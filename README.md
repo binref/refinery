@@ -18,7 +18,7 @@ The main philosophy of the refinery is that every script should be a unit in the
 
 ### License
 
-The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License][CC BY-NC-ND 4.0]. This repository also contains [a copy of the full license text](LICENSE). If you want to do something with it that's not covered by this license, please feel free to contact the author.
+The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License][license]. This repository also contains [a copy of the full license text](LICENSE). If you want to do something with it that's not covered by this license, please feel free to contact the author.
 
 ### Installing the Refinery
 
@@ -128,4 +128,4 @@ emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
 [docs]: https://binre.github.io/
 [argformats]: https://binre.github.io/lib/argformats.html
 [frame]: https://binre.github.io/lib/frame.html
-[CC BY-NC-ND 4.0]: https://creativecommons.org/licenses/by-nd/4.0/legalcode
+[license]: https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode
