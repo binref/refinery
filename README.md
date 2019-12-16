@@ -128,4 +128,4 @@ emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
 [docs]: https://binre.github.io/
 [argformats]: https://binre.github.io/lib/argformats.html
 [frame]: https://binre.github.io/lib/frame.html
-[CC BY-ND 4.0]: https://creativecommons.org/licenses/by-nd/4.0/legalcode
+[CC BY-NC-ND 4.0]: https://creativecommons.org/licenses/by-nd/4.0/legalcode
