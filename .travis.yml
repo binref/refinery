@@ -1,6 +1,6 @@
 language: python
 install: pip3 install .
-script: python3 run-tests.py
+script: python -m unittest discover -p test_*.py
 jobs:
   include:
     - name: "Python 3.8 on Linux (Generates Test Coverage)"
@@ -12,8 +12,10 @@ jobs:
     - name: "Python 3.7 on Linux"
       python: 3.7
     - name: "Python 3.6 on Linux"
+      script: ""
       python: 3.6
     - name: "Python 3.6 on Linux (PyPy3)"
+      script: ""
       python: pypy3
     - name: "Python 3.7 on macOS"
       os: osx
@@ -22,18 +24,9 @@ jobs:
     - name: "Python 3.8 on Windows"
       os: windows
       language: shell
-      script: python run-tests.py
       env: PATH=/c/Python38:/c/Python38/Scripts:$PATH
       before_install:
         - choco install python --version 3.8 -y
-        - python -m pip install --upgrade pip
-    - name: "Python 3.7 on Windows"
-      os: windows
-      language: shell
-      script: python run-tests.py
-      env: PATH=/c/Python37:/c/Python37/Scripts:$PATH
-      before_install:
-        - choco install python --version 3.7 -y
         - python -m pip install --upgrade pip
     - name: "Deploy Documentation"
       python: 3.8
