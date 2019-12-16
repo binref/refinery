@@ -1,6 +1,9 @@
 # Binary Refinery
-[![Build Status](https://travis-ci.org/binref/refinery.svg?branch=master)](https://travis-ci.org/binref/refinery)
-[![Code Coverage](https://codecov.io/github/binref/refinery/coverage.svg?branch=master)](https://codecov.io/github/binref/refinery/?branch=master)
+[![Build Status](https://img.shields.io/travis/binref/refinery?style=for-the-badge)][travis]
+[![Code Coverage](https://img.shields.io/codecov/c/github/binref/refinery?style=for-the-badge)][codecov]
+[![PyPi Versions](https://img.shields.io/pypi/pyversions/binary-refinery?style=for-the-badge)][pypi]
+[![PyPi Wheel](https://img.shields.io/pypi/wheel/binary-refinery?style=for-the-badge)][pypi]
+[![Documentation](https://img.shields.io/badge/docs-super%20retro-red?style=for-the-badge&logo=Python&logoColor=white)][docs]
 ```
   __     __  High Octane Triage Analysis          __
   ||    _||______ __       __________     _____   ||
@@ -129,3 +132,6 @@ emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
 [argformats]: https://binre.github.io/lib/argformats.html
 [frame]: https://binre.github.io/lib/frame.html
 [license]: https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode
+[travis]: https://travis-ci.org/binref/refinery
+[codecov]: https://codecov.io/github/binref/refinery/?branch=master
+[pypi]: https://pypi.org/project/binary-refinery/
