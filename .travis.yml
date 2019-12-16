@@ -3,9 +3,12 @@ install: pip3 install .
 script: python3 run-tests.py
 jobs:
   include:
-    - name: "Python 3.7 on Linux"
+    - name: "Python 3.8 on Linux (Generates Test Coverage)"
       python: 3.8
+      before_install: pip3 install codecov
+      after_success: codecov
       stage: test
+      script: coverage run --source refinery run-tests.py
     - name: "Python 3.7 on Linux"
       python: 3.7
     - name: "Python 3.6 on Linux"
@@ -32,16 +35,10 @@ jobs:
       before_install:
         - choco install python --version 3.7 -y
         - python -m pip install --upgrade pip
-    - name: "Python 3.8 on Linux (Deployment Run)"
-      python: 3.8
-      before_install: pip3 install codecov
-      after_success: codecov
-      script:
-        - coverage run --source refinery run-tests.py
-        - python run-pdoc3.py --current-environment
     - name: "Deploy Documentation"
       python: 3.8
       stage: deploy
+      script: python run-pdoc3.py --current-environment
       deploy:
         provider: pages
         repo: binref/binref.github.io
@@ -50,8 +47,6 @@ jobs:
         skip_cleanup: true
         github_token: $GITHUB_TOKEN
         keep_history: false
-        on:
-          branch: master
     - name: "Deploy PyPi"
       python: 3.8
       deploy:
