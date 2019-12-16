@@ -3,7 +3,7 @@ install: pip3 install .
 script: python -m unittest discover -p test_*.py
 jobs:
   include:
-    - name: "Python 3.8 on Linux (Generates Test Coverage)"
+    - name: "Python 3.8 on Linux, generate test coverage"
       python: 3.8
       before_install: pip3 install codecov
       after_success: codecov
@@ -11,17 +11,24 @@ jobs:
       script: coverage run --source refinery run-tests.py
     - name: "Python 3.7 on Linux"
       python: 3.7
-    - name: "Python 3.6 on Linux"
+    - name: "Python 3.6 on Linux, only installation"
       script: true
       python: 3.6
-    - name: "Python 3.6 on Linux (PyPy3)"
+    - name: "Python 3.6 on Linux, only installation, PyPy3"
       script: true
       python: pypy3
-    - name: "Python 3.7 on macOS"
+    - name: "Unknown Python3 on macOS, only installation"
       os: osx
       script: true
       osx_image: xcode11.2
       language: shell
+    - name: "Python 3.7 on Windows"
+      os: windows
+      language: shell
+      env: PATH=/c/Python37:/c/Python37/Scripts:$PATH
+      before_install:
+        - choco install python --version 3.7 -y
+        - python -m pip install --upgrade pip
     - name: "Python 3.8 on Windows"
       os: windows
       language: shell

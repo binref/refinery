@@ -46,7 +46,7 @@ def main():
 
     setuptools.setup(
         name='binary-refinery',
-        version='0.0.1',
+        version='0.0.2',
         author='Jesko Hüttenhain',
         description='A toolkit to transform and refine (mostly) binary data.',
         long_description=readme,
