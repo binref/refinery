@@ -1,0 +1,9 @@
+__pycache__
+__init__.pkl
+venv*
+html
+build
+dist
+*.egg-info
+*.eggs
+*.pyc

@@ -1,0 +1,14 @@
+capstone
+colorama
+defusedxml
+msgpack
+numpy
+openpyxl
+pefile
+phpserialize 
+Pillow
+pycryptodome
+pyelftools
+pyperclip
+python-magic
+xlrd

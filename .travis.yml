@@ -1,0 +1,65 @@
+language: python
+install: pip3 install .
+script: python3 run-tests.py
+jobs:
+  include:
+    - name: "Python 3.7 on Linux"
+      python: 3.8
+      stage: test
+    - name: "Python 3.7 on Linux"
+      python: 3.7
+    - name: "Python 3.6 on Linux"
+      python: 3.6
+    - name: "Python 3.6 on Linux (PyPy3)"
+      python: pypy3
+    - name: "Python 3.7 on macOS"
+      os: osx
+      osx_image: xcode11.2
+      language: shell
+    - name: "Python 3.8 on Windows"
+      os: windows
+      language: shell
+      script: python run-tests.py
+      env: PATH=/c/Python38:/c/Python38/Scripts:$PATH
+      before_install:
+        - choco install python --version 3.8 -y
+        - python -m pip install --upgrade pip
+    - name: "Python 3.7 on Windows"
+      os: windows
+      language: shell
+      script: python run-tests.py
+      env: PATH=/c/Python37:/c/Python37/Scripts:$PATH
+      before_install:
+        - choco install python --version 3.7 -y
+        - python -m pip install --upgrade pip
+    - name: "Python 3.8 on Linux (Deployment Run)"
+      python: 3.8
+      before_install: pip3 install codecov
+      after_success: codecov
+      script:
+        - coverage run --source refinery run-tests.py
+        - python run-pdoc3.py --current-environment
+    - name: "Deploy Documentation"
+      python: 3.8
+      stage: deploy
+      deploy:
+        provider: pages
+        repo: binref/binref.github.io
+        target_branch: master
+        local_dir: html/refinery
+        skip_cleanup: true
+        github_token: $GITHUB_TOKEN
+        keep_history: false
+        on:
+          branch: master
+    - name: "Deploy PyPi"
+      python: 3.8
+      deploy:
+        provider: pypi
+        user: "__token__"
+        password: $PYPI_TOKEN
+        server: https://test.pypi.org/legacy/
+        distributions: "sdist bdist_wheel"
+        skip_existing: true
+        on:
+          tags: true
