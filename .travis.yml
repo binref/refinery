@@ -53,7 +53,6 @@ jobs:
         provider: pypi
         user: "__token__"
         password: $PYPI_TOKEN
-        server: https://test.pypi.org/legacy/
         distributions: "sdist bdist_wheel"
         skip_existing: true
         on:
