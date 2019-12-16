@@ -5,13 +5,11 @@ import os
 import re
 import os.path
 import sys
-import base64
-import distutils.cmd
-import distutils.log
 
 import refinery.lib.loader as loader
 
 PREFIX = os.getenv('REFINERY_PREFIX') or ''
+GITHUB = 'https://github.com/binref/refinery/'
 
 cache_path = os.path.join(os.path.dirname(__file__), 'refinery', '__init__.pkl')
 if os.path.exists(cache_path):
@@ -38,20 +36,16 @@ def main():
 
     with open('README.md', 'r', encoding='UTF8') as README:
         readme = README.read()
-        readme = re.sub(
-            '(?<=\])\((?!\w+://)(.*?)\)',
-            '(https://github.com/binre/refinery/blob/master/\\1)',
-            readme
-        )
+        readme = re.sub('(?<=\\])\\((?!\\w+://)(.*?)\\)', F'({GITHUB}blob/master/\\1)', readme)
 
     setuptools.setup(
         name='binary-refinery',
-        version='0.0.2',
+        version='0.0.3',
         author='Jesko Hüttenhain',
         description='A toolkit to transform and refine (mostly) binary data.',
         long_description=readme,
         long_description_content_type='text/markdown',
-        url='https://binre.github.io/',
+        url=GITHUB,
         python_requires='>=3.6',
         classifiers=[
             'Development Status :: 3 - Alpha',
