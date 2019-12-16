@@ -128,9 +128,9 @@ emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
 
 
 [pdoc3]: https://pdoc3.github.io/pdoc/
-[docs]: https://binre.github.io/
-[argformats]: https://binre.github.io/lib/argformats.html
-[frame]: https://binre.github.io/lib/frame.html
+[docs]: https://binref.github.io/
+[argformats]: https://binref.github.io/lib/argformats.html
+[frame]: https://binref.github.io/lib/frame.html
 [license]: https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode
 [travis]: https://travis-ci.org/binref/refinery
 [codecov]: https://codecov.io/github/binref/refinery/?branch=master
