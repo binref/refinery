@@ -413,27 +413,26 @@ class Framed:
                         yield chunk.pack()
             return
 
-        def compress() -> Chunk:
-            visibility = None
-            buffer = io.BytesIO()
-            while visibility is None:
-                for chunk in self._apply_filter():
-                    if not chunk.visible:
-                        buffer.write(chunk.data)
-                        continue
-                    for result in self.action(chunk.mut):
-                        buffer.write(result)
-                if self.unpack.peek[:gauge + 1] != self.unpack.trunk[:gauge + 1] \
-                        or not self.unpack.nextframe():
-                    visibility = chunk.view[:gauge]
-            return Chunk(buffer.getvalue(), self.unpack.trunk[:gauge], visibility)
-
         gauge = max(self.unpack.gauge + self.nested, 0)
 
         if gauge:
+            buffer = io.BytesIO()
             yield MAGIC
-            while self.unpack.nextframe():
-                yield compress().pack()
-        else:
-            while self.unpack.nextframe():
-                yield compress().data
+        while self.unpack.nextframe():
+            while True:
+                for chunk in self._apply_filter():
+                    results = self.action(chunk.mut) if chunk.visible else (chunk.data,)
+                    for result in results:
+                        if not gauge:
+                            yield result
+                            continue
+                        buffer.write(result)
+                if self.unpack.peek[:gauge + 1] != self.unpack.trunk[:gauge + 1]:
+                    break
+                if not self.unpack.nextframe():
+                    break
+            if gauge:
+                buffer.truncate(buffer.tell())
+                yield Chunk(buffer.getvalue(),
+                    chunk.path[:gauge], chunk.view[:gauge]).pack()
+                buffer.seek(0)
