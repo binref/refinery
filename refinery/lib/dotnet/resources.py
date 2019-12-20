@@ -165,21 +165,22 @@ class NetManifestResource(Struct):
                     Deserialized = BinaryFormatterParser(
                         Entry.Data,
                         ignore_errors=False,
-                        keep_meta=True
+                        dereference=False,
+                        keep_meta=False
                     )
                 except Exception as error:
                     Entry.Error = 'failed to deserialize entry data: {}'.format(error)
                     continue
                 try:
-                    _, _, Container = Deserialized
+                    _, _, _, Data = Deserialized
                 except ValueError:
-                    Entry.Error = 'deserialized entry has {} records, only 3 were expected.'.format(len(Deserialized))
+                    Entry.Error = 'deserialized entry has {} records, 4 were expected.'.format(len(Deserialized))
                     continue
-                if Container.Members.Data not in Entry.Data:
+                if Data not in Entry.Data:
                     Entry.Error = 'the computed entry value is not a substring of the entry data.'
                     Entry.Value = Entry.Data
                 else:
-                    Entry.Value = Container.Members.Data
+                    Entry.Value = Data
 
             elif TypeCode in self.PRIMITIVE:
                 Type = self.PRIMITIVE[TypeCode]
