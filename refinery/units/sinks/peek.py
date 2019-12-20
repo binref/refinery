@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import sys
 
-from . import HexViewerMixin, get_terminal_size
+from . import HexViewerMixin, get_terminal_size, magic
 from .. import Unit
 
 
@@ -46,19 +46,6 @@ class peek(Unit, HexViewerMixin):
             F'{entropy(bytearray(data)) * 100:.2f}% entropy'
         ]
 
-        try:
-            from winmagic import magic
-        except ImportError:
-            import os
-            if os.name == 'nt':
-                # Attempting to import magic on Windows without winmagic being
-                # installed may result in an uncontrolled crash.
-                magic = None
-            else:
-                try:
-                    import magic
-                except ImportError:
-                    magic = None
         if magic:
             peeks.append(magic.Magic().from_buffer(data))
 

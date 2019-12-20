@@ -4,6 +4,20 @@ import itertools
 
 from ...lib.tools import get_terminal_size, lookahead
 
+try:
+    from winmagic import magic
+except ModuleNotFoundError:
+    import os
+    if os.name == 'nt':
+        # Attempting to import magic on Windows without winmagic being
+        # installed may result in an uncontrolled crash.
+        magic = None
+    else:
+        try:
+            import magic
+        except ModuleNotFoundError:
+            magic = None
+
 
 class HexViewerMixin:
 
