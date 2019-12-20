@@ -8,7 +8,7 @@ from ...lib.decorators import unicoded
 from ...lib.argformats import number
 
 
-class jsonfmt(Unit):
+class ppjson(Unit):
     """
     Expects JSON input data and outputs it in a neatly formatted manner.
     """
