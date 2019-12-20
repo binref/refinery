@@ -36,3 +36,9 @@ class TestFraming(TestBase):
         m = multibin(F'xor[ucrypt[8,H:4242]:swordfish]:H:{buffer.hex()}')
         ucrypt = refinery.ucrypt(size=8, salt=bytes.fromhex('4242'))
         self.assertEqual(m, refinery.xor(arg=[ucrypt(B'swordfish')])(buffer))
+
+    def test_multibin_delayed(self):
+        buffer = self.generate_random_buffer(1024)
+        unit1 = refinery.xor('snip[:4]:x::8')
+        unit2 = refinery.xor('H:{}'.format(buffer[:4].hex()))
+        self.assertEqual(unit1(buffer), unit2(buffer[8:]))

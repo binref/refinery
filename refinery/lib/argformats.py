@@ -72,7 +72,7 @@ will be parsed as the hexadecimal representation of the SHA256 hash of the file 
 """
 import ast
 
-from itertools import cycle, count
+from itertools import cycle, count, chain
 from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, wraps
@@ -301,6 +301,7 @@ class DelayedArgumentDispatch:
         self.units = {}
 
     def _get_unit(self, name, *args):
+        name = name.replace('-', '_')
         uhash = hash((name,) + args)
         if uhash in self.units:
             return self.units[uhash]
@@ -414,9 +415,10 @@ class DelayedArgument(LazyEvaluation):
 
     def __call__(self, data: Optional[bytearray] = None) -> bytes:
         arg = self.seed
+        mod = iter(self.modifiers)
         if not self.finalized:
-            arg = self.handler(arg)
-        for name, arguments in self.modifiers:
+            mod = chain(((None, ()),), mod)
+        for name, arguments in mod:
             try:
                 arg = self.handler(arg, name, *arguments)
             except Exception as error:
