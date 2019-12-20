@@ -34,23 +34,3 @@ class TestDeduplication(TestMetaBase):
                 B'vulpeculae'
             ]
         )
-
-    def test_sorting_strings(self):
-        unit = self.load('-s')
-        self.assertEqual(
-            unit(
-                B'alpha',
-                B'alpha',
-                B'beta',
-                B'gamma',
-                B'delta',
-                B'epsilon',
-                B'epsilon',
-            ), [
-                B'alpha',
-                B'beta',
-                B'delta',
-                B'epsilon',
-                B'gamma'
-            ]
-        )

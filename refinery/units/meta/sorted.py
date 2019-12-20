@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
+from .. import Unit, RefineryCriticalException
 
 
 class sorted(Unit):
@@ -10,6 +10,35 @@ class sorted(Unit):
     """
 
     def filter(self, chunks):
-        gobble = list(chunks)
-        gobble.sort()
-        yield from gobble
+        sortbuffer = []
+        invisibles = {}
+
+        for k, chunk in enumerate(chunks):
+            if not chunk.visible:
+                r = k - len(invisibles)
+                invisibles.setdefault(r, [])
+                invisibles[r].append(chunk)
+            else:
+                sortbuffer.append(chunk)
+
+        sortbuffer.sort()
+
+        if not invisibles:
+            yield from sortbuffer
+            return
+
+        for r, chunk in enumerate(sortbuffer):
+            if r in invisibles:
+                yield from invisibles[r]
+                del invisibles[r]
+            yield chunk
+
+        if invisibles:
+            yield from invisibles[r]
+            del invisibles[r]
+
+        if invisibles:
+            raise RefineryCriticalException(
+                'for unknown reasons, invisible chunks were lost during '
+                'the sorting process.'
+            )

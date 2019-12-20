@@ -378,7 +378,9 @@ class Unit(metaclass=Executable, abstract=True):
 
     @source.setter
     def source(self, stream):
-        if not getattr(stream, '_source', None):
+        if isinstance(stream, self.__class__.__class__):
+            stream = stream()
+        if not isinstance(stream, self.__class__):
             self._framed = None
             self._chunks = None
         self._source = stream
