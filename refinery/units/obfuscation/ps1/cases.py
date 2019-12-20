@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator
+from .. import Deobfuscator, outside
+from ....lib.patterns import formats
 
 
 class deob_ps1_cases(Deobfuscator):
-    NAMES = [
+    _NAMES = [
         '-BXor',
         '-Exec Bypass',
         '-NoLogo',
@@ -37,7 +38,8 @@ class deob_ps1_cases(Deobfuscator):
         'Void',
     ]
 
+    @outside(formats.ps1str)
     def deobfuscate(self, data):
-        for name in self.NAMES:
-            data = re.sub(re.escape(name), name, data, flags=re.IGNORECASE)
+        for name in self._NAMES:
+            data = re.sub(RF'\b{re.escape(name)}\b', name, data, flags=re.IGNORECASE)
         return data

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+import io
+
 from zlib import crc32
 
 from .. import Unit
@@ -18,20 +20,25 @@ class AutoDeobfuscationTimeout(RuntimeError):
     pass
 
 
-def outside(*args):
+def outside(*exceptions):
     """
     A decorator which allows to apply the transformation only to areas where
     a set of given regular expressions does not match. Here, this is mostly
     used to apply deobfuscations only to code outside of strings.
     """
 
-    exclusion = B'(' + B'|'.join(B'(?:%s)' % a for a in args) + B')'
+    exclusion = '|'.join(F'(?:{e})' for e in exceptions)
 
     def excluded(method):
         def wrapper(self, data):
-            split = re.split(exclusion, data, re.DOTALL)
-            split[::2] = [method(self, chunk) for chunk in split[::2]]
-            return B''.join(split)
+            with io.StringIO() as out:
+                cursor = 0
+                for m in re.finditer(exclusion, data, re.DOTALL):
+                    out.write(method(self, data[cursor:m.start()]))
+                    out.write(m.group(0))
+                    cursor = m.end()
+                out.write(method(self, data[cursor:]))
+                return out.getvalue()
         return wrapper
 
     return excluded

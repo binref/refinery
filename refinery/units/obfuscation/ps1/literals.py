@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator
+from .. import Deobfuscator, outside
+from ....lib.patterns import formats
 
 
 class deob_ps1_literals(Deobfuscator):
@@ -16,5 +17,6 @@ class deob_ps1_literals(Deobfuscator):
         super().__init__(*args, **kw)
         self._sentinel = re.compile(R'\$\{(\w+)\}')
 
+    @outside(formats.ps1str)
     def deobfuscate(self, data):
         return self._sentinel.sub(R'$\1', data)
