@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ... import RefineryException
+from ... import RefineryPartialResult
 from . import KeyDerivation
 
 from Crypto.Cipher import DES
@@ -72,5 +72,5 @@ class DESDerive(KeyDerivation):
         key = bytes((self._TABLE[b] for b in key))
 
         if self.args.size > 8:
-            raise RefineryException('DESDerive can provide at most 8 bytes.', partial=key)
+            raise RefineryPartialResult('DESDerive can provide at most 8 bytes.', partial=key)
         return key[:self.args.size]

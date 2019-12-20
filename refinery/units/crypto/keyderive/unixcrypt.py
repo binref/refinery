@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from . import KeyDerivation
-from ... import RefineryException
+from ... import RefineryPartialResult
 
 from typing import List
 
@@ -344,7 +344,7 @@ class ucrypt(KeyDerivation):
     def process(self, data):
         crypted = bytes(UnixCrypt(data, salt=self.salt))
         if len(crypted) < self.args.size:
-            raise RefineryException(
+            raise RefineryPartialResult(
                 F'unix crypt only provided {len(crypted)} bytes, but {self.args.size} '
                 F'were requested.', partial=crypted
             )

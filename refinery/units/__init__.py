@@ -53,13 +53,22 @@ class ArgparseError(ValueError):
         super().__init__(message)
 
 
-class RefineryException(ValueError):
+class RefineryPartialResult(ValueError):
     """
-    Base class for refinery unit exceptions.
+    This exception indicates that a partial result is available.
     """
-    def __init__(self, msg, partial=None):
+    def __init__(self, msg, partial):
         super().__init__(msg)
         self.partial = partial
+
+
+class RefineryCriticalException(RuntimeError):
+    """
+    If this exception is thrown, processing of the entire input stream
+    is aborted instead of just aborting the processing of the current
+    chunk.
+    """
+    pass
 
 
 class Entry:
@@ -297,24 +306,33 @@ class Unit(metaclass=Executable, abstract=True):
         return self
 
     def __next__(self):
-        def raise_or_stop(E: Exception) -> None:
-            raise StopIteration if self.log_level > LogLevel.DETACHED else E
-        if not self._chunks:
-            self._chunks = iter(self._framehandler)
-        try:
-            return next(self._chunks)
-        except StopIteration:
-            raise
-        except KeyboardInterrupt as K:
-            self.output('aborting due to keyboard interrupt')
-            self._source = None
-            raise_or_stop(K)
-        except Exception as E:
-            self.log_warn(F'unexpected error: {E}')
+        def abort(exception: BaseException, stop: bool = True) -> None:
             if self.log_debug():
                 import traceback
                 traceback.print_exc(file=sys.stderr)
-            raise_or_stop(E)
+            if self.log_level > LogLevel.DETACHED:
+                raise StopIteration
+            raise exception
+        if not self._chunks:
+            self._chunks = iter(self._framehandler)
+        while True:
+            try:
+                return next(self._chunks)
+            except StopIteration:
+                raise
+            except KeyboardInterrupt as K:
+                self.output('aborting due to keyboard interrupt')
+                self._source = None
+                abort(K)
+            except RefineryCriticalException as E:
+                self.log_warn(F'critical error, terminating: {E}')
+                abort(E)
+            except RefineryPartialResult as E:
+                self.log_warn(F'error, partial result returned: {E}')
+                return E.partial
+            except Exception as E:
+                self.log_warn(F'unexpected error: {E}')
+                abort(E, stop=False)
 
     @property
     def _framehandler(self) -> Framed:
@@ -376,6 +394,9 @@ class Unit(metaclass=Executable, abstract=True):
             return self.source.nozzle
         except AttributeError:
             return self
+
+    def __class_getitem__(cls, unit: 'Unit'):
+        return cls().__getitem__(unit)
 
     def __getitem__(self, unit: 'Unit'):
         if isinstance(unit, type):
@@ -689,8 +710,11 @@ class Unit(metaclass=Executable, abstract=True):
                     start_clock = clock()
                     unit.output('starting clock: {:.4f}'.format(start_clock))
 
-                with open(os.devnull, 'wb') if unit.args.null else sys.stdout.buffer as output:
-                    source | unit | output
+                try:
+                    with open(os.devnull, 'wb') if unit.args.null else sys.stdout.buffer as output:
+                        source | unit | output
+                except OSError:
+                    pass
 
                 if unit.args.debug_timing:
                     stop_clock = clock()

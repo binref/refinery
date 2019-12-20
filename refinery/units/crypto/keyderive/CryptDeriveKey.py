@@ -4,7 +4,7 @@
 Reference:
 https://docs.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptderivekey
 """
-from ... import RefineryException
+from ... import RefineryPartialResult
 from . import KeyDerivation
 
 
@@ -27,7 +27,7 @@ class CryptDeriveKey(KeyDerivation):
             buffer2[k] ^= b
         buffer = digest(buffer1) + digest(buffer2)
         if self.args.size > max_size:
-            raise RefineryException(
+            raise RefineryPartialResult(
                 F'too many bytes requested, can only provide {max_size}',
                 partial=buffer
             )

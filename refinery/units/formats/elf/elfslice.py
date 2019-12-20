@@ -4,7 +4,7 @@ import io
 
 from elftools.elf.elffile import ELFFile
 
-from ... import Unit, RefineryException
+from ... import Unit
 from ....lib.argformats import number, virtualaddr
 
 
@@ -28,7 +28,7 @@ class elfslice(Unit):
             if delta in range(size + 1):
                 return segment.header.p_offset + delta
         else:
-            raise RefineryException('unable to find offset.')
+            raise ValueError('unable to find offset.')
 
     def _slice(self, off):
         end = off + self.args.limit if self.args.limit else None

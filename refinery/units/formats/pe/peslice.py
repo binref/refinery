@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 import pefile
 
-from ... import Unit, RefineryException
+from ... import Unit
 from ....lib.argformats import number, virtualaddr
 
 
-class EndOfStringNotFound(RefineryException):
+class EndOfStringNotFound(ValueError):
     def __init__(self):
         super().__init__('end of string could not be determined')
 
@@ -40,7 +40,7 @@ class peslice(Unit):
                     self.log_debug('found section', name, F'at offset 0x{addr:08X}')
                     break
             else:
-                raise RefineryException(F'section {offset.section} was not found.')
+                raise ValueError(F'section {offset.section} was not found.')
         else:
             addr = pe.get_offset_from_rva(addr - pe.OPTIONAL_HEADER.ImageBase)
         return addr

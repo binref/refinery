@@ -4,7 +4,7 @@ import io
 import struct
 import copy
 
-from .. import Unit, RefineryException
+from .. import Unit, RefineryPartialResult
 from ...lib.argformats import number
 
 
@@ -130,11 +130,11 @@ class lznt1(Unit):
             try:
                 header, = struct.unpack('<H', data[offset:offset + 2])
             except struct.error as err:
-                raise RefineryException(str(err), partial=out.getvalue())
+                raise RefineryPartialResult(str(err), partial=out.getvalue())
             offset += 2
             size = (header & 0xFFF) + 1
             if size + 1 >= len(data):
-                raise RefineryException(
+                raise RefineryPartialResult(
                     F'chunk header indicates size {size}, but only {len(data)} bytes remain.',
                     partial=out.getvalue()
                 )
