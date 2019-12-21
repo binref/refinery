@@ -28,7 +28,6 @@ class scope(FrameSlicer):
         it = iter(chunks)
         consumed = None
         size = None
-        skips = 0
 
         def buffered():
             yield from it
@@ -49,12 +48,8 @@ class scope(FrameSlicer):
             return max(0, offset + size)
 
         for k, chunk in enumerate(buffered()):
-            if len(chunk.view) > 1 and not chunk.view[~1]:
-                yield chunk
-                skips += 1
-                continue
             for s in self.args.slice:
-                if skips + k in range(shift(s.start, 0), shift(s.stop, k + 1), s.step or 1):
+                if k in range(shift(s.start, 0), shift(s.stop, k + 1), s.step or 1):
                     chunk.visible = self.args.visible
                     break
             else:

@@ -79,6 +79,7 @@ import io
 import os
 
 from typing import Iterable, BinaryIO, Callable, Optional, Tuple, ByteString
+from itertools import chain
 
 try:
     import msgpack
@@ -161,6 +162,13 @@ class Chunk:
         Setting this property on an unframed `refinery.lib.frame.Chunk` raises an `AttributeError`.
         """
         return not self._view or self._view[~0]
+
+    @property
+    def scopable(self):
+        """
+        This property defines whether the chunk can be made visible in the current frame.
+        """
+        return len(self._view) <= 1 or self._view[~1]
 
     @visible.setter
     def visible(self, value: bool):
@@ -351,7 +359,20 @@ class Framed:
         self.filter = filter
 
     def _apply_filter(self) -> Iterable[Chunk]:
-        yield from self.filter(self.unpack)
+
+        it = iter(self.unpack)
+
+        try:
+            chunk = next(it)
+        except StopIteration:
+            pass
+        else:
+            if chunk.scopable:
+                yield from self.filter(chain((chunk,), it))
+            else:
+                yield chunk
+                yield from it
+
         if not self.unpack.eol:  # filter did not consume the iterable, abort
             self.unpack.finished = True
 
