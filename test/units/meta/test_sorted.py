@@ -6,7 +6,7 @@ from . import TestMetaBase
 from .. import refinery as r
 
 
-class TestPad(TestMetaBase):
+class TestSorting(TestMetaBase):
 
     def test_with_scoping(self):
         with io.BytesIO() as result:
