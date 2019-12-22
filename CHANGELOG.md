@@ -1,6 +1,6 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.0.5
 - This changelog was added.
 - The unit `jsonfmt` has been renamed to `ppjson` (for **p**retty-**p**rint **json**).
 - The unit `ppxml` (**p**retty-**p**rint **xml**) was added.
@@ -10,6 +10,7 @@
 - The unit `sorted` now only sorts the chunks of the input stream that are in scope.
 - The unit `dedup` can no longer sort the input stream because `sorted` can do this.
 - PowerShell deobfuscation and their test coverage was improved.
+- Cryptographic units have been refactored; the `salsa` and `chacha` units now take a `--nonce` parameter rather than an `--iv` parameter, as they should.
 
 
 [python-registry]: https://pypi.org/project/python-registry/
