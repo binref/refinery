@@ -40,7 +40,7 @@ class NoManagedResource(AssertionError):
 
 class String(LengthPrefixedString):
     def __init__(self, reader):
-        LengthPrefixedString.__init__(self, reader, codec='UTF-16LE')
+        LengthPrefixedString.__init__(self, reader, codec='UTF-8')
 
 
 class Boolean(Byte):
@@ -155,12 +155,10 @@ class NetManifestResource(Struct):
             self._reader.seek(Entry.Offset)
             TypeCode = self.expect(EncodedInteger)
             Entry.Error = None
+            Entry.Value = Entry.Data = self._reader.read(Entry.Size)
 
             if TypeCode >= self.USERTYPES:
                 Entry.TypeName = ResourceTypes[TypeCode - self.USERTYPES]
-                Entry.Data = self._reader.read(Entry.Size)
-                Entry.Value = Entry.Data
-
                 try:
                     Deserialized = BinaryFormatterParser(
                         Entry.Data,
@@ -185,13 +183,10 @@ class NetManifestResource(Struct):
             elif TypeCode in self.PRIMITIVE:
                 Type = self.PRIMITIVE[TypeCode]
                 Entry.TypeName = repr(Type)
-                package = self.expect_with_meta(Type)
-                Entry.Data = package._data
+                package = StreamReader(Entry.Data).expect_with_meta(Type)
                 Entry.Value = unpack(package)
-
             else:
                 Entry.TypeName = 'UNKNOWN TYPE 0x{:X}'.format(TypeCode)
-                Entry.Data = Entry.Value = self._reader.read()
 
 
 class NetStructuredResources(list):

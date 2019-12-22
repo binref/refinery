@@ -21,7 +21,8 @@ from .types import (
     UInt32,
     UInt64,
     UnicodeString,
-    unpack
+    unpack,
+    ParserEOF
 )
 
 
@@ -913,12 +914,18 @@ class DotNetHeader:
     def parse_resources(self):
         def parse(reader):
             for entry in self.meta.resources:
-                reader.seek(entry.Offset)
-                size = reader.expect(UInt32)
-                yield Box(
-                    Name=entry.Name,
-                    Data=reader.read(size)
-                )
+                try:
+                    reader.seek(entry.Offset)
+                    size = reader.expect(UInt32)
+                    yield Box(
+                        Name=entry.Name,
+                        Data=reader.read(size)
+                    )
+                except ParserEOF:
+                    yield Box(
+                        Name=entry.Name,
+                        Data=B''
+                    )
         self.resources = list(parse(self.reader(self.head.Resources)))
 
     def reader(self, obj):

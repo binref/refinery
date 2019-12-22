@@ -4,7 +4,7 @@ from fnmatch import fnmatch
 from argparse import SUPPRESS
 
 from .... import Unit
-from .....lib.dotnet.header import DotNetHeader
+from .....lib.dotnet.header import DotNetHeader, ParserEOF
 from .....lib.dotnet.resources import NetStructuredResources, NoManagedResource
 
 
@@ -62,7 +62,7 @@ class dnrc(Unit):
         for resource in header.resources:
             try:
                 managed = False if self.args.raw > 1 else NetStructuredResources(resource.Data)
-            except NoManagedResource:
+            except (NoManagedResource, ParserEOF):
                 managed = False
 
             if managed is False:
