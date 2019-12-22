@@ -125,6 +125,14 @@ And get the domains for the next stage:
 ```
 emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
 ```
+Decode the .NET serialized data which contains the configuration of the commodity malware sample with MD5 hash `f21c760cf125431fa2af38fa473558c9`:
+```
+emit stub.exe                                                       \
+ | perc RCDATA                                                      \
+ | ccp PBKDF2[48,rep[8]:H:00]:81080dd57-9797-45a1-af02-a335373d3502 \
+ | aes CBC x::32 --iv x::16                                         \
+ | dnds
+```
 
 
 [pdoc3]: https://pdoc3.github.io/pdoc/
