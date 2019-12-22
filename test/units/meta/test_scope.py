@@ -6,7 +6,7 @@ from refinery import rep, scope, cca, ccp, chop
 
 class TestScope(TestMetaBase):
 
-    def test_only_local_scope_01(self):
+    def test_only_local_scope(self):
         pipeline = rep [ scope(1) | rep [ scope(0) | cca('.') ]] # noqa
         self.assertEqual(pipeline(B'FOO'), B'FOOFOO.FOO')
 

@@ -24,22 +24,26 @@ class pick(Unit):
 
     def filter(self, inputs):
         slices = deque(self.args.slice)
-        skip = 0
+        discards = 0
         consumed = False
+
+        def discardable(s):
+            return s.stop and s.stop >= 0 and (s.step or 1) > 0 \
+                and all(t.start >= s.stop for t in slices)
 
         while slices:
             s = slices.popleft()
-            skipamount = 0
-            if not consumed and slices:
-                if s.stop and all(t.start >= s.stop for t in slices):
-                    skipamount = s.stop - 1 - skip
-                    self.log_debug(F'skipping {skipamount} items without consuming')
-                else:
-                    self.log_debug(F'consumed input into buffer after {skip} skips')
-                    inputs = list(inputs)
+
+            if not consumed:
+                if not discardable(s):
+                    self.log_debug(F'consumed input into buffer after {discards} skips')
+                    inputs = [None] * discards + list(inputs)
                     consumed = True
-            self.log_debug(F'applying slice {s}')
-            yield from islice(chain(repeat(None, skip), inputs), s.start, s.stop, s.step)
-            skip += skipamount
+
+            if consumed:
+                yield from inputs[s]
+            else:
+                yield from islice(chain(repeat(None, discards), inputs), s.start, s.stop, s.step)
+                discards = s.stop
 
         return
