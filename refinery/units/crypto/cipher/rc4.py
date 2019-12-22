@@ -7,9 +7,8 @@ from . import StandardCipherUnit
 ARC4.key_size = range(1, 257)
 
 
-class rc4(StandardCipherUnit):
+class rc4(StandardCipherUnit, cipher=ARC4):
     """
     RC4 encryption and decryption.
     """
-    _cipher = ARC4
-    _requires_iv = False
+    pass

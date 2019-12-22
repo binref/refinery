@@ -193,7 +193,7 @@ class seal(StreamCipherUnit):
     """
     SEAL encryption and decryption.
     """
-    _possible_key_sizes = 20
+    __key_sizes__ = 20
 
     def keystream(self) -> Iterable[bytes]:
         return SEAL_Cipher(self.key)

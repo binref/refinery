@@ -10,9 +10,8 @@ class xtea(CipherUnit):
     XTEA encryption and decryption.
     """
 
-    _requires_iv = False
-    _block_size = 16
-    _possible_key_sizes = 16
+    __blocksize__ = 16
+    __key_sizes__ = 16
 
     def encrypt(self, data):
         blocks = iter(self._load32(data))

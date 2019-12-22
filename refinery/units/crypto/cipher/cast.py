@@ -5,9 +5,8 @@ from Crypto.Cipher import CAST
 from . import StandardCipherUnit
 
 
-class cast(StandardCipherUnit):
+class cast(StandardCipherUnit, cipher=CAST):
     """
     CAST encryption and decryption.
     """
-    _cipher = CAST
-    _requires_iv = False
+    pass

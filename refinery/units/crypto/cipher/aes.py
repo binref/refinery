@@ -5,9 +5,8 @@ from Crypto.Cipher import AES
 from . import StandardCipherUnit
 
 
-class aes(StandardCipherUnit):
+class aes(StandardCipherUnit, cipher=AES):
     """
     AES encryption and decryption.
     """
-    _cipher = AES
-    _requires_iv = True
+    pass

@@ -5,9 +5,8 @@ from Crypto.Cipher import DES
 from . import StandardCipherUnit
 
 
-class des(StandardCipherUnit):
+class des(StandardCipherUnit, cipher=DES):
     """
     DES encryption and decryption.
     """
-    _cipher = DES
-    _requires_iv = True
+    pass
