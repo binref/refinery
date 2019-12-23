@@ -79,7 +79,6 @@ import io
 import os
 
 from typing import Iterable, BinaryIO, Callable, Optional, Tuple, ByteString
-from itertools import chain
 
 try:
     import msgpack
@@ -362,16 +361,17 @@ class Framed:
 
         it = iter(self.unpack)
 
+        def rewind():
+            yield top
+            yield from it
+
         try:
-            chunk = next(it)
+            top = next(it)
         except StopIteration:
             pass
         else:
-            if chunk.scopable:
-                yield from self.filter(chain((chunk,), it))
-            else:
-                yield chunk
-                yield from it
+            rw = rewind()
+            yield from self.filter(rw) if top.scopable else rw
 
         if not self.unpack.eol:  # filter did not consume the iterable, abort
             self.unpack.finished = True

@@ -47,3 +47,7 @@ class TestFraming(TestBase):
             slow = stream | r.chop(5) [ r.rex('.') ] # noqa
             for k in range(20):
                 self.assertEqual(slow.read1(20), bytes((k,)))
+
+    def test_depth3(self):
+        pl = r.snip(':3', 3, 4, '5:')[r.scope('1:3') | r.rex('.')[r.rep(3)[r.ccp('X')]]]
+        self.assertEqual(B'AAAXBXBXBXCXCXCDDD', pl('AAABCDDD'))
