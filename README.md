@@ -55,11 +55,11 @@ The documentation [is available online][docs], but you can also generate it loca
 
 ### Simple Examples
 
-The units [emit](refinery/emit.py) and [dump](refinery/dump.py) play a special role: The former is for outputting data while the latter is for dumping data to the clipboard or to disk. As an example, consider the following pipeline:
+The units [emit][] and [dump][] play a special role: The former is for outputting data while the latter is for dumping data to the clipboard or to disk. As an example, consider the following pipeline:
 ```
 emit M7EwMzVzBkI3IwNTczM3cyMg2wQA | b64 | zl | hex 
 ```
-Here, we emit the string `M7EwMzVzBkI3IwNTczM3cyMg2wQA`, base64-decode it using [b64](refinery/encoding/b64.py), zlib-decompress the result using [zl](refinery/compression/zl.py), and finally [hex](refinery/encoding/hex.py)-decode the decompressed data. Each unit performs the _"decoding"_ operation of a certain transformation by default, but some of them also implement the reverse operation. If they do, this is always done by providing the command line switch `-R`, or `--reverse`. You can produce the above base64 string using the following command because [hex](refinery/encoding/hex.py), [zl](refinery/compression/zl.py), and [b64](refinery/encoding/b64.py) all provide the reverse operation:
+Here, we emit the string `M7EwMzVzBkI3IwNTczM3cyMg2wQA`, base64-decode it using [b64][], zlib-decompress the result using [zl][], and finally [hex][]-decode the decompressed data. Each unit performs the _"decoding"_ operation of a certain transformation by default, but some of them also implement the reverse operation. If they do, this is always done by providing the command line switch `-R`, or `--reverse`. You can produce the above base64 string using the following command because [hex][], [zl][], and [b64][] all provide the reverse operation:
 ```
 emit "Hello World" | hex -R | zl -R | b64 -R
 ```
@@ -68,9 +68,9 @@ Given a file `packed.bin` containing a base64 encoded payload buffer, the follow
 ```
 emit packed.bin | carve -l -p1 b64 | b64 | dump payload.bin
 ```
-The [carve](refinery/pattern/carve.py) unit can be used to carve blocks of data out of the input buffer, in this case it looks for base64 encoded data, sorts them by length (`-l`) and returns the first of these (`-p1`), which carves the largest base64-looking chunk of data from `packed.bin`. The data is then base64-decoded and dumped to the file `payload.bin`. 
+The [carve][] unit can be used to carve blocks of data out of the input buffer, in this case it looks for base64 encoded data, sorts them by length (`-l`) and returns the first of these (`-p1`), which carves the largest base64-looking chunk of data from `packed.bin`. The data is then base64-decoded and dumped to the file `payload.bin`. 
 
-The unit [pack](refinery/pack.py), will pick all numeric expressions from a text buffer and turn them into their binary representation. A simple example is the pipeline
+The unit [pack][], will pick all numeric expressions from a text buffer and turn them into their binary representation. A simple example is the pipeline
 ```
 emit "0xBA 0xAD 0xC0 0xFF 0xEE" | pack | hex -R 
 ```
@@ -143,3 +143,11 @@ emit stub.exe                                                       \
 [travis]: https://travis-ci.org/binref/refinery
 [codecov]: https://codecov.io/github/binref/refinery/?branch=master
 [pypi]: https://pypi.org/project/binary-refinery/
+
+[dump]: https://binref.github.io/#refinery.dump
+[emit]: https://binref.github.io/#refinery.emit
+[hex]: https://binref.github.io/#refinery.hex
+[zl]: https://binref.github.io/#refinery.zl
+[b64]: https://binref.github.io/#refinery.b64
+[carve]: https://binref.github.io/#refinery.carve
+[pack]: https://binref.github.io/#refinery.pack
