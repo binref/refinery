@@ -23,7 +23,7 @@ if ($activated) {
         python setup.py sdist bdist_wheel 2>&1 | Out-Null
         pip install (Get-Item .\dist\*.whl).FullName
     } else {
-        pip install -e .
+        pip install -e "$PSScriptRoot"
     }
     deactivate -nondestructive
 } else {

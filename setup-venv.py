@@ -57,7 +57,7 @@ else:
 
 scriptname, _ = os.path.splitext(os.path.basename(__file__))
 shell, ext = ('powershell', 'ps1') if os.name == 'nt' else ('bash', 'sh')
-cmd = [shell, './{}.{}'.format(scriptname, ext)]
+cmd = [shell, os.path.join(os.path.dirname(__file__), '{}.{}'.format(scriptname, ext))]
 
 if args.wheel:
     cmd.append('-wheel')
