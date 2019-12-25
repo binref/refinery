@@ -37,6 +37,8 @@ You can either install refinery manually (see below) or use the automated instal
 ```
 The optional argument `folder` specifies the folder where the virtual Python environment is created, the default is `venv`. The optional value given by `--prefix` is the prefix (see above). Finally, the `--wheel` option will install the refinery package as a wheel, which may have some performance benefits. If this option is omitted, refinery is installed as an editable package, which means that any source code modifications in the repository will immediately take effect.
 
+Some known issues arise when [setup-venv.py](setup-venv.py) is instructed to create the virtual environment in a location which already contains a virtual environment that was created by other means. As a workaround for these issues, don't do that, i.e. simply delete the virtual environment and use [setup-venv.py](setup-venv.py) to re-create it.
+
 ### Manual Installation
 
 To install refinery manually, simply set the environment variable `REFINERY_PREFIX` to the prefix you want and use pip. For example:
