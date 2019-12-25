@@ -31,7 +31,7 @@ if ($activated) {
     exit
 }
 
-$refinery = Join-Path $PSScriptRoot $venv;
+$refinery = [IO.Path]::GetFullPath($venv);
 $refinery = Join-Path $refinery 'Scripts';
 $refinery = Join-Path $refinery '';
 
