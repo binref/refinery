@@ -108,7 +108,7 @@ Convert the hard-coded IP address `0xC0A80C2A` in network byte order to a readab
 ```
 emit 0xC0A80C2A | pack -NB4 | pack -R [| sep . ]
 ```
-Extract the PowerShell payload from the XLS macro document with MD5 hash `c5e1106f9654a23320132cbc61b3f29d`:
+Extract the PowerShell payload from [a malicious XLS macro dropper](https://malshare.com/sample.php?action=detail&hash=c5e1106f9654a23320132cbc61b3f29d):
 ```
 emit MIL0001781108.xls            \
 [| xlxtr 9.5:11.5 15.15 12.5:14.5 \
@@ -127,13 +127,15 @@ And get the domains for the next stage:
 ```
 emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
 ```
-Decode the .NET serialized data which contains the configuration of the commodity malware sample with MD5 hash `f21c760cf125431fa2af38fa473558c9`:
+Exctract the configuration of [unpacked HawkEye samples](https://malshare.com/sample.php?action=detail&hash=30ae8004a14f188d40c024124022d63d):
 ```
-emit stub.exe                                                       \
- | perc RCDATA                                                      \
- | ccp PBKDF2[48,rep[8]:H:00]:81080dd57-9797-45a1-af02-a335373d3502 \
- | aes CBC x::32 --iv x::16                                         \
- | dnds
+emit 30ae8004a14f188d40c024124022d63d                \
+[| xtp guid                                          \
+ | PBKDF2 48 rep[8]:H:00                             \
+ | cca perc[RCDATA]:30ae8004a14f188d40c024124022d63d \
+ | aes -Q CBC x::32 --iv x::16                       \
+]                                                    \
+| dnds
 ```
 
 
