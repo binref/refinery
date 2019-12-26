@@ -130,8 +130,8 @@ emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
 Exctract the configuration of [unpacked HawkEye samples](https://malshare.com/sample.php?action=detail&hash=30ae8004a14f188d40c024124022d63d):
 ```
 emit 30ae8004a14f188d40c024124022d63d                \
-[| xtp guid                                          \
- | PBKDF2 48 rep[8]:H:00                             \
+| xtp guid                                           \
+[| PBKDF2 48 rep[8]:H:00                             \
  | cca perc[RCDATA]:30ae8004a14f188d40c024124022d63d \
  | aes -Q CBC x::32 --iv x::16                       \
 ]                                                    \
