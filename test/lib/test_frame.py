@@ -4,6 +4,7 @@ import io
 import refinery as r
 
 from refinery.lib.frame import FrameUnpacker
+from refinery.units import LogLevel
 
 from .. import TestBase
 
@@ -67,3 +68,14 @@ class TestFraming(TestBase):
     def test_depth3(self):
         pl = r.snip(':3', 3, 4, '5:')[r.scope('1:3') | r.rex('.')[r.rep(3)[r.ccp('X')]]]
         self.assertEqual(B'AAAXBXBXBXCXCXCDDD', pl(B'AAABCDDD'))
+
+    def test_continue_after_error(self):
+        T = self.generate_random_buffer(16)
+        aes = r.aes('CBC', key=T, iv=T)
+        msg = [self.generate_random_buffer(3*16) for _ in range(12)]
+        hidden = msg[7]
+        msg[7] = aes.reverse(hidden)
+        pipeline = r.emit(data=msg)[aes]
+        pipeline.log_level = LogLevel.NONE
+        self.assertEqual(aes(msg[7]), hidden)
+        self.assertEqual(pipeline(B''), hidden)

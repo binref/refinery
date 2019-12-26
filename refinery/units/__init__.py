@@ -96,14 +96,20 @@ class Executable(type):
 
     def __new__(mcs, name, bases, nmspc, abstract=False, helpdoc=False):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
+
             @wraps(operation)
             def wrapped(self, data: ByteString) -> bytes:
                 if not isinstance(data, bytearray):
                     data = bytearray(data)
                 self.args._lock(data)
-                return operation(self, bytes(data))
+                try:
+                    return operation(self, bytes(data))
+                except BaseException as B:
+                    return self._exception_handler(B)
+
             wrapped.demux = isgeneratorfunction(operation)
             return wrapped
+
         for op in ('process', 'reverse'):
             if op in nmspc:
                 nmspc[op] = normalize(nmspc[op])
@@ -283,20 +289,15 @@ class Unit(metaclass=Executable, abstract=True):
         base.add_argument('-0', '--null',
             action='store_true', help='Do not produce any output.')
 
-        base.add_argument(
-            '-Q', '--quiet',
-            action='store_true',
-            help='Disables all log output.'
-        )
-        base.add_argument('-v', '--verbose',
-            action='count',
-            help=(
-                'Verbosity: Specify up to two times to enable levels INFO and '
-                'DEBUG, respectively. The default level is WARN. Can also be '
-                'specified in the environment variable REFINERY_VERBOSITY as '
-                'one of these strings or a number from 1 to 3.'
-            )
-        )
+        base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
+        base.add_argument('-L', '--lenient', dest='partial', action='store_true',
+            help='Allow this unit to return incomplete results.')
+        base.add_argument('-v', '--verbose', action='count', help=(
+            'Verbosity: Specify up to two times to enable levels INFO and '
+            'DEBUG, respectively. The default level is WARN. Can also be '
+            'specified in the environment variable REFINERY_VERBOSITY as '
+            'one of these strings or a number from 1 to 3.'
+        ))
         base.set_defaults(verbose=1)
 
         argp.add_argument('--debug-timing', action='store_true', help=SUPPRESS)
@@ -305,34 +306,36 @@ class Unit(metaclass=Executable, abstract=True):
     def __iter__(self):
         return self
 
-    def __next__(self):
-        def abort(exception: BaseException, stop: bool = True) -> None:
-            if self.log_debug():
-                import traceback
-                traceback.print_exc(file=sys.stderr)
-            if self.log_level > LogLevel.DETACHED:
-                raise StopIteration
+    def _exception_handler(self, exception: BaseException):
+        if self.log_level <= LogLevel.DETACHED:
             raise exception
+        try:
+            raise exception
+        except KeyboardInterrupt as K:
+            self.output('aborting due to keyboard interrupt')
+            self._source = None
+            return None
+        except RefineryCriticalException as E:
+            self.log_warn(F'critical error, terminating: {E}')
+        except RefineryPartialResult as E:
+            self.log_warn(F'error, partial result returned: {E}')
+            if self.args.partial:
+                return E.partial
+        except Exception as E:
+            self.log_warn(F'unexpected error: {E}')
+        finally:
+            if self.log_level >= LogLevel.DEBUG:
+                import traceback
+                traceback.print_exc(file=sys.stderr)            
+
+    def __next__(self):
         if not self._chunks:
             self._chunks = iter(self._framehandler)
         while True:
-            try:
-                return next(self._chunks)
-            except StopIteration:
-                raise
-            except KeyboardInterrupt as K:
-                self.output('aborting due to keyboard interrupt')
-                self._source = None
-                abort(K)
-            except RefineryCriticalException as E:
-                self.log_warn(F'critical error, terminating: {E}')
-                abort(E)
-            except RefineryPartialResult as E:
-                self.log_warn(F'error, partial result returned: {E}')
-                return E.partial
-            except Exception as E:
-                self.log_warn(F'unexpected error: {E}')
-                abort(E, stop=False)
+            result = next(self._chunks)
+            if not isinstance(result, BaseException):
+                return result
+
 
     @property
     def _framehandler(self) -> Framed:

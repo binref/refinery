@@ -6,7 +6,7 @@ Implements several popular block and stream ciphers.
 from typing import Iterable, Any
 from Crypto.Util.Padding import pad, unpad
 
-from ... import Unit, Executable, RefineryCriticalException
+from ... import Unit, Executable, RefineryCriticalException, RefineryPartialResult
 from ....lib.argformats import multibin, OptionFactory, extract_options
 
 
@@ -141,8 +141,10 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
             except Exception:
                 pass
         else:
-            self.log_warn('none of these paddings worked: ' + ', '.join(self.args.padding))
-            return data
+            raise RefineryPartialResult(
+                'none of these paddings worked: ' + ', '.join(self.args.padding),
+                partial=data
+            )
 
 
 class StandardCipherExecutable(CipherExecutable):
