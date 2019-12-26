@@ -711,8 +711,8 @@ class Unit(metaclass=Executable, abstract=True):
                 cls._output(F'initialization failed:', msg)
             else:
                 if unit.args.debug_timing:
-                    from time import clock
-                    start_clock = clock()
+                    from time import process_time
+                    start_clock = process_time()
                     unit.output('starting clock: {:.4f}'.format(start_clock))
 
                 try:
@@ -722,7 +722,7 @@ class Unit(metaclass=Executable, abstract=True):
                     pass
 
                 if unit.args.debug_timing:
-                    stop_clock = clock()
+                    stop_clock = process_time()
                     unit.output('stopping clock: {:.4f}'.format(stop_clock))
                     unit.output('time delta was: {:.4f}'.format(stop_clock - start_clock))
 
