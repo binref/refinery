@@ -130,7 +130,7 @@ pattern_url = ''.join([
 ])
 
 pattern_email = R'([a-z0-9_\.\+\-]{{1,256}}?)@({})'.format(pattern_domain)
-pattern_guid = R'(?:\b|\{)[0-9a-f]{8}(?:\-[0-9a-f]{4}){3}\-[0-9a-f]{12}(?:\}|\b)'
+pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
 pattern_win_path_nospace = R'[^/\\:"<>|\s\x7E-\xA0\x00-\x1F\xAD]+'
 pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_win_path_nospace)

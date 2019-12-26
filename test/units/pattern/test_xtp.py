@@ -27,3 +27,8 @@ class TestPatternExtractor(TestUnitBase):
             b'\x00ios_base::eofbit set\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
             b'b\x00u\x00i\x00l\x00d\x00.\x00b\x00i\x00n\x00\x00\x00\x00\x00\x00\x00')
         )
+
+    def test_extract_uppercase_guids(self):
+        unit = self.load('guid')
+        data = B'An uppercase GUID! A5371AF2-2000-4A4C-ADD2-5E6F1E302B41'
+        self.assertEqual(unit(data), B'A5371AF2-2000-4A4C-ADD2-5E6F1E302B41')
