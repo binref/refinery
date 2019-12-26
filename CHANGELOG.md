@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.0.6
+- Processing of data in frames is no longer interrupted by errors in one unit.
+- The global `--lenient` (or `-L`) flag has been added: It allows refinery units to return partial results. This behavior is disabled by default because it usually means that an error occurred during processing.
+- The virtual environment setup script has received bug fixes for problems with absolute paths.
+
 ## Version 0.0.5
 - This changelog was added.
 - The unit `jsonfmt` has been renamed to `ppjson` (for **p**retty-**p**rint **json**).
