@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery.lib.dotnet.deserialize import BinaryFormatterParser, unpack
 from refinery.lib.dotnet.resources import NetManifestResource, StreamReader
+from refinery.lib.dotnet.types import StringGUID
 
 from .. import TestBase
 
@@ -337,3 +338,8 @@ class TestDotNetParser(TestBase):
         )
         parsed = NetManifestResource(StreamReader(manifest))
         self.assertEqual(len(parsed.Resources), 11)
+
+    def test_guid_formatter(self):
+        guid_text = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
+        guid = StringGUID(StreamReader(b'\xAA\xAA\xAA\xAA\xBB\xBB\xCC\xCC\xDD\xDD\xEE\xEE\xEE\xEE\xEE\xEE'))
+        self.assertEqual(str(guid), guid_text)

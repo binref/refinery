@@ -265,7 +265,8 @@ class StringGUID(Blob):
 
     @property
     def Value(self):
-        values = struct.unpack('<IHHBB', self._data[:10]) + (base64.b16encode(self._data[10:]),)
+        rest = base64.b16encode(self._data[10:]).decode('ascii')
+        values = struct.unpack('<IHHBB', self._data[:10]) + (rest,)
         return '{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{}'.format(*values)
 
     def __str__(self):
