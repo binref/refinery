@@ -283,12 +283,7 @@ class PatternExtractor(PatternExtractorBase, abstract=True):
         return argp
 
 
-class RegexUnit(PatternExtractorBase, abstract=True, helpdoc=True):
-    """
-    - You can use YARA type hexadecimal pattern syntax. For example, `yara:7?[1-5]E8`
-      translates to `[\\x70-\\x7F].{1,5}\\xE8`.
-    - To excape a raw string, use `escape:ok?`, which would yield `ok\\?`.
-    """
+class RegexUnit(PatternExtractorBase, abstract=True):
 
     def interface(self, argp, regex_default=None):
         mode = argp.add_argument_group(

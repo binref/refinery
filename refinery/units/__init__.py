@@ -94,7 +94,7 @@ class Executable(type):
     for the other ones.
     """
 
-    def __new__(mcs, name, bases, nmspc, abstract=False, helpdoc=False):
+    def __new__(mcs, name, bases, nmspc, abstract=False):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
 
             @wraps(operation)
@@ -114,16 +114,11 @@ class Executable(type):
             if op in nmspc:
                 nmspc[op] = normalize(nmspc[op])
 
-        nmspc['__br_helpdoc__'] = helpdoc
-        nmspc['__doc__'] = '\n\n'.join(filter(None, [nmspc.get('__doc__')] + [
-            b.__doc__ for b in bases if getattr(b, '__br_helpdoc__', False)
-        ]))
-
         if not abstract and Entry not in bases:
             bases = bases + (Entry,)
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
-    def __init__(cls, name, bases, nmspc, abstract=False, helpdoc=False):
+    def __init__(cls, name, bases, nmspc, abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
         if not abstract and sys.modules[cls.__module__].__name__ == '__main__':
             if Executable.Entry:
