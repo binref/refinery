@@ -311,10 +311,6 @@ class Unit(metaclass=Executable, abstract=True):
             raise exception
         try:
             raise exception
-        except KeyboardInterrupt as K:
-            self.output('aborting due to keyboard interrupt')
-            self._source = None
-            return None
         except RefineryCriticalException as E:
             self.log_warn(F'critical error, terminating: {E}')
         except RefineryPartialResult as E:
@@ -326,7 +322,7 @@ class Unit(metaclass=Executable, abstract=True):
         finally:
             if self.log_level >= LogLevel.DEBUG:
                 import traceback
-                traceback.print_exc(file=sys.stderr)            
+                traceback.print_exc(file=sys.stderr)
 
     def __next__(self):
         if not self._chunks:
@@ -461,8 +457,6 @@ class Unit(metaclass=Executable, abstract=True):
                     # read in chunks and the pick unit is used to select only the
                     # first few of these.
                     self.log_info(F'cannot send to next unit: {E}')
-                break
-            except KeyboardInterrupt:
                 break
 
         try:
@@ -718,6 +712,8 @@ class Unit(metaclass=Executable, abstract=True):
                 try:
                     with open(os.devnull, 'wb') if unit.args.null else sys.stdout.buffer as output:
                         source | unit | output
+                except KeyboardInterrupt:
+                    unit.output('aborting due to keyboard interrupt')
                 except OSError:
                     pass
 
