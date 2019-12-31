@@ -831,7 +831,14 @@ class NetMetaDataStreams(Struct):
         self.GUID = {}
         self.Blob = {}
         with self._reader.checkpoint():
-            for k, name in reversed(tuple(enumerate(('#~', '#Strings', '#US', '#GUID', '#Blob')))):
+            TableName = '#~'
+            for se in self._meta.StreamInfo:
+                if se.Name == TableName:
+                    break
+                if se.Name == '#-':
+                    TableName = se.Name
+                    break
+            for k, name in reversed(tuple(enumerate((TableName, '#Strings', '#US', '#GUID', '#Blob')))):
                 for index, se in enumerate(self._meta.StreamInfo):
                     if se.Name.upper() == name.upper():
                         break
