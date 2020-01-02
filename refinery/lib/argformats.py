@@ -305,10 +305,14 @@ class DelayedArgumentDispatch:
         uhash = hash((name,) + args)
         if uhash in self.units:
             return self.units[uhash]
-        unit = getattr(__import__('refinery', None, None, [name]), name, None)
-        unit = unit and unit(*args)
-        self.units[uhash] = unit
-        return unit
+        try:
+            unit = getattr(__import__('refinery', None, None, [name]), name, None)
+        except ModuleNotFoundError:
+            return None
+        else:
+            unit = unit and unit(*args)
+            self.units[uhash] = unit
+            return unit
 
     def __get__(self, instance, instancetype):
         # We do not know the class whose methods we are decorating.
