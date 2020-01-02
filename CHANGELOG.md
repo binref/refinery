@@ -2,6 +2,7 @@
 
 ## Current Build
 - The `rex` unit can now apply an arbitrary number of transformations to each match and return the results as separate outputs.
+- The `urlguards` unit now supports ProofPoint V3 guarded URLs.
 
 ## Version 0.0.6
 - Processing of data in frames is no longer interrupted by errors in one unit.
