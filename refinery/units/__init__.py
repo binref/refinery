@@ -27,7 +27,7 @@ import io
 
 from enum import IntEnum
 from functools import wraps
-from inspect import isgeneratorfunction
+from inspect import isgenerator
 from typing import Iterable, BinaryIO, Union, Optional, Callable, Any, ByteString
 from argparse import (
     ArgumentParser,
@@ -96,7 +96,6 @@ class Executable(type):
 
     def __new__(mcs, name, bases, nmspc, abstract=False):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
-
             @wraps(operation)
             def wrapped(self, data: ByteString) -> bytes:
                 if not isinstance(data, bytearray):
@@ -106,8 +105,6 @@ class Executable(type):
                     return operation(self, bytes(data))
                 except BaseException as B:
                     return self._exception_handler(B)
-
-            wrapped.demux = isgeneratorfunction(operation)
             return wrapped
 
         for op in ('process', 'reverse'):
@@ -222,7 +219,10 @@ class DelayedArgumentProxy:
             return self._args[name]
         except KeyError:
             pass
-        value = getattr(self._argv, name)
+        try:
+            value = getattr(self._argv, name)
+        except AttributeError:
+            raise AttributeError(F'Argument {name} not set.')
         if not value or not pending(value):
             return value
         raise AttributeError(F'the value {name} cannot be accessed until data is available.')
@@ -335,14 +335,12 @@ class Unit(metaclass=Executable, abstract=True):
 
         op = self.reverse if self.args.reverse else self.process
 
-        if op.demux:
-            def normalized_action(data: bytearray) -> Iterable[bytes]:
-                yield from filter(lambda x: x is not None, op(data))
-        else:
-            def normalized_action(data: bytearray) -> Iterable[bytes]:
-                result = op(data)
-                if result is not None:
-                    yield result
+        def normalized_action(data: bytearray) -> Iterable[bytes]:
+            result = op(data)
+            if isgenerator(result):
+                yield from filter(lambda x: x is not None, result)
+            elif result is not None:
+                yield result
 
         self._framed = Framed(
             normalized_action,
