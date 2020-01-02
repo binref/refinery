@@ -3,6 +3,7 @@
 ## Current Build
 - The `rex` unit can now apply an arbitrary number of transformations to each match and return the results as separate outputs.
 - The `urlguards` unit now supports ProofPoint V3 guarded URLs.
+- Thanks to the recent fix of [#29][javaobj-issue-29] in [javaobj][], the `dsjava` (deserialize Java serialized data) unit should now work. However, since there are currently no tests, bugs should be expected.
 
 ## Version 0.0.6
 - Processing of data in frames is no longer interrupted by errors in one unit.
@@ -24,3 +25,5 @@
 
 [python-registry]: https://pypi.org/project/python-registry/
 [python-registry-gh]: https://github.com/williballenthin/python-registry
+[javaobj-issue-29]: https://github.com/tcalmant/python-javaobj/issues/29
+[javaobj]: https://pypi.org/project/javaobj-py3/
