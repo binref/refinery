@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Current Build
+- The `rex` unit can now apply an arbitrary number of transformations to each match and return the results as separate outputs.
+
 ## Version 0.0.6
 - Processing of data in frames is no longer interrupted by errors in one unit.
 - The global `--lenient` (or `-L`) flag has been added: It allows refinery units to return partial results. This behavior is disabled by default because it usually means that an error occurred during processing.

@@ -18,4 +18,4 @@ class carve(PatternExtractor):
         return super().interface(argp)
 
     def process(self, data):
-        yield from self.matches_processed(data, formats[self.args.format].value)
+        yield from self.matches_processed(data, bytes(formats[self.args.format]))

@@ -5,7 +5,7 @@ Pattern matching based extraction and substitution units.
 """
 import re
 
-from typing import Dict, Tuple, Iterable
+from typing import Dict, Tuple, Iterable, Optional, Callable, Union, ByteString
 from itertools import islice
 
 from ...lib.types import INF, AST
@@ -133,14 +133,14 @@ def TransformSubstitutionFactory(fmt):
 
 class AbstractRegexUnit(Unit, abstract=True):
 
-    def matches(self, data: bytes, pattern, ascii=True, utf16=True):
+    def matches(self, data: ByteString, pattern: Union[ByteString, re.Pattern], ascii: bool = True, utf16: bool = True):
         """
         Searches the input data for the given regular expression pattern. If the
         argument `utf16` is `True`, search for occurrences where a zero byte
         is between every character of the match. The `ascii` option allows to
         control whether normal matching results are also returned.
         """
-        if isinstance(pattern, bytes):
+        if not isinstance(pattern, re.Pattern):
             pattern = re.compile(pattern)
         if ascii:
             yield from pattern.finditer(data)
@@ -187,10 +187,10 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
 
     def matches_filtered(
         self,
-        data: bytes,
-        pattern,
-        transform=None,
-        early_abort=True
+        data: ByteString,
+        pattern: Union[ByteString, re.Pattern],
+        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None,
+        early_abort: bool = True
     ) -> Iterable[Tuple[Tuple[int, int], bytes]]:
         """
         This is a wrapper for `AbstractRegexUint.matches` which filters the
@@ -200,41 +200,40 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
         """
         barrier = set()
         taken = 0
+        transforms = transforms or [lambda m: m.group(0)]
 
         if self.args.whitespace:
             data = re.sub(BR'\s+', B'', data)
         for match in self.matches(data, pattern, self.args.ascii, self.args.utf16):
-            if not transform:
-                s = match.group(0)
-            else:
+            for transform in transforms:
                 try:
                     s = transform(match)
                 except TypeError:
                     s = transform
-            if len(s) < self.args.min or len(s) > self.args.max or len(s) != self.args.len:
-                continue
-            if self.args.unique:
-                h = hash(s)
-                if h in barrier:
+                if len(s) < self.args.min or len(s) > self.args.max or len(s) != self.args.len:
                     continue
-                barrier.add(h)
-            yield match.span(), s
-            if early_abort:
-                taken += 1
-                if not self.args.longest and taken >= self.args.take:
-                    break
+                if self.args.unique:
+                    h = hash(s)
+                    if h in barrier:
+                        continue
+                    barrier.add(h)
+                yield match.span(), s
+                if early_abort:
+                    taken += 1
+                    if not self.args.longest and taken >= self.args.take:
+                        break
 
     def matches_filtered_cached(
         self,
-        data: bytes,
-        pattern,
-        transform=None,
-        early_abort=True,
-        matches=None,
+        data: ByteString,
+        pattern: Union[ByteString, re.Pattern],
+        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None,
+        early_abort: bool = True,
+        matches: Optional[dict] = None,
     ) -> Dict[Tuple[int, int], bytes]:
-        if not isinstance(matches, dict):
+        if matches is None:
             matches = {}
-        matches.update(self.matches_filtered(data, pattern, transform, early_abort))
+        matches.update(self.matches_filtered(data, pattern, transforms, early_abort))
         return matches
 
     def matches_finalize(self, matches: Iterable[Tuple[Tuple[int, int], bytes]]) -> Iterable[bytes]:
@@ -252,9 +251,9 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
 
     def matches_processed(
         self,
-        data: bytes,
-        pattern,
-        transform=None
+        data: ByteString,
+        pattern: Union[ByteString, re.Pattern],
+        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None
     ) -> Iterable[bytes]:
         """
         A convenience function that acts as the composition of:
@@ -262,7 +261,7 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
         1. `PatternExtractor.matches_filtered` and
         2. `PatternExtractor.matches_finalize`
         """
-        yield from self.matches_finalize(self.matches_filtered(data, pattern, transform))
+        yield from self.matches_finalize(self.matches_filtered(data, pattern, transforms))
 
 
 class PatternExtractor(PatternExtractorBase, abstract=True):

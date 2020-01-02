@@ -13,15 +13,27 @@ class rex(RegexUnit):
 
     def interface(self, argp):
         argp = super().interface(argp)
-        argp.add_argument('format', type=utf8, nargs='?', default=None,
-            help='An optional transformation to be applied to each match.')
+        argp.add_argument(
+            dest='transformations',
+            metavar='transformation',
+            type=utf8,
+            nargs='*',
+            default=None,
+            help=(
+                'An optional sequence of transformations to be applied to each match. '
+                'Each transformation produces one output in the order in which they '
+                'are given. The default transformation is $0, i.e. the entire match. '
+            )
+        )
         return argp
 
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
-        self.transform = self.args.format and TransformSubstitutionFactory(self.args.format)
-        self.log_debug('using regexp:', self.args.regex)
-        self.log_debug('using format:', self.args.format)
+        self.transforms = [TransformSubstitutionFactory(f) for f in self.args.transformations]
+        if self.log_debug():
+            self.log_debug('regular expression:', self.args.regex)
+            for k, transform in enumerate(self.args.transformations, 1):
+                self.log_debug(F'transformation {k}:', transform)
 
     def process(self, data):
-        yield from self.matches_processed(data, self.args.regex, transform=self.transform)
+        yield from self.matches_processed(data, self.args.regex, transforms=self.transforms)
