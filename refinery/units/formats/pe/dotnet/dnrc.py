@@ -65,8 +65,8 @@ class dnrc(Unit):
             except (NoManagedResource, ParserEOF):
                 managed = False
 
-            if managed is False:
-                if self._check(resource.Name):
+            if not managed:
+                if managed is False and self._check(resource.Name):
                     yield resource.Data
                 elif self._list:
                     yield resource.Name.encode(self.codec)
