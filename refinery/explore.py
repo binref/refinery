@@ -38,8 +38,10 @@ def get_help_string(unit, brief=False, width=None):
         return terminalfit(documentation(unit), width=width)
     else:
         from io import StringIO
+        from os import environ
         try:
-            argp = unit(_terminal_width=width).argp
+            environ['REFINERY_TERMSIZE'] = str(width)
+            argp = unit().argp
         except ArgparseError as fail:
             argp = fail.parser
         buffer = StringIO('w')

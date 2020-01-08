@@ -572,7 +572,7 @@ class Unit(metaclass=Executable, abstract=True):
 
     def __init__(self, *args, **keywords):
         args = [str(a) for a in args]
-        cols = keywords.pop('_terminal_width', 0)
+        cols = get_terminal_size()
 
         class ArgumentParserWithKeywordHooks(ArgumentParser):
             def _add_action(self, action):
@@ -627,7 +627,7 @@ class Unit(metaclass=Executable, abstract=True):
 
         class LineWrapRawTextHelpFormatter(RawDescriptionHelpFormatter):
             def __init__(self, prog, indent_increment=2, max_help_position=30, width=None):
-                super().__init__(prog, indent_increment, max_help_position, width=cols or get_terminal_size())
+                super().__init__(prog, indent_increment, max_help_position, width=cols)
 
             def add_text(self, text):
                 if isinstance(text, str):
