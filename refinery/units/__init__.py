@@ -576,15 +576,16 @@ class Unit(metaclass=Executable, abstract=True):
 
         class ArgumentParserWithKeywordHooks(ArgumentParser):
             def _add_action(self, action):
-                class RememberOrder:
-                    _a = action
-                    def __getattr__(self, name): return getattr(self._a, name)
-                    def __setattr__(self, name, value): return setattr(self._a, name, value)
 
+                class RememberOrder:
+                    def __getattr__(self, name):
+                        return getattr(action, name)
+                    def __setattr__(self, name, value):
+                        return setattr(action, name, value)
                     def __call__(self, parser, ns, values, opt=None):
                         if self.dest not in parser.order:
                             parser.order.append(self.dest)
-                        return self._a(parser, ns, values, opt)
+                        return action(parser, ns, values, opt)
 
                 action.required = action.required and action.dest not in keywords
                 super()._add_action(RememberOrder())
