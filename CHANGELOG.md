@@ -1,6 +1,7 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.1.0
+- It is now possible to instantiate units in code with arguments of type `bytes` and have it work as expected, i.e. `xor(B's3cr3t')` will construct a `xor` unit that decrypts using the byte string key `s3cr3t`.
 - The `rex` unit can now apply an arbitrary number of transformations to each match and return the results as separate outputs.
 - The `urlguards` unit now supports ProofPoint V3 guarded URLs.
 - Thanks to the recent fix of [#29][javaobj-issue-29] in [javaobj][], the `dsjava` (deserialize Java serialized data) unit should now work. However, since there are currently no tests, bugs should be expected.
