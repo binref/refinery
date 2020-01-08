@@ -6,9 +6,12 @@ from .. import TestUnitBase
 class TestChop(TestUnitBase):
 
     def test_check_invalid_args(self):
-        for k in ('"-200000000"', '"-10"', 0, B'FOOBAR'):
-            with self.assertRaises(Exception):
-                self.load(k)
+        with self.assertRaises(Exception):
+            self.load('--', '-200')
+        with self.assertRaises(Exception):
+            self.load(B'FOOBAR')
+        with self.assertRaises(Exception):
+            self.load(0)
 
     def test_simple_chunk_with_custom_separator(self):
         for n in range(1, 20):

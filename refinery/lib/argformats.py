@@ -175,17 +175,20 @@ class PythonExpression:
 _PYTHON_EXPRESSION = PythonExpression()
 
 
-def sliceobj(s):
+def sliceobj(expression: Union[int, str]) -> slice:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
     argument format type will process the string `0x11:0x11+4*0x34` as the slice
     object `slice(17, 225, None)`.
     """
-    sliced = s.split(':')
-    if not sliced or len(sliced) > 3:
-        raise ArgumentTypeError(F'the expression {s} is not a valid slice.')
-    sliced = [None if not t else _PYTHON_EXPRESSION(t) for t in sliced]
+    if isinstance(expression, int):
+        sliced = (expression,)
+    else:
+        sliced = expression.split(':')
+        if not sliced or len(sliced) > 3:
+            raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
+        sliced = [None if not t else _PYTHON_EXPRESSION(t) for t in sliced]
     if len(sliced) == 1:
         k = sliced[0]
         return slice(k, k + 1) if k + 1 else slice(k, None, None)
@@ -234,12 +237,13 @@ class number:
         return self.__class__(bounds.start, bounds.stop)
 
     def __call__(self, value):
-        try:
-            value = _PYTHON_EXPRESSION(value)
-        except Exception:
-            raise ValueError('unable to parse expression')
         if not isinstance(value, int):
-            raise ArgumentTypeError('the expression with value {} is not an integer'.format(value))
+            try:
+                value = _PYTHON_EXPRESSION(value)
+            except Exception:
+                raise ValueError('unable to parse expression')
+            if not isinstance(value, int):
+                raise ArgumentTypeError('the expression with value {} is not an integer'.format(value))
         if self.min is not None and value < self.min or self.max is not None and value > self.max:
             raise ValueError('value {} is out of bounds [{}, {}]'.format(value, self.min, self.max))
         return value
@@ -611,10 +615,12 @@ class DelayedBinaryArgument(DelayedArgument):
         return extract
 
 
-def multibin(expression: str) -> Union[bytes, DelayedBinaryArgument]:
+def multibin(expression: Union[str, bytes, bytearray]) -> Union[bytes, DelayedBinaryArgument]:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedBinaryArgument`.
     """
+    if not isinstance(expression, str):
+        return bytes(expression)
     arg = DelayedBinaryArgument(expression)
     with suppress(TooLazy):
         return arg()
@@ -810,10 +816,12 @@ class DelayedRegexpArgument(DelayedArgument):
         return re.escape(str)
 
 
-def numbin(expression: str) -> Union[int, bytes, DelayedNumbinArgument]:
+def numbin(expression: Union[int, str]) -> Union[Iterable[int], DelayedNumbinArgument]:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedNumbinArgument`.
     """
+    if isinstance(expression, int):
+        return (expression,)
     arg = DelayedNumbinArgument(expression)
     with suppress(TooLazy):
         return arg()

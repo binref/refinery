@@ -28,6 +28,13 @@ class TestFraming(TestBase):
         charlie = refinery.aes('CBC', '--iv', 'x::16', 'x::16')
         self.assertEqual(plaintext, charlie(iv + key + encrypted))
 
+    def test_bytes_arguments(self):
+        key = self.generate_random_buffer(16)
+        iv = self.generate_random_buffer(16)
+        data = self.generate_random_buffer(512)
+        aes = refinery.aes('CBC', key, iv=iv)
+        self.assertEqual(aes.decrypt(aes.encrypt(data)), data)
+
     def test_invalid_multibin_modifier(self):
         self.assertEqual(multibin('foobar:s:content'), B'foobar:s:content')
 

@@ -73,6 +73,12 @@ class TestArithmeticUnits(TestUnitBase):
         unit = refinery.xor(arg=[key])
         self.assertEqual(buffer, unit(unit(buffer)))
 
+    def test_xor_bytes_argument(self):
+        buffer = self.generate_random_buffer(1024)
+        key = self.generate_random_buffer(12)
+        unit = refinery.xor(key)
+        self.assertEqual(buffer, unit(unit(buffer)))
+
     def test_argument_overflow(self):
         for blocksize in (1, 2, 3, 4, 5, 7, 8, 11):
             buffer = self.generate_random_buffer(200 * blocksize)

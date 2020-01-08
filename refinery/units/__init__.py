@@ -571,8 +571,8 @@ class Unit(metaclass=Executable, abstract=True):
         return other
 
     def __init__(self, *args, **keywords):
-        args = [str(a) for a in args]
         cols = get_terminal_size()
+        args = list(args)
 
         class ArgumentParserWithKeywordHooks(ArgumentParser):
             def _add_action(self, action):
@@ -590,6 +590,10 @@ class Unit(metaclass=Executable, abstract=True):
                 action.required = action.required and action.dest not in keywords
                 super()._add_action(RememberOrder())
 
+            def _parse_optional(self, arg_string):
+                if isinstance(arg_string, str):
+                    return super()._parse_optional(arg_string)
+
             def error_commandline(self, message):
                 super().error(message)
 
@@ -600,7 +604,7 @@ class Unit(metaclass=Executable, abstract=True):
             def parse_args(self):
                 self.order = []
                 args_for_parser = args
-                if args and args[~0]:
+                if args and args[~0] and isinstance(args[~0], str):
                     nestarg = args[~0]
                     nesting = len(nestarg)
                     if nestarg == ']' * nesting:
