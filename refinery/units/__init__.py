@@ -494,8 +494,8 @@ class Unit(metaclass=Executable, abstract=True):
         except StopIteration:
             return B''
 
-    def __call__(self, data: bytes) -> bytes:
-        with io.BytesIO(data) as stdin:
+    def __call__(self, data: Optional[ByteString] = None) -> bytes:
+        with io.BytesIO(data) if data else open(os.devnull, 'rb') as stdin:
             with io.BytesIO() as stdout:
                 return (stdin | self | stdout).getvalue()
 
