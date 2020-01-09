@@ -1,7 +1,9 @@
 # Binary Refinery Changelog
 
-## Current Build
-- Several tests were added, testing now uses [malshare] to test units against real world samples. To properly execute tests, the environment variable `MALSHARE_API` needs to contain a valid [malshare] API key.
+## Version 0.1.1
+- Several tests were added, testing now uses [malshare][] to test units against real world samples. To properly execute tests, the environment variable `MALSHARE_API` needs to contain a valid [malshare][] API key.
+- A `numpy` import that always occured during any unit load was moved into the `peek` unit code to reduce import time of other units.
+- Issues with wheel installation on Windows were fixed.
 
 ## Version 0.1.0
 - It is now possible to instantiate units in code with arguments of type `bytes` and have it work as expected, i.e. `xor(B's3cr3t')` will construct a `xor` unit that decrypts using the byte string key `s3cr3t`.
