@@ -5,7 +5,6 @@ A simple tool to output binary data. Multiple arguments are output in framed
 format, see `refinery.lib.frame`.
 """
 from ...lib.argformats import multibin
-from ...lib.clipboard import paste
 from .. import Unit
 
 
@@ -23,7 +22,8 @@ class emit(Unit):
 
     def process(self, data):
         if not self.args.data:
-            data = paste()
+            import pyperclip
+            data = pyperclip.paste()
             try:
                 data = data.encode(self.codec)
             except AttributeError:

@@ -172,8 +172,8 @@ class dump(Unit):
         if not self.exhausted:
             if self._paste:
                 import codecs
-                from ...lib import clipboard
-                clipboard.copy(codecs.decode(
+                import pyperclip
+                pyperclip.copy(codecs.decode(
                     data, 'utf-8', errors='backslashreplace'))
             elif not self.stream:
                 # This should happen only when the unit is called from Python code
