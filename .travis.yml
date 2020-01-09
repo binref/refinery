@@ -13,7 +13,7 @@ jobs:
       before_install:
         - sudo apt-get install xclip
         - sudo apt-get install xvfb
-      script: xvfb-run run-tests.py
+      script: xvfb-run python3 run-tests.py
       python: 3.7
     - name: "Python 3.6 on Linux, only installation"
       script: true
