@@ -26,7 +26,8 @@ class TestDump(TestUnitBase):
             path = os.path.join(root, 'foo', 'bar')
             self.load(path)(b'Waffles')
             self.assertTrue(os.path.exists(path))
-            self.assertEqual(open(path, 'rb').read(), b'Waffles')
+            with open(path, 'rb') as result:
+                self.assertEqual(result.read(), b'Waffles')
 
     def test_dump_formatted(self):
         with tempfile.TemporaryDirectory() as root:
@@ -35,7 +36,8 @@ class TestDump(TestUnitBase):
             dump = self.load(path, format=True)
             emit('Coca', 'Cola', 'Code')[dump]()
             self.assertTrue(os.path.exists(cola))
-            self.assertEqual(open(cola, 'rb').read(), b'Cola')
+            with open(cola, 'rb') as result:
+                self.assertEqual(result.read(), b'Cola')
 
     def test_dump_multiple(self):
         with tempfile.TemporaryDirectory() as root:
@@ -45,4 +47,5 @@ class TestDump(TestUnitBase):
             emit(*words)[dump]()
             for word, path in zip(words, paths):
                 self.assertTrue(os.path.exists(path))
-                self.assertEqual(open(path, 'r').read(), word)
+                with open(path, 'r') as result:
+                    self.assertEqual(result.read(), word)
