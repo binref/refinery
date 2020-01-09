@@ -3,8 +3,10 @@ param(
   [string] [ValidateNotNullOrEmpty()] $venv = 'venv'
 )
 
+$venv = Convert-Path $venv;
+
 try {
-    . $venv/Scripts/Activate.ps1
+    & (Join-Path $venv 'Scripts\Activate.ps1')
     $activated = $?
 } catch {
     $activated = $false
@@ -18,10 +20,13 @@ if ($activated) {
         pip install @(Get-Content .\requirements.txt | ForEach-Object {
             if ($_ -eq 'python-magic') {$_ + '-win64'} else {$_}})
         Write-Output('-- building wheel')
-        try { Remove-Item -Recurse dist } catch {}
+        Remove-Item -Recurse dist -ErrorAction SilentlyContinue
         pip install wheel
         python setup.py sdist bdist_wheel 2>&1 | Out-Null
-        pip install (Get-Item .\dist\*.whl).FullName
+        $wfile = (Get-Item .\dist\*.whl).FullName
+        Remove-Item -Recurse binary_refinery.egg-info -ErrorAction SilentlyContinue
+        Write-Output("-- installing refinery from wheel: $wfile")
+        pip install "$wfile"
     } else {
         pip install -e "$PSScriptRoot"
     }
@@ -31,8 +36,7 @@ if ($activated) {
     exit
 }
 
-$refinery = [IO.Path]::GetFullPath($venv);
-$refinery = Join-Path $refinery 'Scripts';
+$refinery = Join-Path $venv 'Scripts';
 $refinery = Join-Path $refinery '';
 
 $update = $True;
@@ -40,8 +44,8 @@ $update = $True;
 try {
     $path = (Get-Item HKCU:Environment).GetValue('PATH').split(';')
 } catch {
-   Write-Output('-- error determining user path variable');
-   exit
+    Write-Output('-- error determining user path variable');
+    exit
 }
 
 foreach ($item in $path) {
