@@ -5,10 +5,13 @@ jobs:
   include:
     - name: "Python 3.8 on Linux, generate test coverage"
       python: 3.8
-      before_install: pip3 install codecov
+      before_install:
+        - sudo apt-get install xclip
+        - sudo apt-get install xvfb
+        - pip3 install codecov
       after_success: codecov
       stage: test
-      script: coverage run --source refinery run-tests.py
+      script: xvfb-run coverage run --source refinery run-tests.py
     - name: "Python 3.7 on Linux"
       before_install:
         - sudo apt-get install xclip
