@@ -60,13 +60,13 @@ class xtp(PatternExtractor):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.args.pattern = [
+        patternlist = [
             i.value
             for p in self.args.pattern
             for i in indicators
             if fnmatch(i.name, p)
         ]
-        self.pattern = '|'.join(F'(?:{p})' for p in self.args.pattern)
+        self.pattern = '|'.join(F'(?:{p})' for p in patternlist)
         self.log_debug(F'using pattern: {self.pattern}')
         self.pattern = regex(self.pattern.encode('ascii'))
 

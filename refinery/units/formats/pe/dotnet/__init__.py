@@ -63,12 +63,10 @@ class JSONEncoderUnit(Unit, abstract=True):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.args.encoder = BinaryEncoding[self.args.encoder].value()
-
-        if self.args.digest:
-            self.args.digest = BinaryDigest[self.args.digest].value
-
         class _encoder(json.JSONEncoder):
+            unit = BinaryEncoding[self.args.encoder].value()
+            digest = BinaryDigest[self.args.digest].value if self.args.digest else None
+
             def default(e, obj):
                 try:
                     return super().default(obj)
@@ -78,10 +76,10 @@ class JSONEncoderUnit(Unit, abstract=True):
                 if isinstance(obj, Blob):
                     obj = bytes(obj)
                 if isinstance(obj, bytes) or isinstance(obj, bytearray):
-                    if self.args.digest:
-                        return self.args.digest(obj).hexdigest()
+                    if _encoder.digest:
+                        return _encoder.digest(obj).hexdigest()
                     else:
-                        return self.args.encoder.reverse(obj).decode('utf8')
+                        return _encoder.unit.reverse(obj).decode('utf8')
                 else:
                     return str(obj)
 
