@@ -7,12 +7,15 @@ jobs:
       python: 3.8
       before_install:
         - pip3 install codecov
+        - sudo apt-get install xsel
         - sudo apt-get install xclip
       after_success: codecov
       stage: test
       script: coverage run --source refinery run-tests.py
     - name: "Python 3.7 on Linux"
-      before_install: sudo apt-get install xclip
+      before_install:
+        - sudo apt-get install xsel
+        - sudo apt-get install xclip
       python: 3.7
     - name: "Python 3.6 on Linux, only installation"
       script: true
