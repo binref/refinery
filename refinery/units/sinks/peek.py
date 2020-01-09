@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
+from math import log
 
 from . import HexViewerMixin, get_terminal_size, magic
 from .. import Unit
@@ -69,7 +70,7 @@ class peek(Unit, HexViewerMixin):
         import codecs
         import string
         import itertools
-        from ...lib.tools import format_size, entropy
+        from ...lib.tools import format_size
 
         peeks = [
             format_size(len(data)),
