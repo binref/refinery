@@ -57,6 +57,7 @@ jobs:
         keep_history: false
     - name: "Deploy PyPi"
       python: 3.8
+      script: true
       deploy:
         provider: pypi
         user: "__token__"
