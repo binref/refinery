@@ -419,7 +419,8 @@ class Framed:
             return
 
         elif not self.unpack.framed:
-            yield from self.action(next(iter(self.unpack)).mut)
+            for chunk in self._apply_filter():
+                yield from self.action(chunk.mut)
             return
 
         if self.nested == 0:

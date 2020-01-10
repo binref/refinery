@@ -412,15 +412,14 @@ class Unit(metaclass=Executable, abstract=True):
                 stream = stream()
             return stream.clone().__ror__(self)
         except AttributeError:
-            pass
+            self._target = stream
 
-        if not stream.writable():
+        if not self._target.writable():
             return
 
         def cname(x): return x.lower().replace('-', '')
-        terminal = getattr(stream, 'isatty', lambda: False)()
 
-        if terminal and cname(self.codec) != cname(sys.stdout.encoding):
+        if self.isatty and cname(self.codec) != cname(sys.stdout.encoding):
             def recode(chunk):
                 import codecs
                 return codecs.encode(
@@ -439,8 +438,8 @@ class Unit(metaclass=Executable, abstract=True):
             ):
                 chunk += B'\n'
             try:
-                stream.write(recode(chunk))
-                stream.flush()
+                self._target.write(recode(chunk))
+                self._target.flush()
             except AttributeError:
                 pass
             except (BrokenPipeError, OSError) as E:
@@ -453,13 +452,13 @@ class Unit(metaclass=Executable, abstract=True):
                 break
 
         try:
-            if terminal and not chunk.endswith(B'\n'):
-                stream.write(B'\n')
-                stream.flush()
+            if self.isatty and not chunk.endswith(B'\n'):
+                self._target.write(B'\n')
+                self._target.flush()
         except (NameError, AttributeError):
             pass
 
-        return stream
+        return self._target
 
     def read(self, bytecount: int = -1) -> bytes:
         """
@@ -546,6 +545,13 @@ class Unit(metaclass=Executable, abstract=True):
         """
         if not self.args.quiet:
             return self._output(*messages)
+
+    @property
+    def isatty(self) -> bool:
+        try:
+            return self._target.isatty()
+        except AttributeError:
+            return False
 
     @classmethod
     def _output(cls, *messages) -> None:
@@ -670,6 +676,7 @@ class Unit(metaclass=Executable, abstract=True):
 
         self._buffer = B''
         self._source = None
+        self._target = None
         self._framed = None
         self._chunks = None
 

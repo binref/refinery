@@ -70,6 +70,9 @@ class dump(Unit):
         import re
         from . import magic
 
+        if not isinstance(data, bytes):
+            data = bytes(data)
+
         if not magic:
             self.log_warn(F'magic library not found, auto extension defaults to {default}')
             return default
@@ -80,7 +83,7 @@ class dump(Unit):
 
         if mext == 'x-dosexec':
             description = magic.Magic().from_buffer(data)
-            if re.search(R'PE32\+? executable', description):
+            if re.search('executable', description):
                 return 'dll' if '(DLL)' in description else 'exe'
         try:
             return {
@@ -156,7 +159,7 @@ class dump(Unit):
                     return format_size(len(data), explain_bytes=False, default='{}B')
                 if key == 'crc32':
                     from zlib import crc32
-                    return crc32(data)
+                    return F'{crc32(data) & 0xFFFFFFFF:08X}'
                 if key == 'ext':
                     return self._auto_extension(data)
                 if key in ('md5', 'sha1', 'sha256'):
@@ -192,7 +195,7 @@ class dump(Unit):
                     self._close()
             forward_input_data = self.args.tee
         else:
-            forward_input_data = self.args.tee or not sys.stdout.isatty()
+            forward_input_data = self.args.tee or not self.isatty
             if not forward_input_data:
                 self.log_debug(F'discarding unprocessed chunk of size {len(data)}.')
 
