@@ -15,12 +15,12 @@ class xtea(CipherUnit):
 
     def encrypt(self, data):
         blocks = iter(self._load32(data))
-        key = struct.unpack('LLLL', self.key)
+        key = struct.unpack('IIII', self.key)
         return self._stor64(self._encrypt_block(*bp, *key) for bp in zip(blocks, blocks))
 
     def decrypt(self, data):
         blocks = iter(self._load32(data))
-        key = struct.unpack('LLLL', self.key)
+        key = struct.unpack('IIII', self.key)
         return self._stor64(self._decrypt_block(*z, *key) for z in zip(blocks, blocks))
 
     @staticmethod
@@ -45,7 +45,7 @@ class xtea(CipherUnit):
 
     @staticmethod
     def _load32(vector):
-        return struct.unpack('L' * (len(vector) // 4), vector)
+        return struct.unpack('I' * (len(vector) // 4), vector)
 
     @staticmethod
     def _stor64(vector):

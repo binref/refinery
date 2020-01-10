@@ -56,7 +56,7 @@ class TestDump(TestUnitBase):
 
     def test_auto_extension(self):
         examples = {
-            'txt': B'\n'.join([
+            'test.txt': B'\n'.join([
                 B'var r = new XMLHttpRequest();'
                 B'r.open("POST", "path/to/api", true);'
                 B'r.onreadystatechange = function () {'
@@ -65,7 +65,7 @@ class TestDump(TestUnitBase):
                 B'};'
                 B'r.send("banana=yellow");'
             ]),
-            'pdf': zlib.decompress(base64.b64decode(
+            'test.pdf': zlib.decompress(base64.b64decode(
                 'eNptUsFO4zAQvVvyPwyHSnAgtpukpRJCKtBuJbqkanxZbRAy1C2BkqDYRbv79YydRGm7WLJlv3me9zzj'
                 '3uJ2ei4CQYkADuXTKyWXl0AJMPn3QwO7UVZty40DFmqjDfSRtqTk6ooSXaz8BUr6R3fv8pWB3xA6Ljw4'
                 '5KbcFRbEXuY63XGmsMt0SK2TFFYX1kBUmwA2HoMnAkuaDbApnGY4xKgfiMFF0I8DkWVWG5tl63yrz2rW'
@@ -75,7 +75,7 @@ class TestDump(TestUnitBase):
                 'wxjWe6BAbR8q9sDhN6CIov/BKBx1ICW2Utjvqv1Ly7J0P7BpY5r/0xDV1TJWVbb2OBCI9XqTZPoFx5+0'
                 'nw=='
             )),
-            'tar.gz': bytes.fromhex(
+            'test.tar.gz': bytes.fromhex(
                 '1F 8B 08 00 41 9A 18 5E 00 03 ED CF 41 0A 80 30'
                 '0C 04 C0 3C 25 2F 90 B4 A5 F1 01 7D 49 95 8A 82'
                 '50 B0 11 7C BE F5 DA AB 28 28 99 CB DE 96 DD 29'
@@ -85,7 +85,7 @@ class TestDump(TestUnitBase):
                 '13 0E A9 48 07 4A 29 A5 7E 0D E0 04 5A 5F 99 D8'
                 '00 08 00 00'
             ),
-            'exe': bytes.fromhex(
+            'test.exe': bytes.fromhex(
                 '4D 5A 90 00 03 00 00 00 04 00 00 00 FF FF 00 00'  # MZ..............
                 'B8 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00'  # ........@.......
                 '00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00'  # ................
@@ -100,11 +100,11 @@ class TestDump(TestUnitBase):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'test.{ext}')
             dump = self.load(path, format=True)
-            for ext, data in examples.items():
-                expected_path = path.format(ext=ext)
-                dump(data)
-                self.assertTrue(os.path.exists(expected_path))
-                with open(expected_path, 'rb') as result:
+            emit(*examples.values())[dump]()
+            files = set(os.listdir(root))
+            self.assertLessEqual(set(examples), files)
+            for filename, data in examples.items():
+                with open(os.path.join(root, filename), 'rb') as result:
                     self.assertEqual(result.read(), data)
 
     def test_dump_to_single_file(self):

@@ -101,7 +101,7 @@ class dump(Unit):
                 'x-apple-diskimage'           : 'dmg',
             }[mext]
         except KeyError:
-            if mext == 'x-gzip':
+            if 'gzip' in mext:
                 import gzip
                 ungz = gzip.decompress(data)
                 ext1 = self._auto_extension(ungz)
