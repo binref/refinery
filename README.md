@@ -125,7 +125,7 @@ emit MIL0001781108.xls            \
 ```
 And get the domains for the next stage:
 ```
-emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp domain
+emit payload.ps1 | carve-b64z | deob-ps1 | carve-b64z | deob-ps1 | xtp -f domain
 ```
 Exctract the configuration of [unpacked HawkEye samples](https://malshare.com/sample.php?action=detail&hash=30ae8004a14f188d40c024124022d63d):
 ```

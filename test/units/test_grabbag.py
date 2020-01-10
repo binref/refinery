@@ -35,7 +35,7 @@ class TestGrabBagExamples(TestBase):
             scope('-n', 3) | chop('-t', 5) [
                 sorted | snip('2:') | sep
             ] | pack(10) | sub('dec:ev:n')
-        ] | carve_b64z | deob_ps1 | carve_b64z | deob_ps1 | xtp('domain')
+        ] | carve_b64z | deob_ps1 | carve_b64z | deob_ps1 | xtp('domain', filter=True)
 
         with BytesIO(data) as sample:
             c2servers = set(sample | pipeline)

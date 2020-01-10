@@ -25,30 +25,30 @@ class defang(Unit):
         return word if not self.args.quote else B'`%s`' % word
 
     def reverse(self, data):
-        def refang(socket_string):
-            return socket_string.group(0).replace(B'[.]', B'.')
-        data = defanged.socket.sub(refang, data)
+        def refang(hostname):
+            return hostname.group(0).replace(B'[.]', B'.')
+        data = defanged.hostname.sub(refang, data)
         data = data.replace(B'[:]//', B'://')
         return data
 
     def process(self, data):
-        def replace_socket(socket_string, match=True):
+        def replace_hostname(hostname, match=True):
             if match:
-                return self._quote(replace_socket(socket_string.group(0), False))
-            self.log_info('replace:', socket_string)
-            host = socket_string.rsplit(B':')[0].lower()
+                return self._quote(replace_hostname(hostname.group(0), False))
+            self.log_info('replace:', hostname)
+            host = hostname.rsplit(B':')[0].lower()
             if host in self.WHITELIST:
-                return socket_string
-            return B'[.]'.join(socket_string.rsplit(B'.', 1))
+                return hostname
+            return B'[.]'.join(hostname.rsplit(B'.', 1))
 
-        def replace_url(url_string):
-            if not url_string:
-                return url_string
+        def replace_url(url):
+            if not url:
+                return url
             sep = B'[:]//' if self.args.protocol else B'://'
-            self.log_info('replace:', url_string)
-            p, q = url_string.split(B'://')
+            self.log_info('replace:', url)
+            p, q = url.split(B'://')
             q = q.split(B'/', 1)
-            q[0] = replace_socket(q[0], False)
+            q[0] = replace_hostname(q[0], False)
             q = B'/'.join(q)
             return self._quote(p + sep + q)
 
@@ -57,7 +57,7 @@ class defang(Unit):
 
         if not self.args.url_only:
             analyze[0::2] = [
-                indicators.socket.sub(replace_socket, t)
+                indicators.hostname.sub(replace_hostname, t)
                 for t in analyze[0::2]
             ]
 

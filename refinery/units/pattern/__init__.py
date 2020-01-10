@@ -148,14 +148,10 @@ class AbstractRegexUnit(Unit, abstract=True):
             d0 = data[0::2]
             d1 = data[1::2]
             for match in pattern.finditer(d0):
-                high_bytes = d1[match.start() + 0 : match.end() + 0]
-                a, b = match.span()
-                if high_bytes == B'\0' * (b - a):
+                if not any(d1[match.start() + 0 : match.end() + 0]):
                     yield match
             for match in pattern.finditer(d1):
-                high_bytes = d0[match.start() + 1 : match.end() + 1]
-                a, b = match.span()
-                if high_bytes == B'\0' * (b - a):
+                if not any(d0[match.start() + 1 : match.end() + 1]):
                     yield match
 
 
@@ -206,18 +202,15 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
             data = re.sub(BR'\s+', B'', data)
         for match in self.matches(data, pattern, self.args.ascii, self.args.utf16):
             for transform in transforms:
-                try:
-                    s = transform(match)
-                except TypeError:
-                    s = transform
-                if len(s) < self.args.min or len(s) > self.args.max or len(s) != self.args.len:
+                hit = transform(match) if callable(transform) else transform
+                if hit is None or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
                     continue
                 if self.args.unique:
-                    h = hash(s)
-                    if h in barrier:
+                    uid = hash(hit)
+                    if uid in barrier:
                         continue
-                    barrier.add(h)
-                yield match.span(), s
+                    barrier.add(uid)
+                yield match.span(), hit
                 if early_abort:
                     taken += 1
                     if not self.args.longest and taken >= self.args.take:

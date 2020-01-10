@@ -109,12 +109,15 @@ pattern_domain = format_domain_normal.format(repeat='{0,20}', tlds=__TLDS)
 pattern_subdomain = format_domain_normal.format(repeat='{1,20}', tlds=__TLDS)
 pattern_domain_df = format_domain_defang.format(repeat='{0,20}', tlds=__TLDS)
 
-pattern_ocet = R'(?:[12]\d\d|[1-9]?\d)'
-pattern_ipv4 = R'(?:{o}\.){{3}}{o}(?![\d\.])'.format(o=pattern_ocet)
-pattern_socket = '(?:{ip}|{d})(?::\\d{{2,5}})?'.format(ip=pattern_ipv4, d=pattern_domain)
+pattern_version = '|'.join('.' * k + 'version' + '.' * (10 - k) for k in range(10))
 
+pattern_ocet = R'(?:[12]\d\d|[1-9]?\d)'
+pattern_ipv4 = R'(?<!\.|\d)(?:{o}\.){{3}}{o}(?![\d\.])'.format(o=pattern_ocet)
 pattern_ipv4_df = R'(?:{o}(?:\[\.\]|\.)){{2}}{o}\[\.\]{o}'.format(o=pattern_ocet)
-pattern_socket_df = '(?:{ip}|{d})(?::\\d{{2,5}})?'.format(ip=pattern_ipv4_df, d=pattern_domain_df)
+
+pattern_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=pattern_ipv4, d=pattern_domain)
+pattern_hostname = pattern_socket + '?'
+pattern_hostname_df = '(?:{ip}|{d})(?::\\d{{2,5}})?'.format(ip=pattern_ipv4_df, d=pattern_domain_df)
 
 pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-z0-9])'
 pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
@@ -125,14 +128,22 @@ pattern_url = ''.join([
     R'([a-z]{2,20}?:\/\/'                     # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
-    pattern_socket,
-    R'(?:[/?#][/_=?&.,\w\%\-]*)?)'  # '[^"\'\\s\x00-\x20\x7E-\xFF]*)?)'
+    pattern_socket + '?',
+    R'(?:[/?#][/_=?&.,\w\%\-]*)?)'
+])
+
+pattern_url_df = ''.join([
+    R'([a-z]{2,20}?(?:\[:\]|:)\/\/'           # scheme
+    R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
+    R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
+    pattern_socket + '?',
+    R'(?:[/?#][/_=?&.,\w\%\-]*)?)'
 ])
 
 pattern_email = R'([a-z0-9_\.\+\-]{{1,256}}?)@({})'.format(pattern_domain)
 pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
-pattern_win_path_nospace = R'[^/\\:"<>|\s\x7E-\xA0\x00-\x1F\xAD]+'
+pattern_win_path_nospace = R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_win_path_nospace)
 pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]{2,}%'
 pattern_win_path = R'(?:[A-Za-z]:|{}|\\\\[a-z0-9_.$]+\\[a-z0-9_.$]+)[\\\/]'.format(pattern_win_env_variable)
@@ -217,8 +228,10 @@ class indicators(PatternEnum):
     "Hexadecimal strings of length 40"
     sha256 = alphabet('[0-9a-f]', at_least=64, at_most=64)
     "Hexadecimal strings of length 64"
+    hostname = pattern(pattern_hostname)
+    "Any domain name or IPv4 address, optionally followd by a colon and a port number."
     socket = pattern(pattern_socket)
-    "Any domain name or IPv4 address, optionally followed by a colon and a (port) number"
+    "Any domain name or IPv4 address followed by a colon and a (port) number"
     subdomain = pattern(pattern_subdomain)
     "A domain which contains at least three parts, including the top level"
     url = pattern(pattern_url)
@@ -238,5 +251,7 @@ class defanged(PatternEnum):
     An enumeration of patterns for defanged indicators. Used only by the reverse
     operation of `refinery.defang`.
     """
-    socket = pattern(pattern_socket_df)
-    "A defanged `refinery.lib.patterns.indicators.socket`."
+    hostname = pattern(pattern_hostname_df)
+    "A defanged `refinery.lib.patterns.indicators.hostname`."
+    url = pattern(pattern_url_df)
+    "A defanged `refinery.lib.patterns.indicators.url`."
