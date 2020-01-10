@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from .. import TestUnitBase
 from refinery import pad, snip, scope, chop, pick, rep
-from refinery import aes, blowfish, cast, chacha, salsa, seal, des, des3, rc2, rc4
+from refinery import aes, blowfish, cast, chacha, salsa, seal, des, des3, rc2, rc4, xtea, vigenere
 
 
 class TestCipherUnits(TestUnitBase):
@@ -37,6 +37,34 @@ class TestCipherUnits(TestUnitBase):
             with self.assertRaises(ValueError):
                 S = chacha(key=key, nonce=B'FLABBERGAST')
                 S(data)
+
+    def test_xtea(self):
+        for buffersize in (3, 7, 56, 128, 1231):
+            data = self.generate_random_buffer(buffersize)
+            iv = self.generate_random_buffer(16)
+            key = self.generate_random_buffer(16)
+            E = xtea(key=key, iv=iv, reverse=True)
+            D = xtea(key=key, iv=iv)
+            self.assertEqual(D(E(data)), data)
+
+    def test_vigenere(self):
+        data = (
+            B" Take this kiss upon the brow!"
+            B" And, in parting from you now,"
+            B" Thus much let me avow -"
+            B" You are not wrong, who deem"
+            B" That my days have been a dream;"
+            B" Yet if hope has flown away"
+            B" In a night, or in a day,"
+            B" In a vision, or in none,"
+            B" Is it therefore the less gone? "
+            B" All that we see or seem"
+            B" Is but a dream within a dream."
+        )
+        key = 'dream'
+        E = vigenere(key=key, reverse=True)
+        D = vigenere(key=key)
+        self.assertEqual(D(E(data)), data)
 
 
 class TestAES(TestUnitBase):
