@@ -30,7 +30,7 @@ if __name__ == '__main__':
     print('-- collectiong tlds')
     tlds = session.get('https://data.iana.org/TLD/tlds-alpha-by-domain.txt').text
     tlds = [t.strip() for t in tlds.split('\n') if '#' not in t]
-    tlds = normalize(tlds, 'bit')
+    tlds = normalize(tlds, 'bit', 'onion')
 
     with open(os.path.join('.', 'refinery', 'lib', 'patterns', 'tlds.py'), 'w') as stream:
         stream.write(template.format(
