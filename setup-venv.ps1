@@ -24,7 +24,6 @@ if ($activated) {
         pip install wheel
         python setup.py sdist bdist_wheel 2>&1 | Out-Null
         $wfile = (Get-Item .\dist\*.whl).FullName
-        Remove-Item -Recurse binary_refinery.egg-info -ErrorAction SilentlyContinue
         Write-Output("-- installing refinery from wheel: $wfile")
         pip install "$wfile"
     } else {
