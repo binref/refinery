@@ -1,8 +1,7 @@
 # Binary Refinery
-[![Build Status](https://img.shields.io/travis/binref/refinery?style=for-the-badge)][travis]
+[![Test Status](https://img.shields.io/travis/binref/refinery?label=Tests&style=for-the-badge)][travis]
 [![Code Coverage](https://img.shields.io/codecov/c/github/binref/refinery?style=for-the-badge)][codecov]
-[![PyPi Versions](https://img.shields.io/pypi/pyversions/binary-refinery?style=for-the-badge)][pypi]
-[![PyPi Wheel](https://img.shields.io/pypi/wheel/binary-refinery?style=for-the-badge)][pypi]
+[![PyPI Version](https://img.shields.io/pypi/v/binary-refinery.svg?color=blue&style=for-the-badge)][pypi]
 [![Documentation](https://img.shields.io/badge/docs-super%20retro-red?style=for-the-badge&logo=Python&logoColor=white)][docs]
 ```
   __     __  High Octane Triage Analysis          __
@@ -106,7 +105,7 @@ fread ./**/* [| xtp -qn6 ipv4 socket url email | dedup ]]
 ```
 Convert the hard-coded IP address `0xC0A80C2A` in network byte order to a readable format:
 ```
-emit 0xC0A80C2A | pack -NB4 | pack -R [| sep . ]
+emit 0xC0A80C2A | pack -EB4 | pack -R [| sep . ]
 ```
 Extract the PowerShell payload from [a malicious XLS macro dropper](https://malshare.com/sample.php?action=detail&hash=c5e1106f9654a23320132cbc61b3f29d):
 ```
