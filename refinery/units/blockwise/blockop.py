@@ -36,10 +36,10 @@ class blockop(ArithmeticUnit):
     def interface(self, argp):
         argp.add_argument('operation', type=blockop_expression, help='A Python expression defining the operation.')
         argp.prologue = argp.add_mutually_exclusive_group()
-        argp.prologue.add_argument('-P', '--prologue', type=blockop_expression, metavar='E', default=None, help=(
+        argp.prologue.add_argument('-p', '--prologue', type=blockop_expression, metavar='E', default=None, help=(
             'Optional expression with which the state variable S is updated before a block is operated on.'))
         argp.epilogue = argp.add_mutually_exclusive_group()
-        argp.epilogue.add_argument('-E', '--epilogue', type=blockop_expression, metavar='E', default=None, help=(
+        argp.epilogue.add_argument('-e', '--epilogue', type=blockop_expression, metavar='E', default=None, help=(
             'Optional expression with which the state variable S is updated after a block was operated on.'))
         argp.epilogue.add_argument('--ctr', action='store_const', dest='epilogue', const=blockop_expression('S+1'),
             help='equivalent to --epilogue=S+1')

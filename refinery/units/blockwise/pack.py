@@ -15,7 +15,7 @@ class pack(BlockTransformation):
     numbers into its binary form. For example, `123,34,256,12,1,234` would be
     transformed into the byte sequence `7B22000C01EA`, where `256` was wrapped
     and packed as a null byte because the default block size is one byte. If
-    the above sequence would be packed with options -NB2, the result would be
+    the above sequence would be packed with options -EB2, the result would be
     equal to `007B00220100000C000100EA` in hexadecimal.
     """
 

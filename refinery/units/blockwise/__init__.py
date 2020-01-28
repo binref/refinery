@@ -22,8 +22,8 @@ class BlockTransformation(Unit, abstract=True):
             'Block Options',
             'Controls how the input data is split into blocks.'
         )
-        block.add_argument('-N', '--nbo', dest='little_endian', action='store_false',
-            help='Read chunks in network byte order (big endian).')
+        block.add_argument('-E', '--bigendian', dest='little_endian', action='store_false',
+            help='Read chunks in big endian.')
         block.add_argument('-B', '--blocksize', metavar='N', type=number[1:], default=1,
             help='The size of each block in bytes, default is 1.')
 

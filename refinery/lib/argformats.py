@@ -393,10 +393,10 @@ class DelayedArgument(LazyEvaluation):
             if character == self._ARG_BEGIN_TOKEN:
                 if not brackets:
                     if argoffset:
-                        raise ArgumentTypeError(
-                            F'Unable to parse {expression}, no modifier name '
-                            F'or duplicate parameter list.'
-                        )
+                        # This is the second time we encounter what appears to be an
+                        # argument list, before the modifier has ended. This is not
+                        # possible, and we decide to assume that no modifier was used.
+                        break
                     name = expression[:k]
                     argoffset = k + 1
                 brackets += 1
@@ -418,8 +418,7 @@ class DelayedArgument(LazyEvaluation):
                 if name is None:
                     name = expression[:k]
                 return name, arguments, expression[k + 1:]
-        else:
-            return None, arguments, expression
+        return None, (), expression
 
     def __call__(self, data: Optional[bytearray] = None) -> bytes:
         arg = self.seed
@@ -687,7 +686,7 @@ class DelayedNumbinArgument(DelayedArgument):
         parameter is parsed with `refinery.lib.argformats.multibin` yielding this byte string.
         The `size` has to be an integer expression specifying the size of each encoded number in
         bytes. The optional hash tag modifier preceding the size indicates that the parser
-        should use network byte order (big endian) rather than the default, little endian.
+        should use big endian rather than the default, little endian.
         """
         from .chunks import unpack
         size, expression = expression.split(':', 1)
