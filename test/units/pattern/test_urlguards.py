@@ -42,3 +42,10 @@ class TestUrlGuards(TestUnitBase):
                 example['decodedUrl'],
                 unit(example['encodedUrl'])
             )
+
+    def test_multiple(self):
+        unit = self.load()
+        result = unit(B'https://ctp.trendmicro.com/wis/clicktime/v2/clickthrough?url=https%3A%2F%2Femea01.safelinks.protection.outlook.com%2F%3Furl%3Dhttps%253A%252F%252Fearlyyears.register-me.uk%252F%26data%3D02%257C01%257C%257Ca33fd5f06d894aa2440608d688424db3%257Ca708279dde884b62956085a6be8c08cc%257C0%257C0%257C636846215676444342%26sdata%3DFT9IDMzDty7e%252BHKSV4cKQCci8aXVAM8b7P9FTae4n6o%253D%26reserved%3D0&uuid=2dd83146-2964-11e9-913a-02f49198539e&auth=31bbc6a83b73e178539aa463ed38c9bab679818c-b4a3fff82d5c0bbc06a9f06593ed41a47737ef34')
+        self.assertEqual(result, B'https://earlyyears.register-me.uk/')
+        result = unit(B'https://ctp.trendmicro.com/wis/clicktime/v2/clickthrough?url=http%3A%2F%2Fb2bnetwork-online.com%2Fr%2FwISqFfT4067ms210.html&uuid=7c9f1b02-85a7-11e8-9466-0a5a4136c366&auth=2dc9e1234ac4d7d7fe90b44830cb6a6ab54f5623-38190d35acc1780880f39ebca32c99369e78122e')
+        self.assertEqual(result, B'http://b2bnetwork-online.com/r/wISqFfT4067ms210.html')

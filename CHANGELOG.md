@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Current Build
+- Adds support for TrendMicro Clicktime URL guards in the `urlguards` unit.
+
 ## Version 0.1.1
 - Several tests were added, testing now uses [malshare][] to test units against real world samples. To properly execute tests, the environment variable `MALSHARE_API` needs to contain a valid [malshare][] API key.
 - A `numpy` import that always occured during any unit load was moved into the `peek` unit code to reduce import time of other units.
