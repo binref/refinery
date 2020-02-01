@@ -22,11 +22,17 @@ class xtp(PatternExtractor):
 
     _LEGITIMATE_HOSTS = [
         'adobe.com',
+        'aka.ms',
         'digicert.com',
         'google.com',
+        'live.com',
         'microsoft.com',
+        'office.com',
         'openssl.org',
         'openxmlformats.org',
+        'skype.com',
+        'sway-cdn.com',
+        'sway-extensions.com',
         'symantec.com',
         'symauth.com',
         'symcb.com',
@@ -63,7 +69,10 @@ class xtp(PatternExtractor):
             patterns.remove(indicators.hostname)
             patterns.add(indicators.ipv4)
             patterns.add(indicators.domain)
-        self.pattern = '|'.join(F'(?P<{p.name}>{p.value})' for p in patterns)
+        patterns = [F'(?P<{p.name}>{p.value})' for p in patterns]
+        if not patterns:
+            raise RefineryCriticalException('The given mask does not match any known indicator pattern.')
+        self.pattern = '|'.join(patterns)
         self.log_debug(F'using pattern: {self.pattern}')
         self.pattern = re.compile(self.pattern.encode(self.codec))
 

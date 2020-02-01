@@ -157,7 +157,13 @@ pattern_hexline = R'(?:{s}+\s+)?\s*{h}(?:\s+{s}+)?'.format(
     s=R'[-\w:;,#\.\$\?!\/\\=\(\)\[\]\{\}]'
 )
 
-__all__ = [
+pattern_pem = (
+    R'-----BEGIN(?:\s[A-Z]+)+-----{n}'
+    R'(?:{b}{{40,100}}{n})+{b}{{1,100}}={{0,3}}{n}'
+    R'-----END(?:\s[A-Z]+)+-----'
+).format(n=R'(?:\r\n|\n\r|\n)', b=R'[0-9a-zA-Z\+\/]')
+
+__all__ = [ 
     'pattern',
     'alphabet',
     'tokenize',
@@ -238,6 +244,8 @@ class indicators(PatternEnum):
     "Uniform resource locator addresses"
     btc = alphabet('[a-km-zA-HJ-NP-Z0-9]', prefix=R'(?<!\w)[13]', at_least=26, at_most=33, ignore_case=False)
     "Bitcoin addresses"
+    pem = pattern(pattern_pem, ignore_case=False)
+    "A pattern matching PEM encoded cryptographic parameters"
     xmr = alphabet('[1-9A-HJ-NP-Za-km-z]', prefix='4[0-9AB]', at_least=93, at_most=93, ignore_case=False)
     "Monero addresses"
     path = pattern(pattern_win_path)
