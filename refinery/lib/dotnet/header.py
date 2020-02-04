@@ -839,14 +839,14 @@ class NetMetaDataStreams(Struct):
                     TableName = se.Name
                     break
             for k, name in reversed(tuple(enumerate((TableName, '#Strings', '#US', '#GUID', '#Blob')))):
-                for index, se in enumerate(self._meta.StreamInfo):
-                    if se.Name.upper() == name.upper():
+                for _, Entry in enumerate(self._meta.StreamInfo):
+                    if Entry.Name.upper() == name.upper():
                         break
                 else:
                     continue
-                self._reader.seek(se.VirtualAddress)
-                r = StreamReader(self._reader.read(se.Size))
-                if index:
+                self._reader.seek(Entry.VirtualAddress)
+                r = StreamReader(self._reader.read(Entry.Size))
+                if name != TableName:
                     Type = [NullTerminatedString, UnicodeString, StringGUID, RawBytes][k - 1]
                     Stream = NetMetaDataStream(r, Type)
                     setattr(self, name[1:], Stream)
