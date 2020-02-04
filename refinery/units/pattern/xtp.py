@@ -100,9 +100,19 @@ class xtp(PatternExtractor):
                 return None
             if any(host == w for w in cls._DOMAIN_WHITELIST):
                 return None
-            hostparts = host.split('.')
-            if len(hostparts) == 2 and hostparts[0] == 'this':
-                return None
+            if name == 'domain':
+                hostparts = host.split('.')
+                # These heuristics attempt to filter out member access to variables in
+                # scripts which can be mistaken for domains because of the TLD inflation
+                # we've had.
+                if len(hostparts) == 2 and hostparts[0] == 'this':
+                    return None
+                if len(hostparts[-2]) < 3:
+                    return None
+                if any(x.startswith('_') for x in hostparts):
+                    return None
+                if len(hostparts[-1]) > 3 and len(set(re.findall(R'{}(?:\.\w+)+'.format(hostparts[0]).encode('ascii'), data))) > 2:
+                    return None
         elif name == 'path':
             if len(value) < 8:
                 return None
