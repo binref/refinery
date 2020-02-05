@@ -24,18 +24,23 @@ class deob_ps1_format(Deobfuscator):
 
         def deobfuscate(match):
             md = match.groupdict()
+            self.log_debug(F'found match at {match.start()}: {match.group(0)[:30]}')
             pattern = string_unquote(md['pattern'])
             args = re.split(F'({formats.ps1str})', md['args'])
             args = [
                 string_unquote(a.strip())
                 for a in args[1::2]
             ]
+
+            def argreplace(m):
+                try:
+                    index = int(m.group(1))
+                    return args[index]
+                except IndexError:
+                    self.log_debug(F'only found {len(args)} arguments and format sequence {index}, aborting.')
+                    raise
             try:
-                return string_quote(re.sub(
-                    R'\{(\d+)\}',
-                    lambda m: args[int(m.group(1))],
-                    pattern
-                ))
+                return string_quote(re.sub(R'\{(\d+)\}', argreplace, pattern))
             except IndexError:
                 return match.group(0)
 
