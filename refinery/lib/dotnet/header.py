@@ -68,6 +68,8 @@ class MultiTableIndex(Struct):
         'ClassLayout'            : 0x0F,
         'Constant'               : 0x0B,
         'CustomAttribute'        : 0x0C,
+        'ENCLog'                 : 0x1E,
+        'ENCMap'                 : 0x1F,
         'Event'                  : 0x14,
         'EventMap'               : 0x12,
         'EventPtr'               : 0x13,
@@ -615,6 +617,17 @@ class GenericParamConstraint(TableRow):
         self.Constraint = self.index(TypeDefOrRefIndex)
 
 
+class ENCLog(TableRow):
+    def parse(self):
+        self.Token = self.expect(UInt32)
+        self.FuncCode = self.expect(UInt32)
+
+
+class ENCMap(TableRow):
+    def parse(self):
+        self.Token = self.expect(UInt32)
+
+
 class ImageDataDirectory(Struct):
     def parse(self):
         self.VirtualAddress = self.expect(UInt32)
@@ -711,6 +724,8 @@ class NetMetaDataTables(Struct):
         0x1B: TypeSpec,
         0x1C: ImplMap,
         0x1D: FieldRVA,
+        0x1E: ENCLog,
+        0x1F: ENCMap,
         0x20: Assembly,
         0x21: AssemblyProcessor,
         0x22: AssemblyOS,
@@ -734,14 +749,16 @@ class NetMetaDataTables(Struct):
         if self.Header.Flags[6]:
             self.ExtraData = self.expect(UInt32)
         for k, Type in self.lookup.items():
-            if k not in self.Header.ExistingRows:
-                TypeEntries = []
-            else:
-                TypeEntries = [
-                    self.expect(Type, streams=self._streams, header=self.Header)
-                    for _ in range(self.Header.RowCount[k])
-                ]
-            setattr(self, repr(Type), TypeEntries)
+            setattr(self, repr(Type), [])
+        for k, count in self.Header.RowCount.items():
+            try:
+                Type = self.lookup[k]
+            except KeyError:
+                raise RuntimeError('Cannot parse unknown table index 0x{:08X}; unable to continue parsing.')
+            TypeEntries = getattr(self, repr(Type))
+            for _ in range(count):
+                Entry = self.expect(Type, streams=self._streams, header=self.Header)
+                TypeEntries.append(Entry)
 
     def __getitem__(self, k):
         try:
