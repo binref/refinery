@@ -195,11 +195,11 @@ class formats(PatternEnum):
     "Sequences of alphabetic characters"
     anum = alphabet(R'[a-zA-Z0-9]', ignore_case=False)
     "Sequences of alpha-numeric characters"
-    b64 = alphabet(R'[0-9a-zA-Z\+\/]', postfix=R'[0-9a-zA-Z\+\/]{0,3}={0,3}')
+    b64 = alphabet(R'[0-9a-zA-Z\+\/]', postfix=R'[0-9a-zA-Z\+\/]{0,3}={0,3}', ignore_case=False)
     "Base64 encoded strings"
-    b64u = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}')
+    b64u = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}', ignore_case=False)
     "Base64 encoded strings using URL-safe alphabet"
-    hex = alphabet(R'[0-9A-F]')
+    hex = alphabet(R'[0-9a-f]')
     "Hexadecimal strings"
     HEX = alphabet(R'[0-9A-F]', ignore_case=False)
     "Uppercase hexadecimal strings"
