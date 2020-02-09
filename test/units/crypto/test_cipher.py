@@ -4,7 +4,7 @@ from inspect import getdoc
 
 from .. import TestUnitBase
 from refinery import pad, snip, scope, chop, pick, rep
-from refinery import aes, blowfish, cast, chacha, rsa, salsa, seal, des, des3, rc2, rc4, xtea, vigenere
+from refinery import aes, blowfish, cast, chacha, rsa, salsa, seal, des, des3, rc2, rc4, rncrypt, xtea, vigenere
 
 
 class TestCipherUnits(TestUnitBase):
@@ -67,6 +67,15 @@ class TestCipherUnits(TestUnitBase):
         E = vigenere(key=key, reverse=True)
         D = vigenere(key=key)
         self.assertEqual(D(E(data)), data)
+
+    def test_rncrypt(self):
+        for k in (3, 12, 41):
+            for n in (5, 12, 102, 3455):
+                P = self.generate_random_buffer(k)
+                M = self.generate_random_buffer(n)
+                E = rncrypt(P, reverse=True)
+                D = rncrypt(P)
+                self.assertEqual(D(E(M)), M)
 
 
 class TestRSA(TestUnitBase):

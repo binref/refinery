@@ -4,6 +4,7 @@
 - The `xtzip` unit has been added, which can extract data from zip archives.
 - The `carve-zip` unit has been added. It can carve ZIP files from buffers, similar to `carve-pe` for PE files.
 - The `rsa` unit has finally been added.
+- The `rncrypt` unit has been added.
 - Adds support for TrendMicro Clicktime URL guards in the `urlguards` unit.
 
 ## Version 0.1.1
