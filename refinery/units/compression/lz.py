@@ -5,6 +5,8 @@ import lzma as lzma_
 from .. import Unit
 from ...lib.argformats import number, OptionFactory, extract_options
 
+__all__ = ['lzma']
+
 
 class lzma(Unit):
     """
