@@ -287,12 +287,8 @@ class Unit(metaclass=Executable, abstract=True):
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-L', '--lenient', dest='partial', action='store_true',
             help='Allow this unit to return incomplete results.')
-        base.add_argument('-v', '--verbose', action='count', help=(
-            'Verbosity: Specify up to two times to enable levels INFO and '
-            'DEBUG, respectively. The default level is WARN. Can also be '
-            'specified in the environment variable REFINERY_VERBOSITY as '
-            'one of these strings or a number from 1 to 3.'
-        ))
+        base.add_argument('-v', '--verbose', action='count',
+            help='Specify up to two times to increase log level.')
         base.set_defaults(verbose=1)
 
         argp.add_argument('--debug-timing', action='store_true', help=SUPPRESS)
