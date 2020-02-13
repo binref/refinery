@@ -13,7 +13,6 @@ from refinery import (
     chop,
     deob_ps1,
     dnds,
-    dnhdr,
     pack,
     PBKDF2,
     perc,
@@ -69,4 +68,3 @@ class TestGrabBagExamples(TestBase):
         self.assertEqual(config['_EmailUsername'], F'cv{"@"}bandaichemical{"."}com')
         self.assertEqual(config['_EmailPassword'], F'kingqqqqqq1164')
         self.assertEqual(config['_EmailPort'], 587)
-
