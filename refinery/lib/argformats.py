@@ -634,7 +634,7 @@ class DelayedNumbinArgument(DelayedArgument):
     defined here.
     """
 
-    _EV_PARSER = PythonExpression('n')
+    _EV_PARSER = PythonExpression('N')
 
     def _mbin(self, expr: str) -> bytes:
         binary = multibin(expr)
@@ -669,14 +669,14 @@ class DelayedNumbinArgument(DelayedArgument):
     def ev(self, expression: str) -> Iterable[int]:
         """
         Final modifier `ev:expression`; uses a `refinery.lib.argformats.PythonExpression`
-        parser to process expressions that may contain the variable `n` whose value will be
+        parser to process expressions that may contain the variable `N` whose value will be
         the size of the input data.
         """
         ev = self._EV_PARSER(expression)
         try:
             return self._iter(ev())
         except Exception:
-            return lambda d: self._iter(ev(n=len(d)))
+            return lambda d: self._iter(ev(N=len(d)))
 
     @handler.register('unpack', final=True)
     def unpack(self, expression: str) -> Iterable[int]:

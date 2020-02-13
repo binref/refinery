@@ -118,7 +118,7 @@ emit MIL0001781108.xls            \
    | sep                          \
   ]                               \
   | pack 10                       \
-  | sub dec:ev:n                  \
+  | blockop --dec -sN B-S         \
 ]]                                \
 | dump payload.ps1
 ```

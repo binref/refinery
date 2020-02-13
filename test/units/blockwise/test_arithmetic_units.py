@@ -31,7 +31,7 @@ class TestArithmeticUnits(TestUnitBase):
         self.assertEqual(add(bytes(12)), B'\x00\xBE\xEF' * 4)
 
     def test_handler_ev(self):
-        xor = refinery.xor('ev:n,0xB0,0x12')
+        xor = refinery.xor('ev:N,0xB0,0x12')
         self.assertEqual(xor(bytes(0x54)), 28 * B'\x54\xB0\x12')
 
     def test_argument_reset(self):

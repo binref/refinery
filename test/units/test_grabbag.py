@@ -7,6 +7,7 @@ from io import BytesIO
 
 from refinery import (
     aes,
+    blockop,
     carve_b64z,
     cca,
     chop,
@@ -20,7 +21,6 @@ from refinery import (
     sep,
     snip,
     sorted,
-    sub,
     xlxtr,
     xtp,
 )
@@ -34,7 +34,7 @@ class TestGrabBagExamples(TestBase):
         pipeline = xlxtr('9.5:11.5', '15.15', '12.5:14.5') [
             scope('-n', 3) | chop('-t', 5) [
                 sorted | snip('2:') | sep
-            ] | pack(10) | sub('dec:ev:n')
+            ] | pack(10) | blockop('--dec', '-sN', 'B-S')
         ] | carve_b64z | deob_ps1 | carve_b64z | deob_ps1 | xtp('domain', filter=True)
 
         with BytesIO(data) as sample:
