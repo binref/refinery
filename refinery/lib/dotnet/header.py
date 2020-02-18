@@ -750,7 +750,8 @@ class NetMetaDataTables(Struct):
             self.ExtraData = self.expect(UInt32)
         for k, Type in self.lookup.items():
             setattr(self, repr(Type), [])
-        for k, count in self.Header.RowCount.items():
+        for k in sorted(self.Header.RowCount):
+            count = self.Header.RowCount[k]
             try:
                 Type = self.lookup[k]
             except KeyError:
