@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.1.3
+- Fixes a bug in the .NET header parser where the tables were sometimes parsed in the wrong order.
+
 ## Version 0.1.2
 - The `xtzip` unit has been added, which can extract data from zip archives.
 - The `carve-zip` unit has been added. It can carve ZIP files from buffers, similar to `carve-pe` for PE files.
