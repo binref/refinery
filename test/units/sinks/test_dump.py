@@ -9,7 +9,7 @@ import hashlib
 import zlib
 
 from contextlib import contextmanager
-from refinery import emit, chop
+from refinery import emit, chop, xtzip
 
 from .. import TestUnitBase
 
@@ -22,6 +22,16 @@ def temporary_clipboard():
         yield None
     finally:
         pyperclip.copy(backup)
+
+
+@contextmanager
+def temporary_chwd(directory):
+    old = os.getcwd()
+    try:
+        os.chdir(directory)
+        yield directory
+    finally:
+        os.chdir(old)
 
 
 class TestDump(TestUnitBase):
@@ -163,3 +173,60 @@ class TestDump(TestUnitBase):
             self.assertEqual(result, samples[~0])
             self.assertTrue(os.path.exists(p1))
             self.assertTrue(os.path.exists(p2))
+
+    def test_automatic_naming(self):
+        archive = bytes.fromhex(
+            '50 4B 03 04 14 00 00 00 00 00 DB 98 57 50 00 00'  # PK..........WP..
+            '00 00 00 00 00 00 00 00 00 00 04 00 00 00 66 6F'  # ..............fo
+            '6F 2F 50 4B 03 04 0A 00 00 00 00 00 DB 98 57 50'  # o/PK..........WP
+            'D7 58 25 6C 03 00 00 00 03 00 00 00 07 00 00 00'  # .X%l............
+            '66 6F 6F 2F 62 61 66 62 61 66 50 4B 03 04 0A 00'  # foo/bafbafPK....
+            '00 00 00 00 DA 98 57 50 98 04 24 78 03 00 00 00'  # ......WP..$x....
+            '03 00 00 00 07 00 00 00 66 6F 6F 2F 62 61 7A 62'  # ........foo/bazb
+            '61 7A 50 4B 03 04 14 00 00 00 00 00 E4 98 57 50'  # azPK..........WP
+            '00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00'  # ................
+            '62 61 72 2F 50 4B 03 04 0A 00 00 00 00 00 E4 98'  # bar/PK..........
+            '57 50 E4 09 17 8C 03 00 00 00 03 00 00 00 07 00'  # WP..............
+            '00 00 62 61 72 2F 62 6F 6B 62 6F 6B 50 4B 01 02'  # ..bar/bokbokPK..
+            '3F 00 14 00 00 00 00 00 DB 98 57 50 00 00 00 00'  # ?.........WP....
+            '00 00 00 00 00 00 00 00 04 00 24 00 00 00 00 00'  # ..........$.....
+            '00 00 10 00 00 00 00 00 00 00 66 6F 6F 2F 0A 00'  # ..........foo/..
+            '20 00 00 00 00 00 01 00 18 00 A0 E7 09 07 74 EA'  # ..............t.
+            'D5 01 A0 E7 09 07 74 EA D5 01 28 9E A0 FA 73 EA'  # ......t...(...s.
+            'D5 01 50 4B 01 02 3F 00 0A 00 00 00 00 00 DB 98'  # ..PK..?.........
+            '57 50 D7 58 25 6C 03 00 00 00 03 00 00 00 07 00'  # WP.X%l..........
+            '24 00 00 00 00 00 00 00 20 00 00 00 22 00 00 00'  # $..........."...
+            '66 6F 6F 2F 62 61 66 0A 00 20 00 00 00 00 00 01'  # foo/baf.........
+            '00 18 00 3C 23 09 07 74 EA D5 01 3C 23 09 07 74'  # ...<#..t...<#..t
+            'EA D5 01 54 70 A4 03 74 EA D5 01 50 4B 01 02 3F'  # ...Tp..t...PK..?
+            '00 0A 00 00 00 00 00 DA 98 57 50 98 04 24 78 03'  # .........WP..$x.
+            '00 00 00 03 00 00 00 07 00 24 00 00 00 00 00 00'  # .........$......
+            '00 20 00 00 00 4A 00 00 00 66 6F 6F 2F 62 61 7A'  # .....J...foo/baz
+            '0A 00 20 00 00 00 00 00 01 00 18 00 A3 13 7F 05'  # ................
+            '74 EA D5 01 A3 13 7F 05 74 EA D5 01 59 92 91 02'  # t.......t...Y...
+            '74 EA D5 01 50 4B 01 02 3F 00 14 00 00 00 00 00'  # t...PK..?.......
+            'E4 98 57 50 00 00 00 00 00 00 00 00 00 00 00 00'  # ..WP............
+            '04 00 24 00 00 00 00 00 00 00 10 00 00 00 72 00'  # ..$...........r.
+            '00 00 62 61 72 2F 0A 00 20 00 00 00 00 00 01 00'  # ..bar/..........
+            '18 00 42 FF 11 0F 74 EA D5 01 42 FF 11 0F 74 EA'  # ..B...t...B...t.
+            'D5 01 C0 5A 8A FB 73 EA D5 01 50 4B 01 02 3F 00'  # ...Z..s...PK..?.
+            '0A 00 00 00 00 00 E4 98 57 50 E4 09 17 8C 03 00'  # ........WP......
+            '00 00 03 00 00 00 07 00 24 00 00 00 00 00 00 00'  # ........$.......
+            '20 00 00 00 94 00 00 00 62 61 72 2F 62 6F 6B 0A'  # ........bar/bok.
+            '00 20 00 00 00 00 00 01 00 18 00 BD 2D 11 0F 74'  # ............-..t
+            'EA D5 01 BD 2D 11 0F 74 EA D5 01 DC 17 59 0C 74'  # ....-..t.....Y.t
+            'EA D5 01 50 4B 05 06 00 00 00 00 05 00 05 00 B7'  # ...PK...........
+            '01 00 00 BC 00 00 00 00 00'                       # .........
+        )
+        with tempfile.TemporaryDirectory() as root:
+            with temporary_chwd(root) as root:
+                dump = self.load(meta=True)
+                xtzip[dump](archive)
+
+                self.assertTrue(os.path.exists(os.path.join(root, 'foo', 'baz')))
+                self.assertTrue(os.path.exists(os.path.join(root, 'foo', 'baf')))
+                self.assertTrue(os.path.exists(os.path.join(root, 'bar', 'bok')))
+
+                for word in ('baz', 'baf'):
+                    with open(os.path.join(root, 'foo', word), 'r') as stream:
+                        self.assertEqual(stream.read(), word)
