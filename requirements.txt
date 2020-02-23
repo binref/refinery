@@ -1,6 +1,7 @@
 capstone
 colorama
 defusedxml
+extract_msg
 javaobj-py3>=0.4.0.1
 msgpack
 numpy

@@ -20,10 +20,12 @@ def pathspec(expression):
 class ExtractorUnit(Unit):
 
     def interface(self, argp):
-        argp.add_argument('paths', metavar='path', nargs='+', type=pathspec,
+        argp.add_argument('paths', metavar='path', nargs='*', default=['*'], type=pathspec,
             help=(
                 'A path from which data is to be extracted. Each item is returned '
-                ' as a separate output of this unit. Paths may contain wildcards.'
+                ' as a separate output of this unit. Paths may contain wildcards. '
+                'The default is a single asterix, which means that every item will '
+                'be extracted.'
             )
         )
         return super().interface(argp)
