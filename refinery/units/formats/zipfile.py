@@ -13,8 +13,11 @@ class xtzip(ExtractorUnit):
     def process(self, data):
         with io.BytesIO(data) as stream:
             with zipfile.ZipFile(stream) as archive:
-                for name in archive.namelist():
-                    self.log_debug('crawl:', name)
-                    if self._check_path(name):
-                        self.log_info('match:', name)
-                        yield archive.read(name)
+                for info in archive.infolist():
+                    if info.is_dir():
+                        continue
+                    if self._check_path(info.filename):
+                        self.log_info(info.filename)
+                        yield dict(path=info.filename, data=archive.read(info.filename))
+                    else:
+                        self.log_debug(info.filename)
