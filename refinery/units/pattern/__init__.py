@@ -236,8 +236,10 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
         """
         result = (d for _, d in matches)
         if self.args.longest:
+            result = sorted(result, key=len, reverse=True)
+        if self.args.take:
             end = None if self.args.take is INF else self.args.take
-            result = islice(sorted(result, key=len, reverse=True), end)
+            result = islice(result, end)
         if self.args.pick:
             result = islice(result, self.args.pick, self.args.pick + 1)
         yield from result

@@ -141,3 +141,19 @@ class TestRexDeobfuscate(TestUnitBase):
         )
         rex = refinery.rex('-AM', R'^domain\/(.*)$', '$1')
         self.assertEqual(rex(data), data.replace(B'domain/', B''))
+
+    def test_generic_parameters_01(self):
+        unit = self.load('X+', take=2, longest=True)
+        data = B'\n'.join(B'X' * k for k in [12, 1, 7, 17, 3])
+        self.assertEqual(unit(data), B'\n'.join([
+            B'X' * 17,
+            B'X' * 12
+        ]))
+
+    def test_generic_parameters_02(self):
+        unit = self.load('X+', take=2,)
+        data = B'\n'.join(B'X' * k for k in [12, 1, 7, 17, 3])
+        self.assertEqual(unit(data), B'\n'.join([
+            B'X' * 12,
+            B'X' * 1
+        ]))
