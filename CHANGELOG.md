@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Current Build
+- All hashing prefixes for multibin expressions have been implemented as separate units, i.e. `sha256` and `md5` are now units that output the corresponding hash of the input data.
+
 ## Version 0.1.3
 - Fixes a bug in the .NET header parser where the tables were sometimes parsed in the wrong order.
 

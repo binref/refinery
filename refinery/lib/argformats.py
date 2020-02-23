@@ -9,12 +9,12 @@ Many refinery units receive arguments which represent binary data, and usually t
 be given in **multibin** format, which is a special syntax which allows to preprocess data with a
 number of **handlers**. For example, the multibin expression `md5:password` preprocesses the
 argument `password` (which is understood as its UTF8 encoding by default) using the `md5` handler,
-which returns the MD5 hash of the input data. Consequently, the output of 
+which returns the MD5 hash of the input data. Consequently, the output of
 
     emit md5:password | hex -R
 
 would be the string `5F4DCC3B5AA765D61D8327DEB882CF99`. The most important basic handlers to know
-are: 
+are:
 
 - `s:string` disables all further preprocessing and interprets `string` as an UTF8 encoded string
 - `u:string` same, but as an UTF16-LE encoded string
@@ -23,7 +23,7 @@ are:
 
 If a multibin argument does not use any handler, refinery first interprets the string as the path
 of an existing file on disk and attempts to return the contents of this file. If this fails, the
-UTF8 encoding of the string is returned. 
+UTF8 encoding of the string is returned.
 
 The handlers `copy` and `cut` as well as their shortcuts `c` and `x` are **final** handlers like
 the above example `s`, i.e. the string that follows `copy:` will not be interpreted as a multibin
@@ -405,9 +405,12 @@ class DelayedArgument(LazyEvaluation):
                 if brackets == 1:
                     arguments += expression[argoffset:k],
                 elif not brackets:
-                    raise ArgumentTypeError(
-                        F'Unable to parse {expression}, too many closing brackets.'
-                    )
+                    if argoffset:
+                        raise ArgumentTypeError(
+                            F'Unable to parse {expression}, too many closing brackets.'
+                        )
+                    else:
+                        break
                 brackets -= 1
                 continue
             if character == self._ARG_SPLIT_TOKEN:
@@ -453,104 +456,6 @@ class DelayedBinaryArgument(DelayedArgument):
         except Exception:
             pass
         return utf8(expr)
-
-    @handler.register('md5')
-    def md5(self, data: bytes) -> bytes:
-        """
-        `md5:data` returns the MD5 hash of `data`.
-        """
-        import hashlib
-        return hashlib.md5(data).digest()
-
-    @handler.register('sha1')
-    def sha1(self, data: bytes) -> bytes:
-        """
-        `sha1:data` returns the SHA1 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.sha1(data).digest()
-
-    @handler.register('sha224')
-    def sha224(self, data: bytes) -> bytes:
-        """
-        `sha224:data` returns the SHA224 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.sha224(data).digest()
-
-    @handler.register('sha256')
-    def sha256(self, data: bytes) -> bytes:
-        """
-        `sha256:data` returns the SHA256 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.sha256(data).digest()
-
-    @handler.register('sha384')
-    def sha384(self, data: bytes) -> bytes:
-        """
-        `sha384:data` returns the SHA384 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.sha384(data).digest()
-
-    @handler.register('sha512')
-    def sha512(self, data: bytes) -> bytes:
-        """
-        `sha512:data` returns the SHA512 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.sha512(data).digest()
-
-    @handler.register('blk224')
-    def blk224(self, data: bytes) -> bytes:
-        """
-        `blk224:data` returns the BLK224 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.blake2b(data, digest_size=28)
-
-    @handler.register('blk256')
-    def blk256(self, data: bytes) -> bytes:
-        """
-        `blk256:data` returns the BLK256 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.blake2b(data, digest_size=32)
-
-    @handler.register('blk384')
-    def blk384(self, data: bytes) -> bytes:
-        """
-        `blk384:data` returns the BLK384 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.blake2b(data, digest_size=48)
-
-    @handler.register('blk512')
-    def blk512(self, data: bytes) -> bytes:
-        """
-        `blk512:data` returns the BLK512 Hash of `data`.
-        """
-        import hashlib
-        return hashlib.blake2b(data, digest_size=64)
-
-    @handler.register('crc32')
-    def crc32(self, data: bytes) -> bytes:
-        """
-        `crc32:data` returns the CRC32 Hash of `data`.
-        """
-        import zlib
-        import struct
-        return struct.pack('<I', zlib.crc32(data))
-
-    @handler.register('adler32')
-    def adler32(self, data: bytes) -> bytes:
-        """
-        `adler32:data` returns the Adler32 Hash of `data`.
-        """
-        import zlib
-        import struct
-        return struct.pack('<I', zlib.adler32(data))
 
     @handler.register('s', final=True)
     def s(self, string: str) -> bytes:
