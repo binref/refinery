@@ -78,7 +78,7 @@ above example would not be separated by a dash.
 import io
 import os
 
-from typing import Iterable, BinaryIO, Callable, Optional, Tuple, ByteString
+from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString
 
 try:
     import msgpack
@@ -100,8 +100,13 @@ class Chunk:
     Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
     receives an iterable of `refinery.lib.frame.Chunk`s.
     """
-    def __init__(self, data: ByteString, path: Tuple[int], view: Optional[Tuple[bool]] = None):
-
+    def __init__(
+        self,
+        data: ByteString,
+        path: Tuple[int],
+        view: Optional[Tuple[bool]] = None,
+        meta: Optional[Dict[str, str]] = None
+    ):
         view = view or [False] * len(path)
         if len(view) != len(path):
             raise ValueError('skipping must have the same length as path')
@@ -109,6 +114,7 @@ class Chunk:
         self._view = view
         self._path = path
 
+        self.meta = meta or dict()
         self.data = data
 
     def nest(self, *ids):
@@ -121,16 +127,6 @@ class Chunk:
         self._view += (self.visible,) * len(ids)
         self._path += ids
         return self
-
-    def nested(self, data: ByteString, *ids) -> 'Chunk':
-        """
-        Create a new chunk containing the given `data` which is nested deeper. Note that the
-        invocation `chunk.nested(data, *ids)` is syntactic sugar for:
-        ```
-        Chunk(data, chunk.path, chunk.view).nest(*ids)
-        ```
-        """
-        return Chunk(data, self._path, self._view).nest(*ids)
 
     @property
     def view(self) -> Tuple[bool]:
@@ -181,14 +177,14 @@ class Chunk:
         """
         Classmethod to read a serialized chunk from an unpacker stream.
         """
-        path, view, data = next(stream)
-        return cls(data, path, view=view)
+        path, view, meta, data = next(stream)
+        return cls(data, path, view=view, meta=meta)
 
     def pack(self):
         """
         Return the serialized representation of this chunk.
         """
-        return msgpack.packb((self._path, self._view, self.data))
+        return msgpack.packb((self._path, self._view, self.meta, self.data))
 
     def __repr__(self) -> str:
         layer = '/'.join('#' if not s else str(p)
@@ -225,10 +221,15 @@ class Chunk:
         return len(self.data)
 
     def __getitem__(self, bounds):
+        if isinstance(bounds, str):
+            return self.meta.get(bounds, None)
         return self.data[bounds]
 
     def __setitem__(self, bounds, value):
-        self.imm[bounds] = value
+        if isinstance(bounds, str):
+            self.meta[bounds] = value
+        else:
+            self.imm[bounds] = value
 
     @property
     def mut(self) -> bytearray:
@@ -393,6 +394,21 @@ class Framed:
         """
         return self.nested + self.unpack.gauge < 0
 
+    def _generate_chunks(self, parent: Chunk):
+        for item in self.action(parent.mut):
+            meta = parent.meta
+            data = item
+            if isinstance(data, dict):
+                data = item.pop('data', None)
+                meta = item
+            yield Chunk(data, parent.path, parent.view, meta)
+
+    def _generate_bytes(self, data: ByteString):
+        for item in self.action(data):
+            if isinstance(item, dict):
+                item = item.pop('data', None)
+            yield item
+
     def __iter__(self):
         if self.unpack.finished:
             return
@@ -406,21 +422,21 @@ class Framed:
                         if not chunk.visible:
                             yield chunk.nest(k, 0, *rest).pack()
                             continue
-                        for j, result in enumerate(self.action(chunk.mut)):
-                            yield chunk.nested(result, k, j, *rest).pack()
+                        for j, result in enumerate(self._generate_chunks(chunk)):
+                            yield result.nest(k, j, *rest).pack()
             else:
                 while self.unpack.nextframe():
                     for k, chunk in enumerate(self._apply_filter()):
                         if not chunk.visible:
                             yield chunk.nest(k).pack()
                             continue
-                        for result in self.action(chunk.mut):
-                            yield chunk.nested(result, k).pack()
+                        for result in self._generate_chunks(chunk):
+                            yield result.nest(k).pack()
             return
 
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
-                yield from self.action(chunk.mut)
+                yield from self._generate_bytes(chunk.mut)
             return
 
         if self.nested == 0:
@@ -430,9 +446,8 @@ class Framed:
                     if not chunk.visible:
                         yield chunk.pack()
                         continue
-                    for result in self.action(chunk.mut):
-                        chunk.data = result
-                        yield chunk.pack()
+                    for result in self._generate_chunks(chunk):
+                        yield result.pack()
             return
 
         gauge = max(self.unpack.gauge + self.nested, 0)
@@ -443,7 +458,7 @@ class Framed:
         while self.unpack.nextframe():
             while True:
                 for chunk in self._apply_filter():
-                    results = self.action(chunk.mut) if chunk.visible else (chunk.data,)
+                    results = self._generate_bytes(chunk.mut) if chunk.visible else (chunk.data,)
                     for result in results:
                         if not gauge:
                             yield result
