@@ -41,7 +41,21 @@ class dump(Unit):
             help='Output file',
             metavar='file'
         )
+        argp.add_argument('-t', '--tee', action='store_true', 
+            help='Forward all inputs to STDOUT.')
+
         mode = argp.add_mutually_exclusive_group()
+        mode.add_argument('-s', '--stream', action='store_true', 
+            help='Dump all incoming inputs to the same file.')
+
+        mode.add_argument(
+            '-m', '--meta', action='store_true', help=(
+                'Automatically choose a filename. For multiple inputs, some '
+                'units provide a file name in their output; in this case, '
+                'this file name is used. Otherwise, the format {sha256} '
+                'is used as the file name.'
+            )
+        )
         mode.add_argument(
             '-f', '--format', action='store_true', help=(
                 'Provide format strings instead of a list of filenames. '
@@ -49,16 +63,7 @@ class dump(Unit):
                 'a file name for each input to be dumped.'
             )
         )
-        mode.add_argument(
-            '-s', '--stream', action='store_true', help=(
-                'Dump all incoming inputs to the same file.'
-            )
-        )
-        argp.add_argument(
-            '-t', '--tee', action='store_true', help=(
-                'Forward all inputs to STDOUT.'
-            )
-        )
+
         return super().interface(argp)
 
     def __init__(self, *args, **kw):
@@ -119,7 +124,9 @@ class dump(Unit):
     def _reset(self):
         self.stream = None
         self.exhausted = False
-        if self.args.format:
+        if self.args.meta:
+            self.iter_filenames = iter(())
+        elif self.args.format:
             self.iter_filenames = cycle(self.args.filenames)
         else:
             self.iter_filenames = iter(self.args.filenames)
@@ -128,18 +135,19 @@ class dump(Unit):
 
     @property
     def _paste(self):
-        return not bool(self.args.filenames) and not bool(self.args.format)
+        return not bool(self.args.filenames) and not bool(self.args.format) and not self.args.meta
 
-    @staticmethod
-    def _open(filename, unc=False):
+    def _open(self, filename, unc=False):
         filename = os.path.abspath(filename)
         base = os.path.dirname(filename)
+        if not unc:
+            self.log_info(filename)
         try:
             os.makedirs(base, exist_ok=True)
         except FileNotFoundError:
             if not unc and os.name == 'nt':
                 filename = F'\\\\?\\{filename}'
-                return dump._open(filename, unc=True)
+                return self._open(filename, unc=True)
             raise
         else:
             return open(filename, 'wb')
@@ -216,7 +224,12 @@ class dump(Unit):
             if not self.exhausted:
                 if not self.args.stream or not self.stream:
                     try:
-                        filename = next(self.iter_filenames)
+                        if not self.args.meta:
+                            filename = next(self.iter_filenames)
+                        else:
+                            filename = chunk['path']
+                            if not filename:
+                                filename = self._format('{sha256}', chunk.data, index + 1)
                     except StopIteration:
                         self.exhausted = True
                     else:
