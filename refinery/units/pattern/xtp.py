@@ -23,13 +23,18 @@ class xtp(PatternExtractor):
     _LEGITIMATE_HOSTS = [
         'adobe.com',
         'aka.ms',
+        'apache.org',
+        'apple.com',
+        'azure.com',
+        'curl.haxx.se',
         'digicert.com',
-        'google.com',
+        'iana.org',
         'live.com',
         'microsoft.com',
         'office.com',
         'openssl.org',
         'openxmlformats.org',
+        'python.org',
         'skype.com',
         'sway-cdn.com',
         'sway-extensions.com',
@@ -39,7 +44,9 @@ class xtp(PatternExtractor):
         'thawte.com',
         'verisign.com',
         'w3.org',
+        'xml.org',
         'xmlsoap.org',
+        'yahoo.com',
     ]
 
     _DOMAIN_WHITELIST = [
