@@ -85,6 +85,10 @@ class urlguards(Unit):
             pass
         return result
 
+    @unguard(r'https?://outlook.office.com/actions/ei\?u=([:;/_=!?#&.,\w\%\-\+|]+)')
+    def outlook_image_proxy(self, match):
+        return unquote(match.group(1))
+
     @unguard(r'https?://(?:[\w-]+\.)?trendmicro.com(?::\d+)?/wis/clicktime/v[12]/(?:query|clickthrough)[:;/_=!?#&.,\w\%\-\+|]+')
     def trendmicro(self, match):
         result = match.group(0)
@@ -105,6 +109,7 @@ class urlguards(Unit):
                 self.proofpointV2,
                 self.proofpointV3,
                 self.outlook,
+                self.outlook_image_proxy,
                 self.trendmicro
             ):
                 data = handler(data)
