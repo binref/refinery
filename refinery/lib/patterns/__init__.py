@@ -101,8 +101,8 @@ __TLDS = R'(?:{possible_tld})(?!(?:{dealbreakers}))'.format(
     ])
 )
 
-format_domain_normal = R'\b(?:[a-z0-9\-\_]{{1,256}}?\.){repeat}[a-z0-9\-\_]{{1,256}}\.{tlds}'
-format_domain_defang = R'\b(?:[a-z0-9\-\_]{{1,256}}?(?:\[\.\]|\.)){repeat}[a-z0-9\-\_]{{1,256}}(?:\[\.\]|\.){tlds}'
+format_domain_normal = R'\b(?:[a-z0-9\_][a-z0-9\-\_]{{0,256}}?\.){repeat}[a-z0-9\_][a-z0-9\-\_]{{1,256}}\.{tlds}'
+format_domain_defang = R'\b(?:[a-z0-9\_][a-z0-9\-\_]{{0,256}}?(?:\[\.\]|\.)){repeat}[a-z0-9\_][a-z0-9\-\_]{{1,256}}(?:\[\.\]|\.){tlds}'
 
 pattern_domain = format_domain_normal.format(repeat='{0,20}', tlds=__TLDS)
 
