@@ -28,6 +28,10 @@ class TestPatternExtractor(TestUnitBase):
             b'b\x00u\x00i\x00l\x00d\x00.\x00b\x00i\x00n\x00\x00\x00\x00\x00\x00\x00')
         )
 
+    def test_extraction_domain_05(self):
+        unit = self.load('domain', whitelist=False)
+        self.assertEqual(b'', unit(b'\xFA\xF0-b.app\x00\x00'))
+
     def test_extract_uppercase_guids(self):
         unit = self.load('guid')
         data = B'An uppercase GUID! A5371AF2-2000-4A4C-ADD2-5E6F1E302B41'
