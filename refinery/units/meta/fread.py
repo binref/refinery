@@ -47,9 +47,16 @@ class fread(Unit):
             for filename in glob(mask, recursive=True):
                 if not isfile(filename):
                     continue
-                self.log_info('reading:', filename)
-                with open(filename, 'rb') as stream:
-                    if not self.args.size:
-                        yield stream.read()
-                    else:
-                        yield from self._read_chunks(stream)
+                try:
+                    with open(filename, 'rb') as stream:
+                        if not self.args.size:
+                            self.log_info('reading:', filename)
+                            yield stream.read()
+                        else:
+                            yield from self._read_chunks(stream)
+                except PermissionError:
+                    self.log_warn('permission denied:', filename)
+                except FileNotFoundError:
+                    self.log_warn('file is missing:', filename)
+                except Exception:
+                    self.log_warn('unknown error while reading:', filename)
