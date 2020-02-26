@@ -323,7 +323,6 @@ class Unit(metaclass=Executable, abstract=True):
             if not isinstance(result, BaseException):
                 return result
 
-
     @property
     def _framehandler(self) -> Framed:
         if self._framed:
