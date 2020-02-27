@@ -31,6 +31,8 @@ class xtp(PatternExtractor):
         'iana.org',
         'live.com',
         'microsoft.com',
+        'msdn.com',
+        'msn.com',
         'office.com',
         'openssl.org',
         'openxmlformats.org',
@@ -103,7 +105,7 @@ class xtp(PatternExtractor):
             ioc = value.decode(cls.codec)
             if '://' not in ioc: ioc = F'TCP://{ioc}'
             host = urlparse(ioc).netloc.split(':', 1)[0].lower()
-            if any(host.endswith(w) for w in cls._LEGITIMATE_HOSTS):
+            if any(host == w or host.endswith(F'.{w}') for w in cls._LEGITIMATE_HOSTS):
                 return None
             if any(host == w for w in cls._DOMAIN_WHITELIST):
                 return None
