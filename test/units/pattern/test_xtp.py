@@ -34,7 +34,7 @@ class TestPatternExtractor(TestUnitBase):
 
     def test_filter_01(self):
         unit = self.load('domain', filter=True)
-        self.assertEqual(b'www.evilscam-124rd23d23.not_microsoft.com',
+        self.assertEqual(b'www.evilscam-124rd23d23.notmicrosoft.com',
             unit(b'Just click <a href="www.evilscam-124rd23d23.notmicrosoft.com">here!</a>'))
 
     def test_extract_uppercase_guids(self):
