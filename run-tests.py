@@ -9,13 +9,14 @@ import os
 import sys
 
 argp = argparse.ArgumentParser()
-argp.add_argument('pattern', type=str, nargs='?', default='*')
+argp.add_argument('pattern', type=lambda s: str(s).strip('*'), nargs='?', default='*',
+    help='run all tests whose file name contains the given pattern.')
 args = argp.parse_args()
 
 os.chdir('test')
 os.environ['REFINERY_VERBOSITY'] = 'DETACHED'
 
-suite = unittest.TestLoader().discover('test', F'test_{args.pattern}')
+suite = unittest.TestLoader().discover('test', F'test_*{args.pattern}*')
 tests = unittest.TextTestRunner(verbosity=2)
 result = tests.run(suite)
 sys.exit(0 if result.wasSuccessful() else 1)
