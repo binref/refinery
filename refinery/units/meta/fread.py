@@ -51,7 +51,7 @@ class fread(Unit):
                     with open(filename, 'rb') as stream:
                         if not self.args.size:
                             self.log_info('reading:', filename)
-                            yield stream.read()
+                            yield dict(data=stream.read(), path=filename)
                         else:
                             yield from self._read_chunks(stream)
                 except PermissionError:
