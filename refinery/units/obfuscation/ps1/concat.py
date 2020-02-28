@@ -13,7 +13,7 @@ class deob_ps1_concat(IterativeDeobfuscator):
             a, b = match.groups()
             return string_quote(string_unquote(a) + string_unquote(b))
         return re.sub(
-            R'({s})\s*\+\s*({s})'.format(s=formats.ps1str),
+            R'({s})\s*[\+\&]{{1}}\s*({s})'.format(s=formats.ps1str),
             concatenate,
             data
         )
