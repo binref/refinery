@@ -94,7 +94,7 @@ class peek(Unit, HexViewerMixin):
         header = ', '.join(peeks)
 
         dump = None
-        decoded = False
+        working_codec = None
 
         if data and not self.args.brief:
             if self.args.decode:
@@ -125,7 +125,7 @@ class peek(Unit, HexViewerMixin):
                         )
                         for line in chunk.split('\n')
                     ]
-                    decoded = codec
+                    working_codec = codec
                     break
 
             if not dump:
@@ -149,7 +149,7 @@ class peek(Unit, HexViewerMixin):
             yield header
 
         if dump:
-            yield separator(F'CODEC={decoded}' if decoded else 'HEXDUMP')
+            yield separator(F'CODEC={working_codec}' if working_codec else 'HEXDUMP')
             yield from dump
 
         if self.separate:
