@@ -26,10 +26,9 @@ class TestPeek(TestUnitBase):
         output = sys.stderr.getvalue()
         sys.stderr = sys_stderr
 
-        self.assertIn(
-            '128 Bytes, 45.87% entropy, MS-DOS executable',
-            output
-        )
+        for info in ('45.87% entropy', 'MS-DOS executable'):
+            self.assertIn(info, output)
+
         self.assertIn((
             '0000: 4D 5A 90 00 03 00 00 00  MZ......\n'
             '0008: 04 00 00 00 FF FF 00 00  ........\n'

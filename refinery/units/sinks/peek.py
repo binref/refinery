@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
+import textwrap
+
 from math import log
 
-from . import HexViewerMixin, get_terminal_size, magic
+from . import HexViewerMixin, get_terminal_size
 from .. import Unit
 
 try:
@@ -53,10 +55,12 @@ class peek(Unit, HexViewerMixin):
         lines.add_argument('-a', '--lines-all', action='store_const', dest='lines', const=None,
             help='Output all possible preview lines without restriction')
         peek = argp.add_mutually_exclusive_group()
-        peek.add_argument('-x', '--hex', action='store_true',
-            help='Always peek data as hexdump.')
+        peek.add_argument('-d', '--decode', action='store_true',
+            help='Attempt to decode and display printable data.')
         peek.add_argument('-e', '--esc', action='store_true',
             help='Always peek data as string, escape characters if necessary.')
+        peek.add_argument('-b', '--brief', action='store_true',
+            help='One line peek, implies --lines=0.')
         return super().interface(self.hexviewer_interface(argp))
 
     def process(self, data):
@@ -66,71 +70,93 @@ class peek(Unit, HexViewerMixin):
             self.log_info('forwarding input to next unit')
             yield data
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.separate = True
+
     def _peeklines(self, data):
         import codecs
         import string
         import itertools
         from ...lib.tools import format_size
+        from ...lib.magic import magicparse
 
         peeks = [
-            format_size(len(data)),
-            F'{entropy(bytearray(data)) * 100:.2f}% entropy'
+            F'{entropy(bytearray(data)) * 100:05.2f}% entropy',
+            format_size(len(data), align=not self.args.lines)
         ]
 
-        if magic:
-            peeks.append(magic.Magic().from_buffer(data))
+        magic = magicparse(data)
+
+        if magic is not None:
+            peeks.append(magic)
 
         header = ', '.join(peeks)
-        yield header
 
-        if not data:
-            return
+        dump = None
+        decoded = False
 
-        for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
-            if self.args.hex:
-                continue
-            try:
-                self.log_info(F'trying to decode as {codec}.')
-                handler = 'backslashreplace' if self.args.esc else 'strict'
-                decoded = codecs.decode(data, codec, errors=handler)
-                count = sum(x in string.printable for x in decoded)
-                ratio = count / len(data)
-            except ValueError as V:
-                self.log_info('decoding failed:', V)
-                continue
-            if ratio < 0.8 or any(x in decoded for x in '\b\v'):
-                self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
-                continue
+        if data and not self.args.brief:
+            if self.args.decode:
+                for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
+                    try:
+                        self.log_info(F'trying to decode as {codec}.')
+                        handler = 'backslashreplace' if self.args.esc else 'strict'
+                        decoded = codecs.decode(data, codec, errors=handler)
+                        count = sum(x in string.printable for x in decoded)
+                        ratio = count / len(data)
+                    except ValueError as V:
+                        self.log_info('decoding failed:', V)
+                        continue
+                    if ratio < 0.8 or any(x in decoded for x in '\b\v'):
+                        self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
+                        continue
 
-            import textwrap
-            width = self.args.width or get_terminal_size()
-            if self.args.lines is not None:
-                decoded = decoded[:width * self.args.lines]
-            dump = [
-                line.rstrip('\r')
-                for chunk in textwrap.wrap(
-                    decoded,
-                    width,
-                    break_on_hyphens=False,
-                    replace_whitespace=False
-                )
-                for line in chunk.split('\n')
-            ]
-            break
+                    width = self.args.width or get_terminal_size()
+                    if self.args.lines is not None:
+                        decoded = decoded[:width * self.args.lines]
+                    dump = [
+                        line.rstrip('\r')
+                        for chunk in textwrap.wrap(
+                            decoded,
+                            width,
+                            break_on_hyphens=False,
+                            replace_whitespace=False
+                        )
+                        for line in chunk.split('\n')
+                    ]
+                    decoded = codec
+                    break
+
+            if not dump:
+                total = self.args.lines * get_terminal_size() // 3
+                dump = self.hexdump(data, total=total)
+
+            dump = list(itertools.islice(dump, 0, self.args.lines))
+
+        termsize = get_terminal_size()
+
+        def separator(title=None):
+            if title is None or termsize <= len(title) + 8:
+                return termsize * '-'
+            return F'--{title}' + '-' * (termsize - len(title) - 2)
+
+        yield separator()
+
+        if termsize:
+            yield from textwrap.wrap(header, termsize)
         else:
-            dump = self.hexdump(data)
-
-        dump = list(itertools.islice(dump, 0, self.args.lines))
+            yield header
 
         if dump:
-            sepwidth = max(len(header), max(len(l) for l in dump))
-            sepwidth = min(sepwidth, get_terminal_size())
-            separator = sepwidth * '-'
-
-            if len(separator) > 10:
-                yield separator[:-8] + '[PEEK]--'
-            else:
-                yield separator
-
+            yield separator(F'CODEC={decoded}' if decoded else 'HEXDUMP')
             yield from dump
-            yield separator
+
+        if self.separate:
+            yield separator()
+
+    def filter(self, inputs):
+        from ...lib.tools import lookahead
+        for last, item in lookahead(inputs):
+            self.separate = last
+            yield item

@@ -21,7 +21,6 @@ class dump(Unit):
          {md5} : MD5 hash of the data
         {sha1} : SHA1 hash of the data
       {sha256} : SHA-256 hash of the data
-        {size} : Size of the data as a human readable expression
 
     When not using formatted file names, the unit ingests as many incoming inputs
     as filenames were specified on the command line. Unless connected to a terminal,
@@ -72,21 +71,21 @@ class dump(Unit):
 
     def _auto_extension(self, data, default='bin'):
         import re
-        from . import magic
-
-        if not isinstance(data, bytes):
-            data = bytes(data)
+        from ...lib.magic import magic, magicparse
 
         if not magic:
             self.log_warn(F'magic library not found, auto extension defaults to {default}')
             return default
 
-        mime = magic.Magic(mime=True).from_buffer(data)
+        if not isinstance(data, bytes):
+            data = bytes(data)
+
+        mime = magicparse(data, mime=True)
         mime = mime.split(';')[0].lower()
         mtype, mext = mime.split('/')
 
         if mext == 'x-dosexec':
-            description = magic.Magic().from_buffer(data)
+            description = magicparse(data)
             if re.search('executable', description):
                 return 'dll' if '(DLL)' in description else 'exe'
         try:
@@ -161,9 +160,6 @@ class dump(Unit):
     def _format(self, filename, data, index=0):
         class DelayedFormatter(dict):
             def __missing__(_, key):
-                if key == 'size':
-                    from ...lib.tools import format_size
-                    return format_size(len(data), explain_bytes=False, default='{}B')
                 if key == 'crc32':
                     from zlib import crc32
                     return F'{crc32(data) & 0xFFFFFFFF:08X}'
@@ -229,12 +225,13 @@ class dump(Unit):
                         else:
                             filename = chunk['path']
                             if not filename:
-                                filename = self._format('{sha256}', chunk.data, index + 1)
+                                import hashlib
+                                filename = hashlib.sha256(chunk).hexdigest()
                     except StopIteration:
                         self.exhausted = True
                     else:
                         if self.args.format:
-                            filename = self._format(filename, chunk.data, index + 1)
+                            filename = self._format(filename, chunk, index + 1)
                         self.stream = self._open(filename)
             yield chunk
 

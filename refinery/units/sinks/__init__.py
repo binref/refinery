@@ -4,20 +4,6 @@ import itertools
 
 from ...lib.tools import get_terminal_size, lookahead
 
-try:
-    from winmagic import magic
-except ModuleNotFoundError:
-    import os
-    if os.name == 'nt':
-        # Attempting to import magic on Windows without winmagic being
-        # installed may result in an uncontrolled crash.
-        magic = None
-    else:
-        try:
-            import magic
-        except ModuleNotFoundError:
-            magic = None
-
 
 class HexViewerMixin:
 
@@ -31,16 +17,18 @@ class HexViewerMixin:
             help='Do not compress sequences of identical lines in hexdump')
         return argp
 
-    def hexaddr_size(self, data):
+    def hexaddr_size(self, total):
         addr_width = 16
         for k in range(1, 16):
-            if len(data) < (1 << (k << 2)):
+            if total < (1 << (k << 2)):
                 addr_width = k
                 break
         return addr_width
 
-    def hexdump(self, data):
+    def hexdump(self, data, total=None):
         import re
+
+        total = total or len(data)
 
         if self.args.width:
             columns = self.args.width
@@ -54,13 +42,13 @@ class HexViewerMixin:
                 columns = 16
             else:
                 if self.args.hexaddr:
-                    columns -= self.hexaddr_size(data)
+                    columns -= self.hexaddr_size(total)
                     columns -= 1  # for the separator
                 columns = (columns - 2) // 4
 
         columns = min(columns, len(data))
         lines = itertools.zip_longest(*([iter(data)] * columns))
-        address_width = max(self.hexaddr_size(data), 4)
+        address_width = max(self.hexaddr_size(total), 4)
         previous = None
         prevcount = 0
 

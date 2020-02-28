@@ -6,28 +6,23 @@ Miscellaneous helper functions.
 import os
 import sys
 
-from math import log
 
-
-def format_size(num: int, explain_bytes=True, default='{} Bytes') -> str:
+def format_size(num: int, align=False, default='{} BYTE') -> str:
     """
     Given a number of bytes, produce a human-readable expression for this
-    size using common units such as KB and MB. Unless the `explain_bytes`
-    paramter is set to `False`, the returned expression also includes the
-    total number of bytes in brackets.
+    size using common units such as kB and MB.
     """
     step = 1000.0
     result = num
-    for unit in ['', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
-        if result < step:
+    for unit in ['#B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
+        if result / step < 0.1:
             break
         result /= step
-    if not unit:
+    if unit == '#B' and not align:
         return default.format(num)
     else:
-        width = int(log(result, 10))
-        fmt = '{:{a}.{b}f} {} ({n} Bytes)' if explain_bytes else F'{{:{5-width}.{4-width}f}} {{}}'
-        return fmt.format(result, unit, n=num, a=5 - width, b=4 - width)
+        width = 6 if align else ''
+        return F'{result:{width}.3f} {unit}'
 
 
 def lookahead(iterator):

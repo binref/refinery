@@ -98,11 +98,12 @@ class Executable(type):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
             @wraps(operation)
             def wrapped(self, data: ByteString) -> bytes:
-                if not isinstance(data, bytearray):
-                    data = bytearray(data)
-                self.args._lock(data)
+                if -self.args:
+                    if not isinstance(data, bytearray):
+                        data = bytearray(data)
+                    self.args @= data
                 try:
-                    return operation(self, bytes(data))
+                    return operation(self, data)
                 except BaseException as B:
                     return self._exception_handler(B)
             return wrapped
@@ -183,29 +184,32 @@ class DelayedArgumentProxy:
 
     def __init__(self, argv, argo):
         args = {}
-        same = True
+        done = True
         for name, value in vars(argv).items():
             if not pending(value):
                 args[name] = value
             else:
-                same = False
+                done = False
         self._store(
             _argv=argv,
             _argo=argo,
             _args=args,
-            _same=same
+            _done=done
         )
 
-    def _lock(self, data: bytearray):
+    def __neg__(self):
+        return not self._done
+
+    def __imatmul__(self, data: bytearray):
         """
         Lock the current arguments for the given input `data`.
         """
-        if self._same:
-            return
-        for name in self._argo:
-            value = getattr(self._argv, name, None)
-            if value and pending(value):
-                self._args[name] = manifest(value, data)
+        if not self._done:
+            for name in self._argo:
+                value = getattr(self._argv, name, None)
+                if value and pending(value):
+                    self._args[name] = manifest(value, data)
+        return self
 
     def _store(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -229,7 +233,7 @@ class DelayedArgumentProxy:
 
     def __setattr__(self, name, value):
         if pending(value):
-            self._store(_same=False)
+            self._store(_done=False)
         else:
             self._args[name] = value
         return setattr(self._argv, name, value)

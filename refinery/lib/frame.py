@@ -78,7 +78,7 @@ above example would not be separated by a dash.
 import io
 import os
 
-from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString
+from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
 
 try:
     import msgpack
@@ -95,7 +95,7 @@ MAGIC = bytes.fromhex(
     os.environ.get('REFINERY_FRAME_MAGIC', 'C0CAC01AC0DE'))
 
 
-class Chunk:
+class Chunk(bytearray):
     """
     Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
     receives an iterable of `refinery.lib.frame.Chunk`s.
@@ -105,7 +105,7 @@ class Chunk:
         data: ByteString,
         path: Tuple[int],
         view: Optional[Tuple[bool]] = None,
-        meta: Optional[Dict[str, str]] = None
+        meta: Optional[Dict[str, Any]] = None
     ):
         view = view or [False] * len(path)
         if len(view) != len(path):
@@ -113,9 +113,9 @@ class Chunk:
 
         self._view = view
         self._path = path
+        self._meta = meta or dict()
 
-        self.meta = meta or dict()
-        self.data = data
+        bytearray.__init__(self, data)
 
     def nest(self, *ids):
         """
@@ -146,6 +146,13 @@ class Chunk:
         to the leaf vertex representing this `refinery.lib.frame.Chunk`
         """
         return self._path
+
+    @property
+    def meta(self) -> Dict[str, Any]:
+        """
+        Every chunk can contain a dictionary of arbitrary metadata.
+        """
+        return self._meta
 
     @property
     def visible(self):
@@ -184,68 +191,33 @@ class Chunk:
         """
         Return the serialized representation of this chunk.
         """
-        return msgpack.packb((self._path, self._view, self.meta, self.data))
+        return msgpack.packb((self._path, self._view, self._meta, self))
 
     def __repr__(self) -> str:
         layer = '/'.join('#' if not s else str(p)
             for p, s in zip(self._path, self._view))
-        return F'<chunk/{layer}/ size={len(self.data)}>'
-
-    def __lt__(self, other): return self.data < other.data
-    def __gt__(self, other): return self.data > other.data
-    def __eq__(self, other): return self.data == other.data
-    def __ne__(self, other): return self.data != other.data
-    def __le__(self, other): return self.data <= other.data
-    def __ge__(self, other): return self.data >= other.data
-
-    def __add__(self, other):
-        return Chunk(self.data + other, self._path, self._view)
-
-    def __radd__(self, other):
-        return Chunk(other + self.data, self._path, self._view)
-
-    def __iadd__(self, other):
-        if isinstance(self.data, bytearray):
-            self.data.extend(other)
-        else:
-            self.data += other
+        layer = layer and '/' + layer
+        metas = ' '.join(F'{key}={value!s}' for key, value in self._meta.items())
+        metas = metas and ' ' + metas
+        return F'<chunk{layer} size={len(self)}{metas}>'
 
     def __hash__(self):
         return hash((
             len(self),
-            bytes(self.data[:+64]),
-            bytes(self.data[-64:])
+            bytes(self[:+64]),
+            bytes(self[-64:])
         ))
-
-    def __len__(self):
-        return len(self.data)
 
     def __getitem__(self, bounds):
         if isinstance(bounds, str):
-            return self.meta.get(bounds, None)
-        return self.data[bounds]
+            return self._meta.get(bounds, None)
+        return bytearray.__getitem__(self, bounds)
 
     def __setitem__(self, bounds, value):
         if isinstance(bounds, str):
-            self.meta[bounds] = value
+            self._meta[bounds] = value
         else:
-            self.imm[bounds] = value
-
-    @property
-    def mut(self) -> bytearray:
-        """
-        Accessing this property makes the `data` member of this chunk mutable,
-        i.e. turns it into a `bytearray` unless it already is one.
-        """
-        if not isinstance(self.data, bytearray):
-            self.data = bytearray(self.data)
-        return self.data
-
-    def __bytes__(self) -> bytes:
-        result = self.data
-        if not isinstance(result, bytes):
-            result = bytes(result)
-        return result
+            bytearray.__setitem__(self, bounds, value)
 
 
 class FrameUnpacker:
@@ -280,7 +252,7 @@ class FrameUnpacker:
             self.framed = False
             self.gauge = 0
             while buffer:
-                self._next.mut.extend(buffer)
+                self._next.extend(buffer)
                 buffer = stream.read()
 
     def _advance(self) -> None:
@@ -395,7 +367,7 @@ class Framed:
         return self.nested + self.unpack.gauge < 0
 
     def _generate_chunks(self, parent: Chunk):
-        for item in self.action(parent.mut):
+        for item in self.action(parent):
             meta = parent.meta
             data = item
             if isinstance(data, dict):
@@ -436,7 +408,7 @@ class Framed:
 
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
-                yield from self._generate_bytes(chunk.mut)
+                yield from self._generate_bytes(chunk)
             return
 
         if self.nested == 0:
@@ -458,7 +430,7 @@ class Framed:
         while self.unpack.nextframe():
             while True:
                 for chunk in self._apply_filter():
-                    results = self._generate_bytes(chunk.mut) if chunk.visible else (chunk.data,)
+                    results = self._generate_bytes(chunk) if chunk.visible else (chunk,)
                     for result in results:
                         if not gauge:
                             yield result

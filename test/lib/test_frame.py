@@ -20,7 +20,7 @@ class TestFraming(TestBase):
         expected = []
         unpacked = FrameUnpacker(buffer)
         while unpacked.nextframe():
-            expected.extend(c.data for c in unpacked)
+            expected.extend(c for c in unpacked)
         self.assertEqual(chunks, expected)
 
     def test_layered_frame_01(self):
