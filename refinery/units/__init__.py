@@ -108,6 +108,8 @@ class Executable(type):
                     return self._exception_handler(B)
             return wrapped
 
+        nmspc.setdefault('__doc__', '')
+
         for op in ('process', 'reverse'):
             if op in nmspc:
                 nmspc[op] = normalize(nmspc[op])
