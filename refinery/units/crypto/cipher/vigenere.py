@@ -11,7 +11,8 @@ class vigenere(Unit):
     Encryption and decryption using the Vigenère-Bellaso polyalphabetic cipher.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-c', '--case-sensitive',
             action='store_true',

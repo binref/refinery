@@ -145,7 +145,8 @@ class lznt1(Unit):
             out.write(chunk)
         return out.getvalue()
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-c', '--chunk-size', metavar='N', type=number, default=0x1000,
             help='Optionally specify the chunk size for compression, default is 0x1000.')
         return super().interface(argp)

@@ -3,6 +3,7 @@
 """
 Miscellaneous helper functions.
 """
+import inspect
 import os
 import sys
 
@@ -109,3 +110,40 @@ def documentation(unit):
     docs = inspect.getdoc(unit)
     docs = re.sub(R'`refinery\.(?:\w+\.)*(\w+)`', R'\1', docs)
     return docs.replace('`', '')
+
+
+def skipfirst(iterable):
+    """
+    Returns an interable where the first element of the input iterable was
+    skipped.
+    """
+    it = iter(iterable)
+    next(it)
+    yield from it
+
+
+def autoinvoke(method, keywords: dict):
+    """
+    For each parameter that `method` expects, this function looks for an entry
+    in `keywords` which has the same name as that parameter. `autoinvoke` then
+    calls `method` with all matching parameters forwarded in the appropriate
+    manner.
+    """
+
+    kwdargs = {}
+    posargs = []
+    varargs = []
+
+    for p in inspect.signature(method).parameters.values():
+        try:
+            value = keywords[p.name]
+        except KeyError:
+            continue
+        if p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD):
+            kwdargs[p.name] = value
+        elif p.kind is p.POSITIONAL_ONLY:
+            posargs.append(value)
+        elif p.kind is p.VAR_POSITIONAL:
+            varargs = value
+
+    return method(*posargs, *varargs, **kwdargs)

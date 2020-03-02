@@ -13,7 +13,8 @@ class lzma(Unit):
     LZMA compression and decompression.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         mode = argp.add_mutually_exclusive_group()
         mode.add_argument('-r', '--raw',
             action='store_true', help='Use raw (no container) format.')

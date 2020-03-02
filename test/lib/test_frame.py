@@ -14,7 +14,7 @@ class TestFraming(TestBase):
     def test_simple_frame(self):
         chunks = [B'A' * k for k in (0x14, 0x154, 0x81, 0x12031, 0x1311, 0x8012)]
         buffer = io.BytesIO()
-        for chunk in (io.BytesIO(B'\n'.join(chunks)) | r.resplit('[')):
+        for chunk in (io.BytesIO(B'\n'.join(chunks)) | r.resplit.assemble('[')):
             buffer.write(chunk)
         buffer.seek(0)
         expected = []
@@ -44,7 +44,7 @@ class TestFraming(TestBase):
 
     def test_documentation_example_04(self):
         self.assertEqual(B'NaNaNaNaNaNaNaNa-Batman',
-            (r.emit('aaaaaaaa', 'namtaB')[r.scope(0) | r.rex('.')[r.ccp('N')] | r.scope(1) | r.rev | r.sep('-')])(B'')
+            (r.emit('aaaaaaaa', 'namtaB')[r.scope(0) | r.rex(B'.')[r.ccp('N')] | r.scope(1) | r.rev | r.sep('-')])(B'')
         )
 
     def test_real_world_01(self):
@@ -55,24 +55,24 @@ class TestFraming(TestBase):
 
     def test_nonblocking(self):
         with io.BytesIO(bytes(range(20))) as stream:
-            slow = stream | r.rex('.')
+            slow = stream | r.rex(B'.')
             for k in range(20):
                 self.assertEqual(slow.read1(20), bytes((k,)))
 
     def test_nonblocking_frame_collapse(self):
         with io.BytesIO(bytes(range(20))) as stream:
-            slow = stream | r.chop(5) [ r.rex('.') ] # noqa
+            slow = stream | r.chop(5) [ r.rex.assemble('.') ] # noqa
             for k in range(20):
                 self.assertEqual(slow.read1(20), bytes((k,)))
 
     def test_depth3(self):
-        pl = r.snip(':3', 3, 4, '5:')[r.scope('1:3') | r.rex('.')[r.rep(3)[r.ccp('X')]]]
+        pl = r.snip(':3', 3, 4, '5:')[r.scope('1:3') | r.rex(B'.')[r.rep(3)[r.ccp('X')]]]
         self.assertEqual(B'AAAXBXBXBXCXCXCDDD', pl(B'AAABCDDD'))
 
     def test_continue_after_error(self):
         T = self.generate_random_buffer(16)
         aes = r.aes('CBC', key=T, iv=T)
-        msg = [self.generate_random_buffer(3*16) for _ in range(12)]
+        msg = [self.generate_random_buffer(3 * 16) for _ in range(12)]
         hidden = msg[7]
         msg[7] = aes.reverse(hidden)
         pipeline = r.emit(data=msg)[aes]

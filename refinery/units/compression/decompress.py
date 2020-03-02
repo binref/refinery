@@ -17,7 +17,8 @@ class decompress(Unit):
     the output of the first successful one. If none succeeds, the data is
     returned unaltered.
     """
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-t', '--tolerance',
             metavar='n',

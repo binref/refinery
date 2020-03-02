@@ -9,7 +9,8 @@ class cca(Unit):
     Append data to the input.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('data', nargs='*', type=multibin, help='specify data to be appended')
         return super().interface(argp)
 

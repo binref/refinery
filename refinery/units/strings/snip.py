@@ -11,7 +11,8 @@ class snip(Unit):
     every byte at an even position and then, every byte at an odd position. In
     this case, multiple outputs are produced.
     """
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             'slice',
             type=sliceobj,

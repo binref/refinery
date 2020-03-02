@@ -15,7 +15,8 @@ class rsa(Unit):
     it will perform a raw RSA operation. The result of these operations are (un)padded using
     EMSA-PKCS1-v1_5.
     """
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('key', type=multibin, help='RSA key in PEM or DER format.')
         return super().interface(argp)
 

@@ -9,8 +9,9 @@ class hexview(Unit, HexViewerMixin):
     Produces a hex dump of the data.
     """
 
-    def interface(self, argp):
-        return super().interface(self.hexviewer_interface(argp))
+    @classmethod
+    def interface(cls, argp):
+        return super().interface(cls.hexviewer_interface(argp))
 
     def process(self, data):
         for line in self.hexdump(data):

@@ -38,7 +38,8 @@ class esc(Unit):
         BR'"': B'\x22'
     }
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         mode = argp.add_mutually_exclusive_group()
         mode.add_argument('-x', '--hex', action='store_true',
             help='Hex encode everything, do not use C escape sequences.')

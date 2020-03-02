@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from . import TestUnitBase
+import logging
 
 from refinery.lib import loader
-from refinery import neg, b64, repl, rex, pack, sub
+from refinery import neg, b64, repl, rex, pack, sub, Unit
 
 
 class TestPipelines(TestUnitBase):
@@ -23,6 +24,24 @@ class TestMetaProperties(TestUnitBase):
             self.assertNotIn(entry.__qualname__, entry_points)
             entry_points.add(entry.__qualname__)
         self.assertGreaterEqual(len(entry_points), 10)
+
+    def test_retrofitting(self):
+        log = logging.getLogger()
+        log.warn('retrofit not enforced.')
+        for unit in loader.get_all_entry_points():
+            legacy_interface = unit.interface.__func__ is not Unit.interface.__func__
+            if not unit.is_retrofitted:
+                if legacy_interface:
+                    log.warn(F'requires retrofit: {unit.__qualname__}')
+                continue
+            self.assertFalse(legacy_interface, F'{unit.__qualname__}, is retrofitted but defines an interface.')
+
+    def test_custom_unit_01(self):
+        class prefixer(Unit):
+            def __init__(self, prefix) -> Unit: pass
+            def process(self, data): return self.args.prefix + data
+
+        self.assertEqual(prefixer.assemble('Hello')(B'World'), B'HelloWorld')
 
 
 class TestSimpleInvertible(TestUnitBase):

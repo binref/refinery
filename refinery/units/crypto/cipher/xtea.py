@@ -9,19 +9,20 @@ class xtea(CipherUnit):
     """
     XTEA encryption and decryption.
     """
+    blocksize = 16
+    key_sizes = 16
 
-    __blocksize__ = 16
-    __key_sizes__ = 16
+    @property
+    def key(self):
+        return struct.unpack('4I', super().key)
 
     def encrypt(self, data):
-        blocks = iter(self._load32(data))
-        key = struct.unpack('IIII', self.key)
-        return self._stor64(self._encrypt_block(*bp, *key) for bp in zip(blocks, blocks))
+        it = iter(self._load32(data))
+        return self._stor64(self._encrypt_block(y, z, *self.key) for y, z in zip(it, it))
 
     def decrypt(self, data):
-        blocks = iter(self._load32(data))
-        key = struct.unpack('IIII', self.key)
-        return self._stor64(self._decrypt_block(*z, *key) for z in zip(blocks, blocks))
+        it = iter(self._load32(data))
+        return self._stor64(self._decrypt_block(y, z, *self.key) for y, z in zip(it, it))
 
     @staticmethod
     def _encrypt_block(y, z, k1, k2, k3, k4):
@@ -45,9 +46,12 @@ class xtea(CipherUnit):
 
     @staticmethod
     def _load32(vector):
-        return struct.unpack('I' * (len(vector) // 4), vector)
+        Q, R = divmod(len(vector), 4)
+        if R > 0:
+            raise ValueError('Data not padded to a 16 byte boundary.')
+        yield from struct.unpack(F'{Q}I', vector)
 
     @staticmethod
     def _stor64(vector):
         vector = tuple(vector)
-        return struct.pack('Q' * len(vector), *vector)
+        return struct.pack(F'{len(vector)}Q', *vector)

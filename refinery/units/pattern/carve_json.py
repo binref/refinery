@@ -84,7 +84,8 @@ class carve_json(Unit):
     Extracts anything from the input data that looks like JSON.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-d', '--dictonly', action='store_true',
             help='only extract JSON dictionaries, do not extract lists.')
         return super().interface(argp)

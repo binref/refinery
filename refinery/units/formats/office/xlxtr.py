@@ -89,7 +89,8 @@ class xlxtr(Unit):
     Note that indices are 1-based.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('refs', metavar='reference', type=SheetReference, nargs='*',
             help='A sheet reference to be extracted.')
         argp.epilog = 'If no sheet references are given, the unit lists all sheet names.'

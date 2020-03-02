@@ -70,7 +70,8 @@ class perc(Unit):
     Extract PE file resources.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(metavar='entry', dest='entries', type=rsrc, nargs='*',
             help='A resource path for the resource to be extracted. May contain numeric '
                  'literals and name strings with wildcards.')

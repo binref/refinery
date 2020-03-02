@@ -10,7 +10,8 @@ class chop(Unit):
     this sequence.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-t', '--truncate', action='store_true',
             help=(
                 'Truncate possible excess bytes at the end of the input, '

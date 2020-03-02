@@ -5,7 +5,7 @@ Contains all units that can work on blocks a fixed length. Note that block ciphe
 algorithms can be found in `refinery.units.crypto.cipher`.
 """
 from itertools import cycle
-from inspect import signature, Parameter
+from inspect import signature, getattr_static, Parameter
 
 from .. import Unit
 from ...lib.argformats import numbin, number
@@ -17,7 +17,8 @@ class NoNumpy(Exception):
 
 
 class BlockTransformation(Unit, abstract=True):
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         block = argp.add_argument_group(
             'Block Options',
             'Controls how the input data is split into blocks.'
@@ -89,9 +90,10 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     operate = NotImplemented
     inplace = NotImplemented
 
-    def interface(self, argp):
-        specs = signature(self.operate)
-        nargs = len(specs.parameters) - 1
+    @classmethod
+    def interface(cls, argp):
+        specs = signature(cls.operate)
+        nargs = len(specs.parameters) - 2 + int(isinstance(getattr_static(cls, 'operate'), staticmethod))
         if any(p.kind == Parameter.VAR_POSITIONAL for p in specs.parameters.values()):
             nargs = '*'
         if nargs:

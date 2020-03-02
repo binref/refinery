@@ -10,7 +10,8 @@ class bz2(Unit):
     """
     BZip2 compression and decompression.
     """
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-l', '--level', type=number[1:9], action='store', default=9,
             help='compression level preset between 0 and 9')
         return super().interface(argp)

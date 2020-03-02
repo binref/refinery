@@ -24,7 +24,8 @@ class secstr(Unit):
     _PSVER = 2
     _IVERR = 'The IV needs to be 16 bytes long.'
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('key', type=multibin, nargs='?', default=bytes(range(1, 17)),
             help='secure string encryption key')
         argp.add_argument('--iv', default=None,

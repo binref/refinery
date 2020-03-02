@@ -13,7 +13,8 @@ class fread(Unit):
     read large files in chunks.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-s', '--size',
             metavar='N',

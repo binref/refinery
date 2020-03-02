@@ -10,7 +10,8 @@ class rot(Unit):
     amount is 13, providing the common (and weak) string obfuscation method.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('amount', nargs='?', default=13, type=number[1:25], help='rotation amount')
         return super().interface(argp)
 

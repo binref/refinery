@@ -14,7 +14,8 @@ class dnrc(Unit):
     and outputs them.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-s', '--sort', action='store_true', help=(
                 'Sort the resourcey by name rather than by order of appearance.'

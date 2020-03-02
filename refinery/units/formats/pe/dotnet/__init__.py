@@ -39,7 +39,8 @@ class JSONEncoderUnit(Unit, abstract=True):
     encoding.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         enc = argp.add_mutually_exclusive_group()
         enc.add_argument(
             '-e', '--encoder', choices=[m.name for m in BinaryEncoding],

@@ -10,7 +10,8 @@ class HashUnit(Unit, abstract=True):
 
     _algorithm = NotImplemented
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-t', '--text', action='store_true',
             help='Output a hexadecimal representation of the hash')
         return super().interface(argp)

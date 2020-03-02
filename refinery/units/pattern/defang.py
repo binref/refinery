@@ -15,7 +15,8 @@ class defang(Unit):
         B'wscript.shell',
     ]
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-q', '--quote', action='store_true', help='Wrap all indicators in backticks for markdown code.')
         argp.add_argument('-u', '--url-only', action='store_true', help='Only defang URLs, do not look for domains or IPs.')
         argp.add_argument('-d', '--dot-only', dest='protocol', action='store_false', help='Do not escape the protocol colon in URLs.')

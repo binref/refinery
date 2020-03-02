@@ -11,11 +11,12 @@ class recode(Unit):
     the `to` encoding, then outputs the result.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(metavar='from', dest='decode', type=str,
             help='input encoding of the data')
-        argp.add_argument(metavar='to', dest='encode', nargs='?', default=self.codec, type=str,
-            help=F'output encoding, default is {self.codec}')
+        argp.add_argument(metavar='to', dest='encode', nargs='?', default=cls.codec, type=str,
+            help=F'output encoding, default is {cls.codec}')
         return super().interface(argp)
 
     def process(self, data):

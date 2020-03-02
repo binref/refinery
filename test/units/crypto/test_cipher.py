@@ -13,9 +13,9 @@ class TestCipherUnits(TestUnitBase):
         for buffersize in (3, 7, 56, 128, 1231):
             data = self.generate_random_buffer(buffersize)
             for unit in (aes, blowfish, cast, des, des3, rc2):
-                for size in unit.__key_sizes__:
+                for size in unit.key_sizes:
                     K = self.generate_random_buffer(size)
-                    V = self.generate_random_buffer(unit.__blocksize__)
+                    V = self.generate_random_buffer(unit.blocksize)
                     D = unit('CBC', key=K, iv=V, reverse=False)
                     for P in ['PKCS7', 'ISO7816', 'X923']:
                         E = unit(F'-P{P}', 'CBC', key=K, iv=V, reverse=True)
@@ -25,7 +25,7 @@ class TestCipherUnits(TestUnitBase):
         for buffersize in (3, 7, 56, 128, 1231):
             data = self.generate_random_buffer(buffersize)
             for unit in (rc4, seal, chacha, salsa):
-                for size in unit.__key_sizes__:
+                for size in unit.key_sizes:
                     S = unit(key=self.generate_random_buffer(size))
                     self.assertEqual(S(S(data)), data)
 

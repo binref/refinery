@@ -10,7 +10,8 @@ from .. import Unit
 
 class emit(Unit):
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('data', type=multibin, default=None, nargs='*',
             help=(
                 'Data to be emitted. If no argument is specified, data '

@@ -9,7 +9,8 @@ class ccp(Unit):
     Prepend data to the input.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('data', nargs='*', type=multibin, help='specify data to be prepended')
         return super().interface(argp)
 

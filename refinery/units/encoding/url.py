@@ -13,7 +13,8 @@ class url(Unit):
     with a percent symbol.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-p', '--plus', action='store_true', help='also replace plus signs by spaces')
         return super().interface(argp)
 

@@ -25,10 +25,6 @@ class dnsdomain(PatternExtractorBase):
 
     _DOMAIN_PATTERN = BR'(?:%s){1,20}(?:%s)\b' % (_lps(0xFF), _lps(25))
 
-    def interface(self, argp):
-        super().interface(argp)
-        return argp
-
     def process(self, data):
         def prefilter(matches):
             for offset, match in matches:

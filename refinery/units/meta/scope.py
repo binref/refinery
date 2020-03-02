@@ -11,7 +11,8 @@ class scope(FrameSlicer):
     frame closes or the frame is being rescoped by a second application of
     this unit, they become visible again.
     """
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-n', '--not', dest='visible', action='store_false',
             help='Hide the given chunks instead of making them the only ones visible.')
         return super().interface(argp)

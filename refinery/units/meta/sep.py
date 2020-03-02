@@ -11,7 +11,8 @@ class sep(Unit):
     makes them visible by default. This can be prevented by using the `-s` flag.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-s', '--scoped', action='store_true',
             help='Prevent sep from automatically turning all input chunks visible.')
         argp.add_argument('separator', type=DelayedBinaryArgument, default=B'\n',

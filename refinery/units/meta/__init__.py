@@ -9,7 +9,8 @@ from ...lib.argformats import sliceobj
 
 class FrameSlicer(Unit, abstract=True):
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             'slice',
             type=sliceobj,

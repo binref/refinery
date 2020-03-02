@@ -29,7 +29,7 @@ example of how to write simple units.
 import os
 import pickle
 
-from .units import Unit
+from .units import arg, Unit
 
 
 def _singleton(cls):
@@ -154,7 +154,7 @@ class __pdoc__(dict):
         return super().items()
 
 
-__all__ = ['Unit', '__pdoc__']
+__all__ = ['Unit', 'arg', '__pdoc__']
 __all__ += [x for x, _ in sorted(_cache.units.items(), key=lambda x:x[1])]
 
 

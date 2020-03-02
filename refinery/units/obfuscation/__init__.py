@@ -55,7 +55,8 @@ class Deobfuscator(Unit, abstract=True):
 
 class IterativeDeobfuscator(Deobfuscator, abstract=True):
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-t', '--timeout',
             type=number[2:],

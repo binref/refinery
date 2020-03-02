@@ -36,46 +36,47 @@ class KeyDerivation(Unit, abstract=True):
     _DEFAULT_ITER = NotImplemented
     _DEFAULT_SIZE = None
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         kw = dict(
             type=number,
             help='The number of bytes to generate.'
         )
-        if self._DEFAULT_SIZE is not None:
-            hlp = F'The default is {self._DEFAULT_SIZE}.'
+        if cls._DEFAULT_SIZE is not None:
+            hlp = F'The default is {cls._DEFAULT_SIZE}.'
             kw.update(dict(
-                default=self._DEFAULT_SIZE,
+                default=cls._DEFAULT_SIZE,
                 nargs='?',
                 help=F'{kw["help"]} {hlp}'
             ))
         argp.add_argument('size', **kw)
 
-        if self._DEFAULT_SALT is not NotImplemented:
+        if cls._DEFAULT_SALT is not NotImplemented:
             kw = dict(
                 type=multibin,
                 help='Salt for derivation.'
             )
-            if self._DEFAULT_SALT is not None:
-                hlp = F'Default value is {self._DEFAULT_SALT.hex()} (hex).'
+            if cls._DEFAULT_SALT is not None:
+                hlp = F'Default value is {cls._DEFAULT_SALT.hex()} (hex).'
                 kw.update(dict(
-                    default=self._DEFAULT_SALT,
+                    default=cls._DEFAULT_SALT,
                     nargs='?',
                     help=F'{kw["help"]} {hlp}'
                 ))
             argp.add_argument('salt', **kw)
-        if self._DEFAULT_ITER is not NotImplemented:
-            hlp = '' if not self._DEFAULT_ITER else F'Default is {self._DEFAULT_ITER}.'
+        if cls._DEFAULT_ITER is not NotImplemented:
+            hlp = '' if not cls._DEFAULT_ITER else F'Default is {cls._DEFAULT_ITER}.'
             argp.add_argument(
                 '-I', '--iterations',
                 metavar='K',
                 type=number,
-                default=self._DEFAULT_ITER,
+                default=cls._DEFAULT_ITER,
                 help=F'Optionally specify the number of iterations. {hlp}'
             )
-        if self._DEFAULT_HASH is not NotImplemented:
+        if cls._DEFAULT_HASH is not NotImplemented:
             argp.add_argument(
                 '-A', '--algorithm',
-                default=self._DEFAULT_HASH,
+                default=cls._DEFAULT_HASH,
                 metavar='A',
                 choices=[h.name for h in HashAlgorithms],
                 help=(

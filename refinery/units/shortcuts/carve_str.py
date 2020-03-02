@@ -1,9 +1,10 @@
-import refinery as r
+from .. import Unit
+from ..pattern.carve import carve
 
 
-class carve_str(r.Unit):
+class carve_str(Unit):
     """
     Carves the longest string expression and removes the surrounding quotes.
     """
     def process(self, data):
-        return (r.carve('-lt1', 'string') | r.snip('1:-1'))(data)
+        return carve('string', longest=True, take=1)(data)[1:-1]

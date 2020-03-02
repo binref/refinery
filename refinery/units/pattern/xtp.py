@@ -6,7 +6,7 @@ from fnmatch import fnmatch
 from ipaddress import ip_address
 from urllib.parse import urlparse
 
-from . import PatternExtractor
+from . import PatternExtractor, arg
 from .. import RefineryCriticalException
 from ...lib.patterns import indicators
 
@@ -19,6 +19,35 @@ class xtp(PatternExtractor):
     below for a complete list. To extract data formats such as hex-encoded
     data, use `refinery.carve`.
     """
+
+    @arg('pattern', type=str, default=('hostname', 'url', 'email'), help=(
+        'Choose the pattern to extract, defaults are hostname, url, and email. '
+        'Use an asterix character to select all available patterns. The available '
+        'patterns are: {}'.format(', '.join(p.name for p in indicators))))
+    @arg.switch('-f', dest='filter', help=(
+        'If this setting is enabled, the xtp unit will attempt to reduce the number '
+        'of false positives by certain crude heuristics.'))
+    def __init__(
+        self, *pattern, filter=False, min=1, max=None, len=None, whitespace=False,
+        unique=False, longest=False, take=None
+    ):
+        self.superinit(super(), **vars(), ascii=True, utf16=True)
+
+        patterns = {
+            p for name in pattern for p in indicators if fnmatch(p.name, name)
+        }
+        if indicators.hostname in patterns:
+            patterns.remove(indicators.hostname)
+            patterns.add(indicators.ipv4)
+            patterns.add(indicators.domain)
+        patterns = [F'(?P<{p.name}>{p.value})' for p in patterns]
+        if not patterns:
+            raise RefineryCriticalException('The given mask does not match any known indicator pattern.')
+        pattern = '|'.join(patterns)
+        self.log_debug(F'using pattern: {pattern}')
+
+        self.args.pattern = re.compile(pattern.encode(self.codec))
+        self.args.filter = filter
 
     _LEGITIMATE_HOSTS = [
         'adobe.com',
@@ -57,35 +86,6 @@ class xtp(PatternExtractor):
         'system.net',
         'wscript.shell',
     ]
-
-    def interface(self, argp):
-        argp.add_argument('-f', '--filter', action='store_true', help=(
-            'If this setting is enabled, the xtp unit will attempt to reduce the number '
-            'of false positives by certain crude heuristics.'))
-        argp.add_argument('pattern', metavar='PATTERN', type=str, nargs='*',
-            default=['hostname', 'url', 'email'], help=(
-                'Choose the pattern to extract, defaults are hostname, url, and email. '
-                'Use an asterix character to select all available patterns. The available '
-                'patterns are: {}'.format(', '.join(p.name for p in indicators))
-            )
-        )
-        return super().interface(argp)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        patterns = {
-            p for name in self.args.pattern for p in indicators if fnmatch(p.name, name)
-        }
-        if indicators.hostname in patterns:
-            patterns.remove(indicators.hostname)
-            patterns.add(indicators.ipv4)
-            patterns.add(indicators.domain)
-        patterns = [F'(?P<{p.name}>{p.value})' for p in patterns]
-        if not patterns:
-            raise RefineryCriticalException('The given mask does not match any known indicator pattern.')
-        self.pattern = '|'.join(patterns)
-        self.log_debug(F'using pattern: {self.pattern}')
-        self.pattern = re.compile(self.pattern.encode(self.codec))
 
     @classmethod
     def _check_match(cls, data, pos, name, value):
@@ -148,4 +148,4 @@ class xtp(PatternExtractor):
             whitelist.add(value)
 
         transforms = None if not self.args.filter else [check]
-        yield from self.matches_processed(data, self.pattern, transforms)
+        yield from self.matches_processed(data, self.args.pattern, transforms)

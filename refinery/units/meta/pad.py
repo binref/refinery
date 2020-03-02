@@ -11,7 +11,8 @@ class pad(Unit):
     size specifications override this behaviour.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         size = argp.add_mutually_exclusive_group()
         size.add_argument(
             '-b', '--blocksize',

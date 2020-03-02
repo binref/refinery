@@ -49,7 +49,8 @@ class rncrypt(Unit):
     Implements encryption and decryption using the RNCryptor specification.
     See also: https://github.com/RNCryptor
     """
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('password', type=multibin)
         return super().interface(argp)
 

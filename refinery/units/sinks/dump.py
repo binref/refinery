@@ -31,7 +31,8 @@ class dump(Unit):
     If no file is specified, the first ingested input is dumped to the clipboard.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             'filenames',
             type=str,

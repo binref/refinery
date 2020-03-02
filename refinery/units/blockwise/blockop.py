@@ -34,7 +34,8 @@ class blockop(ArithmeticUnit):
     after the update of each block, respectively.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('operation', type=blockop_expression, help='A Python expression defining the operation.')
         argp.prologue = argp.add_mutually_exclusive_group()
         argp.prologue.add_argument('-p', '--prologue', type=blockop_expression, metavar='E', default=None, help=(

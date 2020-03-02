@@ -13,43 +13,42 @@ from ....lib.argformats import multibin, OptionFactory, extract_options
 class CipherExecutable(Executable):
     """
     A metaclass for the abstract class `refinery.units.crypto.cipher.CipherUnit` which
-    normalizes the class variable `__key_sizes__` containing an iterable of all possible
+    normalizes the class variable `key_sizes` containing an iterable of all possible
     key sizes that are acceptable for the represented cipher.
     """
-    def __init__(cls, name, bases, nmspc, abstract=False):
 
-        if cls.__key_sizes__:
-            try:
-                iter(cls.__key_sizes__)
-            except TypeError:
-                cls.__key_sizes__ = (cls.__key_sizes__,)
-        else:
-            cls.__key_sizes__ = ()
+    def __new__(mcs, name, bases, nmspc, abstract=False, blocksize=1, key_sizes=None):
+        nmspc.setdefault('blocksize', blocksize)
+        nmspc.setdefault('key_sizes', key_sizes)
+        return super(CipherExecutable, mcs).__new__(mcs, name, bases, nmspc, abstract=abstract)
 
-        return super(CipherExecutable, cls).__init__(
-            name, bases, nmspc, abstract=abstract
-        )
+    def __init__(cls, name, bases, nmspc, abstract=False, **_):
+        cls.key_sizes = (cls.key_sizes,) if isinstance(cls.key_sizes, int) else tuple(cls.key_sizes or ())
+        super(CipherExecutable, cls).__init__(name, bases, nmspc, abstract=abstract)
+
+    @property
+    def streaming(cls):
+        return cls.blocksize == 1
 
 
 class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
-    __blocksize__ = 1
-    __key_sizes__ = None
-
-    @property
-    def __stream__(self) -> bool:
-        return self.__blocksize__ == 1
 
     @property
     def maximum_key_size(self) -> int:
-        return max(self.__key_sizes__)
+        return max(self.key_sizes)
 
-    def interface(self, argp):
+    @property
+    def streaming(self):
+        return self.__class__.streaming
 
-        if self.__blocksize__ > 1:
+    @classmethod
+    def interface(cls, argp):
+
+        if cls.blocksize > 1:
             argp.add_argument(
                 '-b', '--block-align', action='store_true', help=(
                     F'Pad all input data with zero bytes to a multiple of the block '
-                    F'size ({self.__blocksize__} bytes).'
+                    F'size ({cls.blocksize} bytes).'
                 )
             )
 
@@ -66,21 +65,11 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
         argp.add_argument('key', type=multibin, help='encryption key')
 
-        if not self.__stream__:
-            argp.add_argument('--iv', type=multibin, default=bytes(self.__blocksize__), nargs='?',
+        if not cls.streaming:
+            argp.add_argument('--iv', type=multibin, default=bytes(cls.blocksize), nargs='?',
                 help='Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')
 
         return super().interface(argp)
-
-    def __init__(self, *args, **kw):
-        if self.__key_sizes__:
-            try:
-                iter(self.__key_sizes__)
-            except TypeError:
-                self.__key_sizes__ = (self.__key_sizes__,)
-        else:
-            self.__key_sizes__ = ()
-        super().__init__(*args, **kw)
 
     @property
     def key_size_chosen(self) -> int:
@@ -95,10 +84,10 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
     @property
     def iv(self) -> bytes:
-        if not self.__stream__ and len(self.args.iv) != self.__blocksize__:
+        if not self.streaming and len(self.args.iv) != self.blocksize:
             raise ValueError(
                 F'The IV has length {len(self.args.iv)} but the block size '
-                F'is {self.__blocksize__}.'
+                F'is {self.blocksize}.'
             )
         return self.args.iv
 
@@ -109,21 +98,21 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
         raise NotImplementedError
 
     def _zpad(self, data):
-        if not self.__stream__ and self.args.block_align:
-            overhang = len(data) % self.__blocksize__
+        if not self.streaming and self.args.block_align:
+            overhang = len(data) % self.blocksize
             if overhang:
-                padding = self.__blocksize__ - overhang
+                padding = self.blocksize - overhang
                 self.log_info(F'appending {padding} padding null bytes')
                 return data + B'\0' * padding
         return data
 
     def reverse(self, data: bytes) -> bytes:
         data = self._zpad(data)
-        if not self.__stream__ and self.args.padding:
+        if not self.streaming and self.args.padding:
             padding = self.args.padding[0]
             if padding != 'RAW':
                 self.log_info('padding method:', padding)
-                data = pad(data, self.__blocksize__, padding.lower())
+                data = pad(data, self.blocksize, padding.lower())
         data = self.encrypt(data)
         return data
 
@@ -131,13 +120,13 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
         return self.unpad(self.decrypt(self._zpad(data)))
 
     def unpad(self, data: bytes) -> bytes:
-        if self.__stream__ or not self.args.padding:
+        if self.streaming or not self.args.padding:
             return data
         for p in self.args.padding:
             if p == 'RAW':
                 return data
             try:
-                return unpad(data, self.__blocksize__, p.lower())
+                return unpad(data, self.blocksize, p.lower())
             except Exception:
                 pass
         else:
@@ -149,30 +138,31 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
 class StandardCipherExecutable(CipherExecutable):
 
-    def __new__(mcs, name, bases, nmspc, cipher=None):
-        return super(StandardCipherExecutable, mcs).__new__(
-            mcs, name, bases, nmspc, abstract=not cipher)
-
-    def __init__(cls, name, bases, nmspc, cipher=None):
-        abstract = not cipher
-        if not abstract:
-            cls.__cipher__ = cipher
-            cls.__blocksize__ = cipher.block_size
-            cls.__key_sizes__ = cipher.key_size
+    def __new__(mcs, name, bases, nmspc, cipher=NotImplemented):
+        if cipher is NotImplemented:
+            keywords = dict(abstract=True)
         else:
-            cls.__cipher__ = NotImplemented
-        return super(StandardCipherExecutable, cls).__init__(
-            name, bases, nmspc, abstract=abstract)
+            keywords = dict(
+                abstract=False,
+                blocksize=cipher.block_size,
+                key_sizes=cipher.key_size,
+            )
+        return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
+
+    def __init__(cls, name, bases, nmspc, cipher=NotImplemented):
+        cls.stdcipher = cipher
+        super(StandardCipherExecutable, cls).__init__(name, bases, nmspc, abstract=cipher is NotImplemented)
 
 
 class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
-    def interface(self, argp):
-        if not self.__stream__:
-            modes = extract_options(self.__cipher__)
+    @classmethod
+    def interface(cls, argp):
+        if not cls.streaming:
+            modes = extract_options(cls.stdcipher)
             if not modes:
                 raise RefineryCriticalException(
-                    F'cipher {self.__cipher__.__name__} is a block cipher module '
+                    F'cipher {cls.stdcipher.__name__} is a block cipher module '
                     F'but no cipher block mode constants were found.'
                 )
             argp.add_argument('mode', type=OptionFactory(modes), metavar='mode', choices=list(modes), help=(
@@ -182,20 +172,20 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
     def _get_cipher_instance(self, **optionals) -> Any:
         self.log_info(F'encryption key:', self.key.hex())
-        if not self.__stream__:
+        if not self.streaming:
             if not self.args.mode.name == 'ECB':
                 optionals['IV'] = self.iv
                 self.log_info('initial vector:', self.iv.hex())
             if self.args.mode:
                 optionals['mode'] = self.args.mode.value
         try:
-            return self.__cipher__.new(key=self.key, **optionals)
+            return self.stdcipher.new(key=self.key, **optionals)
         except TypeError:
             # occurs when this mode requires no IV
             optionals.pop('IV')
             if self.iv:
                 self.log_info('ignoring IV for mode', self.args.mode)
-            return self.__cipher__.new(key=self.key, **optionals)
+            return self.stdcipher.new(key=self.key, **optionals)
 
     def encrypt(self, data: bytes) -> bytes:
         return self._get_cipher_instance().encrypt(data)
@@ -205,9 +195,6 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
 
 class StreamCipherUnit(CipherUnit, abstract=True):
-
-    def __stream__(self) -> bool:
-        return True
 
     def keystream(self) -> Iterable[bytes]:
         raise NotImplementedError
@@ -221,7 +208,8 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
 class LatinStreamCipher(StandardCipherUnit):
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-N', '--nonce', default=B'REFINERY', type=multibin,
             help='Specify the one-time use nonce; the default value is "REFINERY".')
         return super().interface(argp)

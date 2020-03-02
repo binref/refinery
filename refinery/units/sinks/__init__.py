@@ -7,7 +7,8 @@ from ...lib.tools import get_terminal_size, lookahead
 
 class HexViewerMixin:
 
-    def hexviewer_interface(self, argp):
+    @classmethod
+    def hexviewer_interface(cls, argp):
         from ...lib.argformats import number
         argp.add_argument('-A', '--no-addr', dest='hexaddr', action='store_false',
             help='Do not show byte offsets in hexdump.')

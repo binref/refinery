@@ -11,7 +11,8 @@ class zl(Unit):
     ZLib compression and decompression.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-l', '--level', action='store', type=number[0:9], default=9,
             help='specify level manually')
         argp.add_argument('-w', '--window', action='store', type=number[8:15], default=15,

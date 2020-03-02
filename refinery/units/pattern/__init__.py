@@ -10,7 +10,7 @@ from itertools import islice
 
 from ...lib.types import INF, AST
 from ...lib.argformats import number, regexp
-from .. import Unit
+from .. import Unit, arg
 
 
 def _lazy_load(cmd: bytes):
@@ -131,9 +131,31 @@ def TransformSubstitutionFactory(fmt):
     return transformation
 
 
-class AbstractRegexUnit(Unit, abstract=True):
+class PatternExtractorBase(Unit, abstract=True):
 
-    def matches(self, data: ByteString, pattern: Union[ByteString, re.Pattern], ascii: bool = True, utf16: bool = True):
+    def __init__(
+        self,
+        min        : arg.number('-n', help='Matches must have length at least N.') = 1,
+        max        : arg.number('-N', help='Matches must have length at most N.') = None,
+        len        : arg.number('-E', help='Matches must be of length N.') = None,
+        whitespace : arg.switch('-w', help='Strip all whitespace from input data.') = False,
+        unique     : arg.switch('-q', help='Yield every (transformed) Match only once.') = False,
+        longest    : arg.switch('-l', help='Sort results by length before picking.') = False,
+        take       : arg.number('-t', help='Return only the first N occurrences.') = None,
+    ):
+        super().__init__(
+            min=min,
+            max=max or INF,
+            len=len or AST,
+            whitespace=whitespace,
+            unique=unique,
+            ascii=True,
+            utf16=True,
+            longest=longest,
+            take=take or INF
+        )
+
+    def matches(self, data: ByteString, pattern: Union[ByteString, re.Pattern]):
         """
         Searches the input data for the given regular expression pattern. If the
         argument `utf16` is `True`, search for occurrences where a zero byte
@@ -142,9 +164,9 @@ class AbstractRegexUnit(Unit, abstract=True):
         """
         if not isinstance(pattern, re.Pattern):
             pattern = re.compile(pattern)
-        if ascii:
+        if self.args.ascii:
             yield from pattern.finditer(data)
-        if utf16:
+        if self.args.utf16:
             d0 = data[0::2]
             d1 = data[1::2]
             for match in pattern.finditer(d0):
@@ -153,33 +175,6 @@ class AbstractRegexUnit(Unit, abstract=True):
             for match in pattern.finditer(d1):
                 if not any(d0[match.start() + 1 : match.end() + 1]):
                     yield match
-
-
-class PatternExtractorBase(AbstractRegexUnit, abstract=True):
-
-    def interface(self, argp):
-        argp = super().interface(argp)
-
-        filters = argp.add_argument_group('Match Filters')
-        filters.add_argument('-n', '--min', type=number, metavar='N', default=1, help='Matches must have length at least N.')
-        filters.add_argument('-N', '--max', type=number, metavar='N', default=INF, help='Matches must have length at most N.')
-        filters.add_argument('-E', '--len', type=number, metavar='N', default=AST, help='Matches must be of length N.')
-        filters.add_argument('-w', '--whitespace', action='store_true', help='Strip all whitespace from input data.')
-        filters.add_argument('-q', '--unique', action='store_true', help='Yield every (transformed) Match only once.')
-
-        filters.set_defaults(ascii=True, utf16=True)
-
-        selectors = argp.add_argument_group('Match Selectors')
-        selectors.add_argument('-l', '--longest', action='store_true',
-            help='Sort results by length before picking.')
-
-        mode = selectors.add_mutually_exclusive_group()
-        mode.add_argument('-t', '--take', type=number[1:], metavar='N', default=INF,
-            help='Return the first N occurrences.')
-        mode.add_argument('-p', '--pick', type=number, metavar='k', default=None,
-            help='Pick the pattern occurrence at index k, starting at 0.')
-
-        return filters
 
     def matches_filtered(
         self,
@@ -200,7 +195,7 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
 
         if self.args.whitespace:
             data = re.sub(BR'\s+', B'', data)
-        for match in self.matches(data, pattern, self.args.ascii, self.args.utf16):
+        for match in self.matches(data, pattern):
             for transform in transforms:
                 hit = transform(match) if callable(transform) else transform
                 if hit is None or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
@@ -240,8 +235,6 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
         if self.args.take:
             end = None if self.args.take is INF else self.args.take
             result = islice(result, end)
-        if self.args.pick:
-            result = islice(result, self.args.pick, self.args.pick + 1)
         yield from result
 
     def matches_processed(
@@ -260,61 +253,50 @@ class PatternExtractorBase(AbstractRegexUnit, abstract=True):
 
 
 class PatternExtractor(PatternExtractorBase, abstract=True):
-    def interface(self, argp):
-        filters = super().interface(argp)
-        switch = filters.add_mutually_exclusive_group()
-        switch.add_argument(
-            '-u', '--only-utf16',
-            action='store_false',
-            dest='ascii',
-            help='Search for UTF16 encoded patterns only.'
+    def __init__(
+        self, min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None,
+        ascii: arg.switch('-u', '--no-ascii', group='AvsU', dest='ascii', help='Search for UTF16 encoded patterns only.') = True,
+        utf16: arg.switch('-a', '--no-utf16', group='AvsU', dest='utf16', help='Search for ASCII encoded patterns only.') = True,
+    ):
+        super().__init__(
+            min=min,
+            max=max,
+            len=len,
+            whitespace=whitespace,
+            unique=unique,
+            longest=longest,
+            take=take
         )
-        switch.add_argument(
-            '-a', '--only-ascii',
-            action='store_false',
-            dest='utf16',
-            help='Search for ASCII encoded patterns only.'
-        )
-        return argp
+        self.args.ascii = ascii
+        self.args.utf16 = utf16
 
 
 class RegexUnit(PatternExtractorBase, abstract=True):
 
-    def interface(self, argp, regex_default=None):
-        mode = argp.add_argument_group(
-            'Regular Expression Flags',
-            'The DOTALL flag is set by default and has to be '
-            'disabled rather than enabled.'
+    def __init__(
+        self, regex : arg(type=regexp, help='Regular expression to match.'), /,
+        multiline   : arg.switch('-M', help='caret and dollar match the beginning and end of a line, the dot does not match line breaks.') = False,
+        ignorecase  : arg.switch('-I', help='ignore capitalization for alphabetic characters.') = False,
+        utf16       : arg.switch('-u', help='search for unicode patterns instead of ascii.') = False,
+        min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None
+    ):
+        super().__init__(
+            min=min,
+            max=max,
+            len=len,
+            whitespace=whitespace,
+            unique=unique,
+            longest=longest,
+            take=take
         )
-        mode.add_argument('-M', '--multiline', action='store_const', default=B'', const=B'm')
-        mode.add_argument('-A', '--notdotall', dest='dotall', action='store_const', default=B's', const=B'')
-        mode.add_argument('-I', '--ignorecase', action='store_const', default=B'', const=B'i')
 
-        regex = dict(
-            type=regexp,
-            help='Regular expression to match.'
-        )
-        if regex_default:
-            regex.update(dict(
-                default=regex_default,
-                nargs='?'
-            ))
+        self.args.utf16 = utf16
+        self.args.ascii = not utf16
 
-        argp.add_argument('regex', **regex)
+        regex_flags = B'm' if multiline else B's'
+        if ignorecase: regex_flags += B'i'
 
-        filters = super().interface(argp)
-        filters.add_argument(
-            '-u', '--utf16',
-            action='store_true',
-            default=False,
-            help='Search for UTF-16 encoded patterns instead of ASCII.'
-        )
-        return argp
+        if isinstance(regex, str):
+            regex = regex.encode(self.codec)
 
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
-        self.args.ascii = not self.args.utf16
-        flags = B''.join(getattr(self.args, flag)
-            for flag in ('ignorecase', 'multiline', 'dotall'))
-        if flags:
-            self.args.regex = B'(?%s)%s' % (flags, self.args.regex)
+        self.args.regex = B'(?%s)%s' % (regex_flags, regex)

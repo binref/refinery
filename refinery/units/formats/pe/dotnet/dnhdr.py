@@ -10,7 +10,8 @@ class dnhdr(JSONEncoderUnit):
     output is a representation of the deserialized data in JSON format.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-r', '--resources',
             action='store_true',

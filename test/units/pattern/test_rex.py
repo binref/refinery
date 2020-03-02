@@ -96,8 +96,8 @@ class TestRexDeobfuscate(TestUnitBase):
 
     def test_nested_substitution_expressions(self):
         unit = refinery.rex(
-            R'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
-            R'$(1 | hex | aes ECB $(2 | hex | xor $3 | hex -R) | trim -r 00)'
+            RB'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
+            RB'$(1 | hex | aes ECB $(2 | hex | xor $3 | hex -R) | trim -r 00)'
         )
 
         msg = B'Too much technology, in too little time.'
@@ -139,7 +139,7 @@ class TestRexDeobfuscate(TestUnitBase):
             B'domain/www.yahoo.com\n'
             B'domain/ns1.dns.com'
         )
-        rex = refinery.rex('-AM', R'^domain\/(.*)$', '$1')
+        rex = refinery.rex.assemble('-M', R'^domain\/(.*)$', '$1')
         self.assertEqual(rex(data), data.replace(B'domain/', B''))
 
     def test_generic_parameters_01(self):

@@ -12,7 +12,8 @@ class trim(Unit):
     Removes byte sequences at beginning and end of input data.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('junk', type=multibin,
             default=[w.encode('ascii') for w in whitespace],
             help='Character(s) to be removed, default is whitespace.', nargs='*')

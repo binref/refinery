@@ -19,7 +19,8 @@ class pack(BlockTransformation):
     equal to `007B00220100000C000100EA` in hexadecimal.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         base = argp.add_argument_group(
             'Number Base Options',
             'Up to base 36 is supported by extending the decimal digits with '

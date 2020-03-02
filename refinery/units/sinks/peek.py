@@ -47,7 +47,8 @@ class peek(Unit, HexViewerMixin):
     a terminal, the data is discarded instead.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         from ...lib.argformats import number
         lines = argp.add_mutually_exclusive_group()
         lines.add_argument('-l', '--lines', metavar='N', type=number, default=10,
@@ -61,7 +62,7 @@ class peek(Unit, HexViewerMixin):
             help='Always peek data as string, escape characters if necessary.')
         peek.add_argument('-b', '--brief', action='store_true',
             help='One line peek, implies --lines=0.')
-        return super().interface(self.hexviewer_interface(argp))
+        return super().interface(cls.hexviewer_interface(argp))
 
     def process(self, data):
         for line in self._peeklines(data):

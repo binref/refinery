@@ -10,7 +10,8 @@ class dnds(JSONEncoderUnit):
     The output is a representation of the deserialized data in JSON format.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-r', '--keep-references',
             dest='dereference',

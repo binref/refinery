@@ -82,7 +82,8 @@ class vbe(Unit):
         0x7F : [0x67, 0x2F, 0x51]
     }
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-m', '--no-marker', dest='marker', action='store_false',
             help=(
                 'Do not require magic marker when encoding and do not search for '

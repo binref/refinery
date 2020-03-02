@@ -24,20 +24,22 @@ the script is executed.
 import sys
 import os
 import io
+import inspect
 
-from enum import IntEnum
+from enum import IntEnum, Enum
 from functools import wraps
-from inspect import isgenerator
-from typing import Iterable, BinaryIO, Union, Optional, Callable, Any, ByteString
+from collections import OrderedDict
+from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Any, ByteString
 from argparse import (
     ArgumentParser,
     ArgumentError,
+    Namespace,
     RawDescriptionHelpFormatter,
     SUPPRESS,
 )
 
-from ..lib.argformats import pending, manifest
-from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead
+from ..lib.argformats import pending, manifest, multibin, number, sliceobj
+from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead, autoinvoke, skipfirst
 from ..lib.frame import Framed, Chunk
 
 
@@ -79,6 +81,272 @@ class Entry:
     pass
 
 
+class Argument:
+    """
+    This class implements an abstract argument to a Python function, including positional
+    and keyword arguments. Passing an `Argument` to a Python function can be done via the
+    matrix multiplication operator: The syntax `function @ Argument(a, b, kwd=c)` is
+    equivalent to the call `function(a, b, kwd=c)`.
+    """
+    __slots__ = 'args', 'kwargs'
+
+    def __init__(self, *args, **kwargs):
+        self.args = list(args)
+        self.kwargs = kwargs
+
+    def __rmatmul__(self, method):
+        return method(*self.args, **self.kwargs)
+
+    def __repr__(self):
+        def rep(v):
+            r = repr(v)
+            if r.startswith('<'):
+                try:
+                    return v.__name__
+                except AttributeError:
+                    pass
+                try:
+                    return v.__class__.__name__
+                except AttributeError:
+                    pass
+            return r
+        arglist = [repr(a) for a in self.args]
+        arglist.extend(F'{key!s}={rep(value)}' for key, value in self.kwargs.items())
+        return ', '.join(arglist)
+
+
+class arg(Argument):
+    """
+    This child class of `refinery.units.Argument` is specifically an argument for the
+    `add_argument` method of an `ArgumentParser` from the `argparse` module. It can also
+    be used as a decorator for the constructor of a refinery unit to better control
+    the argument parser of that unit's command line interface. Example:
+    ```
+    class prefixer(Unit):
+        @arg('prefix', help='this data will be prepended to the input.')
+        def __init__(self, prefix) -> Unit: pass
+
+        def process(self, data):
+            return self.args.prefix + data
+    ```
+    Note that when the init of a unit has a return annotation that is a base class of
+    itself, then all its parameters will automatically be forwarded to that base class.
+    """
+
+    def __init__(
+        self, *args: str,
+            group    : Optional[str]              = None, # noqa
+            action   : Optional[str]              = None, # noqa
+            choices  : Optional[Iterable[Any]]    = None, # noqa
+            const    : Optional[Any]              = None, # noqa
+            default  : Optional[Any]              = None, # noqa
+            dest     : Optional[str]              = None, # noqa
+            help     : Optional[str]              = None, # noqa
+            metavar  : Optional[str]              = None, # noqa
+            nargs    : Optional[Union[int, str]]  = None, # noqa
+            required : Optional[bool]             = None, # noqa
+            type     : Optional[type]             = None, # noqa
+            guess    : bool                       = False # noqa
+    ) -> None:
+        kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
+            help=help, metavar=metavar, nargs=nargs, required=required, type=type)
+        kwargs = {key: value for key, value in kwargs.items() if value is not None}
+        self.group = group
+        self.guess = guess
+        for arg in args:
+            if not arg.startswith('-'):
+                dest = kwargs.setdefault('dest', arg)
+                if dest != arg:
+                    raise ValueError(F'Conflicting parameter name {arg!r} and destination {dest!r}.')
+                args = []
+                break
+        super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def switch(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None, off=False):
+        """
+        A convenience method to add argparse arguments that change a boolean value from True to False or
+        vice versa. By default, a switch will have a False default and change it to True when specified.
+        """
+        return arg(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
+
+    @staticmethod
+    def number(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None):
+        """
+        Used to add argparse arguments that contain a number.
+        """
+        return arg(*args, group=group, help=help, dest=dest, type=number, metavar='N')
+
+    @staticmethod
+    def option(*args: str, choices: Enum, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None):
+        """
+        Used to add argparse arguments with a fixed set of options, based on an enumeration.
+        """
+        cnames = [c.name for c in choices]
+        return arg(*args, group=group, help=help.format(choices=', '.join(cnames)),
+            metavar=choices.__name__, dest=dest, choices=cnames, type=choices.__getitem__)
+
+    @staticmethod
+    def choice(
+        *args: str, choices : List[str],
+        group   : Optional[str] = None,
+        help    : Optional[str] = None,
+        metavar : Optional[str] = None,
+        dest    : Optional[str] = None
+    ):
+        """
+        Used to add argparse arguments with a fixed set of options, based on a list of strings.
+        """
+        return arg(*args, group=group, type=str, metavar=metavar,
+            dest=dest, help=help.format(choices=', '.join(choices)), choices=choices)
+
+    @property
+    def destination(self):
+        """
+        The name of the variable where the contents of this parsed argument will be stored.
+        """
+        try:
+            return self.kwargs['dest']
+        except KeyError:
+            for a in self.args:
+                if a.startswith('--'):
+                    dest = a.lstrip('-').replace('-', '_')
+                    if not dest.replace('_', '').isalnum():
+                        import re
+                        dest = re.sub(R'[^\w]', '_', a.lstrip('-'))
+                    self.kwargs['dest'] = dest
+                    return dest
+            raise ValueError(F'The argument with these values has no destination: {self!r}')
+
+    @classmethod
+    def infer(cls, pt: inspect.Parameter) -> Argument:
+        """
+        This class method can be used to infer the argparse argument for a Python function
+        parameter. This guess is based on the annotation, name, and default value.
+        """
+
+        def get_argp_type(annotation_type):
+            if issubclass(annotation_type, (bytes, bytearray)):
+                return multibin
+            if issubclass(annotation_type, int):
+                return number
+            if issubclass(annotation_type, slice):
+                return sliceobj
+            return annotation_type
+
+        name = pt.name.replace('_', '-')
+        default = pt.default
+        guessed_pos_args = []
+        guessed_kwd_args = dict(dest=pt.name, guess=True)
+
+        if pt.annotation is not pt.empty:
+            if isinstance(pt.annotation, Argument):
+                if pt.annotation.kwargs.setdefault('dest', pt.name) != pt.name:
+                    raise ValueError('Incompatible argument destination specified.')
+                guessed_kwd_args.update(pt.annotation.kwargs)
+                guessed_pos_args = pt.annotation.args
+                guessed_kwd_args['guess'] = False
+            elif isinstance(pt.annotation, type):
+                if not issubclass(pt.annotation, bool):
+                    guessed_kwd_args['type'] = get_argp_type(pt.annotation)
+                elif not isinstance(default, bool):
+                    raise ValueError('Default value for boolean arguments must be provided.')
+
+        if pt.kind is pt.VAR_POSITIONAL:
+            return cls(nargs='*', **guessed_kwd_args)
+
+        if default is not pt.empty:
+            if pt.kind not in (pt.VAR_POSITIONAL, pt.POSITIONAL_ONLY):
+                guessed_pos_args.append(F'--{name}')
+            if isinstance(default, (list, tuple)):
+                if not pt.default:
+                    guessed_kwd_args.setdefault('nargs', '*')
+                    default = pt.empty
+                else:
+                    guessed_kwd_args.setdefault('nargs', '+')
+                    guessed_kwd_args.setdefault('default', pt.default)
+                    default = default[0]
+            else:
+                guessed_kwd_args.setdefault('default', default)
+                if pt.kind is pt.POSITIONAL_ONLY:
+                    guessed_kwd_args.setdefault('nargs', '?')
+
+        if default is not pt.empty:
+            if not isinstance(default, bool):
+                if 'type' not in guessed_kwd_args:
+                    guessed_kwd_args['type'] = get_argp_type(type(default))
+            elif 'action' not in guessed_kwd_args:
+                guessed_kwd_args['action'] = 'store_false' if default else 'store_true'
+
+        return cls(*guessed_pos_args, **guessed_kwd_args)
+
+    def __ior__(self, them):
+        self.kwargs.update(them.kwargs)
+
+        if not self.args:
+            self.args = list(them.args)
+            return self
+
+        sflag = None
+        lflag = None
+
+        def iterboth():
+            yield from them.args
+            yield from self.args
+
+        for a in iterboth():
+            if a.startswith('--'):
+                lflag = lflag or a
+                continue
+            sflag = sflag or a
+
+        self.args = []
+        if sflag: self.args.append(sflag)
+        if lflag: self.args.append(lflag)
+        return self
+
+    def __or__(self, them):
+        clone = self.__copy__()
+        clone |= them
+        return clone
+
+    def __copy__(self):
+        cls = self.__class__
+        clone = cls.__new__(cls)
+        clone.kwargs = dict(self.kwargs)
+        clone.args = list(self.args)
+        return clone
+
+    def __repr__(self):
+        return F'arg({super().__repr__()})'
+
+    def __call__(self, init):
+        parameters = inspect.signature(init).parameters
+        try:
+            inferred = arg.infer(parameters[self.destination])
+            inferred |= self
+            init.__annotations__[self.destination] = inferred
+        except KeyError:
+            raise ValueError(F'Unable to decorate because no parameter with name {self.destination} exists.')
+        return init
+
+
+class ArgumentSpecification(OrderedDict):
+    """
+    A container object that stores `refinery.units.arg` specifications.
+    """
+
+    def merge(self, argument: arg):
+        """
+        Insert or update the specification with the given argument.
+        """
+        dest = argument.destination
+        if dest in self:
+            self[dest] |= argument
+            return
+        self[dest] = argument
+
+
 class Executable(type):
     """
     This is the metaclass for refinery units. A class which is of this type is
@@ -93,6 +361,62 @@ class Executable(type):
     are present, only the first one is executed and an error message is generated
     for the other ones.
     """
+
+    def _infer_argspec(cls, args: Optional[ArgumentSpecification] = None):
+
+        args = ArgumentSpecification() if args is None else args
+        temp = ArgumentSpecification()
+        init = NotImplemented
+
+        if not cls.is_retrofitted:
+            return args
+
+        exposed = [pt.name for pt in skipfirst(inspect.signature(cls.__init__).parameters.values())]
+        parents = []
+
+        for parent in skipfirst(reversed(cls.mro())):
+            if parent.__init__ is init:
+                continue
+            init = parent.__init__
+            sign = inspect.signature(init)
+            parents.append(sign)
+
+        # The arguments are added in reverse order to the argument parser later.
+        # This is done to have a more intuitive use of decorator based argument configuration.
+        exposed.reverse()
+
+        for name in exposed:
+            for sign in parents:
+                try:
+                    argument = arg.infer(sign.parameters[name])
+                except KeyError:
+                    continue
+                if argument.guess:
+                    temp.merge(argument)
+                else:
+                    args.merge(argument)
+
+        for guess in temp.values():
+            known = args.get(guess.destination, None)
+            if known is None:
+                args.merge(guess)
+                continue
+            if len(known.args) == 1 and guess.args:
+                flagparam = guess.args[0]
+                known.args.append(flagparam)
+            for k in guess.kwargs:
+                known.kwargs.setdefault(k, guess.kwargs[k])
+
+        for known in args.values():
+            if len(known.args) == 1 and not known.args[0].startswith('--'):
+                flagname = known.destination.replace('_', '-')
+                known.args.append(F'--{flagname}')
+            if 'action' not in known.kwargs:
+                known.kwargs.setdefault('type', multibin)
+            elif known.kwargs['action'] in ('store_true', 'store_false'):
+                known.kwargs.pop('default', None)
+
+        return args
 
     def __new__(mcs, name, bases, nmspc, abstract=False):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
@@ -109,6 +433,7 @@ class Executable(type):
             return wrapped
 
         nmspc.setdefault('__doc__', '')
+        nmspc.setdefault('argspec', None)
 
         for op in ('process', 'reverse'):
             if op in nmspc:
@@ -116,10 +441,42 @@ class Executable(type):
 
         if not abstract and Entry not in bases:
             bases = bases + (Entry,)
+
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
     def __init__(cls, name, bases, nmspc, abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
+
+        if not abstract:
+            cls.argspec = cls._infer_argspec(cls.argspec)
+
+        fwd = cls.__init__.__annotations__.get('return', None)
+
+        if fwd is not None and not issubclass(cls, fwd):
+            fwd = None
+        elif cls.__init__.__code__.co_code == (lambda: None).__code__.co_code:
+            fwd = bases[0]
+
+        if fwd is not None:
+            head = []
+            tail = None
+
+            for p in skipfirst(inspect.signature(cls.__init__).parameters.values()):
+                if p.kind is p.POSITIONAL_ONLY:
+                    head.append(p.name)
+                if p.kind is p.VAR_POSITIONAL:
+                    tail = p.name
+
+            @wraps(cls.__init__)
+            def cls__init__(self, *args, **kwargs):
+                for k, p in enumerate(head):
+                    kwargs[p] = args[k]
+                if tail:
+                    kwargs[tail] = args[k:]
+                fwd.__init__(self, **kwargs)
+
+            cls.__init__ = cls__init__
+
         if not abstract and sys.modules[cls.__module__].__name__ == '__main__':
             if Executable.Entry:
                 cls._output(
@@ -138,6 +495,11 @@ class Executable(type):
         inverse of `refinery.units.Unit.process`.
         """
         return hasattr(cls, 'reverse')
+
+    @property
+    def is_retrofitted(cls) -> bool:
+        params = inspect.signature(cls.__init__).parameters.values()
+        return not any(p.kind is p.VAR_KEYWORD for p in params)
 
     @property
     def codec(self) -> str:
@@ -184,6 +546,17 @@ class DelayedArgumentProxy:
     recomputed for each input.
     """
 
+    def __copy__(self):
+        cls = self.__class__
+        clone = cls.__new__(cls)
+        clone._store(
+            _argv=self._argv,
+            _argo=list(self._argo),
+            _args=dict(self._args),
+            _done=self._done
+        )
+        return clone
+
     def __init__(self, argv, argo):
         args = {}
         done = True
@@ -194,7 +567,7 @@ class DelayedArgumentProxy:
                 done = False
         self._store(
             _argv=argv,
-            _argo=argo,
+            _argo=list(argo),
             _args=args,
             _done=done
         )
@@ -234,6 +607,8 @@ class DelayedArgumentProxy:
         raise AttributeError(F'the value {name} cannot be accessed until data is available.')
 
     def __setattr__(self, name, value):
+        if not hasattr(self._argv, name):
+            self._argo.append(name)
         if pending(value):
             self._store(_done=False)
         else:
@@ -253,6 +628,10 @@ class Unit(metaclass=Executable, abstract=True):
         return self.__class__.is_reversible
 
     @property
+    def is_retrofitted(self) -> bool:
+        return self.__class__.is_retrofitted
+
+    @property
     def codec(self) -> str:
         return self.__class__.codec
 
@@ -261,44 +640,14 @@ class Unit(metaclass=Executable, abstract=True):
         """
         Returns the current log level as an element of `refinery.units.LogLevel`.
         """
-        if self.args.quiet:
-            return LogLevel.NONE
-        return LogLevel(min(len(LogLevel) - 2, self.args.verbose))
+        try:
+            return LogLevel.NONE if self.args.quiet else LogLevel(min(len(LogLevel) - 2, self.args.verbose))
+        except AttributeError:
+            return LogLevel.DETACHED
 
     @log_level.setter
     def log_level(self, value: LogLevel) -> None:
         self.args.verbose = int(value)
-
-    def interface(self, argp: ArgumentParser) -> ArgumentParser:
-        """
-        Receives a reference to an `ArgumentParser` object. This parser will be used to parse
-        the command line for this unit into the member variable called `args`.
-        Children of `refinery.units.Unit` should override this method to customize their command
-        line interface.
-        """
-        base = argp.add_argument_group(
-            'Global Options',
-            'The following options are available in every refinery unit.'
-        )
-
-        base.add_argument('-h', '--help', action='help',
-            help='Show this help message and exit.')
-        if self.is_reversible:
-            base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
-        else:
-            base.set_defaults(reverse=False)
-        base.add_argument('-0', '--null',
-            action='store_true', help='Do not produce any output.')
-
-        base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
-        base.add_argument('-L', '--lenient', dest='partial', action='store_true',
-            help='Allow this unit to return incomplete results.')
-        base.add_argument('-v', '--verbose', action='count',
-            help='Specify up to two times to increase log level.')
-        base.set_defaults(verbose=1)
-
-        argp.add_argument('--debug-timing', action='store_true', help=SUPPRESS)
-        return argp
 
     def __iter__(self):
         return self
@@ -306,20 +655,19 @@ class Unit(metaclass=Executable, abstract=True):
     def _exception_handler(self, exception: BaseException):
         if self.log_level <= LogLevel.DETACHED:
             raise exception
-        try:
-            raise exception
-        except RefineryCriticalException as E:
-            self.log_warn(F'critical error, terminating: {E}')
-        except RefineryPartialResult as E:
-            self.log_warn(F'error, partial result returned: {E}')
-            if self.args.partial:
-                return E.partial
-        except Exception as E:
-            self.log_warn(F'unexpected error: {E}')
-        finally:
-            if self.log_level >= LogLevel.DEBUG:
-                import traceback
-                traceback.print_exc(file=sys.stderr)
+        elif isinstance(exception, RefineryCriticalException):
+            self.log_warn(F'critical error, terminating: {exception}')
+        elif isinstance(exception, RefineryPartialResult):
+            if not self.log_level:
+                return None
+            elif not self.log_warn(F'error, partial result returned: {exception}'):
+                raise exception
+            return exception.partial
+        else:
+            self.log_warn(F'unexpected error: {exception}')
+        if self.log_level >= LogLevel.DEBUG:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     def __next__(self):
         if not self._chunks:
@@ -338,7 +686,7 @@ class Unit(metaclass=Executable, abstract=True):
 
         def normalized_action(data: bytearray) -> Iterable[bytes]:
             result = op(data)
-            if isgenerator(result):
+            if inspect.isgenerator(result):
                 yield from filter(lambda x: x is not None, result)
             elif result is not None:
                 yield result
@@ -396,8 +744,8 @@ class Unit(metaclass=Executable, abstract=True):
     def __getitem__(self, unit: 'Unit'):
         if isinstance(unit, type):
             unit = unit()
-        alpha = self.clone()
-        omega = unit.clone()
+        alpha = self.__copy__()
+        omega = unit.__copy__()
         alpha.args.nesting += 1
         omega.args.nesting -= 1
         omega.nozzle.source = alpha
@@ -411,7 +759,7 @@ class Unit(metaclass=Executable, abstract=True):
         try:
             if isinstance(stream, type):
                 stream = stream()
-            return stream.clone().__ror__(self)
+            return stream.__copy__().__ror__(self)
         except AttributeError:
             self._target = stream
 
@@ -566,18 +914,44 @@ class Unit(metaclass=Executable, abstract=True):
         message = ' '.join(transform(msg) for msg in messages)
         sys.stderr.write(F'{cls.__name__}: {message}\n')
 
-    def clone(self):
+    @classmethod
+    def interface(cls, argp: ArgumentParser) -> ArgumentParser:
         """
-        Return a clone of this unit. This routine is used internally to avoid
-        mutability issues when using pipe-like syntax for `refinery.units.Unit`
-        objects in a Python script.
+        Receives a reference to an `ArgumentParser` object. This parser will be used to parse
+        the command line for this unit into the member variable called `args`. Previously, it
+        was requested that children of `refinery.units.Unit` override this method to customize
+        their command line interface. This is now deprecated in favor of using initialization
+        methods and `refinery.units.arg` decorators to customize the parser. The current goal
+        is to remove `refinery.units.Unit.interface` in a future version when retrofitting the
+        old units to the new `refinery.units.arg` based interface is complete.
         """
-        other = self.__class__(**vars(self.argv))
-        other._source = self._source
-        other._buffer = self._buffer
-        return other
+        base = argp.add_argument_group('generic options')
 
-    def __init__(self, *args, **keywords):
+        base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
+        base.set_defaults(reverse=False)
+
+        if cls.is_reversible:
+            base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
+
+        base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
+        base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
+        base.add_argument('-v', '--verbose', action='count', default=LogLevel.DETACHED,
+            help='Specify up to two times to increase log level.')
+        argp.add_argument('--debug-timing', dest='dtiming', action='store_true', help=SUPPRESS)
+
+        groups = {}
+
+        for arg in cls.argspec.values():
+            if arg.group is not None:
+                groups[arg.group] = argp.add_mutually_exclusive_group()
+
+        for argument in reversed(cls.argspec.values()):
+            groups.get(argument.group, argp).add_argument @ argument
+
+        return argp
+
+    @classmethod
+    def _generate_parser(cls, *args, **keywords):
         cols = get_terminal_size()
         args = list(args)
 
@@ -585,10 +959,9 @@ class Unit(metaclass=Executable, abstract=True):
             def _add_action(self, action):
 
                 class RememberOrder:
-                    def __getattr__(self, name):
-                        return getattr(action, name)
-                    def __setattr__(self, name, value):
-                        return setattr(action, name, value)
+                    def __getattr__(self, name): return getattr(action, name)
+                    def __setattr__(self, name, value): return setattr(action, name, value)
+
                     def __call__(self, parser, ns, values, opt=None):
                         if self.dest not in parser.order:
                             parser.order.append(self.dest)
@@ -663,31 +1036,98 @@ class Unit(metaclass=Executable, abstract=True):
                     return ', '.join(parts)
 
         argp = ArgumentParserWithKeywordHooks(
-            prog=self.__class__.__name__.replace('_', '-'),
-            description=documentation(self.__class__),
+            prog=cls.__name__.replace('_', '-'),
+            description=documentation(cls),
             formatter_class=LineWrapRawTextHelpFormatter,
             add_help=False
         )
 
         argp.set_defaults(nesting=0)
+        return cls.interface(argp)
 
-        self.argp = self.interface(argp)
-        self.argv = argp.parse_args()
-        self.args = DelayedArgumentProxy(self.argv, self.argp.order)
+    @staticmethod
+    def superinit(super, **keywords):
+        """
+        This function uses `refinery.lib.tools.autoinvoke` to call the `__init__` function of `super` with
+        by taking all required parameters from `keywords`, ignoring the rest. Calling
+        ```
+        self.superinit(super(), **vars())
+        ```
+        will therefore perform initialization of the parent class without having to forward all parameters
+        manually. This is a convenience feature which reduces code bloat when many parameters have to be
+        forwarded, see e.g. `refinery.units.pattern.carve.carve` for an example.
+        """
+        return autoinvoke(super.__init__, keywords)
 
+    @classmethod
+    def assemble(cls, *args, **keywords):
+        """
+        Creates a unit from the given arguments and keywords. The given keywords are used to overwrite any
+        previously specified defaults for the argument parser of the unit, then this modified parser is
+        used to parse the given list of arguments as though they were given on the command line. The parser
+        results are used to construct an instance of the unit, this object is consequently returned.
+        """
+
+        argp = cls._generate_parser(*args, **keywords)
+        args = argp.parse_args()
+
+        if not cls.is_retrofitted:
+            return cls(DelayedArgumentProxy(args, argp.order))
+
+        unit = autoinvoke(cls, args.__dict__)
+
+        unit.args.quiet = args.quiet
+
+        unit.args.dtiming = args.dtiming
+        unit.args.nesting = args.nesting
+        unit.args.reverse = args.reverse
+        unit.args.devnull = args.devnull
+        unit.args.verbose = args.verbose
+
+        return unit
+
+    def __copy__(self):
+        cls = self.__class__
+        clone = cls.__new__(cls)
+        clone.__dict__.update(self.__dict__)
+    #   TODO: Preferably, units should keep all their information in args, making
+    #         the above __dict__ update unnecessary.
+    #   clone._buffer = self._buffer
+    #   clone._source = self._source
+        clone._target = None
+        clone._framed = None
+        clone._chunks = None
+        clone.args = self.args.__copy__()
+        return clone
+
+    def __init__(self, *args, **keywords):
         self._buffer = B''
         self._source = None
         self._target = None
         self._framed = None
         self._chunks = None
 
-        if self.log_level == LogLevel.WARN:
-            level = os.environ.get('REFINERY_VERBOSITY', LogLevel.DETACHED)
-            try:
-                level = int(level)
-            except ValueError:
-                level = getattr(LogLevel, level, LogLevel.DETACHED)
-            self.log_level = level
+        if self.is_retrofitted:
+            assert not args, (
+                'Retrofitted units may not call the Unit base constructor with positional arguments.'
+            )
+            # Since Python 3.6, functions always preserve the order of the keyword 
+            # arguments passed to them (see PEP 468).
+            keywords.update(dict(
+                dtiming=False,
+                nesting=0,
+                reverse=False,
+                devnull=False,
+                verbose=LogLevel.DETACHED,
+                quiet=False,
+            ))
+            self.args = DelayedArgumentProxy(
+                Namespace(**keywords), keywords.values())
+        elif not keywords and len(args) == 1 and isinstance(args[0], DelayedArgumentProxy):
+            self.args = args[0]
+        else:
+            argp = self._generate_parser(*args, **keywords)
+            self.args = DelayedArgumentProxy(argp.parse_args(), argp.order)
 
     @classmethod
     def run(cls, argv=None, stream=None) -> None:
@@ -703,27 +1143,33 @@ class Unit(metaclass=Executable, abstract=True):
 
         with stream as source:
             try:
-                unit = cls(*argv)
-                unit.log_level = max(unit.log_level, LogLevel.WARN)
+                unit = cls.assemble(*argv)
+                dbgl = os.environ.get('REFINERY_VERBOSITY', LogLevel.WARN)
+                try:
+                    dbgl = int(dbgl)
+                except ValueError:
+                    dbgl = getattr(LogLevel, dbgl, LogLevel.WARN)
+                unit.log_level = dbgl
             except ArgparseError as ap:
                 ap.parser.error_commandline(str(ap))
             except Exception as msg:
+                raise
                 cls._output(F'initialization failed:', msg)
             else:
-                if unit.args.debug_timing:
+                if unit.args.dtiming:
                     from time import process_time
                     start_clock = process_time()
                     unit.output('starting clock: {:.4f}'.format(start_clock))
 
                 try:
-                    with open(os.devnull, 'wb') if unit.args.null else sys.stdout.buffer as output:
+                    with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
                         source | unit | output
                 except KeyboardInterrupt:
                     unit.output('aborting due to keyboard interrupt')
                 except OSError:
                     pass
 
-                if unit.args.debug_timing:
+                if unit.args.dtiming:
                     stop_clock = process_time()
                     unit.output('stopping clock: {:.4f}'.format(stop_clock))
                     unit.output('time delta was: {:.4f}'.format(stop_clock - start_clock))

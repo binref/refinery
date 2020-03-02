@@ -25,7 +25,8 @@ class EndOfStringNotFound(ValueError):
 
 class PathExtractorUnit(Unit):
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('paths', metavar='path', nargs='*', default=['*'], type=pathspec,
             help=(
                 'A path from which data is to be extracted. Each item is returned '
@@ -49,7 +50,8 @@ class PathExtractorUnit(Unit):
 
 class MemoryExtractorUnit(Unit):
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         limit = argp.add_mutually_exclusive_group()
         limit.add_argument('-t', '--take', type=number[1:], default=0,
             help='The number of bytes to read.')

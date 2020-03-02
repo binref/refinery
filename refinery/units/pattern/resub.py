@@ -3,7 +3,7 @@
 import re
 
 from ...lib.argformats import utf8
-from . import RegexUnit, TransformSubstitutionFactory
+from . import arg, RegexUnit, TransformSubstitutionFactory
 
 
 class resub(RegexUnit):
@@ -13,12 +13,16 @@ class resub(RegexUnit):
     the unit supports processing the contents of match groups with arbitrary
     refinery units (see `refinery.units.pattern.TransformSubstitutionFactory`).
     """
-
-    def interface(self, argp):
-        super().interface(argp)
-        argp.add_argument('subst', type=utf8, nargs='?', default=B'',
-            help='substitution, use $1 for group 1, $0 for entire match. Matches get removed by default.')
-        return argp
+    def __init__(self, regex,
+        subst : arg(type=utf8, help=(
+            'Substitution value: use $1 for group 1, $0 for entire match. '
+            'Matches are removed (replaced by an empty string) by default.'
+        )) = B'', /,
+        multiline=False, ignorecase=False, min=1, max=None, len=None,
+        whitespace=False, unique=False, longest=False, take=None, utf16=False
+    ):
+        self.superinit(super(), **vars())
+        self.args.subst = subst
 
     def process(self, data):
         self.log_info('pattern:', self.args.regex)

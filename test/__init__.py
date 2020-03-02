@@ -1,6 +1,8 @@
+import sys
 import unittest
 import random
 import refinery
+import logging
 
 
 __all__ = ['refinery', 'TestBase', 'NameUnknownException']
@@ -31,3 +33,8 @@ class TestBase(unittest.TestCase):
 
     def setUp(self):
         random.seed(0xBAADF00D)  # guarantee deterministic 'random' buffers
+        logging.basicConfig(
+            stream=sys.stderr,
+            level=logging.INFO,
+            format='%(message)s'
+        )

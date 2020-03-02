@@ -9,7 +9,8 @@ class rep(Unit):
     Duplicates the given input a given number of times.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('count', type=number[1:], nargs='?', default=2,
             help='Defines the number of outputs for each input. The default is 2.')
         return super().interface(argp)

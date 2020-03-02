@@ -13,7 +13,8 @@ class base(Unit):
 
     _DIGITS = B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument(
             '-e',
             '--little-endian',

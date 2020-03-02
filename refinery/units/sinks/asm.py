@@ -21,7 +21,8 @@ class asm(Unit):
     Disassembles the input data using the capstone disassembly library.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         modes = {
             'x16': (CS_ARCH_X86, CS_MODE_16),
             'x32': (CS_ARCH_X86, CS_MODE_32),

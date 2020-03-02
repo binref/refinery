@@ -28,7 +28,8 @@ class datefix(Unit):
         R'GMT([+-])(\d{2})(\d{2}) \(.+\)$'  # Thu Apr 24 2014 12:32:21 GMT-0700 (PDT)
     ]]
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         iso = '%Y-%m-%d %H:%M:%S'
         argp.add_argument(
             '-d', '--dos', action='store_true',

@@ -9,7 +9,8 @@ class repl(Unit):
     Performs a simple binary string replacement on the input data.
     """
 
-    def interface(self, argp):
+    @classmethod
+    def interface(cls, argp):
         argp.add_argument('-n', '--count', type=number, default=-1,
             help='Only replace the given number of occurrences')
         argp.add_argument('search', type=multibin,
