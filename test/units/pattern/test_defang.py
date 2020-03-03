@@ -9,7 +9,7 @@ class TestDefangUnit(TestUnitBase):
         df = self.load()
         self.assertEqual(
             df(B'visit https://binref.github.io/ for some retro docs'),
-            B'visit https://binref.github[.]io/ for some retro docs'
+            B'visit https[:]//binref.github[.]io/ for some retro docs'
         )
 
     def test_ipv4_defang(self):
