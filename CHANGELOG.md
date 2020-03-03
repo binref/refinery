@@ -4,6 +4,9 @@
 - All hashing prefixes for multibin expressions have been implemented as separate units, i.e. `sha256` and `md5` are now units that output the corresponding hash of the input data.
 - The `xtmail` unit was added which can extract the body and attachments of email documents, both Outlook and MIME formats.
 - The framed format was extended with rudimentary support for metadata in framed chunks. This is currently used by the `xtzip` and `xtmail` units to attach a `name` property to emitted chunks which contains the file name information from the parsed data. The `dump` unit now has a `--meta` option to read this `name` property and use it as the file name for dumping. The `--meta` options defaults to using the SHA256 hash of the data as the file name if no corresponding metadata is present.
+- The `pemeta` unit was added.
+- The `carve-json` unit was added.
+- The `peslice` and `elfslice` units were given a unified interface.
 
 ## Version 0.1.3
 - Fixes a bug in the .NET header parser where the tables were sometimes parsed in the wrong order.
