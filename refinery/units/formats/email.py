@@ -3,7 +3,7 @@
 from email.parser import BytesParser
 from extract_msg.message import Message
 
-from . import ExtractorUnit
+from . import PathExtractorUnit
 
 
 class EmailPart:
@@ -15,7 +15,7 @@ class EmailPart:
         return bool(self.data)
 
 
-class xtmail(ExtractorUnit):
+class xtmail(PathExtractorUnit):
     """
     Extract files and body from EMail messages. The unit supports both the Outlook message format
     and regular MIME documents.

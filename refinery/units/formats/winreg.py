@@ -7,10 +7,10 @@ try:
 except ModuleNotFoundError:
     Registry = None
 
-from . import ExtractorUnit
+from . import PathExtractorUnit
 
 
-class winreg(ExtractorUnit):
+class winreg(PathExtractorUnit):
     """
     Extract values from a Windows registry hive.
     """

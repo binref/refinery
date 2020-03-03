@@ -3,10 +3,10 @@
 import io
 import zipfile
 
-from . import ExtractorUnit
+from . import PathExtractorUnit
 
 
-class xtzip(ExtractorUnit):
+class xtzip(PathExtractorUnit):
     """
     Extract files from a Zip archive.
     """

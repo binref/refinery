@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import io
-
 from elftools.elf.elffile import ELFFile
 
-from ... import Unit
-from ....lib.argformats import number, virtualaddr
+from .. import MemoryExtractorUnit
 
 
-class elfslice(Unit):
+class elfslice(MemoryExtractorUnit):
     """
     Extract data from ELF executables based on virtual offsets.
     """
 
-    def interface(self, argp):
-        argp.add_argument('offset', type=virtualaddr,
-            help='Specify virtual offset as either .section:OFFSET or just a virtual address in hex.')
-        argp.add_argument('limit', type=number[1:], nargs='?', default=0,
-            help='Optionally specify a number of bytes to read, default is to read until the end of input.')
-        return super().interface(argp)
-
-    def _data_offset(self, elf, addr):
+    def _get_file_offset(self, elf, offset):
+        addr = offset.address
+        if offset.section:
+            for section in elf.iter_sections():
+                if section.name == offset.section:
+                    return section['sh_offset'] + addr
+            else:
+                raise ValueError(F'unable to find section {offset.section}.')
         for segment in elf.iter_segments():
             begin = segment.header.p_vaddr
             size = segment.header.p_memsz
@@ -38,15 +36,7 @@ class elfslice(Unit):
         try:
             elf = ELFFile(io.BytesIO(data))
         except Exception:
-            elf = None
-        if not elf:
             raise ValueError('unable to parse input as ELF file')
-        if not self.args.offset.section:
-            return data[self._slice(self._data_offset(elf, self.args.offset.address))]
-        for k in range(elf.num_sections()):
-            section = elf.get_section(k)
-            if self.args.offset.section == section.name:
-                section_data = section.get_data()
-                return section_data[self._slice(self.args.offset.address)]
-        else:
-            raise ValueError(F'unable to find section {self.args.offset.section}')
+
+        return self._read_from_memory(data,
+            lambda addr: self._get_file_offset(elf, addr))
