@@ -199,7 +199,7 @@ class formats(PatternEnum):
     "Base64 encoded strings"
     b64u = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}', ignore_case=False)
     "Base64 encoded strings using URL-safe alphabet"
-    hex = alphabet(R'[0-9a-f]')
+    hex = alphabet(R'[0-9a-fA-F]')
     "Hexadecimal strings"
     HEX = alphabet(R'[0-9A-F]', ignore_case=False)
     "Uppercase hexadecimal strings"

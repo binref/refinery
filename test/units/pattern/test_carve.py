@@ -13,7 +13,7 @@ class TestCarve(TestUnitBase):
         )
         self.assertEqual(unit(data), b'VG9vIG11Y2ggdGVjaG5vbG9neSwgaW4gdG9vIGxpdHRsZSB0aW1lLg==')
 
-    def test_extract_hex(self):
+    def test_extract_hex_01(self):
         unit = self.load('hex', whitespace=True, longest=True, take=1)
         data = (
             B'7937e4492b014445eede1b00006dd0bd05e55720849807014e5a120807c723e9\n'
@@ -26,3 +26,10 @@ class TestCarve(TestUnitBase):
             B'f0f492e798e4c3de1663ff799edbfb7f673d9bfb7e7bdf7da6b5d6b5dac53aff\n'
         )
         self.assertEqual(unit(data), data.replace(b'\n', B''))
+
+    def test_extract_hex_02(self):
+        unit = self.load('hex', min=8)
+        self.assertEqual(
+            unit(B'This is a mixed case hex string:42C56Ffe7da9c37481f26aFE1a06252f!'),
+            B'42C56Ffe7da9c37481f26aFE1a06252f'
+        )
