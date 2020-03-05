@@ -28,6 +28,8 @@ class xtp(PatternExtractor):
         'azure.com',
         'curl.haxx.se',
         'digicert.com',
+        'globalsign.com',
+        'globalsign.net',
         'iana.org',
         'live.com',
         'microsoft.com',
