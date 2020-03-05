@@ -495,6 +495,24 @@ class DelayedBinaryArgument(DelayedArgument):
         """
         return open(path, 'rb').read()
 
+    @handler.register('range', final=True)
+    def range(self, region: str) -> bytes:
+        """
+        Implements the final modifier `range:bounds` to generate a sequence of bytes, where
+        `bounds` is parsed as a `refinery.lib.argformats.sliceobj` with one exception: If
+        `bounds` is just a single integer, it is interpreted as the upper bound for a sequence
+        of bytes starting at zero.
+        """
+        try:
+            bounds = number(region)
+            return bytearray(range(bounds))
+        except ValueError:
+            pass
+        bounds = sliceobj(region)
+        if bounds.stop is None:
+            raise ArgumentTypeError('cannot generate unbounded byte sequence.')
+        return bytearray(range(bounds.start or 0, bounds.stop, bounds.step or 1))
+
     @handler.register('c', 'copy', final=True)
     def copy(self, region: str) -> bytes:
         """
