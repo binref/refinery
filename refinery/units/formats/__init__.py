@@ -69,9 +69,9 @@ class MemoryExtractorUnit(Unit):
 
         if self.args.end:
             end = offset_oracle(self.args.end)
-            if end > start:
+            if end < start:
                 raise ValueError(
-                    F'The end offset 0x{end:08X} lies {end-start} bytes '
+                    F'The end offset 0x{end:08X} lies {start-end} bytes '
                     F'before the start offset 0x{start:08X}.'
                 )
         elif self.args.take:
