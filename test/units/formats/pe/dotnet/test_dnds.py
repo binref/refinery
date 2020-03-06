@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json
+import base64
+import zlib
 
 from .... import TestUnitBase
 
@@ -9,40 +11,64 @@ class TestDotNetDeserializer(TestUnitBase):
 
     def test_real_world_01(self):
         unit = self.load(encoder='hex')
-        data = bytes.fromhex('0001000000'
-            'FFFFFFFF01000000000000000C020000005153797374656D2E44726177696E67'
-            '2C2056657273696F6E3D322E302E302E302C2043756C747572653D6E65757472'
-            '616C2C205075626C69634B6579546F6B656E3D62303366356637663131643530'
-            '61336105010000001553797374656D2E44726177696E672E4269746D61700100'
-            '0000044461746107020200000009030000000F030000000B0200000289504E47'
-            '0D0A1A0A0000000D49484452000000100000001008060000001FF3FF61000000'
-            '0467414D410000B18F0BFC6105000000206348524D00007A26000080840000FA'
-            '00000080E8000075300000EA6000003A98000017709CBA513C00000196494441'
-            '54384FA5D3DD2B43711CC7F1EF1FC1855C892492A7927B97FE0192A724CF2486'
-            '3FC0AD851042CDC86373B6338C1592137B10172B93D6C43666C330EC6EBE1F36'
-            '1D0F17A75CBCFAAEDF7EEFDFF99DDA281A8DFE0B15F4980B590B667EF7162921'
-            '6FB0D0CA27D93159B9425F0DE5A9368B58FB84D9A5F187225625B0170D5ACAED'
-            '3241E54D2862B908BC9895C05E346829A77303AA7D0F6F072E7FD8A404F6A241'
-            '4BD91D6B5073197C95CE7CCFEB728EAB47E1F0FC4EBBE3B81D339D5C0F1A8F7C'
-            '6AB0B9EEE7D1A0A5AC76116ADDB72F7B1C8870EC0EE9B61DFE49BDCD3B2058BD'
-            'EA4F1EF56A8C74169C43839632DB0C50777E13DE3DBE0809FBCEE01C87C33A8B'
-            '6788370FC9671CEF59408396325A04A83FF53E6DF355B582CD3BCA4F84913F7C'
-            '7C2739834B68D0527A930E1AEDAEFB0DBEE6043F6D9CE737588BAF634ACE800E'
-            '0D5A4AAD5FA6B48695667E2F039F3E2D3315F3EB33DF408F062DA5D42D16B3BE'
-            'DE99A3593EC41823FE987222F6A2414BC955DA7EFC2C31994AA1AF8612CBA64A'
-            '124A274730932A34A484BCF9F32FAA5C94DE01ABC3866882C215F60000000049'
-            '454E44AE4260820B')
-        parsed = json.loads(unit(data))
-        self.assertEqual(len(parsed), 3)
+        data = json.loads(unit(zlib.decompress(base64.b85decode(
+            'c-muNWME+U4+J0@1bCQ$L||}baY<^fo=Z_;d1hX^jzU;!QE_H|o~@Cd0SM|SIG5&>loqAh=B1XF6eZ^9C<K%y<zyy%r&fmKXQ$@b'
+            'CK(u~nWmYi85*XT8YCJgvVzPPMKxB>DYGOuu>d5);*waB$j$_^o0Azx@Pi0$AeX5#z|WnRONtA~=k@e(2?EjrAk4uAB;`N<PXy^s'
+            'cl32+VA$Bt{U?zX$X7`A2=ZlMs8VBKXlP+z_yrVdc)`F>YQVtoDuIE)Y6b&?c)^@qfi?^bjMF?_978PpmtMZB?OZ5x{NsE1gRL>0'
+            'DwCE^s-FIjanf>?^D1rj2iCR<IGsI_T)fS=M|6^KwSc(x<ZDOF(heKE$=fGyCd)6rJZ8_Yb@%Ju-~T!HmWEXCKW@=4Gq@wU)9Sv9'
+            'X)5M#xNu7SreWkxr+D6{E6utiez)9Q`mtRpOm%}eZ`7%`MvhN?HIjC6?3pq3K%7a2=JI0ZRki&2?0WS#mau$V<mi1<HannLvS#YJ'
+            'n)9!V`c}I?{P4$b_v0P1#&cu%rTS~KHtc-&{NjS8Ysv((?rztwmgy*X!}oHV>_5-FXRQ??_P+9$`<m5LA~wgld79B}o`CW?;d{3G'
+            'I5>Zwdmz((*s43d!<_$Qy3G4X2cUcu%L@CicDbKJw>F)%KIPvs(Y~fe-Lly`<3do?WIn04>wfd@d&Xj)JLkE1MECk+uX7E2yis0j'
+            '<Ckq|o0?Xq&ph8w*I4xPYvcP4{cO5Rujq<x-gj^2;z+wA63YK(6e)qcb29W+-5(vpnO+Omw+WqI<|X8%?rtzy%VbH*o}ZufSH(=Z'
+            '$GG}%TSn6%(Qlw6>FMg{vd$@?i5mc8JO-@'
+        ))))
+        self.assertEqual(len(data), 3)
         self.assertEqual(
-            parsed[1]['Data']['LibraryName'],
+            data[1]['Data']['LibraryName'],
             'System.Drawing, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'
         )
         self.assertEqual(
-            parsed[2]['Data']['ClassInfo']['ClassName'],
+            data[2]['Data']['ClassInfo']['ClassName'],
             'System.Drawing.Bitmap'
         )
         self.assertEqual(
-            bytes.fromhex(parsed[2]['Data']['Members']['Data'])[:6],
+            bytes.fromhex(data[2]['Data']['Members']['Data'])[:6],
             B'\x89PNG\r\n'
+        )
+
+    def test_real_world_02(self):
+        unit = self.load()
+        data = json.loads(unit(zlib.decompress(base64.b85decode(
+            'c-pN~-EP`Q6gEvrK)b76wAx**S}96;(TjjE7#k$Ak{KKbxG@3a2&a+Pj3>eNF#a18!>UprU>~B-*_&NYlbcPl7c2EhKF8y4zVmOc'
+            'z;WE)xiHJ*#}~O$W}#zKG)3{+h3NReKyl&*<fKvMTh)5Cc6<O*Ow$;h5R}r`#>WTabb(zsLK{8s5ji0##=Fet=fZT8P_(Lo0AmDc'
+            '?k1`B5kavFtE!vOKlrPwe}$`l2%Hq>QNK$P*Vj9F7JHVP=a3Yw#NDEjwZ3<?%W*$H7y9a&HK9~0Gb$_M%U=a<pB=uPcG>g#IU=K#'
+            '8T`{uk(p;N?dQO&&ROqw-?F+k^j&g$>LTp?(&?te!RYb#x19+}s2x)fq=Y_3-*iB*TG_-=UGjwbYiE)Yjld_sZ;TaUM3M6}oR-os'
+            'r79w~bom&~i)Sq;KdS6L^KV@%6iUoC9`>nR%+*Uag1uaQeR25i&+hEJrz*X($)}H=y|$|;Lx%^IAdBo=;+ZYlX3JHUp|{>R8(A|3'
+            '{B%MxVas1?5cK%2uUllOMO(Sv?+s(~(({!u9E``oN>hSi=wom04O1u7jqJiY8;Hg*nF+IzwbYV1CKO197*P$+1whBQ2+Rn-@Zzju'
+            '0%fHrLD!txY6LU55L=gSI*_A_(e|`EH^J@NowXB7ahjFhB8vuXaYHbydr0B+@p?Gyn^pz(hv!S)^Nh*VQ{vN6+HZ+s1h$nJ${#!p'
+            'EChi7b88U&F53icxpJ=R7qU4vYAwF&iOo1RK`MiWD>aoY7)<b3wFkV{3kLW?U$zvD4;sF2jOw}&Eomi@<gg)$?MO*tw6sD+b?4{K'
+            'O1+Vr$Q9{XC>aLO`=)Il9dTSY|IdrXr+axny`BHq%U6~Y+z}ku4syT}K|e`XWeYyMafL#e&0Bhy_a0mC_czFCN|Id@#D*mBwVV2)'
+            'C7@c~(ORP|I#6_OpwMm$aIf@#ZvXHPLWyjR'
+        ))))
+        self.assertEqual([r['Type'] for r in data], [
+            'SerializedStreamHeader',
+            'BinaryLibrary',
+            'SystemClassWithMembersAndTypes',
+            'MemberReference',
+            'ObjectNullMultiple256',
+            'ClassWithMembersAndTypes'
+        ])
+
+        data = data[~0]['Data']['Members']
+
+        self.assertEqual(
+            data['<Bundle>k__BackingField']['Members']['_downloadedChecksum'],
+            'fed577a04637410f2b84e0b680396dc6dfc4994c'
+        )
+        self.assertEqual(
+            data['<CommandLine>k__BackingField'],
+            R'"${BUNDLEDIR}\java.exe" -oxqaaaarUa6aZ8iEhpjvydyAOVH1SRnx4z1WOcCD1BkT_nJOqzA2GDJrZWjkEPcHPPomOEoJpkljY'
+            R'jJudpTVxQ_IH6VJsU4UK_hOsYlntC7V6qtOlY4CtPgeCUn1bjrx-ZCEmEEoBZSaLqcxcb68WiuHAqQKzFBYZCgviU9s_Ed5-DbxqH9'
+            R'6ynlc2jeE1TPvJJGZ_-cGJNh1jjVRSjErFKuG866qCz-rcAMjOCb44nCZzVnTwxyo9A-NLTQAZPV081Bj65rrZCuAC3i75ExoHRlPL'
+            R'aH1jDoHlQTh8EO1o3kkVK2T4qht-s7Ap3769qEsreh_pELiYNdmLfA5ei6tIp7VVCTGZaa##'
         )

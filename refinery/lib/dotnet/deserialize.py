@@ -13,6 +13,7 @@ References:
 from collections import defaultdict
 
 from .types import (
+    BinaryArrayTypeEnumeration,
     Boolean,
     Box,
     Byte,
@@ -229,7 +230,7 @@ class MemberReference(Record):
 class BinaryArray(Record):
     def parse(self):
         self.ObjectId = self.expect(UInt32)
-        self.BinaryArrayTypeEnum = self.expect(BinaryTypeCode)
+        self.BinaryArrayTypeEnum = self.expect(BinaryArrayTypeEnumeration)
         self.Rank = self.expect(UInt32)
         self.Lengths = [self.expect(UInt32) for _ in range(self.Rank)]
         self.LowerBounds = []
@@ -237,7 +238,7 @@ class BinaryArray(Record):
             for _ in range(self.Rank):
                 self.LowerBounds.append(self.expect(UInt32))
         self.TypeEnum = self.expect(BinaryTypeCode)
-        self.AdditionalTypeInfo = self.expect(self.TypeEnum)
+        self.AdditionalTypeInfo = self.expect(self.TypeEnum.Parser)
         self.TypeEnum = repr(self.TypeEnum)
         Record.parse(self)
 
