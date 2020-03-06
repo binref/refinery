@@ -26,9 +26,14 @@ from .types import (
 )
 
 
-class InvalidSignature(Exception):
+class InvalidDotNetHeader(ValueError):
+    def __init__(self, msg=None):
+        ValueError.__init__(self, msg or '.NET parsing failed: corrupt header.')
+
+
+class InvalidSignature(InvalidDotNetHeader):
     def __init__(self):
-        Exception.__init__(self, '.NET parsing failed: Invalid signature.')
+        ValueError.__init__(self, '.NET parsing failed: Invalid signature.')
 
 
 class BitMask:
@@ -779,8 +784,19 @@ class ODict(dict):
             return default
 
 
+class NetMetaDataStreamDummy(dict):
+    def __init__(self, default=None):
+        self._default = default
+        dict.__init__(self)
+
+    def __getitem__(self, offset):
+        return self._default
+
+
 class NetMetaDataStream(dict):
-    def __init__(self, reader, type):
+    def __init__(self, reader, type, default=None):
+        dict.__init__(self)
+        self._default = default
         self._reader = reader
         self._type = type
         self._cached = False
@@ -791,7 +807,7 @@ class NetMetaDataStream(dict):
 
     def __getitem__(self, offset):
         if offset < 0:
-            return None
+            return self._default
         try:
             return dict.__getitem__(self, offset)
         except KeyError:
@@ -808,10 +824,7 @@ class NetMetaDataStream(dict):
         except ValueError:
             return None
         container = unpack(self[closest])
-        result = container[offset - closest:] or None
-        if result:
-            self[offset] = result
-        return result
+        return container[offset - closest:] or self._default
 
     def read(self):
         if self._cached:
@@ -844,10 +857,10 @@ class NetMetaDataStreams(Struct):
 
     def parse(self):
         self.Tables = None
-        self.Strings = {}
-        self.US = {}
-        self.GUID = {}
-        self.Blob = {}
+        self.Strings = NetMetaDataStreamDummy('')
+        self.US = NetMetaDataStreamDummy('')
+        self.GUID = NetMetaDataStreamDummy()
+        self.Blob = NetMetaDataStreamDummy(B'')
         with self._reader.checkpoint():
             TableName = '#~'
             for se in self._meta.StreamInfo:
@@ -863,13 +876,17 @@ class NetMetaDataStreams(Struct):
                 else:
                     continue
                 self._reader.seek(Entry.VirtualAddress)
-                r = StreamReader(self._reader.read(Entry.Size))
+                try:
+                    reader = StreamReader(self._reader.read(Entry.Size))
+                except ParserEOF:
+                    continue
                 if name != TableName:
+                    Default = ['', '', None, B''][k - 1]
                     Type = [NullTerminatedString, UnicodeString, StringGUID, RawBytes][k - 1]
-                    Stream = NetMetaDataStream(r, Type)
+                    Stream = NetMetaDataStream(reader, Type, Default)
                     setattr(self, name[1:], Stream)
                 else:
-                    self.Tables = r.expect(NetMetaDataTables, streams=self)
+                    self.Tables = reader.expect(NetMetaDataTables, streams=self)
 
 
 class NetMetaData(Struct):
@@ -882,9 +899,12 @@ class NetMetaData(Struct):
         return self.Streams.Tables.FieldRVA
 
     def parse(self):
-        self.Signature = self.expect(UInt32)
+        try:
+            self.Signature = self.expect(UInt32)
+        except ParserEOF:
+            raise InvalidSignature
         if self.Signature != 0x424A5342:
-            raise InvalidSignature()
+            raise InvalidSignature
         self.MajorVersion = self.expect(UInt16)
         self.MinorVersion = self.expect(UInt16)
         self._Reserved = self.expect(UInt32)
@@ -928,8 +948,13 @@ class DotNetHeader:
             self.pe = pefile.PE(data=data, fast_load=True)
             self.head = NetDirectory(self.reader(
                 self.pe.OPTIONAL_HEADER.DATA_DIRECTORY[14]))
+        except pefile.PEFormatError:
+            raise InvalidDotNetHeader
 
-        self.meta = NetMetaData(self.reader(self.head.MetaData))
+        try:
+            self.meta = NetMetaData(self.reader(self.head.MetaData))
+        except pefile.PEFormatError:
+            raise InvalidDotNetHeader
 
         if not parse_resources:
             self.resources = []

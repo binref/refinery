@@ -95,7 +95,7 @@ class NetManifestResource(Struct):
     def parse(self):
         self.Signature = self.expect(UInt32)
         if self.Signature != 0xBEEFCACE:
-            raise NoManagedResource()
+            raise NoManagedResource
 
         self.ReaderCount = self.expect(UInt32)
         self.ReaderTypeLength = self.expect(UInt32)
