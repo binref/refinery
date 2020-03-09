@@ -253,7 +253,10 @@ class arg(Argument):
                     raise ValueError('Default value for boolean arguments must be provided.')
 
         if pt.kind is pt.VAR_POSITIONAL:
-            return cls(nargs='*', **guessed_kwd_args)
+            oldnargs = guessed_kwd_args.setdefault('nargs', '*')
+            if oldnargs not in ('*', '+'):
+                raise ValueError(F'Variadic positional arguments has nargs set to {oldnargs!r}')
+            return cls(**guessed_kwd_args)
 
         if default is not pt.empty:
             if pt.kind not in (pt.VAR_POSITIONAL, pt.POSITIONAL_ONLY):
