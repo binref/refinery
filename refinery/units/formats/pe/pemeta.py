@@ -46,7 +46,7 @@ class pemeta(Unit):
 
         return bytes(signature)
 
-    def _parse_certs(self, pe, data):
+    def _parse_signature(self, pe, data):
         cert = self._extract_pkcs7(pe, data)
         info = {}
 
@@ -55,7 +55,7 @@ class pemeta(Unit):
         except Exception as E:
             raise ValueError(F'PKCS7 parser failed with error: {E!s}')
 
-        def tscrawl(entry, native, /, *path):
+        def tscrawl(entry, native):
             try:
                 if entry['type'] == 'signing_time':
                     return entry['values']
@@ -78,13 +78,13 @@ class pemeta(Unit):
                         item = entry[k]
                     except IndexError:
                         continue
-                    results = tscrawl(item, native, *path, F'[{k}]')
+                    results = tscrawl(item, native)
                     if results:
                         return results
             else:
                 for key in keys:
                     value = entry[key]
-                    results = tscrawl(value, native, *path, F'["{key}"]')
+                    results = tscrawl(value, native)
                     if isinstance(results, list) and len(results) == 1:
                         result = dict(Timestamp=str(results[0]))
                         try:
@@ -97,7 +97,7 @@ class pemeta(Unit):
                         return results
 
             try:
-                return tscrawl(entry.native, True, *path)
+                return tscrawl(entry.native, True)
             except Exception:
                 pass
 
@@ -122,15 +122,14 @@ class pemeta(Unit):
                     info.update(tbs)
                     return info
 
-    def process(self, data):
-        pe = pefile.PE(data=data, fast_load=True)
+    def _parse_file_info(self, pe, data):
         pe.parse_data_directories(
             directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
 
         try:
             FileInfoList = pe.FileInfo
         except AttributeError:
-            return B'{}'
+            return None
 
         for FileInfo in FileInfoList:
             for FileInfoEntry in FileInfo:
@@ -139,15 +138,26 @@ class pemeta(Unit):
                 for StringTableEntry in FileInfoEntry.StringTable:
                     StringTableEntryParsed = self._parse_pedict(StringTableEntry.entries)
                     StringTableEntryParsed['LangID'] = self._ensure_string(StringTableEntry.LangID)
-                    Signature = self._parse_certs(pe, data)
-                    try:
-                        pass
-                    except Exception as E:
-                        self.log_info(F'could not extract certificate: {E!s}')
-                        Signature = None
-                    StringTableEntryParsed['Signature'] = Signature
-                    return json.dumps(
-                        StringTableEntryParsed, sort_keys=True, indent=4, ensure_ascii=False
-                    ).encode(self.codec)
+                    return StringTableEntryParsed
 
-        return B'{}'
+    def process(self, data):
+        pe = pefile.PE(data=data, fast_load=True)
+        result = {}
+
+        try:
+            signature = self._parse_signature(pe, data)
+        except Exception as E:
+            self.log_info(F'could not extract certificate: {E!s}')
+        else:
+            if signature:
+                result['Signature'] = signature
+
+        try:
+            file_info = self._parse_file_info(pe, data)
+        except Exception as E:
+            self.log_info(F'failed to obtain file info resource: {E!s}')
+        else:
+            if file_info:
+                result['FileInfo'] = file_info
+
+        return json.dumps(result, indent=4, ensure_ascii=False).encode(self.codec)
