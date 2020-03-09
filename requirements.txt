@@ -1,3 +1,4 @@
+asn1crypto
 capstone
 colorama
 defusedxml
