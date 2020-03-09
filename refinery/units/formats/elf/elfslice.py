@@ -16,7 +16,8 @@ class elfslice(MemoryExtractorUnit):
         if offset.section:
             for section in elf.iter_sections():
                 if section.name == offset.section:
-                    return section['sh_offset'] + addr
+                    addr = section['sh_offset'] + addr
+                    return addr, addr + section.size
             else:
                 raise ValueError(F'unable to find section {offset.section}.')
         for segment in elf.iter_segments():
@@ -24,7 +25,7 @@ class elfslice(MemoryExtractorUnit):
             size = segment.header.p_memsz
             delta = addr - begin
             if delta in range(size + 1):
-                return segment.header.p_offset + delta
+                return segment.header.p_offset + delta, None
         else:
             raise ValueError('unable to find offset.')
 

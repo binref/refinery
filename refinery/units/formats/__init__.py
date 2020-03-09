@@ -65,7 +65,7 @@ class MemoryExtractorUnit(Unit):
 
     def _read_from_memory(self, data, offset_oracle):
 
-        start = offset_oracle(self.args.offset)
+        start, end = offset_oracle(self.args.offset)
 
         if self.args.end:
             end = offset_oracle(self.args.end)
@@ -86,7 +86,5 @@ class MemoryExtractorUnit(Unit):
                     break
             else:
                 raise EndOfStringNotFound
-        else:
-            end = None
 
         return data[start:end]

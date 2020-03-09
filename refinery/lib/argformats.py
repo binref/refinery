@@ -203,18 +203,22 @@ class virtualaddr:
     """
     def __init__(self, s='0'):
         try:
-            self.section, s = s.split(':')
+            self.section, address = s.split(':')
         except ValueError:
             self.section = None
+        else:
+            if not address:
+                self.address = 0
+                return
         try:
-            s = s.upper()
-            if s.endswith('H'):
-                s = '0x' + s[:-1]
-            self.address = number[0:](s)
+            address = address.upper()
+            if address.endswith('H'):
+                address = '0x' + address[:-1]
+            self.address = number[0:](address)
         except ValueError:
             pass
         try:
-            self.address = int(s, 0x10)
+            self.address = int(address, 0x10)
         except ValueError:
             raise ArgumentTypeError(F'could not parse {s} as hexadecimal integer')
 
