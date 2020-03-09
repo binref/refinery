@@ -18,4 +18,7 @@ class ppxml(Unit):
 
     @unicoded
     def process(self, data: str) -> str:
-        return defusedxml.minidom.parseString(data).toprettyxml(self.args.indent * ' ').strip()
+        node = defusedxml.minidom.parseString(data)
+        if B'<?xml' in data:
+            node = node.childNodes[0]
+        return node.toprettyxml(self.args.indent * ' ').strip()
