@@ -201,9 +201,9 @@ class virtualaddr:
     `refinery.elfslice` to reference offsets in executable file
     formats as they would appear in memory.
     """
-    def __init__(self, s='0'):
+    def __init__(self, address='0'):
         try:
-            self.section, address = s.split(':')
+            self.section, address = address.split(':')
         except ValueError:
             self.section = None
         else:
@@ -220,7 +220,7 @@ class virtualaddr:
         try:
             self.address = int(address, 0x10)
         except ValueError:
-            raise ArgumentTypeError(F'could not parse {s} as hexadecimal integer')
+            raise ArgumentTypeError(F'could not parse {address} as hexadecimal integer')
 
 
 def utf8(x):
