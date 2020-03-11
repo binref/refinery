@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import datetime
-import re
+from re import compile as re_compile
+from datetime import datetime, timedelta
 
-from .. import Unit
+from .. import arg, Unit
 from ...lib.decorators import linewise
 
 
@@ -22,48 +22,37 @@ class datefix(Unit):
         '%a %b %d %Y %H:%M:%S',       # Thu Apr 24 2014 12:32:21
     ]
 
-    _TIMEZONE_REGEXES = [re.compile(p) for p in [
+    _TIMEZONE_REGEXES = [re_compile(p) for p in [
         R'([+-])(\d{2})(\d{2})$',           # Thu Apr 24 2014 12:32:21 GMT-0700
         R'([+-])(\d{2}):(\d{2})$',          # 2017:09:11 23:47:22+02:00
         R'GMT([+-])(\d{2})(\d{2}) \(.+\)$'  # Thu Apr 24 2014 12:32:21 GMT-0700 (PDT)
     ]]
 
-    @classmethod
-    def interface(cls, argp):
-        iso = '%Y-%m-%d %H:%M:%S'
-        argp.add_argument(
-            '-d', '--dos', action='store_true',
-            help='Use DOS time parser instead of Unix time stamp parser.'
-        )
-        argp.add_argument(
-            'format',
-            default=iso,
-            nargs='?',
-            help=(
-                'Specify the output format as a strftime-like string. '
-                'The default is {}.'
-            ).format(iso).replace('%', R'%%')
-        )
-        return super().interface(argp)
+    def __init__(
+        self,
+        format: arg(help='Specify the output format as a strftime-like string, using ISO by default.') = '%Y-%m-%d %H:%M:%S',
+        dos: arg('-d', help='Parse timestamps in DOS rather than Unix format.') = False
+    ):
+        super().__init__(format=format, dos=dos)
 
     @staticmethod
-    def _dostime(stamp):
-        if not stamp:
-            stamp = "0000-00-00 00:00:00"
-        else:
-            d, t = stamp >> 16, stamp & 0xFFFF
-            s = (t & 0x1F) << 1
-            stamp = '{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}'.format(
-                ((d & 0xFE00) >> 0x9) + 1980,
-                ((d & 0x01E0) >> 0x5),
-                ((d & 0x001F) >> 0x0),
-                ((t & 0xF800) >> 0xB),
-                ((t & 0x07E0) >> 0x5),
-                59 if s == 60 else s
-            )
-        return datetime.datetime.fromisoformat(stamp)
+    def dostime(stamp: int) -> datetime:
+        """
+        Parses a given DOS timestamp into a datetime object.
+        """
+        d, t = stamp >> 16, stamp & 0xFFFF
+        s = (t & 0x1F) << 1
 
-    def _format(self, dt: datetime.datetime) -> str:
+        return datetime(
+            year   = ((d & 0xFE00) >> 0x9) + 1980,  # noqa
+            month  = ((d & 0x01E0) >> 0x5),         # noqa
+            day    = ((d & 0x001F) >> 0x0),         # noqa
+            hour   = ((t & 0xF800) >> 0xB),         # noqa
+            minute = ((t & 0x07E0) >> 0x5),         # noqa
+            second = 59 if s == 60 else s,          # noqa
+        )
+
+    def _format(self, dt: datetime) -> str:
         return dt.strftime(self.args.format)
 
     def _extract_timezone(self, data):
@@ -72,7 +61,7 @@ class datefix(Unit):
             if not m:
                 continue
             pm = m.group(1)
-            td = datetime.timedelta(
+            td = timedelta(
                 hours=int(m.group(2)), minutes=int(m.group(3)))
             if pm == '-':
                 td = -td
@@ -99,21 +88,21 @@ class datefix(Unit):
                 raise Exception('cannot parse all-numeric string as date: %s' % data)
             elif len(data) == 14:
                 # i.e. 20111020193727
-                return self._format(datetime.datetime.strptime(data, '%Y%m%d%H%M%S'))
+                return self._format(datetime.strptime(data, '%Y%m%d%H%M%S'))
             elif len(data) == 13:
                 # i.e. 1458016535000
                 time_stamp //= 1000
                 data = data[:-3]
             if self.args.dos:
-                return self._format(self._dostime(time_stamp))
+                return self._format(self.dostime(time_stamp))
             else:
-                return self._format(datetime.datetime.utcfromtimestamp(time_stamp))
+                return self._format(datetime.utcfromtimestamp(time_stamp))
 
         data, time_delta = self._extract_timezone(data)
 
         for f in self._FORMATS:
             try:
-                dt = datetime.datetime.strptime(data, f)
+                dt = datetime.strptime(data, f)
             except ValueError:
                 continue
             return self._format(dt if time_delta is None else dt - time_delta)
