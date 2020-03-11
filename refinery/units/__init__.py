@@ -465,13 +465,23 @@ class Executable(type):
                 if p.kind is p.VAR_POSITIONAL:
                     tail = p.name
 
-            @wraps(cls.__init__)
-            def cls__init__(self, *args, **kwargs):
-                for k, name in enumerate(head):
-                    kwargs[name] = args[k]
-                if tail:
-                    kwargs[tail] = args[k + 1:]
-                fwd.__init__(self, **kwargs)
+            if not head and not tail:
+                @wraps(cls.__init__)
+                def cls__init__(self, **kw):
+                    fwd.__init__(self, **kw)
+            elif not head:
+                @wraps(cls.__init__)
+                def cls__init__(self, *args, **kw):
+                    kw[tail] = args
+                    fwd.__init__(self, **kw)
+            else:
+                @wraps(cls.__init__)
+                def cls__init__(self, *args, **kw):
+                    for k, name in enumerate(head):
+                        kw[name] = args[k]
+                    if tail:
+                        kw[tail] = args[k + 1:]
+                    fwd.__init__(self, **kw)
 
             cls.__init__ = cls__init__
 
@@ -598,8 +608,9 @@ class DelayedArgumentProxy:
             pass
         try:
             value = getattr(self._argv, name)
-        except AttributeError:
-            raise AttributeError(F'Argument {name} not set.')
+        except AttributeError as e:
+            e.args = F'Argument {name} not set.',
+            raise
         if not value or not pending(value):
             return value
         raise AttributeError(F'the value {name} cannot be accessed until data is available.')
