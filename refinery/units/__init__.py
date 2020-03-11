@@ -933,7 +933,7 @@ class Unit(metaclass=Executable, abstract=True):
 
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
-        base.add_argument('-v', '--verbose', action='count', default=LogLevel.DETACHED,
+        base.add_argument('-v', '--verbose', action='count', default=LogLevel.WARN,
             help='Specify up to two times to increase log level.')
         argp.add_argument('--debug-timing', dest='dtiming', action='store_true', help=SUPPRESS)
 
@@ -1069,10 +1069,7 @@ class Unit(metaclass=Executable, abstract=True):
         argp = cls.argparser(*args, **keywords)
         args = argp.parse_args()
 
-        if not cls.is_retrofitted:
-            return cls(DelayedArgumentProxy(args, argp.order))
-
-        unit = autoinvoke(cls, args.__dict__)
+        unit = autoinvoke(cls, args.__dict__) if cls.is_retrofitted else cls(DelayedArgumentProxy(args, argp.order))
 
         unit.args.quiet = args.quiet
 
@@ -1124,6 +1121,7 @@ class Unit(metaclass=Executable, abstract=True):
         elif not keywords and len(args) == 1 and isinstance(args[0], DelayedArgumentProxy):
             self.args = args[0]
         else:
+            keywords.setdefault('verbose', -1)
             argp = self.argparser(*args, **keywords)
             self.args = DelayedArgumentProxy(argp.parse_args(), argp.order)
 
@@ -1142,35 +1140,42 @@ class Unit(metaclass=Executable, abstract=True):
         with stream as source:
             try:
                 unit = cls.assemble(*argv)
-                dbgl = os.environ.get('REFINERY_VERBOSITY', LogLevel.WARN)
-                try:
-                    dbgl = int(dbgl)
-                except ValueError:
-                    dbgl = getattr(LogLevel, dbgl, LogLevel.WARN)
-                unit.log_level = dbgl
             except ArgparseError as ap:
                 ap.parser.error_commandline(str(ap))
             except Exception as msg:
-                raise
                 cls._output(F'initialization failed:', msg)
+                return
+
+            try:
+                loglevel = os.environ['REFINERY_VERBOSITY']
+            except KeyError:
+                pass
             else:
-                if unit.args.dtiming:
-                    from time import process_time
-                    start_clock = process_time()
-                    unit.output('starting clock: {:.4f}'.format(start_clock))
-
                 try:
-                    with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
-                        source | unit | output
-                except KeyboardInterrupt:
-                    unit.output('aborting due to keyboard interrupt')
-                except OSError:
-                    pass
+                    loglevel = LogLevel[loglevel]
+                except KeyError:
+                    loglevels = ', '.join(ll.name for ll in LogLevel)
+                    unit.log_warn(F'unknown verbosity {loglevel!r}, pick from {loglevels}')
+                else:
+                    unit.log_level = loglevel
 
-                if unit.args.dtiming:
-                    stop_clock = process_time()
-                    unit.output('stopping clock: {:.4f}'.format(stop_clock))
-                    unit.output('time delta was: {:.4f}'.format(stop_clock - start_clock))
+            if unit.args.dtiming:
+                from time import process_time
+                start_clock = process_time()
+                unit.output('starting clock: {:.4f}'.format(start_clock))
+
+            try:
+                with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
+                    source | unit | output
+            except KeyboardInterrupt:
+                unit.output('aborting due to keyboard interrupt')
+            except OSError:
+                pass
+
+            if unit.args.dtiming:
+                stop_clock = process_time()
+                unit.output('stopping clock: {:.4f}'.format(stop_clock))
+                unit.output('time delta was: {:.4f}'.format(stop_clock - start_clock))
 
 
 __pdoc__ = {
