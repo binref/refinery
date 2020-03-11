@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
+import inspect
 import os
 import os.path
 import shlex
@@ -9,6 +10,8 @@ import subprocess
 from argparse import ArgumentParser
 
 assert __name__ == '__main__', 'this module is not supposed to be imported.'
+
+script_location = os.path.dirname(os.path.abspath(inspect.stack()[0][1]))
 
 argp = ArgumentParser()
 argp.add_argument('-w', '--wheel', action='store_true',
@@ -57,7 +60,7 @@ else:
 
 scriptname, _ = os.path.splitext(os.path.basename(__file__))
 shell, ext = ('powershell', 'ps1') if os.name == 'nt' else ('bash', 'sh')
-cmd = [shell, os.path.join(os.path.dirname(__file__), '{}.{}'.format(scriptname, ext))]
+cmd = [shell, os.path.join(script_location, '{}.{}'.format(scriptname, ext))]
 
 if args.wheel:
     cmd.append('-wheel')
