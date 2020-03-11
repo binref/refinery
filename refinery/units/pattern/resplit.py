@@ -12,8 +12,11 @@ class resplit(RegexUnit):
     """
 
     def __init__(
-        self, regex=RB'\r?\n', /, multiline=False, ignorecase=False, min=1, max=None,
-        len=None, whitespace=False, unique=False, longest=False, take=None, utf16=False
+        self, regex=RB'\r?\n',
+        # TODO: Use positional only in Python 3.8
+        # /,
+        multiline=False, ignorecase=False, min=1, max=None, len=None, whitespace=False,
+        unique=False, longest=False, take=None, utf16=False
     ):
         super().__init__(
             regex,

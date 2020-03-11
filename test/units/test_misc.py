@@ -43,6 +43,35 @@ class TestMetaProperties(TestUnitBase):
 
         self.assertEqual(prefixer.assemble('Hello')(B'World'), B'HelloWorld')
 
+    def test_custom_unit_02(self):
+        class foo(Unit):
+            def __init__(self, pos1, pos2, *posV, rev=False) -> Unit:
+                pass
+            def process(self, data):
+                it = reversed(self.args.posV) if self.args.rev else iter(self.args.posV)
+                return self.args.pos1 + B''.join(it) + data + self.args.pos2
+
+        unit1 = foo.assemble('[[', ']]', 'fi', 'fa', 'fo')
+        unit2 = foo.assemble('[[', ']]', 'fi', 'fa', 'fo', '--rev')
+
+        self.assertEqual(unit1(B'fam'), B'[[fifafofam]]')
+        self.assertEqual(unit2(B'fam'), B'[[fofafifam]]')
+
+    def test_custom_unit_03(self):
+        class foo(Unit):
+            def __init__(self, a: int, n: bytearray, b: bytes = B'', max: int = -1) -> Unit:
+                pass
+            def process(self, data: bytearray):
+                return self.args.a * data.replace(self.args.n, self.args.b, self.args.max)
+
+        unit1 = foo.assemble('3', 'Y', 'X', '1')
+        unit2 = foo.assemble('3', 'Y', 'X')
+        unit3 = foo.assemble('5', 'Y')
+
+        self.assertEqual(unit1(B'HEYYA'), B'HEXYAHEXYAHEXYA')
+        self.assertEqual(unit2(B'HEYYA'), B'HEXXAHEXXAHEXXA')
+        self.assertEqual(unit3(B'HEYYA'), B'HEAHEAHEAHEAHEA')
+
 
 class TestSimpleInvertible(TestUnitBase):
     exceptions = ['vbe', 'u16', 'cp1252']

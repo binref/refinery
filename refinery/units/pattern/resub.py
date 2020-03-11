@@ -14,10 +14,12 @@ class resub(RegexUnit):
     refinery units (see `refinery.units.pattern.TransformSubstitutionFactory`).
     """
     def __init__(self, regex,
-        subst : arg(type=utf8, help=(
+        subst: arg('subst', type=utf8, help=(
             'Substitution value: use $1 for group 1, $0 for entire match. '
             'Matches are removed (replaced by an empty string) by default.'
-        )) = B'', /,
+        )) = B'',
+        # TODO: Use positional only in Python 3.8
+        # /,
         multiline=False, ignorecase=False, min=1, max=None, len=None,
         whitespace=False, unique=False, longest=False, take=None, utf16=False
     ):

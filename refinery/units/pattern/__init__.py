@@ -9,7 +9,7 @@ from typing import Dict, Tuple, Iterable, Optional, Callable, Union, ByteString
 from itertools import islice
 
 from ...lib.types import INF, AST
-from ...lib.argformats import number, regexp
+from ...lib.argformats import regexp
 from .. import Unit, arg
 
 
@@ -255,8 +255,8 @@ class PatternExtractorBase(Unit, abstract=True):
 class PatternExtractor(PatternExtractorBase, abstract=True):
     def __init__(
         self, min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None,
-        ascii: arg.switch('-u', '--no-ascii', group='AvsU', dest='ascii', help='Search for UTF16 encoded patterns only.') = True,
-        utf16: arg.switch('-a', '--no-utf16', group='AvsU', dest='utf16', help='Search for ASCII encoded patterns only.') = True,
+        ascii: arg.switch('-u', '--no-ascii', group='AvsU', help='Search for UTF16 encoded patterns only.') = True,
+        utf16: arg.switch('-a', '--no-utf16', group='AvsU', help='Search for ASCII encoded patterns only.') = True,
     ):
         super().__init__(
             min=min,
@@ -274,7 +274,9 @@ class PatternExtractor(PatternExtractorBase, abstract=True):
 class RegexUnit(PatternExtractorBase, abstract=True):
 
     def __init__(
-        self, regex : arg(type=regexp, help='Regular expression to match.'), /,
+        self, regex : arg(type=regexp, help='Regular expression to match.'),
+        # TODO: Use positional only in Python 3.8
+        # /,
         multiline   : arg.switch('-M', help='caret and dollar match the beginning and end of a line, the dot does not match line breaks.') = False,
         ignorecase  : arg.switch('-I', help='ignore capitalization for alphabetic characters.') = False,
         utf16       : arg.switch('-u', help='search for unicode patterns instead of ascii.') = False,

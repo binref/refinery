@@ -11,9 +11,9 @@ class carve(PatternExtractor):
     def __init__(
         self, format: arg.choice(choices=[p.name for p in formats], metavar='format',
             help='Specify one of the following formats: {choices}'),
-        min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None
+        min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None, utf16=True, ascii=True
     ):
-        self.superinit(super(), **vars(), utf16=True, ascii=True)
+        self.superinit(super(), **vars())
         self.args.format = format
 
     def process(self, data):

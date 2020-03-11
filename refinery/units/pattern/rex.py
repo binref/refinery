@@ -11,7 +11,9 @@ class rex(RegexUnit):
     multibin handlers are available for regular expressions:
     """
 
-    def __init__(self, regex, /,
+    def __init__(self, regex,
+        # TODO: Use positional only in Python 3.8
+        # /,
         *transformation: arg(type=utf8, help=(
             'An optional sequence of transformations to be applied to each match. '
             'Each transformation produces one output in the order in which they   '

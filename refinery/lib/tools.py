@@ -139,11 +139,11 @@ def autoinvoke(method, keywords: dict):
             value = keywords[p.name]
         except KeyError:
             continue
-        if p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD):
-            kwdargs[p.name] = value
-        elif p.kind is p.POSITIONAL_ONLY:
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
             posargs.append(value)
         elif p.kind is p.VAR_POSITIONAL:
             varargs = value
+        elif p.kind is p.KEYWORD_ONLY:
+            kwdargs[p.name] = value
 
     return method(*posargs, *varargs, **kwdargs)

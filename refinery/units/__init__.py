@@ -153,13 +153,6 @@ class arg(Argument):
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
         self.group = group
         self.guess = guess
-        for arg in args:
-            if not arg.startswith('-'):
-                dest = kwargs.setdefault('dest', arg)
-                if dest != arg:
-                    raise ValueError(F'Conflicting parameter name {arg!r} and destination {dest!r}.')
-                args = []
-                break
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -201,22 +194,26 @@ class arg(Argument):
             dest=dest, help=help.format(choices=', '.join(choices)), choices=choices)
 
     @property
+    def positional(self):
+        return any(a[0] != '-' for a in self.args)
+
+    @property
     def destination(self):
         """
         The name of the variable where the contents of this parsed argument will be stored.
         """
+        for a in self.args:
+            if a[0] != '-':
+                return a
         try:
             return self.kwargs['dest']
         except KeyError:
             for a in self.args:
                 if a.startswith('--'):
                     dest = a.lstrip('-').replace('-', '_')
-                    if not dest.replace('_', '').isalnum():
-                        import re
-                        dest = re.sub(R'[^\w]', '_', a.lstrip('-'))
-                    self.kwargs['dest'] = dest
-                    return dest
-            raise ValueError(F'The argument with these values has no destination: {self!r}')
+                    if dest.isidentifier():
+                        return dest
+            raise AttributeError(F'The argument with these values has no destination: {self!r}')
 
     @classmethod
     def infer(cls, pt: inspect.Parameter) -> Argument:
@@ -241,26 +238,29 @@ class arg(Argument):
 
         if pt.annotation is not pt.empty:
             if isinstance(pt.annotation, Argument):
-                if pt.annotation.kwargs.setdefault('dest', pt.name) != pt.name:
-                    raise ValueError('Incompatible argument destination specified.')
-                guessed_kwd_args.update(pt.annotation.kwargs)
+                if pt.annotation.kwargs.get('dest', pt.name) != pt.name:
+                    raise ValueError(
+                        F'Incompatible argument destination specified; parameter {pt.name} '
+                        F'was annotated with {pt.annotation!r}.')
                 guessed_pos_args = pt.annotation.args
+                guessed_kwd_args.update(pt.annotation.kwargs)
                 guessed_kwd_args['guess'] = False
             elif isinstance(pt.annotation, type):
                 if not issubclass(pt.annotation, bool):
-                    guessed_kwd_args['type'] = get_argp_type(pt.annotation)
+                    guessed_kwd_args.update(type=get_argp_type(pt.annotation))
                 elif not isinstance(default, bool):
                     raise ValueError('Default value for boolean arguments must be provided.')
+
+        if not guessed_pos_args:
+            guessed_pos_args = guessed_pos_args or [F'--{name}' if pt.kind is pt.KEYWORD_ONLY else name]
 
         if pt.kind is pt.VAR_POSITIONAL:
             oldnargs = guessed_kwd_args.setdefault('nargs', '*')
             if oldnargs not in ('*', '+'):
                 raise ValueError(F'Variadic positional arguments has nargs set to {oldnargs!r}')
-            return cls(**guessed_kwd_args)
+            return cls(*guessed_pos_args, **guessed_kwd_args)
 
         if default is not pt.empty:
-            if pt.kind not in (pt.VAR_POSITIONAL, pt.POSITIONAL_ONLY):
-                guessed_pos_args.append(F'--{name}')
             if isinstance(default, (list, tuple)):
                 if not pt.default:
                     guessed_kwd_args.setdefault('nargs', '*')
@@ -275,42 +275,35 @@ class arg(Argument):
                     guessed_kwd_args.setdefault('nargs', '?')
 
         if default is not pt.empty:
-            if not isinstance(default, bool):
-                if 'type' not in guessed_kwd_args:
-                    guessed_kwd_args['type'] = get_argp_type(type(default))
-            elif 'action' not in guessed_kwd_args:
+            if isinstance(default, bool):
                 guessed_kwd_args['action'] = 'store_false' if default else 'store_true'
+            elif 'type' not in guessed_kwd_args:
+                guessed_kwd_args['type'] = get_argp_type(type(default))
 
         return cls(*guessed_pos_args, **guessed_kwd_args)
 
-    def __ior__(self, them):
-        self.kwargs.update(them.kwargs)
-
-        if not self.args:
-            self.args = list(them.args)
-            return self
-
-        sflag = None
-        lflag = None
-
+    def merge_args(self, them):
         def iterboth():
             yield from them.args
             yield from self.args
-
+        if not self.args:
+            self.args = list(them.args)
+            return
+        sflag = None
+        lflag = None
         for a in iterboth():
-            if a.startswith('--'):
-                lflag = lflag or a
-                continue
-            sflag = sflag or a
-
+            if a[:2] == '--': lflag = lflag or a
+            elif a[0] == '-': sflag = sflag or a
         self.args = []
         if sflag: self.args.append(sflag)
         if lflag: self.args.append(lflag)
-        return self
+        if not self.args:
+            self.args = list(them.args)
 
     def __or__(self, them):
         clone = self.__copy__()
-        clone |= them
+        clone.kwargs.update(self.kwargs)
+        clone.merge_args(them)
         return clone
 
     def __copy__(self):
@@ -318,6 +311,8 @@ class arg(Argument):
         clone = cls.__new__(cls)
         clone.kwargs = dict(self.kwargs)
         clone.args = list(self.args)
+        clone.group = self.group
+        clone.guess = self.guess
         return clone
 
     def __repr__(self):
@@ -327,7 +322,8 @@ class arg(Argument):
         parameters = inspect.signature(init).parameters
         try:
             inferred = arg.infer(parameters[self.destination])
-            inferred |= self
+            inferred.kwargs.update(self.kwargs)
+            inferred.merge_args(self)
             init.__annotations__[self.destination] = inferred
         except KeyError:
             raise ValueError(F'Unable to decorate because no parameter with name {self.destination} exists.')
@@ -345,7 +341,8 @@ class ArgumentSpecification(OrderedDict):
         """
         dest = argument.destination
         if dest in self:
-            self[dest] |= argument
+            self[dest].kwargs.update(argument.kwargs)
+            self[dest].merge_args(argument)
             return
         self[dest] = argument
 
@@ -365,59 +362,51 @@ class Executable(type):
     for the other ones.
     """
 
-    def _infer_argspec(cls, args: Optional[ArgumentSpecification] = None):
+    def _infer_argspec(cls, parameters, args: Optional[ArgumentSpecification] = None):
 
         args = ArgumentSpecification() if args is None else args
         temp = ArgumentSpecification()
-        init = NotImplemented
 
-        if not cls.is_retrofitted:
-            return args
-
-        exposed = [pt.name for pt in skipfirst(inspect.signature(cls.__init__).parameters.values())]
-        parents = []
-
-        for parent in skipfirst(reversed(cls.mro())):
-            if parent.__init__ is init:
-                continue
-            init = parent.__init__
-            sign = inspect.signature(init)
-            parents.append(sign)
-
+        exposed = [pt.name for pt in skipfirst(parameters.values())]
         # The arguments are added in reverse order to the argument parser later.
         # This is done to have a more intuitive use of decorator based argument configuration.
         exposed.reverse()
 
         for name in exposed:
-            for sign in parents:
-                try:
-                    argument = arg.infer(sign.parameters[name])
-                except KeyError:
-                    continue
-                if argument.guess:
-                    temp.merge(argument)
-                else:
-                    args.merge(argument)
+            try:
+                argument = arg.infer(parameters[name])
+            except KeyError:
+                continue
+            if argument.guess:
+                temp.merge(argument)
+            else:
+                args.merge(argument)
 
         for guess in temp.values():
             known = args.get(guess.destination, None)
             if known is None:
                 args.merge(guess)
                 continue
-            if len(known.args) == 1 and guess.args:
-                flagparam = guess.args[0]
-                known.args.append(flagparam)
+            if not known.positional:
+                known.merge_args(guess)
             for k in guess.kwargs:
                 known.kwargs.setdefault(k, guess.kwargs[k])
 
+        for name in exposed:
+            args.move_to_end(name)
+
         for known in args.values():
-            if len(known.args) == 1 and not known.args[0].startswith('--'):
+            if known.positional:
+                known.kwargs.pop('dest', None)
+                if 'default' in known.kwargs:
+                    known.kwargs.setdefault('nargs', '?')
+            elif not any(a.startswith('--') for a in known.args):
                 flagname = known.destination.replace('_', '-')
                 known.args.append(F'--{flagname}')
-            if 'action' not in known.kwargs:
-                known.kwargs.setdefault('type', multibin)
-            elif known.kwargs['action'] in ('store_true', 'store_false'):
+            if known.kwargs.get('action', None) in ('store_true', 'store_false'):
                 known.kwargs.pop('default', None)
+                continue
+            known.kwargs.setdefault('type', multibin)
 
         return args
 
@@ -436,7 +425,6 @@ class Executable(type):
             return wrapped
 
         nmspc.setdefault('__doc__', '')
-        nmspc.setdefault('argspec', None)
 
         for op in ('process', 'reverse'):
             if op in nmspc:
@@ -449,9 +437,16 @@ class Executable(type):
 
     def __init__(cls, name, bases, nmspc, abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
+        parameters = inspect.signature(cls.__init__).parameters
 
-        if not abstract:
-            cls.argspec = cls._infer_argspec(cls.argspec)
+        cls.argspec = ArgumentSpecification()
+
+        if cls.is_retrofitted:
+            if bases and bases[0].is_retrofitted:
+                for key, value in bases[0].argspec.items():
+                    if not value.guess and key in parameters:
+                        cls.argspec[key] = value.__copy__()
+            cls._infer_argspec(parameters, cls.argspec)
 
         fwd = cls.__init__.__annotations__.get('return', None)
 
@@ -464,18 +459,18 @@ class Executable(type):
             head = []
             tail = None
 
-            for p in skipfirst(inspect.signature(cls.__init__).parameters.values()):
-                if p.kind is p.POSITIONAL_ONLY:
+            for p in skipfirst(parameters.values()):
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
                     head.append(p.name)
                 if p.kind is p.VAR_POSITIONAL:
                     tail = p.name
 
             @wraps(cls.__init__)
             def cls__init__(self, *args, **kwargs):
-                for k, p in enumerate(head):
-                    kwargs[p] = args[k]
+                for k, name in enumerate(head):
+                    kwargs[name] = args[k]
                 if tail:
-                    kwargs[tail] = args[k:]
+                    kwargs[tail] = args[k + 1:]
                 fwd.__init__(self, **kwargs)
 
             cls.__init__ = cls__init__
@@ -1114,8 +1109,6 @@ class Unit(metaclass=Executable, abstract=True):
             assert not args, (
                 'Retrofitted units may not call the Unit base constructor with positional arguments.'
             )
-            # Since Python 3.6, functions always preserve the order of the keyword 
-            # arguments passed to them (see PEP 468).
             keywords.update(dict(
                 dtiming=False,
                 nesting=0,
@@ -1124,6 +1117,8 @@ class Unit(metaclass=Executable, abstract=True):
                 verbose=LogLevel.DETACHED,
                 quiet=False,
             ))
+            # Since Python 3.6, functions always preserve the order of the keyword
+            # arguments passed to them (see PEP 468).
             self.args = DelayedArgumentProxy(
                 Namespace(**keywords), keywords.values())
         elif not keywords and len(args) == 1 and isinstance(args[0], DelayedArgumentProxy):
