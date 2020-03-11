@@ -903,6 +903,8 @@ class Unit(metaclass=Executable, abstract=True):
     @classmethod
     def _output(cls, *messages) -> None:
         def transform(x):
+            try: x = x()
+            except TypeError: pass
             if isinstance(x, str):
                 return x
             if isinstance(x, (bytes, bytearray)):
