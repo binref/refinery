@@ -143,7 +143,7 @@ pattern_url_df = ''.join([
 pattern_email = R'([a-z0-9_\.\+\-]{{1,256}}?)@({})'.format(pattern_domain)
 pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
-pattern_win_path_nospace = R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
+pattern_win_path_nospace = R'[-\w+,.;@\]\[\^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_win_path_nospace)
 pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]{2,}%'
 pattern_win_path = R'(?:[A-Za-z]:|{}|\\\\[a-z0-9_.$]+\\[a-z0-9_.$]+)[\\\/]'.format(pattern_win_env_variable)
