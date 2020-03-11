@@ -930,12 +930,13 @@ class NetResourceWithName(Struct):
 
 
 class DotNetHeader:
-    def __init__(self, data, parse_resources=True):
+    def __init__(self, data, pe=None, parse_resources=True):
         try:
-            self.pe = pefile.PE(data=data, fast_load=True)
+            self.pe = pe or pefile.PE(data=data, fast_load=True)
             self.head = NetDirectory(self.reader(
                 self.pe.OPTIONAL_HEADER.DATA_DIRECTORY[14]))
         except IndexError:
+            if not data: raise
             # this is a temporary fix for what should really be handled in pefile,
             # see also: https://github.com/erocarrera/pefile/issues/264
             import struct
