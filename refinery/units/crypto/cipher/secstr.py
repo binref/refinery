@@ -29,8 +29,8 @@ class secstr(Unit):
         argp.add_argument('key', type=multibin, nargs='?', default=bytes(range(1, 17)),
             help='secure string encryption key')
         argp.add_argument('--iv', default=None,
-            type=request(multibin, lambda r: len(r) == 0x10, self._IVERR),
-            help=F'Optionally specify an IV to use for encryption. {self._IVERR}')
+            type=request(multibin, lambda r: len(r) == 0x10, cls._IVERR),
+            help=F'Optionally specify an IV to use for encryption. {cls._IVERR}')
         return super().interface(argp)
 
     def reverse(self, data):

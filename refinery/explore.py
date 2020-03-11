@@ -41,7 +41,7 @@ def get_help_string(unit, brief=False, width=None):
         from os import environ
         try:
             environ['REFINERY_TERMSIZE'] = str(width)
-            argp = unit().argp
+            argp = unit.argparser()
         except ArgparseError as fail:
             argp = fail.parser
         buffer = StringIO('w')

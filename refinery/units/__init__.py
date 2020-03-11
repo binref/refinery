@@ -949,7 +949,7 @@ class Unit(metaclass=Executable, abstract=True):
         return argp
 
     @classmethod
-    def _generate_parser(cls, *args, **keywords):
+    def argparser(cls, *args, **keywords):
         cols = get_terminal_size()
         args = list(args)
 
@@ -1066,7 +1066,7 @@ class Unit(metaclass=Executable, abstract=True):
         results are used to construct an instance of the unit, this object is consequently returned.
         """
 
-        argp = cls._generate_parser(*args, **keywords)
+        argp = cls.argparser(*args, **keywords)
         args = argp.parse_args()
 
         if not cls.is_retrofitted:
@@ -1124,7 +1124,7 @@ class Unit(metaclass=Executable, abstract=True):
         elif not keywords and len(args) == 1 and isinstance(args[0], DelayedArgumentProxy):
             self.args = args[0]
         else:
-            argp = self._generate_parser(*args, **keywords)
+            argp = self.argparser(*args, **keywords)
             self.args = DelayedArgumentProxy(argp.parse_args(), argp.order)
 
     @classmethod
