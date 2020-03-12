@@ -418,10 +418,7 @@ class Executable(type):
                     if not isinstance(data, bytearray):
                         data = bytearray(data)
                     self.args @= data
-                try:
-                    return operation(self, data)
-                except BaseException as B:
-                    return self._exception_handler(B)
+                return operation(self, data)
             return wrapped
 
         nmspc.setdefault('__doc__', '')
@@ -457,31 +454,28 @@ class Executable(type):
 
         if fwd is not None:
             head = []
+            defs = {}
             tail = None
 
             for p in skipfirst(parameters.values()):
                 if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
                     head.append(p.name)
+                if p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is not p.empty:
+                    defs[p.name] = p.default
                 if p.kind is p.VAR_POSITIONAL:
                     tail = p.name
 
-            if not head and not tail:
-                @wraps(cls.__init__)
-                def cls__init__(self, **kw):
-                    fwd.__init__(self, **kw)
-            elif not head:
-                @wraps(cls.__init__)
-                def cls__init__(self, *args, **kw):
-                    kw[tail] = args
-                    fwd.__init__(self, **kw)
-            else:
-                @wraps(cls.__init__)
-                def cls__init__(self, *args, **kw):
-                    for k, name in enumerate(head):
-                        kw[name] = args[k]
-                    if tail:
-                        kw[tail] = args[k + 1:]
-                    fwd.__init__(self, **kw)
+            @wraps(cls.__init__)
+            def cls__init__(self, *args, **kw):
+                k = -1
+                for k, name in enumerate(head):
+                    kw[name] = args[k]
+                if tail:
+                    kw[tail] = args[k + 1:]
+                for key in defs:
+                    if key not in kw:
+                        kw[key] = defs[key]
+                fwd.__init__(self, **kw)
 
             cls.__init__ = cls__init__
 
@@ -694,11 +688,16 @@ class Unit(metaclass=Executable, abstract=True):
         op = self.reverse if self.args.reverse else self.process
 
         def normalized_action(data: bytearray) -> Iterable[bytes]:
-            result = op(data)
-            if inspect.isgenerator(result):
-                yield from filter(lambda x: x is not None, result)
-            elif result is not None:
-                yield result
+            try:
+                result = op(data)
+                if inspect.isgenerator(result):
+                    yield from filter(lambda x: x is not None, result)
+                elif result is not None:
+                    yield result
+            except BaseException as B:
+                result = self._exception_handler(B)
+                if result is not None:
+                    yield result
 
         self._framed = Framed(
             normalized_action,
