@@ -23,6 +23,7 @@ argp.add_argument('venv', nargs='?', default='venv',
 args = argp.parse_args()
 
 os.environ['REFINERY_PREFIX'] = args.prefix
+os.chdir(script_location)
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 6):
     print('-- python version at least 3.6 is required', file=sys.stderr)
