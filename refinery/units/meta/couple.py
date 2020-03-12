@@ -45,20 +45,18 @@ class couple(Unit):
         qout = Queue()
         done = Event()
 
-        def adapter(stdout, stderr, qout, qerr):
-            while not done.is_set():
-                out = stdout.read1()
-                if out: qout.put(out)
-                err = stderr.read1()
-                if err: qerr.put(err)
-                if not err and not out:
-                    break
-            stdout.close()
-            stderr.close()
+        def adapter(stream, queue: Queue, event: Event):
+            while not event.is_set():
+                out = stream.read1()
+                if out: queue.put(out)
+                else: break
+            stream.close()
 
-        coupling = Thread(target=adapter,
-            args=(process.stdout, process.stderr, qout, qerr), daemon=True)
-        coupling.start()
+        recvout = Thread(target=adapter, args=(process.stdout, qout, done), daemon=True)
+        recverr = Thread(target=adapter, args=(process.stderr, qerr, done), daemon=True)
+
+        recvout.start()
+        recverr.start()
 
         process.stdin.write(data)
         process.stdin.close()
@@ -109,13 +107,13 @@ class couple(Unit):
                             partial=result)
                     break
 
-        coupling.join(0.4)
+        recverr.join(0.4)
+        recvout.join(0.4)
 
-        if coupling.is_alive():
-            self.log_warn('coupling thread is alive after process terminated')
-        else:
-            del coupling
-            self.log_info('coupling thread terminated gracefully')
+        if recverr.is_alive():
+            self.log_warn('stderr receiver thread zombied')
+        if recvout.is_alive():
+            self.log_warn('stdout receiver thread zombied')
 
         if isinstance(result, Exception):
             raise result
