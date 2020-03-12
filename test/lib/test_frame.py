@@ -61,7 +61,7 @@ class TestFraming(TestBase):
 
     def test_nonblocking_frame_collapse(self):
         with io.BytesIO(bytes(range(20))) as stream:
-            slow = stream | r.chop(5) [ r.rex.assemble('.') ] # noqa
+            slow = stream | r.chop(5) [ r.rex(B'.') ] # noqa
             for k in range(20):
                 self.assertEqual(slow.read1(20), bytes((k,)))
 
