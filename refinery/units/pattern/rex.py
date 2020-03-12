@@ -32,4 +32,8 @@ class rex(RegexUnit):
             TransformSubstitutionFactory(t) for t in transformation]
 
     def process(self, data):
-        yield from self.matches_processed(data, self.args.regex, transforms=self.args.transforms)
+        yield from self.matches_processed(
+            memoryview(data),
+            self.args.regex,
+            transforms=self.args.transforms
+        )

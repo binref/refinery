@@ -17,4 +17,7 @@ class carve(PatternExtractor):
         self.args.format = format
 
     def process(self, data):
-        yield from self.matches_processed(data, bytes(formats[self.args.format]))
+        yield from self.matches_processed(
+            memoryview(data),
+            bytes(formats[self.args.format])
+        )

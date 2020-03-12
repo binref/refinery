@@ -41,4 +41,4 @@ class dnsdomain(PatternExtractorBase):
                 else:
                     yield offset, bytes(match[1:])
         yield from self.matches_finalize(
-            prefilter(self.matches_filtered(data, self._DOMAIN_PATTERN)))
+            prefilter(self.matches_filtered(memoryview(data), self._DOMAIN_PATTERN)))

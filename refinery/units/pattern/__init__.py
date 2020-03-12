@@ -167,13 +167,8 @@ class PatternExtractorBase(Unit, abstract=True):
         if self.args.ascii:
             yield from pattern.finditer(data)
         if self.args.utf16:
-            d0 = data[0::2]
-            d1 = data[1::2]
-            for match in pattern.finditer(d0):
-                if not any(d1[match.start() + 0 : match.end() + 0]):
-                    yield match
-            for match in pattern.finditer(d1):
-                if not any(d0[match.start() + 1 : match.end() + 1]):
+            for zm in re.findall(BR'(?:.\0)+', data):
+                for match in pattern.finditer(zm[::2]):
                     yield match
 
     def matches_filtered(
@@ -195,7 +190,7 @@ class PatternExtractorBase(Unit, abstract=True):
 
         if self.args.whitespace:
             data = re.sub(BR'\s+', B'', data)
-        for match in self.matches(data, pattern):
+        for match in self.matches(memoryview(data), pattern):
             for transform in transforms:
                 hit = transform(match) if callable(transform) else transform
                 if hit is None or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
@@ -221,7 +216,7 @@ class PatternExtractorBase(Unit, abstract=True):
     ) -> Dict[Tuple[int, int], bytes]:
         if matches is None:
             matches = {}
-        matches.update(self.matches_filtered(data, pattern, transforms, early_abort))
+        matches.update(self.matches_filtered(memoryview(data), pattern, transforms, early_abort))
         return matches
 
     def matches_finalize(self, matches: Iterable[Tuple[Tuple[int, int], bytes]]) -> Iterable[bytes]:

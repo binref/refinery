@@ -25,4 +25,6 @@ class TestUnitBase(TestBase):
                     break
             else:
                 raise NameUnknownException(name)
-        return entry(*args, **kwargs)
+        unit = entry.assemble(*args, **kwargs)
+        unit.log_level = refinery.units.LogLevel.DETACHED
+        return unit
