@@ -235,7 +235,8 @@ class pemeta(Unit):
         signature = {}
 
         if self.args.timestamps or self.args.signatures:
-            signature = self.parse_signature(data)
+            with suppress(Exception):
+                signature = self.parse_signature(data)
 
         if self.args.timestamps:
             ts = self.parse_time_stamps(data)
