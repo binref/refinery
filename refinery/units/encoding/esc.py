@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
-from struct import pack
-from string import printable
 
-from .. import Unit
+from .. import arg, Unit
 
 
 class esc(Unit):
@@ -38,15 +36,11 @@ class esc(Unit):
         BR'"': B'\x22'
     }
 
-    @classmethod
-    def interface(cls, argp):
-        mode = argp.add_mutually_exclusive_group()
-        mode.add_argument('-x', '--hex', action='store_true',
-            help='Hex encode everything, do not use C escape sequences.')
-        mode.add_argument('-u', '--unicode', action='store_true',
-            help='Expect input/output to be an UTF-8 encoded unicode string and '
-                 'use unicode escape sequences.')
-        return super().interface(argp)
+    def __init__(self,
+        hex     : arg.switch('-x', help='Hex encode everything, do not use C escape sequences.') = False,
+        unicode : arg.switch('-u', help='Use unicode escape sequences and UTF-8 encoding.') = False,
+        greedy  : arg.switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.') = False
+    ) -> Unit: pass  # noqa
 
     def process(self, data):
         if self.args.unicode:
@@ -54,10 +48,13 @@ class esc(Unit):
 
         def unescape(match):
             c = match.group(1)
-            if c[0] == 0x75:  # unicode
-                return pack('H', int(c[1:], 16))
-            if c[0] == 0x78:  # hexadecimal
-                return pack('B', int(c[1:], 16))
+            if len(c) > 1:
+                if c[0] in B'u':  # unicode
+                    return bytes((int(c[3:5], 16), int(c[1:3], 16)))
+                if c[0] in B'x':  # hexadecimal
+                    return bytes((int(c[1:3], 16),))
+            elif c in B'ux':
+                return c if self.args.greedy else match.group(0)
             return self._UNESCAPE.get(c, c)
         data = re.sub(
             RB'\\(u[a-fA-F0-9]{4}|x[a-fA-F0-9]{2}|.)', unescape, data)
@@ -68,7 +65,7 @@ class esc(Unit):
             return data.decode(self.codec).encode('UNICODE_ESCAPE')
 
         def escape(c):
-            if chr(c) not in printable or c in self._ESCAPE and self.args.hex:
+            if c not in range(0x20, 0x7F) or c in self._ESCAPE and self.args.hex:
                 return RB'\x%02x' % c
             else:
                 return self._ESCAPE.get(c, B'%c' % c)

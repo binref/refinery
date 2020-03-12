@@ -15,6 +15,16 @@ class TestEscaping(TestUnitBase):
         data = u'refinery is all about the パイプライン.'.encode('UTF8')
         self.assertEqual(data, unit.process(unit.reverse(data)))
 
+    def test_escape_not_greedy(self):
+        unit = self.load()
+        data = B'H\\x\\y\\x20\\u\\u0020!'
+        self.assertEqual(unit(data), B'H\\xy \\u \x00!')
+
+    def test_escape_greedy(self):
+        unit = self.load(greedy=True)
+        data = B'H\\x\\y\\x20\\u\\u0020!'
+        self.assertEqual(unit(data), B'Hxy u \x00!')
+
     def test_zalgo_text(self):
 
         zalgo_unicode = U'B̘̥̦̣͇̩̱͎̱͑̿̇̅͂ì̢̬̲̪̯̼̠̉͂̾͋͢͢ṋ̷̡̯̰͖͎̲̋̄͌̒͊̍͑̽͛ą̶̮̗̱̗̥̜̙̞̋̑́̀͐̓͋́̇̆r̶̟͇̬̺̙̝̻̪̥̙̽͊͋̔̍̾̒̄y̗̞̠̬̭̖̼̠̣͐̆͂͗͗̀͞ R̻͍̭͚͍̭̤̜̽̿̄́͡é͕̝͚̻̙̤͌̊̇͆͆̆̊͠f̷̨͓̜̣̜͐͛̿̌̉̋̎͜͜ḯ͚̩͈̮̫́̃͂̀͞ǹ̢̫͔̞̝̝̯̼̊̍͗͗̽̽́̿͜͜ẻ̸͚̮̝͎͖̜̻̙̀̔̆̅̆̔̊͞r̸̢̢̻̣̠̈́̂͛̓͋̍̾̌̕͟y̥̖͖̦̼̱̼̜͍͛́́͊͆̐̍̚͠͞'.encode('UTF8')
