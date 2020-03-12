@@ -11,7 +11,7 @@ class TestCoupler(TestUnitBase):
     def setUp(self):
         super().setUp()
         self.sleep = ('sleep',) if os.name != 'nt' else shlex.split(
-            'powershell -ExecutionPolicy Bypass -Command Start-Sleep'
+            '-- powershell -ExecutionPolicy Bypass -Command Start-Sleep'
         )
 
     def test_simple_echo(self):
