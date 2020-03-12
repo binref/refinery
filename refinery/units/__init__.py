@@ -467,11 +467,11 @@ class Executable(type):
 
             @wraps(cls.__init__)
             def cls__init__(self, *args, **kw):
-                k = -1
-                for k, name in enumerate(head):
-                    kw[name] = args[k]
+                for name, arg in zip(head, args):
+                    kw[name] = arg
                 if tail:
-                    kw[tail] = args[k + 1:]
+                    k = min(len(args), len(head))
+                    kw[tail] = args[k:]
                 for key in defs:
                     if key not in kw:
                         kw[key] = defs[key]
