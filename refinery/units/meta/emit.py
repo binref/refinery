@@ -38,6 +38,7 @@ class emit(Unit):
 
     @classmethod
     def run(cls, argv=None, stream=None):
-        super(emit, cls).run(argv=argv,
+        super(emit, cls).run(
+            argv=argv,
             stream=stream or open(__import__('os').devnull, 'rb')
         )

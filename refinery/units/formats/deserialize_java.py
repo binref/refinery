@@ -9,6 +9,7 @@ import json
 
 from .. import Unit
 
+
 class JavaEncoder(json.JSONEncoder):
 
     def encode(self, obj):
@@ -23,6 +24,7 @@ class JavaEncoder(json.JSONEncoder):
             if isinstance(obj, java.beans.JavaString):
                 return str(obj)
             raise
+
 
 class dsjava(Unit):
     """

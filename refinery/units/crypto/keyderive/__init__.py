@@ -24,6 +24,7 @@ class HashAlgorithms(Enum):
     MD2 = MD2
     MD4 = MD4
     MD5 = MD5
+    SHA1 = SHA1
     SHA256 = SHA256
     SHA512 = SHA512
     SHA224 = SHA224

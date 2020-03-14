@@ -4,7 +4,7 @@ import json
 
 from functools import lru_cache
 from contextlib import suppress
-from pefile import PE
+from pefile import PE, DIRECTORY_ENTRY
 from datetime import datetime, timezone
 from asn1crypto import cms
 from asn1crypto import x509
@@ -22,8 +22,8 @@ class pemeta(Unit):
     - Timestamps
     - If present, .NET header information
     """
-    def __init__(self,
-        all : arg('-c', '--custom',
+    def __init__(
+        self, all : arg('-c', '--custom',
             help='Unless enabled, everything will be extracted.') = True,
         version    : arg('-V', help='Parse the VERSION resource.') = False,
         timestamps : arg('-T', help='Extract time stamps.') = False,
@@ -50,7 +50,7 @@ class pemeta(Unit):
 
     @lru_cache(maxsize=1, typed=False)
     def _getpe(self, data: bytearray) -> PE:
-        return PE(data=data)
+        return PE(data=data, fast_load=True)
 
     def parse_signature(self, data: bytearray) -> dict:
         """
@@ -130,7 +130,9 @@ class pemeta(Unit):
         the version resource of an input PE file, if available.
         """
         try:
-            FileInfoList = self._getpe(data).FileInfo
+            pe = self._getpe(data)
+            pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+            FileInfoList = pe.FileInfo
         except AttributeError:
             return None
         for FileInfo in FileInfoList:
@@ -163,6 +165,13 @@ class pemeta(Unit):
             return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
 
         pe = self._getpe(data)
+        pe.parse_data_directories(directories=[
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT'],
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DEBUG'],
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
+        ])
+
         info = {}
 
         with suppress(AttributeError):

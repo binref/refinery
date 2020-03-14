@@ -28,8 +28,9 @@ class couple(Unit):
             type=str,
             help='Part of an arbitrary command line to be executed.',
             metavar='token'),
-        buffer  : arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
-        timeout : arg('-t', metavar='T', help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
+        buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
+        timeout: arg('-t', metavar='T',
+            help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
     ) -> Unit: pass
 
     def process(self, data):

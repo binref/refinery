@@ -72,7 +72,7 @@ def TransformSubstitutionFactory(fmt):
     try:
         fmt = fmt.decode('UNICODE_ESCAPE')
     except AttributeError:
-        if type(fmt) != str:
+        if not isinstance(fmt, str):
             raise
 
     fmt = fmt.encode('UTF8')
@@ -272,9 +272,10 @@ class RegexUnit(PatternExtractorBase, abstract=True):
         self, regex : arg(type=regexp, help='Regular expression to match.'),
         # TODO: Use positional only in Python 3.8
         # /,
-        multiline   : arg.switch('-M', help='caret and dollar match the beginning and end of a line, the dot does not match line breaks.') = False,
-        ignorecase  : arg.switch('-I', help='ignore capitalization for alphabetic characters.') = False,
-        utf16       : arg.switch('-u', help='search for unicode patterns instead of ascii.') = False,
+        multiline   : arg.switch('-M', help='Caret and dollar match the beginning and end of '
+                                            'a line, a dot does not match line breaks.') = False,
+        ignorecase  : arg.switch('-I', help='Ignore capitalization for alphabetic characters.') = False,
+        utf16       : arg.switch('-u', help='Search for unicode patterns instead of ascii.') = False,
         min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None
     ):
         super().__init__(

@@ -3,7 +3,6 @@
 import re
 
 from .. import Deobfuscator
-from . import string_quote, string_escape
 from ...crypto.cipher.secstr import secstr
 from ...blockwise.pack import pack
 from ....lib.patterns import formats
@@ -43,7 +42,6 @@ class deob_ps1_secstr(Deobfuscator):
             self._secstr.args.key = self._pack(match.group(5).encode(self.codec))
         decoded = self._secstr(match.group(2).encode(self.codec))
         decoded = decoded.decode(self.codec)
-        #result = string_quote(string_escape(decoded))
         result = F'\n\n{decoded}\n\n'
         brackets = match.group(6).count(')')
         start = match.start()

@@ -163,7 +163,7 @@ pattern_pem = (
     R'-----END(?:\s[A-Z0-9]+)+-----'
 ).format(n=R'(?:\r\n|\n\r|\n)', b=R'[0-9a-zA-Z\+\/]')
 
-__all__ = [ 
+__all__ = [
     'pattern',
     'alphabet',
     'tokenize',

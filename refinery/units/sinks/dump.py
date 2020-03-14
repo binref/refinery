@@ -41,11 +41,11 @@ class dump(Unit):
             help='Output file',
             metavar='file'
         )
-        argp.add_argument('-t', '--tee', action='store_true', 
+        argp.add_argument('-t', '--tee', action='store_true',
             help='Forward all inputs to STDOUT.')
 
         mode = argp.add_mutually_exclusive_group()
-        mode.add_argument('-s', '--stream', action='store_true', 
+        mode.add_argument('-s', '--stream', action='store_true',
             help='Dump all incoming inputs to the same file.')
 
         mode.add_argument(
@@ -160,7 +160,7 @@ class dump(Unit):
 
     def _format(self, filename, data, index=0):
         class DelayedFormatter(dict):
-            def __missing__(_, key):
+            def __missing__(_, key):  # noqa: W291
                 if key == 'crc32':
                     from zlib import crc32
                     return F'{crc32(data) & 0xFFFFFFFF:08X}'

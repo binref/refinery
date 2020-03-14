@@ -130,7 +130,8 @@ class peek(Unit, HexViewerMixin):
                     break
 
             if not dump:
-                total = self.args.lines * get_terminal_size() // 3
+                total = self.args.lines
+                total = total and total * get_terminal_size() // 3
                 dump = self.hexdump(data, total=total)
 
             dump = list(itertools.islice(dump, 0, self.args.lines))
