@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import os.path
+import inspect
 
 from glob import glob
 from flake8.api import legacy as flake8
@@ -24,6 +25,10 @@ class TestPipelines(TestUnitBase):
 class TestMetaProperties(TestUnitBase):
 
     def test_style_guide(self):
+        root = os.path.abspath(inspect.stack()[0][1])
+        for _ in range(3):
+            root = os.path.dirname(root)
+
         rules = flake8.get_style_guide(ignore=[
             'E128',  # A continuation line is under-indented for a visual indentation.
             'E203',  # Colons should not have any space before them.
@@ -32,7 +37,7 @@ class TestMetaProperties(TestUnitBase):
             'W503',  # Line break occurred before a binary operator
         ], max_line_length=140)
         report = rules.check_files(glob(
-            os.path.join(os.path.abspath('.'), 'refinery', '**', '*.py'), recursive=True))
+            os.path.join(root, 'refinery', '**', '*.py'), recursive=True))
         self.assertEqual(report.total_errors, 0,
             msg='Flake8 formatting errors were found.')
 
