@@ -133,6 +133,8 @@ class arg(Argument):
     itself, then all its parameters will automatically be forwarded to that base class.
     """
 
+    class delete: pass
+
     def __init__(
         self, *args: str,
             group    : Optional[str]              = None, # noqa
@@ -156,7 +158,7 @@ class arg(Argument):
         super().__init__(*args, **kwargs)
 
     @staticmethod
-    def switch(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None, off=False):
+    def switch(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None, off=False) -> Argument:
         """
         A convenience method to add argparse arguments that change a boolean value from True to False or
         vice versa. By default, a switch will have a False default and change it to True when specified.
@@ -164,20 +166,24 @@ class arg(Argument):
         return arg(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
 
     @staticmethod
-    def number(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None):
+    def number(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None) -> Argument:
         """
         Used to add argparse arguments that contain a number.
         """
         return arg(*args, group=group, help=help, dest=dest, type=number, metavar='N')
 
     @staticmethod
-    def option(*args: str, choices: Enum, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None):
+    def option(*args: str, choices: Enum, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None) -> Argument:
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
         """
         cnames = [c.name for c in choices]
         return arg(*args, group=group, help=help.format(choices=', '.join(cnames)),
             metavar=choices.__name__, dest=dest, choices=cnames, type=choices.__getitem__)
+
+    @staticmethod
+    def help(msg: str) -> Argument:
+        return arg(help=msg)
 
     @staticmethod
     def choice(
@@ -194,11 +200,11 @@ class arg(Argument):
             dest=dest, help=help.format(choices=', '.join(choices)), choices=choices)
 
     @property
-    def positional(self):
+    def positional(self) -> bool:
         return any(a[0] != '-' for a in self.args)
 
     @property
-    def destination(self):
+    def destination(self) -> str:
         """
         The name of the variable where the contents of this parsed argument will be stored.
         """
@@ -245,6 +251,7 @@ class arg(Argument):
                 guessed_pos_args = pt.annotation.args
                 guessed_kwd_args.update(pt.annotation.kwargs)
                 guessed_kwd_args['guess'] = False
+                guessed_kwd_args['group'] = pt.annotation.group
             elif isinstance(pt.annotation, type):
                 if not issubclass(pt.annotation, bool):
                     guessed_kwd_args.update(type=get_argp_type(pt.annotation))
@@ -282,7 +289,7 @@ class arg(Argument):
 
         return cls(*guessed_pos_args, **guessed_kwd_args)
 
-    def merge_args(self, them):
+    def merge_args(self, them: Argument) -> None:
         def iterboth():
             yield from them.args
             yield from self.args
@@ -300,13 +307,23 @@ class arg(Argument):
         if not self.args:
             self.args = list(them.args)
 
-    def __or__(self, them):
+    def merge_all(self, them: Argument) -> None:
+        for key, value in them.kwargs.items():
+            if value is arg.delete:
+                self.kwargs.pop(key, None)
+                continue
+            self.kwargs[key] = value
+        self.merge_args(them)
+        self.guess = self.guess and them.guess
+        self.group = self.group or them.group
+
+    def __or__(self, them: Argument) -> Argument:
         clone = self.__copy__()
         clone.kwargs.update(self.kwargs)
         clone.merge_args(them)
         return clone
 
-    def __copy__(self):
+    def __copy__(self) -> Argument:
         cls = self.__class__
         clone = cls.__new__(cls)
         clone.kwargs = dict(self.kwargs)
@@ -315,15 +332,14 @@ class arg(Argument):
         clone.guess = self.guess
         return clone
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return F'arg({super().__repr__()})'
 
-    def __call__(self, init):
+    def __call__(self, init: Callable) -> Callable:
         parameters = inspect.signature(init).parameters
         try:
             inferred = arg.infer(parameters[self.destination])
-            inferred.kwargs.update(self.kwargs)
-            inferred.merge_args(self)
+            inferred.merge_all(self)
             init.__annotations__[self.destination] = inferred
         except KeyError:
             raise ValueError(F'Unable to decorate because no parameter with name {self.destination} exists.')
@@ -341,8 +357,7 @@ class ArgumentSpecification(OrderedDict):
         """
         dest = argument.destination
         if dest in self:
-            self[dest].kwargs.update(argument.kwargs)
-            self[dest].merge_args(argument)
+            self[dest].merge_all(argument)
             return
         self[dest] = argument
 
@@ -403,11 +418,10 @@ class Executable(type):
             elif not any(a.startswith('--') for a in known.args):
                 flagname = known.destination.replace('_', '-')
                 known.args.append(F'--{flagname}')
-            if known.kwargs.get('action', None) in ('store_true', 'store_false'):
+            if known.kwargs.get('action', '').startswith('store_'):
                 known.kwargs.pop('default', None)
                 continue
             known.kwargs.setdefault('type', multibin)
-
         return args
 
     def __new__(mcs, name, bases, nmspc, abstract=False):
@@ -435,14 +449,18 @@ class Executable(type):
     def __init__(cls, name, bases, nmspc, abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
         parameters = inspect.signature(cls.__init__).parameters
-
         cls.argspec = ArgumentSpecification()
 
         if cls.is_retrofitted:
-            if bases and bases[0].is_retrofitted:
-                for key, value in bases[0].argspec.items():
-                    if not value.guess and key in parameters:
-                        cls.argspec[key] = value.__copy__()
+            parent = bases[0]
+            if not parent.is_retrofitted and cls.__init__ is parent.__init__:
+                @wraps(cls.__init__)
+                def __init__stub_(self): parent.__init__(self)
+                cls.__init__ = __init__stub_
+                parameters = dict(self=None)
+            for key, value in parent.argspec.items():
+                if not value.guess and key in parameters:
+                    cls.argspec[key] = value.__copy__()
             cls._infer_argspec(parameters, cls.argspec)
 
         fwd = cls.__init__.__annotations__.get('return', None)
@@ -500,8 +518,16 @@ class Executable(type):
 
     @property
     def is_retrofitted(cls) -> bool:
-        params = inspect.signature(cls.__init__).parameters.values()
-        return not any(p.kind is p.VAR_KEYWORD for p in params)
+        bases = cls.__mro__[1:]
+        if len(bases) == 1:
+            return False
+        for base in bases:
+            try:
+                if cls.interface.__func__ is not base.interface.__func__:
+                    return False
+            except AttributeError:
+                pass
+        return True
 
     @property
     def codec(self) -> str:
@@ -602,9 +628,8 @@ class DelayedArgumentProxy:
             pass
         try:
             value = getattr(self._argv, name)
-        except AttributeError as e:
-            e.args = F'Argument {name} not set.',
-            raise
+        except AttributeError as E:
+            raise AttributeError(F'Argument {name} not set.') from E
         if not value or not pending(value):
             return value
         raise AttributeError(F'the value {name} cannot be accessed until data is available.')
@@ -651,6 +676,10 @@ class Unit(metaclass=Executable, abstract=True):
     @log_level.setter
     def log_level(self, value: LogLevel) -> None:
         self.args.verbose = int(value)
+
+    def log_detach(self) -> None:
+        self.log_level = LogLevel.DETACHED
+        self.args.quiet = False
 
     def __iter__(self):
         return self
@@ -950,11 +979,9 @@ class Unit(metaclass=Executable, abstract=True):
         argp.add_argument('--debug-timing', dest='dtiming', action='store_true', help=SUPPRESS)
 
         groups = {}
-
         for arg in cls.argspec.values():
-            if arg.group is not None:
+            if arg.group is not None and arg.group not in groups:
                 groups[arg.group] = argp.add_mutually_exclusive_group()
-
         for argument in reversed(cls.argspec.values()):
             groups.get(argument.group, argp).add_argument @ argument
 
@@ -978,7 +1005,7 @@ class Unit(metaclass=Executable, abstract=True):
                         return action(parser, ns, values, opt)
 
                 action.required = action.required and action.dest not in keywords
-                super()._add_action(RememberOrder())
+                return super()._add_action(RememberOrder())
 
             def _parse_optional(self, arg_string):
                 if isinstance(arg_string, str):
@@ -1077,7 +1104,6 @@ class Unit(metaclass=Executable, abstract=True):
         used to parse the given list of arguments as though they were given on the command line. The parser
         results are used to construct an instance of the unit, this object is consequently returned.
         """
-
         argp = cls.argparser(*args, **keywords)
         args = argp.parse_args()
 
@@ -1129,7 +1155,7 @@ class Unit(metaclass=Executable, abstract=True):
             # Since Python 3.6, functions always preserve the order of the keyword
             # arguments passed to them (see PEP 468).
             self.args = DelayedArgumentProxy(
-                Namespace(**keywords), keywords.values())
+                Namespace(**keywords), list(keywords))
         elif not keywords and len(args) == 1 and isinstance(args[0], DelayedArgumentProxy):
             self.args = args[0]
         else:
@@ -1155,6 +1181,7 @@ class Unit(metaclass=Executable, abstract=True):
             except ArgparseError as ap:
                 ap.parser.error_commandline(str(ap))
             except Exception as msg:
+                raise
                 cls._output(F'initialization failed:', msg)
                 return
 

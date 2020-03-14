@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import ArithmeticUnit
+from . import UnaryOperation
 
 
-class neg(ArithmeticUnit):
+class neg(UnaryOperation):
     """
     Each block of the input data is negated bitwise. This is sometimes
     also called the bitwise complement or inverse.

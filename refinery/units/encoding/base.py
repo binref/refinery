@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
+from .. import arg, Unit
 from ...lib.argformats import number
 
 
@@ -13,30 +13,25 @@ class base(Unit):
 
     _DIGITS = B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(
-            '-e',
-            '--little-endian',
-            dest='byteorder',
-            action='store_const',
-            const='little',
-            help='use little endian instead of the default big endian byte order.'
-        )
-        argp.add_argument(
-            'base',
-            type=number[2:36],
-            default=0,
-            nargs='?',
-            help='base to be used for conversion; default value of 0 '
-                 'uses common python syntax such as the 0x prefix for hexadecimal.'
-        )
-        argp.set_defaults(byteorder='big')
-        return super().interface(argp)
+    def __init__(
+        self,
+        base: arg(type=number[2:36], help=(
+            'Base to be used for conversion; default value of 0 uses common '
+            'python syntax such as the 0x prefix for hexadecimal.')) = 0,
+        bigendian: arg('-e', '--lend', help=(
+            'Use little endian instead of the default big endian byte order')) = True
+    ):
+        if base and base not in range(2, 37):
+            raise ValueError('base may only be an integer between 2 and 36')
+        super().__init__(base=base, bigendian=bigendian)
+
+    @property
+    def byteorder(self):
+        return 'big' if self.args.bigendian else 'little'
 
     def reverse(self, data):
-        self.log_info('using byte order', self.args.byteorder)
-        number = int.from_bytes(data, byteorder=self.args.byteorder)
+        self.log_info('using byte order', self.byteorder)
+        number = int.from_bytes(data, byteorder=self.byteorder)
 
         if number == 0:
             return B'0'
@@ -60,4 +55,4 @@ class base(Unit):
         number = int(data, self.args.base)
         size, rest = divmod(number.bit_length(), 8)
         if rest: size += 1
-        return number.to_bytes(size, byteorder=self.args.byteorder)
+        return number.to_bytes(size, byteorder=self.byteorder)

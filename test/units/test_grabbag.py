@@ -5,24 +5,8 @@ import json
 from .. import TestBase
 from io import BytesIO
 
-from refinery import (
-    aes,
-    blockop,
-    carve_b64z,
-    cca,
-    chop,
-    deob_ps1,
-    dnds,
-    pack,
-    PBKDF2,
-    perc,
-    scope,
-    sep,
-    snip,
-    sorted,
-    xlxtr,
-    xtp,
-)
+from refinery.lib.loader import load_commandline as L
+from refinery import cca
 
 
 class TestGrabBagExamples(TestBase):
@@ -30,11 +14,12 @@ class TestGrabBagExamples(TestBase):
     def test_example_01_maldoc(self):
         data = self.download_from_malshare('81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b')
 
-        pipeline = xlxtr('9.5:11.5', '15.15', '12.5:14.5') [
-            scope('-n', 3) | chop('-t', 5) [
-                sorted | snip('2:') | sep
-            ] | pack(10) | blockop('--dec', '-sN', 'B-S')
-        ] | carve_b64z | deob_ps1 | carve_b64z | deob_ps1 | xtp('domain', filter=True)
+        # flake8: noqa
+        pipeline = L('xlxtr 9.5:11.5 15.15 12.5:14.5') [
+            L('scope -n 3') | L('chop -t 5') [
+                L('sorted') | L('snip 2:') | L('sep')
+            ]| L('pack 10') | L('blockop --dec -sN B-S')
+        ]| L('carve_b64z') | L('deob_ps1') | L('carve_b64z') | L('deob_ps1') | L('xtp -f domain')
 
         with BytesIO(data) as sample:
             c2servers = set(sample | pipeline)
@@ -55,11 +40,11 @@ class TestGrabBagExamples(TestBase):
 
     def test_example_02_hawkeye_config(self):
         data = self.download_from_malshare('ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c')
-        rsrc = perc('RCDATA')(data)
+        rsrc = L('perc RCDATA')(data)
 
-        pipeline = xtp('guid') [
-            PBKDF2(48, 'rep[8]:H:00') | cca(rsrc) | aes('CBC', 'x::32', '--iv=x::16', quiet=True)
-        ] | dnds
+        pipeline = L('xtp guid') [
+            L('PBKDF2 48 rep[8]:H:00') | cca(rsrc) | L('aes CBC x::32 --iv=x::16 -Q')
+        ] | L('dnds')
 
         result = json.loads(pipeline(data))
         config = result[2]['Data']['Members']

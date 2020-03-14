@@ -1,22 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ...lib.argformats import PythonExpression
-from . import ArithmeticUnit, NoNumpy
-
-
-_BLOCK_OPERATION_PARSER = PythonExpression('B', 'A', 'S', 'N', 'V')
-
-
-def blockop_expression(definition):
-    """
-    An argparse type which uses the `refinery.lib.argformats.PythonExpression` parser to
-    parse the expressions that can be passed to `refinery.blockop`. Essentially, these
-    are Python expressions which can contain variables `B`, `A`, `S`, and `V`.
-    """
-    def wrapper(B, S, N, *V):
-        return wrapper.parsed(B=B, A=V[0], N=N, S=S, V=V) if V else wrapper.parsed(B=B, S=S)
-    wrapper.parsed = _BLOCK_OPERATION_PARSER(definition)
-    return wrapper
+from . import arg, ArithmeticUnit, NoNumpy
 
 
 class blockop(ArithmeticUnit):
@@ -34,26 +19,60 @@ class blockop(ArithmeticUnit):
     after the update of each block, respectively.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('operation', type=blockop_expression, help='A Python expression defining the operation.')
-        argp.prologue = argp.add_mutually_exclusive_group()
-        argp.prologue.add_argument('-p', '--prologue', type=blockop_expression, metavar='E', default=None, help=(
-            'Optional expression with which the state variable S is updated before a block is operated on.'))
-        argp.epilogue = argp.add_mutually_exclusive_group()
-        argp.epilogue.add_argument('-e', '--epilogue', type=blockop_expression, metavar='E', default=None, help=(
-            'Optional expression with which the state variable S is updated after a block was operated on.'))
-        argp.epilogue.add_argument('--inc', action='store_const', dest='epilogue', const=blockop_expression('S+1'),
-            help='equivalent to --epilogue=S+1')
-        argp.epilogue.add_argument('--dec', action='store_const', dest='epilogue', const=blockop_expression('S-1'),
-            help='equivalent to --epilogue=S-1')
-        argp.epilogue.add_argument('--cbc', action='store_const', dest='epilogue', const=blockop_expression('B'),
-            help='equivalent to --epilogue=B')
-        argp.add_argument('-s', '--seed', type=PythonExpression('N'), default=0, help=(
+    _PARSER_OPERATION = PythonExpression('B', 'A', 'S', 'N', 'V')
+    _PARSER_SEEDVALUE = PythonExpression('N')
+
+    @staticmethod
+    def _parse_op(definition):
+        """
+        An argparse type which uses the `refinery.lib.argformats.PythonExpression` parser to
+        parse the expressions that can be passed to `refinery.blockop`. Essentially, these
+        are Python expressions which can contain variables `B`, `A`, `S`, and `V`.
+        """
+        def wrapper(B, S, N, *V):
+            return wrapper.parsed(B=B, A=V[0], N=N, S=S, V=V) if V else wrapper.parsed(B=B, S=S)
+        wrapper.parsed = blockop._PARSER_OPERATION(definition)
+        return wrapper
+
+    def __init__(
+        self, operation: arg(type=str, help='A Python expression defining the operation.'), *argument,
+        seed: arg('-s', type=str, help=(
             'Optional seed value for the state variable S. The default is zero. This can be an expression '
-            'involving the variable N.'
-        ))
-        return super().interface(argp)
+            'involving the variable N.')) = 0,
+        prologue: arg('-p', type=str, metavar='E', help=(
+            'Optional expression with which the state variable S is updated before a block is operated on.')) = None,
+        epilogue: arg('-e', type=str, metavar='E', group='EPI', help=(
+            'Optional expression with which the state variable S is updated after a block was operated on.')) = None,
+        inc: arg('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
+        dec: arg('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
+        cbc: arg('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
+        bigendian=False, blocksize=1
+    ):
+        for flag, flag_is_set, expression in [
+            ('--cbc', cbc, '(B)'),
+            ('--inc', inc, 'S+1'),
+            ('--dec', dec, 'S-1'),
+        ]:
+            if flag_is_set:
+                if epilogue is not None:
+                    raise ValueError(
+                        F'Ambiguous specification; epilogue was already set to {epilogue} '
+                        F'when {flag} was parsed.'
+                    )
+                epilogue = expression
+
+        if isinstance(seed, str):
+            seed = self._PARSER_SEEDVALUE(seed)
+
+        super().__init__(
+            *argument,
+            bigendian=bigendian,
+            blocksize=blocksize,
+            operation=self._parse_op(operation),
+            seed=seed,
+            prologue=prologue and self._parse_op(prologue),
+            epilogue=epilogue and self._parse_op(epilogue),
+        )
 
     @property
     def ecb(self):

@@ -13,10 +13,8 @@ class deob_ps1_literals(Deobfuscator):
     just `$variable`.
     """
 
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
-        self._sentinel = re.compile(R'\$\{(\w+)\}')
+    _SENTINEL = re.compile(R'\$\{(\w+)\}')
 
     @outside(formats.ps1str)
     def deobfuscate(self, data):
-        return self._sentinel.sub(R'$\1', data)
+        return self._SENTINEL.sub(R'$\1', data)

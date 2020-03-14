@@ -15,7 +15,7 @@ class TestPack(TestUnitBase):
         )
 
     def test_pack_wrapping_dword(self):
-        pack = self.load(blocksize=4, little_endian=False)
+        pack = self.load(blocksize=4, bigendian=True)
         self.assertEqual(
             pack(B'0xB0000000D 0x31337BAADC0DE'),
             bytes.fromhex('0000000DBAADC0DE')
@@ -29,7 +29,7 @@ class TestPack(TestUnitBase):
         )
 
     def test_pack_words_big(self):
-        pack = self.load(16, blocksize=2, little_endian=False)
+        pack = self.load(16, blocksize=2, bigendian=True)
         self.assertEqual(
             pack(B'BAAD F00D FACE C0CA C01A'),
             struct.pack('>HHHHH', 0xBAAD, 0xF00D, 0xFACE, 0xC0CA, 0xC01A)
@@ -38,21 +38,21 @@ class TestPack(TestUnitBase):
     def test_pack_bigblock(self):
         bigint = 0xAB0F4E70B00A20391B0BB03C92D8110CE33017BE
         buffer = bigint.to_bytes(20, 'big')
-        pack = self.load(blocksize=len(buffer), little_endian=False)
+        pack = self.load(blocksize=len(buffer), bigendian=True)
         self.assertEqual(
             pack('0x{:X}'.format(bigint).encode('utf-8')),
             buffer
         )
 
     def test_pack_reverse_01(self):
-        unpack = self.load(16, blocksize=2, reverse=True, little_endian=False)
+        unpack = self.load(16, blocksize=2, reverse=True, prefix=True, bigendian=True)
         self.assertEqual(
             unpack(bytes.fromhex('C0CAC01A')),
             B'\n'.join([B'0xC0CA', B'0xC01A'])
         )
 
     def test_pack_reverse_02(self):
-        unpack = self.load('-B2', '-RP', '16')
+        unpack = self.load('-B2', '-R', '16')
         self.assertEqual(
             unpack(bytes.fromhex('C0CAC01A')),
             B'\n'.join([B'CAC0', B'1AC0'])

@@ -3,11 +3,15 @@
 """
 Functions to help dynamically load refinery units.
 """
+from ..units import Unit, Executable
+
 import pkgutil
 import pkg_resources
 
+from typing import Iterable
 
-def get_package_name():
+
+def get_package_name() -> str:
     """
     Retrieves the toplevel package name.
     """
@@ -18,7 +22,7 @@ def get_package_name():
     return root
 
 
-def get_all_entry_points():
+def get_all_entry_points() -> Iterable[Executable]:
     """
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
@@ -48,7 +52,7 @@ def get_all_entry_points():
     yield from iterate(root, *path)
 
 
-def get_entry_point(name: str):
+def get_entry_point(name: str) -> Executable:
     """
     Retrieve a refinery entry point by name.
     """
@@ -68,16 +72,16 @@ def get_entry_point(name: str):
     return entry
 
 
-def load(name: str, *args, **kwargs):
+def load(name: str, *args, **kwargs) -> Unit:
     """
     Loads the unit specified by `name`, initialized with the given arguments
     and keyword arguments.
     """
     entry = get_entry_point(name)
-    return entry(*args, **kwargs)
+    return entry.assemble(*args, **kwargs)
 
 
-def load_commandline(command: str):
+def load_commandline(command: str) -> Unit:
     """
     Returns a unit as it would be loaded from a given command line string.
     """

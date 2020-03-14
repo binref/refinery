@@ -15,22 +15,20 @@ from .invoke import deob_ps1_invoke
 
 class deob_ps1(IterativeDeobfuscator):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.sub_units = [sub() for sub in [
-            deob_ps1_escape,
-            deob_ps1_cases,
-            deob_ps1_brackets,
-            deob_ps1_format,
-            deob_ps1_typecast,
-            deob_ps1_stringreplace,
-            deob_ps1_concat,
-            deob_ps1_invoke,
-            deob_ps1_literals
-        ]]
+    _SUBUNITS = [sub() for sub in [
+        deob_ps1_escape,
+        deob_ps1_cases,
+        deob_ps1_brackets,
+        deob_ps1_format,
+        deob_ps1_typecast,
+        deob_ps1_stringreplace,
+        deob_ps1_concat,
+        deob_ps1_invoke,
+        deob_ps1_literals
+    ]]
 
     def deobfuscate(self, data):
-        for unit in self.sub_units:
+        for unit in self._SUBUNITS:
             if self.log_debug():
                 self.log_debug(F'invoking {unit.__class__.__name__}')
                 checkpoint = hash(data)

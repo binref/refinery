@@ -12,20 +12,17 @@ class deob_ps1_brackets(Deobfuscator):
     literals, i.e. `("{0}{2}{1}")` is transformed to `"{0}{2}{1}"`. Currently,
     only integer and string constants are supported.
     """
-
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
-        self._sentinel = re.compile(
-            RF'(?<![\w"\']{{2}})'  # this may be a function call
-            RF'(\-\w+)?'  # not a function call but an argument
-            RF'\(\s*({formats.integer}|{formats.ps1str})\s*\)',
-            flags=re.IGNORECASE
-        )
+    _SENTINEL = re.compile(
+        RF'(?<![\w"\']{{2}})'  # this may be a function call
+        RF'(\-\w+)?'  # not a function call but an argument
+        RF'\(\s*({formats.integer}|{formats.ps1str})\s*\)',
+        flags=re.IGNORECASE
+    )
 
     def deobfuscate(self, data):
         while True:
-            match = self._sentinel.search(data)
+            match = self._SENTINEL.search(data)
             if not match:
                 break
-            data = self._sentinel.sub(R'\1\2', data)
+            data = self._SENTINEL.sub(R'\1\2', data)
         return data

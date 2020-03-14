@@ -3,18 +3,15 @@
 """
 Implements various hashing algorithms.
 """
-from ... import Unit
+from ... import arg, Unit
 
 
 class HashUnit(Unit, abstract=True):
 
     _algorithm = NotImplemented
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-t', '--text', action='store_true',
-            help='Output a hexadecimal representation of the hash')
-        return super().interface(argp)
+    def __init__(self, text: arg('-t', help='Output a hexadecimal representation of the hash.') = False):
+        super().__init__(text=text)
 
     def process(self, data: bytes) -> bytes:
         digest = self._algorithm(data)

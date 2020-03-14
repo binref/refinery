@@ -6,7 +6,7 @@ as consecutive sequences of bytes, all with the same length and byte order.
 """
 
 
-def unpack(data: bytes, blocksize, little_endian=True):
+def unpack(data: bytes, blocksize, bigendian=False):
     """
     Returns an iterable of integers which have been unpacked from the given `data`
     buffer as chunks of `blocksize` many bytes.
@@ -18,7 +18,7 @@ def unpack(data: bytes, blocksize, little_endian=True):
             import numpy
         except ModuleNotFoundError:
             numpy = None
-        order = '<' if little_endian else '>'
+        order = '<>'[bigendian]
         count = len(data) // blocksize
         if numpy:
             dtype = numpy.dtype(F'{order}u{blocksize}')
@@ -29,11 +29,11 @@ def unpack(data: bytes, blocksize, little_endian=True):
             return struct.unpack(F'{order}{count}{scode}', data[:count * blocksize])
     else:
         blocks = zip(*([iter(data)] * blocksize))
-        byteorder = ('big', 'little')[little_endian]
+        byteorder = ('little', 'big')[bigendian]
         return (int.from_bytes(block, byteorder) for block in blocks)
 
 
-def pack(data, blocksize, little_endian=True):
+def pack(data, blocksize, bigendian=False):
     """
     Returns a bytes object which contains the packed representation of the
     integers in `data`, where each item is encoded using `blocksize` many
@@ -46,7 +46,7 @@ def pack(data, blocksize, little_endian=True):
             import numpy
         except ModuleNotFoundError:
             numpy = None
-        order = '<' if little_endian else '>'
+        order = '<>'[bigendian]
         if numpy:
             dtype = numpy.dtype(F'{order}u{blocksize}')
             return numpy.fromiter(data, dtype).tobytes()
@@ -54,5 +54,5 @@ def pack(data, blocksize, little_endian=True):
             import struct
             scode = {2: 'H', 4: 'L', 8: 'Q'}[blocksize]
             return struct.pack(F'{order}{len(data)}{scode}', *data)
-    byteorder = ('big', 'little')[little_endian]
+    byteorder = ('little', 'big')[bigendian]
     return B''.join(number.to_bytes(blocksize, byteorder) for number in data)

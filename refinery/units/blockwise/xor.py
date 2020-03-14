@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import ArithmeticUnit
+from . import BinaryOperation
 
 
-class xor(ArithmeticUnit):
+class xor(BinaryOperation):
     """
     Form the exclusive or of the input data with the given argument.
     """

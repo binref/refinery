@@ -5,10 +5,9 @@ Contains all units that can work on blocks a fixed length. Note that block ciphe
 algorithms can be found in `refinery.units.crypto.cipher`.
 """
 from itertools import cycle
-from inspect import signature, getattr_static, Parameter
 
-from .. import Unit
-from ...lib.argformats import numbin, number
+from .. import arg, Unit
+from ...lib.argformats import numbin
 from ...lib import chunks
 
 
@@ -17,18 +16,16 @@ class NoNumpy(Exception):
 
 
 class BlockTransformation(Unit, abstract=True):
-    @classmethod
-    def interface(cls, argp):
-        block = argp.add_argument_group(
-            'Block Options',
-            'Controls how the input data is split into blocks.'
-        )
-        block.add_argument('-E', '--bigendian', dest='little_endian', action='store_false',
-            help='Read chunks in big endian.')
-        block.add_argument('-B', '--blocksize', metavar='N', type=number[1:], default=1,
-            help='The size of each block in bytes, default is 1.')
 
-        return super().interface(argp)
+    def __init__(
+        self,
+        bigendian: arg.switch('-E', help='Read chunks in big endian.') = False,
+        blocksize: arg.number('-B', help='The size of each block in bytes, default is 1.') = 1,
+        **keywords
+    ):
+        if blocksize < 1:
+            raise ValueError('Block size can not be less than 1.')
+        super().__init__(bigendian=bigendian, blocksize=blocksize, **keywords)
 
     @property
     def bytestream(self):
@@ -50,7 +47,7 @@ class BlockTransformation(Unit, abstract=True):
 
     def chunk(self, data, raw=False):
         if not raw:
-            return chunks.unpack(data, self.args.blocksize, self.args.little_endian)
+            return chunks.unpack(data, self.args.blocksize, self.args.bigendian)
 
         def chunkraw(data):
             stop = len(data)
@@ -62,7 +59,7 @@ class BlockTransformation(Unit, abstract=True):
 
     def unchunk(self, data, raw=False):
         if not raw:
-            return chunks.pack(data, self.args.blocksize, self.args.little_endian)
+            return chunks.pack(data, self.args.blocksize, self.args.bigendian)
 
         def bytefilter(it):
             for item in it:
@@ -90,21 +87,14 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     operate = NotImplemented
     inplace = NotImplemented
 
-    @classmethod
-    def interface(cls, argp):
-        specs = signature(cls.operate)
-        nargs = len(specs.parameters) - 2 + int(isinstance(getattr_static(cls, 'operate'), staticmethod))
-        if any(p.kind == Parameter.VAR_POSITIONAL for p in specs.parameters.values()):
-            nargs = '*'
-        if nargs:
-            argp.add_argument('arg', type=numbin, nargs=nargs, help=(
-                'A single numeric expression which provides the right argument to the operation, '
-                'where the left argument is each block in the input data. This argument can also '
-                'contain a sequence of bytes which is then split into blocks of the same size as '
-                'the input data and used cyclically.'))
-        else:
-            argp.set_defaults(arg=[])
-        return super().interface(argp)
+    def __init__(self, *argument: arg(type=numbin, help=(
+        'A single numeric expression which provides the right argument to the operation, '
+        'where the left argument is each block in the input data. This argument can also '
+        'contain a sequence of bytes which is then split into blocks of the same size as '
+        'the input data and used cyclically.')),
+        bigendian=False, blocksize=1, **kw
+    ):
+        super().__init__(bigendian=bigendian, blocksize=blocksize, arg=argument, **kw)
 
     def process_ecb_fast(self, data):
         """
@@ -115,7 +105,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         except ModuleNotFoundError:
             raise NoNumpy
 
-        order = '<' if self.args.little_endian else '>'
+        order = '<>'[self.args.bigendian]
         dtype = numpy.dtype(F'{order}u{self.args.blocksize}')
         blocks = len(data) // self.args.blocksize
 
@@ -155,3 +145,15 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
 
     def process_block(self, block):
         return self.operate(block, *(next(a) & self.fmask for a in self._arg)) & self.fmask
+
+
+class UnaryOperation(ArithmeticUnit):
+    def __init__(self, bigendian=False, blocksize=1):
+        super().__init__(
+            bigendian=bigendian, blocksize=blocksize)
+
+
+class BinaryOperation(ArithmeticUnit):
+    def __init__(self, argument: arg(nargs=arg.delete), bigendian=False, blocksize=1):
+        super().__init__(argument,
+            bigendian=bigendian, blocksize=blocksize)

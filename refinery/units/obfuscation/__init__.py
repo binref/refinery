@@ -5,8 +5,7 @@ import io
 
 from zlib import crc32
 
-from .. import Unit
-from ...lib.argformats import number
+from .. import arg, Unit
 from ...lib.decorators import unicoded
 
 
@@ -45,6 +44,9 @@ def outside(*exceptions):
 
 
 class Deobfuscator(Unit, abstract=True):
+
+    def __init__(self): super().__init__()
+
     @unicoded
     def process(self, data: str) -> str:
         return self.deobfuscate(data)
@@ -55,16 +57,11 @@ class Deobfuscator(Unit, abstract=True):
 
 class IterativeDeobfuscator(Deobfuscator, abstract=True):
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(
-            '-t', '--timeout',
-            type=number[2:],
-            default=100,
-            help='Specify the maximum number of iterations that may be '
-                 'performed. The default is 100.'
-        )
-        return super().interface(argp)
+    def __init__(self, timeout: arg('-t', help='Maximum number of iterations; the default is 100.') = 100):
+        if timeout < 2:
+            raise ValueError('The timeout must be at least 2.')
+        super().__init__()
+        self.args.timeout = timeout
 
     def process(self, data: bytes) -> bytes:
         previous = crc32(data)

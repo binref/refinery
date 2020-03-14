@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from . import BlockTransformation
+from . import arg, BlockTransformation
 from ...lib.argformats import number
 from ...lib.patterns import formats
 from ..encoding.base import base as base_unit
@@ -19,33 +19,22 @@ class pack(BlockTransformation):
     equal to `007B00220100000C000100EA` in hexadecimal.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        base = argp.add_argument_group(
-            'Number Base Options',
-            'Up to base 36 is supported by extending the decimal digits with '
-            'case-insensitive alphabetic characters A through Z.'
-        ).add_mutually_exclusive_group()
-        base.add_argument(
-            'base',
-            type=number[2:36],
-            default=0,
-            nargs='?',
-            help='Find only numbers in given base. Default of 0 means that '
-                 'common expressions for hexadecimal, octal and binary are '
-                 'accepted.')
-        base.add_argument(
-            '-x', '--hexdump',
-            action='store_true',
-            help='Only look for exactly two digit hexadecimal numbers surrounded by whitespace.'
+    def __init__(self,
+        base: arg(type=number[2:36], help=(
+            'Find only numbers in given base. Default of 0 means that '
+            'common expressions for hexadecimal, octal and binary are '
+            'accepted.')) = 0,
+        hexdump : arg.switch('-x', help='Parse only pairs of hexadecimal digits surrounded by whitespace.') = False,
+        prefix  : arg.switch('-r', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.') = False,
+        bigendian=False, blocksize=1
+    ):
+        super().__init__(
+            base=0x10 if hexdump else base,
+            hexdump=hexdump,
+            prefix=prefix,
+            bigendian=bigendian,
+            blocksize=blocksize
         )
-        rev = argp.add_argument_group(
-            'Reverse Options',
-            'The following options only apply to reverse mode.'
-        )
-        rev.add_argument('-P', '--no-prefix', action='store_true',
-            help='Does not automatically add numeric prefixes in reverse mode')
-        return super().interface(argp)
 
     @property
     def bytestream(self):
@@ -58,26 +47,17 @@ class pack(BlockTransformation):
 
         self.log_debug(F'using base {base:d}')
 
-        if not self.args.no_prefix:
+        if self.args.prefix:
             prefix = {
                 0x02: b'0b',
                 0x08: b'0o',
                 0x10: b'0x'
             }.get(base, B'')
 
-        converter = base_unit(
-            base=base,
-            byteorder=('big', 'little')[self.args.little_endian]
-        )
+        converter = base_unit(base, self.args.bigendian)
 
         for n in self.chunk(data, raw=True):
             yield prefix + converter.reverse(n)
-
-    def __init__(self, *a, **kw):
-        super().__init__(*a, **kw)
-        if self.args.hexdump:
-            self.log_debug('enabling hexdump parser')
-            self.args.base = 0x10
 
     def process(self, data):
         if self.args.hexdump:

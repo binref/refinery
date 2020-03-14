@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import ArithmeticUnit
+from . import BinaryOperation
 
 
-class sub(ArithmeticUnit):
+class sub(BinaryOperation):
     """
     Subtract the given argument from each block.
     """

@@ -9,6 +9,7 @@ jobs:
         - sudo apt-get install xclip
         - sudo apt-get install xvfb
         - pip3 install codecov
+        - pip3 install flake8
       after_success: codecov
       stage: test
       script: xvfb-run coverage run --source refinery run-tests.py
@@ -16,6 +17,7 @@ jobs:
       before_install:
         - sudo apt-get install xclip
         - sudo apt-get install xvfb
+        - pip3 install flake8
       script: xvfb-run python3 run-tests.py
       python: 3.7
     - name: "Python 3.6 on Linux, only installation"
@@ -35,14 +37,14 @@ jobs:
       env: PATH=/c/Python37:/c/Python37/Scripts:$PATH
       before_install:
         - choco install python --version 3.7 -y
-        - python -m pip install --upgrade pip
+        - python -m pip install --upgrade pip flake8
     - name: "Python 3.8 on Windows"
       os: windows
       language: shell
       env: PATH=/c/Python38:/c/Python38/Scripts:$PATH
       before_install:
         - choco install python --version 3.8 -y
-        - python -m pip install --upgrade pip
+        - python -m pip install --upgrade pip flake8
     - name: "Deploy Documentation"
       python: 3.8
       stage: deploy

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import BlockTransformation
-from ...lib.argformats import multibin
+from . import arg, BlockTransformation
 
 
 class map(BlockTransformation):
@@ -9,11 +8,13 @@ class map(BlockTransformation):
     Each block of the input data which occurs as a block of the index argument
     is replaced by the corresponding block of the image argument.
     """
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('index', type=multibin, help='index characters')
-        argp.add_argument('image', type=multibin, help='image characters')
-        return super().interface(argp)
+    def __init__(
+        self,
+        index: arg(help='index characters'),
+        image: arg(help='image characters'),
+        blocksize=1
+    ):
+        super().__init__(blocksize=blocksize, index=index, image=image)
 
     def process(self, data):
         self._map = dict(zip(

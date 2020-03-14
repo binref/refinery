@@ -16,6 +16,12 @@ class NameUnknownException(Exception):
 class TestBase(unittest.TestCase):
     _MALSHARE_CACHE = {}
 
+    def ldu(self, name, *args, **kwargs):
+        unit = refinery.lib.loader.load(name, *args, **kwargs)
+        if not unit.args.quiet:
+            unit.log_detach()
+        return unit
+
     def generate_random_buffer(self, size):
         return bytes((random.randrange(0, 0xFF) for _ in range(size)))
 

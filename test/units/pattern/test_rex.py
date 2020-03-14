@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import TestUnitBase, refinery
+from .. import TestUnitBase
 
 
 class TestRexDeobfuscate(TestUnitBase):
@@ -74,18 +74,9 @@ class TestRexDeobfuscate(TestUnitBase):
         EndFunc
         '''.encode('ASCII')
 
-        layer1 = refinery.resub(
-            R'sjwakhwbtxwwb\("(.*?)"\)',
-            R'"$(1 | resub (.)(.) $$2$$1)"'
-        )
-        layer2 = refinery.resub(
-            R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)',
-            R'"$(1 | snip ::$2)"'
-        )
-        layer3 = refinery.resub(
-            R'\$e\(\$b\("([^"]+)"\)\)',
-            R'$(1 | base)'
-        )
+        layer1 = self.ldu('resub', R'sjwakhwbtxwwb\("(.*?)"\)', R'"$(1 | resub (.)(.) $$2$$1)"')
+        layer2 = self.ldu('resub', R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)', R'"$(1 | snip ::$2)"')
+        layer3 = self.ldu('resub', R'\$e\(\$b\("([^"]+)"\)\)', R'$(1 | base)')
 
         autoit_refined = autoit_obfuscated
         autoit_refined = layer1(autoit_refined)
@@ -95,17 +86,16 @@ class TestRexDeobfuscate(TestUnitBase):
         self.assertEqual(autoit_refined, autoit_cleaned_up)
 
     def test_nested_substitution_expressions(self):
-        unit = refinery.rex(
-            RB'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
-            RB'$(1 | hex | aes ECB $(2 | hex | xor $3 | hex -R) | trim -r 00)'
-        )
+        unit = self.ldu('rex',
+            R'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
+            R'$(1 | hex | aes ECB $(2 | hex | xor $3 | hex -R) | trim -r 00)')
 
         msg = B'Too much technology, in too little time.'
 
         aeskey = self.generate_random_buffer(16)
-        hex_op = refinery.hex()
-        xor_op = refinery.xor('0x4D')
-        aes_op = refinery.aes('-R', 'ECB', hex_op.reverse(aeskey).upper().decode('UTF8'))
+        hex_op = self.ldu('hex')
+        xor_op = self.ldu('xor', '0x4D')
+        aes_op = self.ldu('aes', '-R', 'ECB', hex_op.reverse(aeskey).upper().decode('UTF8'))
 
         data = aes_op(msg)
 
@@ -118,19 +108,19 @@ class TestRexDeobfuscate(TestUnitBase):
         self.assertEqual(msg, unit(data))
 
     def test_resub_powershell_variables(self):
-        resub = refinery.resub(R'\$\{(\w+)\}', '$$$1')
+        resub = self.ldu('resub', R'\$\{(\w+)\}', '$$$1')
         self.assertEqual(resub(B'(^& ${R} ${dAtA} (${iV}+${K}))'), B'(^& $R $dAtA ($iV+$K))')
 
     def test_dollar_escapes_01(self):
-        resub = refinery.resub(R'FOO(.)', '$1$$1')
+        resub = self.ldu('resub', R'FOO(.)', '$1$$1')
         self.assertEqual(resub(B'FOOP FOOZ'), B'P$1 Z$1')
 
     def test_dollar_escapes_02(self):
-        resub = refinery.resub(R'FOO(.)', '$$$x$1$(1|hex -R)$$1')
+        resub = self.ldu('resub', R'FOO(.)', '$$$x$1$(1|hex -R)$$1')
         self.assertEqual(resub(B'FOO3 FOO2'), B'$$x333$1 $$x232$1')
 
     def test_dollar_escapes_03(self):
-        resub = refinery.resub(R'FOO(.)', '$$$$$$$$$x$1$$$')
+        resub = self.ldu('resub', R'FOO(.)', '$$$$$$$$$x$1$$$')
         self.assertEqual(resub(B'FOOP'), B'$$$$$$$$xP$$')
 
     def test_real_world_01(self):
@@ -139,7 +129,7 @@ class TestRexDeobfuscate(TestUnitBase):
             B'domain/www.yahoo.com\n'
             B'domain/ns1.dns.com'
         )
-        rex = refinery.rex.assemble('-M', R'^domain\/(.*)$', '$1')
+        rex = self.ldu('rex', '-M', R'^domain\/(.*)$', '$1')
         self.assertEqual(rex(data), data.replace(B'domain/', B''))
 
     def test_generic_parameters_01(self):

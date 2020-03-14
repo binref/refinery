@@ -141,7 +141,7 @@ class PythonExpression:
             expression = ast.parse(definition)
             nodes = ast.walk(expression)
         except Exception:
-            raise ArgumentTypeError('the provided expression could not be parsed')
+            raise ArgumentTypeError(F'The provided expression could not be parsed: {definition!s}')
 
         if type(next(nodes)) != ast.Module:
             raise ArgumentTypeError('unknown error parsing the expression')
@@ -318,7 +318,7 @@ class DelayedArgumentDispatch:
         except ModuleNotFoundError:
             return None
         else:
-            unit = unit and unit(*args)
+            unit = unit and unit.assemble(*args)
             self.units[uhash] = unit
             return unit
 
@@ -435,8 +435,8 @@ class DelayedArgument(LazyEvaluation):
         for name, arguments in mod:
             try:
                 arg = self.handler(arg, name, *arguments)
-            except Exception as error:
-                raise ArgumentTypeError(F'failed to apply modifier {name} to incoming data: {error}')
+            except Exception as E:
+                raise ArgumentTypeError(F'failed to apply modifier {name} to incoming data: {E}') from E
             if callable(arg):
                 if data is None:
                     raise TooLazy
@@ -617,22 +617,22 @@ class DelayedNumbinArgument(DelayedArgument):
         """
         from .chunks import unpack
         size, expression = expression.split(':', 1)
-        little_endian = True
+        bigendian = False
         if size.startswith('#'):
-            little_endian = False
+            bigendian = True
             size = size[1:]
         try:
             size = int(size, 0)
-        except ValueError:
+        except ValueError as E:
             raise ArgumentTypeError(
                 'the syntax is unpack:[!]size:bytes where size is an integer '
                 'and bytes a multibin expression. You can specify the exclamation '
                 'mark to use network (big endian) byte order.'
-            )
+            ) from E
         mbin = self._mbin(expression)
         if not callable(mbin):
-            return unpack(mbin, size, little_endian)
-        return lambda d: unpack(mbin(d), size, little_endian)
+            return list(unpack(mbin, size, bigendian))
+        return lambda d: list(unpack(mbin(d), size, bigendian))
 
     @handler.register('inc')
     def inc(self, it: Iterable[int], wrap=None) -> Iterable[int]:
@@ -810,13 +810,13 @@ def extract_options(symbols, prefix='MODE_'):
     return {k: v for k, v in candidates.items() if isinstance(v, int)}
 
 
-def pending(argument: Union[Any, List[Any]]) -> bool:
+def pending(argument: Union[Any, Iterable[Any]]) -> bool:
     """
     This function returns a boolean value which indicates whether the given
     argument is a `refinery.lib.argformats.LazyEvaluation`.
     """
-    if isinstance(argument, list):
-        return any(pending(element) for element in argument)
+    if isinstance(argument, (list, tuple)):
+        return any(pending(x) for x in argument)
     return isinstance(argument, LazyEvaluation)
 
 
@@ -825,7 +825,7 @@ def manifest(argument: Union[Any, List[Any]], data: bytearray) -> Union[Any, Lis
     Returns the manifestation of a `refinery.lib.argformats.LazyEvaluation`
     on the given data. This function can change the data.
     """
-    if isinstance(argument, list):
+    if isinstance(argument, (list, tuple)):
         return [manifest(x, data) for x in argument]
     return argument(data) if isinstance(argument, LazyEvaluation) else argument
 

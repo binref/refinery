@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import ArithmeticUnit
+from . import BinaryOperation
 
 
-class add(ArithmeticUnit):
+class add(BinaryOperation):
     """
-    Subtract the given argument from each block.
+    Add the given argument to each block.
     """
     @staticmethod
     def operate(a, b): return a + b

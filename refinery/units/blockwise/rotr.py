@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import ArithmeticUnit
+from . import BinaryOperation
 
 
-class rotr(ArithmeticUnit):
+class rotr(BinaryOperation):
     """
     Rotate the bits of each block right.
     """

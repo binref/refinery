@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import ArithmeticUnit
+from . import BinaryOperation
 
 
-class shl(ArithmeticUnit):
+class shl(BinaryOperation):
     """
     Shift the bits of each block left, filling with zero bits.
     """
