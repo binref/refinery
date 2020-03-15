@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import bz2 as bz2_
 
-from .. import Unit
+from .. import arg, Unit
 from ...lib.argformats import number
 
 
@@ -10,11 +10,8 @@ class bz2(Unit):
     """
     BZip2 compression and decompression.
     """
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-l', '--level', type=number[1:9], action='store', default=9,
-            help='compression level preset between 0 and 9')
-        return super().interface(argp)
+    def __init__(self, level: arg('-l', type=number[1:9], help='compression level preset between 1 and 9') = 9):
+        super().__init__(level=level)
 
     def process(self, data):
         return bz2_.decompress(data)
