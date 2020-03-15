@@ -14,7 +14,16 @@ class INF:
     def __gt__(self, other): return True
     def __ge__(self, other): return True
     def __eq__(self, other): return other is INF
+    def __mul__(self, other): return self
+    def __add__(self, other): return self
+    def __sub__(self, other): return self
+    def __div__(self, other): return self
+    def __mod__(self, other): return self
+    def __pow__(self, other): return self
+    def __abs__(self): return None
     def __repr__(self): return '∞'
+    def __truediv__(self, other): return self
+    def __floordiv__(self, other): return self
 
 
 class AST:

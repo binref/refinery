@@ -5,8 +5,8 @@ import textwrap
 
 from math import log
 
-from . import HexViewerMixin, get_terminal_size
-from .. import Unit
+from . import arg, HexViewer, get_terminal_size
+from ...lib.types import INF
 
 try:
     import numpy
@@ -39,7 +39,7 @@ def entropy(data: bytearray) -> float:
         return 0.0 + -sum(q * log(q, 2) for q in S) / 8.0
 
 
-class peek(Unit, HexViewerMixin):
+class peek(HexViewer):
     """
     The unit extracts preview information of the input data and displays it on
     the standard error stream. If the standard output of this unit is connected
@@ -47,22 +47,19 @@ class peek(Unit, HexViewerMixin):
     a terminal, the data is discarded instead.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        from ...lib.argformats import number
-        lines = argp.add_mutually_exclusive_group()
-        lines.add_argument('-l', '--lines', metavar='N', type=number, default=10,
-            help='Specify number N of lines in the preview, default is 10.')
-        lines.add_argument('-a', '--lines-all', action='store_const', dest='lines', const=None,
-            help='Output all possible preview lines without restriction')
-        peek = argp.add_mutually_exclusive_group()
-        peek.add_argument('-d', '--decode', action='store_true',
-            help='Attempt to decode and display printable data.')
-        peek.add_argument('-e', '--esc', action='store_true',
-            help='Always peek data as string, escape characters if necessary.')
-        peek.add_argument('-b', '--brief', action='store_true',
-            help='One line peek, implies --lines=0.')
-        return super().interface(cls.hexviewer_interface(argp))
+    def __init__(
+        self,
+        lines  : arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
+        all    : arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
+        decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
+        esc    : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
+        brief  : arg('-b', group='MODE', help='One line peek, implies --lines=0.') = False,
+        hexaddr=True, expand=False, width=0
+    ):
+        lines = INF if all else lines
+        super(peek, self).__init__(
+            hexaddr=hexaddr, expand=expand, width=width, lines=lines, decode=decode, esc=esc, brief=brief)
+        self.separate = True
 
     def process(self, data):
         for line in self._peeklines(data):
@@ -70,10 +67,6 @@ class peek(Unit, HexViewerMixin):
         if not sys.stdout.isatty():
             self.log_info('forwarding input to next unit')
             yield data
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.separate = True
 
     def _peeklines(self, data):
         import codecs
@@ -114,8 +107,7 @@ class peek(Unit, HexViewerMixin):
                         continue
 
                     width = self.args.width or get_terminal_size()
-                    if self.args.lines is not None:
-                        decoded = decoded[:width * self.args.lines]
+                    decoded = decoded[:abs(width * self.args.lines)]
                     dump = [
                         line.rstrip('\r')
                         for chunk in textwrap.wrap(
@@ -130,11 +122,10 @@ class peek(Unit, HexViewerMixin):
                     break
 
             if not dump:
-                total = self.args.lines
-                total = total and total * get_terminal_size() // 3
+                total = abs(self.args.lines * get_terminal_size() // 3)
                 dump = self.hexdump(data, total=total)
 
-            dump = list(itertools.islice(dump, 0, self.args.lines))
+            dump = list(itertools.islice(dump, 0, abs(self.args.lines)))
 
         termsize = get_terminal_size()
 

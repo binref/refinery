@@ -2,21 +2,20 @@
 # -*- coding: utf-8 -*-
 import itertools
 
+from .. import arg, Unit
 from ...lib.tools import get_terminal_size, lookahead
 
 
-class HexViewerMixin:
+class HexViewer(Unit, abstract=True):
 
-    @classmethod
-    def hexviewer_interface(cls, argp):
-        from ...lib.argformats import number
-        argp.add_argument('-A', '--no-addr', dest='hexaddr', action='store_false',
-            help='Do not show byte offsets in hexdump.')
-        argp.add_argument('-W', '--width', metavar='N', type=number, default=0,
-            help='Specify the number of hexadecimal characters to use in preview.')
-        argp.add_argument('-E', '--expand', action='store_true',
-            help='Do not compress sequences of identical lines in hexdump')
-        return argp
+    def __init__(
+        self,
+        hexaddr : arg.switch('-A', '--no-addr', help='Do not show addresses in hexdump', off=True) = True,
+        width   : arg.number('-W', help='Specify the number of hexadecimal characters to use in preview.') = 0,
+        expand  : arg.switch('-E', help='Do not compress sequences of identical lines in hexdump') = False,
+        **kwargs
+    ):
+        super().__init__(hexaddr=hexaddr, width=width, expand=expand, **kwargs)
 
     def hexaddr_size(self, total):
         addr_width = 16
