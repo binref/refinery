@@ -10,17 +10,17 @@ class TestFormatString(TestUnitBase):
         self.assertEqual(trim(b'   abc   '), b'abc')
 
     def test_LeftRemoval(self):
-        trim = self.load(left_only=True)
+        trim = self.load('-l')
         self.assertEqual(trim(b'   abc   '), b'abc   ')
 
     def test_RightRemoval(self):
-        trim = self.load(right_only=True)
+        trim = self.load('-r')
         self.assertEqual(trim(b'   abc   '), b'   abc')
 
     def test_MultiChar(self):
-        trim = self.load(junk=[b'x:'])
+        trim = self.load(b'x:')
         self.assertEqual(trim(b'x:x:x::abc'), b':abc')
 
     def test_TwoMultiChar(self):
-        trim = self.load(junk=[b'ab', b'cd'])
+        trim = self.load(b'ab', b'cd')
         self.assertEqual(trim(b'abcdabef'), b'ef')

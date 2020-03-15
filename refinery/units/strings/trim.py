@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from string import whitespace
 import re
 
-from .. import Unit
-from ...lib.argformats import multibin
+from .. import arg, Unit
 
 
 class trim(Unit):
@@ -12,38 +10,35 @@ class trim(Unit):
     Removes byte sequences at beginning and end of input data.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('junk', type=multibin,
-            default=[w.encode('ascii') for w in whitespace],
-            help='Character(s) to be removed, default is whitespace.', nargs='*')
-        one_side_only = argp.add_mutually_exclusive_group()
-        one_side_only.add_argument('-l', '--left-only', action='store_true')
-        one_side_only.add_argument('-r', '--right-only', action='store_true')
-        return super().interface(argp)
+    def __init__(
+        self, *junk: arg.help('Binary strings to be removed, default are all whitespace characters.'),
+        left: arg.switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
+        right: arg.switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True
+    ):
+        if not junk:
+            import string
+            junk = [w.encode('ascii') for w in string.whitespace]
+
+        super().__init__(junk=junk, left=left, right=right)
 
     def process(self, data):
         keep_running = True
+        mv = memoryview(data)
+
+        if self.args.left:
+            jpl = tuple(re.compile(B'^(?:%s)+' % re.escape(j)) for j in self.args.junk)
+        if self.args.right:
+            jpr = tuple(re.compile(B'(?:%s)+$' % re.escape(j)) for j in self.args.junk)
+
         while keep_running:
             keep_running = False
-            for junk in self.args.junk:
-                jlen = len(junk)
-                if not self.args.right_only:
-                    if data.startswith(junk):
-                        if jlen == 1:
-                            data = data.lstrip(junk)
-                        else:
-                            pattern = B'^(?:' + B''.join(B'\\x%02X' % X for X in junk) + B')+'
-                            match = re.search(pattern, data)
-                            data = data[match.end():]
-                        keep_running = True
-                if not self.args.left_only:
-                    if data.endswith(junk):
-                        if jlen == 1:
-                            data = data.rstrip(junk)
-                        else:
-                            pattern = B'(?:' + B''.join(B'\\x%02X' % X for X in junk) + B')+$'
-                            match = re.search(pattern, data)
-                            data = data[:match.start()]
-                        keep_running = True
-        return data
+            for k, junk in enumerate(self.args.junk):
+                jl = len(junk)
+                if self.args.left and mv[:jl] == junk:
+                    mv = mv[jpl[k].search(mv).end():]
+                    keep_running = True
+                if self.args.right and mv[-jl:] == junk:
+                    mv = mv[:jpr[k].search(mv).start()]
+                    keep_running = True
+
+        return bytearray(mv)
