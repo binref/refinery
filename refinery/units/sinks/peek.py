@@ -3,40 +3,9 @@
 import sys
 import textwrap
 
-from math import log
-
 from . import arg, HexViewer, get_terminal_size
 from ...lib.types import INF
-
-try:
-    import numpy
-
-    def _np_entropy(data: bytearray) -> float:
-        value, counts = numpy.unique(data, return_counts=True)
-        probs = counts / len(data)
-        # 8 bits are the maximum number of bits of information in a byte
-        return 0.0 + -sum(p * log(p, 2) for p in probs) / 8.0
-
-except ImportError:
-    _np_entropy = None
-
-
-def entropy(data: bytearray) -> float:
-    """
-    Computes the entropy of `data` over the alphabet of all bytes.
-    """
-    if not data:
-        return 0.0
-    if _np_entropy:
-        return _np_entropy(data)
-    else:
-        from collections import defaultdict
-        histogram = defaultdict(int)
-        for b in data:
-            histogram[b] += 1
-        p = 1. / len(data)
-        S = [histogram[b] * p for b in histogram]
-        return 0.0 + -sum(q * log(q, 2) for q in S) / 8.0
+from ...lib.tools import entropy
 
 
 class peek(HexViewer):
@@ -76,7 +45,7 @@ class peek(HexViewer):
         from ...lib.magic import magicparse
 
         peeks = [
-            F'{entropy(bytearray(data)) * 100:05.2f}% entropy',
+            F'{entropy(memoryview(data)) * 100:05.2f}% entropy',
             format_size(len(data), align=not self.args.lines)
         ]
 
