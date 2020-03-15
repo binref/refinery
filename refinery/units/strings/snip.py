@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
-from ...lib.argformats import sliceobj
+from .. import arg, Unit
 
 
 class snip(Unit):
@@ -11,17 +10,9 @@ class snip(Unit):
     every byte at an even position and then, every byte at an odd position. In
     this case, multiple outputs are produced.
     """
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(
-            'slice',
-            type=sliceobj,
-            nargs='*',
-            default=[slice(None, None)],
-            help='Specify start:stop:step in Python slice syntax.'
-        )
-        return super().interface(argp)
+    def __init__(self, slices: arg.help('Specify start:stop:step in Python slice syntax.') = [slice(None, None)]):
+        super().__init__(slices=slices)
 
     def process(self, data):
-        for bounds in self.args.slice:
+        for bounds in self.args.slices:
             yield data[bounds]

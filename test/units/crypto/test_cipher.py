@@ -196,7 +196,7 @@ class TestAES(TestUnitBase):
         M = self.generate_random_buffer(L)
 
         D = chop(0x10)[
-            pick(':~1', ':~2:~0') | scope('~0') | rep | scope('~1') | aes('-PRAW', 'ECB', key=K) | snip('11:')
+            pick(':~1', ':~2:~0') | scope('~0') | rep | scope('~1') | aes('-PRAW', 'ECB', key=K) | self.ldu('snip', '11:')
         ] | aes('CBC', '-PRAW', key=K)
 
         E = pad('-b16') | aes('-RPRAW', 'CBC', key=K) | chop(16)[pick(':(-2)', '(-1)', '(-2)')]
