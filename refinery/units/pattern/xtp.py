@@ -6,7 +6,7 @@ from fnmatch import fnmatch
 from ipaddress import ip_address
 from urllib.parse import urlparse
 
-from . import PatternExtractor, arg
+from . import arg, PatternExtractor
 from .. import RefineryCriticalException
 from ...lib.patterns import indicators
 

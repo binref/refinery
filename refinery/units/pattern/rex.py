@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ...lib.argformats import utf8
-from . import RegexUnit, TransformSubstitutionFactory, arg
+from . import arg, RegexUnit, TransformSubstitutionFactory
 
 
 class rex(RegexUnit):

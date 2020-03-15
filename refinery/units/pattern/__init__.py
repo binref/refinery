@@ -10,7 +10,7 @@ from itertools import islice
 
 from ...lib.types import INF, AST
 from ...lib.argformats import regexp
-from .. import Unit, arg
+from .. import arg, Unit
 
 
 def _lazy_load(cmd: bytes):
