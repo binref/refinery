@@ -9,8 +9,9 @@ from flake8.api import legacy as flake8
 
 from . import TestUnitBase
 
+from refinery import neg, b64, repl, rex, pack
 from refinery.lib import loader
-from refinery import neg, b64, repl, rex, pack, Unit
+from refinery.units import _retrofitted, Unit
 
 
 class TestPipelines(TestUnitBase):
@@ -53,7 +54,7 @@ class TestMetaProperties(TestUnitBase):
         log.warn('retrofit not enforced.')
         for unit in loader.get_all_entry_points():
             legacy_interface = unit.interface.__func__ is not Unit.interface.__func__
-            if not unit.is_retrofitted:
+            if not _retrofitted(unit):
                 if legacy_interface:
                     log.warn(F'requires retrofit: {unit.__qualname__}')
                 continue

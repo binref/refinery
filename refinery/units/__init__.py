@@ -43,6 +43,21 @@ from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead
 from ..lib.frame import Framed, Chunk
 
 
+def _retrofitted(cls: Union[type, Any]) -> bool:
+    if not isinstance(cls, type):
+        cls = cls.__class__
+    bases = cls.__mro__[1:]
+    if len(bases) == 1:
+        return False
+    for base in bases:
+        try:
+            if cls.interface.__func__ is not base.interface.__func__:
+                return False
+        except AttributeError:
+            pass
+    return True
+
+
 class ArgparseError(ValueError):
     """
     This custom exception type is thrown from the custom argument parser of
@@ -451,9 +466,14 @@ class Executable(type):
         parameters = inspect.signature(cls.__init__).parameters
         cls.argspec = ArgumentSpecification()
 
-        if cls.is_retrofitted:
+        if _retrofitted(cls):
+            if not bases:
+                raise TypeError(
+                    F'Unexpected empty MRO for {cls.__name__}: You should not use the Executable '
+                    F'metaclass directly, instead you should inherit from Unit.'
+                )
             parent = bases[0]
-            if not parent.is_retrofitted and cls.__init__ is parent.__init__:
+            if not _retrofitted(parent) and cls.__init__ is parent.__init__:
                 @wraps(cls.__init__)
                 def __init__stub_(self): parent.__init__(self)
                 cls.__init__ = __init__stub_
@@ -515,19 +535,6 @@ class Executable(type):
         inverse of `refinery.units.Unit.process`.
         """
         return hasattr(cls, 'reverse')
-
-    @property
-    def is_retrofitted(cls) -> bool:
-        bases = cls.__mro__[1:]
-        if len(bases) == 1:
-            return False
-        for base in bases:
-            try:
-                if cls.interface.__func__ is not base.interface.__func__:
-                    return False
-            except AttributeError:
-                pass
-        return True
 
     @property
     def codec(self) -> str:
@@ -654,10 +661,6 @@ class Unit(metaclass=Executable, abstract=True):
     @property
     def is_reversible(self) -> bool:
         return self.__class__.is_reversible
-
-    @property
-    def is_retrofitted(self) -> bool:
-        return self.__class__.is_retrofitted
 
     @property
     def codec(self) -> str:
@@ -978,12 +981,13 @@ class Unit(metaclass=Executable, abstract=True):
             help='Specify up to two times to increase log level.')
         argp.add_argument('--debug-timing', dest='dtiming', action='store_true', help=SUPPRESS)
 
-        groups = {}
-        for arg in cls.argspec.values():
-            if arg.group is not None and arg.group not in groups:
-                groups[arg.group] = argp.add_mutually_exclusive_group()
+        groups = {None: argp}
+
         for argument in reversed(cls.argspec.values()):
-            groups.get(argument.group, argp).add_argument @ argument
+            gp = argument.group
+            if gp not in groups:
+                groups[gp] = argp.add_mutually_exclusive_group()
+            groups[gp].add_argument @ argument
 
         return argp
 
@@ -1107,7 +1111,7 @@ class Unit(metaclass=Executable, abstract=True):
         argp = cls.argparser(*args, **keywords)
         args = argp.parse_args()
 
-        unit = autoinvoke(cls, args.__dict__) if cls.is_retrofitted else cls(DelayedArgumentProxy(args, argp.order))
+        unit = autoinvoke(cls, args.__dict__) if _retrofitted(cls) else cls(DelayedArgumentProxy(args, argp.order))
 
         unit.args.quiet = args.quiet
 
@@ -1140,7 +1144,7 @@ class Unit(metaclass=Executable, abstract=True):
         self._framed = None
         self._chunks = None
 
-        if self.is_retrofitted:
+        if _retrofitted(self):
             assert not args, (
                 'Retrofitted units may not call the Unit base constructor with positional arguments.'
             )
