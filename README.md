@@ -67,9 +67,9 @@ emit "Hello World" | hex -R | zl -R | b64 -R
 
 Given a file `packed.bin` containing a base64 encoded payload buffer, the following pipeline extracts said payload to `payload.bin`:
 ```
-emit packed.bin | carve -l -p1 b64 | b64 | dump payload.bin
+emit packed.bin | carve -l -t1 b64 | b64 | dump payload.bin
 ```
-The [carve][] unit can be used to carve blocks of data out of the input buffer, in this case it looks for base64 encoded data, sorts them by length (`-l`) and returns the first of these (`-p1`), which carves the largest base64-looking chunk of data from `packed.bin`. The data is then base64-decoded and dumped to the file `payload.bin`. 
+The [carve][] unit can be used to carve blocks of data out of the input buffer, in this case it looks for base64 encoded data, sorts them by length (`-l`) and returns the first of these (`-t1`), which carves the largest base64-looking chunk of data from `packed.bin`. The data is then base64-decoded and dumped to the file `payload.bin`. 
 
 The unit [pack][], will pick all numeric expressions from a text buffer and turn them into their binary representation. A simple example is the pipeline
 ```
