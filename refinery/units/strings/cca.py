@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
-from ...lib.argformats import multibin
+from .. import arg, Unit
 
 
 class cca(Unit):
@@ -9,10 +8,8 @@ class cca(Unit):
     Append data to the input.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('data', nargs='*', type=multibin, help='specify data to be appended')
-        return super().interface(argp)
+    def __init__(self, *data: arg.help('Binary strings to be appended to the input.')):
+        super().__init__(data=data)
 
     def process(self, data):
         return data + B''.join(self.args.data)
