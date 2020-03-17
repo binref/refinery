@@ -2,20 +2,19 @@
 # -*- coding: utf-8 -*-
 import defusedxml.minidom
 
-from .. import Unit
+from .. import arg, Unit
 from ...lib.decorators import unicoded
-from ...lib.argformats import number
 
 
 class ppxml(Unit):
     """
     Expects XML input data and outputs it in a neatly formatted manner.
     """
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-i', '--indent', type=number, default=4,
-            help='Controls the amount of space characters used for indentation in the output. Default is 4.')
-        return super().interface(argp)
+
+    def __init__(self, indent: arg.number('-i', help=(
+        'Controls the amount of space characters used for indentation in the output. Default is 4.')) = 4
+    ):
+        super().__init__(indent=indent)
 
     @unicoded
     def process(self, data: str) -> str:
