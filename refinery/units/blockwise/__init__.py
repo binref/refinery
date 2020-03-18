@@ -118,7 +118,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             return numpy.fromiter(cycle(buffer), dtype, blocks)
 
         rest = data[blocks * self.args.blocksize:]
-        data = numpy.frombuffer(data, dtype, blocks)
+        data = numpy.frombuffer(memoryview(data), dtype, blocks)
         args = [nparg(a) for a in self.args.arg]
 
         if self.inplace is NotImplemented:
@@ -126,7 +126,6 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             if data.dtype != dtype:
                 data = data.astype(dtype)
         else:
-            data = data.copy()
             self.inplace(data, *args)
         return data.tobytes() + rest
 

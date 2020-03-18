@@ -692,15 +692,18 @@ class Unit(metaclass=Executable, abstract=True):
             raise exception
         elif isinstance(exception, RefineryCriticalException):
             self.log_warn(F'critical error, terminating: {exception}')
+        elif isinstance(exception, GeneratorExit):
+            raise
         elif isinstance(exception, RefineryPartialResult):
             if not self.log_level:
                 return None
             elif not self.log_warn(F'error, partial result returned: {exception}'):
                 raise exception
             return exception.partial
-        else:
-            self.log_warn(F'unexpected error: {exception}')
-        if self.log_level >= LogLevel.DEBUG:
+
+        self.log_warn(F'unexpected exception {exception!r}; {exception!s}')
+
+        if self.log_debug():
             import traceback
             traceback.print_exc(file=sys.stderr)
 
