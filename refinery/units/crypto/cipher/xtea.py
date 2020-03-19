@@ -2,15 +2,18 @@
 # -*- coding: utf-8 -*-
 import struct
 
-from . import CipherUnit
+from . import BlockCipherUnitBase
 
 
-class xtea(CipherUnit):
+class xtea(BlockCipherUnitBase):
     """
     XTEA encryption and decryption.
     """
     blocksize = 16
     key_sizes = 16
+
+    def __init__(self, key, padding=None):
+        super().__init__(key=key, padding=padding)
 
     @property
     def key(self):

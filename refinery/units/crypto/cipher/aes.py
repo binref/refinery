@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import AES
 
-from . import StandardCipherUnit
+from . import StandardBlockCipherUnit
 
 
-class aes(StandardCipherUnit, cipher=AES):
+class aes(StandardBlockCipherUnit, cipher=AES):
     """
     AES encryption and decryption.
     """

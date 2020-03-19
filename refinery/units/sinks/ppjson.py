@@ -12,7 +12,7 @@ class ppjson(Unit):
     """
     Expects JSON input data and outputs it in a neatly formatted manner.
     """
-    _TRAILING_COMMA = R',\s*(}|])'
+    _TRAILING_COMMA = re.compile(R',\s*(}|])')
 
     @classmethod
     def interface(cls, argp):
@@ -22,7 +22,7 @@ class ppjson(Unit):
 
     @unicoded
     def process(self, data: str) -> str:
-        if re.search(self._TRAILING_COMMA, data):
+        if self._TRAILING_COMMA.search(data):
             from ...lib.patterns import formats
 
             strings = {
@@ -34,6 +34,6 @@ class ppjson(Unit):
                 k = match.start()
                 return match.group(0 if any(k in s for s in strings) else 1)
 
-            data = re.sub(self._TRAILING_COMMA, smartfix, data)
+            data = self._TRAILING_COMMA.sub(smartfix, data)
 
         return json.dumps(json.loads(data), indent=self.args.indent)

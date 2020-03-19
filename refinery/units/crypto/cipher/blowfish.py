@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import Blowfish
 
-from . import StandardCipherUnit
+from . import StandardBlockCipherUnit
 
 
-class blowfish(StandardCipherUnit, cipher=Blowfish):
+class blowfish(StandardBlockCipherUnit, cipher=Blowfish):
     """
     Blowfish encryption and decryption.
     """

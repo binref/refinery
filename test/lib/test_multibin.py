@@ -17,7 +17,7 @@ class TestFraming(TestBase):
     def test_encrypted_buffer(self):
         key = b'encryptioniseasy'
         iv = b'iviviviviviviviv'
-        alice = self.ldu('aes', 'CBC', key=key, iv=iv)
+        alice = self.ldu('aes', 'CBC', key, iv=iv)
         plaintext = self.generate_random_buffer(200)
         encrypted = alice.reverse(plaintext)
 

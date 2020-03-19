@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import CAST
 
-from . import StandardCipherUnit
+from . import StandardBlockCipherUnit
 
 
-class cast(StandardCipherUnit, cipher=CAST):
+class cast(StandardBlockCipherUnit, cipher=CAST):
     """
     CAST encryption and decryption.
     """

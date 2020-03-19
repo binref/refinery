@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import DES
 
-from . import StandardCipherUnit
+from . import StandardBlockCipherUnit
 
 
-class des(StandardCipherUnit, cipher=DES):
+class des(StandardBlockCipherUnit, cipher=DES):
     """
     DES encryption and decryption.
     """

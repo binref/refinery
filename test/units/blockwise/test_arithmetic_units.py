@@ -58,7 +58,7 @@ class TestArithmeticUnits(TestUnitBase):
         )
 
     def test_neg_example_01(self):
-        neg = self.ldu('neg', )
+        neg = self.ldu('neg')
         self.assertEqual(neg(b'\xFF\x00'), b'\x00\xFF')
 
     def test_neg_idempotence(self):

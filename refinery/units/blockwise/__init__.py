@@ -94,7 +94,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         'the input data and used cyclically.')),
         bigendian=False, blocksize=1, **kw
     ):
-        super().__init__(bigendian=bigendian, blocksize=blocksize, arg=argument, **kw)
+        super().__init__(bigendian=bigendian, blocksize=blocksize, argument=argument, **kw)
 
     def process_ecb_fast(self, data):
         """
@@ -119,7 +119,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
 
         rest = data[blocks * self.args.blocksize:]
         data = numpy.frombuffer(memoryview(data), dtype, blocks)
-        args = [nparg(a) for a in self.args.arg]
+        args = [nparg(a) for a in self.args.argument]
 
         if self.inplace is NotImplemented:
             data = self.operate(data, *args)
@@ -139,7 +139,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         else:
             self.log_debug('successfully used numpy to process data in ecb mode')
             return result
-        self._arg = [cycle(a) for a in self.args.arg]
+        self._arg = [cycle(a) for a in self.args.argument]
         return super().process(data)
 
     def process_block(self, block):

@@ -206,12 +206,13 @@ class arg(Argument):
         group   : Optional[str] = None,
         help    : Optional[str] = None,
         metavar : Optional[str] = None,
-        dest    : Optional[str] = None
+        dest    : Optional[str] = None,
+        nargs   : Optional[Union[int, str]] = None,
     ):
         """
         Used to add argparse arguments with a fixed set of options, based on a list of strings.
         """
-        return arg(*args, group=group, type=str, metavar=metavar,
+        return arg(*args, group=group, type=str, metavar=metavar, nargs=nargs,
             dest=dest, help=help.format(choices=', '.join(choices)), choices=choices)
 
     @property
@@ -588,7 +589,8 @@ class DelayedArgumentProxy:
             _argv=self._argv,
             _argo=list(self._argo),
             _args=dict(self._args),
-            _done=self._done
+            _done=self._done,
+            _guid=self._guid,
         )
         return clone
 
@@ -604,7 +606,8 @@ class DelayedArgumentProxy:
             _argv=argv,
             _argo=list(argo),
             _args=args,
-            _done=done
+            _done=done,
+            _guid=None,
         )
 
     def __neg__(self):
@@ -614,7 +617,9 @@ class DelayedArgumentProxy:
         """
         Lock the current arguments for the given input `data`.
         """
-        if not self._done:
+        identifier = id(data)
+        if not self._done and identifier != self._guid:
+            self._store(_guid=identifier)
             for name in self._argo:
                 value = getattr(self._argv, name, None)
                 if value and pending(value):
@@ -1116,6 +1121,7 @@ class Unit(metaclass=Executable, abstract=True):
 
         unit = autoinvoke(cls, args.__dict__) if _retrofitted(cls) else cls(DelayedArgumentProxy(args, argp.order))
 
+        unit.args._store(_argo=argp.order)
         unit.args.quiet = args.quiet
 
         unit.args.dtiming = args.dtiming

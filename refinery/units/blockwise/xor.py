@@ -18,7 +18,7 @@ class xor(BinaryOperation):
             else:
                 from itertools import islice, cycle
                 take = len(data) // self.args.blocksize + 1
-                argb = self.unchunk(islice(cycle(x & self.fmask for x in self.args.arg[0]), take))
+                argb = self.unchunk(islice(cycle(x & self.fmask for x in self.args.argument[0]), take))
                 return strxor(data, argb[:len(data)])
 
     @staticmethod

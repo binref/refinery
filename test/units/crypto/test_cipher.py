@@ -5,6 +5,7 @@ from inspect import getdoc
 from .. import TestUnitBase
 from refinery import pad, snip, scope, chop, pick, rep
 from refinery import aes, blowfish, cast, chacha, rsa, salsa, seal, des, des3, rc2, rc4, rncrypt, xtea, vigenere
+from refinery.lib.loader import load_commandline as L
 
 
 class TestCipherUnits(TestUnitBase):
@@ -16,10 +17,10 @@ class TestCipherUnits(TestUnitBase):
                 for size in unit.key_sizes:
                     K = self.generate_random_buffer(size)
                     V = self.generate_random_buffer(unit.blocksize)
-                    D = unit('CBC', key=K, iv=V, reverse=False)
+                    D = unit(key=K, iv=V, mode='CBC')
                     for P in ['PKCS7', 'ISO7816', 'X923']:
-                        E = unit(F'-P{P}', 'CBC', key=K, iv=V, reverse=True)
-                    self.assertEqual(D(E(data)), data)
+                        E = unit(key=K, iv=V, padding=P, mode='CBC')
+                    self.assertEqual(D.process(E.reverse(data)), data)
 
     def test_basic_for_stream_ciphers(self):
         for buffersize in (3, 7, 56, 128, 1231):
@@ -43,10 +44,9 @@ class TestCipherUnits(TestUnitBase):
     def test_xtea(self):
         for buffersize in (3, 7, 56, 128, 1231):
             data = self.generate_random_buffer(buffersize)
-            iv = self.generate_random_buffer(16)
             key = self.generate_random_buffer(16)
-            E = xtea(key=key, iv=iv, reverse=True)
-            D = xtea(key=key, iv=iv)
+            E = self.ldu('xtea', key=key, reverse=True)
+            D = self.ldu('xtea', key=key)
             self.assertEqual(D(E(data)), data)
 
     def test_vigenere(self):
@@ -172,13 +172,18 @@ class TestRSA(TestUnitBase):
 
 class TestAES(TestUnitBase):
 
+    def test_panic(self):
+        data = B'BINARY REFINERY REFINES BINARIES FINER THAN BINARY TOOLS'
+        pp = L('aes -R CBC range:16 --iv rep[16]:H:AC') | L('ccp rep[16]:H:AC') | L('aes CBC range:16 --iv x::16')
+        self.assertEqual(pp(data), data)
+
     def test_invertible_01(self):
-        cipher = aes('CBC', 'PBKDF2[32,s4ltY]:p4$$w0rd')
+        cipher = L('aes CBC PBKDF2[32,s4ltY]:p4$$w0rd')
         test = self.generate_random_buffer(200)
         self.assertEqual(cipher.process(cipher.reverse(test)), test)
 
     def test_invertible_02(self):
-        cipher = aes('CBC', 'PBKDF2[32,s4ltY]:p4$$w0rd', iv=(b'MYIV' * 4))
+        cipher = self.ldu('aes', 'CBC', 'PBKDF2[32,s4ltY]:p4$$w0rd', iv=(b'MYIV' * 4))
         test = self.generate_random_buffer(200)
         self.assertEqual(cipher.process(cipher.reverse(test)), test)
 
@@ -186,22 +191,25 @@ class TestAES(TestUnitBase):
         K = self.generate_random_buffer(16)
         V = self.generate_random_buffer(16)
         M = self.generate_random_buffer(5 * 16)
-        D = aes('CBC', key=K, iv=V)
-        E = aes('CBC', key=K, iv=V, reverse=True)
+        D = self.ldu('aes', 'CBC', key=K, iv=V)
+        E = self.ldu('aes', 'CBC', key=K, iv=V, reverse=True)
         self.assertEqual(M, D(E(M)))
 
     def test_cbc_ciphertext_stealing(self):
-        L = 5 * 16 + 11
-        K = self.generate_random_buffer(16)
-        M = self.generate_random_buffer(L)
+        N = 5 * 16 + 11
+        M = self.generate_random_buffer(N)
 
-        D = chop(0x10)[
-            pick(':~1', ':~2:~0') | scope('~0') | rep | scope('~1') | aes('-PRAW', 'ECB', key=K) | self.ldu('snip', '11:')
-        ] | aes('CBC', '-PRAW', key=K)
+        # flake8: noqa
+        D = L('chop 0x10') [
+            L('pick :~1 :~2:~0') | L('scope ~0') | L('rep') | L('scope ~1') 
+                | L('aes -PRAW ECB H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('snip 11:')
+        ] | L('aes CBC -PRAW H:C0CAC01AFACEBEA75DEFACEDBEEFCACE')
 
-        E = pad('-b16') | aes('-RPRAW', 'CBC', key=K) | chop(16)[pick(':(-2)', '(-1)', '(-2)')]
+        # flake8: noqa
+        E = L('pad -b 16') | L('aes -RPRAW CBC H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('chop 16') [
+                L('pick :(-2) (-1) (-2)') ]
 
-        C = E(M)[:L]
-        P = D(C)[:L]
+        C = E(M)[:N]
+        P = D(C)[:N]
 
         self.assertEqual(M, P)

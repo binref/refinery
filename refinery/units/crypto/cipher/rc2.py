@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import ARC2
 
-from . import StandardCipherUnit
+from . import StandardBlockCipherUnit
 
 
-class rc2(StandardCipherUnit, cipher=ARC2):
+class rc2(StandardBlockCipherUnit, cipher=ARC2):
     """
     RC2 encryption and decryption.
     """
