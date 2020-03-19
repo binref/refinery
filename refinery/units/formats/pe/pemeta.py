@@ -106,7 +106,7 @@ class pemeta(Unit):
         for signer in signature['content']['signer_infos']:
             ts = tscrawl(signer, False)
             if ts is not None:
-                timestamps.append()
+                timestamps.append(ts)
         if len(timestamps) == 1:
             info.update(timestamps[0])
 
