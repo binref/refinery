@@ -16,11 +16,9 @@ class pattern:
     operators.
     """
 
-    def __init__(self, pattern, ignore_case=True):
+    def __init__(self, pattern):
         self.pattern = pattern
-        self.ignore_case = ignore_case
-        self.compiled = re.compile(bytes(self), re.IGNORECASE) \
-            if ignore_case else re.compile(bytes(self))
+        self.compiled = re.compile(bytes(self))
 
     def __bytes__(self):
         return str(self).encode('ascii')
@@ -101,8 +99,14 @@ __TLDS = R'(?:{possible_tld})(?!(?:{dealbreakers}))'.format(
     ])
 )
 
-format_domain_normal = R'\b(?:[a-z0-9\_][a-z0-9\-\_]{{0,256}}?\.){repeat}[a-z0-9\_][a-z0-9\-\_]{{1,256}}\.{tlds}'
-format_domain_defang = R'\b(?:[a-z0-9\_][a-z0-9\-\_]{{0,256}}?(?:\[\.\]|\.)){repeat}[a-z0-9\_][a-z0-9\-\_]{{1,256}}(?:\[\.\]|\.){tlds}'
+format_domain_normal = (
+    R'(?:[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{0,256}}?\.){repeat}'
+    R'[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{1,256}}\.{tlds}'
+)
+format_domain_defang = (
+    R'(?:[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{0,256}}?(?:\[\.\]|\.)){repeat}'
+    R'[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{1,256}}(?:\[\.\]|\.){tlds}'
+)
 
 pattern_domain = format_domain_normal.format(repeat='{0,20}', tlds=__TLDS)
 
@@ -119,13 +123,13 @@ pattern_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=pattern_ipv4, d=pattern
 pattern_hostname = pattern_socket + '?'
 pattern_hostname_df = '(?:{ip}|{d})(?::\\d{{2,5}})?'.format(ip=pattern_ipv4_df, d=pattern_domain_df)
 
-pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-z0-9])'
+pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-zA-Z0-9])'
 pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 pattern_ps1str = R'''(?:"(?:\`"|""|[^"])*"|'(?:''|[^'])*')'''
 pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
 
 pattern_url = ''.join([
-    R'([a-z]{2,20}?:\/\/'                     # scheme
+    R'([a-zA-Z]{2,20}?:\/\/'                     # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
     pattern_socket + '?',
@@ -133,20 +137,20 @@ pattern_url = ''.join([
 ])
 
 pattern_url_df = ''.join([
-    R'([a-z]{2,20}?(?:\[:\]|:)\/\/'           # scheme
+    R'([a-zA-Z]{2,20}?(?:\[:\]|:)\/\/'           # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
     pattern_socket + '?',
     R'(?:[/?#][/_=?&.,\w\%\-]*)?)'
 ])
 
-pattern_email = R'([a-z0-9_\.\+\-]{{1,256}}?)@({})'.format(pattern_domain)
+pattern_email = R'([a-zA-Z0-9_\.\+\-]{{1,256}}?)@({})'.format(pattern_domain)
 pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
 pattern_win_path_nospace = R'[-\w+,.;@\]\[\^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_win_path_nospace)
 pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]{2,}%'
-pattern_win_path = R'(?:[A-Za-z]:|{}|\\\\[a-z0-9_.$]+\\[a-z0-9_.$]+)[\\\/]'.format(pattern_win_env_variable)
+pattern_win_path = R'(?:[A-Za-z]:|{}|\\\\[a-zA-Z0-9_.$]+\\[a-zA-Z0-9_.$]+)[\\\/]'.format(pattern_win_env_variable)
 pattern_win_path += R'(?:{p}[\\\/])*{p}\b'.format(p=pattern_win_path_element)
 
 pattern_hexline = R'(?:{s}+\s+)?\s*{h}(?:\s+{s}+)?'.format(
@@ -191,17 +195,17 @@ class formats(PatternEnum):
     "Sequences of integers, separated by commas or semicolons"
     word = alphabet(R'\\w')
     "Sequences of word characters"
-    alph = alphabet(R'[a-zA-Z]', ignore_case=False)
+    alph = alphabet(R'[a-zA-Z]')
     "Sequences of alphabetic characters"
-    anum = alphabet(R'[a-zA-Z0-9]', ignore_case=False)
+    anum = alphabet(R'[a-zA-Z0-9]')
     "Sequences of alpha-numeric characters"
-    b64 = alphabet(R'[0-9a-zA-Z\+\/]', postfix=R'[0-9a-zA-Z\+\/]{0,3}={0,3}', ignore_case=False)
+    b64 = alphabet(R'[0-9a-zA-Z\+\/]', postfix=R'[0-9a-zA-Z\+\/]{0,3}={0,3}')
     "Base64 encoded strings"
-    b64u = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}', ignore_case=False)
+    b64u = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}')
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]')
     "Hexadecimal strings"
-    HEX = alphabet(R'[0-9A-F]', ignore_case=False)
+    HEX = alphabet(R'[0-9A-F]')
     "Uppercase hexadecimal strings"
     hexdump = tokenize(pattern_hexline, bound='', sep=R'\s*\n')
     """
@@ -242,11 +246,11 @@ class indicators(PatternEnum):
     "A domain which contains at least three parts, including the top level"
     url = pattern(pattern_url)
     "Uniform resource locator addresses"
-    btc = alphabet('[a-km-zA-HJ-NP-Z0-9]', prefix=R'(?<!\w)[13]', at_least=26, at_most=33, ignore_case=False)
+    btc = alphabet('[a-km-zA-HJ-NP-Z0-9]', prefix=R'(?<!\w)[13]', at_least=26, at_most=33)
     "Bitcoin addresses"
-    pem = pattern(pattern_pem, ignore_case=False)
+    pem = pattern(pattern_pem)
     "A pattern matching PEM encoded cryptographic parameters"
-    xmr = alphabet('[1-9A-HJ-NP-Za-km-z]', prefix='4[0-9AB]', at_least=93, at_most=93, ignore_case=False)
+    xmr = alphabet('[1-9A-HJ-NP-Za-km-z]', prefix='4[0-9AB]', at_least=93, at_most=93)
     "Monero addresses"
     path = pattern(pattern_win_path)
     "Windows and Linux path names"

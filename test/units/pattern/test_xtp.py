@@ -41,3 +41,25 @@ class TestPatternExtractor(TestUnitBase):
         unit = self.load('guid')
         data = B'An uppercase GUID! A5371AF2-2000-4A4C-ADD2-5E6F1E302B41'
         self.assertEqual(unit(data), B'A5371AF2-2000-4A4C-ADD2-5E6F1E302B41')
+
+    def test_real_domain_with_dash(self):
+        data = bytes.fromhex(
+            '10 10 73 61 6E 73 2D 73 65 72 69 66 2D 6C 69 67'  # ..sans-serif-lig
+            '68 74 00 15 15 47 6F 6F 67 6C 65 2D 63 6F 6D 2E'  # ht...Google-com.
+            '6C 69 6E 6B 70 63 2E 6E 65 74 00 05 05 31 30 37'  # linkpc.net...107
+            '31 37 00 04 04 6E 75 6C 6C 00 07 07 53 65 72 76'  # 17...null...Serv
+        )
+        unit = self.load('domain')
+        hits = list(unit.process(data))
+        self.assertIn(b'Google-com.linkpc.net', hits)
+
+    def test_email_with_dash(self):
+        data = (
+            B'\r\r\nBart_simpson@springfield.name\r\r\n'
+            B'&nbsp;&nbsp;&nbsp;&nbsp;<small><small>or</small></small>&nbsp;&nbsp;&nbsp;&nbsp;'
+            B'\r\r\nlisa_simpson02@protonmail.com'
+        )
+        unit = self.load('email')
+        hits = list(unit.process(data))
+        self.assertIn(b'Bart_simpson@springfield.name', hits)
+        self.assertIn(b'lisa_simpson02@protonmail.com', hits)
