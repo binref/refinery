@@ -4,7 +4,7 @@ import json
 
 from functools import lru_cache
 from contextlib import suppress
-from pefile import PE, DIRECTORY_ENTRY
+from pefile import PE, DIRECTORY_ENTRY, DEBUG_TYPE
 from datetime import datetime, timezone
 from asn1crypto import cms
 from asn1crypto import x509
@@ -25,16 +25,18 @@ class pemeta(Unit):
     def __init__(
         self, all : arg('-c', '--custom',
             help='Unless enabled, everything will be extracted.') = True,
-        version    : arg('-V', help='Parse the VERSION resource.') = False,
-        timestamps : arg('-T', help='Extract time stamps.') = False,
+        debug      : arg('-D', help='Parse the PDB path from the debug directory.') = False,
+        dotnet     : arg('-N', help='Parse the .NET header.') = False,
         signatures : arg('-S', help='Parse digital signatures.') = False,
-        dotnet     : arg('-D', help='Parse the .NET header.') = False
+        timestamps : arg('-T', help='Extract time stamps.') = False,
+        version    : arg('-V', help='Parse the VERSION resource.') = False,
     ):
         super().__init__(
-            timestamps=all or timestamps,
-            signatures=all or signatures,
+            debug=all or debug,
             dotnet=all or dotnet,
-            version=all or version
+            signatures=all or signatures,
+            timestamps=all or timestamps,
+            version=all or version,
         )
 
     def _ensure_string(self, x):
@@ -233,6 +235,24 @@ class pemeta(Unit):
 
         return info
 
+    def parse_debug_data(self, data):
+        result = {}
+        pe = self._getpe(data)
+        pe.parse_data_directories(directories=[
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DEBUG']])
+        for dbg in pe.DIRECTORY_ENTRY_DEBUG:
+            if DEBUG_TYPE.get(dbg.struct.Type, None) != 'IMAGE_DEBUG_TYPE_CODEVIEW':
+                continue
+            with suppress(Exception):
+                pdb = dbg.entry.PdbFileName
+                if 0 in pdb:
+                    pdb = pdb[:pdb.index(0)].decode(self.codec)
+                result.update(
+                    PdbPath=pdb,
+                    PdbAge=dbg.entry.Age
+                )
+        return result
+
     def process(self, data):
         result = {}
 
@@ -252,6 +272,14 @@ class pemeta(Unit):
             else:
                 if dnet_info:
                     result['DotNet'] = dnet_info
+        if self.args.debug:
+            try:
+                debug_info = self.parse_debug_data(data)
+            except Exception as E:
+                self.log_info(F'failed to parse debug directory: {E!s}')
+            else:
+                if debug_info:
+                    result['Debug'] = debug_info
 
         signature = {}
 
