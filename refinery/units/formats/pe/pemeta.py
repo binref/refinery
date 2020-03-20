@@ -246,9 +246,9 @@ class pemeta(Unit):
             with suppress(Exception):
                 pdb = dbg.entry.PdbFileName
                 if 0 in pdb:
-                    pdb = pdb[:pdb.index(0)].decode(self.codec)
+                    pdb = pdb[:pdb.index(0)]
                 result.update(
-                    PdbPath=pdb,
+                    PdbPath=pdb.decode(self.codec),
                     PdbAge=dbg.entry.Age
                 )
         return result
