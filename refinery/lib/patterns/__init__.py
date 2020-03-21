@@ -91,10 +91,11 @@ class PatternEnum(enum.Enum):
         raise AttributeError
 
 
-__TLDS = R'(?:{possible_tld})(?!(?:{dealbreakers}))'.format(
+__TLDS = R'(?i:{possible_tld})(?!(?:{dealbreakers}))'.format(
     possible_tld='|'.join(tlds),
     dealbreakers='|'.join([
         R'[a-z]',
+        R'[A-Za-z]{3}',
         R'\.\w\w',
     ])
 )
@@ -129,7 +130,7 @@ pattern_ps1str = R'''(?:"(?:\`"|""|[^"])*"|'(?:''|[^'])*')'''
 pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
 
 pattern_url = ''.join([
-    R'([a-zA-Z]{2,20}?:\/\/'                     # scheme
+    R'([a-zA-Z]{2,20}?:\/\/'                  # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
     pattern_socket + '?',
@@ -137,21 +138,29 @@ pattern_url = ''.join([
 ])
 
 pattern_url_df = ''.join([
-    R'([a-zA-Z]{2,20}?(?:\[:\]|:)\/\/'           # scheme
+    R'([a-zA-Z]{2,20}?(?:\[:\]|:)\/\/'        # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
     pattern_socket + '?',
     R'(?:[/?#][/_=?&.,\w\%\-]*)?)'
 ])
 
-pattern_email = R'([a-zA-Z0-9_\.\+\-]{{1,256}}?)@({})'.format(pattern_domain)
+pattern_email = R'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{})'.format(pattern_domain)
 pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
 pattern_win_path_nospace = R'[-\w+,.;@\]\[\^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_win_path_nospace)
 pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]{2,}%'
-pattern_win_path = R'(?:[A-Za-z]:|{}|\\\\[a-zA-Z0-9_.$]+\\[a-zA-Z0-9_.$]+)[\\\/]'.format(pattern_win_env_variable)
-pattern_win_path += R'(?:{p}[\\\/])*{p}\b'.format(p=pattern_win_path_element)
+
+pattern_win_path = R'(?:{s})(?P<pathsep>[\\\/])(?:{p}(?P=pathsep))*{p}\b'.format(
+    s='|'.join([
+        pattern_win_env_variable,     # environment variable
+        R'[A-Za-z]:',                 # drive letter with colon
+        R'\\\\[a-zA-Z0-9_.$]{1,50}',  # UNC path
+        R'HK[A-Z_]{1,30}',            # registry root key
+    ]),
+    p=pattern_win_path_element
+)
 
 pattern_hexline = R'(?:{s}+\s+)?\s*{h}(?:\s+{s}+)?'.format(
     h=tokenize(

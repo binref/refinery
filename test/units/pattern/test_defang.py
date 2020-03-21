@@ -18,3 +18,9 @@ class TestDefangUnit(TestUnitBase):
             df(B'Blah foo connects to `10.0.13.11` and `192.168.102.3`'),
             B'Blah foo connects to `10.0.13[.]11` and `192.168.102[.]3`'
         )
+
+    def test_email_allcaps(self):
+        data = B'Email us at ALEXANDER.IRWIN@PROTONMAIL.COM (or) MISAEL.SHORT@TUTANOTA.COM to get the ransom amount.'
+        unit = self.load()
+        self.assertEqual(unit(data),
+            B'Email us at ALEXANDER.IRWIN@PROTONMAIL[.]COM (or) MISAEL.SHORT@TUTANOTA[.]COM to get the ransom amount.')

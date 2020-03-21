@@ -63,3 +63,13 @@ class TestPatternExtractor(TestUnitBase):
         hits = list(unit.process(data))
         self.assertIn(b'Bart_simpson@springfield.name', hits)
         self.assertIn(b'lisa_simpson02@protonmail.com', hits)
+
+    def test_email_allcaps(self):
+        data = (
+            B'Email us at ALEXANDER.IRWIN@PROTONMAIL.COM (or) MISAEL.SHORT@TUTANOTA.COM to get the ransom amount.'
+            B'Keep our contacts safe. Disclosure can lead to impossibility of decryption.'
+        )
+        unit = self.load('email')
+        hits = list(unit.process(data))
+        self.assertIn(b'ALEXANDER.IRWIN@PROTONMAIL.COM', hits)
+        self.assertIn(b'MISAEL.SHORT@TUTANOTA.COM', hits)
