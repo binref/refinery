@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ... import Unit
+from ... import arg, Unit
 from ....lib.argformats import number
 
 
@@ -10,10 +10,8 @@ class rot(Unit):
     amount is 13, providing the common (and weak) string obfuscation method.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('amount', nargs='?', default=13, type=number[1:25], help='rotation amount')
-        return super().interface(argp)
+    def __init__(self, amount: arg(help='Number of letters to rotate by; Default is 13.', type=number[1:25]) = 13):
+        super().__init__(amount=amount)
 
     def process(self, data):
         def rotate(char):

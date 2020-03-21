@@ -73,8 +73,8 @@ class TestCipherUnits(TestUnitBase):
             for n in (5, 12, 102, 3455):
                 P = self.generate_random_buffer(k)
                 M = self.generate_random_buffer(n)
-                E = rncrypt(P, reverse=True)
-                D = rncrypt(P)
+                E = self.ldu('rncrypt', P, reverse=True)
+                D = self.ldu('rncrypt', P)
                 self.assertEqual(D(E(M)), M)
 
 

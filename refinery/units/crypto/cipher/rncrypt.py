@@ -33,7 +33,6 @@ subject to the same MIT license as the original RNCryptor source code:
 RNCryptor is Copyright (C) 2013-2016 Rob Napier, Yan Kalchevskiy, Brant Young.
 """
 from ... import Unit
-from ....lib.argformats import multibin
 
 import hashlib
 import hmac
@@ -49,10 +48,8 @@ class rncrypt(Unit):
     Implements encryption and decryption using the RNCryptor specification.
     See also: https://github.com/RNCryptor
     """
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('password', type=multibin)
-        return super().interface(argp)
+    def __init__(self, password: bytearray):
+        super().__init__(password=password)
 
     def process(self, data: bytes) -> bytes:
         encryption_salt = data[2:10]

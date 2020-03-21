@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 import zlib
 
-from .. import Unit
-from ...lib.argformats import number
+from .. import arg, Unit
 
 
 class zl(Unit):
@@ -11,17 +10,17 @@ class zl(Unit):
     ZLib compression and decompression.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-l', '--level', action='store', type=number[0:9], default=9,
-            help='specify level manually')
-        argp.add_argument('-w', '--window', action='store', type=number[8:15], default=15,
-            help='manually specify window size (but why.)')
-        argp.add_argument('-f', '--force', action='store_true', help='decompress even if all known methods fail')
-        mode = argp.add_mutually_exclusive_group()
-        mode.add_argument('-z', '--zlib-header', action='store_true', help='use a zlib header')
-        mode.add_argument('-g', '--gzip-header', action='store_true', help='use a gzip header')
-        return super().interface(argp)
+    def __init__(
+        self,
+        level  : arg.number('-l', bound=(0, 0X9), help='Specify a compression level between 0 and 9.') = 9,
+        window : arg.number('-w', bound=(8, 0XF), help='Manually specify the window size between 8 and 15.') = 15,
+        force  : arg.switch('-f', help='Decompress as far as possible, even if all known methods fail.') = False,
+        zlib_header: arg.switch('-z', group='MODE', help='Use a ZLIB header.') = False,
+        gzip_header: arg.switch('-g', group='MODE', help='Use a GZIP header.') = False
+    ):
+        if zlib_header and gzip_header:
+            raise ValueError('You can only specify one header type (ZLIB or GZIP).')
+        return super().__init__(level=level, window=window, force=force, zlib_header=zlib_header, gzip_header=gzip_header)
 
     def _force_decompress(self, data, mode):
         z = zlib.decompressobj(mode)
