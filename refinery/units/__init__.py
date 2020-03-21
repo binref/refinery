@@ -29,7 +29,7 @@ import inspect
 from enum import IntEnum, Enum
 from functools import wraps
 from collections import OrderedDict
-from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Any, ByteString
+from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Tuple, Any, ByteString
 from argparse import (
     ArgumentParser,
     ArgumentError,
@@ -181,11 +181,21 @@ class arg(Argument):
         return arg(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
 
     @staticmethod
-    def number(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None) -> Argument:
+    def number(
+        *args: str,
+        group : Optional[str] = None,
+        bound : Optional[Tuple[int, int]] = None,
+        help  : Optional[str] = None,
+        dest  : Optional[str] = None,
+    ) -> Argument:
         """
         Used to add argparse arguments that contain a number.
         """
-        return arg(*args, group=group, help=help, dest=dest, type=number, metavar='N')
+        nt = number
+        if bound is not None:
+            lower, upper = bound
+            nt = nt[lower:upper]
+        return arg(*args, group=group, help=help, dest=dest, type=nt, metavar='N')
 
     @staticmethod
     def option(*args: str, choices: Enum, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None) -> Argument:

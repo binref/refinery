@@ -798,7 +798,7 @@ def OptionFactory(options: Mapping[str, Any]):
     return Option
 
 
-def extract_options(symbols, prefix='MODE_'):
+def extract_options(symbols, prefix='MODE_', *exceptions):
     """
     A helper function to extract all numeric constants from modules that have a certain
     prefix. `refinery.units.crypto.cipher.StandardCipherUnit` uses this to extract the
@@ -806,7 +806,10 @@ def extract_options(symbols, prefix='MODE_'):
     """
     candidates = {
         k[len(prefix):]: getattr(symbols, k, None)
-        for k in dir(symbols) if k.startswith(prefix)}
+        for k in dir(symbols) if k.startswith(prefix) and all(
+            e not in k for e in exceptions
+        )
+    }
     return {k: v for k, v in candidates.items() if isinstance(v, int)}
 
 
