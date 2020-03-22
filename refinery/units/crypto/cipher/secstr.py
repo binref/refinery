@@ -5,8 +5,7 @@ from Crypto.Cipher import AES
 from Crypto.Random import urandom
 from Crypto.Util.Padding import pad, unpad
 
-from ... import Unit
-from ....lib.argformats import multibin, request
+from ... import arg, Unit
 
 
 class secstr(Unit):
@@ -19,19 +18,22 @@ class secstr(Unit):
     _MAGIC = bytes((
         0xEF, 0xAE, 0x3D, 0xD9, 0xDD, 0x75, 0xD7, 0xAE, 0xF8, 0xDD, 0xFD, 0x38,
         0xDB, 0x7E, 0x35, 0xDD, 0xBD, 0x7A, 0xD3, 0x9D, 0x1A, 0xE7, 0x7E, 0x39))
+
     # Secure strings include a decimal number formatted as a string directly
     # following the header. Presumably, this is the PowerShell version.
     _PSVER = 2
-    _IVERR = 'The IV needs to be 16 bytes long.'
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('key', type=multibin, nargs='?', default=bytes(range(1, 17)),
-            help='secure string encryption key')
-        argp.add_argument('--iv', default=None,
-            type=request(multibin, lambda r: len(r) == 0x10, cls._IVERR),
-            help=F'Optionally specify an IV to use for encryption. {cls._IVERR}')
-        return super().interface(argp)
+    def __init__(
+        self, key: arg.help(
+            'Secure string encryption 16-byte AES key; the default are the bytes from 1 to 16.'
+        ) = bytes(range(1, 17)),
+        iv: arg('-I', help=F'Optionally specify an IV to use for encryption.') = None
+    ):
+        if len(key) != 0x10:
+            raise ValueError('The encryption key has to be 16 bytes long.')
+        if iv is not None and len(iv) != 0x10:
+            raise ValueError('The IV has to be 16 bytes long.')
+        super().__init__(key=key, iv=iv)
 
     def reverse(self, data):
         ivec = self.args.iv or urandom(0x10)

@@ -157,15 +157,15 @@ class TestRSA(TestUnitBase):
 
     def test_invertible_01(self):
         M = self.generate_random_buffer(200)
-        E = rsa(self.key_public, reverse=True)
-        D = rsa(self.key_private)
+        E = self.ldu('rsa', self.key_public, reverse=True)
+        D = self.ldu('rsa', self.key_private)
         C = E(M)
         self.assertEqual(D(C), M)
 
     def test_invertible_02(self):
         M = self.generate_random_buffer(200)
-        E = rsa(self.key_private, reverse=True)
-        D = rsa(self.key_public)
+        E = self.ldu('rsa', self.key_private, reverse=True)
+        D = self.ldu('rsa', self.key_public)
         C = E(M)
         self.assertEqual(D(C), M)
 

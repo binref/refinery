@@ -75,8 +75,8 @@ import ast
 from itertools import cycle, count, chain
 from argparse import ArgumentTypeError
 from contextlib import suppress
-from functools import update_wrapper, wraps
-from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable, Callable
+from functools import update_wrapper
+from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable
 
 
 class PythonExpression:
@@ -831,19 +831,3 @@ def manifest(argument: Union[Any, List[Any]], data: bytearray) -> Union[Any, Lis
     if isinstance(argument, (list, tuple)):
         return [manifest(x, data) for x in argument]
     return argument(data) if isinstance(argument, LazyEvaluation) else argument
-
-
-def request(parser: Callable[[str], Any], predicate: Callable[[Any], bool], errmsg: str):
-    """
-    Turns an existing `parser` into one where the parsed data satisfies
-    the given `predicate`, which is a callable returning a bool. If the
-    parsed data is not pending and the predicate returns false, the
-    exception `ArgumentTypeError(errmsg)` is generated.
-    """
-    @wraps(parser)
-    def wrapped(s: str):
-        result = parser(s)
-        if not pending(result) and not predicate(result):
-            raise ArgumentTypeError(errmsg)
-        return result
-    return wrapped

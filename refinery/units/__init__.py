@@ -716,7 +716,7 @@ class Unit(metaclass=Executable, abstract=True):
                 raise exception
             return exception.partial
 
-        self.log_warn(F'unexpected exception {exception!r}; {exception!s}')
+        self.log_warn(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
 
         if self.log_debug():
             import traceback
@@ -1129,7 +1129,11 @@ class Unit(metaclass=Executable, abstract=True):
         argp = cls.argparser(*args, **keywords)
         args = argp.parse_args()
 
-        unit = autoinvoke(cls, args.__dict__) if _retrofitted(cls) else cls(DelayedArgumentProxy(args, argp.order))
+        try:
+            if _retrofitted(cls): unit = autoinvoke(cls, args.__dict__)
+            else: unit = cls(DelayedArgumentProxy(args, argp.order))
+        except ValueError as E:
+            argp.error(str(E))
 
         unit.args._store(_argo=argp.order)
         unit.args.quiet = args.quiet

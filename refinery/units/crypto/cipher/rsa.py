@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ... import Unit, RefineryPartialResult
-from ....lib.argformats import multibin
+from ... import arg, Unit, RefineryPartialResult
 
 from Crypto.Cipher import PKCS1_OAEP, PKCS1_v1_5
 from Crypto.PublicKey import RSA
@@ -15,13 +14,8 @@ class rsa(Unit):
     it will perform a raw RSA operation. The result of these operations are (un)padded using
     EMSA-PKCS1-v1_5.
     """
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('key', type=multibin, help='RSA key in PEM or DER format.')
-        return super().interface(argp)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, key: arg.help('RSA key in PEM or DER format.')):
+        super().__init__(key=key)
         self.key = RSA.import_key(self.args.key)
 
     @property
