@@ -73,3 +73,6 @@ class TestPatternExtractor(TestUnitBase):
         hits = list(unit.process(data))
         self.assertIn(b'ALEXANDER.IRWIN@PROTONMAIL.COM', hits)
         self.assertIn(b'MISAEL.SHORT@TUTANOTA.COM', hits)
+
+    def test_email_with_symbols(self):
+        self.assertEqual(self.load('email', filter=True)(B'.###/.test@host.com.Q@aVw5w.tR.'), B'test@host.com')

@@ -5,6 +5,7 @@ import re
 from fnmatch import fnmatch
 from ipaddress import ip_address
 from urllib.parse import urlparse
+from string import ascii_letters
 
 from . import arg, PatternExtractor
 from .. import RefineryCriticalException
@@ -49,6 +50,7 @@ class xtp(PatternExtractor):
         self.args.pattern = re.compile(pattern.encode(self.codec))
         self.args.filter = filter
 
+    _ALPHABETIC = ascii_letters.encode('ASCII')
     _LEGITIMATE_HOSTS = [
         'adobe.com',
         'aka.ms',
@@ -122,8 +124,17 @@ class xtp(PatternExtractor):
                     return None
                 if any(x.startswith('_') for x in hostparts):
                     return None
-                if len(hostparts[-1]) > 3 and len(set(re.findall(R'{}(?:\.\w+)+'.format(hostparts[0]).encode('ascii'), data))) > 2:
-                    return None
+                if len(hostparts[-1]) > 3:
+                    seen_before = len(set(re.findall(
+                        R'{}(?:\.\w+)+'.format(hostparts[0]).encode('ascii'), data)))
+                    if seen_before > 2:
+                        return None
+        elif name == 'email':
+            at = value.find(B'@')
+            ix = 0
+            while value[ix] not in cls._ALPHABETIC:
+                ix += 1
+            return None if at - ix < 3 else value[ix:]
         elif name == 'path':
             if len(value) < 8:
                 return None
