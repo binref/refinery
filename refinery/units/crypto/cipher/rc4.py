@@ -11,4 +11,4 @@ class rc4(StandardCipherUnit, cipher=ARC4):
     """
     RC4 encryption and decryption.
     """
-    pass
+    def __init__(self, key): super().__init__(key)
