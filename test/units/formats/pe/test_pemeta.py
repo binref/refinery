@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import json
 from ... import TestUnitBase
-from refinery import pesig
 
 
 class TestPEMeta(TestUnitBase):
@@ -40,7 +39,7 @@ class TestPEMeta(TestUnitBase):
         self.assertEqual(result['Signature']['Subject'], 'Usoris Systems')
         self.assertEqual(result['Signature']['Serial'], '67fd5aec0d8f9f6f1caa40589f568a0c')
 
-        signature = pesig()(data)
+        signature = self.ldu('pesig')(data)
 
         self.assertIn(signature, data)
         data = data.replace(signature, B'')

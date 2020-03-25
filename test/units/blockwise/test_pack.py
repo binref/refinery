@@ -125,8 +125,7 @@ class TestPack(TestUnitBase):
         self.assertEqual(pack(dump), data)
 
     def test_pack_hexdump_auto(self):
-        from refinery import hexview
-        dump = hexview(expand=True)
+        dump = self.ldu('hexview', expand=True)
         pack = self.load(hexdump=True)
         for size in (20, 200, 400):
             data = self.generate_random_buffer(size)

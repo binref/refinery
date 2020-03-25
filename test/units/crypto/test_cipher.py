@@ -3,9 +3,8 @@
 from inspect import getdoc
 
 from .. import TestUnitBase
-from refinery import pad, snip, scope, chop, pick, rep
-from refinery import aes, blowfish, cast, chacha, rsa, salsa, seal, des, des3, rc2, rc4, rncrypt, xtea, vigenere
-from refinery.lib.loader import load_commandline as L
+
+from refinery.lib.loader import load_commandline as L, resolve
 
 
 class TestCipherUnits(TestUnitBase):
@@ -13,7 +12,8 @@ class TestCipherUnits(TestUnitBase):
     def test_basic_for_block_ciphers(self):
         for buffersize in (3, 7, 56, 128, 1231):
             data = self.generate_random_buffer(buffersize)
-            for unit in (aes, blowfish, cast, des, des3, rc2):
+            for name in ('aes', 'blowfish', 'cast', 'des', 'des3', 'rc2'):
+                unit = resolve(name)
                 for size in unit.key_sizes:
                     K = self.generate_random_buffer(size)
                     V = self.generate_random_buffer(unit.blocksize)
@@ -25,7 +25,8 @@ class TestCipherUnits(TestUnitBase):
     def test_basic_for_stream_ciphers(self):
         for buffersize in (3, 7, 56, 128, 1231):
             data = self.generate_random_buffer(buffersize)
-            for unit in (rc4, seal, chacha, salsa):
+            for name in ('rc4', 'seal', 'chacha', 'salsa'):
+                unit = resolve(name)
                 for size in unit.key_sizes:
                     S = unit(key=self.generate_random_buffer(size))
                     self.assertEqual(S(S(data)), data)
@@ -35,10 +36,10 @@ class TestCipherUnits(TestUnitBase):
             data = self.generate_random_buffer(buffersize)
             key = self.generate_random_buffer(32)
             for n in (8, 12, 24):
-                S = chacha(key=key, nonce=self.generate_random_buffer(n))
+                S = self.ldu('chacha', key=key, nonce=self.generate_random_buffer(n))
                 self.assertEqual(S(S(data)), data)
             with self.assertRaises(ValueError):
-                S = chacha(key=key, nonce=B'FLABBERGAST')
+                S = self.ldu('chacha', key=key, nonce=B'FLABBERGAST')
                 S(data)
 
     def test_xtea(self):
@@ -64,8 +65,8 @@ class TestCipherUnits(TestUnitBase):
             B" Is but a dream within a dream."
         )
         key = 'dream'
-        E = vigenere(key=key, reverse=True)
-        D = vigenere(key=key)
+        E = self.ldu('vigenere', key=key, reverse=True)
+        D = self.ldu('vigenere', key=key)
         self.assertEqual(D(E(data)), data)
 
     def test_rncrypt(self):
@@ -152,7 +153,7 @@ class TestRSA(TestUnitBase):
             '41 F1 C3 D4 23 53 70 2B 63 4E 7D 42 9B 09 3A 80'  # A...#Sp+cN}B..:.
             'D2 B1 C2 E4 D5 EA 01 9E 20 9C 5A 5B F2 DF C3 E6'  # ..........Z[....
         )
-        cipher = rsa(self.key_public)
+        cipher = self.ldu('rsa', self.key_public)
         self.assertEqual(cipher(data), B'Taste the real thing.')
 
     def test_invertible_01(self):

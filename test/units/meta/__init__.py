@@ -3,7 +3,6 @@
 import os
 
 from refinery.lib.frame import FrameUnpacker
-from refinery import emit
 
 from .. import TestUnitBase
 
@@ -15,7 +14,7 @@ class TestMetaBase(TestUnitBase):
 
         def wrapper(*inputs):
             with open(os.devnull, 'rb') as stream:
-                unpacker = FrameUnpacker(stream | emit('[', data=list(inputs)) | unit)
+                unpacker = FrameUnpacker(stream | self.ldu('emit', '[', data=list(inputs)) | unit)
                 results = []
                 while unpacker.nextframe():
                     results.extend((bytes(item) for item in unpacker))

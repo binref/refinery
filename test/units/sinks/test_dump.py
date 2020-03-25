@@ -9,9 +9,9 @@ import hashlib
 import zlib
 
 from contextlib import contextmanager
-from refinery import emit, chop, xtzip
 
 from .. import TestUnitBase
+from refinery.lib.loader import load_commandline as L
 
 
 @contextmanager
@@ -39,7 +39,7 @@ class TestDump(TestUnitBase):
     def test_clipboard_copy(self):
         copy = self.load()
         with temporary_clipboard():
-            emit('Too', 'much', 'technology')[copy]()
+            L('emit Too much technology')[copy]()
             self.assertEqual(pyperclip.paste(), 'Too')
 
     def test_clipboard_copy_multiple(self):
@@ -55,7 +55,7 @@ class TestDump(TestUnitBase):
             dump = self.load(path, stream=True)
             data = self.generate_random_buffer(1024)
             with io.BytesIO(data) as stream:
-                list(stream | chop(32)[dump])
+                list(stream | L('chop 32')[dump])
             self.assertTrue(os.path.exists(path))
             with open(path, 'rb') as result:
                 self.assertEqual(result.read(), data)
@@ -110,7 +110,7 @@ class TestDump(TestUnitBase):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'test.{ext}')
             dump = self.load(path, format=True)
-            emit(*examples.values())[dump]()
+            self.ldu('emit', *examples.values())[dump]()
             files = set(os.listdir(root))
             self.assertLessEqual(set(examples), files)
             for filename, data in examples.items():
@@ -141,7 +141,7 @@ class TestDump(TestUnitBase):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'file-{index:02d}-{foobar}-{crc32}-{md5}.{ext}')
             dump = self.load(path, format=True)
-            emit(*samples)[dump]()
+            self.ldu('emit', *samples)[dump]()
             for filename, data in zip(filenames, samples):
                 result_path = os.path.join(root, filename)
                 self.assertTrue(os.path.exists(result_path))
@@ -153,7 +153,7 @@ class TestDump(TestUnitBase):
             words = ['coca', 'cola', 'code']
             paths = [os.path.join(root, word) for word in words]
             dump = self.load(*paths)
-            emit(*words)[dump]()
+            self.ldu('emit', *words)[dump]()
             for word, path in zip(words, paths):
                 self.assertTrue(os.path.exists(path))
                 with open(path, 'r') as result:
@@ -169,7 +169,7 @@ class TestDump(TestUnitBase):
             p1 = os.path.join(root, 'F1')
             p2 = os.path.join(root, 'F2')
             dump = self.load(p1, p2)
-            result = emit(*samples)[dump]()
+            result = self.ldu('emit', *samples)[dump]()
             self.assertEqual(result, samples[~0])
             self.assertTrue(os.path.exists(p1))
             self.assertTrue(os.path.exists(p2))
@@ -221,7 +221,7 @@ class TestDump(TestUnitBase):
         with tempfile.TemporaryDirectory() as root:
             with temporary_chwd(root) as root:
                 dump = self.load(meta=True)
-                xtzip[dump](archive)
+                self.ldu('xtzip')[dump](archive)
 
                 self.assertTrue(os.path.exists(os.path.join(root, 'foo', 'baz')))
                 self.assertTrue(os.path.exists(os.path.join(root, 'foo', 'baf')))

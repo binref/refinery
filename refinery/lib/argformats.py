@@ -78,6 +78,8 @@ from contextlib import suppress
 from functools import update_wrapper
 from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable
 
+from ..lib.loader import resolve, EntryNotFound
+
 
 class PythonExpression:
     """
@@ -314,8 +316,8 @@ class DelayedArgumentDispatch:
         if uhash in self.units:
             return self.units[uhash]
         try:
-            unit = getattr(__import__('refinery', None, None, [name]), name, None)
-        except ModuleNotFoundError:
+            unit = resolve(name)
+        except EntryNotFound:
             return None
         else:
             unit = unit and unit.assemble(*args)

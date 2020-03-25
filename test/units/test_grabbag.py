@@ -6,7 +6,6 @@ from .. import TestBase
 from io import BytesIO
 
 from refinery.lib.loader import load_commandline as L
-from refinery import cca
 
 
 class TestGrabBagExamples(TestBase):
@@ -43,7 +42,7 @@ class TestGrabBagExamples(TestBase):
         rsrc = L('perc RCDATA')(data)
 
         pipeline = L('xtp guid') [
-            L('PBKDF2 48 rep[8]:H:00') | cca(rsrc) | L('aes CBC x::32 --iv=x::16 -Q')
+            L('PBKDF2 48 rep[8]:H:00') | self.ldu('cca', rsrc) | L('aes CBC x::32 --iv=x::16 -Q')
         ] | L('dnds')
 
         result = json.loads(pipeline(data))

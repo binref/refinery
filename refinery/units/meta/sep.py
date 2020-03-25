@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
-from ...lib.argformats import DelayedBinaryArgument
+from .. import arg, Unit
 
 
 class sep(Unit):
@@ -11,16 +10,12 @@ class sep(Unit):
     makes them visible by default. This can be prevented by using the `-s` flag.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-s', '--scoped', action='store_true',
-            help='Prevent sep from automatically turning all input chunks visible.')
-        argp.add_argument('separator', type=DelayedBinaryArgument, default=B'\n',
-            nargs='?', help='Separator; the default is a line break.')
-        return super().interface(argp)
-
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
+    def __init__(
+        self, separator: arg.help('Separator; the default is a line break.') = B'\n',
+        scoped: arg.switch('-s', help=(
+            'Maintain chunk scope; i.e. do not turn all input chunks visible.')) = False
+    ):
+        super().__init__(separator=separator, scoped=scoped)
         self.separate = False
 
     def filter(self, inputs):

@@ -3,17 +3,17 @@
 import io
 
 from . import TestMetaBase
-from .. import refinery as r
+from refinery.lib.loader import load_commandline as L
 
 
 class TestSorting(TestMetaBase):
 
     def test_with_scoping(self):
         with io.BytesIO() as result:
-            r.emit('F2', 'F3', 'S4', 'S6', 'S5', 'F1', 'S2', 'S3', 'S1')[
-                r.scope('2:5', '6:') | r.sorted | r.sep('-')] | result
+            L('emit F2 F3 S4 S6 S5 F1 S2 S3 S1')[
+                L('scope 2:5 6:') | L('sorted') | L('sep -')] | result
             self.assertEqual(result.getvalue(), B'F2-F3-S1-S2-S3-S4-F1-S5-S6')
 
     def test_trailing_chunks(self):
-        pipeline = r.rep[r.scope(0) | r.chop(1)[r.sorted]]
+        pipeline = L('rep') [ L('scope 0') | L('chop 1') [ L('sorted') ]]  # noqa
         self.assertEqual(pipeline(B'8492756031'), B'01234567898492756031')

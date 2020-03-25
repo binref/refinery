@@ -3,12 +3,14 @@
 """
 Functions to help dynamically load refinery units.
 """
-from ..units import Unit, Executable
-
 import pkgutil
 import pkg_resources
 
-from typing import Iterable
+from typing import Iterable, Any
+
+
+class EntryNotFound(NameError):
+    pass
 
 
 def get_package_name() -> str:
@@ -22,13 +24,14 @@ def get_package_name() -> str:
     return root
 
 
-def get_all_entry_points() -> Iterable[Executable]:
+def get_all_entry_points() -> Iterable[type]:
     """
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
     """
     path = [get_package_name(), 'units']
     root = __import__('.'.join(path))
+
     for name in path[1:]:
         root = getattr(root, name)
 
@@ -52,7 +55,7 @@ def get_all_entry_points() -> Iterable[Executable]:
     yield from iterate(root, *path)
 
 
-def get_entry_point(name: str) -> Executable:
+def get_entry_point(name: str) -> type:
     """
     Retrieve a refinery entry point by name.
     """
@@ -68,11 +71,24 @@ def get_entry_point(name: str) -> Executable:
             if getattr(entry, '__name__', None) == name:
                 break
         else:
-            raise AttributeError('no entry point with name "%s" was found.' % name)
+            raise EntryNotFound('no entry point with name "%s" was found.' % name)
     return entry
 
 
-def load(name: str, *args, **kwargs) -> Unit:
+def resolve(name: str) -> type:
+    """
+    Attempts to import the unit with the given name from the refinery package
+    and falls back to using `refinery.lib.loader.get_entry_point` if this fails.
+    Raises `refinery.lib.loader.EntryNotFound` if the entry is not found.
+    """
+    try:
+        unit = getattr(__import__('refinery', None, None, [name]), name, None)
+    except ImportError:
+        unit = None
+    return unit or get_entry_point(name)
+
+
+def load(name: str, *args, **kwargs) -> Any:
     """
     Loads the unit specified by `name`, initialized with the given arguments
     and keyword arguments.
@@ -81,7 +97,7 @@ def load(name: str, *args, **kwargs) -> Unit:
     return entry.assemble(*args, **kwargs)
 
 
-def load_commandline(command: str) -> Unit:
+def load_commandline(command: str) -> Any:
     """
     Returns a unit as it would be loaded from a given command line string.
     """

@@ -9,15 +9,14 @@ from flake8.api import legacy as flake8
 
 from . import TestUnitBase
 
-from refinery import neg, b64, repl, rex, pack
-from refinery.lib import loader
+from refinery.lib.loader import get_all_entry_points, resolve, load_commandline as L
 from refinery.units import _retrofitted, Unit
 
 
 class TestPipelines(TestUnitBase):
 
     def test_link_loader_tb01(self):
-        pipeline = repl(B'Grk', B')+chr(') | rex(R'chr.(\d+)-(\d+).', '$1,$2,') | pack() | self.ldu('sub', 'x:1::2')
+        pipeline = L('repl Grk ")+chr("') | L(R'rex "chr.(\d+)-(\d+)." "$1,$2,"') | L('pack') | L('sub x:1::2')
         payload = (
             B'chr(118-7Grk119-9Grk38-6Grk104-3Grk116-2Grk119-5Grk117-6Grk120-6Grk36-4Grk116-2Grk110-9Grk119-4Grk124-7Grk110-1Grk1'
             B'02-1Grk39-7Grk111-1Grk103-2Grk124-4Grk125-9Grk14-1Grk19-9Grk123-8Grk103-2Grk123-7Grk36-4Grk89-2Grk119-4Grk113-9Grk9'
@@ -112,7 +111,7 @@ class TestMetaProperties(TestUnitBase):
 
     def test_unique_entry_point_names(self):
         entry_points = set()
-        for entry in loader.get_all_entry_points():
+        for entry in get_all_entry_points():
             self.assertNotIn(entry.__qualname__, entry_points)
             entry_points.add(entry.__qualname__)
         self.assertGreaterEqual(len(entry_points), 10)
@@ -120,7 +119,7 @@ class TestMetaProperties(TestUnitBase):
     def test_retrofitting(self):
         log = logging.getLogger()
         log.warn('retrofit not enforced.')
-        for unit in loader.get_all_entry_points():
+        for unit in get_all_entry_points():
             legacy_interface = unit.interface.__func__ is not Unit.interface.__func__
             if not _retrofitted(unit):
                 if legacy_interface:
@@ -177,7 +176,7 @@ class TestSimpleInvertible(TestUnitBase):
             B'FOO' * 200,
             bytes(range(1, 200))
         ]
-        for item in loader.get_all_entry_points():
+        for item in get_all_entry_points():
             if item.is_reversible:
                 name = item.__qualname__
                 try:
@@ -186,8 +185,10 @@ class TestSimpleInvertible(TestUnitBase):
                     pass
 
     def test_reversible(self):
-        self.assertFalse(neg.is_reversible)
-        self.assertTrue(b64.is_reversible)
+        neg = resolve('neg')
+        b64 = resolve('b64')
+        self.assertEqual(neg.is_reversible, False)
+        self.assertEqual(b64.is_reversible, True)
 
     def test_reverse_property_random(self):
         for name, (convert, invert) in self.invertibles.items():
