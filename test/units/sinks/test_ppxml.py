@@ -18,5 +18,5 @@ class TestXML(TestUnitBase):
         unit = self.load(indent=1)
         self.assertEqual(
             B'<?xml version="1.0" ?>\n<foo>\n <bar>baz</bar>\n <bar>bamf</bar>\n</foo>',
-            unit(B'<?xml version="1.0" encoding="UTF-8"?><foo><bar>baz</bar><bar>bamf</bar></foo>')
+            unit(B'<?xml version="1.0" encoding="UTF-8"?>\n\n<foo>\n\n\n<bar>baz</bar>\n<bar>bamf</bar></foo>')
         )

@@ -21,4 +21,5 @@ class ppxml(Unit):
         node = defusedxml.minidom.parseString(data)
         if '<?xml' not in data:
             node = node.childNodes[0]
-        return node.toprettyxml(self.args.indent * ' ').strip()
+        return '\n'.join(s for s in node.toprettyxml(
+            self.args.indent * ' ').splitlines() if s and not s.isspace())
