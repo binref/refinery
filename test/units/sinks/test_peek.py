@@ -26,7 +26,7 @@ class TestPeek(TestUnitBase):
         output = sys.stderr.getvalue()
         sys.stderr = sys_stderr
 
-        for info in ('45.87% entropy', 'MS-DOS executable'):
+        for info in ('45.87% entropy', 'MS-DOS'):
             self.assertIn(info, output)
 
         self.assertIn((

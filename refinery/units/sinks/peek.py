@@ -57,6 +57,7 @@ class peek(HexViewer):
         header = ', '.join(peeks)
 
         dump = None
+        termsize = get_terminal_size()
         working_codec = None
 
         if data and not self.args.brief:
@@ -75,7 +76,7 @@ class peek(HexViewer):
                         self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
                         continue
 
-                    width = self.args.width or get_terminal_size()
+                    width = self.args.width or termsize
                     decoded = decoded[:abs(width * self.args.lines)]
                     dump = [
                         line.rstrip('\r')
@@ -91,22 +92,22 @@ class peek(HexViewer):
                     break
 
             if not dump:
-                total = abs(self.args.lines * get_terminal_size() // 3)
+                total = abs(self.args.lines * termsize // 3)
                 dump = self.hexdump(data, total=total)
 
             dump = list(itertools.islice(dump, 0, abs(self.args.lines)))
 
-        termsize = get_terminal_size()
+        width = max(len(d) for d in dump) if self.args.width else termsize
 
         def separator(title=None):
-            if title is None or termsize <= len(title) + 8:
-                return termsize * '-'
-            return F'--{title}' + '-' * (termsize - len(title) - 2)
+            if title is None or width <= len(title) + 8:
+                return width * '-'
+            return F'--{title}' + '-' * (width - len(title) - 2)
 
         yield separator()
 
-        if termsize:
-            yield from textwrap.wrap(header, termsize)
+        if width:
+            yield from textwrap.wrap(header, width)
         else:
             yield header
 
