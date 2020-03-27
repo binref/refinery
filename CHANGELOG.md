@@ -5,6 +5,7 @@
 - The `pemeta` unit has more features now.
 - The `couple` unit was added; it is an adapter to turn any stdin/stdout based command line tool into a refinery unit.
 - The `carve-xml` unit was added.
+- The `dnstr` unit was added.
 
 ## Version 0.1.4
 - All hashing prefixes for multibin expressions have been implemented as separate units, i.e. `sha256` and `md5` are now units that output the corresponding hash of the input data.
