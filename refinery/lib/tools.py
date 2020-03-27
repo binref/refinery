@@ -177,7 +177,7 @@ def isbuffer(obj) -> bool:
     or bytearray object.
     """
     try:
-        memoryview(obj)
-        return True
+        with memoryview(obj):
+            return True
     except TypeError:
         return False
