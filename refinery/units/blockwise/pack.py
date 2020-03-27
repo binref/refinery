@@ -61,7 +61,10 @@ class pack(BlockTransformation):
 
     def process(self, data):
         if self.args.hexdump:
-            pattern = re.compile(BR'(?:\s|^)(?:0x)?([0-9a-f]{%i})h?(?=\s|$)' % (self.args.blocksize * 2), re.IGNORECASE)
+            pattern = re.compile(
+                BR'(?:\W|\s|^)(?:0x)?([0-9a-f]{%i})h?(?=\s|$)' % (self.args.blocksize * 2),
+                re.IGNORECASE
+            )
         elif self.args.base == 0:
             pattern = formats.integer
         elif self.args.base <= 10:
