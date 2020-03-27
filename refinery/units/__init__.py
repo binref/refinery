@@ -39,7 +39,7 @@ from argparse import (
 )
 
 from ..lib.argformats import pending, manifest, multibin, number, sliceobj
-from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead, autoinvoke, skipfirst
+from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead, autoinvoke, skipfirst, isbuffer
 from ..lib.frame import Framed, Chunk
 
 
@@ -538,6 +538,15 @@ class Executable(type):
                 Executable.Entry = cls.__name__
                 cls.run()
 
+    def __getitem__(cls, other):
+        return cls().__getitem__(other)
+
+    def __or__(cls, other):
+        return cls().__or__(other)
+
+    def __ror__(cls, other):
+        return cls().__ror__(other)
+
     @property
     def is_reversible(cls) -> bool:
         """
@@ -796,9 +805,6 @@ class Unit(metaclass=Executable, abstract=True):
         except AttributeError:
             return self
 
-    def __class_getitem__(cls, unit: 'Unit'):
-        return cls().__getitem__(unit)
-
     def __getitem__(self, unit: 'Unit'):
         if isinstance(unit, type):
             unit = unit()
@@ -809,9 +815,11 @@ class Unit(metaclass=Executable, abstract=True):
         omega.nozzle.source = alpha
         return omega
 
-    def __ror__(self, stream: Union[BinaryIO, bytes, bytearray, 'Unit']):
-        self.nozzle.source = stream
-        return self
+    def __ror__(self, stream: Union[BinaryIO, ByteString]):
+        if not isbuffer(stream):
+            self.nozzle.source = stream
+            return self
+        return self(stream)
 
     def __or__(self, stream: Union[BinaryIO, 'Unit']):
         try:

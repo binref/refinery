@@ -169,3 +169,15 @@ def entropy(data: bytearray) -> float:
         probs = counts / len(data)
         # 8 bits are the maximum number of bits of information in a byte
         return 0.0 + -sum(p * log(p, 2) for p in probs) / 8.0
+
+
+def isbuffer(obj) -> bool:
+    """
+    Test whether `obj` is an object that supports the buffer API, like a bytes
+    or bytearray object.
+    """
+    try:
+        memoryview(obj)
+        return True
+    except TypeError:
+        return False

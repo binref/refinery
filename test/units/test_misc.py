@@ -127,6 +127,10 @@ class TestMetaProperties(TestUnitBase):
                 continue
             self.assertFalse(legacy_interface, F'{unit.__qualname__}, is retrofitted but defines an interface.')
 
+    def test_pipe_bytestring(self):
+        from refinery.units.encoding.b64 import b64
+        self.assertEqual(b'YmluYXJ5cmVmaW5lcnk=' | b64, b'binaryrefinery')
+
     def test_custom_unit_01(self):
         class prefixer(Unit):
             def __init__(self, prefix) -> Unit: pass
