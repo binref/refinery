@@ -16,7 +16,7 @@ class TestCarve(TestUnitBase):
         self.assertEqual(unit(data), b'VG9vIG11Y2ggdGVjaG5vbG9neSwgaW4gdG9vIGxpdHRsZSB0aW1lLg==')
 
     def test_extract_hex_01(self):
-        unit = self.load('hex', whitespace=True, longest=True, take=1)
+        unit = self.load('hex', stripspace=True, longest=True, take=1)
         data = (
             B'7937e4492b014445eede1b00006dd0bd05e55720849807014e5a120807c723e9\n'
             B'0400156bebd8d58deb76fc69ab284811c57a289ea374ea79d76c67edf154784c\n'

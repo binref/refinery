@@ -29,7 +29,7 @@ class xtp(PatternExtractor):
         'If this setting is enabled, the xtp unit will attempt to reduce the number '
         'of false positives by certain crude heuristics.'))
     def __init__(
-        self, *pattern, filter=False, min=1, max=None, len=None, whitespace=False,
+        self, *pattern, filter=False, min=1, max=None, len=None, stripspace=False,
         unique=False, longest=False, take=None
     ):
         self.superinit(super(), **vars(), ascii=True, utf16=True)

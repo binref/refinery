@@ -21,7 +21,7 @@ class resub(RegexUnit):
         # TODO: Use positional only in Python 3.8
         # /,
         multiline=False, ignorecase=False, min=1, max=None, len=None,
-        whitespace=False, unique=False, longest=False, take=None, utf16=False
+        stripspace=False, unique=False, longest=False, take=None, utf16=False
     ):
         self.superinit(super(), **vars())
         self.args.subst = subst

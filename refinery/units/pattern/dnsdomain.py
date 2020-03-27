@@ -27,8 +27,9 @@ class dnsdomain(PatternExtractorBase):
 
     def process(self, data):
         def prefilter(matches):
-            for offset, match in matches:
-                match = bytearray(match)
+            for match in matches:
+                if not isinstance(match, bytearray):
+                    match = bytearray(match)
                 pos = 0
                 while pos < len(match):
                     length = match[pos]
@@ -39,6 +40,6 @@ class dnsdomain(PatternExtractorBase):
                         break
                     pos += 1 + length
                 else:
-                    yield offset, bytes(match[1:])
+                    yield bytes(match[1:])
         yield from self.matches_finalize(
             prefilter(self.matches_filtered(memoryview(data), self._DOMAIN_PATTERN)))

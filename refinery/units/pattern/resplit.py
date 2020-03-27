@@ -15,7 +15,7 @@ class resplit(RegexUnit):
         self, regex=RB'\r?\n',
         # TODO: Use positional only in Python 3.8
         # /,
-        multiline=False, ignorecase=False, min=1, max=None, len=None, whitespace=False,
+        multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
         unique=False, longest=False, take=None, utf16=False
     ):
         super().__init__(
@@ -23,7 +23,7 @@ class resplit(RegexUnit):
             min=min,
             max=max,
             len=len,
-            whitespace=whitespace,
+            stripspace=stripspace,
             unique=unique,
             utf16=utf16,
             longest=longest,

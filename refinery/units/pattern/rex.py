@@ -19,7 +19,7 @@ class rex(RegexUnit):
             'Each transformation produces one output in the order in which they   '
             'are given. The default transformation is $0, i.e. the entire match.  '
         )),
-        multiline=False, ignorecase=False, min=1, max=None, len=None, whitespace=False,
+        multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
         unique=False, longest=False, take=None, utf16=False
     ):
         self.superinit(super(), **vars())

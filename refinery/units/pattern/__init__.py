@@ -5,8 +5,9 @@ Pattern matching based extraction and substitution units.
 """
 import re
 
-from typing import Dict, Tuple, Iterable, Optional, Callable, Union, ByteString
+from typing import Iterable, Optional, Callable, Union, ByteString
 from itertools import islice
+from hashlib import blake2b
 
 from ...lib.types import INF, AST
 from ...lib.argformats import regexp
@@ -138,7 +139,7 @@ class PatternExtractorBase(Unit, abstract=True):
         min        : arg.number('-n', help='Matches must have length at least N.') = 1,
         max        : arg.number('-N', help='Matches must have length at most N.') = None,
         len        : arg.number('-E', help='Matches must be of length N.') = None,
-        whitespace : arg.switch('-w', help='Strip all whitespace from input data.') = False,
+        stripspace : arg.switch('-S', help='Strip all whitespace from input data.') = False,
         unique     : arg.switch('-q', help='Yield every (transformed) Match only once.') = False,
         longest    : arg.switch('-l', help='Sort results by length before picking.') = False,
         take       : arg.number('-t', help='Return only the first N occurrences.') = None,
@@ -147,7 +148,7 @@ class PatternExtractorBase(Unit, abstract=True):
             min=min,
             max=max or INF,
             len=len or AST,
-            whitespace=whitespace,
+            stripspace=stripspace,
             unique=unique,
             ascii=True,
             utf16=True,
@@ -171,60 +172,49 @@ class PatternExtractorBase(Unit, abstract=True):
                 for match in pattern.finditer(zm[::2]):
                     yield match
 
+    def matchfilter(self, hits: Iterable[ByteString]) -> Iterable[ByteString]:
+        barrier = set()
+        taken = 0
+        for hit in hits:
+            if not hit or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
+                continue
+            if self.args.unique:
+                uid = blake2b(hit, digest_size=8)
+                if uid in barrier:
+                    continue
+                barrier.add(uid)
+            yield hit
+            taken += 1
+            if not self.args.longest and taken >= self.args.take:
+                break
+
     def matches_filtered(
         self,
         data: ByteString,
         pattern: Union[ByteString, re.Pattern],
-        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None,
-        early_abort: bool = True
-    ) -> Iterable[Tuple[Tuple[int, int], bytes]]:
+        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None
+    ) -> Iterable[ByteString]:
         """
         This is a wrapper for `AbstractRegexUint.matches` which filters the
         results according to the given commandline arguments. Returns a
         dictionary mapping its position (start, end) in the input data to the
         filtered and transformed match that was found at this position.
         """
-        barrier = set()
-        taken = 0
         transforms = transforms or [lambda m: m.group(0)]
-
-        if self.args.whitespace:
+        if self.args.stripspace:
             data = re.sub(BR'\s+', B'', data)
-        for match in self.matches(memoryview(data), pattern):
-            for transform in transforms:
-                hit = transform(match) if callable(transform) else transform
-                if hit is None or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
-                    continue
-                if self.args.unique:
-                    uid = hash(hit)
-                    if uid in barrier:
-                        continue
-                    barrier.add(uid)
-                yield match.span(), hit
-                if early_abort:
-                    taken += 1
-                    if not self.args.longest and taken >= self.args.take:
-                        break
+        yield from self.matchfilter(
+            transform(match) if callable(transform) else transform
+            for match in self.matches(memoryview(data), pattern)
+            for transform in transforms
+        )
 
-    def matches_filtered_cached(
-        self,
-        data: ByteString,
-        pattern: Union[ByteString, re.Pattern],
-        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None,
-        early_abort: bool = True,
-        matches: Optional[dict] = None,
-    ) -> Dict[Tuple[int, int], bytes]:
-        if matches is None:
-            matches = {}
-        matches.update(self.matches_filtered(memoryview(data), pattern, transforms, early_abort))
-        return matches
-
-    def matches_finalize(self, matches: Iterable[Tuple[Tuple[int, int], bytes]]) -> Iterable[bytes]:
+    def matches_finalize(self, matches: Iterable[ByteString]) -> Iterable[ByteString]:
         """
         Returns the final result of a dictionary of matches according to the
         settings provided via the command line interface.
         """
-        result = (d for _, d in matches)
+        result = matches
         if self.args.longest:
             result = sorted(result, key=len, reverse=True)
         if self.args.take:
@@ -237,7 +227,7 @@ class PatternExtractorBase(Unit, abstract=True):
         data: ByteString,
         pattern: Union[ByteString, re.Pattern],
         transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None
-    ) -> Iterable[bytes]:
+    ) -> Iterable[ByteString]:
         """
         A convenience function that acts as the composition of:
 
@@ -249,7 +239,7 @@ class PatternExtractorBase(Unit, abstract=True):
 
 class PatternExtractor(PatternExtractorBase, abstract=True):
     def __init__(
-        self, min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None,
+        self, min=1, max=None, len=None, stripspace=False, unique=False, longest=False, take=None,
         ascii: arg.switch('-u', '--no-ascii', group='AvsU', help='Search for UTF16 encoded patterns only.') = True,
         utf16: arg.switch('-a', '--no-utf16', group='AvsU', help='Search for ASCII encoded patterns only.') = True,
     ):
@@ -257,7 +247,7 @@ class PatternExtractor(PatternExtractorBase, abstract=True):
             min=min,
             max=max,
             len=len,
-            whitespace=whitespace,
+            stripspace=stripspace,
             unique=unique,
             longest=longest,
             take=take
@@ -276,13 +266,13 @@ class RegexUnit(PatternExtractorBase, abstract=True):
                                             'a line, a dot does not match line breaks.') = False,
         ignorecase  : arg.switch('-I', help='Ignore capitalization for alphabetic characters.') = False,
         utf16       : arg.switch('-u', help='Search for unicode patterns instead of ascii.') = False,
-        min=1, max=None, len=None, whitespace=False, unique=False, longest=False, take=None
+        min=1, max=None, len=None, stripspace=False, unique=False, longest=False, take=None
     ):
         super().__init__(
             min=min,
             max=max,
             len=len,
-            whitespace=whitespace,
+            stripspace=stripspace,
             unique=unique,
             longest=longest,
             take=take
