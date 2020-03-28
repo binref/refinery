@@ -18,7 +18,7 @@ class TestGrabBagExamples(TestBase):
             L('scope -n 3') | L('chop -t 5') [
                 L('sorted') | L('snip 2:') | L('sep')
             ]| L('pack 10') | L('blockop --dec -sN B-S')
-        ]| L('carve_b64z') | L('deob_ps1') | L('carve_b64z') | L('deob_ps1') | L('xtp -f domain')
+        ]| L('carveb64z') | L('deob_ps1') | L('carveb64z') | L('deob_ps1') | L('xtp -f domain')
 
         with BytesIO(data) as sample:
             c2servers = set(sample | pipeline)
