@@ -26,9 +26,8 @@ jobs:
     - name: "Python 3.6 on Linux, only installation, PyPy3"
       script: true
       python: pypy3
-    - name: "Unknown Python3 on macOS, only installation"
+    - name: "Python3.7+ on macOS"
       os: osx
-      script: python3 --version
       osx_image: xcode11.2
       language: shell
     - name: "Python 3.7 on Windows"
