@@ -118,12 +118,12 @@ class TestMetaProperties(TestUnitBase):
 
     def test_retrofitting(self):
         log = logging.getLogger()
-        log.warn('retrofit not enforced.')
+        log.warning('retrofit not enforced.')
         for unit in get_all_entry_points():
             legacy_interface = unit.interface.__func__ is not Unit.interface.__func__
             if not _retrofitted(unit):
                 if legacy_interface:
-                    log.warn(F'requires retrofit: {unit.__qualname__}')
+                    log.warning(F'requires retrofit: {unit.__qualname__}')
                 continue
             self.assertFalse(legacy_interface, F'{unit.__qualname__}, is retrofitted but defines an interface.')
 
