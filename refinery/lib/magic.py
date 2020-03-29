@@ -14,7 +14,7 @@ except ModuleNotFoundError:
     else:
         try:
             import magic
-        except ModuleNotFoundError:
+        except ImportError:
             magic = None
 
 

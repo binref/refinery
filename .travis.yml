@@ -27,6 +27,9 @@ jobs:
       script: true
       python: pypy3
     - name: "Python 3.7+ on macOS"
+      before_install:
+        - brew install libmagic
+        - pip3 install flake8
       os: osx
       script: python3 -m unittest discover -p test_*.py
       osx_image: xcode11.2
