@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import io
 import sys
-
-from threading import Thread, Event
 from subprocess import PIPE, Popen
-from queue import Queue, Empty
-from time import process_time, sleep
 
 from .. import arg, Unit, RefineryPartialResult
 
@@ -24,7 +19,7 @@ class couple(Unit):
 
     def __init__(
         self, *commandline : arg(
-            nargs='+',
+            nargs='...',
             type=str,
             help='Part of an arbitrary command line to be executed.',
             metavar='token'),
@@ -40,6 +35,19 @@ class couple(Unit):
         process = Popen(self.args.commandline,
             stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=False, close_fds=posix)
 
+        if self.args.buffer and not self.args.timeout:
+            out, err = process.communicate(data)
+            for line in err.splitlines():
+                self.log_debug(line)
+            yield out
+            return
+
+        import io
+        from threading import Thread, Event
+        from queue import Queue, Empty
+        from time import process_time, sleep
+
+        start = 0
         result = None
 
         qerr = Queue()
@@ -61,34 +69,37 @@ class couple(Unit):
 
         process.stdin.write(data)
         process.stdin.close()
+        start = process_time()
 
         if self.args.buffer or self.args.timeout:
             result = io.BytesIO()
 
-        if self.args.timeout:
-            start = process_time()
+        def queue_read(q: Queue):
+            try: return q.get_nowait()
+            except Empty: return None
 
         while True:
 
-            try:
-                err = qerr.get_nowait()
-            except Empty:
-                err = None
-            else:
+            err = queue_read(qerr)
+            out = queue_read(qout)
+            if err:
                 self.log_debug(err)
-
-            try:
-                out = qout.get_nowait()
-            except Empty:
-                out = None
-            else:
+            if out:
                 if self.args.buffer or self.args.timeout:
                     result.write(out)
-                elif not self.args.buffer:
+                if not self.args.buffer:
                     yield out
 
-            if not err and not out and process.poll() is not None:
+            if done.is_set():
+                if recverr.is_alive():
+                    self.log_warn('stderr receiver thread zombied')
+                if recvout.is_alive():
+                    self.log_warn('stdout receiver thread zombied')
                 break
+            elif not err and not out and process.poll() is not None:
+                recverr.join(0.4)
+                recvout.join(0.4)
+                done.set()
             elif self.args.timeout:
                 if process_time() - start > self.args.timeout:
                     self.log_info('terminating process after timeout expired')
@@ -99,22 +110,14 @@ class couple(Unit):
                         sleep(.1)
                     else:
                         self.log_warn('process termination may have failed')
-                    result = result.getvalue()
-                    if not result:
+                    recverr.join(0.4)
+                    recvout.join(0.4)
+                    if not len(result.getbuffer()):
                         result = RuntimeError('timeout reached, process had no output')
                     else:
                         result = RefineryPartialResult(
                             'timeout reached, returning all collected output',
-                            partial=result)
-                    break
-
-        recverr.join(0.4)
-        recvout.join(0.4)
-
-        if recverr.is_alive():
-            self.log_warn('stderr receiver thread zombied')
-        if recvout.is_alive():
-            self.log_warn('stdout receiver thread zombied')
+                            partial=result.getvalue())
 
         if isinstance(result, Exception):
             raise result

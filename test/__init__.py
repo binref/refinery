@@ -3,6 +3,7 @@ import unittest
 import random
 import refinery
 import logging
+import string
 
 
 __all__ = ['refinery', 'TestBase', 'NameUnknownException']
@@ -24,6 +25,10 @@ class TestBase(unittest.TestCase):
 
     def generate_random_buffer(self, size):
         return bytes((random.randrange(0, 0xFF) for _ in range(size)))
+
+    def generate_random_text(self, size):
+        return ''.join(string.printable[
+            random.randrange(0, len(string.printable))] for _ in range(size))
 
     def download_from_malshare(self, sha256hash):
         import os
