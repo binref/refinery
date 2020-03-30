@@ -35,7 +35,11 @@ from argparse import (
     ArgumentError,
     Namespace,
     RawDescriptionHelpFormatter,
+    ONE_OR_MORE,
+    OPTIONAL,
+    REMAINDER,
     SUPPRESS,
+    ZERO_OR_MORE
 )
 
 from ..lib.argformats import pending, manifest, multibin, number, sliceobj
@@ -288,24 +292,24 @@ class arg(Argument):
             guessed_pos_args = guessed_pos_args or [F'--{name}' if pt.kind is pt.KEYWORD_ONLY else name]
 
         if pt.kind is pt.VAR_POSITIONAL:
-            oldnargs = guessed_kwd_args.setdefault('nargs', '*')
-            if oldnargs not in ('*', '+'):
+            oldnargs = guessed_kwd_args.setdefault('nargs', ZERO_OR_MORE)
+            if oldnargs not in (ONE_OR_MORE, ZERO_OR_MORE, REMAINDER):
                 raise ValueError(F'Variadic positional arguments has nargs set to {oldnargs!r}')
             return cls(*guessed_pos_args, **guessed_kwd_args)
 
         if default is not pt.empty:
             if isinstance(default, (list, tuple)):
                 if not pt.default:
-                    guessed_kwd_args.setdefault('nargs', '*')
+                    guessed_kwd_args.setdefault('nargs', ZERO_OR_MORE)
                     default = pt.empty
                 else:
-                    guessed_kwd_args.setdefault('nargs', '+')
+                    guessed_kwd_args.setdefault('nargs', ONE_OR_MORE)
                     guessed_kwd_args.setdefault('default', pt.default)
                     default = default[0]
             else:
                 guessed_kwd_args.setdefault('default', default)
                 if pt.kind is pt.POSITIONAL_ONLY:
-                    guessed_kwd_args.setdefault('nargs', '?')
+                    guessed_kwd_args.setdefault('nargs', OPTIONAL)
 
         if default is not pt.empty:
             if isinstance(default, bool):
@@ -440,7 +444,7 @@ class Executable(type):
             if known.positional:
                 known.kwargs.pop('dest', None)
                 if 'default' in known.kwargs:
-                    known.kwargs.setdefault('nargs', '?')
+                    known.kwargs.setdefault('nargs', OPTIONAL)
             elif not any(a.startswith('--') for a in known.args):
                 flagname = known.destination.replace('_', '-')
                 known.args.append(F'--{flagname}')
