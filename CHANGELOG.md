@@ -1,6 +1,6 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.1.5
 - Units can now be written with a Python `__init__` constructor and deduce the command line interface from this constructor. A decorator class was added to help enriching the parameter list of the constructor with information on how to translate these into command line parameters. The goal is to eventually retrofit all units to follow this standard.
 - The `pemeta` unit has more features now.
 - The `couple` unit was added; it is an adapter to turn any stdin/stdout based command line tool into a refinery unit.
