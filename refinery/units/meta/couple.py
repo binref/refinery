@@ -18,18 +18,22 @@ class couple(Unit):
     """
 
     def __init__(
-        self, *commandline : arg(
-            nargs='...',
-            type=str,
-            help='Part of an arbitrary command line to be executed.',
-            metavar='token'),
+        self, *commandline : arg(nargs='...', metavar='(all remaining)', type=str,
+            help='An arbitrary command line to be executed.'),
         buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
         timeout: arg('-t', metavar='T',
             help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
-    ) -> Unit: pass
+    ):
+        if not commandline:
+            raise ValueError('you need to provide a command line.')
+        super().__init__(commandline=commandline, buffer=buffer, timeout=timeout)
 
     def process(self, data):
-        self.log_debug(lambda: __import__('shlex').join(self.args.commandline))
+        def shlexjoin():
+            import shlex
+            return ' '.join(shlex.quote(cmd) for cmd in self.args.commandline)
+
+        self.log_debug(shlexjoin)
 
         posix = 'posix' in sys.builtin_module_names
         process = Popen(self.args.commandline,

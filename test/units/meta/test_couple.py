@@ -40,7 +40,7 @@ class TestCoupler(TestUnitBase):
         data = text.encode('UTF8')
         expect = (B'%c\n' % data[13]) * data.count(data[13])
         try:
-            result = self.load('--', 'grep', '-o', '-h', text[13])(data)
+            result = self.load('grep', '-o', '-h', text[13])(data)
         except FileNotFoundError:
             if os.name != 'nt':
                 raise
