@@ -46,7 +46,7 @@ class xtmail(PathExtractorUnit):
     def _get_parts_outlook(self, data):
         def ensure_bytes(data):
             return data if isinstance(data, bytes) else data.encode(self.codec)
-        with Message(data) as msg:
+        with Message(bytes(data)) as msg:
             parts = []
             if msg.body:
                 parts.append(EmailPart(None, ensure_bytes(msg.body)))
@@ -64,6 +64,7 @@ class xtmail(PathExtractorUnit):
         try:
             parts = self._get_parts_outlook(data)
         except Exception as e:
+            raise
             self.log_debug(F'failed parsing input as Outlook message: {e}')
             parts = self._get_parts_regular(data)
 
