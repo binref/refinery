@@ -30,7 +30,7 @@ class TestCoupler(TestUnitBase):
         result = self.load(timeout=9, buffer=True, *self.echo)()
         self.assertIn(B'Hello World', result)
 
-    def test_simple_echo_timeout_rance_condition(self):
+    def test_simple_echo_timeout_race_condition(self):
         for k in range(1, 100):
             result = self.load(timeout=9, buffer=False, *self.echo)()
             self.assertIn(B'Hello World', result, msg=F'Race condition in iteration {k}')
