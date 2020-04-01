@@ -5,6 +5,11 @@ from .. import TestUnitBase
 
 class TestRexDeobfuscate(TestUnitBase):
 
+    def test_uniqueness(self):
+        unit = self.load('.', unique=True)
+        data = B'HELLO WORLD'
+        self.assertEqual(B'HELO WRD', B''.join(unit.process(data)))
+
     def test_real_world_obfuscated_code(self):
         autoit_obfuscated = '''
         Func lwmmqmcfqg($vdata, $vcryptkey)

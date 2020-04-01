@@ -179,7 +179,7 @@ class PatternExtractorBase(Unit, abstract=True):
             if not hit or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
                 continue
             if self.args.unique:
-                uid = blake2b(hit, digest_size=8)
+                uid = int.from_bytes(blake2b(hit, digest_size=8).digest(), 'big')
                 if uid in barrier:
                     continue
                 barrier.add(uid)
