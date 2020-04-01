@@ -63,10 +63,13 @@ class esc(Unit):
     def reverse(self, data):
         if self.args.unicode:
             return data.decode(self.codec).encode('UNICODE_ESCAPE')
-
-        def escape(c):
-            if c not in range(0x20, 0x7F) or c in self._ESCAPE and self.args.hex:
+        elif not self.args.hex:
+            def escape(match):
+                c = match.group(0)[0]
+                return self._ESCAPE.get(c, RB'\x%02x' % c)
+        else:
+            def escape(match):
+                c = match.group(0)[0]
                 return RB'\x%02x' % c
-            else:
-                return self._ESCAPE.get(c, B'%c' % c)
-        return B''.join(escape(c) for c in data)
+
+        return re.sub(RB'[\x00-\x1F\x22\x27\x5C\x7F-\xFF]', escape, data)

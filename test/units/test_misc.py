@@ -200,7 +200,8 @@ class TestSimpleInvertible(TestUnitBase):
                 continue
             for size in (0x40, 0x100, 0x200, 0x500):
                 buffer = self.generate_random_buffer(size)
-                self.assertEqual(buffer, convert(invert(buffer)),
+                result = convert(invert(buffer))
+                self.assertEqual(buffer, result,
                     msg=F'inversion property failed for {name} testing random buffer of size {size}')
 
     def test_reverse_property_structured(self):
@@ -208,5 +209,7 @@ class TestSimpleInvertible(TestUnitBase):
             if name in self.exceptions:
                 continue
             for k, buffer in enumerate(self.structured_buffers, 1):
-                self.assertEqual(buffer, convert(invert(buffer)),
+                inverted = invert(buffer)
+                result = convert(inverted)
+                self.assertEqual(buffer, result,
                     msg=F'inversion property failed for {name} testing structured buffer #{k}.')

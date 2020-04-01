@@ -15,6 +15,11 @@ class TestEscaping(TestUnitBase):
         data = u'refinery is all about the パイプライン.'.encode('UTF8')
         self.assertEqual(data, unit.process(unit.reverse(data)))
 
+    def test_reverse(self):
+        unit = self.load(reverse=True)
+        data = B'FOO\tBAR\nBAZ\tBOF.\a\a'
+        self.assertEqual(BR'FOO\tBAR\nBAZ\tBOF.\a\a', unit(data))
+
     def test_escape_not_greedy(self):
         unit = self.load()
         data = B'H\\x\\y\\x20\\u\\u0020!'
