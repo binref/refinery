@@ -141,14 +141,14 @@ class dump(Unit):
         filename = os.path.abspath(filename)
         base = os.path.dirname(filename)
         if not unc:
-            self.log_info(filename)
+            self.log_info('opening:', filename)
         try:
             os.makedirs(base, exist_ok=True)
         except FileNotFoundError:
-            if not unc and os.name == 'nt':
-                filename = F'\\\\?\\{filename}'
-                return self._open(filename, unc=True)
-            raise
+            if unc or os.name != 'nt':
+                raise
+            filename = F'\\\\?\\{filename}'
+            return self._open(filename, unc=True)
         else:
             return open(filename, 'wb')
 
@@ -218,22 +218,23 @@ class dump(Unit):
             return
 
         for index, chunk in enumerate(chunks):
-            if not self.exhausted:
-                if not self.args.stream or not self.stream:
-                    try:
-                        if not self.args.meta:
-                            filename = next(self.iter_filenames)
-                        else:
-                            filename = chunk['path']
-                            if not filename:
-                                import hashlib
-                                filename = hashlib.sha256(chunk).hexdigest()
-                    except StopIteration:
-                        self.exhausted = True
+            if self.exhausted:
+                continue
+            if not self.args.stream or not self.stream:
+                try:
+                    if not self.args.meta:
+                        filename = next(self.iter_filenames)
                     else:
-                        if self.args.format:
-                            filename = self._format(filename, chunk, index + 1)
-                        self.stream = self._open(filename)
+                        filename = chunk['path']
+                        if not filename:
+                            import hashlib
+                            filename = hashlib.sha256(chunk).hexdigest()
+                except StopIteration:
+                    self.exhausted = True
+                else:
+                    if self.args.format:
+                        filename = self._format(filename, chunk, index + 1)
+                    self.stream = self._open(filename)
             yield chunk
 
         self._close()
