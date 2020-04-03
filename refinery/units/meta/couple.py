@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
+import os
+
 from subprocess import PIPE, Popen
 
 from .. import arg, Unit, RefineryPartialResult
@@ -37,8 +39,9 @@ class couple(Unit):
         self.log_debug(shlexjoin)
 
         posix = 'posix' in sys.builtin_module_names
+        shell = os.name == 'nt'
         process = Popen(commandline,
-            stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True, close_fds=posix)
+            stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=shell, close_fds=posix)
 
         if self.args.buffer and not self.args.timeout:
             out, err = process.communicate(data)
