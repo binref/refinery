@@ -739,7 +739,14 @@ class Unit(metaclass=Executable, abstract=True):
         if not self._chunks:
             self._chunks = iter(self._framehandler)
         while True:
-            result = next(self._chunks)
+            try:
+                result = next(self._chunks)
+            except Exception as E:
+                if isinstance(E, StopIteration):
+                    raise
+                result = self._exception_handler(E)
+                if result is None:
+                    raise StopIteration from E
             if not isinstance(result, BaseException):
                 return result
 
