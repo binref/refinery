@@ -36,11 +36,11 @@ class TestCoupler(TestUnitBase):
             self.assertIn(B'Hello World', result, msg=F'Race condition in iteration {k}')
 
     def test_grep(self):
-        text = self.generate_random_text(200)
+        text = self.generate_random_text(200) + 'HABBA'
         data = text.encode('UTF8')
-        expect = (B'%c\n' % data[13]) * data.count(data[13])
+        expect = B'A\n' * data.count(B'A'[0])
         try:
-            result = self.load('grep', '-o', '-h', text[13])(data)
+            result = self.load('grep', '-o', '-h', 'A')(data)
         except FileNotFoundError:
             if os.name != 'nt':
                 raise
