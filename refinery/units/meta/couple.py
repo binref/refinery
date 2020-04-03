@@ -18,7 +18,7 @@ class couple(Unit):
     """
 
     def __init__(
-        self, *commandline : arg(nargs='...', metavar='(all remaining)', type=str,
+        self, *commandline : arg(nargs='...', metavar='(all remaining)',
             help='An arbitrary command line to be executed.'),
         buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
         timeout: arg('-t', metavar='T',
@@ -31,13 +31,14 @@ class couple(Unit):
     def process(self, data):
         def shlexjoin():
             import shlex
-            return ' '.join(shlex.quote(cmd) for cmd in self.args.commandline)
+            return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
+        commandline = [cmd.decode(self.codec) for cmd in self.args.commandline]
         self.log_debug(shlexjoin)
 
         posix = 'posix' in sys.builtin_module_names
-        process = Popen(self.args.commandline,
-            stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=False, close_fds=posix)
+        process = Popen(commandline,
+            stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True, close_fds=posix)
 
         if self.args.buffer and not self.args.timeout:
             out, err = process.communicate(data)
@@ -82,12 +83,24 @@ class couple(Unit):
             try: return q.get_nowait()
             except Empty: return None
 
+        errbuf = io.BytesIO()
+
         while True:
 
             err = queue_read(qerr)
             out = queue_read(qout)
-            if err:
-                self.log_debug(err)
+            if err and self.log_debug():
+                errbuf.write(err)
+                errbuf.seek(0)
+                lines = errbuf.readlines()
+                errbuf.seek(0)
+                errbuf.truncate()
+                if lines:
+                    if not (done.is_set() or lines[~0].endswith(B'\n')):
+                        errbuf.write(lines.pop())
+                    for line in lines:
+                        msg = line.rstrip(B'\n')
+                        if msg: self.log_debug(msg)
             if out:
                 if self.args.buffer or self.args.timeout:
                     result.write(out)
