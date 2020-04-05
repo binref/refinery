@@ -125,7 +125,6 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
                 return unpad(result, self.blocksize, p.lower())
             except Exception:
                 pass
-        self.output(self.args.padding)
         raise RefineryPartialResult(
             'None of these paddings worked: {}'.format(', '.join(self.args.padding)),
             partial=result)
