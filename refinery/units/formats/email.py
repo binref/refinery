@@ -64,7 +64,6 @@ class xtmail(PathExtractorUnit):
         try:
             parts = self._get_parts_outlook(data)
         except Exception as e:
-            raise
             self.log_debug(F'failed parsing input as Outlook message: {e}')
             parts = self._get_parts_regular(data)
 
