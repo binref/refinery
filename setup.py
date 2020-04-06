@@ -21,12 +21,9 @@ def normalize_name(name, separator='-'):
 
 
 def main():
-    if sys.version_info < (3, 6):
-        print('ERROR: Python version at least 3.6 is required.', file=sys.stderr)
-        sys.exit(0xFADE)
     if sys.version_info < (3, 7):
-        print('WARNING: Python 3.7 or higher is recommended, some features will be impaired.',
-            file=sys.stderr)
+        print('ERROR: Python version at least 3.7 is required.', file=sys.stderr)
+        sys.exit(0xFADE)
 
     def magic(x):
         return '{}-win64'.format(x) if os.name == 'nt' and x == 'python-magic' else x
@@ -40,13 +37,13 @@ def main():
 
     setuptools.setup(
         name='binary-refinery',
-        version='0.1.5',
+        version='0.1.6',
         author='Jesko Hüttenhain',
         description='A toolkit to transform and refine (mostly) binary data.',
         long_description=readme,
         long_description_content_type='text/markdown',
         url=GITHUB,
-        python_requires='>=3.6',
+        python_requires='>=3.7',
         classifiers=[
             'Development Status :: 3 - Alpha',
             'License :: Other/Proprietary License',
