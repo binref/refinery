@@ -14,7 +14,7 @@ class pesig(Unit):
 
     _SECDIRID = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
 
-    def __init__(self) -> Unit: pass
+    def __init__(self): pass
 
     def process(self, data: bytearray) -> bytearray:
         """

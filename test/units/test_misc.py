@@ -133,14 +133,14 @@ class TestMetaProperties(TestUnitBase):
 
     def test_custom_unit_01(self):
         class prefixer(Unit):
-            def __init__(self, prefix) -> Unit: pass
+            def __init__(self, prefix): pass
             def process(self, data): return self.args.prefix + data
 
         self.assertEqual(prefixer.assemble('Hello')(B'World'), B'HelloWorld')
 
     def test_custom_unit_02(self):
         class foo(Unit):
-            def __init__(self, pos1, pos2, *posV, rev=False) -> Unit:
+            def __init__(self, pos1, pos2, *posV, rev=False):
                 pass
             def process(self, data): # noqa
                 it = reversed(self.args.posV) if self.args.rev else iter(self.args.posV)
@@ -154,7 +154,7 @@ class TestMetaProperties(TestUnitBase):
 
     def test_custom_unit_03(self):
         class foo(Unit):
-            def __init__(self, a: int, n: bytearray, b: bytes = B'', max: int = -1) -> Unit:
+            def __init__(self, a: int, n: bytearray, b: bytes = B'', max: int = -1):
                 pass
             def process(self, data: bytearray): # noqa
                 return self.args.a * data.replace(self.args.n, self.args.b, self.args.max)

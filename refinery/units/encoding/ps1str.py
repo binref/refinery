@@ -37,7 +37,7 @@ class ps1str(Unit):
         '\"': '`"',
     }
 
-    def __init__(self) -> Unit: pass # noqa
+    def __init__(self): pass
 
     @unicoded
     def process(self, data):

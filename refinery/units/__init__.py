@@ -143,7 +143,7 @@ class arg(Argument):
     ```
     class prefixer(Unit):
         @arg('prefix', help='this data will be prepended to the input.')
-        def __init__(self, prefix) -> Unit: pass
+        def __init__(self, prefix): pass
 
         def process(self, data):
             return self.args.prefix + data
@@ -498,14 +498,8 @@ class Executable(type):
                     cls.argspec[key] = value.__copy__()
             cls._infer_argspec(parameters, cls.argspec)
 
-        fwd = cls.__init__.__annotations__.get('return', None)
-
-        if fwd is not None and not issubclass(cls, fwd):
-            fwd = None
-        elif cls.__init__.__code__.co_code == (lambda: None).__code__.co_code:
-            fwd = bases[0]
-
-        if fwd is not None:
+        if cls.__init__.__code__.co_code == (lambda: None).__code__.co_code:
+            base = bases[0]
             head = []
             defs = {}
             tail = None
@@ -528,7 +522,7 @@ class Executable(type):
                 for key in defs:
                     if key not in kw:
                         kw[key] = defs[key]
-                fwd.__init__(self, **kw)
+                base.__init__(self, **kw)
 
             cls.__init__ = cls__init__
 
