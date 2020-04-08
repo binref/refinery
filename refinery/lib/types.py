@@ -14,6 +14,8 @@ class INF:
     def __gt__(self, other): return True
     def __ge__(self, other): return True
     def __eq__(self, other): return other is INF
+    def __rmul__(self, other): return self
+    def __radd__(self, other): return self
     def __mul__(self, other): return self
     def __add__(self, other): return self
     def __sub__(self, other): return self
