@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Current Build
+- The `dump` unit has been refactored to make it easier to use; Formatting of file names is done automatically now unless the flag `-p` or `--plain` is specified to prevent string formatting.
+
 ## Version 0.1.6
 - After some incomplete attempts to improve backwards compatibility, the package now simply requires Python 3.7.
 

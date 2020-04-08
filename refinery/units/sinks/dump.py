@@ -10,8 +10,9 @@ from .. import arg, Unit, RefineryCriticalException
 
 class dump(Unit):
     """
-    Dump incoming data to files on disk. It is possible to specify filenames with format fields when
-    the `-f` or `--format` switch is enabled. The following format fields are supported:
+    Dump incoming data to files on disk. It is possible to specify filenames with format fields.
+    The following format fields are supported. Additionally, any metadata field on an incoming chunk
+    can also be used.
 
          {ext} : Automatically guessed file extension
        {crc32} : CRC32 checksum of the data
@@ -33,18 +34,19 @@ class dump(Unit):
     def __init__(
         self, *filenames: str,
         tee    : arg.switch('-t', help='Forward all inputs to STDOUT.') = False,
-        stream : arg.switch('-s', group='MODE', help='Dump all incoming data to the same file') = False,
-        auto   : arg.switch('-a', group='MODE', help='Equivalent to --format {{path}}') = False,
-        format : arg.switch('-f', group='MODE', help=(
-            'Provide format strings instead of a list of filenames. '
-            'The format strings will be used cyclically to generate '
-            'a file name for each input to be dumped.'
-        )) = False
+        stream : arg.switch('-s', help='Dump all incoming data to the same file.') = False,
+        plain  : arg.switch('-p', help='Never apply any formatting to file names.') = False,
     ):
-        if auto:
-            filenames = ['{path}']
-            format = True
-        super().__init__(filenames=filenames, tee=tee, stream=stream, format=format)
+        if stream and len(filenames) != 1:
+            raise ValueError('Can only use exactly one file in stream mode.')
+        super().__init__(filenames=filenames, tee=tee, stream=stream)
+        if plain:
+            self.formatted = False
+        else:
+            from string import Formatter
+            nf = Formatter()
+            self.formatted = any(any(t.isalnum() for t in fields)
+                for f in filenames for _, fields, *__ in nf.parse(f) if fields)
         self._reset()
 
     def _auto_extension(self, data, default='bin'):
@@ -101,16 +103,14 @@ class dump(Unit):
     def _reset(self):
         self.stream = None
         self.exhausted = False
-        if self.args.format:
-            self.iter_filenames = cycle(self.args.filenames)
+        if self.formatted:
+            self.paths = cycle(self.args.filenames)
         else:
-            self.iter_filenames = iter(self.args.filenames)
-        if self.args.stream and len(self.args.filenames) > 1:
-            raise ValueError('can only use one file in stream mode.')
+            self.paths = iter(self.args.filenames)
 
     @property
     def _paste(self):
-        return not bool(self.args.filenames) and not bool(self.args.format)
+        return not self.args.filenames
 
     def _open(self, filename, unc=False):
         filename = os.path.abspath(filename)
@@ -163,7 +163,7 @@ class dump(Unit):
                 # This should happen only when the unit is called from Python code
                 # rather than via the command line.
                 try:
-                    filename = next(self.iter_filenames)
+                    filename = next(self.paths)
                 except StopIteration:
                     raise RefineryCriticalException('the list of filenames was exhausted.')
                 else:
@@ -199,11 +199,11 @@ class dump(Unit):
                 continue
             if not self.args.stream or not self.stream:
                 try:
-                    filename = next(self.iter_filenames)
+                    filename = next(self.paths)
                 except StopIteration:
                     self.exhausted = True
                 else:
-                    if self.args.format:
+                    if self.formatted:
                         filename = self._format(filename, chunk, index, **chunk.meta)
                     self.stream = self._open(filename)
             yield chunk

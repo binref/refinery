@@ -109,7 +109,7 @@ class TestDump(TestUnitBase):
 
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'test.{ext}')
-            dump = self.load(path, format=True)
+            dump = self.load(path)
             self.ldu('emit', *examples.values())[dump]()
             files = set(os.listdir(root))
             self.assertLessEqual(set(examples), files)
@@ -140,7 +140,7 @@ class TestDump(TestUnitBase):
         ]
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'file-{index:02d}-{foobar}-{crc32}-{md5}.{ext}')
-            dump = self.load(path, format=True)
+            dump = self.load(path)
             self.ldu('emit', *samples)[dump]()
             for filename, data in zip(filenames, samples):
                 result_path = os.path.join(root, filename)
@@ -220,7 +220,7 @@ class TestDump(TestUnitBase):
         )
         with tempfile.TemporaryDirectory() as root:
             with temporary_chwd(root) as root:
-                dump = self.load(meta=True)
+                dump = self.load('{path}')
                 self.ldu('xtzip')[dump](archive)
 
                 self.assertTrue(os.path.exists(os.path.join(root, 'foo', 'baz')))
