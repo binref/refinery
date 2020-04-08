@@ -5,14 +5,13 @@ import os.path
 
 from itertools import cycle
 
-from .. import Unit, RefineryCriticalException
+from .. import arg, Unit, RefineryCriticalException
 
 
 class dump(Unit):
     """
-    Dump incoming data to files on disk. It is possible to specify filenames with
-    format fields using the `-f` or `--format` switch. The following format fields
-    are supported:
+    Dump incoming data to files on disk. It is possible to specify filenames with format fields when
+    the `-f` or `--format` switch is enabled. The following format fields are supported:
 
          {ext} : Automatically guessed file extension
        {crc32} : CRC32 checksum of the data
@@ -21,53 +20,31 @@ class dump(Unit):
          {md5} : MD5 hash of the data
         {sha1} : SHA1 hash of the data
       {sha256} : SHA-256 hash of the data
+        {path} : Associated path; defaults to {sha256} if none is given.
 
-    When not using formatted file names, the unit ingests as many incoming inputs
-    as filenames were specified on the command line. Unless connected to a terminal,
-    the remaining inputs will be forwarded on STDOUT. The `-t` or `--tee` switch
-    can be used to forward all inputs, under all circumstances, regardless of
-    whether or not they have been processed.
+    When not using formatted file names, the unit ingests as many incoming inputs as filenames were
+    specified on the command line. Unless connected to a terminal, the remaining inputs will be
+    forwarded on STDOUT. The `-t` or `--tee` switch can be used to forward all inputs, under all
+    circumstances, regardless of whether or not they have been processed.
 
     If no file is specified, the first ingested input is dumped to the clipboard.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(
-            'filenames',
-            type=str,
-            default=None,
-            nargs='*',
-            help='Output file',
-            metavar='file'
-        )
-        argp.add_argument('-t', '--tee', action='store_true',
-            help='Forward all inputs to STDOUT.')
-
-        mode = argp.add_mutually_exclusive_group()
-        mode.add_argument('-s', '--stream', action='store_true',
-            help='Dump all incoming inputs to the same file.')
-
-        mode.add_argument(
-            '-m', '--meta', action='store_true', help=(
-                'Automatically choose a filename. For multiple inputs, some '
-                'units provide a file name in their output; in this case, '
-                'this file name is used. Otherwise, the format {sha256} '
-                'is used as the file name.'
-            )
-        )
-        mode.add_argument(
-            '-f', '--format', action='store_true', help=(
-                'Provide format strings instead of a list of filenames. '
-                'The format strings will be used cyclically to generate '
-                'a file name for each input to be dumped.'
-            )
-        )
-
-        return super().interface(argp)
-
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
+    def __init__(
+        self, *filenames: str,
+        tee    : arg.switch('-t', help='Forward all inputs to STDOUT.') = False,
+        stream : arg.switch('-s', group='MODE', help='Dump all incoming data to the same file') = False,
+        auto   : arg.switch('-a', group='MODE', help='Equivalent to --format {{path}}') = False,
+        format : arg.switch('-f', group='MODE', help=(
+            'Provide format strings instead of a list of filenames. '
+            'The format strings will be used cyclically to generate '
+            'a file name for each input to be dumped.'
+        )) = False
+    ):
+        if auto:
+            filenames = ['{path}']
+            format = True
+        super().__init__(filenames=filenames, tee=tee, stream=stream, format=format)
         self._reset()
 
     def _auto_extension(self, data, default='bin'):
@@ -124,9 +101,7 @@ class dump(Unit):
     def _reset(self):
         self.stream = None
         self.exhausted = False
-        if self.args.meta:
-            self.iter_filenames = iter(())
-        elif self.args.format:
+        if self.args.format:
             self.iter_filenames = cycle(self.args.filenames)
         else:
             self.iter_filenames = iter(self.args.filenames)
@@ -135,7 +110,7 @@ class dump(Unit):
 
     @property
     def _paste(self):
-        return not bool(self.args.filenames) and not bool(self.args.format) and not self.args.meta
+        return not bool(self.args.filenames) and not bool(self.args.format)
 
     def _open(self, filename, unc=False):
         filename = os.path.abspath(filename)
@@ -158,7 +133,7 @@ class dump(Unit):
             self.stream.close()
             self.stream = None
 
-    def _format(self, filename, data, index=0):
+    def _format(self, filename, data, index=0, **meta):
         class DelayedFormatter(dict):
             def __missing__(_, key):  # noqa: W291
                 if key == 'crc32':
@@ -166,13 +141,15 @@ class dump(Unit):
                     return F'{crc32(data) & 0xFFFFFFFF:08X}'
                 if key == 'ext':
                     return self._auto_extension(data)
+                if key == 'path':
+                    key = 'sha256'
                 if key in ('md5', 'sha1', 'sha256'):
                     import hashlib
                     algorithm = getattr(hashlib, key)
                     return algorithm(data).hexdigest()
                 return '{' + key + '}'
         return filename.format_map(
-            DelayedFormatter(dict(index=index, length=len(data)))
+            DelayedFormatter(dict(index=index, length=len(data), **meta))
         )
 
     def process(self, data):
@@ -217,23 +194,17 @@ class dump(Unit):
             yield from it
             return
 
-        for index, chunk in enumerate(chunks):
+        for index, chunk in enumerate(chunks, 1):
             if self.exhausted:
                 continue
             if not self.args.stream or not self.stream:
                 try:
-                    if not self.args.meta:
-                        filename = next(self.iter_filenames)
-                    else:
-                        filename = chunk['path']
-                        if not filename:
-                            import hashlib
-                            filename = hashlib.sha256(chunk).hexdigest()
+                    filename = next(self.iter_filenames)
                 except StopIteration:
                     self.exhausted = True
                 else:
                     if self.args.format:
-                        filename = self._format(filename, chunk, index + 1)
+                        filename = self._format(filename, chunk, index, **chunk.meta)
                     self.stream = self._open(filename)
             yield chunk
 
