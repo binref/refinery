@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from copy import copy
+
 from .. import arg, Unit
+from ...lib.tools import lookahead
 
 
 class snip(Unit):
@@ -12,14 +15,18 @@ class snip(Unit):
     mode, in which case the specified ranges are deleted sequentially from the
     input.
     """
-    def __init__(self, slices: arg.help('Specify start:stop:step in Python slice syntax.') = [slice(None, None)]):
-        super().__init__(slices=slices)
+    def __init__(self,
+        slices: arg.help('Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
+        remove: arg.switch('-r', help='Remove the slices from the input rather than selecting them.') = False
+    ):
+        super().__init__(slices=slices, remove=remove)
 
-    def reverse(self, data):
-        for bounds in self.args.slices:
-            del data[bounds]
-        return data
-
-    def process(self, data):
-        for bounds in self.args.slices:
-            yield data[bounds]
+    def process(self, data: bytearray):
+        if self.args.remove:
+            for last, bounds in lookahead(self.args.slices):
+                chunk = data if last else copy(data)
+                del chunk[bounds]
+                yield chunk
+        else:
+            for bounds in self.args.slices:
+                yield data[bounds]

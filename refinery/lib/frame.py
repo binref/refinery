@@ -107,13 +107,13 @@ class Chunk(bytearray):
         view: Optional[Tuple[bool]] = None,
         meta: Optional[Dict[str, Any]] = None
     ):
-        view = view or [False] * len(path)
+        view = view or (False,) * len(path)
         if len(view) != len(path):
             raise ValueError('skipping must have the same length as path')
 
-        self._view = view
-        self._path = path
-        self._meta = meta or dict()
+        self._view: Tuple[bool] = view
+        self._path: Tuple[int] = path
+        self._meta: Dict[str, Any] = meta or dict()
 
         bytearray.__init__(self, data)
 
@@ -218,6 +218,16 @@ class Chunk(bytearray):
             self._meta[bounds] = value
         else:
             bytearray.__setitem__(self, bounds, value)
+
+    def __copy__(self):
+        return Chunk(self, self._path, self._view, self._meta)
+
+    def __deepcopy__(self, memo):
+        from copy import deepcopy
+        copy = Chunk(self, self._path, self._view)
+        memo[id(self)] = copy
+        copy._meta = deepcopy(self._meta, memo)
+        return copy
 
 
 class FrameUnpacker:
