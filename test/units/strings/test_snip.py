@@ -14,3 +14,8 @@ class TestSnip(TestUnitBase):
         unit = self.load('--', '-4:')
         data = B'FOO BAR BARF'
         self.assertEqual(unit(data), B'BARF')
+
+    def test_snip_reverse(self):
+        unit = self.load('2::3', reverse=True)
+        data = B'He!ll!o !Wo!rl!d'
+        self.assertEqual(unit(data), B'Hello World')
