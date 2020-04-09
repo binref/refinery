@@ -3,6 +3,7 @@
 import re
 import io
 
+from typing import ByteString
 from zlib import crc32
 
 from .. import arg, Unit
@@ -63,7 +64,7 @@ class IterativeDeobfuscator(Deobfuscator, abstract=True):
         super().__init__()
         self.args.timeout = timeout
 
-    def process(self, data: bytes) -> bytes:
+    def process(self, data: ByteString) -> ByteString:
         previous = crc32(data)
         for _ in range(self.args.timeout):
             data = super().process(data)
