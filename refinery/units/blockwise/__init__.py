@@ -146,13 +146,13 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         return self.operate(block, *(next(a) & self.fmask for a in self._arg)) & self.fmask
 
 
-class UnaryOperation(ArithmeticUnit):
+class UnaryOperation(ArithmeticUnit, abstract=True):
     def __init__(self, bigendian=False, blocksize=1):
         super().__init__(
             bigendian=bigendian, blocksize=blocksize)
 
 
-class BinaryOperation(ArithmeticUnit):
+class BinaryOperation(ArithmeticUnit, abstract=True):
     def __init__(self, argument: arg(nargs=arg.delete), bigendian=False, blocksize=1):
         super().__init__(argument,
             bigendian=bigendian, blocksize=blocksize)
