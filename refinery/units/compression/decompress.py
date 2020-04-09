@@ -80,13 +80,14 @@ class decompress(Unit):
                 nonlocal best, current_ratio
                 if self.ratio >= self._MIN_RATIO:
                     return
-                self._LOG_DEBUG(
-                    F'obtained {self.ratio:.2f} compression ratio with: prefix={self.prefix}, '
-                    F'cutoff={self.cutoff}, engine={self.engine.__class__.__name__}')
+                prefix = hex(self.prefix[0]) if self.prefix else None
                 r = 1 if self.unmodified and best and not best.unmodified else 0.9
                 if self.engine.__class__ is lznt1:
                     r /= 2
                 if not best or self.ratio / current_ratio < r:
+                    self._LOG_DEBUG(
+                        F'obtained {self.ratio:.2f} compression ratio with: prefix={prefix}, '
+                        F'cutoff={self.cutoff}, engine={self.engine.__class__.__name__}')
                     best = self
                     current_ratio = self.ratio
 
