@@ -15,7 +15,8 @@ class snip(Unit):
     mode, in which case the specified ranges are deleted sequentially from the
     input.
     """
-    def __init__(self,
+    def __init__(
+        self,
         slices: arg.help('Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
         remove: arg.switch('-r', help='Remove the slices from the input rather than selecting them.') = False
     ):
