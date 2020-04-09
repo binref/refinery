@@ -463,11 +463,12 @@ class Executable(type):
                         data = bytearray(data)
                     self.args @= data
                 else:
-                    annotations = tuple(operation.__annotations__.values())
-                    if len(annotations) == 1 and annotations[0] in (bytes, bytearray, memoryview):
-                        required_type = annotations[0]
-                        if not isinstance(data, required_type):
-                            data = required_type(data)
+                    try:
+                        dt = next(iter(operation.__annotations__.values()))
+                        if dt in (bytes, bytearray, memoryview) and not isinstance(data, dt):
+                            data = dt(data)
+                    except StopIteration:
+                        pass
                 return operation(self, data)
             return wrapped
 
