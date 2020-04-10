@@ -5,7 +5,7 @@ from .. import TestUnitBase
 
 class TestHTTPParser(TestUnitBase):
 
-    def test_basice(self):
+    def test_basic(self):
         unit = self.load()
         data = B'\r\n'.join([
             B'HTTP/1.1 200 OK',
