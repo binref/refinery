@@ -1,6 +1,6 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.1.7
 - The `dump` unit has been refactored to make it easier to use; Formatting of file names is done automatically now unless the flag `-p` or `--plain` is specified to prevent string formatting.
 - The `snip` unit can now remove bytes from the input.
 - The `dnfields` unit was added.
