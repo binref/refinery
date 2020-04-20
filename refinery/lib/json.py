@@ -38,7 +38,6 @@ class JSONEncoderExMeta(type):
         return json.dumps(data, indent=indent, **kwargs)
 
 
-
 class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
     """
     Base class for JSON encoders used in refinery. Any such encoder can
