@@ -3,22 +3,21 @@
 import json
 import re
 
-from .. import Unit
+from .. import arg, Unit
 from ...lib.decorators import unicoded
-from ...lib.argformats import number
 
 
 class ppjson(Unit):
     """
     Expects JSON input data and outputs it in a neatly formatted manner.
+    If the indentation is set to zero, the output is minified.
     """
     _TRAILING_COMMA = re.compile(R',\s*(}|])')
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-i', '--indent', type=number, default=4,
-            help='Controls the amount of space characters used for indentation in the output. Default is 4.')
-        return super().interface(argp)
+    def __init__(self, indent: arg.number('-i', help=(
+        'Controls the amount of space characters used for indentation in the output. Default is 4.')) = 4
+    ):
+        return super().__init__(indent=indent)
 
     @unicoded
     def process(self, data: str) -> str:
@@ -36,4 +35,8 @@ class ppjson(Unit):
 
             data = self._TRAILING_COMMA.sub(smartfix, data)
 
-        return json.dumps(json.loads(data), indent=self.args.indent)
+        kwargs = dict(indent=self.args.indent)
+        if not self.args.indent:
+            kwargs.update(separators=(',', ':'))
+        data = json.dumps(json.loads(data), **kwargs)
+        return data if self.args.indent else data.replace('\n', '')
