@@ -6,6 +6,7 @@ References:
   [1]: https://www.ntcore.com/files/dotnetformat.htm
 """
 import pefile
+from typing import List
 
 from .types import (
     RawBytes,
@@ -356,7 +357,21 @@ class FieldPtr(TableRow):
 
 class Field(TableRow):
     def parse(self):
-        self.Flags = self.expect(UInt16)
+        class FieldFlags:
+            def __init__(self, mask):
+                self.Value = BitMask(mask)
+                self.Static = bool(self.Value[4])
+                self.InitOnly = bool(self.Value[5])
+                self.Literal = bool(self.Value[6])
+                self.NotSerialized = bool(self.Value[7])
+                self.HasFieldRVA = bool(self.Value[8])
+                self.SpecialName = bool(self.Value[9])
+                self.RTSpecialName = bool(self.Value[10])
+                self.HasFieldMarshal = bool(self.Value[11])
+                self.PinvokeImpl = bool(self.Value[12])
+                self.HasDefault = bool(self.Value[13])
+
+        self.Flags = FieldFlags(self.expect(UInt16))
         self.Name = self.expect_strA()
         self.Signature = self.expect_blob()
 
@@ -517,7 +532,7 @@ class ImplMap(TableRow):
 class FieldRVA(TableRow):
     def parse(self):
         self.RVA = self.expect(UInt32)
-        self.Field = self.index(FieldIndex)
+        self.Field: MultiTableIndex = self.index(FieldIndex)
 
 
 class Assembly(TableRow):
@@ -750,11 +765,56 @@ class NetMetaDataTables(Struct):
         Struct.__init__(self, reader, _streams=streams)
 
     def parse(self):
-        self.Header = self.expect(NetMetaDataTablesHeader)
+        self.Header: NetMetaDataTablesHeader = self.expect(NetMetaDataTablesHeader)
         if self.Header.Flags[6]:
             self.ExtraData = self.expect(UInt32)
-        for k, Type in self.lookup.items():
-            setattr(self, repr(Type), [])
+
+        self.Module: List[Module] = []
+        self.TypeRef: List[TypeRef] = []
+        self.TypeDef: List[TypeDef] = []
+        self.FieldPtr: List[FieldPtr] = []
+        self.Field: List[Field] = []
+        self.MethodPtr: List[MethodPtr] = []
+        self.MethodDef: List[MethodDef] = []
+        self.ParamPtr: List[ParamPtr] = []
+        self.Param: List[Param] = []
+        self.InterfaceImpl: List[InterfaceImpl] = []
+        self.MemberRef: List[MemberRef] = []
+        self.Constant: List[Constant] = []
+        self.CustomAttribute: List[CustomAttribute] = []
+        self.FieldMarshal: List[FieldMarshal] = []
+        self.Permission: List[Permission] = []
+        self.ClassLayout: List[ClassLayout] = []
+        self.FieldLayout: List[FieldLayout] = []
+        self.StandAloneSig: List[StandAloneSig] = []
+        self.EventMap: List[EventMap] = []
+        self.EventPtr: List[EventPtr] = []
+        self.Event: List[Event] = []
+        self.PropertyMap: List[PropertyMap] = []
+        self.PropertyPtr: List[PropertyPtr] = []
+        self.Property: List[Property] = []
+        self.MethodSemantics: List[MethodSemantics] = []
+        self.MethodImpl: List[MethodImpl] = []
+        self.ModuleRef: List[ModuleRef] = []
+        self.TypeSpec: List[TypeSpec] = []
+        self.ImplMap: List[ImplMap] = []
+        self.FieldRVA: List[FieldRVA] = []
+        self.ENCLog: List[ENCLog] = []
+        self.ENCMap: List[ENCMap] = []
+        self.Assembly: List[Assembly] = []
+        self.AssemblyProcessor: List[AssemblyProcessor] = []
+        self.AssemblyOS: List[AssemblyOS] = []
+        self.AssemblyRef: List[AssemblyRef] = []
+        self.AssemblyRefProcessor: List[AssemblyRefProcessor] = []
+        self.AssemblyRefOS: List[AssemblyRefOS] = []
+        self.File: List[File] = []
+        self.ExportedType: List[ExportedType] = []
+        self.ManifestResource: List[ManifestResource] = []
+        self.NestedClass: List[NestedClass] = []
+        self.GenericParam: List[GenericParam] = []
+        self.MethodSpec: List[MethodSpec] = []
+        self.GenericParamConstraint: List[GenericParamConstraint] = []
+
         for k in sorted(self.Header.RowCount):
             count = self.Header.RowCount[k]
             try:
@@ -856,7 +916,7 @@ class NetMetaDataStreams(Struct):
                 break
 
     def parse(self):
-        self.Tables = None
+        self.Tables: NetMetaDataTables = None
         self.Strings = NetMetaDataStreamDummy('')
         self.US = NetMetaDataStreamDummy('')
         self.GUID = NetMetaDataStreamDummy()
@@ -916,7 +976,7 @@ class NetMetaData(Struct):
             self.expect(NetMetaDataStreamEntry)
             for _ in range(self.StreamCount)
         ]
-        self.Streams = self.expect(NetMetaDataStreams, meta=self)
+        self.Streams: NetMetaDataStreams = self.expect(NetMetaDataStreams, meta=self)
 
 
 class NetResourceWithName(Struct):
