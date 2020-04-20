@@ -299,11 +299,10 @@ class arg(Argument):
 
         if default is not pt.empty:
             if isinstance(default, (list, tuple)):
+                guessed_kwd_args.setdefault('nargs', ZERO_OR_MORE)
                 if not pt.default:
-                    guessed_kwd_args.setdefault('nargs', ZERO_OR_MORE)
                     default = pt.empty
                 else:
-                    guessed_kwd_args.setdefault('nargs', ONE_OR_MORE)
                     guessed_kwd_args.setdefault('default', pt.default)
                     default = default[0]
             else:
@@ -456,6 +455,11 @@ class Executable(type):
 
     def __new__(mcs, name, bases, nmspc, abstract=False):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
+            def chunkify(item):
+                if not isinstance(item, dict):
+                    return Chunk(item)
+                return Chunk(item.pop('data', None), meta=item)
+
             @wraps(operation)
             def wrapped(self, data: ByteString) -> bytes:
                 if -self.args:
@@ -469,7 +473,9 @@ class Executable(type):
                             data = dt(data)
                     except StopIteration:
                         pass
-                return operation(self, data)
+                if inspect.isgeneratorfunction(operation):
+                    return (chunkify(r) for r in operation(self, data))
+                return chunkify(operation(self, data))
             return wrapped
 
         nmspc.setdefault('__doc__', '')

@@ -24,8 +24,8 @@ class TestGrabBagExamples(TestBase):
             c2servers = set(sample | pipeline)
 
         self.assertSetEqual(
-            c2servers,
-            set(c2 % 0x2E for c2 in {
+            {bytes(c2) for c2 in c2servers},
+            {c2 % 0x2E for c2 in {
                 b'udatapost%cred',
                 b'marvellstudio%conline',
                 b'sdkscontrol%cpw',
@@ -34,7 +34,7 @@ class TestGrabBagExamples(TestBase):
                 b'ublaznze%conline',
                 b'sutsyiekha%ccasa',
                 b'makretplaise%cxyz',
-            })
+            }}
         )
 
     def test_example_02_hawkeye_config(self):

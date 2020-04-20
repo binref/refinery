@@ -103,7 +103,7 @@ class Chunk(bytearray):
     def __init__(
         self,
         data: ByteString,
-        path: Tuple[int],
+        path: Tuple[int] = (),
         view: Optional[Tuple[bool]] = None,
         meta: Optional[Dict[str, Any]] = None
     ):
@@ -378,18 +378,10 @@ class Framed:
 
     def _generate_chunks(self, parent: Chunk):
         for item in self.action(parent):
-            meta = parent.meta
-            data = item
-            if isinstance(data, dict):
-                data = item.pop('data', None)
-                meta = item
-            yield Chunk(data, parent.path, parent.view, meta)
+            yield Chunk(item, parent.path, parent.view, item.meta)
 
     def _generate_bytes(self, data: ByteString):
-        for item in self.action(data):
-            if isinstance(item, dict):
-                item = item.pop('data', None)
-            yield item
+        yield from self.action(data)
 
     def __iter__(self):
         if self.unpack.finished:
