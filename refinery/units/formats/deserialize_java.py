@@ -5,17 +5,11 @@ try:
 except ImportError:
     java = None
 
-import json
-
 from .. import Unit
+from ...lib.json import BytesAsArrayEncoder
 
 
-class JavaEncoder(json.JSONEncoder):
-
-    def encode(self, obj):
-        if isinstance(obj, dict):
-            obj = {str(key): value for key, value in obj.items()}
-        return super().encode(obj)
+class JavaEncoder(BytesAsArrayEncoder):
 
     def default(self, obj):
         try:
@@ -23,6 +17,24 @@ class JavaEncoder(json.JSONEncoder):
         except TypeError:
             if isinstance(obj, java.beans.JavaString):
                 return str(obj)
+            if isinstance(obj, java.beans.JavaInstance):
+                cd = obj.classdesc
+                fd = obj.field_data[cd]
+                return dict(
+                    isException=cd.is_exception,
+                    isInnerClass=cd.is_inner_class,
+                    isLocalInnerClass=cd.is_local_inner_class,
+                    isStaticMemberClass=cd.is_static_member_class,
+                    name=cd.name,
+                    fields={t.name: v for t, v in fd.items()}
+                )
+            if isinstance(obj, java.beans.JavaField):
+                return obj.class_name
+            if isinstance(obj, java.beans.JavaEnum):
+                return obj.value
+            if isinstance(obj, java.beans.JavaArray):
+                if obj.classdesc.name == '[B':
+                    return bytearray(t & 0xFF for t in obj)
             raise
 
 
@@ -31,8 +43,5 @@ class dsjava(Unit):
     Deserialize Java serialized data and re-serialize as JSON.
     """
     def process(self, data):
-        return json.dumps(
-            java.loads(data),
-            indent=4,
-            cls=JavaEncoder
-        ).encode(self.codec)
+        with JavaEncoder as encoder:
+            return encoder.dumps(java.loads(data)).encode(self.codec)
