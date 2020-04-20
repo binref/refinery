@@ -154,9 +154,9 @@ class StandardCipherExecutable(CipherExecutable):
                     F'The cipher {cipher.__name__} is a block cipher module, '
                     F'but no cipher block mode constants were found.'
                 )
-            cls.modespec = OptionFactory(modes)
+            cls.modespec = OptionFactory(modes, ignorecase=True)
             cls.argspec['mode'].merge_all(arg(
-                dest='mode', type=str, metavar='mode', choices=list(modes),
+                dest='mode', type=str.upper, metavar='mode', choices=list(modes),
                 help='Choose cipher mode to be used. Possible values are: {}.'.format(', '.join(modes))
             ))
 

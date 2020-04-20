@@ -766,7 +766,7 @@ def regexp(expression: str) -> Union[int, bytes, DelayedRegexpArgument]:
     return arg
 
 
-def OptionFactory(options: Mapping[str, Any]):
+def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
     """
     The factory produces an argument parser type that accepts the keys of `options`
     as possible values and causes the parsed argument to contain the corresponding
@@ -775,9 +775,14 @@ def OptionFactory(options: Mapping[str, Any]):
 
     class Option():
         def __init__(self, name: str):
+            if ignorecase and name not in options:
+                needle = name.upper()
+                for key in options:
+                    if needle == key.upper():
+                        name = key
+                        break
             if name not in options:
-                raise ValueError(
-                    'the option %s is not one of these: %s' % (name, list(options)))
+                raise ValueError('The option %s is not one of these: %s' % (name, list(options)))
             self.mode = options[name]
             self.name = name
 

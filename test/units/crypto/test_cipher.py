@@ -184,7 +184,7 @@ class TestAES(TestUnitBase):
         self.assertEqual(cipher.process(cipher.reverse(test)), test)
 
     def test_invertible_02(self):
-        cipher = self.ldu('aes', 'CBC', 'PBKDF2[32,s4ltY]:p4$$w0rd', iv=(b'MYIV' * 4))
+        cipher = self.ldu('aes', 'cbc', 'PBKDF2[32,s4ltY]:p4$$w0rd', iv=(b'MYIV' * 4))
         test = self.generate_random_buffer(200)
         self.assertEqual(cipher.process(cipher.reverse(test)), test)
 
@@ -192,7 +192,7 @@ class TestAES(TestUnitBase):
         K = self.generate_random_buffer(16)
         V = self.generate_random_buffer(16)
         M = self.generate_random_buffer(5 * 16)
-        D = self.ldu('aes', 'CBC', key=K, iv=V)
+        D = self.ldu('aes', 'cbc', key=K, iv=V)
         E = self.ldu('aes', 'CBC', key=K, iv=V, reverse=True)
         self.assertEqual(M, D(E(M)))
 
