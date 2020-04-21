@@ -61,7 +61,7 @@ class fread(Unit):
 
     def process(self, data):
         for mask in self.args.filenames:
-            self.log_info('scanning for mask:', mask)
+            self.log_debug('scanning for mask:', mask)
             for filename in glob(mask, recursive=True):
                 if not isfile(filename):
                     continue
@@ -72,8 +72,9 @@ class fread(Unit):
                         elif self.args.size:
                             yield from self._read_chunks(stream)
                         else:
-                            self.log_info('reading:', filename)
-                            yield dict(data=stream.read(), path=filename)
+                            data = stream.read()
+                            self.log_info(lambda: F'reading: {filename} ({len(data)} bytes)')
+                            yield dict(data=data, path=filename)
                 except PermissionError:
                     self.log_warn('permission denied:', filename)
                 except FileNotFoundError:
