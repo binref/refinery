@@ -141,8 +141,8 @@ class PatternExtractorBase(Unit, abstract=True):
         len        : arg.number('-E', help='Matches must be of length N.') = None,
         stripspace : arg.switch('-S', help='Strip all whitespace from input data.') = False,
         unique     : arg.switch('-q', help='Yield every (transformed) Match only once.') = False,
-        longest    : arg.switch('-l', help='Sort results by length before picking.') = False,
-        take       : arg.number('-t', help='Return only the first N occurrences.') = None,
+        longest    : arg.switch('-l', help='Sort results by length.') = False,
+        take       : arg.number('-t', help='Return only the first N occurrences in order of appearance.') = None,
     ):
         super().__init__(
             min=min,
@@ -215,12 +215,19 @@ class PatternExtractorBase(Unit, abstract=True):
         settings provided via the command line interface.
         """
         result = matches
-        if self.args.longest:
-            result = sorted(result, key=len, reverse=True)
-        if self.args.take:
-            end = None if self.args.take is INF else self.args.take
-            result = islice(result, end)
-        yield from result
+        if self.args.longest and self.args.take and self.args.take is not INF:
+            try:
+                length = len(result)
+            except TypeError:
+                result = list(result)
+                length = len(result)
+            indices = sorted(range(length), key=lambda k: len(result[k]), reverse=True)
+            for k in sorted(islice(indices, abs(self.args.take))):
+                yield result[k]
+        elif self.args.longest:
+            yield from sorted(result, key=len, reverse=True)
+        elif self.args.take:
+            yield from islice(result, abs(self.args.take))
 
     def matches_processed(
         self,
