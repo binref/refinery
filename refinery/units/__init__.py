@@ -473,9 +473,10 @@ class Executable(type):
                             data = dt(data)
                     except StopIteration:
                         pass
-                if inspect.isgeneratorfunction(operation):
+                if wrapped.chunked:
                     return (chunkify(r) for r in operation(self, data))
                 return chunkify(operation(self, data))
+            wrapped.chunked = inspect.isgeneratorfunction(operation)
             return wrapped
 
         nmspc.setdefault('__doc__', '')
@@ -866,8 +867,9 @@ class Unit(metaclass=Executable, abstract=True):
             if (
                 self._framehandler.framebreak
                 or self._framehandler.unframed
-                and not last
                 and not chunk.endswith(B'\n')
+                and not self.args.squeeze
+                and not last
             ):
                 chunk += B'\n'
             try:
@@ -1014,10 +1016,13 @@ class Unit(metaclass=Executable, abstract=True):
         base = argp.add_argument_group('generic options')
 
         base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
-        base.set_defaults(reverse=False)
+        base.set_defaults(reverse=False, squeeze=False)
 
         if cls.is_reversible:
             base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
+
+        if cls.process.chunked or (cls.is_reversible and cls.reverse.chunked):
+            base.add_argument('-Z', '--squeeze', action='store_true', help='Fuse outputs, do not insert line breaks.')
 
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
@@ -1164,6 +1169,7 @@ class Unit(metaclass=Executable, abstract=True):
         unit.args._store(_argo=argp.order)
         unit.args.quiet = args.quiet
 
+        unit.args.squeeze = args.squeeze
         unit.args.dtiming = args.dtiming
         unit.args.nesting = args.nesting
         unit.args.reverse = args.reverse
@@ -1201,6 +1207,7 @@ class Unit(metaclass=Executable, abstract=True):
                 dtiming=False,
                 nesting=0,
                 reverse=False,
+                squeeze=False,
                 devnull=False,
                 verbose=LogLevel.DETACHED,
                 quiet=False,
