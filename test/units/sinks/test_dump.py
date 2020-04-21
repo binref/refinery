@@ -230,3 +230,14 @@ class TestDump(TestUnitBase):
                 for word in ('baz', 'baf'):
                     with open(os.path.join(root, 'foo', word), 'r') as stream:
                         self.assertEqual(stream.read(), word)
+
+    def test_force_mode(self):
+        with tempfile.TemporaryDirectory() as root:
+            with temporary_chwd(root) as root:
+                dump = self.load('A', 'A/B', force=True)
+                self.ldu('emit', 'A', 'B')[dump]()
+
+                self.assertTrue(os.path.isdir(os.path.join(root, 'A')))
+                self.assertTrue(os.path.exists(os.path.join(root, 'A', 'B')))
+                with open(os.path.join(root, 'A', 'B'), 'r') as stream:
+                    self.assertEqual(stream.read(), 'B')

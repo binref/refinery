@@ -36,10 +36,11 @@ class dump(Unit):
         tee    : arg.switch('-t', help='Forward all inputs to STDOUT.') = False,
         stream : arg.switch('-s', help='Dump all incoming data to the same file.') = False,
         plain  : arg.switch('-p', help='Never apply any formatting to file names.') = False,
+        force  : arg.switch('-f', help='Remove files if necessary to create dump path.') = False,
     ):
         if stream and len(filenames) != 1:
             raise ValueError('Can only use exactly one file in stream mode.')
-        super().__init__(filenames=filenames, tee=tee, stream=stream)
+        super().__init__(filenames=filenames, tee=tee, stream=stream, force=force)
         if plain:
             self.formatted = False
         else:
@@ -112,6 +113,18 @@ class dump(Unit):
     def _paste(self):
         return not self.args.filenames
 
+    def _components(self, path):
+        def _reversed_components(path):
+            while True:
+                path, component = os.path.split(path)
+                if not component:
+                    break
+                yield component
+            yield path
+        components = list(_reversed_components(path))
+        components.reverse()
+        return components
+
     def _open(self, filename, unc=False):
         filename = os.path.abspath(filename)
         base = os.path.dirname(filename)
@@ -119,6 +132,17 @@ class dump(Unit):
             self.log_info('opening:', filename)
         try:
             os.makedirs(base, exist_ok=True)
+        except FileExistsError:
+            path, components = '', self._components(filename)
+            while components:
+                component, *components = components
+                path = os.path.join(path, component)
+                if os.path.exists(path) and os.path.isfile(path):
+                    if self.args.force:
+                        os.unlink(path)
+                        return self._open(filename, unc)
+                    break
+            raise RefineryCriticalException(F'Unable to dump to {filename} because {path} is a file.')
         except FileNotFoundError:
             if unc or os.name != 'nt':
                 raise
