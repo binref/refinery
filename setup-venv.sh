@@ -57,5 +57,5 @@ function realpath {
 
 echo -- to enable the refinery, update your PATH as follows:
 echo
-echo PATH=$(realpath $venv/bin):\$PATH
+echo PATH=\$PATH:$(realpath $venv/bin)
 echo
