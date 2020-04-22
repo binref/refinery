@@ -141,8 +141,8 @@ class TestRexDeobfuscate(TestUnitBase):
         unit = self.load('X+', take=2, longest=True)
         data = B'\n'.join(B'X' * k for k in [12, 1, 7, 17, 3])
         self.assertEqual(unit(data), B'\n'.join([
-            B'X' * 17,
-            B'X' * 12
+            B'X' * 12,
+            B'X' * 17
         ]))
 
     def test_generic_parameters_02(self):
