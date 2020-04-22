@@ -356,8 +356,9 @@ class Framed:
             rw = rewind()
             yield from self.filter(rw) if top.scopable else rw
 
-        if not self.unpack.eol:  # filter did not consume the iterable, abort
-            self.unpack.finished = True
+        if not self.unpack.eol:  # filter did not consume the iterable
+            for _ in self.unpack:
+                pass
 
     @property
     def unframed(self) -> bool:

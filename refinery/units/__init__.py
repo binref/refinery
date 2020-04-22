@@ -42,7 +42,7 @@ from argparse import (
     ZERO_OR_MORE
 )
 
-from ..lib.argformats import pending, manifest, multibin, number, sliceobj
+from ..lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
 from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead, autoinvoke, skipfirst, isbuffer
 from ..lib.frame import Framed, Chunk
 
@@ -727,9 +727,13 @@ class Unit(metaclass=Executable, abstract=True):
 
     def _exception_handler(self, exception: BaseException):
         if self.log_level <= LogLevel.DETACHED:
-            raise exception
+            raise
         elif isinstance(exception, RefineryCriticalException):
             self.log_warn(F'critical error, terminating: {exception}')
+            raise
+        elif isinstance(exception, VariableMissing):
+            self.log_warn('critical error:', exception)
+            raise RefineryCriticalException
         elif isinstance(exception, GeneratorExit):
             raise
         elif isinstance(exception, RefineryPartialResult):
@@ -738,8 +742,8 @@ class Unit(metaclass=Executable, abstract=True):
             elif not self.log_warn(F'error, partial result returned: {exception}'):
                 raise exception
             return exception.partial
-
-        self.log_warn(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
+        else:
+            self.log_warn(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
 
         if self.log_debug():
             import traceback
@@ -750,15 +754,9 @@ class Unit(metaclass=Executable, abstract=True):
             self._chunks = iter(self._framehandler)
         while True:
             try:
-                result = next(self._chunks)
-            except Exception as E:
-                if isinstance(E, StopIteration):
-                    raise
-                result = self._exception_handler(E)
-                if result is None:
-                    raise StopIteration from E
-            if not isinstance(result, BaseException):
-                return result
+                return next(self._chunks)
+            except RefineryCriticalException as R:
+                raise StopIteration from R
 
     @property
     def _framehandler(self) -> Framed:

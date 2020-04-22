@@ -79,6 +79,7 @@ from functools import update_wrapper
 from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable
 
 from ..lib.loader import resolve, EntryNotFound
+from ..lib.frame import Chunk
 
 
 class PythonExpression:
@@ -287,6 +288,12 @@ class TooLazy(Exception):
     evaluated.
     """
     pass
+
+
+class VariableMissing(RuntimeError):
+    def __init__(self, name):
+        super().__init__(F'The variable {name} is not defined.')
+        self.name = name
 
 
 class LazyEvaluation:
@@ -540,6 +547,39 @@ class DelayedBinaryArgument(DelayedArgument):
             data[bounds] = []
             return result
         bounds = sliceobj(region)
+        return extract
+
+    def _interpret_variable(self, name: str, obj: Any):
+        if isinstance(obj, (bytes, bytearray, memoryview)):
+            return obj
+        if isinstance(obj, str):
+            return utf8(obj)
+        raise ValueError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion to bytes is known.')
+
+    @handler.register('var', final=True)
+    def meta_get(self, name: str) -> bytes:
+        """
+        Contains the value of a meta variable. The variable remains attached to the chunk.
+        """
+        def extract(data: Chunk):
+            try:
+                result = data.meta[name]
+            except KeyError as K:
+                raise VariableMissing(name) from K
+            return self._interpret_variable(name, result)
+        return extract
+
+    @handler.register('pop', final=True)
+    def meta_pop(self, name: str) -> bytes:
+        """
+        Extracts data from a meta field in a chunk.
+        """
+        def extract(data: Chunk):
+            try:
+                result = data.meta.pop(name)
+            except KeyError as K:
+                raise VariableMissing(name) from K
+            return self._interpret_variable(name, result)
         return extract
 
 

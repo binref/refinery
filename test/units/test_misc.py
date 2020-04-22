@@ -167,6 +167,10 @@ class TestMetaProperties(TestUnitBase):
         self.assertEqual(unit2(B'HEYYA'), B'HEXXAHEXXAHEXXA')
         self.assertEqual(unit3(B'HEYYA'), B'HEAHEAHEAHEAHEA')
 
+    def test_multiple_calls(self):
+        result = B'' | L('emit FOO BAR BAZ [') | L('rex . [') | L('pick 2 ]]')
+        self.assertEqual(result, B'ORZ')
+
 
 class TestSimpleInvertible(TestUnitBase):
     exceptions = ['vbe', 'u16', 'cp1252']
