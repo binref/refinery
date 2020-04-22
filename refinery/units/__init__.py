@@ -456,9 +456,11 @@ class Executable(type):
     def __new__(mcs, name, bases, nmspc, abstract=False):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
             def chunkify(item):
-                if not isinstance(item, dict):
-                    return Chunk(item)
-                return Chunk(item.pop('data', None), meta=item)
+                if isinstance(item, Chunk):
+                    return item
+                if isinstance(item, dict):
+                    return Chunk(item.pop('data', None), meta=item)
+                return Chunk(item)
 
             @wraps(operation)
             def wrapped(self, data: ByteString) -> bytes:
