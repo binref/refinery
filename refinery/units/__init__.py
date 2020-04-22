@@ -259,7 +259,7 @@ class arg(Argument):
         """
 
         def get_argp_type(annotation_type):
-            if issubclass(annotation_type, (bytes, bytearray)):
+            if issubclass(annotation_type, (bytes, bytearray, memoryview)):
                 return multibin
             if issubclass(annotation_type, int):
                 return number
@@ -463,7 +463,7 @@ class Executable(type):
                 return Chunk(item)
 
             @wraps(operation)
-            def wrapped(self, data: ByteString) -> bytes:
+            def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
                 if -self.args:
                     if not isinstance(data, bytearray):
                         data = bytearray(data)
@@ -765,7 +765,7 @@ class Unit(metaclass=Executable, abstract=True):
 
         op = self.reverse if self.args.reverse else self.process
 
-        def normalized_action(data: bytearray) -> Iterable[bytes]:
+        def normalized_action(data: ByteString) -> Iterable[ByteString]:
             try:
                 result = op(data)
                 if inspect.isgenerator(result):
@@ -933,7 +933,7 @@ class Unit(metaclass=Executable, abstract=True):
             with io.BytesIO() as stdout:
                 return (stdin | self | stdout).getvalue()
 
-    def process(self, data: bytes) -> Union[Optional[bytes], Iterable[bytes]]:
+    def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
         """
         This routine is overridden by children of `refinery.units.Unit` to define how
         the unit processes a given chunk of binary data.
@@ -995,7 +995,7 @@ class Unit(metaclass=Executable, abstract=True):
             except TypeError: pass
             if isinstance(x, str):
                 return x
-            if isinstance(x, (bytes, bytearray)):
+            if isinstance(x, (bytes, bytearray, memoryview)):
                 import codecs
                 return codecs.decode(x, cls.codec, errors='backslashreplace')
             return str(x)
