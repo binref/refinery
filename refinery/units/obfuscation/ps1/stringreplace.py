@@ -29,14 +29,18 @@ class deob_ps1_stringreplace(Deobfuscator):
             return string_quote(string.replace(needle, insert))
 
         data = re.sub(
-            R'({s})\s*-([ci]?)replace\s*({s})\s*,\s*({s})'.format(s=formats.ps1str),
+            R'\s*'.join([
+                R'({s})', R'-([ci]?)replace', R'[\(\s]*({s})[\)\s]*', R',', R'[\(\s]*({s})[\)\s]*'
+            ]).format(s=formats.ps1str),
             dash_replace,
             data,
             flags=re.IGNORECASE
         )
 
         data = re.sub(
-            R'({s}).Replace\(\s*({s})\s*,\s*({s})\s*\)'.format(s=formats.ps1str),
+            R'\s*'.join([
+                R'({s})', R'\.replace', R'\(', R'[\(\s]*({s})[\)\s]*', R',', R'[\(\s]*({s})[\)\s]*', R'\)'
+            ]).format(s=formats.ps1str),
             dot_replace,
             data,
             flags=re.IGNORECASE
