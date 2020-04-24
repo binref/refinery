@@ -3,16 +3,26 @@
 import re
 
 from .. import Deobfuscator
+from . import Ps1StringLiterals
 
 
 class deob_ps1_invoke(Deobfuscator):
     def deobfuscate(self, data):
+        strlit = Ps1StringLiterals(data)
+
+        @strlit.outside
+        def invrepl1(m): return m.group(1) + m.group(3)
+
         data = re.sub(
             R'''(\.|::)'''                    # preceeded by dot or namespace delimiter
             R'''(['"])(\w{1,200})\2'''        # quoted string (actually a method name)
             R'''(?=[\s\(\.\,\;\+\-])''',      # only if followed by certain characters
-            R'\1\3', data                     # remove quotes around symbol
+            invrepl1, data                    # remove quotes around symbol
         )
+
+        @strlit.outside
+        def invrepl2(m): return m.group(1) + '('
+
         data = re.sub(
             '\\s{0,5}'.join([
                 '[.&]', '(\\(',               # sourcing operator
@@ -23,8 +33,8 @@ class deob_ps1_invoke(Deobfuscator):
         )
         data = re.sub(
             R'''(\w{1,200})\.Invoke\s*\(''',
-            R'\1(',
-            data,
+            invrepl2, data,
             flags=re.IGNORECASE
         )
+
         return data

@@ -14,3 +14,8 @@ class TestStringReplace(TestUnitBase):
             self.unit.deobfuscate('''"Hello World".replace('l', "FOO")'''),
             '"HeFOOFOOo WorFOOd"'
         )
+
+    def test_real_world_01(self):
+        data = B'''"UVL0NR"-RepLaCe"UVL",""""-RepLaCe "0NR","'"-CrePLAcE  '31V',"|"))'''
+        wish = B'''"""'"))'''
+        self.assertEqual(self.unit(data), wish)

@@ -4,14 +4,43 @@ import re
 
 from ....lib.patterns import formats
 from .. import Deobfuscator
-from . import string_unquote, string_quote, string_escape
+from . import string_unquote, string_quote, string_escape, Ps1StringLiterals
 
 
 class deob_ps1_stringreplace(Deobfuscator):
     def deobfuscate(self, data):
-        def dash_replace(match):
+        strlit = Ps1StringLiterals(data)
+        repeat = True
+        needle = None
+
+        def trimbrackets(string: str):
+            while True:
+                string = string.strip()
+                if not string.startswith('(') or not string.endswith(')'):
+                    break
+                string = string[1:-1]
+            if string.startswith('('):
+                raise ValueError
+            pos = len(string)
+            while string[pos - 1] not in ''''"''':
+                pos -= 1
+            return string[:pos], string[pos:]
+
+        @strlit.outside
+        def replacer(match):
+            nonlocal repeat, needle
+            if needle not in range(*match.span()):
+                return None
             string, case, needle, insert = match.groups()
             case = '(?i)' if 'c' not in case else ''
+            try:
+                string, tmp = trimbrackets(string)
+                assert not tmp
+                needle, tmp = trimbrackets(needle)
+                assert not tmp
+                insert, end = trimbrackets(insert)
+            except Exception:
+                return match[0]
             string = string_unquote(string)
             needle = string_unquote(needle)
             # transforming "Tvar".replace('T', '$')
@@ -19,31 +48,43 @@ class deob_ps1_stringreplace(Deobfuscator):
             # hence we need to escape the insert variable:
             insert = string_escape(string_unquote(insert))
             needle = re.escape(needle)
-            return string_quote(re.sub(needle, lambda _: insert, string))
+            repeat = True
+            return string_quote(re.sub(case + needle, insert, string)) + end
 
-        def dot_replace(match):
-            string, needle, insert = match.groups()
-            string = string_unquote(string)
-            needle = string_unquote(needle)
-            insert = string_escape(string_unquote(insert))
-            return string_quote(string.replace(needle, insert))
+        while repeat:
+            repeat = False
+            needle = None
+            strlit.update(data)
 
-        data = re.sub(
-            R'\s*'.join([
-                R'({s})', R'-([ci]?)replace', R'[\(\s]*({s})[\)\s]*', R',', R'[\(\s]*({s})[\)\s]*'
-            ]).format(s=formats.ps1str),
-            dash_replace,
-            data,
-            flags=re.IGNORECASE
-        )
+            for nm in re.finditer(R'''replace\s*[\(\s]*['"]''', data, flags=re.IGNORECASE):
+                if nm.start() not in strlit:
+                    needle = nm.start()
+                    break
 
-        data = re.sub(
-            R'\s*'.join([
-                R'({s})', R'\.replace', R'\(', R'[\(\s]*({s})[\)\s]*', R',', R'[\(\s]*({s})[\)\s]*', R'\)'
-            ]).format(s=formats.ps1str),
-            dot_replace,
-            data,
-            flags=re.IGNORECASE
-        )
+            if needle is None:
+                break
+
+            data = re.sub(
+                R'\s*'.join([
+                    R'({s})', R'-([ci]?)replace', R'([\(\s]*{s}[\)\s]*)', R',', R'([\(\s]*{s}[\)\s]*)'
+                ]).format(s=formats.ps1str),
+                replacer,
+                data,
+                count=1,
+                flags=re.IGNORECASE
+            )
+
+            if repeat:
+                continue
+
+            data = re.sub(
+                R'\s*'.join([
+                    R'({s})', R'\.repla(c)e', R'\(', R'([\(\s]*{s}[\)\s]*)', R',', R'([\(\s]*{s}[\)\s]*)', R'\)'
+                ]).format(s=formats.ps1str),
+                replacer,
+                data,
+                count=1,
+                flags=re.IGNORECASE
+            )
 
         return data

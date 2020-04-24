@@ -27,10 +27,15 @@ class deob_ps1(IterativeDeobfuscator):
         deob_ps1_literals
     ]]
 
+    def __init__(self, timeout):
+        super().__init__(timeout)
+        for u in self._SUBUNITS:
+            u.log_level = self.log_level
+
     def deobfuscate(self, data):
         for unit in self._SUBUNITS:
             if self.log_debug():
-                self.log_debug(F'invoking {unit.__class__.__name__}')
+                self.log_debug(F'invoking {unit.__class__.__name__.replace("_", "-")}')
                 checkpoint = hash(data)
             data = unit.deobfuscate(data)
             if self.log_debug() and checkpoint != hash(data):

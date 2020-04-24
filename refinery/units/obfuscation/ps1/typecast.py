@@ -5,7 +5,7 @@ import string
 
 from ....lib.patterns import formats
 from .. import Deobfuscator
-from . import string_escape, string_quote
+from . import string_escape, string_quote, Ps1StringLiterals
 
 
 class deob_ps1_typecast(Deobfuscator):
@@ -15,14 +15,19 @@ class deob_ps1_typecast(Deobfuscator):
     """
 
     def deobfuscate(self, data):
+        strlit = Ps1StringLiterals(data)
+
+        @strlit.outside
+        def strip_typecast(m): return m.group(1)
 
         data = re.sub(
-            R'\[(?:string|char\[\])\]\s*(%s)' % formats.ps1str,
-            R'\1',
+            FR'\[(?:string|char\[\])\]\s*({formats.ps1str!s})',
+            strip_typecast,
             data,
             flags=re.IGNORECASE
         )
 
+        @strlit.outside
         def char_literal(match):
             return string_quote(string_escape(chr(int(match.group(1), 0))))
 

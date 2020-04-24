@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator, outside
-from ....lib.patterns import formats
+from .. import Deobfuscator
+from . import Ps1StringLiterals
 
 
 class deob_ps1_literals(Deobfuscator):
@@ -15,6 +15,8 @@ class deob_ps1_literals(Deobfuscator):
 
     _SENTINEL = re.compile(R'\$\{(\w+)\}')
 
-    @outside(formats.ps1str)
     def deobfuscate(self, data):
-        return self._SENTINEL.sub(R'$\1', data)
+        strlit = Ps1StringLiterals(data)
+        @strlit.outside
+        def strip(m): return F'${m.group(1)}'
+        return self._SENTINEL.sub(strip, data)

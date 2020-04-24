@@ -4,6 +4,7 @@ import re
 
 from ....lib.patterns import formats
 from .. import Deobfuscator
+from . import Ps1StringLiterals
 
 
 class deob_ps1_brackets(Deobfuscator):
@@ -15,14 +16,23 @@ class deob_ps1_brackets(Deobfuscator):
     _SENTINEL = re.compile(
         RF'''(?<![\w"']{{2}})'''  # this may be a function call
         RF'''(\-\w+)?'''  # not a function call but an argument
-        RF'''\(\s*({formats.integer}|{formats.ps1str})\s*\)''',
+        RF'''\(\s*({formats.integer}|{formats.ps1str})\s*(\S)''',
         flags=re.IGNORECASE
     )
 
     def deobfuscate(self, data):
-        while True:
-            match = self._SENTINEL.search(data)
-            if not match:
-                break
-            data = self._SENTINEL.sub(R'\1\2', data)
+        strlit = Ps1StringLiterals(data)
+        repeat = True
+
+        @strlit.outside
+        def replacement(match):
+            nonlocal repeat
+            if match.group(3) == ')':
+                repeat = True
+                return (match.group(1) or '') + match.group(2)
+
+        while repeat:
+            repeat = False
+            data = self._SENTINEL.sub(replacement, data)
+
         return data

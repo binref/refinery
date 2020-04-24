@@ -22,7 +22,7 @@ class TestPEMeta(TestUnitBase):
         self.assertEqual(result['TimeStamp']['Linker'][:19], '2017-06-03 22:05:18')
         self.assertEqual(result['TimeStamp']['Signed'][:19], '2019-06-03 21:07:55')
 
-        self.assertEqual(result['Signature']['Serial'], '7fb45d9f70b5529036097b4f4e14370')
+        self.assertEqual(result['Signature']['Serial'], '07fb45d9f70b5529036097b4f4e14370')
 
     def test_rw_delphi_sample(self):
         data = self.download_from_malshare('ce1cd24a782932e1c28c030da741a21729a3c5930d8358079b0f91747dd0d832')

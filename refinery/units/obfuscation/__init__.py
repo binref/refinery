@@ -6,18 +6,21 @@ import io
 from typing import ByteString
 from zlib import crc32
 
-from .. import arg, Unit
+from .. import arg, Unit, RefineryPartialResult
 from ...lib.decorators import unicoded
 
 
 __all__ = [
     'Deobfuscator',
-    'IterativeDeobfuscator'
+    'IterativeDeobfuscator',
+    'outside',
+    'unicoded',
 ]
 
 
-class AutoDeobfuscationTimeout(RuntimeError):
-    pass
+class AutoDeobfuscationTimeout(RefineryPartialResult):
+    def __init__(self, partial):
+        super().__init__('The deobfuscation timeout was reached before the data stabilized.', partial=partial)
 
 
 def outside(*exceptions):
@@ -59,19 +62,22 @@ class Deobfuscator(Unit, abstract=True):
 class IterativeDeobfuscator(Deobfuscator, abstract=True):
 
     def __init__(self, timeout: arg('-t', help='Maximum number of iterations; the default is 100.') = 100):
-        if timeout < 2:
-            raise ValueError('The timeout must be at least 2.')
+        if timeout < 1:
+            raise ValueError('The timeout must be at least 1.')
         super().__init__()
         self.args.timeout = timeout
 
     def process(self, data: ByteString) -> ByteString:
         previous = crc32(data)
         for _ in range(self.args.timeout):
-            data = super().process(data)
+            try:
+                data = super().process(data)
+            except KeyboardInterrupt:
+                raise RefineryPartialResult('Returning partially deobfuscated data', partial=data)
             checksum = crc32(data)
             if checksum == previous:
                 break
             previous = checksum
         else:
-            raise AutoDeobfuscationTimeout()
+            raise AutoDeobfuscationTimeout(data)
         return data
