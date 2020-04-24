@@ -13,9 +13,9 @@ class deob_ps1_brackets(Deobfuscator):
     only integer and string constants are supported.
     """
     _SENTINEL = re.compile(
-        RF'(?<![\w"\']{{2}})'  # this may be a function call
-        RF'(\-\w+)?'  # not a function call but an argument
-        RF'\(\s*({formats.integer}|{formats.ps1str})\s*\)',
+        RF'''(?<![\w"']{{2}})'''  # this may be a function call
+        RF'''(\-\w+)?'''  # not a function call but an argument
+        RF'''\(\s*({formats.integer}|{formats.ps1str})\s*\)''',
         flags=re.IGNORECASE
     )
 
