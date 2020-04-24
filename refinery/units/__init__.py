@@ -1147,6 +1147,15 @@ class Unit(metaclass=Executable, abstract=True):
         manually. This is a convenience feature which reduces code bloat when many parameters have to be
         forwarded, see e.g. `refinery.units.pattern.carve.carve` for an example.
         """
+        try:
+            if super.__init__.__func__ is Unit.__init__:
+                return super.__init__(**{
+                    name: value for name, value in keywords.items()
+                    if name != 'self' and not name.startswith('_')
+                })
+        except AttributeError:
+            pass
+
         return autoinvoke(super.__init__, keywords)
 
     @classmethod

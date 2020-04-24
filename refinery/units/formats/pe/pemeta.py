@@ -119,10 +119,13 @@ class pemeta(Unit):
                 tbs = cert.native['tbs_certificate']
                 for extension in tbs['extensions']:
                     if extension['extn_id'] == 'extended_key_usage' and 'code_signing' in extension['extn_value']:
+                        Serial = F'{tbs["serial_number"]:x}'
+                        if len(Serial) % 2:
+                            Serial = '0' + Serial
                         tbs = dict(
                             Issuer=tbs['issuer']['common_name'],
                             Subject=tbs['subject']['common_name'],
-                            Serial=F"{tbs['serial_number']:x}",
+                            Serial=Serial,
                         )
                         info.update(tbs)
                         return info

@@ -126,7 +126,7 @@ pattern_hostname_df = '(?:{ip}|{d})(?::\\d{{2,5}})?'.format(ip=pattern_ipv4_df, 
 
 pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-zA-Z0-9])'
 pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
-pattern_ps1str = R'''(?:"(?:\`"|""|[^"])*"|'(?:''|[^'])*')'''
+pattern_ps1str = R'''(?:"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
 pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
 
 pattern_url = ''.join([

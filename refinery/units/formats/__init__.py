@@ -6,7 +6,7 @@ A package containing several sub-packages for various data formats.
 import fnmatch
 import re
 
-from .. import Unit
+from .. import arg, Unit
 from ...lib.argformats import number, virtualaddr
 
 
@@ -48,25 +48,22 @@ class PathExtractorUnit(Unit):
 
 class MemoryExtractorUnit(Unit):
 
-    @classmethod
-    def interface(cls, argp):
-        limit = argp.add_mutually_exclusive_group()
-        limit.add_argument('-t', '--take', type=number[1:], default=0,
-            help='The number of bytes to read.')
-        limit.add_argument('-e', '--end', type=virtualaddr, default=None,
-            help='Read bytes until this offset, which has to be located after the starting offset.')
-        limit.add_argument('-a', '--ascii', action='store_true',
-            help='Read the memory at the given offset as an ASCII string.')
-        limit.add_argument('-u', '--utf16', action='store_true',
-            help='Read the memory at the given offset as an UTF16 string.')
-        argp.add_argument('offset', type=virtualaddr,
-            help='Specify virtual offset as either .section:OFFSET or just a virtual address in hex.')
-        return super().interface(argp)
+    def __init__(
+        self,
+        offset: arg(type=virtualaddr,
+            help='Specify virtual offset as either .section:OFFSET or just a virtual address in hex.'),
+        end : arg('-e', group='END', type=virtualaddr,
+            help='Read bytes until this offset, which has to be located after the starting offset.') = None,
+        take  : arg.number('-t', group='END', help='The number of bytes to read.') = 0,
+        utf16 : arg.switch('-u', group='END', help='Read the memory at the given offset as an UTF16 string.') = False,
+        ascii : arg.switch('-a', group='END', help='Read the memory at the given offset as an ASCII string.') = False
+    ):
+        if sum(1 for p in (end, take, utf16, ascii) if p) > 1:
+            raise ValueError('Only one of end, take, utf16, and ascii may be specified.')
+        return self.superinit(super(), **vars())
 
     def _read_from_memory(self, data, offset_oracle):
-
         start, end = offset_oracle(self.args.offset)
-
         if self.args.end:
             end, _ = offset_oracle(self.args.end)
             if end < start:
@@ -86,5 +83,4 @@ class MemoryExtractorUnit(Unit):
                     break
             else:
                 raise EndOfStringNotFound
-
         return data[start:end]

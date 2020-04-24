@@ -2,13 +2,21 @@
 # -*- coding: utf-8 -*-
 import pefile
 
-from .. import MemoryExtractorUnit
+from .. import arg, MemoryExtractorUnit
 
 
 class peslice(MemoryExtractorUnit):
     """
     Extract data from PE files based on virtual offsets.
     """
+
+    def __init__(
+        self, offset,
+        base: arg.number('-b', help='Optionally specify a custom base address.') = 0,
+        end=None, take=0, utf16=False, ascii=False
+    ):
+        self.superinit(super(), **vars())
+        self.args.base = base
 
     def _get_file_offset(self, pe, offset):
         addr = offset.address
@@ -24,7 +32,8 @@ class peslice(MemoryExtractorUnit):
             else:
                 raise ValueError(F'section {offset.section} was not found.')
         else:
-            addr = pe.get_offset_from_rva(addr - pe.OPTIONAL_HEADER.ImageBase)
+            base = self.args.base or pe.OPTIONAL_HEADER.ImageBase
+            addr = pe.get_offset_from_rva(addr - base)
         return addr, end
 
     def process(self, data):
