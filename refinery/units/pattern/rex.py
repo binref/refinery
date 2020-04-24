@@ -23,15 +23,13 @@ class rex(RegexUnit):
         unique=False, longest=False, take=None, utf16=False
     ):
         self.superinit(super(), **vars())
-
-        if self.log_debug('regular expression:', self.args.regex):
-            for t in transformation:
-                self.log_debug(F'transformation:', t)
-
         self.args.transforms = [
             TransformSubstitutionFactory(t) for t in transformation]
 
     def process(self, data):
+
+        self.log_debug('regular expression:', self.args.regex)
+
         yield from self.matches_processed(
             memoryview(data),
             self.args.regex,
