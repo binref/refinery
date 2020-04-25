@@ -3,6 +3,11 @@
 ## Version 0.1.8
 - The `rsa` unit was improved and can handle the Microsoft blob format now.
 - Powershell deobfuscation was improved, but that doesn't change the fact that this would be much better with a proper parser.
+- The `b32` for base32 encoding and decoding was added.
+- Preliminary support for meta variables has been added with the `mpush`, `mpop`, and `mput` units. This feature is experimental and not well documented yet.
+- The `--squeeze`/`-Z` option was added to all units that produce multiple outputs: It disables the default separation of these outputs by line breaks.
+- Pattern extraction units such as `rex` will now preserve the order of extracted strings, even when the `--longest` option is used.
+- The suggested `PATH` environment variabe modification from the Linux installer script was corrected; The previous variant would make the refinery virtual environment take precedence over the global python executables.
 
 ## Version 0.1.7
 - The `dump` unit has been refactored to make it easier to use; Formatting of file names is done automatically now unless the flag `-p` or `--plain` is specified to prevent string formatting.
