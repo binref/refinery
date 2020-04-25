@@ -25,15 +25,14 @@ class EndOfStringNotFound(ValueError):
 
 class PathExtractorUnit(Unit, abstract=True):
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('paths', metavar='path', nargs='*', default=['*'], type=pathspec, help=(
+    def __init__(self, *paths: arg(
+        metavar='path', nargs='*', default=['*'], type=pathspec, help=(
             'A path from which data is to be extracted. Each item is returned '
-            ' as a separate output of this unit. Paths may contain wildcards. '
+            'as a separate output of this unit. Paths may contain wildcards. '
             'The default is a single asterix, which means that every item will '
-            'be extracted.'
-        ))
-        return super().interface(argp)
+            'be extracted.')
+    )):
+        super().__init__(paths=paths)
 
     def _check_reachable(self, path: str) -> bool:
         for pattern in self.args.path:
