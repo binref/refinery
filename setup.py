@@ -10,6 +10,7 @@ import refinery.lib.loader as loader
 
 PREFIX = os.getenv('REFINERY_PREFIX') or ''
 GITHUB = 'https://github.com/binref/refinery/'
+GITRAW = 'https://raw.githubusercontent.com/binref/refinery/'
 
 cache_path = os.path.join(os.path.dirname(__file__), 'refinery', '__init__.pkl')
 if os.path.exists(cache_path):
@@ -32,12 +33,18 @@ def main():
     requirements = [r for r in requirements if r]
 
     with open('README.md', 'r', encoding='UTF8') as README:
+        def complete_link(match):
+            link = match[1]
+            if any(link.lower().endswith(xt) for xt in ('jpg', 'gif', 'png', 'svg')):
+                return F'({GITRAW}master/{link})'
+            else:
+                return F'({GITHUB}blob/master/{link})'
         readme = README.read()
-        readme = re.sub('(?<=\\])\\((?!\\w+://)(.*?)\\)', F'({GITHUB}blob/master/\\1)', readme)
+        readme = re.sub(R'(?<=\])\((?!\w+://)(.*?)\)', complete_link, readme)
 
     setuptools.setup(
         name='binary-refinery',
-        version='0.1.8',
+        version='0.1.9',
         author='Jesko Hüttenhain',
         description='A toolkit to transform and refine (mostly) binary data.',
         long_description=readme,

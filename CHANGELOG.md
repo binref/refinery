@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.1.9
+- Fixes a tiny bug in the PyPI display of the readme file, and completes changelog from previous version.
+
 ## Version 0.1.8
 - The `rsa` unit was improved and can handle the Microsoft blob format now.
 - Powershell deobfuscation was improved, but that doesn't change the fact that this would be much better with a proper parser.
