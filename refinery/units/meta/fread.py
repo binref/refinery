@@ -22,13 +22,13 @@ class fread(Unit):
             'If specified, files will be read in chunks of size N and each '
             'chunk is emitted as one element in the output list.'
         )) = 0,
-        line: arg.switch('-l', help=(
+        linewise: arg.switch('-l', help=(
             'Read the file linewise. By default, one line is read at a time. '
             'In line mode, the --size argument can be used to read the given '
             'number of lines in each chunk.'
         )) = False
     ):
-        super().__init__(size=size, line=line, filenames=filenames)
+        super().__init__(size=size, linewise=linewise, filenames=filenames)
 
     def _read_chunks(self, fd):
         while True:
@@ -67,7 +67,7 @@ class fread(Unit):
                     continue
                 try:
                     with open(filename, 'rb') as stream:
-                        if self.args.line:
+                        if self.args.linewise:
                             yield from self._read_lines(stream)
                         elif self.args.size:
                             yield from self._read_chunks(stream)
