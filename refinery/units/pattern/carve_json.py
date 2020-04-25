@@ -4,7 +4,7 @@ import enum
 import string
 import json
 
-from ... import Unit
+from ... import arg, Unit
 
 
 class JSONScope(enum.Enum):
@@ -83,12 +83,8 @@ class carve_json(Unit):
     """
     Extracts anything from the input data that looks like JSON.
     """
-
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-d', '--dictonly', action='store_true',
-            help='only extract JSON dictionaries, do not extract lists.')
-        return super().interface(argp)
+    def __init__(self, dictonly: arg.switch('-d', help='only extract JSON dictionaries, do not extract lists.') = False):
+        super().__init__(dictonly=dictonly)
 
     def process(self, data):
         yield from JSONCarver(data, dictonly=self.args.dictonly)
