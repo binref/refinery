@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.1.8
+- The `rsa` unit was improved and can handle the Microsoft blob format now.
+- Powershell deobfuscation was improved, but that doesn't change the fact that this would be much better with a proper parser.
+
 ## Version 0.1.7
 - The `dump` unit has been refactored to make it easier to use; Formatting of file names is done automatically now unless the flag `-p` or `--plain` is specified to prevent string formatting.
 - The `snip` unit can now remove bytes from the input.
