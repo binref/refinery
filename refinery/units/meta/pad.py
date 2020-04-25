@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
-from ...lib.argformats import multibin, number
+from .. import arg, Unit
 
 
 class pad(Unit):
@@ -11,37 +10,18 @@ class pad(Unit):
     size specifications override this behaviour.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        size = argp.add_mutually_exclusive_group()
-        size.add_argument(
-            '-b', '--blocksize',
-            type=number,
-            default=0,
-            metavar='N',
-            help='Pad inputs to any even multiple of N.'
-        )
-        size.add_argument(
-            '-a', '--absolute',
-            type=number,
-            default=0,
-            metavar='N',
-            help='Pad inputs to be at least N bytes in size.'
-        )
-        argp.add_argument(
-            '-l', '--left',
-            action='store_true',
-            help='Pad on the left instead of the right.'
-        )
-        argp.add_argument(
-            'padding',
-            type=multibin,
-            default=B'\0',
-            nargs='?',
-            help='This custom binary sequence is used (repeatedly, if necessary) '
-                 'to pad the input. The default is a zero byte.'
-        )
-        return super().interface(argp)
+    def __init__(
+        self, padding: arg('padding', help=(
+            'This custom binary sequence is used (repeatedly, if necessary) '
+            'to pad the input. The default is a zero byte.')) = B'\0',
+        absolute : arg.number('-a', group='HOW', help='Pad inputs to be at least N bytes in size.') = 0,
+        blocksize: arg.number('-b', group='HOW', help='Pad inputs to any even multiple of N.') = 0,
+        left: arg.switch('-l', help='Pad on the left instead of the right.') = False
+    ):
+        if absolute and blocksize:
+            raise ValueError('Cannot pad simultaneously to a given block size and absolutely.')
+        self.superinit(super(), **vars())
+        self._maxlen = None
 
     @property
     def relative(self):
@@ -50,10 +30,6 @@ class pad(Unit):
         if self.args.absolute:
             return False
         return True
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._maxlen = None
 
     def _pad(self, data, size):
         missing = (size - len(data))
