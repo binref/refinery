@@ -208,7 +208,7 @@ class arg(Argument):
         """
         cnames = [c.name for c in choices]
         return arg(*args, group=group, help=help.format(choices=', '.join(cnames)),
-            metavar=choices.__name__, dest=dest, choices=cnames, type=choices.__getitem__)
+            metavar=choices.__name__, dest=dest, choices=[c.value for c in choices], type=choices.__getitem__)
 
     @staticmethod
     def help(msg: str) -> Argument:
@@ -1057,7 +1057,13 @@ class Unit(metaclass=Executable, abstract=True):
                             parser.order.append(self.dest)
                         return action(parser, ns, values, opt)
 
-                action.required = action.required and action.dest not in keywords
+                if action.dest in keywords:
+                    action.required = False
+                    if callable(getattr(action, 'type', None)):
+                        value = keywords[action.dest]
+                        if isinstance(value, str) and action.type is not str:
+                            keywords[action.dest] = action.type(keywords[action.dest])
+
                 return super()._add_action(RememberOrder())
 
             def _parse_optional(self, arg_string):

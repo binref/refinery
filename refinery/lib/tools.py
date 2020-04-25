@@ -7,6 +7,7 @@ import inspect
 import os
 import sys
 
+from typing import ByteString, Iterable
 from math import log
 
 
@@ -181,3 +182,11 @@ def isbuffer(obj) -> bool:
             return True
     except TypeError:
         return False
+
+
+def splitchunks(data: ByteString, size: int) -> Iterable[ByteString]:
+    if len(data) <= size:
+        yield data
+        return
+    for k in range(0, len(data), size):
+        yield data[k:k + size]
