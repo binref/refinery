@@ -14,14 +14,14 @@ class dump(Unit):
     The following format fields are supported. Additionally, any metadata field on an incoming chunk
     can also be used.
 
-         {ext} : Automatically guessed file extension
-       {crc32} : CRC32 checksum of the data
-       {index} : Index of the data in the input stream, starting at 1
-      {length} : Size of the data in bytes
-         {md5} : MD5 hash of the data
-        {sha1} : SHA1 hash of the data
-      {sha256} : SHA-256 hash of the data
-        {path} : Associated path; defaults to {sha256} if none is given.
+        {ext}    : Automatically guessed file extension
+        {crc32}  : CRC32 checksum of the data
+        {index}  : Index of the data in the input stream, starting at 1
+        {length} : Size of the data in bytes
+        {md5}    : MD5 hash of the data
+        {sha1}   : SHA1 hash of the data
+        {sha256} : SHA-256 hash of the data
+        {path}   : Associated path; defaults to {sha256} if none is given.
 
     When not using formatted file names, the unit ingests as many incoming inputs as filenames were
     specified on the command line. Unless connected to a terminal, the remaining inputs will be
