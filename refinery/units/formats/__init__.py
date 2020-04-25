@@ -23,7 +23,7 @@ class EndOfStringNotFound(ValueError):
         super().__init__('end of string could not be determined')
 
 
-class PathExtractorUnit(Unit):
+class PathExtractorUnit(Unit, abstract=True):
 
     @classmethod
     def interface(cls, argp):
@@ -46,7 +46,7 @@ class PathExtractorUnit(Unit):
         return any(fnmatch.fnmatch(path, pattern) for pattern in self.args.paths)
 
 
-class MemoryExtractorUnit(Unit):
+class MemoryExtractorUnit(Unit, abstract=True):
 
     def __init__(
         self,
