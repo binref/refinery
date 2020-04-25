@@ -3,7 +3,7 @@
 import re
 
 from ....lib.patterns import formats
-from . import string_unquote, string_quote, Ps1StringLiterals
+from . import string_unquote, string_quote
 from .. import Deobfuscator
 
 

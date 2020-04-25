@@ -7,7 +7,7 @@ import fnmatch
 import re
 
 from .. import arg, Unit
-from ...lib.argformats import number, virtualaddr
+from ...lib.argformats import virtualaddr
 
 
 def pathspec(expression):

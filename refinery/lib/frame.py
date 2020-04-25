@@ -459,10 +459,8 @@ class Framed:
                     break
             if gauge:
                 buffer.truncate(buffer.tell())
-                #yield Chunk(buffer.getvalue(), chunk.path[:gauge], chunk.view[:gauge], chunk.meta, chunk.fill).pack()
                 collapsed = buffer.getvalue()
                 try:
-                    #chunk = chunk.__copy__()
                     chunk[:] = collapsed
                     chunk.truncate(gauge)
                 except NameError:
