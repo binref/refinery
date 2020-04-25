@@ -1,35 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
+import re
+
+from .. import arg, Unit
 from ...lib.patterns import defanged, indicators
 
 
 class defang(Unit):
     """
-    Defangs all domains and ipv4 addresses in the input data by replacing the
-    last dot in the expression by `[.]`. For example, `127.0.0.1` will be
-    replaced by `127.0.0[.]1`.
+    Defangs all domains and ipv4 addresses in the input data by replacing the last dot in the
+    expression by `[.]`. For example, `127.0.0.1` will be replaced by `127.0.0[.]1`.
     """
 
     WHITELIST = [
         B'wscript.shell',
     ]
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-q', '--quote', action='store_true', help='Wrap all indicators in backticks for markdown code.')
-        argp.add_argument('-u', '--url-only', action='store_true', help='Only defang URLs, do not look for domains or IPs.')
-        argp.add_argument('-d', '--dot-only', dest='protocol', action='store_false', help='Do not escape the protocol colon in URLs.')
-        return super().interface(argp)
+    def __init__(
+        self,
+        url_only: arg.switch('-u', help='Only defang URLs, do not look for domains or IPs.') = False,
+        dot_only: arg.switch('-d', help='Do not escape the protocol colon in URLs.') = False,
+        quote_md: arg.switch('-q', help='Wrap all indicators in backticks for markdown code.') = False
+    ):
+        self.superinit(super(), **vars())
 
     def _quote(self, word):
-        return word if not self.args.quote else B'`%s`' % word
+        return word if not self.args.quote_md else B'`%s`' % word
 
     def reverse(self, data):
         def refang(hostname):
             return hostname.group(0).replace(B'[.]', B'.')
         data = defanged.hostname.sub(refang, data)
         data = data.replace(B'[:]//', B'://')
+        data = re.sub(B'hxxp(s?)://', B'http\\1://', data)
         return data
 
     def process(self, data):
@@ -45,7 +48,7 @@ class defang(Unit):
         def replace_url(url):
             if not url:
                 return url
-            sep = B'[:]//' if self.args.protocol else B'://'
+            sep = B'://' if self.args.dot_only else B'[:]//'
             self.log_info('replace:', url)
             p, q = url.split(B'://')
             q = q.split(B'/', 1)

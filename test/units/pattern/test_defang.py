@@ -24,3 +24,9 @@ class TestDefangUnit(TestUnitBase):
         unit = self.load()
         self.assertEqual(unit(data),
             B'Email us at ALEXANDER.IRWIN@PROTONMAIL[.]COM (or) MISAEL.SHORT@TUTANOTA[.]COM to get the ransom amount.')
+
+    def test_hxxp_escape(self):
+        data = B'Description: As seen on hxxps://caminoflamingo[.]co[.]uk, flamingos are on the rise.'
+        unit = self.load(reverse=True)
+        self.assertEqual(unit(data),
+            B'Description: As seen on https://caminoflamingo.co.uk, flamingos are on the rise.')
