@@ -51,6 +51,9 @@ class carve(PatternExtractor):
         elif self.args.format is formats.hexarray:
             from ..blockwise.pack import pack
             decoder = pack(0x10)
+        elif self.args.format is formats.vbe:
+            from ..encoding.vbe import vbe
+            decoder = vbe()
         else:
             decoder = NotImplemented
         self.decoder = decoder

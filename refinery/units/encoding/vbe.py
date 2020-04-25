@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
-from .. import Unit
+
+from .. import arg, Unit
+from ...lib.patterns import formats
 
 
 class vbe(Unit):
@@ -9,8 +11,8 @@ class vbe(Unit):
     Encoding and decoding of Visual Basic Scripts.
     """
 
-    _MARKER_INIT = RB'#@~\^......=='
-    _MARKER_STOP = RB'......==\^#~@'
+    _MARKER_INIT = RB'#@~^BINREF=='
+    _MARKER_STOP = RB'BINREF==^#~@'
 
     _CHUNKS = (
         0x57, 0x6E, 0x7B, 0x4A, 0x4C, 0x41, 0x0B, 0x0B, 0x0B, 0x0C, 0x0C, 0x0C, 0x4A, 0x4C, 0x41,
@@ -82,15 +84,30 @@ class vbe(Unit):
         0x7F : [0x67, 0x2F, 0x51]
     }
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-m', '--no-marker', dest='marker', action='store_false',
-            help=(
-                'Do not require magic marker when encoding and do not search for '
-                'marker when decoding.'
-            )
-        )
-        return super().interface(argp)
+    _ESCAPE = {
+        0x40: B'@$',
+        0x3C: B'@!',
+        0x3E: B'@*',
+        0x0D: B'@#',
+        0x0A: B'@&',
+    }
+
+    _UNESCAPE = {
+        B'@$': B'@',
+        B'@!': B'<',
+        B'@*': B'>',
+        B'@#': B'\r',
+        B'@&': B'\n',
+    }
+
+    def __init__(
+        self,
+        marker: arg.switch('-m', '--no-marker', off=True, help=(
+            'Do not require magic marker when encoding and do not search for '
+            'marker when decoding.')
+        ) = True
+    ):
+        super().__init__(marker=marker)
 
     @classmethod
     def _chunk(cls, byte, index):
@@ -98,13 +115,21 @@ class vbe(Unit):
         c = cls._CHUNKS[k * 3 : k * 3 + 3]
         return c[cls._OFFSETS[index % 64]]
 
-    @staticmethod
-    def _escape(data):
-        return data.replace(B'@', B'@$').replace(B'<', B'@!').replace(B'>', B'@*').replace(B'\r', B'@#').replace(B'\n', B'@&')
+    def _escape(self, iterable):
+        escapes = bytes(self._ESCAPE)
+        if self.args.marker:
+            yield from self._MARKER_INIT
+        for byte in iterable:
+            if byte in escapes:
+                yield from self._ESCAPE[byte]
+            else:
+                yield byte
+        if self.args.marker:
+            yield from self._MARKER_STOP
 
-    @staticmethod
-    def _unescape(data):
-        return data.replace(B'@&', B'\n').replace(B'@#', B'\r').replace(B'@*', B'>').replace(B'@!', B'<').replace(B'@$', B'@')
+    def _unescape(self, data):
+        def unescaper(m): return self._UNESCAPE[m[0]]
+        return re.sub(RB'@[$!*#&]', unescaper, data)
 
     @classmethod
     def _decoded(cls, data):
@@ -128,16 +153,12 @@ class vbe(Unit):
                 yield sequence[offset]
 
     def reverse(self, data):
-        data = self._escape(bytes(self.encoded(data)))
-        if self.args.marker:
-            data = self._MARKER_INIT + data + self._MARKER_STOP
-        return data
+        return bytearray(self._escape(self._encoded(data)))
 
     def process(self, data):
         if self.args.marker:
-            pattern = RB'%s(.+)%s' % (self._MARKER_INIT, self._MARKER_STOP)
-            match = re.search(pattern, data)
+            match = formats.vbe.search(data)
             if not match:
                 raise ValueError('Encoded script marker was not found.')
-            data = match.group(1)
-        return bytes(self.decoded(self.unescape(data)))
+            data = match[0][12:-12]
+        return bytearray(self._decoded(self._unescape(data)))

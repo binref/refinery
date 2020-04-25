@@ -129,6 +129,8 @@ pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 pattern_ps1str = R'''(?:"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
 pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
 
+pattern_vbe = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
+
 pattern_url = ''.join([
     R'([a-zA-Z]{2,20}?:\/\/'                  # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
@@ -206,6 +208,8 @@ class formats(PatternEnum):
     "Sequences of word characters"
     alph = alphabet(R'[a-zA-Z]')
     "Sequences of alphabetic characters"
+    vbe = pattern(pattern_vbe)
+    "Encoded Visual Basic Scripts"
     anum = alphabet(R'[a-zA-Z0-9]')
     "Sequences of alpha-numeric characters"
     b64 = alphabet(R'[0-9a-zA-Z\+\/]', postfix=R'[0-9a-zA-Z\+\/]{0,3}={0,3}')
