@@ -25,3 +25,11 @@ class TestChop(TestUnitBase):
     def test_uneven_chop(self):
         unit = self.load(3)
         self.assertEqual(unit(B'ABCDEFGH'), B'ABC\nDEF\nGH')
+
+    def test_chop_into(self):
+        unit = self.load('--into', 10)
+        for size in (11, 15, 20, 34, 200, 2011):
+            buffer = self.generate_random_buffer(size)
+            chunks = list(unit.process(buffer))
+            self.assertEqual(len(chunks), 10)
+            self.assertEqual(B''.join(chunks), buffer)

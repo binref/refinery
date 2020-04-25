@@ -184,9 +184,13 @@ def isbuffer(obj) -> bool:
         return False
 
 
-def splitchunks(data: ByteString, size: int) -> Iterable[ByteString]:
+def splitchunks(data: ByteString, size: int, truncate=False) -> Iterable[ByteString]:
     if len(data) <= size:
-        yield data
+        if not truncate or len(data) == size:
+            yield data
         return
-    for k in range(0, len(data), size):
+    total = len(data)
+    if truncate:
+        total -= len(data) % size
+    for k in range(0, total, size):
         yield data[k:k + size]

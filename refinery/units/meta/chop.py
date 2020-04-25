@@ -1,41 +1,37 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
-from ...lib.argformats import number
+from .. import arg, Unit
+from ...lib.tools import splitchunks
 
 
 class chop(Unit):
     """
-    Reinterprets the input as a sequence of equally sized chunks and outputs
-    this sequence.
+    Reinterprets the input as a sequence of equally sized chunks and outputs this sequence.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-t', '--truncate', action='store_true',
-            help=(
-                'Truncate possible excess bytes at the end of the input, '
-                'by default they are appended as a single chunk.'
-            )
-        )
-        argp.add_argument('-l', '--len', action='store_true',
-            help=(
-                'If this flag is specified, the size parameter determines '
-                'the number of blocks to be produced rather than the size '
-                'of each block.'
-            )
-        )
-        argp.add_argument('size', type=number[1:],
-            help='Chop data into chunks of this size.')
-
-        return super().interface(argp)
+    def __init__(
+        self, size: arg.number('size', help='Chop data into chunks of this size.'),
+        truncate: arg.switch('-t', help=(
+            'Truncate possible excess bytes at the end of the input, by default they are appended as a single chunk.')) = False,
+        into: arg.switch('-i', help=(
+            'If this flag is specified, the size parameter determines the number of blocks to be produced rather than the size '
+            'of each block. In this case, truncation is performed before the data is split.')) = False
+    ):
+        if size < 1:
+            raise ValueError('The chunk size has to be a positive integer value.')
+        return super().__init__(size=size, into=into, truncate=truncate)
 
     def process(self, data):
+
         size = self.args.size
-        if self.args.len:
-            size = len(data) // size
-        for chunk in zip(*[iter(data)] * size):
-            yield bytes(chunk)
-        excess = len(data) % size
-        if excess and not self.args.truncate:
-            yield data[-excess:]
+
+        if self.args.into:
+            size, remainder = divmod(len(data), size)
+            if remainder and not self.args.truncate:
+                partition = remainder * (size + 1)
+                part1, part2 = data[:partition], data[partition:]
+                yield from splitchunks(part1, size + 1)
+                yield from splitchunks(part2, size)
+                return
+
+        yield from splitchunks(data, size, self.args.truncate)
