@@ -12,10 +12,10 @@ class scope(FrameSlicer):
     frame closes or the frame is being rescoped by a second application of
     this unit, they become visible again.
     """
-    def __init__(self, visible: arg.switch('-n', '--not', off=True, help=(
+    def __init__(self, *slice, visible: arg.switch('-n', '--not', off=True, help=(
         'Hide the given chunks instead of making them the only ones visible.')) = True
     ):
-        super().__init__(visible=visible)
+        super().__init__(*slice, visible=visible)
         # Sort any slices with negative arguments to the back so we check
         # them last. This delays potential consumption of the chunks iterator
         # as much as possible.
