@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Unit
+from .. import arg, Unit
 
 
 class url(Unit):
@@ -13,10 +13,8 @@ class url(Unit):
     with a percent symbol.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('-p', '--plus', action='store_true', help='also replace plus signs by spaces')
-        return super().interface(argp)
+    def __init__(self, plus: arg.switch('-p', help='also replace plus signs by spaces') = False):
+        super().__init__(plus=plus)
 
     def process(self, data):
         data = re.sub(
