@@ -153,31 +153,37 @@ class arg(Argument):
     """
 
     class delete: pass
+    class omit: pass
 
     def __init__(
         self, *args: str,
-            group    : Optional[str]              = None, # noqa
-            action   : Optional[str]              = None, # noqa
-            choices  : Optional[Iterable[Any]]    = None, # noqa
-            const    : Optional[Any]              = None, # noqa
-            default  : Optional[Any]              = None, # noqa
-            dest     : Optional[str]              = None, # noqa
-            help     : Optional[str]              = None, # noqa
-            metavar  : Optional[str]              = None, # noqa
-            nargs    : Optional[Union[int, str]]  = None, # noqa
-            required : Optional[bool]             = None, # noqa
-            type     : Optional[type]             = None, # noqa
-            guess    : bool                       = False # noqa
+            action   : Union[omit, str]           = omit, # noqa
+            choices  : Union[omit, Iterable[Any]] = omit, # noqa
+            const    : Union[omit, Any]           = omit, # noqa
+            default  : Union[omit, Any]           = omit, # noqa
+            dest     : Union[omit, str]           = omit, # noqa
+            help     : Union[omit, str]           = omit, # noqa
+            metavar  : Union[omit, str]           = omit, # noqa
+            nargs    : Union[omit, int, str]      = omit, # noqa
+            required : Union[omit, bool]          = omit, # noqa
+            type     : Union[omit, type]          = omit, # noqa
+            group    : Optional[str]              = None,   # noqa
+            guess    : bool                       = False   # noqa
     ) -> None:
         kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
             help=help, metavar=metavar, nargs=nargs, required=required, type=type)
-        kwargs = {key: value for key, value in kwargs.items() if value is not None}
+        kwargs = {key: value for key, value in kwargs.items() if value is not arg.omit}
         self.group = group
         self.guess = guess
         super().__init__(*args, **kwargs)
 
     @staticmethod
-    def switch(*args: str, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None, off=False) -> Argument:
+    def switch(
+        *args: str, off=False,
+        help : Union[omit, str] = omit,
+        dest : Union[omit, str] = omit,
+        group: Optional[str] = None,
+    ) -> Argument:
         """
         A convenience method to add argparse arguments that change a boolean value from True to False or
         vice versa. By default, a switch will have a False default and change it to True when specified.
@@ -187,22 +193,27 @@ class arg(Argument):
     @staticmethod
     def number(
         *args: str,
-        group : Optional[str] = None,
-        bound : Optional[Tuple[int, int]] = None,
-        help  : Optional[str] = None,
-        dest  : Optional[str] = None,
+        bound: Union[omit, Tuple[int, int]] = omit,
+        help : Union[omit, str] = omit,
+        dest : Union[omit, str] = omit,
+        group: Optional[str] = None,
     ) -> Argument:
         """
         Used to add argparse arguments that contain a number.
         """
         nt = number
-        if bound is not None:
+        if bound is not arg.omit:
             lower, upper = bound
             nt = nt[lower:upper]
         return arg(*args, group=group, help=help, dest=dest, type=nt, metavar='N')
 
     @staticmethod
-    def option(*args: str, choices: Enum, group: Optional[str] = None, help: Optional[str] = None, dest: Optional[str] = None) -> Argument:
+    def option(
+        *args: str, choices: Enum,
+        help : Union[omit, str] = omit,
+        dest : Union[omit, str] = omit,
+        group: Optional[str] = None,
+    ) -> Argument:
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
         """
@@ -217,11 +228,11 @@ class arg(Argument):
     @staticmethod
     def choice(
         *args: str, choices : List[str],
+        help    : Union[omit, str] = omit,
+        metavar : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        nargs   : Union[omit, int, str] = omit,
         group   : Optional[str] = None,
-        help    : Optional[str] = None,
-        metavar : Optional[str] = None,
-        dest    : Optional[str] = None,
-        nargs   : Optional[Union[int, str]] = None,
     ):
         """
         Used to add argparse arguments with a fixed set of options, based on a list of strings.

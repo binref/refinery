@@ -16,7 +16,7 @@ class lzma(Unit):
     _LZMA_PARSER = OptionFactory(_LZMA_FILTER)
 
     def __init__(
-        self, filter: arg.choice(choices=list(_LZMA_FILTER), metavar='FILTER', nargs='?', help=(
+        self, filter: arg.choice(choices=list(_LZMA_FILTER), metavar='FILTER', help=(
             'Specifies a bcj filter to be applied. Possible values are: {choices}')) = None,
         raw   : arg.switch('-r', group='MODE', help='Use raw (no container) format.') = False,
         alone : arg.switch('-a', group='MODE', help='Use the lzma container format.') = False,
