@@ -11,6 +11,20 @@ from ...lib.json import BytesAsArrayEncoder
 
 class JavaEncoder(BytesAsArrayEncoder):
 
+    @classmethod
+    def _is_byte_array(cls, obj) -> bool:
+        if super()._is_byte_array(obj):
+            return True
+        elif not isinstance(obj, list) or not obj:
+            return False
+        if not all(isinstance(t, int) for t in obj):
+            return False
+        if all(t in range(-0x80, 0x80) for t in obj):
+            return True
+        if all(t in range(0x100) for t in obj):
+            return True
+        return False
+
     def default(self, obj):
         try:
             return super().default(obj)

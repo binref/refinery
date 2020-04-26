@@ -60,8 +60,10 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
                 return str(k)
             obj = {_encode(key): value for key, value in obj.items()}
         data = super().encode(obj)
-        uids = R'''(['"])({})\1'''.format('|'.join(re.escape(u) for u in self.substitute))
-        return re.sub(uids, lambda m: self.substitute[m.group(2)], data)
+        if self.substitute:
+            uids = R'''(['"])({})\1'''.format('|'.join(re.escape(u) for u in self.substitute))
+            return re.sub(uids, lambda m: self.substitute[m.group(2)], data)
+        return data
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -86,25 +88,18 @@ class BytesAsArrayEncoder(JSONEncoderEx):
 
     @classmethod
     def _is_byte_array(cls, obj) -> bool:
-        if isinstance(obj, (bytes, bytearray, memoryview)):
-            return True
-        elif not isinstance(obj, list) or not obj:
-            return False
-        if not all(isinstance(t, int) for t in obj):
-            return False
-        if all(t in range(-0x80, 0x80) for t in obj):
-            return True
-        if all(t in range(0x100) for t in obj):
-            return True
-        return False
+        return isinstance(obj, (bytes, bytearray, memoryview))
 
     @classmethod
     def handled(cls, obj) -> bool:
         return cls._is_byte_array(obj) or super().handled(obj)
 
+    def encode_bytes(self, obj):
+        uid = str(uuid.uuid4())
+        self.substitute[uid] = '[{}]'.format(','.join(F'{b & 0xFF:d}' for b in obj))
+        return uid
+
     def default(self, obj):
         if self._is_byte_array(obj):
-            uid = str(uuid.uuid4())
-            self.substitute[uid] = '[{}]'.format(','.join(F'{b & 0xFF:d}' for b in obj))
-            return uid
+            return self.encode_bytes(obj)
         return super().default(obj)

@@ -3,6 +3,7 @@
 from ... import arg, Unit
 from ....lib.tools import splitchunks
 from ....lib.mscrypto import CRYPTOKEY, TYPES
+from ....lib.enumeration import makeinstance
 
 from contextlib import suppress
 from enum import IntEnum
@@ -37,13 +38,7 @@ class rsa(Unit):
         rsautl  : arg.switch('-r', group='PAD',
             help='Act as rsautl from OpenSSH; This is equivalent to --swapkeys --padding=PKCS10') = False,
     ):
-        if not isinstance(padding, PAD):
-            if isinstance(padding, str):
-                padding = PAD[padding.upper()]
-            elif isinstance(padding, int):
-                padding = PAD(padding)
-            else:
-                raise ValueError(F'Invalid padding value: {padding}')
+        padding = makeinstance(PAD, padding)
         if textbook:
             if padding != PAD.AUTO:
                 raise ValueError('Conflicting padding options!')

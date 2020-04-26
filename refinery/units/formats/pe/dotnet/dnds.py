@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import JSONEncoderUnit
+from . import arg, JSONEncoderUnit
 from .....lib.dotnet.deserialize import BinaryFormatterParser
 
 
@@ -10,15 +10,12 @@ class dnds(JSONEncoderUnit):
     The output is a representation of the deserialized data in JSON format.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(
-            '-r', '--keep-references',
-            dest='dereference',
-            action='store_false',
-            help='Do not resolve Object references in serialized data.'
-        )
-        return super().interface(argp)
+    def __init__(
+        self, dereference: arg.switch('-r', '--keep-references', off=True,
+            help='Do not resolve Object references in serialized data.') = True,
+        encode=None, digest=None
+    ):
+        super().__init__(encode=encode, digest=digest, dereference=dereference)
 
     def process(self, data):
         self.log_debug('initializing parser, will fail on malformed stream')

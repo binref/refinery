@@ -10,7 +10,7 @@ from .... import TestUnitBase
 class TestDotNetDeserializer(TestUnitBase):
 
     def test_real_world_01(self):
-        unit = self.load(encoder='hex')
+        unit = self.load(encode='hex')
         data = json.loads(unit(zlib.decompress(base64.b85decode(
             'c-muNWME+U4+J0@1bCQ$L||}baY<^fo=Z_;d1hX^jzU;!QE_H|o~@Cd0SM|SIG5&>loqAh=B1XF6eZ^9C<K%y<zyy%r&fmKXQ$@b'
             'CK(u~nWmYi85*XT8YCJgvVzPPMKxB>DYGOuu>d5);*waB$j$_^o0Azx@Pi0$AeX5#z|WnRONtA~=k@e(2?EjrAk4uAB;`N<PXy^s'
