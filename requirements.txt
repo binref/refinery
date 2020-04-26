@@ -1,5 +1,6 @@
 asn1crypto
 capstone
+chardet
 colorama
 defusedxml
 extract_msg
