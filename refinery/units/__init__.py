@@ -258,6 +258,9 @@ class arg(Argument):
         parameter. This guess is based on the annotation, name, and default value.
         """
 
+        def needs_type(item):
+            return item.get('action', 'store') == 'store'
+
         def get_argp_type(annotation_type):
             if issubclass(annotation_type, (bytes, bytearray, memoryview)):
                 return multibin
@@ -283,7 +286,7 @@ class arg(Argument):
                 guessed_kwd_args['guess'] = False
                 guessed_kwd_args['group'] = pt.annotation.group
             elif isinstance(pt.annotation, type):
-                if not issubclass(pt.annotation, bool):
+                if not issubclass(pt.annotation, bool) and needs_type(guessed_kwd_args):
                     guessed_kwd_args.update(type=get_argp_type(pt.annotation))
                 elif not isinstance(default, bool):
                     raise ValueError('Default value for boolean arguments must be provided.')
@@ -313,7 +316,7 @@ class arg(Argument):
         if default is not pt.empty:
             if isinstance(default, bool):
                 guessed_kwd_args['action'] = 'store_false' if default else 'store_true'
-            elif 'type' not in guessed_kwd_args:
+            elif needs_type(guessed_kwd_args) and 'type' not in guessed_kwd_args:
                 guessed_kwd_args['type'] = get_argp_type(type(default))
 
         return cls(*guessed_pos_args, **guessed_kwd_args)
@@ -447,10 +450,12 @@ class Executable(type):
             elif not any(a.startswith('--') for a in known.args):
                 flagname = known.destination.replace('_', '-')
                 known.args.append(F'--{flagname}')
-            if known.kwargs.get('action', '').startswith('store_'):
+            action = known.kwargs.get('action', 'store')
+            if action.startswith('store_'):
                 known.kwargs.pop('default', None)
                 continue
-            known.kwargs.setdefault('type', multibin)
+            if action == 'store':
+                known.kwargs.setdefault('type', multibin)
         return args
 
     def __new__(mcs, name, bases, nmspc, abstract=False):

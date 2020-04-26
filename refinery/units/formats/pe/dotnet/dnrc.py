@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from fnmatch import fnmatch
-from argparse import SUPPRESS
 
-from .... import Unit
+from .... import arg, Unit
 from .....lib.dotnet.header import DotNetHeader, ParserEOF
 from .....lib.dotnet.resources import NetStructuredResources, NoManagedResource
 
@@ -14,27 +13,16 @@ class dnrc(Unit):
     and outputs them.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(
-            '-s', '--sort', action='store_true', help=(
-                'Sort the resourcey by name rather than by order of appearance.'
-            )
-        )
-        argp.add_argument(
-            '-r', '--raw', action='count', default=0, help=(
-                'Specify once to not deserialize the entries of managed resources. '
-                'Use twice to not parse managed resources at all.'
-            )
-        )
-        argp.add_argument(
-            'needles', metavar='pattern', nargs='*', type=str, default=[], help=(
-                'A wildcard pattern for the name of a .NET resource. '
-                'Omit to list all available resources.'
-            )
-        )
-        argp.add_argument('--check', action='store_true', help=SUPPRESS)
-        return super().interface(argp)
+    def __init__(
+        self,
+        *needles: arg(metavar='pattern', nargs='*', type=str, default=['*'], help=(
+            'A wildcard pattern for the name of a .NET resource. By default, all resources are extracted.')),
+        sort: arg.switch('-s', help='Sort the resourcey by name rather than by order of appearance.') = False,
+        raw: arg('-r', action='count', help=(
+            'Specify once to not deserialize the entries of managed resources. '
+            'Use twice to not parse managed resources at all.')) = 0
+    ):
+        self.superinit(super(), **vars())
 
     def _check(self, major: str, minor: str = ''):
         return any(
@@ -44,10 +32,6 @@ class dnrc(Unit):
             for needle in self.args.needles
             if isinstance(needle, str)
         )
-
-    @property
-    def _list(self) -> bool:
-        return not self.args.needles and not self.args.check
 
     def process(self, data):
         header = DotNetHeader(data)
@@ -69,8 +53,7 @@ class dnrc(Unit):
             if not managed:
                 if managed is False and self._check(resource.Name):
                     yield resource.Data
-                elif self._list:
-                    yield resource.Name.encode(self.codec)
+                self.log_info(resource.Name)
                 continue
 
             for entry in managed:
@@ -79,11 +62,10 @@ class dnrc(Unit):
                 else:
                     self.log_debug(F'entry {resource.Name}.{entry.Name}')
 
-                if self._list:
-                    yield F'{resource.Name}.{entry.Name}'.encode(self.codec)
-                    continue
                 if not self._check(resource.Name, entry.Name):
                     continue
+
+                self.log_info(F'{resource.Name}.{entry.Name}')
 
                 if self.args.raw:
                     yield entry.Data
