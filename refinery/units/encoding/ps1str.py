@@ -53,11 +53,15 @@ class ps1str(Unit):
             string = match.group(0)
             return self._UNESCAPE.get(string, string[1:])
 
-        return re.sub('`.', unescape, data).replace(2 * quote, quote)
+        if quote == '"':
+            variables = list(re.finditer(R'(?<!`)\$(?=[\w\(\{\$\?\^:])', data))
+            if variables:
+                n = len(variables)
+                self.log_warn(F'{n} variable substitutions in this double quoted string will be lost.')
+            data = re.sub('`.', unescape, data)
+
+        return data.replace(quote + quote, quote)
 
     @unicoded
     def reverse(self, data):
-        def escape(match):
-            string = match.group(0)
-            return self._ESCAPE[string]
-        return "'{}'".format(re.sub(R'[`\0\a\b\f\n\r\t\v\'\"]', escape, data))
+        return "'{}'".format(data.replace("'", "''"))
