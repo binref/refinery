@@ -26,8 +26,13 @@ class TestRecode(TestUnitBase):
         unit = self.load('cp1252', 'UTF8')
         self.assertEqual(unit(data.encode('cp1252')).decode('UTF8'), data)
 
-    def test_auto_decode(self):
+    def test_auto_decode_01(self):
         data = b64decode('08nT2uSvwMDG97XEyejWw8/e1sajrMXk1sO5pL7fzt63qNaxvdPUy9DQo6zH68rWtq/PwtTYsaO05rW9sb67+rrz1NnUy9DQIQ==')
         unit = self.load()
         self.assertEqual(unit(data).decode(unit.codec),
             U'由于浏览器的设置限制，配置工具无法直接运行，请手动下载保存到本机后再运行!')
+
+    def test_auto_decode_02(self):
+        data = B'H\0e\0l\0l\0o\0 \0W\0o\0r\0l\0d\0'
+        unit = self.load()
+        self.assertEqual(unit(data).decode(unit.codec), U'Hello World')
