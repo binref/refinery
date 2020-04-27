@@ -7,8 +7,9 @@ class TestPS1String(TestUnitBase):
 
     def test_unicode_with_quotes(self):
         unit = self.load()
-        data = u"refinery:\n all about the 'パイプライン'.".encode('UTF8')
-        self.assertEqual(unit.reverse(data), B"'%s'" % data.replace(B"'", B"''"))
+        data = U"refinery:\n all about the 'パイプライン'.".encode('UTF8')
+        self.assertEqual(unit.reverse(data).decode('UTF8'),
+            U'''"refinery:`n all about the `'パイプライン`'."''')
 
     def test_string_with_variables(self):
         unit = self.load()

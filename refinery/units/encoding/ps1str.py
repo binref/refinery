@@ -10,7 +10,7 @@ class ps1str(Unit):
     """
     Escapes and unescapes PowerShell strings.
     """
-    _UNESCAPE = {
+    UNESCAPE = {
         '`0': '\0',
         '`a': '\a',
         '`b': '\b',
@@ -23,7 +23,7 @@ class ps1str(Unit):
         "`'": '\'',
         '`"': '\"',
     }
-    _ESCAPE = {
+    ESCAPE = {
         '`': '``',
         '\0': '`0',
         '\a': '`a',
@@ -51,17 +51,18 @@ class ps1str(Unit):
 
         def unescape(match):
             string = match.group(0)
-            return self._UNESCAPE.get(string, string[1:])
+            return self.UNESCAPE.get(string, string[1:])
 
         if quote == '"':
-            variables = list(re.finditer(R'(?<!`)\$(?=[\w\(\{\$\?\^:])', data))
-            if variables:
-                n = len(variables)
-                self.log_warn(F'{n} variable substitutions in this double quoted string will be lost.')
+            if re.search(R'(?<!`)\$(?=[\w\(\{\$\?\^:])', data):
+                self.log_warn(F'Loss of information: double quoted string contains variable substitutions.')
             data = re.sub('`.', unescape, data)
 
         return data.replace(quote + quote, quote)
 
     @unicoded
     def reverse(self, data):
-        return "'{}'".format(data.replace("'", "''"))
+        def escaper(match):
+            char = match[0]
+            return ps1str.ESCAPE.get(char, char)
+        return '"{}"'.format(re.sub(R'''[\x00\x07-\x0D`$'"]''', escaper, data))
