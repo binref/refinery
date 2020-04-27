@@ -13,78 +13,56 @@ class deob_ps1_stringreplace(Deobfuscator):
         repeat = True
         needle = None
 
-        def trimbrackets(string: str):
-            while True:
-                string = string.strip()
-                if not string.startswith('(') or not string.endswith(')'):
-                    break
-                string = string[1:-1]
-            if string.startswith('('):
-                raise ValueError
-            pos = len(string)
-            while string[pos - 1] not in ''''"''':
-                pos -= 1
-            return string[:pos], string[pos:]
-
         @strlit.outside
         def replacer(match):
             nonlocal repeat, needle
             if needle not in range(*match.span()):
                 return None
-            string, case, needle, insert = match.groups()
-            case = '(?i)' if 'c' not in case else ''
-            try:
-                string, tmp = trimbrackets(string)
-                assert not tmp
-                needle, tmp = trimbrackets(needle)
-                assert not tmp
-                insert, end = trimbrackets(insert)
-            except Exception:
+            string, case, bl1, needle, bl2, br1, insert, br2 = match.groups()
+            case = '' if case[0] in '.c' else '(?i)'
+            bl = bl1.count('(') - bl2.count(')')
+            br = br1.count(')') - br2.count('(')
+            if bl < 0 or br < 0:
                 return match[0]
             string = string_unquote(string)
             needle = string_unquote(needle)
-            # transforming "Tvar".replace('T', '$')
-            # into "$var" would trigger a variable substitution,
-            # hence we need to escape the insert variable:
             insert = string_escape(string_unquote(insert))
-            needle = re.escape(needle)
+            needle = case + re.escape(needle)
             repeat = True
-            return string_quote(re.sub(case + needle, insert, string)) + end
+            return (bl * '(') + string_quote(re.sub(needle, lambda _: insert, string)) + (br * ')')
 
         while repeat:
             repeat = False
             needle = None
             strlit.update(data)
 
-            for nm in re.finditer(R'''replace\s*[\(\s]*['"]''', data, flags=re.IGNORECASE):
-                if nm.start() not in strlit:
-                    needle = nm.start()
-                    break
+            for nm in re.finditer(R'''(?i)(-c|-i|-|\.)replace\s*[\(\s]*['"]''', data):
+                if nm.start() in strlit:
+                    continue
+                k = strlit.get_container(nm.end() + 1)
+                if k is None:
+                    continue
+                needle = strlit.ranges[k - 1][0]
+                break
 
             if needle is None:
                 break
 
-            data = re.sub(
-                R'\s*'.join([
-                    R'({s})', R'-([ci]?)replace', R'([\(\s]*{s}[\)\s]*)', R',', R'([\(\s]*{s}[\)\s]*)'
-                ]).format(s=formats.ps1str),
-                replacer,
-                data,
-                count=1,
-                flags=re.IGNORECASE
-            )
+            self.log_debug(needle)
 
-            if repeat:
-                continue
+            pattern = (
+                R'(?i)'
+                F'^.{{{{{needle}}}}}'        # anything before the actual string
+                R'({s})'                     # string on which the replace is performed
+                R'\s*(-c|-i|-|\.)replace'    # the replace call
+                R'([\(\s]*)({s})([\)\s]*),'  # needle for the replacement (with brackets)
+                R'([\(\s]*)({s})([\)\s]*)'   # replacement (with brackets)
+            ).format(s=formats.ps1str)
 
-            data = re.sub(
-                R'\s*'.join([
-                    R'({s})', R'\.repla(c)e', R'\(', R'([\(\s]*{s}[\)\s]*)', R',', R'([\(\s]*{s}[\)\s]*)', R'\)'
-                ]).format(s=formats.ps1str),
-                replacer,
-                data,
-                count=1,
-                flags=re.IGNORECASE
-            )
+            m = re.search(pattern, data)
+            if m:
+                self.log_debug(m[4])
+
+            data = re.sub(pattern, replacer, data, count=1)
 
         return data
