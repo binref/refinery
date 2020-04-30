@@ -57,7 +57,7 @@ class _cache:
         try:
             with open(self.path, 'rb') as stream:
                 self.units = pickle.load(stream)
-        except FileNotFoundError:
+        except (FileNotFoundError, EOFError):
             self.reload()
 
     def save(self):
