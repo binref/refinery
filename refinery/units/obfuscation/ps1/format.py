@@ -3,7 +3,8 @@
 import re
 
 from ....lib.patterns import formats
-from . import string_unquote, string_quote
+from ....lib.tools import lookahead
+from . import string_apply, string_unquote
 from .. import Deobfuscator
 
 
@@ -37,24 +38,42 @@ class deob_ps1_format(Deobfuscator):
                 self.log_debug(dbgmsg)
 
                 args = re.split(F'({formats.ps1str})', argmatch.group(1))
-                args = [
-                    string_unquote(a.strip())
-                    for a in args[1::2]
-                ]
+                args = [list(string_unquote(a.strip())) for a in args[1::2]]
 
-                def argreplace(m):
-                    try:
-                        index = int(m.group(1))
-                        return args[index]
-                    except IndexError:
-                        self.log_debug(F'only found {len(args)} arguments and format sequence {index}, aborting.')
-                        raise
+                def formatter(string):
+                    buffer = []
+                    for k, part in enumerate(re.split(R'(\{\d+\})', string)):
+                        if k % 2 == 0:
+                            if part:
+                                buffer.append(part)
+                            continue
+                        try:
+                            index = int(part[1:-1])
+                            arg = args[index]
+                        except IndexError:
+                            self.log_debug(F'only found {len(args)} arguments and format sequence {index}, aborting.')
+                            raise
+
+                        it = iter(arg)
+                        buffer.append(next(it))
+
+                        if len(arg) > 1:
+                            yield ''.join(buffer)
+                            buffer = []
+                            for last, part in lookahead(it):
+                                if last:
+                                    buffer.append(part)
+                                    break
+                                yield part
+
+                    yield ''.join(buffer)
+
                 try:
-                    substitution = string_quote(re.sub(R'\{(\d+)\}', argreplace, string_unquote(string.group(0))))
+                    result = string_apply(string[0], formatter)
                 except IndexError:
                     continue
 
-                data = data[:string.start()] + substitution + data[argmatch.end() + string.end():]
+                data = data[:string.start()] + result + data[argmatch.end() + string.end():]
                 repeat = True
                 break
 

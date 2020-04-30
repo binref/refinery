@@ -5,7 +5,7 @@ import string
 
 from ....lib.patterns import formats
 from .. import Deobfuscator
-from . import string_escape, string_quote, Ps1StringLiterals
+from . import string_quote, Ps1StringLiterals
 
 
 class deob_ps1_typecast(Deobfuscator):
@@ -29,7 +29,10 @@ class deob_ps1_typecast(Deobfuscator):
 
         @strlit.outside
         def char_literal(match):
-            return string_quote(string_escape(chr(int(match.group(1), 0))))
+            c = chr(int(match[1]))
+            if c == "'":
+                return '''"'"'''
+            return F"'{c}'"
 
         data = re.sub(
             R'\[char\]\s*0*(0x[0-9a-f]+|\d+)',
@@ -39,15 +42,15 @@ class deob_ps1_typecast(Deobfuscator):
         )
 
         def char_array(match):
-            result = bytes(int(x, 0) for x in match.group(1).split(','))
+            result = bytes(int(x, 0) for x in match[1].split(','))
             try:
                 result = result.decode('ascii')
-                if not all(x in string.printable for x in result):
+                if not all(x in string.printable or x.isspace() for x in result):
                     raise ValueError
             except ValueError:
-                return match.group(0)
+                return match[0]
             else:
-                return string_quote(string_escape(result))
+                return string_quote(result)
 
         data = re.sub(
             R'\s*'.join([

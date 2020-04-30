@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import re
+
 from .. import IterativeDeobfuscator
 
 from .brackets import deob_ps1_brackets
@@ -29,15 +31,14 @@ class deob_ps1(IterativeDeobfuscator):
 
     def __init__(self, timeout):
         super().__init__(timeout)
-        for u in self._SUBUNITS:
-            u.log_level = self.log_level
 
     def deobfuscate(self, data):
+        for u in self._SUBUNITS:
+            u.log_level = self.log_level
         for unit in self._SUBUNITS:
-            if self.log_debug():
-                self.log_debug(F'invoking {unit.__class__.__name__.replace("_", "-")}')
-                checkpoint = hash(data)
-            data = unit.deobfuscate(data)
-            if self.log_debug() and checkpoint != hash(data):
-                self.log_debug('data has changed.')
-        return data
+            self.log_debug(lambda: F'invoking {unit.__class__.__name__.replace("_", "-")}')
+            checkpoint = hash(data)
+            data = unit.deobfuscate(data)              
+            if checkpoint != hash(data) and not self.log_debug('data has changed.'):
+                self.log_info(F'used {unit.__class__.__name__.replace("_", "-")}')
+        return re.sub(R'[\r\n]+', '\n', data)

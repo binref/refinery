@@ -30,3 +30,8 @@ class TestConcat(TestUnitBase):
         data = b'''-RepLaCe"UVL",""""-CrePLAcE "MQo","``" -RepLaCe ("0"+"N"+"R"),"'"-CrePLAcE'eV5',"`$"-CrePLAcE  '31V',"|")'''
         wish = b'''-RepLaCe"UVL",""""-CrePLAcE "MQo","``" -RepLaCe ("0NR"),"'"-CrePLAcE'eV5',"`$"-CrePLAcE  '31V',"|")'''
         self.assertEqual(self.load()(data), wish)
+
+    def test_variable_substitution(self):
+        data = B'''$y = "$y"+'$z';'''
+        wish = B'''$y = "$y`$z";'''
+        self.assertEqual(self.load()(data), wish)
