@@ -38,7 +38,7 @@ class deob_ps1(IterativeDeobfuscator):
         for unit in self._SUBUNITS:
             self.log_debug(lambda: F'invoking {unit.__class__.__name__.replace("_", "-")}')
             checkpoint = hash(data)
-            data = unit.deobfuscate(data)              
+            data = unit.deobfuscate(data)
             if checkpoint != hash(data) and not self.log_debug('data has changed.'):
                 self.log_info(F'used {unit.__class__.__name__.replace("_", "-")}')
         return re.sub(R'[\r\n]+', '\n', data)
