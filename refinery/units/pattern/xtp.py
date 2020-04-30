@@ -21,16 +21,17 @@ class xtp(PatternExtractor):
     data, use `refinery.carve`.
     """
 
-    @arg('pattern', type=str, default=('hostname', 'url', 'email'), help=(
-        'Choose the pattern to extract, defaults are hostname, url, and email. '
-        'Use an asterix character to select all available patterns. The available '
-        'patterns are: {}'.format(', '.join(p.name for p in indicators))))
-    @arg.switch('-f', dest='filter', help=(
-        'If this setting is enabled, the xtp unit will attempt to reduce the number '
-        'of false positives by certain crude heuristics.'))
     def __init__(
-        self, *pattern, filter=False, min=1, max=None, len=None, stripspace=False,
-        unique=False, longest=False, take=None
+        self,
+        *pattern: arg('pattern', type=str, default=('hostname', 'url', 'email'), help=(
+            'Choose the pattern to extract, defaults are hostname, url, and email. '
+            'Use an asterix character to select all available patterns. The available '
+            'patterns are: {}'.format(', '.join(p.name for p in indicators)))),
+        filter: arg('-f', dest='filter', action='count', help=(
+            'If this setting is enabled, the xtp unit will attempt to reduce the number '
+            'of false positives by certain crude heuristics. Specify multiple times to '
+            'make the filtering more aggressive.')) = 0,
+        min=1, max=None, len=None, stripspace=False, unique=False, longest=False, take=None
     ):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
 
@@ -89,8 +90,7 @@ class xtp(PatternExtractor):
         'wscript.shell',
     ]
 
-    @classmethod
-    def _check_match(cls, data, pos, name, value):
+    def _check_match(self, data, pos, name, value):
         if name == 'ipv4':
             ocets = [int(x) for x in value.split(B'.')]
             if ocets.count(0) >= 3:
@@ -102,16 +102,17 @@ class xtp(PatternExtractor):
             ):
                 if B'version' in area.lower():
                     return None
-            ip = ip_address(value.decode(cls.codec))
-            if not ip.is_global and not ip.is_private:
-                return None
+            ip = ip_address(value.decode(self.codec))
+            if not ip.is_global:
+                if self.args.filter > 1 or not ip.is_private:
+                    return None
         elif name in ('url', 'socket', 'domain'):
-            ioc = value.decode(cls.codec)
+            ioc = value.decode(self.codec)
             if '://' not in ioc: ioc = F'TCP://{ioc}'
             host = urlparse(ioc).netloc.split(':', 1)[0].lower()
-            if any(host == w or host.endswith(F'.{w}') for w in cls._LEGITIMATE_HOSTS):
+            if any(host == w or host.endswith(F'.{w}') for w in self._LEGITIMATE_HOSTS):
                 return None
-            if any(host == w for w in cls._DOMAIN_WHITELIST):
+            if any(host == w for w in self._DOMAIN_WHITELIST):
                 return None
             if name == 'domain':
                 hostparts = host.split('.')
@@ -132,7 +133,7 @@ class xtp(PatternExtractor):
         elif name == 'email':
             at = value.find(B'@')
             ix = 0
-            while value[ix] not in cls._ALPHABETIC:
+            while value[ix] not in self._ALPHABETIC:
                 ix += 1
             return None if at - ix < 3 else value[ix:]
         elif name == 'path':
