@@ -1,11 +1,18 @@
 # Binary Refinery Changelog
 
+## Current Build
+- Test coverage was increased
+- The `recode` unit can now autodetect input encoding.
+- Several bugfixes were performed on the `vbe` unit.
+- More bandaids were added to PowerShell deobfuscation.
+- The `pestrip` and `peoverlay` units were added.
+
 ## Version 0.1.9
 - Fixes a tiny bug in the PyPI display of the readme file, and completes changelog from previous version.
 
 ## Version 0.1.8
 - The `rsa` unit was improved and can handle the Microsoft blob format now.
-- Powershell deobfuscation was improved, but that doesn't change the fact that this would be much better with a proper parser.
+- PowerShell deobfuscation was improved, but that doesn't change the fact that this would be much better with a proper parser.
 - The `b32` for base32 encoding and decoding was added.
 - Preliminary support for meta variables has been added with the `mpush`, `mpop`, and `mput` units. This feature is experimental and not well documented yet.
 - The `--squeeze`/`-Z` option was added to all units that produce multiple outputs: It disables the default separation of these outputs by line breaks.
