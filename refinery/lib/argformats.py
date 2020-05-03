@@ -626,12 +626,13 @@ class DelayedNumbinArgument(DelayedArgument):
     @DelayedArgumentDispatch
     def handler(self, expression: str) -> Iterable[int]:
         """
-        The default handler: Attempts to parse the input expression as an integer and uses
-        `refinery.lib.argformats.multibin` to parse it if that fails.
+        The default handler: Attempts to parse the input expression as a sequence of integers
+        and uses `refinery.lib.argformats.multibin` to parse it if that fails.
         """
         try:
-            return (int(expression, 0),)
-        except ValueError:
+            ev = self._EV_PARSER(expression)
+            return self._iter(ev())
+        except Exception:
             return self._mbin(expression)
 
     @handler.register('ev', final=True)
