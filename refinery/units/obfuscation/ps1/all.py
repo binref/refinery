@@ -36,9 +36,9 @@ class deob_ps1(IterativeDeobfuscator):
         for u in self._SUBUNITS:
             u.log_level = self.log_level
         for unit in self._SUBUNITS:
-            self.log_debug(lambda: F'invoking {unit.__class__.__name__.replace("_", "-")}')
+            self.log_debug(lambda: F'invoking {unit.name}')
             checkpoint = hash(data)
             data = unit.deobfuscate(data)
             if checkpoint != hash(data) and not self.log_debug('data has changed.'):
-                self.log_info(F'used {unit.__class__.__name__.replace("_", "-")}')
+                self.log_info(F'used {unit.name}')
         return re.sub(R'[\r\n]+', '\n', data)

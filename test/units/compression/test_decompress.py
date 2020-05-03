@@ -37,7 +37,7 @@ class TestAutoDecompressor(TestUnitBase):
                 failures = []
                 success = 0
                 self.assertEqual(unit(compressed), buffer,
-                    msg=F'Failed for {e.__class__.__name__}, buffer {k}')
+                    msg=F'Failed for {e.name}, buffer {k}')
                 for m, sample in enumerate(self._mangle(compressed), 1):
                     if buffer not in unit(sample):
                         failures.append(m)
@@ -45,4 +45,4 @@ class TestAutoDecompressor(TestUnitBase):
                         success += 1
                         if success >= 2: break
                 self.assertGreaterEqual(success, 1,
-                    msg=F'Failed for {e.__class__.__name__}, buffer {k} failed for these manglings: {failures}.')
+                    msg=F'Failed for {e.name}, buffer {k} failed for these manglings: {failures}.')

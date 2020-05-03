@@ -516,7 +516,7 @@ class Executable(type):
         if _retrofitted(cls):
             if not bases:
                 raise TypeError(
-                    F'Unexpected empty MRO for {cls.__name__}: You should not use the Executable '
+                    F'Unexpected empty MRO for {cls.name}: You should not use the Executable '
                     F'metaclass directly, instead you should inherit from Unit.'
                 )
             parent = bases[0]
@@ -565,7 +565,7 @@ class Executable(type):
                     F'already executed: {Executable.Entry}'
                 )
             else:
-                Executable.Entry = cls.__name__
+                Executable.Entry = cls.name
                 cls.run()
 
     def __getitem__(cls, other):
@@ -587,12 +587,16 @@ class Executable(type):
         return hasattr(cls, 'reverse')
 
     @property
-    def codec(self) -> str:
+    def codec(cls) -> str:
         """
         The default codec for encoding textual information between units.
         The value of this property is hardcoded to `UTF8`.
         """
         return 'UTF8'
+
+    @property
+    def name(cls) -> str:
+        return cls.__name__.replace('_', '-')
 
 
 class LogLevel(IntEnum):
@@ -719,6 +723,10 @@ class Unit(metaclass=Executable, abstract=True):
     @property
     def codec(self) -> str:
         return self.__class__.codec
+
+    @property
+    def name(self) -> str:
+        return self.__class__.name
 
     @property
     def log_level(self) -> LogLevel:
@@ -1016,7 +1024,7 @@ class Unit(metaclass=Executable, abstract=True):
                 return codecs.decode(x, cls.codec, errors='backslashreplace')
             return str(x)
         message = ' '.join(transform(msg) for msg in messages)
-        sys.stderr.write(F'{cls.__name__}: {message}\n')
+        sys.stderr.write(F'{cls.name}: {message}\n')
 
     @classmethod
     def interface(cls, argp: ArgumentParser) -> ArgumentParser:
@@ -1148,7 +1156,7 @@ class Unit(metaclass=Executable, abstract=True):
                     return ', '.join(parts)
 
         argp = ArgumentParserWithKeywordHooks(
-            prog=cls.__name__.replace('_', '-'),
+            prog=cls.name,
             description=documentation(cls),
             formatter_class=LineWrapRawTextHelpFormatter,
             add_help=False

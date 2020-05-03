@@ -151,7 +151,7 @@ class StandardCipherExecutable(CipherExecutable):
             modes = extract_options(cipher)
             if not modes:
                 raise RefineryCriticalException(
-                    F'The cipher {cipher.__name__} is a block cipher module, '
+                    F'The cipher {cipher.name} is a block cipher module, '
                     F'but no cipher block mode constants were found.'
                 )
             cls.modespec = OptionFactory(modes, ignorecase=True)

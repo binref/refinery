@@ -87,7 +87,7 @@ class decompress(Unit):
                 if not best or self.ratio / current_ratio < r:
                     self._LOG_DEBUG(
                         F'obtained {self.ratio:.2f} compression ratio with: prefix={prefix}, '
-                        F'cutoff={self.cutoff}, engine={self.engine.__class__.__name__}')
+                        F'cutoff={self.cutoff}, engine={self.engine.name}')
                     best = self
                     current_ratio = self.ratio
 
