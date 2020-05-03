@@ -52,38 +52,41 @@ class xtp(PatternExtractor):
         self.args.filter = filter
 
     _ALPHABETIC = ascii_letters.encode('ASCII')
-    _LEGITIMATE_HOSTS = [
-        'adobe.com',
-        'aka.ms',
-        'apache.org',
-        'apple.com',
-        'azure.com',
-        'curl.haxx.se',
-        'digicert.com',
-        'globalsign.com',
-        'globalsign.net',
-        'iana.org',
-        'live.com',
-        'microsoft.com',
-        'msdn.com',
-        'msn.com',
-        'office.com',
-        'openssl.org',
-        'openxmlformats.org',
-        'python.org',
-        'skype.com',
-        'sway-cdn.com',
-        'sway-extensions.com',
-        'symantec.com',
-        'symauth.com',
-        'symcb.com',
-        'thawte.com',
-        'verisign.com',
-        'w3.org',
-        'xml.org',
-        'xmlsoap.org',
-        'yahoo.com',
-    ]
+    _LEGITIMATE_HOSTS = {
+        'adobe.com'           : 1,
+        'aka.ms'              : 1,
+        'apache.org'          : 1,
+        'apple.com'           : 1,
+        'azure.com'           : 1,
+        'baidu.com'           : 2,
+        'curl.haxx.se'        : 1,
+        'digicert.com'        : 1,
+        'globalsign.com'      : 1,
+        'globalsign.net'      : 1,
+        'google.com'          : 3,
+        'iana.org'            : 1,
+        'live.com'            : 1,
+        'microsoft.com'       : 1,
+        'msdn.com'            : 1,
+        'msn.com'             : 1,
+        'office.com'          : 1,
+        'openssl.org'         : 1,
+        'openxmlformats.org'  : 1,
+        'purl.org'            : 1,
+        'python.org'          : 1,
+        'skype.com'           : 1,
+        'sway-cdn.com'        : 1,
+        'sway-extensions.com' : 1,
+        'symantec.com'        : 1,
+        'symauth.com'         : 1,
+        'symcb.com'           : 1,
+        'thawte.com'          : 1,
+        'verisign.com'        : 1,
+        'w3.org'              : 1,
+        'xml.org'             : 1,
+        'xmlsoap.org'         : 1,
+        'yahoo.com'           : 1,
+    }
 
     _DOMAIN_WHITELIST = [
         'system.net',
@@ -110,8 +113,9 @@ class xtp(PatternExtractor):
             ioc = value.decode(self.codec)
             if '://' not in ioc: ioc = F'TCP://{ioc}'
             host = urlparse(ioc).netloc.split(':', 1)[0].lower()
-            if any(host == w or host.endswith(F'.{w}') for w in self._LEGITIMATE_HOSTS):
-                return None
+            for white, level in self._LEGITIMATE_HOSTS.items():
+                if level <= self.args.filter and host == white or host.endswith(F'.{white}'):
+                    return None
             if any(host == w for w in self._DOMAIN_WHITELIST):
                 return None
             if name == 'domain':
