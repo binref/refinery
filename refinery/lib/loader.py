@@ -66,9 +66,8 @@ def get_entry_point(name: str) -> type:
         # refinery unit entry points with underscored names will be exposed with
         # these underscores replaced by dashes. If such a name is passed to the
         # loader, the following substitution ensures that it still works.
-        name = name.replace('-', '_')
         for entry in get_all_entry_points():
-            if getattr(entry, '__name__', None) == name:
+            if getattr(entry, 'name', None) == name:
                 break
         else:
             raise EntryNotFound('no entry point with name "%s" was found.' % name)
