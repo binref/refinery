@@ -3,9 +3,11 @@
 import re
 from capstone import Cs, CS_ARCH_X86, CS_ARCH_ARM, CS_MODE_16, CS_MODE_32, CS_MODE_64, CS_MODE_ARM
 from string import ascii_letters, digits
+from enum import Enum
 
-from .. import Unit
+from .. import arg, Unit
 from ...lib.argformats import number, OptionFactory
+from ...lib.enumeration import makeinstance
 
 __all__ = ['asm']
 
@@ -16,33 +18,31 @@ class box:
             setattr(self, k, v)
 
 
+class ARCH(Enum):
+    x16 = CS_ARCH_X86, CS_MODE_16
+    x32 = CS_ARCH_X86, CS_MODE_32
+    x64 = CS_ARCH_X86, CS_MODE_64
+    arm = CS_ARCH_ARM, CS_MODE_ARM
+
+    def __str__(self):
+        return self.name
+
+
 class asm(Unit):
     """
     Disassembles the input data using the capstone disassembly library.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        modes = {
-            'x16': (CS_ARCH_X86, CS_MODE_16),
-            'x32': (CS_ARCH_X86, CS_MODE_32),
-            'x64': (CS_ARCH_X86, CS_MODE_64),
-            'arm': (CS_ARCH_ARM, CS_MODE_ARM)
-        }
-        arch = OptionFactory(modes)
-        argp.add_argument('mode', choices=list(modes), type=arch, default=arch('x32'), nargs='?', const=arch('x32'),
-            help='select architecture for disassembly')
-        argp.add_argument('-a', '--addr', action='store_false',
-            help='hide addresses of instruction')
-        argp.add_argument('-b', '--bytes', action='store_false',
-            help='hide instruction bytes next to disassembly')
-        argp.add_argument('-s', '--str', action='store_false',
-            help='disassemble over detected strings')
-        argp.add_argument('-z', '--zeros', action='store_false',
-            help='disassemble zero byte patches')
-        argp.add_argument('-w', '--width', type=number[3:], default=15,
-            help='number of data bytes to put in one row')
-        return super().interface(argp)
+    def __init__(
+        self,
+        mode  : arg.option(choices=ARCH, help='select one of the following architectures: {choices}; the default is {default}.') = ARCH.x32,
+        addr  : arg.switch('-a', help='hide addresses of instruction') = True,
+        bytes : arg.switch('-b', help='hide instruction bytes next to disassembly') = True,
+        str   : arg.switch('-s', help='disassemble over detected strings') = True,
+        zeros : arg.switch('-z', help='disassemble zero byte patches') = True,
+        width : arg.number('-w', bound=(3, None), help='number of data bytes to put in one row, {default} by default') = 15
+    ):
+        self.superinit(super(), **vars())
 
     def _printable(self, b):
         return 0x20 <= b <= 0x7E and b not in B' \t\v\r\n'
