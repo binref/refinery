@@ -10,7 +10,7 @@ from flake8.api import legacy as flake8
 from . import TestUnitBase
 
 from refinery.lib.loader import get_all_entry_points, resolve, load_commandline as L
-from refinery.units import _retrofitted, Unit
+from refinery.units import Unit
 
 
 class TestPipelines(TestUnitBase):
@@ -117,15 +117,11 @@ class TestMetaProperties(TestUnitBase):
         self.assertGreaterEqual(len(entry_points), 10)
 
     def test_retrofitting(self):
-        log = logging.getLogger()
-        log.warning('retrofit not enforced.')
         for unit in get_all_entry_points():
-            legacy_interface = unit.interface.__func__ is not Unit.interface.__func__
-            if not _retrofitted(unit):
-                if legacy_interface:
-                    log.warning(F'requires retrofit: {unit.__qualname__}')
-                continue
-            self.assertFalse(legacy_interface, F'{unit.__qualname__}, is retrofitted but defines an interface.')
+            self.assertFalse(
+                unit.interface.__func__ is not Unit.interface.__func__,
+                F'{unit.__qualname__} defines a legacy interface.'
+            )
 
     def test_pipe_bytestring(self):
         from refinery.units.encoding.b64 import b64
