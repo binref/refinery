@@ -8,7 +8,7 @@ import defusedxml
 import math
 import functools
 
-from ... import Unit
+from ... import arg, Unit
 
 
 defusedxml.defuse_stdlib()
@@ -89,12 +89,11 @@ class xlxtr(Unit):
     Note that indices are 1-based.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('refs', metavar='reference', type=SheetReference, nargs='*',
-            help='A sheet reference to be extracted.')
-        argp.epilog = 'If no sheet references are given, the unit lists all sheet names.'
-        return super().interface(argp)
+    def __init__(self, *refs: arg(metavar='reference', type=SheetReference, help=(
+        'A sheet reference to be extracted. '
+        'If no sheet references are given, the unit lists all sheet names.'
+    ))):
+        super().__init__(refs=refs)
 
     def _process_legacy(self, data):
         import io
