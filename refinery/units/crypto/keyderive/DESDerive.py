@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ... import RefineryPartialResult
-from . import KeyDerivation
+from . import arg, KeyDerivation
 
 from Crypto.Cipher import DES
+from Crypto.Util.strxor import strxor
 
 __all__ = ['DESDerive']
 
@@ -14,8 +15,6 @@ class DESDerive(KeyDerivation):
     converts a string to an 8 byte DES key with odd byte parity, per FIPS
     specification. This is not a modern key derivation function.
     """
-
-    _DEFAULT_SIZE = 8
 
     _TABLE = bytearray((
         0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x07, 0x07,
@@ -52,25 +51,32 @@ class DESDerive(KeyDerivation):
         0xF8, 0xF8, 0xFB, 0xFB, 0xFD, 0xFD, 0xFE, 0xFE
     ))
 
+    def __init__(self, size: arg(help='The number of bytes to generate, default is the maximum of 8.') = 8):
+        super().__init__(size=size, salt=None)
+
     def process(self, password):
         key = bytearray(8)
 
-        for i, c in enumerate(password):
+        for i, j in enumerate(password):
             if ((i % 16) < 8):
-                key[i % 8] ^= (c << 1) & 0xFF
+                key[i % 8] ^= (j << 1) & 0xFF
             else:
-                c = (((c << 4) & 0xf0) | ((c >> 4) & 0x0f))
-                c = (((c << 2) & 0xcc) | ((c >> 2) & 0x33))
-                c = (((c << 1) & 0xaa) | ((c >> 1) & 0x55))
-                key[7 - (i % 8)] ^= c
-
-        n = len(password)
+                j = (((j << 4) & 0xf0) | ((j >> 4) & 0x0f))
+                j = (((j << 2) & 0xcc) | ((j >> 2) & 0x33))
+                j = (((j << 1) & 0xaa) | ((j >> 1) & 0x55))
+                key[7 - (i % 8)] ^= j
 
         key[:] = (self._TABLE[b] for b in key)
-        des = DES.new(key, DES.MODE_CBC, iv=key)
-        key = des.decrypt(password.ljust(n + 8 - n % 8, b'\0'))[-8:]
-        key = bytes((self._TABLE[b] for b in key))
+
+        if password:
+            n = len(password)
+            password = password.ljust(n + 7 - ((n - 1) % 8), b'\0')
+            des = DES.new(key, DES.MODE_ECB)
+            for k in range(0, n, 8):
+                key = des.encrypt(strxor(password[k:k + 8], key))
+            key = bytes(self._TABLE[b] for b in key)
 
         if self.args.size > 8:
             raise RefineryPartialResult('DESDerive can provide at most 8 bytes.', partial=key)
+
         return key[:self.args.size]

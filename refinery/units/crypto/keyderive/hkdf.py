@@ -8,8 +8,8 @@ from . import KeyDerivation
 class HKDF(KeyDerivation):
     """HKDF Key derivation"""
 
-    _DEFAULT_SALT = None
-    _DEFAULT_HASH = 'SHA512'
+    def __init__(self, size, salt, hash='SHA512'):
+        super().__init__(size=size, salt=salt, hash=hash)
 
     def process(self, data):
-        return HKDF_(data, self.args.size, self.salt, self.algorithm)
+        return HKDF_(data, self.args.size, self.args.salt, self.hash)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import KeyDerivation
+from . import arg, KeyDerivation
 from ... import RefineryPartialResult
 
 from typing import List
@@ -337,12 +337,15 @@ class ucrypt(KeyDerivation):
     """
     Implements the classic Unix crypt algorithm.
     """
-
-    _DEFAULT_SALT = B'AA'
-    _DEFAULT_SIZE = 13
+    def __init__(
+        self,
+        size: arg(help='The number of bytes to generate, default is 13.') = 13,
+        salt: arg(help='Salt for the derivation, the default is "AA".') = B'AA'
+    ):
+        super().__init__(size=size, salt=salt)
 
     def process(self, data):
-        crypted = bytes(UnixCrypt(data, salt=self.salt))
+        crypted = bytes(UnixCrypt(data, salt=self.args.salt))
         if len(crypted) < self.args.size:
             raise RefineryPartialResult(
                 F'unix crypt only provided {len(crypted)} bytes, but {self.args.size} '

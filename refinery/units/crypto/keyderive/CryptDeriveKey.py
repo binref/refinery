@@ -13,11 +13,13 @@ class CryptDeriveKey(KeyDerivation):
     An implementation of the CryptDeriveKey routine available from the Win32 API.
     """
 
-    _DEFAULT_HASH = 'MD5'
+    def __init__(self, size, hash='MD5'):
+        super().__init__(size=size, salt=None, hash=hash)
 
     def process(self, data):
-        def digest(x): return self.algorithm.new(x).digest()
-        max_size = 2 * self.algorithm.digest_size
+        def digest(x):
+            return self.hash.new(x).digest()
+        max_size = 2 * self.hash.digest_size
         value = digest(data)
         del data
         buffer1 = bytearray([0x36] * 64)

@@ -8,16 +8,14 @@ from . import KeyDerivation
 class PBKDF2(KeyDerivation):
     """PBKDF2 Key derivation"""
 
-    _DEFAULT_ITER = None
-    _DEFAULT_SALT = None
-    _DEFAULT_HASH = None
+    def __init__(self, size, salt, iter=1000, hash='SHA1'):
+        self.superinit(super(), **vars())
 
     def process(self, data):
-        kwargs = dict(
+        return PBKDF2_(
+            data.decode(self.codec),
+            self.args.salt,
             dkLen=self.args.size,
-            count=self.args.iterations,
-            hmac_hash_module=self.algorithm
+            hmac_hash_module=self.hash,
+            count=self.args.iter
         )
-        kwargs = {k: v for k, v in kwargs.items() if v is not None}
-        data = PBKDF2_(data.decode(self.codec), self.salt, **kwargs)
-        return bytes(data)

@@ -167,8 +167,8 @@ class arg(Argument):
             nargs    : Union[omit, int, str]      = omit, # noqa
             required : Union[omit, bool]          = omit, # noqa
             type     : Union[omit, type]          = omit, # noqa
-            group    : Optional[str]              = None,   # noqa
-            guess    : bool                       = False   # noqa
+            group    : Optional[str]              = None, # noqa
+            guess    : bool                       = False # noqa
     ) -> None:
         kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
             help=help, metavar=metavar, nargs=nargs, required=required, type=type)
@@ -176,6 +176,28 @@ class arg(Argument):
         self.group = group
         self.guess = guess
         super().__init__(*args, **kwargs)
+
+    def update_help(self):
+        if 'help' not in self.kwargs:
+            return
+        formatting = {}
+        choices = self.kwargs.get('choices', None)
+        if choices is not None:
+            formatting.update(choices=', '.join(self.kwargs['choices']))
+        default = self.kwargs.get('default', None)
+        if default is not None:
+            try:
+                formatting.update(default=F'H:{default.hex()}')
+            except AttributeError:
+                formatting.update(default=str(default))
+        try:
+            self.kwargs['help'] = self.kwargs['help'].format(**formatting)
+        except Exception:
+            pass
+
+    def __rmatmul__(self, method):
+        self.update_help()
+        return super().__rmatmul__(method)
 
     @staticmethod
     def switch(
@@ -212,14 +234,15 @@ class arg(Argument):
         *args: str, choices: Enum,
         help : Union[omit, str] = omit,
         dest : Union[omit, str] = omit,
+        metavar: Optional[str] = None,
         group: Optional[str] = None,
     ) -> Argument:
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
         """
         cnames = [c.name for c in choices]
-        return arg(*args, group=group, help=help.format(choices=', '.join(cnames)),
-            metavar=choices.__name__, dest=dest, choices=cnames, type=str)
+        metavar = metavar or choices.__name__
+        return arg(*args, group=group, help=help, metavar=metavar, dest=dest, choices=cnames, type=str)
 
     @staticmethod
     def help(msg: str) -> Argument:
@@ -238,7 +261,7 @@ class arg(Argument):
         Used to add argparse arguments with a fixed set of options, based on a list of strings.
         """
         return arg(*args, group=group, type=str, metavar=metavar, nargs=nargs,
-            dest=dest, help=help.format(choices=', '.join(choices)), choices=choices)
+            dest=dest, help=help, choices=choices)
 
     @property
     def positional(self) -> bool:
@@ -360,12 +383,6 @@ class arg(Argument):
         self.guess = self.guess and them.guess
         self.group = self.group or them.group
 
-    def __or__(self, them: Argument) -> Argument:
-        clone = self.__copy__()
-        clone.kwargs.update(self.kwargs)
-        clone.merge_args(them)
-        return clone
-
     def __copy__(self) -> Argument:
         cls = self.__class__
         clone = cls.__new__(cls)
@@ -447,8 +464,11 @@ class Executable(type):
                 continue
             if not known.positional:
                 known.merge_args(guess)
-            for k in guess.kwargs:
-                known.kwargs.setdefault(k, guess.kwargs[k])
+            for k, v in guess.kwargs.items():
+                if k == 'default':
+                    known.kwargs[k] = v
+                else:
+                    known.kwargs.setdefault(k, v)
 
         for name in exposed:
             args.move_to_end(name)
