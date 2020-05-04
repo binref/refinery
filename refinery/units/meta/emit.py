@@ -4,22 +4,17 @@
 A simple tool to output binary data. Multiple arguments are output in framed
 format, see `refinery.lib.frame`.
 """
-from ...lib.argformats import multibin
-from .. import Unit
+from .. import arg, Unit
 
 
 class emit(Unit):
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument('data', type=multibin, default=None, nargs='*',
-            help=(
-                'Data to be emitted. If no argument is specified, data '
-                'is retrieved from the clipboard. Multiple arguments are '
-                'output in framed format.'
-            )
-        )
-        return super().interface(argp)
+    def __init__(self, *data: arg(help=(
+        'Data to be emitted. If no argument is specified, data '
+        'is retrieved from the clipboard. Multiple arguments are '
+        'output in framed format.'
+    ))):
+        super().__init__(data=data)
 
     def process(self, data):
         if not self.args.data:
