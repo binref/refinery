@@ -111,8 +111,8 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
 
     def reverse(self, data: ByteString) -> ByteString:
         padding = self.args.padding[0]
+        self.log_info('padding method:', padding)
         if padding != 'RAW':
-            self.log_info('padding method:', padding)
             data = pad(data, self.blocksize, padding.lower())
         return super().reverse(data)
 
@@ -179,7 +179,7 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
-    def __init__(self, mode, key, iv=None, padding=None):
+    def __init__(self, mode, key, iv=B'', padding=None):
         super().__init__(key=key, iv=iv, padding=padding, mode=self.modespec(mode))
 
     def _get_cipher_instance(self, **optionals) -> Any:
