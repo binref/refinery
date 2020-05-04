@@ -3,7 +3,7 @@
 import pefile
 from fnmatch import fnmatch
 
-from ... import Unit
+from ... import arg, Unit
 
 
 class rsrc:
@@ -70,12 +70,11 @@ class perc(Unit):
     Extract PE file resources.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(metavar='entry', dest='entries', type=rsrc, nargs='*',
-            help='A resource path for the resource to be extracted. May contain numeric '
-                 'literals and name strings with wildcards.')
-        return super().interface(argp)
+    def __init__(self, *entries: arg(metavar='entry', type=rsrc, help=(
+        'A resource path for the resource to be extracted. May contain numeric '
+        'literals and name strings with wildcards.'
+    ))):
+        super().__init__(entries=entries)
 
     def _match(self, level, needle, e):
         if e.id == needle or str(e.id) == needle:
