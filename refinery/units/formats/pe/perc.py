@@ -109,8 +109,8 @@ class perc(Unit):
         if not self.args.entries:
             yield from self._search(pe, pe.DIRECTORY_ENTRY_RESOURCE, [])
             return
-        for arg in self.args.entries:
-            while len(arg.needles) <= 3:
-                self.log_info('searching pattern:', str(arg))
-                yield from self._search(pe, pe.DIRECTORY_ENTRY_RESOURCE, arg.needles)
-                arg = arg.relax()
+        for entry in self.args.entries:
+            while len(entry.needles) <= 3:
+                self.log_info('searching pattern:', str(entry))
+                yield from self._search(pe, pe.DIRECTORY_ENTRY_RESOURCE, entry.needles)
+                entry = entry.relax()

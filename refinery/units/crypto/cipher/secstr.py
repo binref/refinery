@@ -24,8 +24,8 @@ class secstr(Unit):
     _PSVER = 2
 
     def __init__(
-        self, key: arg(help=
-            'Secure string encryption 16-byte AES key; the default are the bytes from 1 to 16.'
+        self, key: arg(
+            help='Secure string encryption 16-byte AES key; the default are the bytes from 1 to 16.'
         ) = bytes(range(1, 17)),
         iv: arg('-I', help=F'Optionally specify an IV to use for encryption.') = None
     ):
