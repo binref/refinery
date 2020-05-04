@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from itertools import cycle
 
-from ... import Unit
+from ... import arg, Unit
 from ....lib.decorators import unicoded
 
 
@@ -11,49 +11,31 @@ class vigenere(Unit):
     Encryption and decryption using the Vigenère-Bellaso polyalphabetic cipher.
     """
 
-    @classmethod
-    def interface(cls, argp):
-        argp.add_argument(
-            '-c', '--case-sensitive',
-            action='store_true',
-            help='Unless this option is set, the key will be case insensitive and '
-                 'the alphabet is assumed to contain only lowercase letters. Any '
-                 'uppercase letter is transformed using the same shift as would be '
-                 'the lowercase variant, but case is retained.'
-        )
-        argp.add_argument(
-            '-i', '--ignore-unknown',
-            action='store_true',
-            help='Unless this option is set, the key stream will be iterated even '
-                 'for letters that are not contained in the alphabet.'
-        )
-        argp.add_argument(
-            'key', type=str, help='The encryption key')
-        argp.add_argument(
-            'alphabet',
-            type=str,
-            nargs='?',
-            default='abcdefghijklmnopqrstuvwxyz',
-            help='The alphabet which should be used, default is the Latin one: '
-                 '"abcdefghijklmnopqrstuvwxyz"'
-        )
-        return super().interface(argp)
-
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
-        if not self.args.case_sensitive:
-            self.args.key = self.args.key.lower()
-        alphabet = ''
-        for c in self.args.alphabet:
-            if not self.args.case_sensitive:
-                c = c.lower()
-            if c not in alphabet:
-                alphabet += c
-        if alphabet != self.args.alphabet:
-            self.log_warn(F'correcting alphabet to: {alphabet}')
-            self.args.alphabet = alphabet
-        if not set(self.args.key) <= set(self.args.alphabet):
+    def __init__(
+        self,
+        key: arg(type=str, help='The encryption key'),
+        alphabet: arg(
+            help='The alphabet, by default the Latin one is used: "{default}"'
+        ) = 'abcdefghijklmnopqrstuvwxyz',
+        case_sensitive: arg.switch('-c', help=(
+            'Unless this option is set, the key will be case insensitive and '
+            'the alphabet is assumed to contain only lowercase letters. Any '
+            'uppercase letter is transformed using the same shift as would be '
+            'the lowercase variant, but case is retained.'
+        )) = False,
+        ignore_unknown: arg.switch('-i', help=(
+            'Unless this option is set, the key stream will be iterated even '
+            'for letters that are not contained in the alphabet.'
+        )) = False
+    ):
+        if not case_sensitive:
+            key = key.lower()
+            alphabet = alphabet.lower()
+            if len(set(alphabet)) != len(alphabet):
+                raise ValueError('Duplicate entries detected in alphabet.')
+        if not set(key) <= set(alphabet):
             raise ValueError('key contains letters which are not from the given alphabet')
+        self.superinit(super(), **vars())
 
     def _tabula_recta(self, data, reverse=True):
         keystream = cycle(self.args.key)
