@@ -9,7 +9,7 @@ class trim(Unit):
     """
 
     def __init__(
-        self, *junk: arg.help('Binary strings to be removed, default are all whitespace characters.'),
+        self, *junk: arg(help='Binary strings to be removed, default are all whitespace characters.'),
         left: arg.switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
         right: arg.switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True
     ):

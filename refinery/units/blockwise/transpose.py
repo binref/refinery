@@ -9,7 +9,7 @@ class transpose(BlockTransformation):
     blocks that correspond to the columns of this matrix.
     """
     def __init__(
-        self, padding: arg.help('Optional byte sequence to use as padding for tail end.') = B'',
+        self, padding: arg(help='Optional byte sequence to use as padding for tail end.') = B'',
         bigendian=False, blocksize=1
     ):
         super().__init__(bigendian=bigendian, blocksize=blocksize, padding=padding)

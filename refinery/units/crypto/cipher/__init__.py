@@ -29,7 +29,7 @@ class CipherExecutable(Executable):
 
 class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
-    def __init__(self, key: arg.help('The encryption key.'), **keywords):
+    def __init__(self, key: arg(help='The encryption key.'), **keywords):
         super().__init__(key=key, **keywords)
 
     @property

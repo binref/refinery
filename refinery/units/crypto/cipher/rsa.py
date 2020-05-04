@@ -30,7 +30,7 @@ class rsa(Unit):
     """
     def __init__(
         self,
-        key: arg.help('RSA key in PEM, DER, or Microsoft BLOB format.'),
+        key: arg(help='RSA key in PEM, DER, or Microsoft BLOB format.'),
         swapkeys: arg.switch('-s', help='Swap public and private exponent.') = False,
         textbook: arg.switch('-t', group='PAD', help='Equivalent to --padding=NONE.') = False,
         padding : arg.option('-p', group='PAD', choices=PAD,

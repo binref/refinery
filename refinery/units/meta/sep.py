@@ -11,7 +11,7 @@ class sep(Unit):
     """
 
     def __init__(
-        self, separator: arg.help('Separator; the default is a line break.') = B'\n',
+        self, separator: arg(help='Separator; the default is a line break.') = B'\n',
         scoped: arg.switch('-s', help=(
             'Maintain chunk scope; i.e. do not turn all input chunks visible.')) = False
     ):

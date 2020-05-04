@@ -245,10 +245,6 @@ class arg(Argument):
         return arg(*args, group=group, help=help, metavar=metavar, dest=dest, choices=cnames, type=str)
 
     @staticmethod
-    def help(msg: str) -> Argument:
-        return arg(help=msg)
-
-    @staticmethod
     def choice(
         *args: str, choices : List[str],
         help    : Union[omit, str] = omit,

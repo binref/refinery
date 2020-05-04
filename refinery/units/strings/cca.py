@@ -8,7 +8,7 @@ class cca(Unit):
     Append data to the input.
     """
 
-    def __init__(self, *data: arg.help('Binary strings to be appended to the input.')):
+    def __init__(self, *data: arg(help='Binary strings to be appended to the input.')):
         super().__init__(data=data)
 
     def process(self, data):

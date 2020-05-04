@@ -17,7 +17,7 @@ class snip(Unit):
     """
     def __init__(
         self,
-        slices: arg.help('Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
+        slices: arg(help='Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
         remove: arg.switch('-r', help='Remove the slices from the input rather than selecting them.') = False
     ):
         super().__init__(slices=slices, remove=remove)

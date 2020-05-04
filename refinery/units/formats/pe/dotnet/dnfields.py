@@ -23,7 +23,7 @@ class dnfields(Unit):
         '^[us]?int.?64$' : 8,
     }
 
-    def __init__(self, fields: arg.help('Any sequence of wildcard patterns') = ['*']):
+    def __init__(self, fields: arg(help='Any sequence of wildcard patterns') = ['*']):
         pass
 
     def _guess_field_info(self, tables, data, t):

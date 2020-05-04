@@ -8,7 +8,7 @@ class rep(Unit):
     Duplicates the given input a given number of times.
     """
 
-    def __init__(self, count: arg.help(
+    def __init__(self, count: arg(help=
         'Defines the number of outputs for each input. The default is the minimum of 2.') = 2
     ):
         if count < 2:
