@@ -1,11 +1,12 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.2.0
 - Test coverage was increased
 - The `recode` unit can now autodetect input encoding.
 - Several bugfixes were performed on the `vbe` unit.
 - More bandaids were added to PowerShell deobfuscation.
 - The `pestrip` and `peoverlay` units were added.
+- Interface retrofitting was completed.
 
 ## Version 0.1.9
 - Fixes a tiny bug in the PyPI display of the readme file, and completes changelog from previous version.
