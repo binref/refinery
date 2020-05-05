@@ -1182,7 +1182,7 @@ class Unit(metaclass=Executable, abstract=True):
         return cls.interface(argp)
 
     @staticmethod
-    def superinit(super, **keywords):
+    def superinit(spc, **keywords):
         """
         This function uses `refinery.lib.tools.autoinvoke` to call the `__init__` function of `super` with
         by taking all required parameters from `keywords`, ignoring the rest. Calling
@@ -1193,16 +1193,19 @@ class Unit(metaclass=Executable, abstract=True):
         manually. This is a convenience feature which reduces code bloat when many parameters have to be
         forwarded, see e.g. `refinery.units.pattern.carve.carve` for an example.
         """
+        args = inspect.signature(spc.__thisclass__.__init__).parameters
+        keep = list(skipfirst(args))
+        junk = [a for a in keywords if a not in keep]
+        for j in junk: del keywords[j]
+        for a in args.values():
+            if a.kind is a.VAR_KEYWORD:
+                keywords.update(keywords.pop(a.name, {}))
         try:
-            if super.__init__.__func__ is Unit.__init__:
-                return super.__init__(**{
-                    name: value for name, value in keywords.items()
-                    if name != 'self' and not name.startswith('_')
-                })
+            if spc.__init__.__func__ is Unit.__init__:
+                return spc.__init__(**keywords)
         except AttributeError:
             pass
-
-        return autoinvoke(super.__init__, keywords)
+        return autoinvoke(spc.__init__, keywords)
 
     @classmethod
     def assemble(cls, *args, **keywords):
