@@ -47,21 +47,6 @@ from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead
 from ..lib.frame import Framed, Chunk
 
 
-def _retrofitted(cls: Union[type, Any]) -> bool:
-    if not isinstance(cls, type):
-        cls = cls.__class__
-    bases = cls.__mro__[1:]
-    if len(bases) == 1:
-        return False
-    for base in bases:
-        try:
-            if cls.interface.__func__ is not base.interface.__func__:
-                return False
-        except AttributeError:
-            pass
-    return True
-
-
 class ArgparseError(ValueError):
     """
     This custom exception type is thrown from the custom argument parser of
@@ -438,7 +423,7 @@ class Executable(type):
         args = ArgumentSpecification() if args is None else args
         temp = ArgumentSpecification()
 
-        exposed = [pt.name for pt in skipfirst(parameters.values())]
+        exposed = [pt.name for pt in skipfirst(parameters.values()) if pt.kind != pt.VAR_KEYWORD]
         # The arguments are added in reverse order to the argument parser later.
         # This is done to have a more intuitive use of decorator based argument configuration.
         exposed.reverse()
@@ -529,18 +514,8 @@ class Executable(type):
         parameters = inspect.signature(cls.__init__).parameters
         cls.argspec = ArgumentSpecification()
 
-        if _retrofitted(cls):
-            if not bases:
-                raise TypeError(
-                    F'Unexpected empty MRO for {cls.name}: You should not use the Executable '
-                    F'metaclass directly, instead you should inherit from Unit.'
-                )
+        if bases:
             parent = bases[0]
-            if not _retrofitted(parent) and cls.__init__ is parent.__init__:
-                @wraps(cls.__init__)
-                def __init__stub_(self): parent.__init__(self)
-                cls.__init__ = __init__stub_
-                parameters = dict(self=None)
             for key, value in parent.argspec.items():
                 if not value.guess and key in parameters:
                     cls.argspec[key] = value.__copy__()
@@ -1043,15 +1018,10 @@ class Unit(metaclass=Executable, abstract=True):
         sys.stderr.write(F'{cls.name}: {message}\n')
 
     @classmethod
-    def interface(cls, argp: ArgumentParser) -> ArgumentParser:
+    def _interface(cls, argp: ArgumentParser) -> ArgumentParser:
         """
         Receives a reference to an `ArgumentParser` object. This parser will be used to parse
-        the command line for this unit into the member variable called `args`. Previously, it
-        was requested that children of `refinery.units.Unit` override this method to customize
-        their command line interface. This is now deprecated in favor of using initialization
-        methods and `refinery.units.arg` decorators to customize the parser. The current goal
-        is to remove `refinery.units.Unit.interface` in a future version when retrofitting the
-        old units to the new `refinery.units.arg` based interface is complete.
+        the command line for this unit into the member variable called `args`.
         """
         base = argp.add_argument_group('generic options')
 
@@ -1179,7 +1149,7 @@ class Unit(metaclass=Executable, abstract=True):
         )
 
         argp.set_defaults(nesting=0)
-        return cls.interface(argp)
+        return cls._interface(argp)
 
     @staticmethod
     def superinit(spc, **keywords):
@@ -1219,8 +1189,7 @@ class Unit(metaclass=Executable, abstract=True):
         args = argp.parse_args()
 
         try:
-            if _retrofitted(cls): unit = autoinvoke(cls, args.__dict__)
-            else: unit = cls(DelayedArgumentProxy(args, argp.order))
+            unit = autoinvoke(cls, args.__dict__)
         except ValueError as E:
             argp.error(str(E))
 
@@ -1250,36 +1219,25 @@ class Unit(metaclass=Executable, abstract=True):
         clone.args = self.args.__copy__()
         return clone
 
-    def __init__(self, *args, **keywords):
+    def __init__(self, **keywords):
         self._buffer = B''
         self._source = None
         self._target = None
         self._framed = None
         self._chunks = None
 
-        if _retrofitted(self):
-            assert not args, (
-                'Retrofitted units may not call the Unit base constructor with positional arguments.'
-            )
-            keywords.update(dict(
-                dtiming=False,
-                nesting=0,
-                reverse=False,
-                squeeze=False,
-                devnull=False,
-                verbose=LogLevel.DETACHED,
-                quiet=False,
-            ))
-            # Since Python 3.6, functions always preserve the order of the keyword
-            # arguments passed to them (see PEP 468).
-            self.args = DelayedArgumentProxy(
-                Namespace(**keywords), list(keywords))
-        elif not keywords and len(args) == 1 and isinstance(args[0], DelayedArgumentProxy):
-            self.args = args[0]
-        else:
-            keywords.setdefault('verbose', -1)
-            argp = self.argparser(*args, **keywords)
-            self.args = DelayedArgumentProxy(argp.parse_args(), argp.order)
+        keywords.update(dict(
+            dtiming=False,
+            nesting=0,
+            reverse=False,
+            squeeze=False,
+            devnull=False,
+            verbose=LogLevel.DETACHED,
+            quiet=False,
+        ))
+        # Since Python 3.6, functions always preserve the order of the keyword
+        # arguments passed to them (see PEP 468).
+        self.args = DelayedArgumentProxy(Namespace(**keywords), list(keywords))
 
     @classmethod
     def run(cls, argv=None, stream=None) -> None:
