@@ -27,13 +27,14 @@ class TestFileReader(TestUnitBase):
     def test_count_lines(self):
         loc = 0
         log = logging.getLogger()
+        logging.StreamHandler.terminator = ': '
 
         for line in self.load(os.path.join(self.root, 'refinery', '**', '*.py'), linewise=True).process(None):
             if not line or line.isspace() or line.startswith(B'#'):
                 continue
             loc += 1
 
-        log.info(F'The binary refinery has roughly {loc} lines of code.')
+        log.info(F'the binary refinery has roughly {loc} lines of code')
 
         self.assertGreaterEqual(loc, 7000)
         self.assertLessEqual(loc, 7000000)

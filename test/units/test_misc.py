@@ -93,6 +93,7 @@ class TestPipelines(TestUnitBase):
 class TestMetaProperties(TestUnitBase):
 
     def test_style_guide(self):
+        logging.StreamHandler.terminator = '\n    '
         root = os.path.abspath(inspect.stack()[0][1])
         for _ in range(3):
             root = os.path.dirname(root)
@@ -116,12 +117,9 @@ class TestMetaProperties(TestUnitBase):
             entry_points.add(entry.__qualname__)
         self.assertGreaterEqual(len(entry_points), 10)
 
-    def test_retrofitting(self):
+    def test_no_legacy_interfaces(self):
         for unit in get_all_entry_points():
-            self.assertFalse(
-                unit.interface.__func__ is not Unit.interface.__func__,
-                F'{unit.__qualname__} defines a legacy interface.'
-            )
+            self.assertFalse(hasattr(unit, 'interface') and callable(unit.interface))
 
     def test_pipe_bytestring(self):
         from refinery.units.encoding.b64 import b64

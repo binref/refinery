@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from json import loads
+import logging
+import json
 
 from .. import TestUnitBase
 
@@ -51,10 +52,13 @@ class TestJavaDeserializer(TestUnitBase):
             '73656375726974792E4B6579526570245479706500000000000000001200007872000E6A'
             '6176612E6C616E672E456E756D0000000000000000120000787074000750524956415445'
         )
-        unit = self.load()
-        json = loads(unit(data))
 
-        self.assertEqual(json['fields']['algorithm'], 'RSA')
-        self.assertEqual(json['fields']['type'], 'PRIVATE')
-        self.assertGreater(len(json['fields']['encoded']), 1000)
-        self.assertIn(bytes(json['fields']['encoded']), data)
+        logging.StreamHandler.terminator = ', '
+
+        unit = self.load()
+        jser = json.loads(unit(data))
+
+        self.assertEqual(jser['fields']['algorithm'], 'RSA')
+        self.assertEqual(jser['fields']['type'], 'PRIVATE')
+        self.assertGreater(len(jser['fields']['encoded']), 1000)
+        self.assertIn(bytes(jser['fields']['encoded']), data)
