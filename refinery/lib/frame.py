@@ -202,6 +202,16 @@ class Chunk(bytearray):
         if value != self.visible:
             self._view = self._view[:~0] + (value,)
 
+    def inherit(self, parent):
+        """
+        This method can be used to take over properties of a parent `refinery.lib.frame.Chunk`.
+        """
+        self._path = parent._path
+        self._view = parent._view
+        for key, value in parent._meta.items():
+            if key not in self._meta:
+                self._meta[key] = value
+
     @classmethod
     def unpack(cls, stream):
         """
@@ -217,12 +227,11 @@ class Chunk(bytearray):
         return msgpack.packb((self._path, self._view, self._meta, self._fill, self))
 
     def __repr__(self) -> str:
-        layer = '/'.join('#' if not s else str(p)
-            for p, s in zip(self._path, self._view))
+        layer = '/'.join('#' if not s else str(p) for p, s in zip(self._path, self._view))
         layer = layer and '/' + layer
-        metas = ' '.join(F'{key}={value!s}' for key, value in self._meta.items())
-        metas = metas and ' ' + metas
-        return F'<chunk{layer} size={len(self)}{metas}>'
+        metas = ','.join(self._meta)
+        metas = metas and F' meta=({metas})'
+        return F'<chunk{layer}{metas} size={len(self)} data={repr(bytes(self))}>'
 
     def __hash__(self):
         return hash((
@@ -353,7 +362,7 @@ class Framed:
     """
     def __init__(
         self,
-        action: Callable[[bytearray], Iterable[bytes]],
+        action: Callable[[bytearray], Iterable[Chunk]],
         stream: BinaryIO,
         nested: int = 0,
         filter: Optional[Callable[[Iterable[Chunk]], Iterable[Chunk]]] = None,
@@ -402,7 +411,9 @@ class Framed:
 
     def _generate_chunks(self, parent: Chunk):
         for item in self.action(parent):
-            yield Chunk(item, path=parent.path, view=parent.view)
+            item = item.__copy__()
+            item.inherit(parent)
+            yield item
 
     def _generate_bytes(self, data: ByteString):
         yield from self.action(data)

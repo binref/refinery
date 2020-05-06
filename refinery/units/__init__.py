@@ -881,11 +881,10 @@ class Unit(metaclass=Executable, abstract=True):
 
         for last, chunk in lookahead(self):
             if (
-                self._framehandler.framebreak
-                or self._framehandler.unframed
+                not last
+                and (self._framehandler.unframed or self._framehandler.framebreak)
                 and not chunk.endswith(B'\n')
                 and not self.args.squeeze
-                and not last
             ):
                 chunk += B'\n'
             try:

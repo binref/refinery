@@ -78,8 +78,9 @@ from contextlib import suppress
 from functools import update_wrapper
 from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable
 
-from ..lib.loader import resolve, EntryNotFound
 from ..lib.frame import Chunk
+from ..lib.tools import isbuffer
+from ..lib.loader import resolve, EntryNotFound
 
 
 class PythonExpression:
@@ -327,7 +328,7 @@ class DelayedArgumentDispatch:
         except EntryNotFound:
             return None
         else:
-            unit = unit and unit.assemble(*args)
+            unit = unit and unit.assemble(*args).detach()
             self.units[uhash] = unit
             return unit
 
@@ -341,12 +342,11 @@ class DelayedArgumentDispatch:
             handler = self.default if modifier is None else self.handlers[modifier]
             return handler(self.instance, data, *args)
         except KeyError:
-            import io
             unit = self._get_unit(modifier, *args)
             if not unit:
                 raise ArgumentTypeError(F'failed to build unit {modifier}')
-            with io.BytesIO(data) as stream:
-                return B''.join(stream | unit)
+            result = unit.process(data)
+            return result if isbuffer(result) else B''.join(result)
 
     def can_handle(self, modifier, *args):
         return modifier in self.handlers or bool(self._get_unit(modifier, *args))
@@ -436,14 +436,22 @@ class DelayedArgument(LazyEvaluation):
                 return name, arguments, expression[k + 1:]
         return None, (), expression
 
-    def __call__(self, data: Optional[bytearray] = None) -> bytes:
+    def __call__(self, data: Optional[Chunk] = None) -> bytes:
         arg = self.seed
         mod = iter(self.modifiers)
         if not self.finalized:
             mod = chain(((None, ()),), mod)
         for name, arguments in mod:
+            if isbuffer(arg):
+                arg = Chunk(arg)
+                with suppress(AttributeError):
+                    arg.meta.update(data.meta)
             try:
                 arg = self.handler(arg, name, *arguments)
+            except VariableMissing as v:
+                if data is not None:
+                    raise
+                raise TooLazy from v
             except Exception as E:
                 raise ArgumentTypeError(F'failed to apply modifier {name} to incoming data: {E}') from E
             if callable(arg):
