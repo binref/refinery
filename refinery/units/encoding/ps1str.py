@@ -51,7 +51,7 @@ class ps1str(Unit):
         quote, data = data[0], data[1:-1]
 
         def unescape(match):
-            string = match.group(0)
+            string = match[0]
             return self.UNESCAPE.get(string, string[1:])
 
         if quote == '"':

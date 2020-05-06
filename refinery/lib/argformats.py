@@ -724,9 +724,9 @@ class DelayedRegexpArgument(DelayedArgument):
             from .patterns import formats, indicators
 
             def replace(match):
-                name = match.group(1)
+                name = match[1]
                 return '(?:{})'.format(formats.get(
-                    name, indicators.get(name, match.group(0))))
+                    name, indicators.get(name, match[0])))
 
             expression = re.sub(
                 R'\(\?\?({}|{})\)'.format(
@@ -755,7 +755,7 @@ class DelayedRegexpArgument(DelayedArgument):
         import re
 
         def y2r(match):
-            expr = match.group(0)
+            expr = match[0]
             if expr == B'??':
                 return B'.'
             if B'?' not in expr:

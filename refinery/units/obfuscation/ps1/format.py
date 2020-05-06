@@ -30,14 +30,14 @@ class deob_ps1_format(Deobfuscator):
                     continue
 
                 def dbgmsg():
-                    sample = string.group(0)
+                    sample = string[0]
                     if len(sample) > 33:
                         sample = F"{sample[1:30]}...{sample[0]}"
                     return F'found match at {string.start()}: {sample}'
 
                 self.log_debug(dbgmsg)
 
-                args = re.split(F'({formats.ps1str})', argmatch.group(1))
+                args = re.split(F'({formats.ps1str})', argmatch[1])
                 args = [list(string_unquote(a.strip())) for a in args[1::2]]
 
                 def formatter(string):

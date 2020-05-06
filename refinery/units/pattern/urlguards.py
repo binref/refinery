@@ -35,25 +35,25 @@ class urlguards(Unit):
 
     @unguard(r'https?://urldefense(?:\.proofpoint)?\.com/v([12])/url\?([:;/_=!?#&.,\w\%\-\+|]+)')
     def proofpointV2(self, match):
-        version = int(match.group(1))
+        version = int(match[1])
         self.log_info('proofpoint match:', version)
         argmatch = re.match(
             R'^u=(.+?)&(?:amp;)?{}='.format('k' if version == 1 else '[dc]'),
-            match.group(2),
+            match[2],
             flags=re.DOTALL
         )
         if not argmatch:
             self.log_warn('not able to translate unexpected proofpoint format:', match)
-            return match.group(0)
-        encoded = argmatch.group(1)
-        if match.group(1) == '2':
+            return match[0]
+        encoded = argmatch[1]
+        if match[1] == '2':
             encoded = encoded.translate(str.maketrans('-_', '%/'))
         return unescape(unquote(encoded))
 
     @unguard(r'https?://urldefense(?:\.proofpoint)?\.com/v3/__(.+?)__;(.*?)![-\w!?$]+')
     def proofpointV3(self, match):
-        data = unquote(match.group(1))
-        cmap = match.group(2) + '=' * (-len(match.group(2)) % 4)
+        data = unquote(match[1])
+        cmap = match[2] + '=' * (-len(match[2]) % 4)
         cmap = urlsafe_b64decode(cmap).decode('UTF-8')
         cursor = 0
         result = ''
@@ -75,7 +75,7 @@ class urlguards(Unit):
 
     @unguard(r'https?://\w+.safelinks\.protection\.outlook\.com/([:;/_=!?#&.,\w\%\-\+|]+)')
     def outlook(self, match):
-        result = match.group(0)
+        result = match[0]
         self.log_info('outlook match:', result)
         parsed = urlparse(result)
         params = parse_qs(parsed.query)
@@ -87,11 +87,11 @@ class urlguards(Unit):
 
     @unguard(r'https?://outlook.office.com/actions/ei\?u=([:;/_=!?#&.,\w\%\-\+|]+)')
     def outlook_image_proxy(self, match):
-        return unquote(match.group(1))
+        return unquote(match[1])
 
     @unguard(r'https?://(?:[\w-]+\.)?trendmicro.com(?::\d+)?/wis/clicktime/v[12]/(?:query|clickthrough)[:;/_=!?#&.,\w\%\-\+|]+')
     def trendmicro(self, match):
-        result = match.group(0)
+        result = match[0]
         self.log_info('trendmicro match:', result)
         parsed = urlparse(result)
         params = parse_qs(parsed.query)

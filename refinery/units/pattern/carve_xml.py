@@ -14,8 +14,8 @@ class XMLTag:
         match = re.search(R'\A<([/\?]?)([^\W\d][-:\.\w]*)', tag)
         if not match:
             raise ValueError
-        self.name = match.group(2)
-        self.mod = match.group(1)
+        self.name = match[2]
+        self.mod = match[1]
         self.delta = {'/': -1, '?': 0}.get(self.mod, 1)
 
     def __repr__(self) -> str:

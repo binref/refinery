@@ -42,7 +42,7 @@ def TransformSubstitutionFactory(fmt):
     """
 
     def unescape_dollars(s):
-        return re.sub(RB'(\$+)\$', lambda m: m.group(1), s)
+        return re.sub(RB'(\$+)\$', lambda m: m[1], s)
 
     class PipeLine:
         def __init__(self, argument, seam, pipeline):
@@ -89,7 +89,7 @@ def TransformSubstitutionFactory(fmt):
         start, stop = expression.span()
         if start in escapes:
             continue
-        argument = expression.group(1)
+        argument = expression[1]
         if not argument.isdigit():
             level = 1
             poles = [expression.start() + 2]
@@ -200,7 +200,7 @@ class PatternExtractorBase(Unit, abstract=True):
         dictionary mapping its position (start, end) in the input data to the
         filtered and transformed match that was found at this position.
         """
-        transforms = transforms or [lambda m: m.group(0)]
+        transforms = transforms or [lambda m: m[0]]
         if self.args.stripspace:
             data = re.sub(BR'\s+', B'', data)
         yield from self.matchfilter(

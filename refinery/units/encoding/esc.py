@@ -47,14 +47,14 @@ class esc(Unit):
             return data.decode('UNICODE_ESCAPE').encode(self.codec)
 
         def unescape(match):
-            c = match.group(1)
+            c = match[1]
             if len(c) > 1:
                 if c[0] in B'u':  # unicode
                     return bytes((int(c[3:5], 16), int(c[1:3], 16)))
                 if c[0] in B'x':  # hexadecimal
                     return bytes((int(c[1:3], 16),))
             elif c in B'ux':
-                return c if self.args.greedy else match.group(0)
+                return c if self.args.greedy else match[0]
             return self._UNESCAPE.get(c, c)
         data = re.sub(
             RB'\\(u[a-fA-F0-9]{4}|x[a-fA-F0-9]{2}|.)', unescape, data)
@@ -65,11 +65,11 @@ class esc(Unit):
             return data.decode(self.codec).encode('UNICODE_ESCAPE')
         elif not self.args.hex:
             def escape(match):
-                c = match.group(0)[0]
+                c = match[0][0]
                 return self._ESCAPE.get(c, RB'\x%02x' % c)
         else:
             def escape(match):
-                c = match.group(0)[0]
+                c = match[0][0]
                 return RB'\x%02x' % c
 
         return re.sub(RB'[\x00-\x1F\x22\x27\x5C\x7F-\xFF]', escape, data)

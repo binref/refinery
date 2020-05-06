@@ -32,20 +32,20 @@ class deob_ps1_secstr(Deobfuscator):
         )
 
     def _decrypt_block(self, data, match):
-        if '..' in match.group(5):
-            a, b = [int(x.strip(), 0) for x in match.group(5).split('..')]
+        if '..' in match[5]:
+            a, b = [int(x.strip(), 0) for x in match[5].split('..')]
             key = range(min(a, b), max(a, b) + 1)
             if a > b:
                 key = reversed(key)
             self._secstr.args.key = bytes(bytearray(key))
         else:
-            self._secstr.args.key = self._pack(match.group(5).encode(self.codec))
-        decoded = self._secstr(match.group(2).encode(self.codec))
+            self._secstr.args.key = self._pack(match[5].encode(self.codec))
+        decoded = self._secstr(match[2].encode(self.codec))
         decoded = decoded.decode(self.codec)
         result = F'\n\n{decoded}\n\n'
-        brackets = match.group(6).count(')')
+        brackets = match[6].count(')')
         start = match.start()
-        if match.group(4):
+        if match[4]:
             brackets -= 1
         if brackets <= 0:
             if brackets < 0:

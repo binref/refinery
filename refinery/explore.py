@@ -18,7 +18,7 @@ def highlight(text, expression, color):
     in `text`.
     """
     return expression.sub(
-        lambda m: '\033[' + color + 'm' + m.group(0) + '\033[0m',
+        lambda m: '\033[' + color + 'm' + m[0] + '\033[0m',
         text
     )
 

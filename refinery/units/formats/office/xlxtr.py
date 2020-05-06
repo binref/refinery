@@ -43,10 +43,10 @@ class SheetReference:
         else:
             col = functools.reduce(
                 lambda acc, c: (acc * 26) + c,
-                (ord(c) - 0x40 for c in match.group(1)),
+                (ord(c) - 0x40 for c in match[1]),
                 0
             )
-            row = int(match.group(2), 10)
+            row = int(match[2], 10)
         return row, col
 
     def __init__(self, token):

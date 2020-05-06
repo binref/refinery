@@ -142,11 +142,11 @@ class Ps1StringLiterals:
             for x, y in self.ranges:
                 if x > b: break
                 if (a in range(x, y) or x in range(a, b)) and (x < a or y > b):
-                    return match.group(0)
+                    return match[0]
             result = function(match)
             if result is not None:
                 return result
-            return match.group(0)
+            return match[0]
         return wrapper
 
     def __contains__(self, index):

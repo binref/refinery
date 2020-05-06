@@ -62,7 +62,7 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
         data = super().encode(obj)
         if self.substitute:
             uids = R'''(['"])({})\1'''.format('|'.join(re.escape(u) for u in self.substitute))
-            return re.sub(uids, lambda m: self.substitute[m.group(2)], data)
+            return re.sub(uids, lambda m: self.substitute[m[2]], data)
         return data
 
     def __init__(self, *args, **kwargs):

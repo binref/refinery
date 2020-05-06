@@ -60,12 +60,12 @@ class datefix(Unit):
             m = r.search(data)
             if not m:
                 continue
-            pm = m.group(1)
+            pm = m[1]
             td = timedelta(
-                hours=int(m.group(2)), minutes=int(m.group(3)))
+                hours=int(m[2]), minutes=int(m[3]))
             if pm == '-':
                 td = -td
-            return data[:-len(m.group(0))].strip(), td
+            return data[:-len(m[0])].strip(), td
 
         return data, None
 

@@ -29,7 +29,7 @@ class defang(Unit):
 
     def reverse(self, data):
         def refang(hostname):
-            return hostname.group(0).replace(B'[.]', B'.')
+            return hostname[0].replace(B'[.]', B'.')
         data = defanged.hostname.sub(refang, data)
         data = data.replace(B'[:]//', B'://')
         data = re.sub(B'hxxp(s?)://', B'http\\1://', data)
@@ -38,7 +38,7 @@ class defang(Unit):
     def process(self, data):
         def replace_hostname(hostname, match=True):
             if match:
-                return self._quote(replace_hostname(hostname.group(0), False))
+                return self._quote(replace_hostname(hostname[0], False))
             self.log_info('replace:', hostname)
             host = hostname.rsplit(B':')[0].lower()
             if host in self.WHITELIST:

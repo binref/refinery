@@ -17,8 +17,8 @@ class mimewords(Unit):
     @unicoded
     def process(self, data: str) -> str:
         def replacer(match):
-            self.log_info('encoded mime word:', match.group(0))
-            decoded, = decode_header(match.group(0))
+            self.log_info('encoded mime word:', match[0])
+            decoded, = decode_header(match[0])
             raw, codec = decoded
             return codecs.decode(raw, codec, errors='surrogateescape')
         return re.sub(R"=(?:\?[^\?]*){3}\?=", replacer, data)

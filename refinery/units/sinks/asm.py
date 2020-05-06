@@ -51,7 +51,7 @@ class asm(Unit):
         if not self.args.str:
             return
         for match in re.finditer(BR'([ -~]{5,})\x00?|((?:[ -~]\x00){5,})(?:\x00\x00)?', data):
-            string = match.group(0)
+            string = match[0]
             try:
                 string = string.decode('UTF16-LE') if not string.end \
                     else string.decode('UTF8')

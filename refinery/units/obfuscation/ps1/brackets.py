@@ -27,9 +27,9 @@ class deob_ps1_brackets(Deobfuscator):
         @strlit.outside
         def replacement(match):
             nonlocal repeat
-            if match.group(3) == ')':
+            if match[3] == ')':
                 repeat = True
-                return (match.group(1) or '') + match.group(2)
+                return (match[1] or '') + match[2]
 
         while repeat:
             repeat = False

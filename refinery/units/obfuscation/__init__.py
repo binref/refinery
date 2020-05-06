@@ -38,7 +38,7 @@ def outside(*exceptions):
                 cursor = 0
                 for m in re.finditer(exclusion, data, re.DOTALL):
                     out.write(method(self, data[cursor:m.start()]))
-                    out.write(m.group(0))
+                    out.write(m[0])
                     cursor = m.end()
                 out.write(method(self, data[cursor:]))
                 return out.getvalue()

@@ -96,7 +96,7 @@ class dump(Unit):
                 re.IGNORECASE
             )
             if xtype_match:
-                return xtype_match.group(1)
+                return xtype_match[1]
             if len(mext) < 6 and re.match('[a-z]+', mext):
                 return mext
             return default

@@ -31,10 +31,10 @@ class dncfx(Unit):
         class IntegerAssignment:
             def __init__(self, match):
                 self.offset = match.start()
-                self.value, = struct.unpack('<I', match.group(1))
+                self.value, = struct.unpack('<I', match[1])
 
         def get_size(match):
-            ins = match.group(1)
+            ins = match[1]
             fmt = '<B' if ins[0] == 0x1F else '<I'
             result, = struct.unpack(fmt, ins[-struct.calcsize(fmt):])
             return result

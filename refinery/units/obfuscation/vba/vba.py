@@ -8,7 +8,7 @@ from ... import Unit
 class deob_vba_chr_literals(Unit):
     def process(self, data):
         def _chr(m):
-            code = int(m.group(1), 0)
+            code = int(m[1], 0)
             if code == 34:
                 return B'""""'
             return B'"%s"' % chr(code).encode('unicode_escape')

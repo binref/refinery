@@ -36,7 +36,7 @@ class deob_vba_dummy_variables(Deobfuscator):
 
         for k, current_line in enumerate(lines):
             try:
-                name = pattern.match(current_line).group(1)
+                name = pattern.match(current_line)[1]
             except AttributeError:
                 continue
             used_somewhere = False
