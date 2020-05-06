@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Current Build
+- The `netbios` unit was added.
+- The `stretch` unit was added.
+
 ## Version 0.2.0
 - Test coverage was increased
 - The `recode` unit can now autodetect input encoding.
