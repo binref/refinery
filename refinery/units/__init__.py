@@ -203,6 +203,7 @@ class arg(Argument):
         bound: Union[omit, Tuple[int, int]] = omit,
         help : Union[omit, str] = omit,
         dest : Union[omit, str] = omit,
+        metavar : Optional[str] = None,
         group: Optional[str] = None,
     ) -> Argument:
         """
@@ -212,7 +213,7 @@ class arg(Argument):
         if bound is not arg.omit:
             lower, upper = bound
             nt = nt[lower:upper]
-        return arg(*args, group=group, help=help, dest=dest, type=nt, metavar='N')
+        return arg(*args, group=group, help=help, dest=dest, type=nt, metavar=metavar or 'N')
 
     @staticmethod
     def option(
