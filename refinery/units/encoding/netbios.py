@@ -16,23 +16,23 @@ class netbios(Unit):
             raise ValueError("The key must be a binary string of length exactly 1")
         super().__init__(key=key[0])
 
-    def process(self, data):
+    def reverse(self, data):
         result = bytearray(2 * len(data))
         for k, byte in enumerate(data):
             hi, lo = byte >> 4, byte & 15
-            result[2 * k + 1] = lo + self.args.key
             result[2 * k + 0] = hi + self.args.key
+            result[2 * k + 1] = lo + self.args.key
         return result
 
-    def reverse(self, data):
+    def process(self, data):
         def merge(it):
             while True:
                 try:
-                    lo = next(it) - self.args.key
                     hi = next(it) - self.args.key
+                    lo = next(it) - self.args.key
                     if hi not in range(16) or lo not in range(16):
-                        raise ValueError('Invalid character encoding detected.')
-                    yield hi << 4 | lo
+                        raise ValueError(F'Invalid character encoding detected: hi={hi:X}, lo={lo:X}.')
+                    yield (hi << 4) | lo
                 except StopIteration:
                     break
         return bytearray(merge(iter(data)))
