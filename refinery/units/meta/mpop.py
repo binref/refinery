@@ -38,6 +38,12 @@ class mpop(Unit):
             except StopIteration:
                 invisible.append(chunk)
                 break
+        try:
+            next(remaining)
+        except StopIteration:
+            pass
+        else:
+            raise ValueError('Not all variables could be assigned.')
 
         for chunk in itertools.chain(invisible, it):
             chunk.meta.update(variables)
