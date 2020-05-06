@@ -100,13 +100,14 @@ __TLDS = R'(?i:{possible_tld})(?!(?:{dealbreakers}))'.format(
     ])
 )
 
+# see https://tools.ietf.org/html/rfc2181#section-11
 format_domain_normal = (
-    R'(?:[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{0,256}}?\.){repeat}'
-    R'[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{1,256}}\.{tlds}'
+    R'(?:[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{0,62}}?\.){repeat}'
+    R'[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{1,62}}\.{tlds}'
 )
 format_domain_defang = (
-    R'(?:[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{0,256}}?(?:\[\.\]|\.)){repeat}'
-    R'[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{1,256}}(?:\[\.\]|\.){tlds}'
+    R'(?:[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{0,62}}?(?:\[\.\]|\.)){repeat}'
+    R'[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{1,62}}(?:\[\.\]|\.){tlds}'
 )
 
 pattern_domain = format_domain_normal.format(repeat='{0,20}', tlds=__TLDS)
