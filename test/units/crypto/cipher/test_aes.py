@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from ... import TestUnitBase
 
-from refinery.lib.loader import load_commandline as L, resolve
+from refinery.lib.loader import load_detached as L, resolve
 
 
 class TestAES(TestUnitBase):

@@ -5,7 +5,7 @@ import json
 from .. import TestBase
 from io import BytesIO
 
-from refinery.lib.loader import load_commandline as L
+from refinery.lib.loader import load_detached as L
 
 
 class TestGrabBagExamples(TestBase):

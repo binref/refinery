@@ -103,3 +103,11 @@ def load_commandline(command: str) -> Any:
     import shlex
     module, *arguments = shlex.split(command)
     return load(module, *arguments)
+
+
+def load_detached(command: str) -> Any:
+    """
+    Returns a unit as it would be loaded from a given command line string,
+    except that the unit has been detached from the default log level.
+    """
+    return load_commandline(command).detach()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from . import TestMetaBase
-from refinery.lib.loader import load_commandline as L
+from refinery.lib.loader import load_detached as L
 
 
 class TestScope(TestMetaBase):

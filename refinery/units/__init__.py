@@ -1240,6 +1240,16 @@ class Unit(metaclass=Executable, abstract=True):
         # arguments passed to them (see PEP 468).
         self.args = DelayedArgumentProxy(Namespace(**keywords), list(keywords))
 
+    def detach(self):
+        """
+        When a unit is created using the `refinery.units.Unit.assemble` method, it is attached to a
+        logger by default (in less abstract terms, the `refinery.units.Unit.log_level` property is
+        set to a positive value). This method detaches the unit from its logger, which also means that
+        any exceptions that occur during runtime will be raised to the caller.
+        """
+        self.log_level = LogLevel.DETACHED
+        return self
+
     @classmethod
     def run(cls, argv=None, stream=None) -> None:
         """

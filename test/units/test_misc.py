@@ -9,7 +9,7 @@ from flake8.api import legacy as flake8
 
 from . import TestUnitBase
 
-from refinery.lib.loader import get_all_entry_points, resolve, load_commandline as L
+from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L
 from refinery.units import Unit
 
 
@@ -164,6 +164,16 @@ class TestMetaProperties(TestUnitBase):
     def test_multiple_calls(self):
         result = B'' | L('emit FOO BAR BAZ [') | L('rex . [') | L('pick 2 ]]')
         self.assertEqual(result, B'ORZ')
+
+    def test_loglevel_detached_in_code_01(self):
+        unit = self.ldu('ccp', 'var:x')
+        with self.assertRaises(Exception):
+            unit(B'y')
+
+    def test_loglevel_detached_in_code_02(self):
+        unit = L('ccp var:x')
+        with self.assertRaises(Exception):
+            unit(B'y')
 
 
 class TestSimpleInvertible(TestUnitBase):

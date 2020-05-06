@@ -3,7 +3,7 @@
 import io
 
 from refinery.lib.frame import FrameUnpacker
-from refinery.lib.loader import load_commandline as L
+from refinery.lib.loader import load_detached as L
 
 from .. import TestBase
 

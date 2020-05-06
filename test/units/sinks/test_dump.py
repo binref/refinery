@@ -11,7 +11,7 @@ import zlib
 from contextlib import contextmanager
 
 from .. import TestUnitBase
-from refinery.lib.loader import load_commandline as L
+from refinery.lib.loader import load_detached as L
 
 
 @contextmanager
