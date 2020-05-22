@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from .. import arg, Unit
+from ...lib.tools import isbuffer
 
 from os.path import isfile
 from glob import glob
@@ -16,7 +17,9 @@ class fread(Unit):
     def __init__(self,
         *filenames: arg(metavar='FILEMASK', nargs='+', type=str, help=(
             'A list of file masks (with wildcard patterns). Each matching '
-            'file will be read from disk and emitted.'
+            'file will be read from disk and emitted. In addition to glob '
+            'patterns, the file mask can include format string expressions '
+            'which will be substituted from the current meta variables.'
         )),
         size: arg.number('-s', help=(
             'If specified, files will be read in chunks of size N and each '
@@ -60,7 +63,22 @@ class fread(Unit):
                 out.truncate()
 
     def process(self, data):
+        class metamap(dict):
+            def __missing__(_, key): # noqa
+                try:
+                    value = data[key]
+                    if isinstance(value, (str, int, float)):
+                        return value
+                    if isbuffer(value):
+                        return value.decode(self.codec)
+                except Exception:
+                    pass
+                return F'{{{key}}}'
+
+        metamap = metamap()
+
         for mask in self.args.filenames:
+            mask = mask.format_map(metamap)
             self.log_debug('scanning for mask:', mask)
             for filename in glob(mask, recursive=True):
                 if not isfile(filename):
