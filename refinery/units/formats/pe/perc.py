@@ -100,7 +100,10 @@ class perc(Unit):
                 if e.struct.DataIsDirectory:
                     yield from self._search(pe, e.directory, needles, level + 1, new_path)
                 elif needles:
-                    yield pe.get_data(e.data.struct.OffsetToData, e.data.struct.Size)
+                    yield dict(
+                        data=pe.get_data(e.data.struct.OffsetToData, e.data.struct.Size),
+                        path='/'.join(new_path[1:])
+                    )
                 else:
                     yield '/'.join(new_path[1:]).encode('UTF8')
 
