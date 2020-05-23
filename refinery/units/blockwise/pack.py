@@ -26,12 +26,14 @@ class pack(BlockTransformation):
             'accepted.')) = 0,
         hexdump : arg.switch('-x', help='Parse only pairs of hexadecimal digits surrounded by whitespace.') = False,
         prefix  : arg.switch('-r', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.') = False,
+        strict  : arg.switch('-s', help='Only parse integers that fit in one block of the given block size.') = False,
         bigendian=False, blocksize=1
     ):
         super().__init__(
             base=0x10 if hexdump else base,
             hexdump=hexdump,
             prefix=prefix,
+            strict=strict,
             bigendian=bigendian,
             blocksize=blocksize
         )
@@ -60,6 +62,16 @@ class pack(BlockTransformation):
             yield prefix + converter.reverse(n)
 
     def process(self, data):
+        def intb(integers):
+            for n in integers:
+                if self.args.base == 0 and n.startswith(B'0'):
+                    n = B'0o' + n
+                N = int(n, self.args.base)
+                M = N & self.fmask
+                if self.args.strict and M != N:
+                    continue
+                yield M
+
         if self.args.hexdump:
             pattern = re.compile(
                 BR'(?:\W|\s|^)(?:0x)?([0-9a-f]{%i})h?(?=\s|$)' % (self.args.blocksize * 2),
@@ -72,6 +84,4 @@ class pack(BlockTransformation):
         else:
             pattern = re.compile(B'[-+]?[0-9a-%c]{1,20}' % (0x57 + self.args.base), re.IGNORECASE)
 
-        items = pattern.findall(data)
-        items = [int(n, self.args.base) & self.fmask for n in items]
-        return self.unchunk(items)
+        return self.unchunk(intb(pattern.findall(data)))
