@@ -130,3 +130,10 @@ class TestPack(TestUnitBase):
         for size in (20, 200, 400):
             data = self.generate_random_buffer(size)
             self.assertEqual(pack(dump(data)), data)
+
+    def test_pack_hexint_array(self):
+        pack = self.load()
+        self.assertEqual(
+            pack(B'0x90,0x90,0x34,0x65,0xAF,0xFD,0x01,0x02'),
+            bytes.fromhex('90 90 34 65 AF FD 01 02')
+        )
