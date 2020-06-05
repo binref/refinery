@@ -64,7 +64,7 @@ class pack(BlockTransformation):
     def process(self, data):
         def intb(integers):
             for n in integers:
-                if self.args.base == 0 and n.startswith(B'0'):
+                if self.args.base == 0 and n.startswith(B'0') and n[1:].isdigit():
                     n = B'0o' + n
                 N = int(n, self.args.base)
                 M = N & self.fmask
