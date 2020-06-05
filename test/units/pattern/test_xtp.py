@@ -76,3 +76,7 @@ class TestPatternExtractor(TestUnitBase):
 
     def test_email_with_symbols(self):
         self.assertEqual(self.load('email', filter=True)(B'.###/.test@host.com.Q@aVw5w.tR.'), B'test@host.com')
+
+    def test_url_with_tilde(self):
+        url = B'http://www.htz.klmp.cv.gov.edu/~drjay/obbx/grades.txt'
+        self.assertEqual(self.load('url')(url), url)

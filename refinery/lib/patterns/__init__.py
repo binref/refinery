@@ -137,7 +137,7 @@ pattern_url = ''.join([
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
     pattern_socket + '?',
-    R'(?:[/?#][/_=?&.,\w\%\-]*)?)'
+    R'(?:[/?#][~/_=?&.,\w\%\-]*)?)'
 ])
 
 pattern_url_df = ''.join([
