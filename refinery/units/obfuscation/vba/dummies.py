@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import collections
 import re
 
 from .. import Deobfuscator
@@ -9,7 +10,7 @@ from ....lib.patterns import formats
 class deob_vba_dummy_variables(Deobfuscator):
     def deobfuscate(self, data):
         lines = data.splitlines(keepends=False)
-        keeps = {}
+        names = collections.defaultdict(list)
 
         def might_be_used_in(name, line):
             # avoid finding the name within a string literal
@@ -34,16 +35,21 @@ class deob_vba_dummy_variables(Deobfuscator):
             flags=re.IGNORECASE
         )
 
-        for k, current_line in enumerate(lines):
+        for k, line in enumerate(lines):
             try:
-                name = pattern.match(current_line)[1]
-            except AttributeError:
+                name = pattern.match(line)[1]
+            except (AttributeError, TypeError):
                 continue
-            used_somewhere = False
-            for j, line in enumerate(lines):
-                if might_be_used_in(name, line):
-                    used_somewhere = keeps[j] = True
-            if not used_somewhere and not keeps.get(k, False):
-                keeps[k] = False
+            names[name].append(k)
 
-        return '\n'.join(line for k, line in enumerate(lines) if keeps.get(k, True))
+        for line in lines:
+            while True:
+                for name in names:
+                    if might_be_used_in(name, line):
+                        del names[name]
+                        break
+                else:
+                    break
+
+        return '\n'.join(line for k, line in enumerate(lines) if not any(
+            k in rows for rows in names.values()))
