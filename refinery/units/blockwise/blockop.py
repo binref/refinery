@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from ...lib.argformats import PythonExpression
-from . import arg, ArithmeticUnit, NoNumpy
+from . import ArithmeticUnit, NoNumpy
 
 
 class blockop(ArithmeticUnit):

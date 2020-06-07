@@ -290,20 +290,25 @@ class arg(Argument):
         default = pt.default
         guessed_pos_args = []
         guessed_kwd_args = dict(dest=pt.name, guess=True)
+        annotation = pt.annotation
 
-        if pt.annotation is not pt.empty:
-            if isinstance(pt.annotation, Argument):
-                if pt.annotation.kwargs.get('dest', pt.name) != pt.name:
+        if isinstance(annotation, str):
+            try: annotation = eval(annotation)
+            except Exception: pass
+
+        if annotation is not pt.empty:
+            if isinstance(annotation, Argument):
+                if annotation.kwargs.get('dest', pt.name) != pt.name:
                     raise ValueError(
                         F'Incompatible argument destination specified; parameter {pt.name} '
-                        F'was annotated with {pt.annotation!r}.')
-                guessed_pos_args = pt.annotation.args
-                guessed_kwd_args.update(pt.annotation.kwargs)
+                        F'was annotated with {annotation!r}.')
+                guessed_pos_args = annotation.args
+                guessed_kwd_args.update(annotation.kwargs)
                 guessed_kwd_args['guess'] = False
-                guessed_kwd_args['group'] = pt.annotation.group
-            elif isinstance(pt.annotation, type):
-                if not issubclass(pt.annotation, bool) and needs_type(guessed_kwd_args):
-                    guessed_kwd_args.update(type=get_argp_type(pt.annotation))
+                guessed_kwd_args['group'] = annotation.group
+            elif isinstance(annotation, type):
+                if not issubclass(annotation, bool) and needs_type(guessed_kwd_args):
+                    guessed_kwd_args.update(type=get_argp_type(annotation))
                 elif not isinstance(default, bool):
                     raise ValueError('Default value for boolean arguments must be provided.')
 
@@ -1267,8 +1272,7 @@ class Unit(metaclass=Executable, abstract=True):
             except ArgparseError as ap:
                 ap.parser.error_commandline(str(ap))
             except Exception as msg:
-                raise
-                cls._output(F'initialization failed:', msg)
+                cls._output('initialization failed:', msg)
                 return
 
             try:
