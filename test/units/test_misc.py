@@ -104,6 +104,8 @@ class TestMetaProperties(TestUnitBase):
             'E701',  # Multiple statements on one line (colon)
             'E704',  # Multiple statements on one line (def)
             'W503',  # Line break occurred before a binary operator
+            'F722',  # syntax error in forward annotation
+            'F821',  # undefined name
         ], max_line_length=140)
         report = rules.check_files(glob(
             os.path.join(root, 'refinery', '**', '*.py'), recursive=True))

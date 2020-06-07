@@ -167,7 +167,7 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
         super().__init__(key, **keywords)
 
     def _get_cipher_instance(self, **optionals) -> Any:
-        self.log_info(F'encryption key:', self.key.hex())
+        self.log_info('encryption key:', self.key.hex())
         return self.stdcipher.new(key=self.key, **optionals)
 
     def encrypt(self, data: bytes) -> bytes:
@@ -207,5 +207,5 @@ class LatinStreamCipher(StandardCipherUnit):
         super().__init__(key, nonce=nonce)
 
     def _get_cipher_instance(self, **optionals) -> Any:
-        self.log_info(F'one-time nonce:', self.args.nonce.hex())
+        self.log_info('one-time nonce:', self.args.nonce.hex())
         return super()._get_cipher_instance(nonce=self.args.nonce)

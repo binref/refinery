@@ -27,7 +27,7 @@ class secstr(Unit):
         self, key: arg(
             help='Secure string encryption 16-byte AES key; the default are the bytes from 1 to 16.'
         ) = bytes(range(1, 17)),
-        iv: arg('-I', help=F'Optionally specify an IV to use for encryption.') = None
+        iv: arg('-I', help='Optionally specify an IV to use for encryption.') = None
     ):
         if len(key) != 0x10:
             raise ValueError('The encryption key has to be 16 bytes long.')

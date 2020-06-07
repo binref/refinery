@@ -374,6 +374,7 @@ class TimeSpan(FixedSize):
 
 class DateTime(FixedSize):
     format = 'Q'
+
     @classmethod
     def parser(x):
         hi_byte = x >> 56

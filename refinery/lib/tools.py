@@ -76,7 +76,7 @@ def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
 
     def bulletpoint(line):
         wrapped = textwrap.wrap(line, width - 2, **kw)
-        wrapped[1:] = ['  {}'.format(l) for l in wrapped[1:]]
+        wrapped[1:] = ['  {}'.format(line) for line in wrapped[1:]]
         return '\n'.join(wrapped)
 
     def fitted(paragraphs):

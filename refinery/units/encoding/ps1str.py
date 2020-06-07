@@ -56,7 +56,7 @@ class ps1str(Unit):
 
         if quote == '"':
             if re.search(R'(?<!`)\$(?=[\w\(\{\$\?\^:])', data):
-                self.log_warn(F'Loss of information: double quoted string contains variable substitutions.')
+                self.log_warn('Loss of information: double quoted string contains variable substitutions.')
             data = re.sub('`.', unescape, data)
 
         return data.replace(quote + quote, quote)
