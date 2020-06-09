@@ -56,7 +56,7 @@ class ppxml(Unit):
     ):
         super().__init__(indent=indent, header=header)
 
-    def process(self, data: str) -> str:
+    def process(self, data):
 
         pad = self.args.indent * ' '
         etm = {}
