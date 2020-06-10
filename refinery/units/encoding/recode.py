@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import codecs
+import enum
 
+from ...lib.enumeration import makeinstance
 from .. import arg, Unit
+
+
+class Handler(enum.Enum):
+    STRICT = 'strict'
+    IGNORE = 'ignore'
+    REPLACE = 'replace'
+    XMLREF = 'xmlcharrefreplace'
+    BACKSLASH = 'backslashreplace'
+    SURROGATE = 'surrogateescape'
 
 
 class recode(Unit):
@@ -14,9 +25,21 @@ class recode(Unit):
     def __init__(
         self,
         decode: arg(metavar='decode-as', type=str, help='Input encoding; Guess encoding by default.') = None,
-        encode: arg(metavar='encode-as', type=str, help=F'Output encoding; The default is {Unit.codec}.') = Unit.codec
+        encode: arg(metavar='encode-as', type=str, help=F'Output encoding; The default is {Unit.codec}.') = Unit.codec,
+        decerr: arg.option('-d', choices=Handler,
+            help='Specify an error handler for decoding.') = None,
+        encerr: arg.option('-e', choices=Handler,
+            help='Specify an error handler for encoding.') = None,
+        errors: arg.option('-E', choices=Handler, help=(
+            'Specify an error handler for both encoding and decoding. '
+            'The possible choices are the following: {choices}')) = None,
     ):
-        super().__init__(decode=decode, encode=encode)
+        super().__init__(
+            decode=decode,
+            encode=encode,
+            decerr=makeinstance(Handler, decerr or errors or 'STRICT').value,
+            encerr=makeinstance(Handler, encerr or errors or 'STRICT').value
+        )
 
     def detect(self, data):
         mv = memoryview(data)
@@ -33,7 +56,7 @@ class recode(Unit):
         if codec is None:
             codec = self.detect(data)
         return codecs.encode(
-            codecs.decode(data, codec, errors='surrogateescape'),
+            codecs.decode(data, codec, errors=self.args.decerr),
             self.args.encode,
-            errors='surrogateescape'
+            errors=self.args.encerr
         )
