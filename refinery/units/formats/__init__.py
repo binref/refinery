@@ -45,9 +45,9 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(self, *paths: arg(
         metavar='path', nargs='*', default=['*'], type=pathspec, help=(
-            'A path from which data is to be extracted. Each item is returned as a separate o'
-            'utput of this unit. Paths may contain wildcards. The default is a single asterix'
-            ', which means that every item will be extracted.')),
+            'Wildcard pattern for the name of the item to be extracted. Each item is returned'
+            ' as a separate output of this unit. Paths may contain wildcards. The default is '
+            'a single asterix, which means that every item will be extracted.')),
         list: arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join: arg.switch('-j', help='Join path names from container with previous path names.') = False,
     ):
