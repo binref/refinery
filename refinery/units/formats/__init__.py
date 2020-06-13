@@ -5,6 +5,9 @@ A package containing several sub-packages for various data formats.
 """
 import fnmatch
 import re
+import os
+
+from typing import ByteString, Iterable, Callable, Union
 
 from .. import arg, Unit
 from ...lib.argformats import virtualaddr
@@ -18,6 +21,21 @@ def pathspec(expression):
     return '/'.join(re.split(R'[\\\/]', expression))
 
 
+class UnpackResult:
+
+    def get_data(self) -> ByteString:
+        if callable(self._data):
+            self._data = self._data()
+        return self._data
+
+    def get_path(self) -> str:
+        return self._path
+
+    def __init__(self, path: str, data: Union[ByteString, Callable[[], ByteString]]):
+        self._path = path
+        self._data = data
+
+
 class EndOfStringNotFound(ValueError):
     def __init__(self):
         super().__init__('end of string could not be determined')
@@ -27,12 +45,13 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(self, *paths: arg(
         metavar='path', nargs='*', default=['*'], type=pathspec, help=(
-            'A path from which data is to be extracted. Each item is returned '
-            'as a separate output of this unit. Paths may contain wildcards. '
-            'The default is a single asterix, which means that every item will '
-            'be extracted.')
-    )):
-        super().__init__(paths=paths)
+            'A path from which data is to be extracted. Each item is returned as a separate o'
+            'utput of this unit. Paths may contain wildcards. The default is a single asterix'
+            ', which means that every item will be extracted.')),
+        list: arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
+        join: arg.switch('-j', help='Join path names from container with previous path names.') = False,
+    ):
+        super().__init__(paths=paths, list=list, join=join)
 
     def _check_reachable(self, path: str) -> bool:
         for pattern in self.args.path:
@@ -43,6 +62,37 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def _check_path(self, path: str) -> bool:
         return any(fnmatch.fnmatch(path, pattern) for pattern in self.args.paths)
+
+    def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
+        raise NotImplementedError
+
+    def process(self, data: ByteString) -> ByteString:
+
+        if self.args.join:
+            try:
+                root = data['path']
+            except (KeyError, TypeError):
+                root = ''
+
+        for result in self.unpack(data):
+            path = result.get_path()
+
+            if not self._check_path(path):
+                continue
+
+            if self.args.join:
+                path = os.path.join(root, path)
+
+            if self.args.list:
+                yield path.encode(self.codec)
+                continue
+            else:
+                self.log_info(path)
+
+            yield dict(
+                data=result.get_data(),
+                path=path
+            )
 
 
 class MemoryExtractorUnit(Unit, abstract=True):

@@ -3,7 +3,7 @@
 from email.parser import BytesParser
 from extract_msg.message import Message
 
-from . import PathExtractorUnit
+from . import PathExtractorUnit, UnpackResult
 
 
 class EmailPart:
@@ -60,7 +60,7 @@ class xtmail(PathExtractorUnit):
         msg = BytesParser().parsebytes(data)
         return [EmailPart(part.get_filename(), part.get_payload(decode=True)) for part in msg.walk()]
 
-    def process(self, data):
+    def unpack(self, data):
         try:
             parts = self._get_parts_outlook(data)
         except Exception as e:
@@ -70,9 +70,6 @@ class xtmail(PathExtractorUnit):
         self._normalize_names(parts)
 
         for part in parts:
-            if part:
-                if self._check_path(part.name):
-                    self.log_info(part.name)
-                    yield dict(data=part.data, path=part.name)
-                else:
-                    self.log_debug(part.name)
+            if not part:
+                continue
+            yield UnpackResult(part.name, part.data)
