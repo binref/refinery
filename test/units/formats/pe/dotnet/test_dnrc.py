@@ -3,14 +3,11 @@
 from .... import TestUnitBase
 
 
-class TestDotNetDeserializer(TestUnitBase):
+class TestDotNetResourceExtractor(TestUnitBase):
 
     def test_real_world_01(self):
-        unit = self.load('f0787dcf-8df6-f70')
-        sample = self.download_from_malshare('82831deadbb41d00df1f45c1b1e7cb89901531ab784a55171f11c891f92fffaf')
-        self.assertTrue(unit(sample).startswith(bytes.fromhex('89 50 4E 47 0D 0A 1A 0A')))
-
-    def test_real_world_02(self):
-        unit = self.load('b091b52a-98c2-06')
-        sample = self.download_from_malshare('82831deadbb41d00df1f45c1b1e7cb89901531ab784a55171f11c891f92fffaf')
-        self.assertEqual(unit(sample), B'29')
+        unit = self.load('70218dfd-5f9f-d4*')
+        data = self.download_from_malshare('82831deadbb41d00df1f45c1b1e7cb89901531ab784a55171f11c891f92fffaf')
+        data = unit(data)
+        self.assertTrue(data.startswith(b'\xCE\xCA\xEF\xBE'))
+        self.assertIn(b'PublicKeyToken=b03f5f7f11d50a3a', data)
