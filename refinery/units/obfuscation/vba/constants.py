@@ -19,6 +19,6 @@ class deob_vba_constants(Deobfuscator):
         constants = {}
         data = '\n'.join(extract_constants(data.splitlines(keepends=False)))
         for name, value in constants.items():
-            data = data.replace(name, value)
+            data = re.sub(RF'\b{re.escape(name)!s}\b', value, data)
 
         return data
