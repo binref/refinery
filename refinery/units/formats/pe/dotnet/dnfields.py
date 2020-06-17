@@ -57,4 +57,4 @@ class dnfields(PathExtractorUnit):
             totalsize = count * size
             self.log_info(lambda: F'field {k:0{iwidth}d}: {field.Name} of type {typename}, count: {count}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
-            yield UnpackResult(field.Name, lambda: data[offset:offset + totalsize])
+            yield UnpackResult(field.Name, lambda t=offset, s=totalsize: data[t:t + s])

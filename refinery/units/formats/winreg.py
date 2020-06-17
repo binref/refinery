@@ -20,7 +20,7 @@ class winreg(PathExtractorUnit):
             return
         for value in key.values():
             vpath = F'{here}/{value.name()}'
-            yield UnpackResult(vpath, lambda: value.raw_data())
+            yield UnpackResult(vpath, lambda v=value: v.raw_data())
         for subkey in key.subkeys():
             yield from self._walk(subkey, *path, subkey.name())
 

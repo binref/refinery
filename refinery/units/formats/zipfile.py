@@ -16,4 +16,4 @@ class xtzip(PathExtractorUnit):
                 for info in archive.infolist():
                     if info.is_dir():
                         continue
-                    yield UnpackResult(info.filename, lambda: archive.read(info.filename))
+                    yield UnpackResult(info.filename, lambda info=info: archive.read(info.filename))
