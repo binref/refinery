@@ -74,25 +74,31 @@ class PathExtractorUnit(Unit, abstract=True):
             except (KeyError, TypeError):
                 root = ''
 
+        results = []
+
         for result in self.unpack(data):
-            path = result.get_path()
+            if self._check_path(result.get_path()):
+                if not self.args.list:
+                    result.get_data()
+                results.append(result)
 
-            if not self._check_path(path):
-                continue
-
-            if self.args.join:
-                path = os.path.join(root, path)
-
-            if self.args.list:
-                yield path.encode(self.codec)
-                continue
-            else:
-                self.log_info(path)
-
-            yield dict(
-                data=result.get_data(),
-                path=path
-            )
+        for pattern in self.args.paths:
+            self.log_debug('checking pattern:', pattern)
+            for result in results:
+                path = result.get_path()
+                if not fnmatch.fnmatch(path, pattern):
+                    continue
+                if self.args.join:
+                    path = os.path.join(root, path)
+                if self.args.list:
+                    yield path.encode(self.codec)
+                    continue
+                else:
+                    self.log_info(path)
+                yield dict(
+                    data=result.get_data(),
+                    path=path
+                )
 
 
 class MemoryExtractorUnit(Unit, abstract=True):
