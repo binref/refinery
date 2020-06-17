@@ -5,7 +5,7 @@ Pattern matching based extraction and substitution units.
 """
 import re
 
-from typing import Iterable, Optional, Callable, Union, ByteString
+from typing import Iterable, Optional, Callable, Union, ByteString, Dict
 from itertools import islice
 from hashlib import blake2b
 
@@ -172,10 +172,11 @@ class PatternExtractorBase(Unit, abstract=True):
                 for match in pattern.finditer(zm[::2]):
                     yield match
 
-    def matchfilter(self, hits: Iterable[ByteString]) -> Iterable[ByteString]:
+    def _prefilter(self, matches: Iterable[re.Match]) -> Iterable[re.Match]:
         barrier = set()
         taken = 0
-        for hit in hits:
+        for match in matches:
+            hit = memoryview(match[0])
             if not hit or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
                 continue
             if self.args.unique:
@@ -183,37 +184,12 @@ class PatternExtractorBase(Unit, abstract=True):
                 if uid in barrier:
                     continue
                 barrier.add(uid)
-            yield hit
+            yield match
             taken += 1
             if not self.args.longest and taken >= self.args.take:
                 break
 
-    def matches_filtered(
-        self,
-        data: ByteString,
-        pattern: Union[ByteString, re.Pattern],
-        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None
-    ) -> Iterable[ByteString]:
-        """
-        This is a wrapper for `AbstractRegexUint.matches` which filters the
-        results according to the given commandline arguments. Returns a
-        dictionary mapping its position (start, end) in the input data to the
-        filtered and transformed match that was found at this position.
-        """
-        transforms = transforms or [lambda m: m[0]]
-        if self.args.stripspace:
-            data = re.sub(BR'\s+', B'', data)
-        yield from self.matchfilter(
-            transform(match) if callable(transform) else transform
-            for match in self.matches(memoryview(data), pattern)
-            for transform in transforms
-        )
-
-    def matches_finalize(self, matches: Iterable[ByteString]) -> Iterable[ByteString]:
-        """
-        Returns the final result of a dictionary of matches according to the
-        settings provided via the command line interface.
-        """
+    def _postfilter(self, matches: Iterable[re.Match]) -> Iterable[re.Match]:
         result = matches
         if self.args.longest and self.args.take and self.args.take is not INF:
             try:
@@ -221,7 +197,7 @@ class PatternExtractorBase(Unit, abstract=True):
             except TypeError:
                 result = list(result)
                 length = len(result)
-            indices = sorted(range(length), key=lambda k: len(result[k]), reverse=True)
+            indices = sorted(range(length), key=lambda k: len(result[k][0]), reverse=True)
             for k in sorted(islice(indices, abs(self.args.take))):
                 yield result[k]
         elif self.args.longest:
@@ -229,19 +205,33 @@ class PatternExtractorBase(Unit, abstract=True):
         elif self.args.take:
             yield from islice(result, abs(self.args.take))
 
-    def matches_processed(
+    def matchfilter(self, matches: Iterable[re.Match]) -> Iterable[re.Match]:
+        yield from self._postfilter(self._prefilter(matches))
+
+    def matches_filtered(
         self,
         data: ByteString,
         pattern: Union[ByteString, re.Pattern],
-        transforms: Optional[Iterable[Union[ByteString, Callable[[re.Match], ByteString]]]] = None
-    ) -> Iterable[ByteString]:
+        *transforms: Optional[Iterable[Callable[[re.Match], Optional[Union[Dict, ByteString]]]]]
+    ) -> Iterable[Union[Dict, ByteString]]:
         """
-        A convenience function that acts as the composition of:
+        This is a wrapper for `AbstractRegexUint.matches` which filters the
+        results according to the given commandline arguments. Returns a
+        dictionary mapping its position (start, end) in the input data to the
+        filtered and transformed match that was found at this position.
+        """
+        def funcify(t):
+            def const(m): return t
+            return t if callable(t) else const
 
-        1. `PatternExtractor.matches_filtered` and
-        2. `PatternExtractor.matches_finalize`
-        """
-        yield from self.matches_finalize(self.matches_filtered(data, pattern, transforms))
+        transforms = [funcify(f) for f in transforms] or [lambda m: m[0]]
+
+        if self.args.stripspace:
+            data = re.sub(BR'\s+', B'', data)
+        for match in self.matchfilter(self.matches(memoryview(data), pattern)):
+            for transform in transforms:
+                t = transform(match)
+                if t is not None: yield t
 
 
 class PatternExtractor(PatternExtractorBase, abstract=True):

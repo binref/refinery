@@ -35,7 +35,7 @@ class TestArithmeticUnits(TestUnitBase):
         self.assertEqual(xor(bytes(0x54)), 28 * B'\x54\xB0\x12')
 
     def test_argument_reset(self):
-        xor = self.ldu('xor', 'inc:ev:2')
+        xor = self.ldu('xor', 'inc:ev:1+1')
         self.assertEqual(xor(bytes(5)), bytes(range(2, 7)))
         self.assertEqual(xor(bytes(5)), bytes(range(2, 7)))
 

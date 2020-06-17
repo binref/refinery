@@ -76,7 +76,7 @@ from itertools import cycle, count, chain
 from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper
-from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable
+from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable, ByteString
 
 from ..lib.frame import Chunk
 from ..lib.tools import isbuffer
@@ -148,10 +148,10 @@ class PythonExpression:
             raise ArgumentTypeError(F'The provided expression could not be parsed: {definition!s}')
 
         if type(next(nodes)) != ast.Module:
-            raise ArgumentTypeError('unknown error parsing the expression')
+            raise ArgumentTypeError(F'unknown error parsing the expression: {definition!s}')
 
         if type(next(nodes)) != ast.Expr:
-            raise ArgumentTypeError('operation string is not a valid Python expression')
+            raise ArgumentTypeError(F'not a valid Python expression: {definition!s}')
 
         nodes = list(nodes)
         types = set(type(node) for node in nodes)
@@ -643,13 +643,18 @@ class DelayedNumbinArgument(DelayedArgument):
         except Exception:
             return self._mbin(expression)
 
-    @handler.register('ev', final=True)
-    def ev(self, expression: str) -> Iterable[int]:
+    @handler.register('ev')
+    def ev(self, expression: Union[str, ByteString]) -> Iterable[int]:
         """
         Final modifier `ev:expression`; uses a `refinery.lib.argformats.PythonExpression`
         parser to process expressions that may contain the variable `N` whose value will be
         the size of the input data.
         """
+        if not isinstance(expression, str):
+            try:
+                expression = expression.decode('ascii')
+            except AttributeError:
+                return expression
         ev = self._EV_PARSER(expression)
         try:
             return self._iter(ev())

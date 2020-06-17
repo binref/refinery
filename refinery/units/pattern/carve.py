@@ -59,7 +59,7 @@ class carve(PatternExtractor):
         self.decoder = decoder
 
     def process(self, data):
-        it = iter(self.matches_processed(memoryview(data), bytes(self.args.format)))
+        it = iter(self.matches_filtered(memoryview(data), bytes(self.args.format)))
         if self.decoder is NotImplemented:
             yield from it
         for chunk in it:

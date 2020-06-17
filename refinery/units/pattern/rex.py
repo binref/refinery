@@ -10,6 +10,14 @@ class rex(RegexUnit):
     individual output and standard forking settings apply. Two additional special
     multibin handlers are available for regular expressions:
     """
+    @staticmethod
+    def _xmeta(t):
+        def meta_transform(match):
+            meta = match.groupdict()
+            data = t(match) if callable(t) else t
+            meta.update(data=data)
+            return meta
+        return meta_transform
 
     def __init__(self, regex,
         # TODO: Use positional only in Python 3.8
@@ -24,14 +32,16 @@ class rex(RegexUnit):
     ):
         self.superinit(super(), **vars())
         self.args.transforms = [
-            TransformSubstitutionFactory(t) for t in transformation]
+            self._xmeta(TransformSubstitutionFactory(t))
+            for t in transformation
+        ]
+        if not self.args.transforms:
+            self.args.transforms.append(self._xmeta(lambda m: m[0]))
 
     def process(self, data):
-
         self.log_debug('regular expression:', self.args.regex)
-
-        yield from self.matches_processed(
+        yield from self.matches_filtered(
             memoryview(data),
             self.args.regex,
-            transforms=self.args.transforms
+            *self.args.transforms
         )

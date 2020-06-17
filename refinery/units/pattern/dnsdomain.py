@@ -26,20 +26,18 @@ class dnsdomain(PatternExtractorBase):
     _DOMAIN_PATTERN = BR'(?:%s){1,20}(?:%s)\b' % (_lps(0xFF), _lps(25))
 
     def process(self, data):
-        def prefilter(matches):
-            for match in matches:
-                if not isinstance(match, bytearray):
-                    match = bytearray(match)
-                pos = 0
-                while pos < len(match):
-                    length = match[pos]
-                    match[pos] = 0x2E
-                    if len(match) < length + pos:
-                        break
-                    if any(x not in self._DOMAIN_CHARACTERS for x in match[pos + 1 : pos + length]):
-                        break
-                    pos += 1 + length
-                else:
-                    yield bytes(match[1:])
-        yield from self.matches_finalize(
-            prefilter(self.matches_filtered(memoryview(data), self._DOMAIN_PATTERN)))
+
+        def transform(match):
+            match = bytearray(match[0])
+            pos = 0
+            while pos < len(match):
+                length = match[pos]
+                match[pos] = 0x2E
+                if len(match) < length + pos:
+                    return None
+                if any(x not in self._DOMAIN_CHARACTERS for x in match[pos + 1 : pos + length]):
+                    return None
+                pos += 1 + length
+            return match[1:]
+
+        yield from self.matches_filtered(memoryview(data), self._DOMAIN_PATTERN, transform)
