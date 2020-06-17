@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
-import fnmatch
 import struct
 
-from .... import arg, Unit
+from ... import PathExtractorUnit, UnpackResult
 from .....lib.dotnet.header import DotNetHeader
 
 
-class dnfields(Unit):
+class dnfields(PathExtractorUnit):
     """
     This unit can extract data from constant field variables in classes of .NET
     executables. Since the .NET header stores only the offset and not the size of
@@ -22,9 +21,6 @@ class dnfields(Unit):
         '^[us]?int.?32$' : 4,
         '^[us]?int.?64$' : 8,
     }
-
-    def __init__(self, fields: arg(help='Any sequence of wildcard patterns') = ['*']):
-        pass
 
     def _guess_field_info(self, tables, data, t):
         pattern = (
@@ -45,26 +41,20 @@ class dnfields(Unit):
                 if re.match(pattern, element.TypeName, flags=re.IGNORECASE):
                     return element.TypeName, count, size
 
-    def process(self, data) -> dict(path='The name of the field that was extracted.'):
+    def unpack(self, data):
         header = DotNetHeader(data, parse_resources=False)
         tables = header.meta.Streams.Tables
         iwidth = len(str(len(tables.FieldRVA)))
 
-        for pattern in self.args.fields:
-            for k, rv in enumerate(tables.FieldRVA):
-                index = rv.Field.Index
-                field = tables.Field[index - 1]
-                if not fnmatch.fnmatch(field.Name, pattern):
-                    continue
-                guess = self._guess_field_info(tables, data, index)
-                if guess is None:
-                    self.log_debug(lambda: F'field {k:0{iwidth}d}: {field.Name} unable to guess type information')
-                    continue
-                typename, count, size = guess
-                totalsize = count * size
-                self.log_info(lambda: F'field {k:0{iwidth}d}: {field.Name} of type {typename}, count: {count}')
-                offset = header.pe.get_offset_from_rva(rv.RVA)
-                yield dict(
-                    data=data[offset:offset + totalsize],
-                    path=field.Name
-                )
+        for k, rv in enumerate(tables.FieldRVA):
+            index = rv.Field.Index
+            field = tables.Field[index - 1]
+            guess = self._guess_field_info(tables, data, index)
+            if guess is None:
+                self.log_debug(lambda: F'field {k:0{iwidth}d}: {field.Name} unable to guess type information')
+                continue
+            typename, count, size = guess
+            totalsize = count * size
+            self.log_info(lambda: F'field {k:0{iwidth}d}: {field.Name} of type {typename}, count: {count}')
+            offset = header.pe.get_offset_from_rva(rv.RVA)
+            yield UnpackResult(field.Name, lambda: data[offset:offset + totalsize])
