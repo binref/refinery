@@ -14,7 +14,7 @@ class dnrc(PathExtractorUnit):
         header = DotNetHeader(data)
 
         if not header.resources:
-            if self._list:
+            if self.args.list:
                 return
             raise ValueError('This file contains no resources.')
 
