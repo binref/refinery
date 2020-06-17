@@ -126,6 +126,7 @@ pattern_hostname = pattern_socket + '?'
 pattern_hostname_df = '(?:{ip}|{d})(?::\\d{{2,5}})?'.format(ip=pattern_ipv4_df, d=pattern_domain_df)
 
 pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-zA-Z0-9])'
+pattern_float = R'[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?'
 pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 pattern_ps1str = R'''(?:"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
 pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
@@ -133,19 +134,19 @@ pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
 pattern_vbe = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
 pattern_url = ''.join([
-    R'([a-zA-Z]{2,20}?:\/\/'                  # scheme
+    R'([a-zA-Z]{2,20}?://'                    # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
     pattern_socket + '?',
-    R'(?:[/?#][~/_=?&.,\w\%\-]*)?)'
+    R'(?:[/?#](?:[~/_=?&.,\w\%\-](?![a-zA-Z]{2,20}://))*)?)'
 ])
 
 pattern_url_df = ''.join([
-    R'([a-zA-Z]{2,20}?(?:\[:\]|:)\/\/'        # scheme
+    R'([a-zA-Z]{2,20}?(?:\[:\]|:)//'          # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
     pattern_socket + '?',
-    R'(?:[/?#][/_=?&.,\w\%\-]*)?)'
+    R'(?:[/?#](?:[/_=?&.,\w\%\-](?![a-zA-Z]{2,20}://))*)?)'
 ])
 
 pattern_email = R'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{})'.format(pattern_domain)
@@ -195,6 +196,8 @@ class formats(PatternEnum):
     """
     integer = pattern(pattern_integer)
     "Integer expressions"
+    float = pattern(pattern_float)
+    "Floating point number expressions"
     string = pattern(pattern_string)
     "C syntax string literal"
     cmdstr = pattern(pattern_cmdstr)
