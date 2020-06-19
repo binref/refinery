@@ -68,6 +68,7 @@ class pack(BlockTransformation):
                     n = B'0o' + n
                 N = int(n, self.args.base)
                 M = N & self.fmask
+                self.log_debug(lambda: F'0x{M:0{self.fbits // 4}X}')
                 if self.args.strict and M != N:
                     continue
                 yield M
