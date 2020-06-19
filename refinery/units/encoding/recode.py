@@ -51,12 +51,12 @@ class recode(Unit):
         self.log_info(lambda: F'Using input encoding: {codec}, detected with {int(detection["confidence"]*100)}% confidence.')
         return codec
 
+    def _recode(self, enc, dec, encerr, decerr, data):
+        dec = dec or self.detect(data)
+        return codecs.encode(codecs.decode(data, dec, errors=decerr), enc, errors=encerr)
+
+    def reverse(self, data):
+        return self._recode(self.args.decode, self.args.encode, self.args.decerr, self.args.encerr, data)
+
     def process(self, data):
-        codec = self.args.decode
-        if codec is None:
-            codec = self.detect(data)
-        return codecs.encode(
-            codecs.decode(data, codec, errors=self.args.decerr),
-            self.args.encode,
-            errors=self.args.encerr
-        )
+        return self._recode(self.args.encode, self.args.decode, self.args.encerr, self.args.decerr, data)
