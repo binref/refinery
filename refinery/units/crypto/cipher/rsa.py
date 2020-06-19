@@ -53,11 +53,12 @@ class rsa(Unit):
 
         try:
             blob = CRYPTOKEY(key)
-            if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
-                raise ValueError
-            self.key: RSA.RsaKey = blob.key.convert()
         except ValueError:
             self.key: RSA.RsaKey = RSA.import_key(key)
+        else:
+            if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
+                raise ValueError(F'The provided key is of invalid type {blob.header.type!s}.')
+            self.key: RSA.RsaKey = blob.key.convert()
 
     @property
     def blocksize(self) -> int:
