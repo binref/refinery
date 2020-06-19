@@ -57,7 +57,7 @@ class rsa(Unit):
             self.key: RSA.RsaKey = RSA.import_key(key)
         else:
             if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
-                raise ValueError(F'The provided key is of invalid type {blob.header.type!s}.')
+                raise ValueError(F'The provided key is of invalid type {blob.header.type!s}, the algorithm is {blob.header.algorithm!s}.')
             self.key: RSA.RsaKey = blob.key.convert()
 
     @property
