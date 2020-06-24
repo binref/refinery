@@ -6,7 +6,9 @@ A package containing several sub-packages for various data formats.
 import fnmatch
 import re
 import os
+import collections
 
+from zlib import adler32
 from typing import ByteString, Iterable, Callable, Union
 
 from .. import arg, Unit
@@ -73,7 +75,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 root = ''
 
         results = []
-        paths = set()
+        paths = collections.defaultdict(set)
 
         for result in self.unpack(data):
             if self._check_path(result.path):
@@ -85,11 +87,14 @@ class PathExtractorUnit(Unit, abstract=True):
             self.log_debug('checking pattern:', pattern)
             for result in results:
                 path = result.path
-                if path in paths:
-                    self.log_warn('duplicate path:', path)
-                paths.add(path)
                 if not fnmatch.fnmatch(path, pattern):
                     continue
+                csum = adler32(result.get_data())
+                if path in paths:
+                    if csum in paths[path]:
+                        continue
+                    self.log_warn(F'duplicate path with different contents:', path)
+                paths[path].add(csum)
                 if self.args.join:
                     path = os.path.join(root, path)
                 if self.args.list:

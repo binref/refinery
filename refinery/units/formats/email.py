@@ -14,16 +14,6 @@ class xtmail(PathExtractorUnit):
     Extract files and body from EMail messages. The unit supports both the Outlook message format
     and regular MIME documents.
     """
-    def _normalize_names(self, parts, prefix='BODY'):
-        unnamed = 0
-        for part in parts:
-            if not part:
-                continue
-            if part.path is None:
-                unnamed += 1
-                part.path = F'{prefix}{unnamed}'
-            yield part
-
     def _get_headparts(self, head):
         yield UnpackResult('HEAD.TXT',
             lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h.items()).encode(self.codec))
@@ -35,7 +25,7 @@ class xtmail(PathExtractorUnit):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
         with Message(bytes(data)) as msg:
-            yield from self._get_headparts(msg.header)
+            yield from self._get_headparts(dict(msg.header))
             if msg.body:
                 yield UnpackResult('BODY.TXT', ensure_bytes(msg.body))
             if msg.htmlBody:
@@ -60,9 +50,7 @@ class xtmail(PathExtractorUnit):
 
     def unpack(self, data):
         try:
-            it = list(self._get_parts_outlook(data))
+            yield from self._get_parts_outlook(data)
         except Exception as e:
             self.log_debug(F'failed parsing input as Outlook message: {e}')
-            it = list(self._get_parts_regular(data))
-
-        yield from self._normalize_names(it)
+            yield from self._get_parts_regular(data)
