@@ -43,7 +43,7 @@ class defang(Unit):
             host = hostname.rsplit(B':')[0].lower()
             if host in self.WHITELIST:
                 return hostname
-            return host.replace(B'[.]', B'.')
+            return B'[.]'.join(hostname.rsplit(B'.', 1))
 
         def replace_url(url):
             if not url:
