@@ -59,7 +59,7 @@ def file_extension_from_data(data, default='bin'):
         if re.search('executable', description):
             return 'dll' if '(DLL)' in description else 'exe'
 
-    extension = file_extension(data, default)
+    extension = file_extension(subtype, default)
 
     if extension == 'gz':
         import gzip
