@@ -4,9 +4,12 @@ import json
 
 from email.parser import BytesParser
 from extract_msg.message import Message
+from functools import partial
+from collections import defaultdict
 
 from . import PathExtractorUnit, UnpackResult
 from ...lib.mime import file_extension
+from ..pattern.mimewords import mimewords
 
 
 class xtmail(PathExtractorUnit):
@@ -15,17 +18,23 @@ class xtmail(PathExtractorUnit):
     and regular MIME documents.
     """
     def _get_headparts(self, head):
+        mw = mimewords()
+        mw = partial(mw.process.__wrapped__.__wrapped__, mw)
+        jh = defaultdict(list)
+        for key, value in head:
+            jh[key].append(mw(''.join(t.lstrip() for t in value.splitlines(False))))
+        jh = {k: v[0] if len(v) == 1 else v for k, v in jh.items()}
         yield UnpackResult('HEAD.TXT',
-            lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h.items()).encode(self.codec))
+            lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h).encode(self.codec))
         yield UnpackResult('HEAD.JSON',
-            lambda h=head: json.dumps(h, indent=4).encode(self.codec))
+            lambda jsn=jh: json.dumps(jsn, indent=4).encode(self.codec))
 
     def _get_parts_outlook(self, data):
         def ensure_bytes(data):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
         with Message(bytes(data)) as msg:
-            yield from self._get_headparts(dict(msg.header))
+            yield from self._get_headparts(msg.header.items())
             if msg.body:
                 yield UnpackResult('BODY.TXT', ensure_bytes(msg.body))
             if msg.htmlBody:
@@ -37,7 +46,7 @@ class xtmail(PathExtractorUnit):
     def _get_parts_regular(self, data):
         msg = BytesParser().parsebytes(data)
 
-        yield from self._get_headparts(dict(msg.items()))
+        yield from self._get_headparts(msg.items())
 
         for part in msg.walk():
             path = part.get_filename()
