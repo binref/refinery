@@ -1,6 +1,6 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.2.1
 - The `netbios` unit was added.
 - The `stretch` unit was added.
 - The `hc128` cipher unit was added.
