@@ -11,4 +11,7 @@ class kblob(Unit):
         blob = CRYPTOKEY(data)
         self.log_info(F'BLOB Type: {blob.header.type!s}')
         self.log_info(F'Algorithm: {blob.header.algorithm!s}')
-        return bytes(blob.key)
+        try:
+            return bytes(blob.key)
+        except AttributeError as A:
+            raise ValueError(F'unable to derive key from {blob.header.type!s}') from A

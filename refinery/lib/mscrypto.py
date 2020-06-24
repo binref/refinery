@@ -87,17 +87,21 @@ class BLOBHEADER(Struct):
 
 
 class PLAINTEXTKEYBLOB(Struct):
+    def __bytes__(self): return self.data
+
     def __init__(self, reader: StructReader):
         self.size = reader.read_dword()
         self.data = reader.read_exactly(self.size)
 
 
 class SIMPLEBLOB(Struct):
+    def __bytes__(self): return self.data
+
     def __init__(self, reader: StructReader):
         self.magic = reader.read_exactly(4)
         if self.magic != B'\0\0\xA4\0':
             raise ValueError(F'Invalid magic bytes: {self.magic.hex(":").upper()}')
-        self.data = reader.read(self.size)
+        self.data = reader.read(0x100)
 
 
 class RSAPUBKEY(Struct):
@@ -116,6 +120,9 @@ class RSAPUBKEY(Struct):
 
     def __str__(self):
         return self.key().export_key(format='PEM')
+
+    def __bytes__(self):
+        return str(self).encode('ascii')
 
 
 class PRIVATEKEYBLOB(Struct):
@@ -167,6 +174,9 @@ class PRIVATEKEYBLOB(Struct):
     def __str__(self):
         return self.key().export_key(format='PEM')
 
+    def __bytes__(self):
+        return str(self).encode('ascii')
+
 
 class DHPUBKEY(Struct):
     def __init__(self, reader: StructReader):
@@ -179,6 +189,9 @@ class DHPUBKEY(Struct):
         self.public = reader.read_bigint(self.size)
         self.prime = reader.read_bigint(self.size)
         self.generator = reader.read_bigint(self.size)
+
+    def __bytes__(self):
+        raise NotImplementedError
 
 
 class CRYPTOKEY(Struct):
