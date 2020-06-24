@@ -13,7 +13,7 @@ class termfit(Unit):
     def __init__(
         self,
         width: arg('width', help='Optionally specify the width, by default the current terminal width is used.') = 0,
-        delta: arg('-d', help='Subtract this number from the calculated width (0 by default).') = 0,
+        delta: arg.number('-d', help='Subtract this number from the calculated width (0 by default).') = 0,
     ):
         super().__init__(width=width, delta=delta)
 
