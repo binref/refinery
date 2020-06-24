@@ -371,6 +371,9 @@ class Field(TableRow):
                 self.PinvokeImpl = bool(self.Value[12])
                 self.HasDefault = bool(self.Value[13])
 
+            def __str__(self):
+                return str(self.Value)
+
         self.Flags = FieldFlags(self.expect(UInt16))
         self.Name = self.expect_strA()
         self.Signature = self.expect_blob()
