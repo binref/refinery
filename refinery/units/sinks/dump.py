@@ -109,7 +109,9 @@ class dump(Unit):
 
     def _format(self, filename, data, index=0, **meta):
         class DelayedFormatter(dict):
-            def __missing__(_, key):  # noqa: W291
+            dmp = self
+
+            def __missing__(self, key):
                 if key == 'crc32':
                     from zlib import crc32
                     return F'{crc32(data) & 0xFFFFFFFF:08X}'
@@ -117,7 +119,7 @@ class dump(Unit):
                     try:
                         return file_extension_from_data(data)
                     except NoMagicAvailable:
-                        self.log_warn('no magic library available, using default extension .bin')
+                        self.dmp.log_warn('no magic library available, using default extension .bin')
                         return 'bin'
                 if key == 'path':
                     key = 'sha256'
@@ -126,6 +128,7 @@ class dump(Unit):
                     algorithm = getattr(hashlib, key)
                     return algorithm(data).hexdigest()
                 return '{' + key + '}'
+
         return filename.format_map(
             DelayedFormatter(dict(index=index, length=len(data), **meta))
         )
