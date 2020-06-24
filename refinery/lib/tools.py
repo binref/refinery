@@ -108,7 +108,6 @@ def documentation(unit):
     Return the documentation string of a given unit as it should be displayed
     on the command line. Certain pdoc3-specific reference strings are removed.
     """
-    import inspect
     import re
     docs = inspect.getdoc(unit)
     docs = re.sub(R'`refinery\.(?:\w+\.)*(\w+)`', R'\1', docs)
