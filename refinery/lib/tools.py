@@ -71,12 +71,21 @@ def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
     Reformats text to fit the given width while not mangling bullet point lists.
     """
     import textwrap
+    import re
+
     width = width or get_terminal_size()
     width = width - delta
 
+    def isol(t): return re.match(R'^\(\d+\)|\d+[.:;]', t)
+    def isul(t): return t.startswith('-') or t.startswith('*')
+    def issp(t): return t.startswith('  ')
+
+    text = text.replace('\r', '')
+
     def bulletpoint(line):
         wrapped = textwrap.wrap(line, width - 2, **kw)
-        wrapped[1:] = ['  {}'.format(line) for line in wrapped[1:]]
+        indent = '  ' if isul(line) else '   '
+        wrapped[1:] = ['{}{}'.format(indent, line) for line in wrapped[1:]]
         return '\n'.join(wrapped)
 
     def fitted(paragraphs):
@@ -84,13 +93,14 @@ def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
             if p.startswith(' '):
                 yield p
                 continue
-            if p.startswith('-'):
+            ol, ul = isol(p), isul(p)
+            if ol or ul:
                 input_lines = p.splitlines(keepends=False)
                 unwrapped_line = input_lines[0].rstrip()
                 lines = []
-                if all(t.startswith('-') or t.startswith('  ') for t in input_lines):
+                if (ol and all(isol(t) or issp(t) for t in input_lines) or ul and all(isul(t) or issp(t) for t in input_lines)):
                     for line in input_lines[1:]:
-                        if not line.startswith('-'):
+                        if not (ol and isol(line) or ul and isul(line)):
                             unwrapped_line += ' ' + line.strip()
                             continue
                         lines.append(bulletpoint(unwrapped_line))
