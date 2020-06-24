@@ -119,7 +119,7 @@ pattern_version = '|'.join('.' * k + 'version' + '.' * (10 - k) for k in range(1
 
 pattern_ocet = R'(?:[12]\d\d|[1-9]?\d)'
 pattern_ipv4 = R'(?<!\.|\d)(?:{o}\.){{3}}{o}(?![\d\.])'.format(o=pattern_ocet)
-pattern_ipv4_df = R'(?:{o}(?:\[\.\]|\.)){{2}}{o}\[\.\]{o}'.format(o=pattern_ocet)
+pattern_ipv4_df = R'(?:{o}{d}){{3}}{o}'.format(o=pattern_ocet, d=R'(?:\[\.\]|\.)')
 
 pattern_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=pattern_ipv4, d=pattern_domain)
 pattern_hostname = pattern_socket + '?'
