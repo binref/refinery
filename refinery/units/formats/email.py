@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import json
+
 from email.parser import BytesParser
 from extract_msg.message import Message
 
 from . import PathExtractorUnit, UnpackResult
-
-
-class EmailPart:
-    def __init__(self, name, data):
-        self.name = name
-        self.data = data
-
-    def __bool__(self):
-        return bool(self.data)
+from ...lib.mime import file_extension
 
 
 class xtmail(PathExtractorUnit):
@@ -20,56 +14,55 @@ class xtmail(PathExtractorUnit):
     Extract files and body from EMail messages. The unit supports both the Outlook message format
     and regular MIME documents.
     """
-    def _normalize_names(self, parts):
-        names = set()
+    def _normalize_names(self, parts, prefix='BODY'):
         unnamed = 0
-        prefix = 'BODY'
-
         for part in parts:
             if not part:
                 continue
-            if part.name is None:
+            if part.path is None:
                 unnamed += 1
-            else:
-                names.add(part.name)
+                part.path = F'{prefix}{unnamed}'
+            yield part
 
-        pw = len(str(unnamed))
-
-        while {F'{prefix}{k:0{pw}}' for k in range(1, unnamed + 1)} & names:
-            prefix = prefix + '_'
-
-        for part in reversed(parts):
-            if part.name is None:
-                part.name = F'{prefix}{unnamed:0{pw}}'
-                unnamed -= 1
+    def _get_headparts(self, head):
+        yield UnpackResult('HEAD.TXT',
+            lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h.items()).encode(self.codec))
+        yield UnpackResult('HEAD.JSON',
+            lambda h=head: json.dumps(h, indent=4).encode(self.codec))
 
     def _get_parts_outlook(self, data):
         def ensure_bytes(data):
             return data if isinstance(data, bytes) else data.encode(self.codec)
+
         with Message(bytes(data)) as msg:
-            parts = []
+            yield from self._get_headparts(msg.header)
             if msg.body:
-                parts.append(EmailPart(None, ensure_bytes(msg.body)))
+                yield UnpackResult('BODY.TXT', ensure_bytes(msg.body))
             if msg.htmlBody:
-                parts.append(EmailPart(None, ensure_bytes(msg.htmlBody)))
+                yield UnpackResult('BODY.HTM', ensure_bytes(msg.htmlBody))
             for attachment in msg.attachments:
-                parts.append(EmailPart(attachment.longFilename or attachment.shortFilename, attachment.data))
-            return parts
+                path = attachment.longFilename or attachment.shortFilename
+                yield UnpackResult(path, attachment.data)
 
     def _get_parts_regular(self, data):
         msg = BytesParser().parsebytes(data)
-        return [EmailPart(part.get_filename(), part.get_payload(decode=True)) for part in msg.walk()]
+
+        yield from self._get_headparts(dict(msg.items()))
+
+        for part in msg.walk():
+            path = part.get_filename()
+            data = part.get_payload(decode=True)
+            if data is None:
+                continue
+            if path is None:
+                path = F'BODY.{file_extension(part.get_content_subtype(), "TXT").upper()}'
+            yield UnpackResult(path, data)
 
     def unpack(self, data):
         try:
-            parts = self._get_parts_outlook(data)
+            it = list(self._get_parts_outlook(data))
         except Exception as e:
             self.log_debug(F'failed parsing input as Outlook message: {e}')
-            parts = self._get_parts_regular(data)
+            it = list(self._get_parts_regular(data))
 
-        self._normalize_names(parts)
-
-        for part in parts:
-            if not part:
-                continue
-            yield UnpackResult(part.name, part.data)
+        yield from self._normalize_names(it)

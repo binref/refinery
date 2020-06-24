@@ -24,16 +24,13 @@ def pathspec(expression):
 class UnpackResult:
 
     def get_data(self) -> ByteString:
-        if callable(self._data):
-            self._data = self._data()
-        return self._data
-
-    def get_path(self) -> str:
-        return self._path
+        if callable(self.data):
+            self.data = self.data()
+        return self.data
 
     def __init__(self, path: str, data: Union[ByteString, Callable[[], ByteString]]):
-        self._path = path
-        self._data = data
+        self.path = path
+        self.data = data
 
 
 class EndOfStringNotFound(ValueError):
@@ -50,8 +47,9 @@ class PathExtractorUnit(Unit, abstract=True):
             'a single asterix, which means that every item will be extracted.')),
         list: arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join: arg.switch('-j', help='Join path names from container with previous path names.') = False,
+        **keywords
     ):
-        super().__init__(paths=paths, list=list, join=join)
+        super().__init__(paths=paths, list=list, join=join, **keywords)
 
     def _check_reachable(self, path: str) -> bool:
         for pattern in self.args.path:
@@ -75,9 +73,10 @@ class PathExtractorUnit(Unit, abstract=True):
                 root = ''
 
         results = []
+        paths = set()
 
         for result in self.unpack(data):
-            if self._check_path(result.get_path()):
+            if self._check_path(result.path):
                 if not self.args.list:
                     result.get_data()
                 results.append(result)
@@ -85,7 +84,10 @@ class PathExtractorUnit(Unit, abstract=True):
         for pattern in self.args.paths:
             self.log_debug('checking pattern:', pattern)
             for result in results:
-                path = result.get_path()
+                path = result.path
+                if path in paths:
+                    self.log_warn('duplicate path:', path)
+                paths.add(path)
                 if not fnmatch.fnmatch(path, pattern):
                     continue
                 if self.args.join:
