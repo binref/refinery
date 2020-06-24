@@ -30,3 +30,8 @@ class TestDefangUnit(TestUnitBase):
         unit = self.load(reverse=True)
         self.assertEqual(unit(data),
             B'Description: As seen on https://caminoflamingo.co.uk, flamingos are on the rise.')
+
+    def test_dots_in_various_places(self):
+        data = B'Maybe 12[.]67.123.12 or 12[.]67[.]123.12 or 12.67[.]123.12 or 32.67[.]123[.]12'
+        unit = self.load(reverse=True)
+        self.assertEqual(unit(data), data.replace(B'[.]', B'.'))
