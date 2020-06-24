@@ -6,6 +6,7 @@ import os.path
 from itertools import cycle
 
 from .. import arg, Unit, RefineryCriticalException
+from ...lib.mime import file_extension_from_data, NoMagicAvailable
 
 
 class dump(Unit):
@@ -49,57 +50,6 @@ class dump(Unit):
             self.formatted = any(any(t.isalnum() for t in fields)
                 for f in filenames for _, fields, *__ in nf.parse(f) if fields)
         self._reset()
-
-    def _auto_extension(self, data, default='bin'):
-        import re
-        from ...lib.magic import magic, magicparse
-
-        if not magic:
-            self.log_warn(F'magic library not found, auto extension defaults to {default}')
-            return default
-
-        if not isinstance(data, bytes):
-            data = bytes(data)
-
-        mime = magicparse(data, mime=True)
-        mime = mime.split(';')[0].lower()
-        mtype, mext = mime.split('/')
-
-        if mext == 'x-dosexec':
-            description = magicparse(data)
-            if re.search('executable', description):
-                return 'dll' if '(DLL)' in description else 'exe'
-        try:
-            return {
-                'octet-stream'                : 'bin',
-                'plain'                       : 'txt',
-                'javascript'                  : 'js',
-                'java-archive'                : 'jar',
-                'svg+xml'                     : 'svg',
-                'x-icon'                      : 'ico',
-                'wave'                        : 'wav',
-                'x-pn-wav'                    : 'wav',
-                'x-ms-wim'                    : 'wim',
-                'vnd.android.package-archive' : 'apk',
-                'vnd.ms-cab-compressed'       : 'cab',
-                'x-apple-diskimage'           : 'dmg',
-            }[mext]
-        except KeyError:
-            if 'gzip' in mext:
-                import gzip
-                ungz = gzip.decompress(data)
-                ext1 = self._auto_extension(ungz)
-                return ext1 + '.gz'
-            xtype_match = re.match(
-                r'^x-(\w{2,4})(-compressed)?$',
-                mext,
-                re.IGNORECASE
-            )
-            if xtype_match:
-                return xtype_match[1]
-            if len(mext) < 6 and re.match('[a-z]+', mext):
-                return mext
-            return default
 
     def _reset(self):
         self.stream = None
@@ -164,7 +114,11 @@ class dump(Unit):
                     from zlib import crc32
                     return F'{crc32(data) & 0xFFFFFFFF:08X}'
                 if key == 'ext':
-                    return self._auto_extension(data)
+                    try:
+                        return file_extension_from_data(data)
+                    except NoMagicAvailable:
+                        self.log_warn('no magic library available, using default extension .bin')
+                        return 'bin'
                 if key == 'path':
                     key = 'sha256'
                 if key in ('md5', 'sha1', 'sha256'):
