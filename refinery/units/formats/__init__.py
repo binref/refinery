@@ -93,7 +93,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 if path in paths:
                     if csum in paths[path]:
                         continue
-                    self.log_warn(F'duplicate path with different contents:', path)
+                    self.log_warn('duplicate path with different contents:', path)
                 paths[path].add(csum)
                 if self.args.join:
                     path = os.path.join(root, path)
