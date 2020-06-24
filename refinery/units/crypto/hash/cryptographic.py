@@ -13,7 +13,7 @@ class md5(HashUnit):
     Returns the MD5 hash of the input data.
     """
     @classmethod
-    def _algorithm(cls, data): return hashlib.md5(data).digest()
+    def _algorithm(cls, data): return hashlib.md5(data)
 
 
 class sha1(HashUnit):
@@ -21,7 +21,7 @@ class sha1(HashUnit):
     Returns the SHA1 Hash of the input data.
     """
     @classmethod
-    def _algorithm(cls, data): return hashlib.sha1(data).digest()
+    def _algorithm(cls, data): return hashlib.sha1(data)
 
 
 class sha224(HashUnit):
@@ -29,7 +29,7 @@ class sha224(HashUnit):
     Returns the SHA224 Hash of the input data.
     """
     @classmethod
-    def _algorithm(cls, data): return hashlib.sha224(data).digest()
+    def _algorithm(cls, data): return hashlib.sha224(data)
 
 
 class sha256(HashUnit):
@@ -37,7 +37,7 @@ class sha256(HashUnit):
     Returns the SHA256 Hash of the input data.
     """
     @classmethod
-    def _algorithm(cls, data): return hashlib.sha256(data).digest()
+    def _algorithm(cls, data): return hashlib.sha256(data)
 
 
 class sha384(HashUnit):
@@ -45,7 +45,7 @@ class sha384(HashUnit):
     Returns the SHA384 Hash of the input data.
     """
     @classmethod
-    def _algorithm(cls, data): return hashlib.sha384(data).digest()
+    def _algorithm(cls, data): return hashlib.sha384(data)
 
 
 class sha512(HashUnit):
@@ -53,7 +53,7 @@ class sha512(HashUnit):
     Returns the SHA512 Hash of the input data.
     """
     @classmethod
-    def _algorithm(cls, data): return hashlib.sha512(data).digest()
+    def _algorithm(cls, data): return hashlib.sha512(data)
 
 
 class blk224(HashUnit):
