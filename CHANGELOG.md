@@ -7,6 +7,8 @@
 - The unit `dnrc` was split into `dnrc` for extracting .NET resources and `dnmr` for unpacking managed .NET resources.
 - Several units that extract items from container formats have received a unified interface. So far, this interface applies to `xtmail`, `xtzip`, `winreg`, `dnfields`, `dnrc`, and `dnmr`.
 - When using named match groups for the `rex` unit, these matches are now forwarded as metadata within frames.
+- The `xtzip` unit was given an optional archive password parameter.
+- The `xtmail` unit can now extract headers in text and json format.
 
 ## Version 0.2.0
 - Test coverage was increased
