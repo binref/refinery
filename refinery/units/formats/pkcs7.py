@@ -53,13 +53,11 @@ class PKCS7Encoder(BytesAsArrayEncoder):
             keys = list(obj)
             if all(isinstance(k, str) for k in keys):
                 return {key: obj[key] for key in keys}
-        try:
-            len(obj)
-        except TypeError:
-            if isinstance(obj, asn1crypto.core.Any):
-                return obj.dump()
-            raise
-        return list(obj)
+        with suppress(Exception):
+            return list(obj)
+        if isinstance(obj, asn1crypto.core.Any):
+            return obj.dump()
+        raise ValueError('Unable to parse data ask PKCS7')
 
 
 class pkcs7(Unit):
