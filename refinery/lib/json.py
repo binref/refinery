@@ -65,6 +65,11 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
             return re.sub(uids, lambda m: self.substitute[m[2]], data)
         return data
 
+    def encode_raw(self, representation):
+        uid = str(uuid.uuid4())
+        self.substitute[uid] = representation
+        return uid
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.substitute = {}
@@ -95,9 +100,7 @@ class BytesAsArrayEncoder(JSONEncoderEx):
         return cls._is_byte_array(obj) or super().handled(obj)
 
     def encode_bytes(self, obj):
-        uid = str(uuid.uuid4())
-        self.substitute[uid] = '[{}]'.format(','.join(F'{b & 0xFF:d}' for b in obj))
-        return uid
+        return self.encode_raw('[{}]'.format(','.join(F'{b & 0xFF:d}' for b in obj)))
 
     def default(self, obj):
         if self._is_byte_array(obj):
