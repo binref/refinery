@@ -1020,7 +1020,7 @@ class Unit(metaclass=Executable, abstract=True):
                 return codecs.decode(x, cls.codec, errors='backslashreplace')
             return str(x)
         message = ' '.join(transform(msg) for msg in messages)
-        sys.stderr.write(F'{cls.name}: {message}\n')
+        print(F'{cls.name}: {message}', file=sys.stderr)
 
     @classmethod
     def _interface(cls, argp: ArgumentParser) -> ArgumentParser:
