@@ -10,3 +10,6 @@ class TestConcatentation(TestUnitBase):
 
     def test_append(self):
         self.assertEqual(self.ldu('cca', 's:World').process(B'Hello '), B'Hello World')
+
+    def test_formatter_simple(self):
+        self.assertEqual(self.ldu('cfmt', 'Hello %b World')(B'cruel'), B'Hello cruel World')
