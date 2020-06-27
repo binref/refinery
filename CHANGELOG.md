@@ -1,8 +1,9 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.3.0
 - The `autoxor` unit was added.
 - The `cfmt` unit was added.
+- The License of Binary Refinery was changed to 3-Clause BSD.
 
 ## Version 0.2.1
 - The `netbios` unit was added.
