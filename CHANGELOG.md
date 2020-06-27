@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Current Build
+- The `autoxor` unit was added.
+- The `cfmt` unit was added.
+
 ## Version 0.2.1
 - The `netbios` unit was added.
 - The `stretch` unit was added.
