@@ -92,7 +92,7 @@ class couple(Unit):
 
             err = queue_read(qerr)
             out = queue_read(qout)
-            if err and self.log_debug():
+            if err and self.log_info():
                 errbuf.write(err)
                 errbuf.seek(0)
                 lines = errbuf.readlines()
@@ -103,7 +103,7 @@ class couple(Unit):
                         errbuf.write(lines.pop())
                     for line in lines:
                         msg = line.rstrip(B'\n')
-                        if msg: self.log_debug(msg)
+                        if msg: self.log_info(msg)
             if out:
                 if self.args.buffer or self.args.timeout:
                     result.write(out)
