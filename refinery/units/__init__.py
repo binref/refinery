@@ -29,7 +29,7 @@ import inspect
 from enum import IntEnum, Enum
 from functools import wraps
 from collections import OrderedDict
-from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Tuple, Any, ByteString
+from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check
 from argparse import (
     ArgumentParser,
     ArgumentError,
@@ -506,6 +506,9 @@ class Executable(type):
 
         nmspc.setdefault('__doc__', '')
 
+        try: nmspc['__init__'] = no_type_check(nmspc['__init__'])
+        except KeyError: pass
+
         for op in ('process', 'reverse'):
             if op in nmspc:
                 nmspc[op] = normalize(nmspc[op])
@@ -518,14 +521,18 @@ class Executable(type):
     def __init__(cls, name, bases, nmspc, abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
         parameters = inspect.signature(cls.__init__).parameters
-        cls.argspec = ArgumentSpecification()
+        cls._argspec_ = ArgumentSpecification()
 
         if bases:
             parent = bases[0]
-            for key, value in parent.argspec.items():
+            for key, value in parent._argspec_.items():
                 if not value.guess and key in parameters:
-                    cls.argspec[key] = value.__copy__()
-            cls._infer_argspec(parameters, cls.argspec)
+                    cls._argspec_[key] = value.__copy__()
+            cls._infer_argspec(parameters, cls._argspec_)
+
+            if parent.__init__ is cls.__init__:
+                def init(self): super(cls, self).__init__()
+                cls.__init__ = init
 
         if cls.__init__.__code__.co_code == (lambda: None).__code__.co_code:
             base = bases[0]
@@ -1047,7 +1054,7 @@ class Unit(metaclass=Executable, abstract=True):
 
         groups = {None: argp}
 
-        for argument in reversed(cls.argspec.values()):
+        for argument in reversed(cls._argspec_.values()):
             gp = argument.group
             if gp not in groups:
                 groups[gp] = argp.add_mutually_exclusive_group()

@@ -146,16 +146,16 @@ class StandardCipherExecutable(CipherExecutable):
     def __init__(cls, name, bases, nmspc, cipher=NotImplemented):
         super(StandardCipherExecutable, cls).__init__(
             name, bases, nmspc, abstract=cipher is NotImplemented)
-        cls.stdcipher = cipher
-        if cipher is not NotImplemented and cipher.block_size > 1 and 'mode' in cls.argspec:
+        cls._stdcipher_ = cipher
+        if cipher is not NotImplemented and cipher.block_size > 1 and 'mode' in cls._argspec_:
             modes = extract_options(cipher)
             if not modes:
                 raise RefineryCriticalException(
                     F'The cipher {cipher.name} is a block cipher module, '
                     F'but no cipher block mode constants were found.'
                 )
-            cls.modespec = OptionFactory(modes, ignorecase=True)
-            cls.argspec['mode'].merge_all(arg(
+            cls._bcmspec_ = OptionFactory(modes, ignorecase=True)
+            cls._argspec_['mode'].merge_all(arg(
                 dest='mode', type=str.upper, metavar='mode', choices=list(modes),
                 help='Choose cipher mode to be used. Possible values are: {}.'.format(', '.join(modes))
             ))
@@ -168,7 +168,7 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
     def _get_cipher_instance(self, **optionals) -> Any:
         self.log_info('encryption key:', self.key.hex())
-        return self.stdcipher.new(key=self.key, **optionals)
+        return self._stdcipher_.new(key=self.key, **optionals)
 
     def encrypt(self, data: bytes) -> bytes:
         return self._get_cipher_instance().encrypt(data)
@@ -180,7 +180,7 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
     def __init__(self, mode, key, iv=B'', padding=None):
-        super().__init__(key=key, iv=iv, padding=padding, mode=self.modespec(mode))
+        super().__init__(key=key, iv=iv, padding=padding, mode=self._bcmspec_(mode))
 
     def _get_cipher_instance(self, **optionals) -> Any:
         if not self.args.mode.name == 'ECB':
@@ -196,7 +196,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             del optionals['IV']
             if self.iv:
                 self.log_info('ignoring IV for mode', self.args.mode)
-            return self.stdcipher.new(key=self.key, **optionals)
+            return self._stdcipher_.new(key=self.key, **optionals)
 
 
 class LatinStreamCipher(StandardCipherUnit):

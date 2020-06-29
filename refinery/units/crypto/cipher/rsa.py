@@ -65,7 +65,7 @@ class rsa(Unit):
         return self.key.size_in_bytes()
 
     @property
-    def blocksize_plain(self) -> int:
+    def _blocksize_plain(self) -> int:
         # PKCS#1 v1.5 padding is at least 11 bytes.
         return self.blocksize - 11
 
@@ -109,8 +109,8 @@ class rsa(Unit):
         raise ValueError('Incorrect padding')
 
     def _pad(self, data, head, padbyte=None):
-        if len(data) > self.blocksize_plain:
-            raise ValueError(F'This key can only encrypt messages of size at most {self.blocksize_plain}.')
+        if len(data) > self._blocksize_plain:
+            raise ValueError(F'This key can only encrypt messages of size at most {self._blocksize_plain}.')
         pad = self.blocksize - len(data) - len(head) - 1
         if padbyte is not None:
             padding = pad * bytes((padbyte,))
@@ -211,4 +211,4 @@ class rsa(Unit):
 
     def reverse(self, data):
         self._pads = self.args.padding
-        return B''.join(self._encrypt_block(block) for block in splitchunks(data, self.blocksize_plain))
+        return B''.join(self._encrypt_block(block) for block in splitchunks(data, self._blocksize_plain))
