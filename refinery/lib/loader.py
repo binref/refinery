@@ -60,18 +60,27 @@ def get_entry_point(name: str) -> type:
     Retrieve a refinery entry point by name.
     """
     try:
-        entry = pkg_resources.load_entry_point(
-            get_package_name(), 'console_scripts', name).__self__
+        ep = pkg_resources.load_entry_point(get_package_name(), 'console_scripts', name)
+        return ep.__self__
     except Exception:
-        # refinery unit entry points with underscored names will be exposed with
-        # these underscores replaced by dashes. If such a name is passed to the
-        # loader, the following substitution ensures that it still works.
-        for entry in get_all_entry_points():
-            if getattr(entry, 'name', None) == name:
-                break
-        else:
-            raise EntryNotFound('no entry point with name "%s" was found.' % name)
-    return entry
+        pass
+    try:
+        from ..units import Entry
+        from sys import path as pypath
+        pypath.append('.')
+        module = __import__(name)
+        for attr in dir(module):
+            item = getattr(module, attr)
+            if getattr(item, '__module__', None) != name:
+                continue
+            if isinstance(item, type) and issubclass(item, Entry):
+                return item
+    except Exception:
+        pass
+    for entry in get_all_entry_points():
+        if getattr(entry, 'name', None) == name:
+            return entry
+    raise EntryNotFound('no entry point with name "%s" was found.' % name)
 
 
 def resolve(name: str) -> type:
