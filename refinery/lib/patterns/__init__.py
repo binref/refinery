@@ -97,6 +97,7 @@ __TLDS = R'(?i:{possible_tld})(?!(?:{dealbreakers}))'.format(
         R'[a-z]',
         R'[A-Za-z]{3}',
         R'\.\w\w',
+        R'\([\'"\w)]'
     ])
 )
 
