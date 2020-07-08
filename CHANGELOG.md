@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Current Build
+- It is now possible to use local refinery units (i.e. a Python script in the current director which contains a refinery unit that is not abstract) for multibin prefixes and in any other situation where units are dynamically loaded.
+
 ## Version 0.3.0
 - The `autoxor` unit was added.
 - The `cfmt` unit was added.
