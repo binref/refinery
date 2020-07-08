@@ -520,19 +520,24 @@ class Executable(type):
 
     def __init__(cls, name, bases, nmspc, abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
-        parameters = inspect.signature(cls.__init__).parameters
         cls._argspec_ = ArgumentSpecification()
 
+        cls_init = cls.__init__
+        sig_init = inspect.signature(cls_init)
+        parameters = sig_init.parameters
+
         if bases:
-            parent = bases[0]
-            for key, value in parent._argspec_.items():
+            for key, value in bases[0]._argspec_.items():
                 if not value.guess and key in parameters:
                     cls._argspec_[key] = value.__copy__()
             cls._infer_argspec(parameters, cls._argspec_)
 
-            if parent.__init__ is cls.__init__:
-                def init(self): super(cls, self).__init__()
-                cls.__init__ = init
+        if not abstract and any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+            @wraps(cls.__init__)
+            def init(self, *args, **kwargs): super(cls, self).__init__(*args, **kwargs)
+            init.__signature__ = sig_init.replace(parameters=tuple(
+                p for p in parameters.values() if p.kind != p.VAR_KEYWORD))
+            cls.__init__ = init
 
         if cls.__init__.__code__.co_code == (lambda: None).__code__.co_code:
             base = bases[0]
