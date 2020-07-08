@@ -17,7 +17,7 @@ class TestStringReplace(TestUnitBase):
 
     def test_real_world_01(self):
         data = B'''"UVL0NR"-RepLaCe"UVL",""""-RepLaCe "0NR","'"-CrePLAcE  '31V',"|"))'''
-        wish = B'''"`"`'"))'''
+        wish = B'''"""`'"))'''
         self.assertEqual(self.unit(data), wish)
 
     def test_variable_substitution_01(self):
