@@ -35,7 +35,7 @@ class ps1str(Unit):
         '\t': '`t',
         '\v': '`v',
         '\'': "`'",
-        '\"': '`"',
+        '\"': '""',
     }
 
     def __init__(self): pass
