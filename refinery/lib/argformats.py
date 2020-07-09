@@ -283,6 +283,17 @@ class DelayedArgumentDispatch:
     `refinery.lib.argformats.DelayedArgumentDispatch`, `handler.register` can be used to
     register additional handlers.
     """
+    class Wrapper:
+        def can_handle(self, *a): return self.ego.can_handle(*a)
+        def terminates(self, *a): return self.ego.terminates(*a)
+
+        def __init__(self, ego, arg):
+            self.ego = ego
+            self.arg = arg
+
+        def __call__(self, *args, **kwargs):
+            return self.ego(self.arg, *args, **kwargs)
+
     def __init__(self, method):
         update_wrapper(self, method)
         self.default = method
@@ -304,15 +315,13 @@ class DelayedArgumentDispatch:
             self.units[uhash] = unit
             return unit
 
-    def __get__(self, instance, instancetype):
-        # We do not know the class whose methods we are decorating.
-        self.instance = instance
-        return self
+    def __get__(self, instance, t=None):
+        return self.Wrapper(self, instance)
 
-    def __call__(self, data, modifier=None, *args):
+    def __call__(self, instance, data, modifier=None, *args):
         try:
             handler = self.default if modifier is None else self.handlers[modifier]
-            return handler(self.instance, data, *args)
+            return handler(instance, data, *args)
         except KeyError:
             unit = self._get_unit(modifier, *args)
             if not unit:
@@ -353,11 +362,6 @@ class DelayedArgument(LazyEvaluation):
     def __init__(self, expression: str):
         self.modifiers = []
         self.finalized = False
-        if not isinstance(self.handler, DelayedArgumentDispatch):
-            raise NotImplementedError(
-                'The default handler is required to be a '
-                'DelayedArgumentDispatch instance.'
-            )
         while not self.finalized:
             name, arguments, newexpr = self._split_modifier(expression)
             if not name or not self.handler.can_handle(name, *arguments):
