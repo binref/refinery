@@ -76,11 +76,15 @@ from itertools import cycle, count, chain
 from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper
-from typing import Optional, Tuple, Union, Mapping, Any, List, Iterable, ByteString
+from typing import Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 
 from ..lib.frame import Chunk
 from ..lib.tools import isbuffer
 from ..lib.loader import resolve, EntryNotFound
+
+FinalType = TypeVar('T')
+DelayedType = Callable[[ByteString], FinalType]
+MaybeDelayedType = Union[DelayedType, FinalType]
 
 
 class PythonExpression:
@@ -217,12 +221,12 @@ class virtualaddr:
         try:
             address = address.upper()
             if address.endswith('H'):
-                address = '0x' + address[:-1]
+                address = F'0x{address[:-1]}'
             self.address = number[0:](address)
-        except ValueError:
+        except Exception:
             pass
         try:
-            self.address = int(address, 0x10)
+            self.address = number(F'0x{address}')
         except ValueError:
             raise ArgumentTypeError(F'could not parse {address} as hexadecimal integer')
 
@@ -232,38 +236,6 @@ def utf8(x):
     Returns the UTF8 encoding of the given string.
     """
     return x.encode('UTF8')
-
-
-class number:
-    __name__ = 'number'
-
-    def __init__(self, min=None, max=None):
-        self.min = min
-        self.max = max
-
-    def __getitem__(self, bounds):
-        return self.__class__(bounds.start, bounds.stop)
-
-    def __call__(self, value):
-        if not isinstance(value, int):
-            try:
-                value = _PYTHON_EXPRESSION(value)
-            except Exception:
-                raise ValueError('unable to parse expression')
-            if not isinstance(value, int):
-                raise ArgumentTypeError('the expression with value {} is not an integer'.format(value))
-        if self.min is not None and value < self.min or self.max is not None and value > self.max:
-            raise ValueError('value {} is out of bounds [{}, {}]'.format(value, self.min, self.max))
-        return value
-
-
-number = number()
-"""
-The singleton instance of a class that uses `refinery.lib.argformats.PythonExpression`
-to parse expressions with integer value. This singleton can be slice accessed to
-create new number parsers, e.g. `number[0:]` will refuse to parse negative integer
-expressions.
-"""
 
 
 class IncompatibleHandler(ValueError):
@@ -345,7 +317,7 @@ class DelayedArgumentDispatch:
             unit = self._get_unit(modifier, *args)
             if not unit:
                 raise ArgumentTypeError(F'failed to build unit {modifier}')
-            result = unit.process(data)
+            result = unit(data)
             return result if isbuffer(result) else B''.join(result)
 
     def can_handle(self, modifier, *args):
@@ -796,6 +768,85 @@ class DelayedRegexpArgument(DelayedArgument):
         """
         import re
         return re.escape(str)
+
+
+class DelayedNumberArgument(DelayedArgument):
+    """
+    A parser for numeric arguments. As `refinery.lib.argformats.DelayedNumberArgument.handler`
+    uses `refinery.lib.argformats.multibin`, it is possible to use any handler specified in
+    `refinery.lib.argformats.DelayedBinaryArgument` as long as these handlers precede any of
+    the handlers defined here.
+    """
+    def __init__(self, expression: str, min: int, max: int):
+        self.min = min
+        self.max = max
+        super().__init__(expression)
+
+    def _mbin(self, converter: DelayedType[int], expr: str) -> MaybeDelayedType[int]:
+        def bound_checked_converter(b: ByteString):
+            value = converter(b)
+            if self.min is not None and value < self.min or self.max is not None and value > self.max:
+                a = '-∞' if self.min is None else self.min
+                b = '∞' if self.max is None else self.max
+                raise ValueError(F'value {value} is out of bounds [{a}, {b}]')
+            return value
+        binary = multibin(expr)
+        if not binary:
+            raise ArgumentTypeError('received empty binary argument')
+        if callable(binary):
+            return lambda d: bound_checked_converter(binary(d))
+        return bound_checked_converter(binary)
+
+    @DelayedArgumentDispatch
+    def handler(self, expression: str) -> int:
+        """
+        The default handler: Attempts to parse the input expression as an integer.
+        """
+        def parse(b):
+            e = b.decode('utf8')
+            t = _PYTHON_EXPRESSION(e)
+            if isinstance(t, int):
+                return t
+            raise ValueError(F'the expression with value {e} is not an integer')
+        return self._mbin(parse, expression)
+
+    @handler.register('be', final=True)
+    def be(self, expression: str) -> int:
+        def be(b: ByteString): return int.from_bytes(b, 'big')
+        return self._mbin(be, expression)
+
+    @handler.register('le', 'unpack', final=True)
+    def le(self, expression: str) -> int:
+        def le(b: ByteString): return int.from_bytes(b, 'little')
+        return self._mbin(le, expression)
+
+
+class number:
+    __name__ = 'number'
+
+    def __init__(self, min=None, max=None):
+        self.min = min
+        self.max = max
+
+    def __getitem__(self, bounds):
+        return self.__class__(bounds.start, bounds.stop)
+
+    def __call__(self, value):
+        if isinstance(value, int):
+            return value
+        value = DelayedNumberArgument(value, self.min, self.max)
+        with suppress(TooLazy):
+            return value()
+        return value
+
+
+number = number()
+"""
+The singleton instance of a class that uses `refinery.lib.argformats.PythonExpression`
+to parse expressions with integer value. This singleton can be slice accessed to
+create new number parsers, e.g. `number[0:]` will refuse to parse negative integer
+expressions.
+"""
 
 
 def numbin(expression: Union[int, str]) -> Union[Iterable[int], DelayedNumbinArgument]:

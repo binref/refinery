@@ -50,3 +50,9 @@ class TestFraming(TestBase):
         unit1 = self.ldu('xor', 'snip[:4]:x::8')
         unit2 = self.ldu('xor', 'H:{}'.format(buffer[:4].hex()))
         self.assertEqual(unit1(buffer), unit2(buffer[8:]))
+
+    def test_unit_loader(self):
+        m = multibin('hex[-R]:x::4')
+        b = bytearray.fromhex('BAADF00DCAB00F')
+        a = m(b)
+        self.assertEqual(a, B'BAADF00D')
