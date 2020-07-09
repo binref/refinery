@@ -80,6 +80,7 @@ class xtp(PatternExtractor):
         'symantec.com'        : 1,
         'symauth.com'         : 1,
         'symcb.com'           : 1,
+        'symcd.com'           : 1,
         'thawte.com'          : 1,
         'verisign.com'        : 1,
         'w3.org'              : 1,
