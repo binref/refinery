@@ -153,8 +153,8 @@ pattern_url_df = ''.join([
 pattern_email = R'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{})'.format(pattern_domain)
 pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
-pattern_win_path_nospace = R'[-\w+,.;@\]\[\^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
-pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_win_path_nospace)
+pattern_pathpart_nospace = R'[-\w+,.;@\]\[\^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
+pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_pathpart_nospace)
 pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]{2,}%'
 
 pattern_win_path = R'(?:{s})(?P<pathsep>[\\\/])(?:{p}(?P=pathsep))*{p}\b'.format(
@@ -165,6 +165,12 @@ pattern_win_path = R'(?:{s})(?P<pathsep>[\\\/])(?:{p}(?P=pathsep))*{p}\b'.format
         R'HK[A-Z_]{1,30}',            # registry root key
     ]),
     p=pattern_win_path_element
+)
+
+pattern_nix_path = R'\b/?(?:{n}/){{2,}}{n}\b'.format(n=pattern_pathpart_nospace)
+pattern_path = R'(?:{nix})|(?:{win})'.format(
+    nix=pattern_nix_path,
+    win=pattern_win_path
 )
 
 pattern_hexline = R'(?:{s}+\s+)?\s*{h}(?:\s+{s}+)?'.format(
@@ -270,7 +276,7 @@ class indicators(PatternEnum):
     "A pattern matching PEM encoded cryptographic parameters"
     xmr = alphabet('[1-9A-HJ-NP-Za-km-z]', prefix='4[0-9AB]', at_least=93, at_most=93)
     "Monero addresses"
-    path = pattern(pattern_win_path)
+    path = pattern(pattern_path)
     "Windows and Linux path names"
     evar = pattern(pattern_win_env_variable)
     "Windows environment variables, i.e. something like `%APPDATA%`"
