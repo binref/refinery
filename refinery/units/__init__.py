@@ -960,7 +960,11 @@ class Unit(metaclass=Executable, abstract=True):
         except StopIteration:
             return B''
 
-    def __call__(self, data: Optional[ByteString] = None) -> bytes:
+    def act(self, data: Union[Chunk, ByteString]) -> Union[ByteString, Chunk, None]:
+        op = self.reverse if self.args.reverse else self.process
+        return op(data)
+
+    def __call__(self, data: Union[ByteString, Chunk, None] = None) -> bytes:
         with io.BytesIO(data) if data else open(os.devnull, 'rb') as stdin:
             with io.BytesIO() as stdout:
                 return (stdin | self | stdout).getvalue()

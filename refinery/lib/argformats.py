@@ -326,7 +326,7 @@ class DelayedArgumentDispatch:
             unit = self._get_unit(modifier, *args)
             if not unit:
                 raise ArgumentTypeError(F'failed to build unit {modifier}')
-            result = unit(data)
+            result = unit.act(data)
             return result if isbuffer(result) else B''.join(result)
 
     def can_handle(self, modifier, *args):
@@ -412,7 +412,7 @@ class DelayedArgument(LazyEvaluation):
                 return name, arguments, expression[k + 1:]
         return None, (), expression
 
-    def __call__(self, data: Optional[Chunk] = None) -> bytes:
+    def __call__(self, data: Union[ByteString, Chunk, None] = None) -> bytes:
         arg = self.seed
         mod = iter(self.modifiers)
         if not self.finalized:
