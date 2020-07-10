@@ -164,5 +164,7 @@ class xtp(PatternExtractor):
                 return result
             whitelist.add(value)
 
+        self.log_debug(self.args.pattern)
+
         transforms = [] if not self.args.filter else [check]
         yield from self.matches_filtered(memoryview(data), self.args.pattern, *transforms)
