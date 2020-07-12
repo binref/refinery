@@ -65,9 +65,11 @@ def get_entry_point(name: str) -> type:
     except Exception:
         pass
     try:
+        import sys
+        import os
+        assert int(os.environ['REFINERY_LOAD_LOCAL']) == 1
         from ..units import Entry
-        from sys import path as pypath
-        pypath.append('.')
+        sys.path.append('.')
         module = __import__(name)
         for attr in dir(module):
             item = getattr(module, attr)
