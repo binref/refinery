@@ -112,7 +112,7 @@ class NetManifestResource(Struct):
         RsrcTypeCount = self.expect(UInt32)
 
         ResourceTypes = [
-            self.expect(StringPrimitive)
+            self.expect(LengthPrefixedString)
             for _ in range(RsrcTypeCount)
         ]
 
