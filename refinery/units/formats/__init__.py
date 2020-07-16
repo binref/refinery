@@ -89,12 +89,13 @@ class PathExtractorUnit(Unit, abstract=True):
                 path = result.path
                 if not fnmatch.fnmatch(path, pattern):
                     continue
-                csum = adler32(result.get_data())
-                if path in paths:
-                    if csum in paths[path]:
-                        continue
-                    self.log_warn('duplicate path with different contents:', path)
-                paths[path].add(csum)
+                if not self.args.list:
+                    csum = adler32(result.get_data())
+                    if path in paths:
+                        if csum in paths[path]:
+                            continue
+                        self.log_warn('duplicate path with different contents:', path)
+                    paths[path].add(csum)
                 if self.args.join:
                     path = os.path.join(root, path)
                 if self.args.list:

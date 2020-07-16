@@ -218,6 +218,12 @@ class TestDump(TestUnitBase):
             'EA D5 01 50 4B 05 06 00 00 00 00 05 00 05 00 B7'  # ...PK...........
             '01 00 00 BC 00 00 00 00 00'                       # .........
         )
+        listing = self.ldu('xtzip', list=True)
+        self.assertEqual(listing(archive), B'\n'.join([
+            B'foo/baf',
+            B'foo/baz',
+            B'bar/bok'
+        ]))
         with tempfile.TemporaryDirectory() as root:
             with temporary_chwd(root) as root:
                 dump = self.load('{path}')
