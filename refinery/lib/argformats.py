@@ -503,7 +503,7 @@ class DelayedBinaryArgument(DelayedArgument):
         try:
             bounds = number(region)
             return bytearray(range(bounds))
-        except ValueError:
+        except (ValueError, ArgumentTypeError):
             pass
         bounds = sliceobj(region)
         if bounds.stop is None:

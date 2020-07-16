@@ -56,3 +56,7 @@ class TestFraming(TestBase):
         b = bytearray.fromhex('BAADF00DCAB00F')
         a = m(b)
         self.assertEqual(a, B'BAADF00D')
+
+    def test_range_modifier(self):
+        m = multibin('range:0x31:0x39+1')
+        self.assertEqual(m, B'123456789')
