@@ -1,119 +1,68 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import enum
 import pefile
-from fnmatch import fnmatch
+import re
 
-from ... import arg, Unit
-
-
-class rsrc:
-    RESOURCE_TYPES = {
-        'CURSOR': 1,
-        'BITMAP': 2,
-        'ICON': 3,
-        'MENU': 4,
-        'DIALOG': 5,
-        'STRING': 6,
-        'FONTDIR': 7,
-        'FONT': 8,
-        'ACCELERATOR': 9,
-        'RCDATA': 10,
-        'MESSAGETABLE': 11,
-        'VERSION': 16,
-        'DLGINCLUDE': 17,
-        'PLUGPLAY': 19,
-        'VXD': 20,
-        'ANICURSOR': 21,
-        'ANIICON': 22,
-        'HTML': 23,
-        'MANIFEST': 24,
-    }
-
-    @staticmethod
-    def to_name(number):
-        for key in rsrc.RESOURCE_TYPES:
-            if rsrc.RESOURCE_TYPES[key] == number:
-                return key
-        return str(number)
-
-    def __init__(self, path):
-        self.root = False
-        self.needles = tuple(
-            self._parse(k, x)
-            for k, x in enumerate(path.split('/'))
-        )
-
-    def relax(self):
-        return rsrc(F'*/{self}')
-
-    def __str__(self):
-        return '/'.join(self.to_name(x) for x in self.needles)
-
-    def _parse(self, index, s):
-        if not index:
-            try:
-                translation = self.RESOURCE_TYPES[s]
-            except KeyError:
-                pass
-            else:
-                self.root = True
-                return translation
-        try:
-            return int(s, 0)
-        except ValueError:
-            pass
-        return s
+from .. import UnpackResult, PathExtractorUnit
 
 
-class perc(Unit):
+class RSRC(enum.IntEnum):
+    CURSOR        = 0x01  # noqa
+    BITMAP        = 0x02  # noqa
+    ICON          = 0x03  # noqa
+    MENU          = 0x04  # noqa
+    DIALOG        = 0x05  # noqa
+    STRING        = 0x06  # noqa
+    FONTDIR       = 0x07  # noqa
+    FONT          = 0x08  # noqa
+    ACCELERATOR   = 0x09  # noqa
+    RCDATA        = 0x0A  # noqa
+    MESSAGETABLE  = 0x0B  # noqa
+    VERSION       = 0x10  # noqa
+    DLGINCLUDE    = 0x11  # noqa
+    PLUGPLAY      = 0x13  # noqa
+    VXD           = 0x14  # noqa
+    ANICURSOR     = 0x15  # noqa
+    ANIICON       = 0x16  # noqa
+    HTML          = 0x17  # noqa
+    MANIFEST      = 0x18  # noqa
+
+
+class perc(PathExtractorUnit):
     """
     Extract PE file resources.
     """
+    def __init__(self, *paths, list=False, join=False, regex=False):
+        def fixpath(p):
+            if regex or not p.isidentifier():
+                return p
+            return re.compile(FR'^.*?\b{re.escape(p)}\b.*$')
+        super().__init__(*(fixpath(p) for p in paths), list=list, join=join)
 
-    def __init__(self, *entries: arg(metavar='entry', type=rsrc, help=(
-        'A resource path for the resource to be extracted. May contain numeric '
-        'literals and name strings with wildcards.'
-    ))):
-        super().__init__(entries=entries)
+    def _search(self, pe, directory, level=0, *path):
+        if level >= 3:
+            self.log_warn(F'unexpected resource tree level {level + 1:d}')
+        for entry in directory.entries:
+            if entry.name:
+                identifier = str(entry.name)
+            elif level == 0 and entry.id in iter(RSRC):
+                identifier = RSRC(entry.id).name
+            elif entry.id is not None:
+                identifier = str(entry.id)
+            else:
+                self.log_warn(F'resource entry has name {entry.name} and id {entry.id} at level {level + 1:d}')
+                continue
+            if entry.struct.DataIsDirectory:
+                yield from self._search(pe, entry.directory, level + 1, *path, identifier)
+            else:
+                path = '/'.join((*path, identifier))
+                yield UnpackResult(path, data=lambda p=pe, e=entry:
+                    p.get_data(e.data.struct.OffsetToData, e.data.struct.Size))
 
-    def _match(self, level, needle, e):
-        if e.id == needle or str(e.id) == needle:
-            return True
-        if level == 0 and rsrc.to_name(needle) == str(e.name):
-            return True
-        elif fnmatch(str(e.name), str(needle)):
-            return True
-        return False
-
-    def _search(self, pe, directory, needles, level=0, path=('.rsrc',)):
-        try:
-            needle = needles[level]
-        except IndexError:
-            if level >= 3:
-                self.log_warn(F'unexpected resource tree level {level + 1:d}')
-            needle = '*'
-
-        for e in directory.entries:
-            if self._match(level, needle, e):
-                id_string = e.id if level else rsrc.to_name(e.id)
-                new_path = path + (str(e.name if e.name else id_string),)
-                if e.struct.DataIsDirectory:
-                    yield from self._search(pe, e.directory, needles, level + 1, new_path)
-                elif needles:
-                    yield dict(
-                        data=pe.get_data(e.data.struct.OffsetToData, e.data.struct.Size),
-                        path='/'.join(new_path[1:])
-                    )
-                else:
-                    yield '/'.join(new_path[1:]).encode('UTF8')
-
-    def process(self, data):
+    def unpack(self, data):
         pe = pefile.PE(data=data)
-        if not self.args.entries:
-            yield from self._search(pe, pe.DIRECTORY_ENTRY_RESOURCE, [])
-            return
-        for entry in self.args.entries:
-            while len(entry.needles) <= 3:
-                self.log_info('searching pattern:', str(entry))
-                yield from self._search(pe, pe.DIRECTORY_ENTRY_RESOURCE, entry.needles)
-                entry = entry.relax()
+        try:
+            yield from self._search(pe, pe.DIRECTORY_ENTRY_RESOURCE)
+        except AttributeError:
+            pass

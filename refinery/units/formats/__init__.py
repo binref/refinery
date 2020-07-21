@@ -40,6 +40,29 @@ class EndOfStringNotFound(ValueError):
         super().__init__('end of string could not be determined')
 
 
+class PathPattern:
+    def __init__(self, pp, regex=False):
+        if isinstance(pp, re.Pattern):
+            self.stops = []
+            self.pattern = pp
+        else:
+            if not regex:
+                self.stops = [pp[:k] for k, c in enumerate(pp) if c in '/*?']
+                pp = fnmatch.translate(pp)
+            self.pattern = re.compile(pp)
+
+    def reach(self, path):
+        if not self.stops:
+            return True
+        for stop in self.stops:
+            if fnmatch.fnmatch(path, stop):
+                return True
+        return False
+
+    def check(self, path):
+        return self.pattern.fullmatch(path)
+
+
 class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(self, *paths: arg(
@@ -47,21 +70,18 @@ class PathExtractorUnit(Unit, abstract=True):
             'Wildcard pattern for the name of the item to be extracted. Each item is returned'
             ' as a separate output of this unit. Paths may contain wildcards. The default is '
             'a single asterix, which means that every item will be extracted.')),
-        list: arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
-        join: arg.switch('-j', help='Join path names from container with previous path names.') = False,
+        list : arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
+        join : arg.switch('-j', help='Join path names from container with previous path names.') = False,
+        regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
         **keywords
     ):
-        super().__init__(paths=paths, list=list, join=join, **keywords)
+        super().__init__(patterns=[PathPattern(p) for p in paths], list=list, join=join, **keywords)
 
     def _check_reachable(self, path: str) -> bool:
-        for pattern in self.args.path:
-            stops = [k for k, c in enumerate(pattern) if c in '/*?'] + [None]
-            for stop in stops:
-                if fnmatch.fnmatch(path, pattern[:stop]):
-                    return True
+        return any(p.reach(path) for p in self.args.patterns)
 
     def _check_path(self, path: str) -> bool:
-        return any(fnmatch.fnmatch(path, pattern) for pattern in self.args.paths)
+        return any(p.check(path) for p in self.args.patterns)
 
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
         raise NotImplementedError
@@ -83,11 +103,11 @@ class PathExtractorUnit(Unit, abstract=True):
                     result.get_data()
                 results.append(result)
 
-        for pattern in self.args.paths:
-            self.log_debug('checking pattern:', pattern)
+        for p in self.args.patterns:
+            self.log_debug('checking pattern:', p.pattern)
             for result in results:
                 path = result.path
-                if not fnmatch.fnmatch(path, pattern):
+                if not p.check(path):
                     continue
                 if not self.args.list:
                     csum = adler32(result.get_data())
