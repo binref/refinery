@@ -53,17 +53,21 @@ class xtp(PatternExtractor):
 
     _ALPHABETIC = ascii_letters.encode('ASCII')
     _LEGITIMATE_HOSTS = {
+        'acm.org'             : 1,
         'adobe.com'           : 1,
         'aka.ms'              : 1,
         'apache.org'          : 1,
         'apple.com'           : 1,
+        'archive.org'         : 2,
         'azure.com'           : 1,
         'baidu.com'           : 2,
         'curl.haxx.se'        : 1,
         'digicert.com'        : 1,
+        'github.com'          : 3,
         'globalsign.com'      : 1,
         'globalsign.net'      : 1,
         'google.com'          : 3,
+        'gov'                 : 2,
         'iana.org'            : 1,
         'live.com'            : 1,
         'microsoft.com'       : 1,
@@ -75,6 +79,7 @@ class xtp(PatternExtractor):
         'purl.org'            : 1,
         'python.org'          : 1,
         'skype.com'           : 1,
+        'sourceforge.net'     : 3,
         'sway-cdn.com'        : 1,
         'sway-extensions.com' : 1,
         'symantec.com'        : 1,
@@ -84,6 +89,8 @@ class xtp(PatternExtractor):
         'thawte.com'          : 1,
         'verisign.com'        : 1,
         'w3.org'              : 1,
+        'wikipedia.org'       : 1,
+        'wolfram.com'         : 1,
         'xml.org'             : 1,
         'xmlsoap.org'         : 1,
         'yahoo.com'           : 1,
@@ -110,31 +117,39 @@ class xtp(PatternExtractor):
             if not ip.is_global:
                 if self.args.filter > 1 or not ip.is_private:
                     return None
-        elif name in ('url', 'socket', 'domain'):
+        elif name in ('url', 'socket', 'domain', 'subdomain'):
             ioc = value.decode(self.codec)
             if '://' not in ioc: ioc = F'TCP://{ioc}'
-            host = urlparse(ioc).netloc.split(':', 1)[0].lower()
+            host = urlparse(ioc).netloc.split(':', 1)[0]
+            hlow = host.lower()
             for white, level in self._LEGITIMATE_HOSTS.items():
-                if level <= self.args.filter and host == white or host.endswith(F'.{white}'):
+                if level <= self.args.filter and hlow == white or hlow.endswith(F'.{white}'):
                     return None
-            if any(host == w for w in self._DOMAIN_WHITELIST):
+            if any(hlow == w for w in self._DOMAIN_WHITELIST):
                 return None
-            if name == 'domain':
+            if name.endswith('domain'):
                 hostparts = host.split('.')
                 # These heuristics attempt to filter out member access to variables in
                 # scripts which can be mistaken for domains because of the TLD inflation
                 # we've had.
-                if len(hostparts) == 2 and hostparts[0] == 'this':
-                    return None
-                if len(hostparts[-2]) < 3:
-                    return None
-                if any(x.startswith('_') for x in hostparts):
-                    return None
-                if len(hostparts[-1]) > 3:
-                    seen_before = len(set(re.findall(
-                        R'{}(?:\.\w+)+'.format(hostparts[0]).encode('ascii'), data)))
-                    if seen_before > 2:
+                uppercase = sum(1 for c in host if c.isalpha() and c.upper() == c)
+                lowercase = sum(1 for c in host if c.isalpha() and c.lower() == c)
+                if lowercase and uppercase:
+                    caseratio = uppercase / lowercase
+                    if 0.1 < caseratio < 0.9:
                         return None
+                if all(x.isidentifier() for x in hostparts):
+                    if len(hostparts) == 2 and hostparts[0] == 'this':
+                        return None
+                    if len(hostparts[-2]) < 3:
+                        return None
+                    if any(x.startswith('_') for x in hostparts):
+                        return None
+                    if len(hostparts[-1]) > 3:
+                        seen_before = len(set(re.findall(
+                            R'{}(?:\.\w+)+'.format(hostparts[0]).encode('ascii'), data)))
+                        if seen_before > 2:
+                            return None
         elif name == 'email':
             at = value.find(B'@')
             ix = 0
