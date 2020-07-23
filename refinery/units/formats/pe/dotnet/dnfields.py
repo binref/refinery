@@ -49,12 +49,18 @@ class dnfields(PathExtractorUnit):
         for k, rv in enumerate(tables.FieldRVA):
             index = rv.Field.Index
             field = tables.Field[index - 1]
+            fname = field.Name
             guess = self._guess_field_info(tables, data, index)
             if guess is None:
-                self.log_debug(lambda: F'field {k:0{iwidth}d}: {field.Name} unable to guess type information')
+                self.log_debug(lambda: F'field {k:0{iwidth}d}: unable to guess type information')
                 continue
             typename, count, size = guess
             totalsize = count * size
-            self.log_info(lambda: F'field {k:0{iwidth}d}: {field.Name} of type {typename}, count: {count}')
+            name = F'F{k:0{iwidth}d}:{rv.RVA:04X}:{typename}[{count}]'
+            if fname.isprintable():
+                name = F'{name}:{fname}'
+            else:
+                fname = '<UNPRINTABLE>'
+            self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {typename}, count: {count}, name: {fname}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
-            yield UnpackResult(field.Name, lambda t=offset, s=totalsize: data[t:t + s])
+            yield UnpackResult(name, lambda t=offset, s=totalsize: data[t:t + s])
