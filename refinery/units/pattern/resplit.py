@@ -11,24 +11,8 @@ class resplit(RegexUnit):
     chunks between the separators. By default, the input is split along line breaks.
     """
 
-    def __init__(
-        self, regex=RB'\r?\n',
-        # TODO: Use positional only in Python 3.8
-        # /,
-        multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
-        unique=False, longest=False, take=None, utf16=False
-    ):
-        super().__init__(
-            regex,
-            min=min,
-            max=max,
-            len=len,
-            stripspace=stripspace,
-            unique=unique,
-            utf16=utf16,
-            longest=longest,
-            take=take
-        )
+    def __init__(self, regex=RB'\r?\n', multiline=False, ignorecase=False):
+        super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase)
 
     def process(self, data):
         yield from re.split(self.args.regex, data)

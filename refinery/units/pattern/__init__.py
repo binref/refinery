@@ -140,20 +140,22 @@ class PatternExtractorBase(Unit, abstract=True):
         max        : arg.number('-N', help='Matches must have length at most N.') = None,
         len        : arg.number('-E', help='Matches must be of length N.') = None,
         stripspace : arg.switch('-S', help='Strip all whitespace from input data.') = False,
-        unique     : arg.switch('-q', help='Yield every (transformed) Match only once.') = False,
+        duplicates : arg.switch('-D', help='Yield every (transformed) Match, even when it was found before.') = False,
         longest    : arg.switch('-l', help='Sort results by length.') = False,
         take       : arg.number('-t', help='Return only the first N occurrences in order of appearance.') = None,
+        **keywords
     ):
+        keywords.setdefault('ascii', True)
+        keywords.setdefault('utf16', True)
         super().__init__(
             min=min,
             max=max or INF,
             len=len or AST,
             stripspace=stripspace,
-            unique=unique,
-            ascii=True,
-            utf16=True,
+            duplicates=duplicates,
             longest=longest,
-            take=take or INF
+            take=take or INF,
+            **keywords
         )
 
     def matches(self, data: ByteString, pattern: Union[ByteString, re.Pattern]):
@@ -179,7 +181,7 @@ class PatternExtractorBase(Unit, abstract=True):
             hit = memoryview(match[0])
             if not hit or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
                 continue
-            if self.args.unique:
+            if not self.args.duplicates:
                 uid = int.from_bytes(blake2b(hit, digest_size=8).digest(), 'big')
                 if uid in barrier:
                     continue
@@ -236,52 +238,38 @@ class PatternExtractorBase(Unit, abstract=True):
 
 class PatternExtractor(PatternExtractorBase, abstract=True):
     def __init__(
-        self, min=1, max=None, len=None, stripspace=False, unique=False, longest=False, take=None,
+        self, min=1, max=None, len=None, stripspace=False, duplicates=False, longest=False, take=None,
         ascii: arg.switch('-u', '--no-ascii', group='AvsU', help='Search for UTF16 encoded patterns only.') = True,
         utf16: arg.switch('-a', '--no-utf16', group='AvsU', help='Search for ASCII encoded patterns only.') = True,
+        **keywords
     ):
         super().__init__(
             min=min,
             max=max,
             len=len,
             stripspace=stripspace,
-            unique=unique,
+            duplicates=duplicates,
             longest=longest,
-            take=take
+            take=take,
+            ascii=ascii,
+            utf16=utf16,
+            **keywords
         )
-        self.args.ascii = ascii
-        self.args.utf16 = utf16
 
 
-class RegexUnit(PatternExtractorBase, abstract=True):
+class RegexUnit(Unit, abstract=True):
 
     def __init__(
         self, regex : arg(type=regexp, help='Regular expression to match.'),
-        # TODO: Use positional only in Python 3.8
-        # /,
-        multiline   : arg.switch('-M', help='Caret and dollar match the beginning and end of '
-                                            'a line, a dot does not match line breaks.') = False,
-        ignorecase  : arg.switch('-I', help='Ignore capitalization for alphabetic characters.') = False,
-        utf16       : arg.switch('-u', help='Search for unicode patterns instead of ascii.') = False,
-        min=1, max=None, len=None, stripspace=False, unique=False, longest=False, take=None
+        multiline   : arg.switch('-M',
+            help='Caret and dollar match the beginning and end of a line, a dot does not match line breaks.') = False,
+        ignorecase  : arg.switch('-I',
+            help='Ignore capitalization for alphabetic characters.') = False,
+        **keywords
     ):
-        super().__init__(
-            min=min,
-            max=max,
-            len=len,
-            stripspace=stripspace,
-            unique=unique,
-            longest=longest,
-            take=take
-        )
-
-        self.args.utf16 = utf16
-        self.args.ascii = not utf16
-
         regex_flags = B'm' if multiline else B's'
         if ignorecase: regex_flags += B'i'
-
         if isinstance(regex, str):
             regex = regex.encode(self.codec)
-
-        self.args.regex = B'(?%s)%s' % (regex_flags, regex)
+        regex = B'(?%s)%s' % (regex_flags, regex)
+        super().__init__(regex=regex, **keywords)

@@ -18,13 +18,10 @@ class resub(RegexUnit):
             'Substitution value: use $1 for group 1, $0 for entire match. '
             'Matches are removed (replaced by an empty string) by default.'
         )) = B'',
-        # TODO: Use positional only in Python 3.8
-        # /,
-        multiline=False, ignorecase=False, min=1, max=None, len=None,
-        stripspace=False, unique=False, longest=False, take=None, utf16=False
+        multiline=False,
+        ignorecase=False
     ):
-        self.superinit(super(), **vars())
-        self.args.subst = subst
+        super().__init__(regex=regex, subst=subst, multiline=multiline, ignorecase=ignorecase)
 
     def process(self, data):
         self.log_info('pattern:', self.args.regex)

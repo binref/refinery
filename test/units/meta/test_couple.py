@@ -36,8 +36,7 @@ class TestCoupler(TestUnitBase):
             self.assertIn(B'Hello World', result, msg=F'Race condition in iteration {k}')
 
     def test_grep(self):
-        text = self.generate_random_text(200) + 'HABBA'
-        data = text.encode('UTF8')
+        data = self.generate_random_text(200) + B'HABBA'
         expect = B'A\n' * data.count(B'A'[0])
         try:
             result = self.load('grep', '-o', '-h', 'A')(data)

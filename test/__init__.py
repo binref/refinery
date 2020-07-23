@@ -28,7 +28,7 @@ class TestBase(unittest.TestCase):
 
     def generate_random_text(self, size):
         return ''.join(string.printable[
-            random.randrange(0, len(string.printable))] for _ in range(size))
+            random.randrange(0, len(string.printable))] for _ in range(size)).encode('UTF8')
 
     def download_from_malshare(self, sha256hash):
         import os

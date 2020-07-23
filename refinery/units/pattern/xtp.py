@@ -31,7 +31,7 @@ class xtp(PatternExtractor):
             'If this setting is enabled, the xtp unit will attempt to reduce the number '
             'of false positives by certain crude heuristics. Specify multiple times to '
             'make the filtering more aggressive.')) = 0,
-        min=1, max=None, len=None, stripspace=False, unique=False, longest=False, take=None
+        min=1, max=None, len=None, stripspace=False, duplicates=False, longest=False, take=None
     ):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
 

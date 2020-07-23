@@ -145,10 +145,13 @@ def autoinvoke(method, keywords: dict):
     kwdargs = {}
     posargs = []
     varargs = []
+    kwdjoin = False
 
     for p in inspect.signature(method).parameters.values():
+        if p.kind is p.VAR_KEYWORD:
+            kwdjoin = True
         try:
-            value = keywords[p.name]
+            value = keywords.pop(p.name)
         except KeyError:
             continue
         if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
@@ -157,6 +160,9 @@ def autoinvoke(method, keywords: dict):
             varargs = value
         elif p.kind is p.KEYWORD_ONLY:
             kwdargs[p.name] = value
+
+    if kwdjoin:
+        kwdargs.update(keywords)
 
     return method(*posargs, *varargs, **kwdargs)
 

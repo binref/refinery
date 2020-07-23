@@ -526,8 +526,8 @@ class Executable(type):
         sig_init = inspect.signature(cls_init)
         parameters = sig_init.parameters
 
-        if bases:
-            for key, value in bases[0]._argspec_.items():
+        for base in bases:
+            for key, value in base._argspec_.items():
                 if not value.guess and key in parameters:
                     cls._argspec_[key] = value.__copy__()
             cls._infer_argspec(parameters, cls._argspec_)
@@ -1184,13 +1184,21 @@ class Unit(metaclass=Executable, abstract=True):
         manually. This is a convenience feature which reduces code bloat when many parameters have to be
         forwarded, see e.g. `refinery.units.pattern.carve.carve` for an example.
         """
-        args = inspect.signature(spc.__thisclass__.__init__).parameters
-        keep = list(skipfirst(args))
-        junk = [a for a in keywords if a not in keep]
-        for j in junk: del keywords[j]
-        for a in args.values():
+        my_own_args = iter(inspect.signature(spc.__thisclass__.__init__).parameters.values())
+        parent_args = inspect.signature(spc.__init__).parameters
+        keywords.pop(next(my_own_args).name, None)
+        for a in my_own_args:
             if a.kind is a.VAR_KEYWORD:
                 keywords.update(keywords.pop(a.name, {}))
+        junk = [a for a in keywords]
+        for a in parent_args.values():
+            if a.kind is a.VAR_KEYWORD:
+                junk = [j for j in junk if j.startswith('_')]
+                break
+            try: junk.remove(a.name)
+            except ValueError: pass
+        for j in junk:
+            del keywords[j]
         try:
             if spc.__init__.__func__ is Unit.__init__:
                 return spc.__init__(**keywords)

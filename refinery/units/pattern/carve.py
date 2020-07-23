@@ -14,12 +14,12 @@ class carve(PatternExtractor):
         decode: arg.switch('-d', help='Automatically decode known patterns.') = False,
         single: arg.switch('-s', help='Only get the biggest match; equivalent to -qlt1') = False,
         min=1, max=None, len=None,
-        stripspace=False, unique=False, longest=False, take=None, utf16=True, ascii=True
+        stripspace=False, duplicates=False, longest=False, take=None, utf16=True, ascii=True
     ):
         if single:
-            take = 1        # noqa warning about unused variable
-            longest = True  # noqa warning about unused variable
-            unique = True   # noqa warning about unused variable
+            take = 1           # noqa warning about unused variable
+            duplicates = False # noqa warning about unused variable
+            longest = True     # noqa warning about unused variable
         del single
         self.superinit(super(), **vars())
         self.args.format = formats[format]
