@@ -6,11 +6,10 @@ from .. import Deobfuscator
 from . import Ps1StringLiterals
 
 
-class deob_ps1_literals(Deobfuscator):
+class deob_ps1_uncurly(Deobfuscator):
     """
-    PowerShell deobfuscation that removes superfluous curly braces around
-    literals that do not require it, i.e. `${variable}` is transformed to
-    just `$variable`.
+    PowerShell deobfuscation that removes superfluous curly braces around variable
+    names that do not require it, i.e. `${variable}` is transformed to just `$variable`.
     """
 
     _SENTINEL = re.compile(R'\$\{(\w+)\}')

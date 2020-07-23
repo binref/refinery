@@ -11,7 +11,7 @@ from .cases import deob_ps1_cases
 from .format import deob_ps1_format
 from .typecast import deob_ps1_typecast
 from .stringreplace import deob_ps1_stringreplace
-from .literals import deob_ps1_literals
+from .uncurly import deob_ps1_uncurly
 from .invoke import deob_ps1_invoke
 
 
@@ -26,7 +26,7 @@ class deob_ps1(IterativeDeobfuscator):
         deob_ps1_stringreplace,
         deob_ps1_concat,
         deob_ps1_invoke,
-        deob_ps1_literals
+        deob_ps1_uncurly
     ]]
 
     def __init__(self, timeout):
