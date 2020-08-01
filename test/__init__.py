@@ -1,4 +1,5 @@
 import sys
+import os
 import unittest
 import random
 import refinery
@@ -24,7 +25,7 @@ class TestBase(unittest.TestCase):
         return unit
 
     def generate_random_buffer(self, size):
-        return bytes((random.randrange(0, 0xFF) for _ in range(size)))
+        return os.urandom(size)
 
     def generate_random_text(self, size):
         return ''.join(string.printable[
