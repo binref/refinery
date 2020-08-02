@@ -126,7 +126,7 @@ pattern_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=pattern_ipv4, d=pattern
 pattern_hostname = pattern_socket + '?'
 pattern_hostname_df = '(?:{ip}|{d})(?::\\d{{2,5}})?'.format(ip=pattern_ipv4_df, d=pattern_domain_df)
 
-pattern_integer = '([-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0))[a-z]{0,2}(?![a-zA-Z0-9])'
+pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-zA-Z0-9])'
 pattern_float = R'[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?'
 pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 pattern_ps1str = R'''(?:"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
