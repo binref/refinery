@@ -123,7 +123,7 @@ class lz4(Unit):
                 break
             self.log_info(F'reading block of size 0x{size:06X}')
             assert reader.byte_aligned
-            assert size < block_maximum, 'block size exceeds maximum size'
+            assert size <= block_maximum, 'block size exceeds maximum size'
             if uncompressed:
                 output.write(reader.read_exactly(size))
             else:
