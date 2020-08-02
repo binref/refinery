@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import io
 
-from ...lib.structures import ByteFile, StructReader, StreamDetour, EOF
+from ...lib.structures import StructReader, StreamDetour, EOF
 from ...units.crypto.hash.xxhash import xxhash
 from ...units import Unit, RefineryPartialResult
 
@@ -144,20 +144,3 @@ class lz4(Unit):
             pos = reader.tell()
             self.log_warn(F'found {len(data)-pos} additional bytes starting at position 0x{pos:X} after compressed data')
         return output.getbuffer()
-
-    def reverse(self, data):
-        # This is a simply stub which does not actually compress the data.
-        import struct
-        mv = memoryview(data)
-        q, r = divmod(len(mv), 0x400000)
-        blocks = q + int(bool(r))
-        out = ByteFile(bytearray(11 + blocks * 4 + len(data)))
-        out.write(B'\x04\x22\x4D\x18\x40\x70\xDF')
-        for k in range(0, len(data), 0x400000):
-            data = mv[k:k + 0x400000]
-            head = len(data) | 0x80000000
-            out.write(struct.pack('<I', head))
-            out.write(data)
-        out.write(B'\0\0\0\0')
-        assert out.eof
-        return out.getbuffer()

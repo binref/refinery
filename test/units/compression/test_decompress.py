@@ -32,6 +32,8 @@ class TestAutoDecompressor(TestUnitBase):
     def test_mangled_buffers(self):
         unit = self.load(min_ratio=0.7)
         for e in unit.engines:
+            if not e.is_reversible:
+                continue
             for k, buffer in enumerate(self.buffers, 1):
                 compressed = e.reverse(buffer)
                 failures = []
