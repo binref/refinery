@@ -87,7 +87,7 @@ class BLOBHEADER(Struct):
 
 
 class PLAINTEXTKEYBLOB(Struct):
-    def __bytes__(self): return self.data
+    def __bytes__(self): return bytes(self.data)
 
     def __init__(self, reader: StructReader):
         self.size = reader.read_dword()
@@ -95,7 +95,7 @@ class PLAINTEXTKEYBLOB(Struct):
 
 
 class SIMPLEBLOB(Struct):
-    def __bytes__(self): return self.data
+    def __bytes__(self): return bytes(self.data)
 
     def __init__(self, reader: StructReader):
         self.magic = reader.read_exactly(4)
