@@ -25,14 +25,13 @@ class TestBase(unittest.TestCase):
         return unit
 
     def generate_random_buffer(self, size):
-        return os.urandom(size)
+        return bytes(random.randrange(0, 0x100) for _ in range(size))
 
     def generate_random_text(self, size):
         return ''.join(string.printable[
             random.randrange(0, len(string.printable))] for _ in range(size)).encode('UTF8')
 
     def download_from_malshare(self, sha256hash):
-        import os
         import urllib.request
         if sha256hash in self._MALSHARE_CACHE:
             return self._MALSHARE_CACHE[sha256hash]
