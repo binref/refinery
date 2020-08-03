@@ -94,7 +94,7 @@ class lz4(Unit):
             raise ValueError('unknown maximum block size value in LZ4 frame header')
         rsrv3 = reader.read_bit()
         if any((rsrv1, rsrv2, rsrv3)):
-            self.log_warn(F'nonzero reserved value in LZ4 frame header')
+            self.log_warn('nonzero reserved value in LZ4 frame header')
         if (v1, v2) != (0, 1):
             self.log_warn(F'invalid version ({v1},{v2}) in LZ4 frame header')
         content_size = content_size and reader.read_qword() or None
