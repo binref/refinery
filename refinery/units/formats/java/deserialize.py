@@ -6,7 +6,7 @@ except ImportError:
     java = None
 
 from .. import Unit
-from ...lib.json import BytesAsArrayEncoder
+from ....lib.json import BytesAsArrayEncoder
 
 
 class JavaEncoder(BytesAsArrayEncoder):

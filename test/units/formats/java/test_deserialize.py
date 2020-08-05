@@ -3,7 +3,7 @@
 import logging
 import json
 
-from .. import TestUnitBase
+from ... import TestUnitBase
 
 
 class TestJavaDeserializer(TestUnitBase):
