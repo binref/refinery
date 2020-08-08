@@ -6,13 +6,18 @@ Interfaces and classes to read structured data.
 import struct
 import functools
 import io
+import enum
 
-from typing import Union, Tuple, Optional, Iterable
+from typing import Union, Tuple, Optional, Iterable, ByteString
 
 
 class EOF(ValueError):
-    def __init__(self):
+    def __init__(self, rest: ByteString = B''):
         super().__init__('Unexpected end of buffer.')
+        self.rest = rest
+
+    def __bytes__(self):
+        return bytes(self.rest)
 
 
 class StreamDetour:
@@ -31,7 +36,7 @@ class StreamDetour:
         self._stream.seek(self._cursor, io.SEEK_SET)
 
 
-class ByteFile(io.RawIOBase):
+class MemoryFile(io.RawIOBase):
     """
     A thin wrapper around (potentially mutable) byte sequences which gives it the
     features of a file-like object.
@@ -39,7 +44,7 @@ class ByteFile(io.RawIOBase):
 
     __slots__ = ['_data', '_cursor']
 
-    def __init__(self, data: Union[bytearray, bytes, memoryview]):
+    def __init__(self, data: ByteString):
         self._data = data
         self._cursor = 0
 
@@ -90,7 +95,7 @@ class ByteFile(io.RawIOBase):
             return not self._data.readonly
         return isinstance(self._data, bytearray)
 
-    def read(self, size=-1) -> memoryview:
+    def read(self, size=-1) -> ByteString:
         beginning = self._cursor
         if size is None or size < 0:
             self._cursor = len(self._data)
@@ -105,14 +110,14 @@ class ByteFile(io.RawIOBase):
             if self._data[k] == 0xA: return k
         return -1
 
-    def readline(self, size=-1):
+    def readline(self, size=-1) -> ByteString:
         beginning, end = self._cursor, len(self._data)
         if size is not None and size >= 0:
             end = beginning + size
         self._cursor = max(self._find_linebreak(beginning, end) + 1, end)
         return self._data[beginning:self._cursor]
 
-    def readlines(self, hint=-1):
+    def readlines(self, hint=-1) -> Iterable[ByteString]:
         if hint is None or hint < 0:
             yield from self
         else:
@@ -131,16 +136,16 @@ class ByteFile(io.RawIOBase):
     def readinto(self, b) -> int:
         return self.readinto1(b)
 
-    def tell(self):
+    def tell(self) -> int:
         return self._cursor
 
-    def seekrel(self, offset):
+    def seekrel(self, offset) -> int:
         return self.seek(offset, io.SEEK_CUR)
 
-    def getbuffer(self):
+    def getbuffer(self) -> ByteString:
         return self._data
 
-    def seek(self, offset, whence=io.SEEK_SET):
+    def seek(self, offset, whence=io.SEEK_SET) -> int:
         if whence == io.SEEK_SET:
             if offset < 0:
                 raise ValueError('no negative offsets allowed for SEEK_SET.')
@@ -153,116 +158,187 @@ class ByteFile(io.RawIOBase):
         self._cursor = min(self._cursor, len(self._data))
         return self._cursor
 
-    def writelines(self, lines):
+    def writelines(self, lines) -> None:
         for line in lines:
             self.write(line)
 
-    def truncate(self, size=None):
+    def truncate(self, size=None) -> None:
         if size is not None:
             if not (0 <= size < len(self._data)):
                 raise ValueError('invalid  size value')
             self._cursor = size
         del self._data[self._cursor:]
 
-    def write(self, data):
+    def write(self, data) -> int:
         beginning = self._cursor
         self._cursor += len(data)
         self._data[beginning:self._cursor] = data
         return len(data)
 
 
-class StructReader(ByteFile):
+class bitorder(str, enum.Enum):
+    big = 'big'
+    little = 'little'
 
-    def __init__(self, *args):
-        super().__init__(*args)
+
+class StructReader(MemoryFile):
+    """
+    An extension of a `refinery.lib.structures.MemoryFile` which provides methods to
+    read structured data.
+    """
+
+    class Unaligned(RuntimeError):
+        pass
+
+    def __init__(self, data: Union[bytearray, bytes, memoryview], bo='little'):
+        super().__init__(data)
         self._bbits = 0
         self._nbits = 0
+        self.bitorder = bitorder(bo)
+
+    @property
+    def byteorder_format(self) -> str:
+        return '<>'[int(self.bitorder is bitorder.big)]
 
     def seek(self, offset, whence=io.SEEK_SET):
         self._bbits = 0
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read(self, size: Optional[int] = None, stash_bits=False):
-        if self._nbits > 0 and not stash_bits:
-            raise RuntimeError(F'Attempt to perform bytewise read with {self._nbits} bits left in buffer.')
-        return super().read(size)
-
-    def read_bit(self) -> int:
-        bit, = self.read_bits(1)
-        return bit
+    def read(self, size: Optional[int] = None):
+        """
+        Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
+        byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
+        an exception of type `refinery.lib.structures.EOF` when less data is available in the stream than
+        requested via the `size` parameter. The remaining data can be extracted from the exception.
+        Use `refinery.lib.structures.StructReader.read_bytes` to read bytes from the stream when it is
+        not byte-aligned.
+        """
+        if not self.byte_aligned:
+            raise StructReader.Unaligned(F'but buffer is not byte-aligned')
+        data = super().read(size)
+        if len(data) != size:
+            raise EOF(data)
+        return data
 
     def byte_aligned(self) -> bool:
+        """
+        This property is `True` if and only if there are currently no bits still waiting in the internal
+        bit buffer.
+        """
         return not self._nbits
 
-    def byte_align(self) -> None:
+    def byte_align(self) -> Tuple[int, int]:
+        """
+        This method clears the internal bit buffer and moves the cursor to the next byte. It returns a
+        tuple containing the size and contents of the bit buffer.
+        """
+        nbits = self._nbits
+        bbits = self._bbits
         self._nbits = 0
         self._bbits = 0
+        return nbits, bbits
 
-    def _bitstash(self, nbits) -> None:
-        if self._nbits < nbits:
-            required = nbits - self._nbits
-            bytecount, r = divmod(required, 8)
-            if r: bytecount += 1
-            self._bbits |= (self.read_bigint(bytecount) << self._nbits)
-            self._nbits += bytecount * 8
+    def read_integer(self, length) -> int:
+        """
+        Read `length` many bits from the underlying stream as an integer.
+        """
+        if length < self._nbits:
+            self._nbits -= length
+            if self.bitorder is bitorder.little:
+                result = self._bbits & 2 ** length - 1
+                self._bbits >>= length
+            else:
+                result = self._bbits >> length
+                self._bbits ^= result << length
+            return result
+        nbits, bbits = self.byte_align()
+        required = length - nbits
+        bytecount, rest = divmod(required, 8)
+        if rest:
+            bytecount += 1
+            rest = 8 - rest
+        result = int.from_bytes(self.read(bytecount), self.bitorder)
+        if not nbits and not rest:
+            return result
+        if self.bitorder is bitorder.little:
+            excess   = result >> required  # noqa
+            result  ^= excess << required  # noqa
+            result <<= nbits               # noqa
+            result  |= bbits               # noqa
+        else:
+            rbmask   = 2 ** rest - 1       # noqa
+            excess   = result & rbmask     # noqa
+            result >>= rest                # noqa
+            result  ^= bbits << required   # noqa
+        assert excess.bit_length() <= rest
+        self._nbits = rest
+        self._bbits = excess
+        return result
 
-    def read_fixed_int(self, nbits) -> int:
-        self._bitstash(nbits)
-        chunk = self._bbits & ((1 << nbits) - 1)
-        self._bbits >>= nbits
-        self._nbits -= nbits
-        return chunk
+    def read_bytes(self, size) -> bytes:
+        """
+        The method reads `size` many bytes from the underlying stream starting at the current bit.
+        """
+        if self.byte_aligned:
+            return self.read(size)
+        return self.read_integer(size * 8).to_bytes(size, self.bitorder)
 
-    def read_bits(self, nbits) -> Iterable[int]:
-        self._bitstash(nbits)
-        for k in range(nbits):
-            yield (self._bbits >> k) & 1
-        self._bbits >>= nbits
-        self._nbits -= nbits
+    def read_bit(self) -> int:
+        """
+        This function is a shortcut for calling `refinery.lib.structures.StructReader.read_fixed_int` with
+        an argument of `1`, i.e. this reads the next bit from the stream. The bits of any byte in the stream
+        are read from least significant to most significant.
+        """
+        return self.read_integer(1)
 
-    def read_struct(self, format) -> Union[Tuple, int, bytes]:
-        data = struct.unpack(format, self.read_exactly(struct.calcsize(format)))
+    def read_bits(self, nbits: int) -> Iterable[int]:
+        """
+        This method returns the bits of `refinery.lib.structures.StructReader.read_fixed_int` as an iterable
+        from least to most significant.
+        """
+        chunk = self.read_integer(nbits)
+        for k in range(nbits - 1, -1, -1):
+            yield chunk >> k & 1
+
+    def read_struct(self, format: str) -> Union[Tuple, int, bool, float, bytes]:
+        """
+        Read structured data from the stream in any format supported by the `struct` module. If the `format`
+        argument does not specify a byte order, then `refinery.lib.structures.StructReader.byteorder` will be
+        used to determine a format.
+        """
+        if not format:
+            raise ValueError('no format specified')
+        if format[:1] not in '<!=@>':
+            format = F'{self.byteorder_format}{format}'
+        data = struct.unpack(format, self.read_bytes(struct.calcsize(format)))
         if len(data) == 1:
             return data[0]
         return data
 
     def read_nibble(self) -> int:
-        return self.read_fixed_int(4)
+        """
+        Calls `refinery.lib.structures.StructReader.read_fixed_int` with an argument of `4`.
+        """
+        return self.read_integer(4)
 
-    def read_byte(self) -> int:
-        if not self._nbits:
-            onebyte = self.read_exactly(1)
-            return onebyte[0]
-        return self.read_fixed_int(8)
+    def u16(self) -> int: return self.read_integer(16)
+    def u32(self) -> int: return self.read_integer(32)
+    def u64(self) -> int: return self.read_integer(64)
+    def i16(self) -> int: return self.read_struct('h')
+    def i32(self) -> int: return self.read_struct('l')
+    def i64(self) -> int: return self.read_struct('q')
 
-    def read_word(self) -> int:
-        if not self._nbits:
-            return self.read_struct('<H')
-        return self.read_fixed_int(16)
-
-    def read_dword(self) -> int:
-        if not self._nbits:
-            return self.read_struct('<I')
-        return self.read_fixed_int(32)
-
-    def read_qword(self) -> int:
-        if not self._nbits:
-            return self.read_struct('<Q')
-        return self.read_fixed_int(64)
-
-    def read_bigint(self, length, byteorder='little') -> int:
-        return int.from_bytes(self.read_exactly(length), byteorder)
-
-    def read_exactly(self, size) -> bytes:
-        result = super().read(size)
-        if len(result) != size:
-            raise EOF
-        return result
+    def read_byte(self) -> int: return self.read_integer(8)
+    def read_char(self) -> int: return self.read_struct('b')
 
 
 class StructMeta(type):
-    def __init__(cls, name, bases, nmspc):
+    def __new__(mcls, name, bases, nmspc, **kwargs):
+        nmspc.update(kwargs)
+        return type.__new__(mcls, name, bases, nmspc)
+
+    def __init__(cls, name, bases, nmspc, **kwargs):
         super(StructMeta, cls).__init__(name, bases, nmspc)
         original__init__ = cls.__init__
 

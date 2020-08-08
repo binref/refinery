@@ -81,7 +81,7 @@ class ALGORITHMS(_ENUM):
 
 class BLOBHEADER(Struct):
     def __init__(self, reader: StructReader):
-        t, self.version, self.reserved, a = reader.read_struct('=BBHI')
+        t, self.version, self.reserved, a = reader.read_struct('BBHI')
         self.type = TYPES(t)
         self.algorithm = ALGORITHMS(a)
 
@@ -90,15 +90,15 @@ class PLAINTEXTKEYBLOB(Struct):
     def __bytes__(self): return bytes(self.data)
 
     def __init__(self, reader: StructReader):
-        self.size = reader.read_dword()
-        self.data = reader.read_exactly(self.size)
+        self.size = reader.u32()
+        self.data = reader.read(self.size)
 
 
 class SIMPLEBLOB(Struct):
     def __bytes__(self): return bytes(self.data)
 
     def __init__(self, reader: StructReader):
-        self.magic = reader.read_exactly(4)
+        self.magic = reader.read(4)
         if self.magic != B'\0\0\xA4\0':
             raise ValueError(F'Invalid magic bytes: {self.magic.hex(":").upper()}')
         self.data = reader.read(0x100)
@@ -109,11 +109,10 @@ class RSAPUBKEY(Struct):
         self.magic = reader.read(4)
         if self.magic not in (B'RSA2', B'RSA1'):
             raise ValueError(F'Invalid signature: {self.magic.hex()}')
-        self.size, self.exponent = reader.read_struct('<II')
+        self.size, self.exponent = reader.read_struct('II')
         if self.size % 8 != 0:
             raise ValueError(F'The bitlength {self.size} is not a multiple of 8.')
-        self.size //= 8
-        self.modulus = reader.read_bigint(self.size)
+        self.modulus = reader.read_integer(self.size)
 
     def convert(self):
         return RSA.construct((self.modulus, self.exponent))
@@ -129,12 +128,12 @@ class PRIVATEKEYBLOB(Struct):
     def __init__(self, reader: StructReader):
         self.pub = RSAPUBKEY(reader)
         halfsize = self.pub.size // 2
-        self.prime1 = reader.read_bigint(halfsize)
-        self.prime2 = reader.read_bigint(halfsize)
-        self.exp1 = reader.read_bigint(halfsize)
-        self.exp2 = reader.read_bigint(halfsize)
-        self.coefficient = reader.read_bigint(halfsize)
-        self.exponent = reader.read_bigint(halfsize)
+        self.prime1 = reader.read_integer(halfsize)
+        self.prime2 = reader.read_integer(halfsize)
+        self.exp1 = reader.read_integer(halfsize)
+        self.exp2 = reader.read_integer(halfsize)
+        self.coefficient = reader.read_integer(halfsize)
+        self.exponent = reader.read_integer(halfsize)
         self._check()
 
     def _check(self):
@@ -180,15 +179,14 @@ class PRIVATEKEYBLOB(Struct):
 
 class DHPUBKEY(Struct):
     def __init__(self, reader: StructReader):
-        self.magic, self.size = reader.read_struct('<4sI')
+        self.magic, self.size = reader.read_struct('4sI')
         if self.magic not in (B'\0DH1', B'\0DH2'):
             raise ValueError(F'Invalid magic bytes: {self.magic.hex(":").upper()}')
         if self.size % 8 != 0:
             raise ValueError('Bit length is not a multiple of 8.')
-        self.size //= 8
-        self.public = reader.read_bigint(self.size)
-        self.prime = reader.read_bigint(self.size)
-        self.generator = reader.read_bigint(self.size)
+        self.public = reader.read_integer(self.size)
+        self.prime = reader.read_integer(self.size)
+        self.generator = reader.read_integer(self.size)
 
     def __bytes__(self):
         raise NotImplementedError

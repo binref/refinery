@@ -13,7 +13,7 @@ class LZ4Reader(StructReader):
             return size
         nb = 0xFF
         while nb == 0xFF:
-            nb = self.read_byte()
+            nb = self.read(1)[0]
             size += nb
         return size
 
@@ -39,10 +39,10 @@ class lz4(Unit):
             reflen = reader.read_nibble()
             litlen = reader.read_nibble()
             litlen = reader.read_size(litlen)
-            literal = reader.read_exactly(litlen)
+            literal = reader.read(litlen)
             output.write(literal)
             if ubound_check(): break
-            try: refpos = reader.read_word()
+            try: refpos = reader.u16()
             except EOF: break
             if refpos - 1 not in range(output.tell()):
                 with StreamDetour(output, lastend):
@@ -72,7 +72,7 @@ class lz4(Unit):
         output = io.BytesIO()
         reader = LZ4Reader(memoryview(data))
         try:
-            magic = reader.read_dword() == 0x184D2204
+            magic = reader.u32() == 0x184D2204
         except EOF:
             magic = False
         if not magic:
@@ -89,7 +89,7 @@ class lz4(Unit):
                 6: 0x100000,
                 5: 0x040000,
                 4: 0x010000,
-            }[reader.read_fixed_int(3)]
+            }[reader.read_integer(3)]
         except KeyError:
             raise ValueError('unknown maximum block size value in LZ4 frame header')
         rsrv3 = reader.read_bit()
@@ -97,8 +97,8 @@ class lz4(Unit):
             self.log_warn('nonzero reserved value in LZ4 frame header')
         if (v1, v2) != (0, 1):
             self.log_warn(F'invalid version ({v1},{v2}) in LZ4 frame header')
-        content_size = content_size and reader.read_qword() or None
-        dict_id = dict_id and reader.read_dword() or None
+        content_size = content_size and reader.u64() or None
+        dict_id = dict_id and reader.u32() or None
         # Header Checksum
         xxh = xxhash(data[4:reader.tell()]).intdigest() >> 8 & 0xFF
         chk = reader.read_byte()
@@ -116,7 +116,7 @@ class lz4(Unit):
 
         while True:
             blockindex += 1
-            size = reader.read_fixed_int(31)
+            size = reader.read_integer(31)
             uncompressed = reader.read_bit()
             if not size:
                 assert not uncompressed
@@ -125,19 +125,19 @@ class lz4(Unit):
             assert reader.byte_aligned
             assert size <= block_maximum, 'block size exceeds maximum size'
             if uncompressed:
-                output.write(reader.read_exactly(size))
+                output.write(reader.read(size))
             else:
                 self._read_block(reader, output, size)
             if blocks_checksummed:
                 with StreamDetour(reader, -size, io.SEEK_CUR):
-                    xxh = xxhash(reader.read_exactly(size)).intdigest()
-                chk = reader.read_dword()
+                    xxh = xxhash(reader.read(size)).intdigest()
+                chk = reader.u32()
                 if chk != xxh:
                     self.log_warn(F'block {blockindex} had checksum {chk:08X} which did not match computed value {xxh:08X}')
         if content_checksummed:
             self.log_info('computing checksum')
             xxh = xxhash(output.getbuffer()).intdigest()
-            chk = reader.read_dword()
+            chk = reader.u32()
             if chk != xxh:
                 self.log_warn(F'the given checksum {chk:08X} did not match the computed checksum {xxh:08X}')
         if not reader.eof:
