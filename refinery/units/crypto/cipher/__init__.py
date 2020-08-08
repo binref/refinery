@@ -32,21 +32,6 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
     def __init__(self, key: arg(help='The encryption key.'), **keywords):
         super().__init__(key=key, **keywords)
 
-    @property
-    def key_size_chosen(self) -> int:
-        try:
-            return self.args.key_size
-        except AttributeError:
-            return self.maximum_key_size
-
-    @property
-    def maximum_key_size(self) -> int:
-        return max(self.key_sizes)
-
-    @property
-    def key(self) -> ByteString:
-        return self.args.key
-
     def decrypt(self, data: ByteString) -> ByteString:
         raise NotImplementedError
 
@@ -54,6 +39,8 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
+        if len(self.args.key) not in self.key_sizes:
+            raise ValueError(F'the key has length {len(self.args.key)}')
         return self.decrypt(data)
 
     def reverse(self, data: ByteString) -> ByteString:
@@ -167,8 +154,8 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
         super().__init__(key, **keywords)
 
     def _get_cipher_instance(self, **optionals) -> Any:
-        self.log_info('encryption key:', self.key.hex())
-        return self._stdcipher_.new(key=self.key, **optionals)
+        self.log_info(lambda: F'encryption key: {self.args.key.hex()}')
+        return self._stdcipher_.new(key=self.args.key, **optionals)
 
     def encrypt(self, data: bytes) -> bytes:
         return self._get_cipher_instance().encrypt(data)
@@ -196,7 +183,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             del optionals['IV']
             if self.iv:
                 self.log_info('ignoring IV for mode', self.args.mode)
-            return self._stdcipher_.new(key=self.key, **optionals)
+            return self._stdcipher_.new(key=self.args.key, **optionals)
 
 
 class LatinStreamCipher(StandardCipherUnit):

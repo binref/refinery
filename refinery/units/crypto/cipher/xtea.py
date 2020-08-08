@@ -17,7 +17,7 @@ class xtea(BlockCipherUnitBase):
 
     @property
     def key(self):
-        return struct.unpack('4I', super().key)
+        return struct.unpack('4I', self.args.key)
 
     def encrypt(self, data):
         it = iter(self._load32(data))
