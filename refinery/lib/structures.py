@@ -173,7 +173,11 @@ class MemoryFile(io.RawIOBase):
     def write(self, data) -> int:
         beginning = self._cursor
         self._cursor += len(data)
-        self._data[beginning:self._cursor] = data
+        try:
+            self._data[beginning:self._cursor] = data
+        except Exception as T:
+            self._cursor = beginning
+            raise OSError(str(T)) from T
         return len(data)
 
 

@@ -10,6 +10,26 @@ from .. import TestBase
 
 class TestStructures(TestBase):
 
+    def test_memoryfile_bytes(self):
+        buffers = (
+            B'Binary Refinery',
+            memoryview(bytearray(B'Binary Refinery')).toreadonly()
+        )
+        for b in buffers:
+            with MemoryFile(b) as mem:
+                self.assertFalse(mem.writable())
+                self.assertTrue(mem.readable())
+                with self.assertRaises(OSError):
+                    mem.write(B'Unicode')
+                self.assertEqual(mem.read(6), B'Binary')
+
+    def test_memoryfile_memoryview(self):
+        with MemoryFile(memoryview(bytearray(B'Binary Refinery'))) as mem:
+            self.assertTrue(mem.writable())
+            mem.write(B'Unicode')
+            mem.seek(0)
+            self.assertEqual(mem.read(), B'UnicodeRefinery')
+
     def test_memoryfile(self):
         buffer = bytearray()
         data = [
