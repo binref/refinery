@@ -227,6 +227,7 @@ class StructReader(MemoryFile):
             raise EOF(data)
         return data
 
+    @property
     def byte_aligned(self) -> bool:
         """
         This property is `True` if and only if there are currently no bits still waiting in the internal
@@ -255,8 +256,8 @@ class StructReader(MemoryFile):
                 result = self._bbits & 2 ** length - 1
                 self._bbits >>= length
             else:
-                result = self._bbits >> length
-                self._bbits ^= result << length
+                result = self._bbits >> self._nbits
+                self._bbits ^= result << self._nbits
             return result
         nbits, bbits = self.byte_align()
         required = length - nbits
@@ -362,7 +363,7 @@ class StructMeta(type):
         def wrapped__init__(self, data, *args, **kwargs):
             if not isinstance(data, StructReader):
                 data = StructReader(data)
-            for key, value in kwargs.items:
+            for key, value in kwargs.items():
                 setattr(self, key, value)
             original__init__(self, data, *args)
 
