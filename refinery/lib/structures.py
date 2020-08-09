@@ -114,7 +114,8 @@ class MemoryFile(io.RawIOBase):
         beginning, end = self._cursor, len(self._data)
         if size is not None and size >= 0:
             end = beginning + size
-        self._cursor = max(self._find_linebreak(beginning, end) + 1, end)
+        p = self._find_linebreak(beginning, end)
+        self._cursor = end if p < 0 else p + 1
         return self._data[beginning:self._cursor]
 
     def readlines(self, hint=-1) -> Iterable[ByteString]:
@@ -165,7 +166,7 @@ class MemoryFile(io.RawIOBase):
     def truncate(self, size=None) -> None:
         if size is not None:
             if not (0 <= size < len(self._data)):
-                raise ValueError('invalid  size value')
+                raise ValueError('invalid size value')
             self._cursor = size
         del self._data[self._cursor:]
 
@@ -371,5 +372,4 @@ class StructMeta(type):
 
 
 class Struct(metaclass=StructMeta):
-    def __init__(self, data):
-        pass
+    def __init__(self, data): pass
