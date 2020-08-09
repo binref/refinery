@@ -40,7 +40,7 @@ class perc(PathExtractorUnit):
             return re.compile(FR'^.*?\b{re.escape(p)}\b.*$')
         super().__init__(*(fixpath(p) for p in paths), list=list, join=join)
 
-    def _search(self, pe, directory, level=0, *path):
+    def _search(self, pe, directory, level=0, *parts):
         if level >= 3:
             self.log_warn(F'unexpected resource tree level {level + 1:d}')
         for entry in directory.entries:
@@ -54,9 +54,9 @@ class perc(PathExtractorUnit):
                 self.log_warn(F'resource entry has name {entry.name} and id {entry.id} at level {level + 1:d}')
                 continue
             if entry.struct.DataIsDirectory:
-                yield from self._search(pe, entry.directory, level + 1, *path, identifier)
+                yield from self._search(pe, entry.directory, level + 1, *parts, identifier)
             else:
-                path = '/'.join((*path, identifier))
+                path = '/'.join((*parts, identifier))
                 yield UnpackResult(path, data=lambda p=pe, e=entry:
                     p.get_data(e.data.struct.OffsetToData, e.data.struct.Size))
 
