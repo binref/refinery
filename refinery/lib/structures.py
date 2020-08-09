@@ -221,7 +221,7 @@ class StructReader(MemoryFile):
         not byte-aligned.
         """
         if not self.byte_aligned:
-            raise StructReader.Unaligned(F'but buffer is not byte-aligned')
+            raise StructReader.Unaligned('buffer is not byte-aligned')
         data = super().read(size)
         if len(data) != size:
             raise EOF(data)
