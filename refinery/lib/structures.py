@@ -294,7 +294,7 @@ class StructReader(MemoryFile):
 
     def read_bit(self) -> int:
         """
-        This function is a shortcut for calling `refinery.lib.structures.StructReader.read_fixed_int` with
+        This function is a shortcut for calling `refinery.lib.structures.StructReader.read_integer` with
         an argument of `1`, i.e. this reads the next bit from the stream. The bits of any byte in the stream
         are read from least significant to most significant.
         """
@@ -302,7 +302,7 @@ class StructReader(MemoryFile):
 
     def read_bits(self, nbits: int) -> Iterable[int]:
         """
-        This method returns the bits of `refinery.lib.structures.StructReader.read_fixed_int` as an iterable
+        This method returns the bits of `refinery.lib.structures.StructReader.read_integer` as an iterable
         from least to most significant.
         """
         chunk = self.read_integer(nbits)
@@ -322,7 +322,7 @@ class StructReader(MemoryFile):
     def read_struct(self, format: str) -> Union[Tuple, int, bool, float, bytes]:
         """
         Read structured data from the stream in any format supported by the `struct` module. If the `format`
-        argument does not specify a byte order, then `refinery.lib.structures.StructReader.byteorder` will be
+        argument does not specify a byte order, then `refinery.lib.structures.StructReader.bitorder` will be
         used to determine a format.
         """
         if not format:
@@ -336,7 +336,7 @@ class StructReader(MemoryFile):
 
     def read_nibble(self) -> int:
         """
-        Calls `refinery.lib.structures.StructReader.read_fixed_int` with an argument of `4`.
+        Calls `refinery.lib.structures.StructReader.read_integer` with an argument of `4`.
         """
         return self.read_integer(4)
 
@@ -352,6 +352,9 @@ class StructReader(MemoryFile):
 
 
 class StructMeta(type):
+    """
+    A metaclass to facilitate the behavior outlined for `refinery.lib.structures.Struct`.
+    """
     def __new__(mcls, name, bases, nmspc, **kwargs):
         nmspc.update(kwargs)
         return type.__new__(mcls, name, bases, nmspc)
@@ -372,4 +375,16 @@ class StructMeta(type):
 
 
 class Struct(metaclass=StructMeta):
+    """
+    A class to parse structured data. A `refinery.lib.structures.Struct` class can be instantiated
+    as follows:
+
+        foo = Struct(data, bar=29)
+
+    The initialization routine of the structure will be called with a single argument `reader`. If
+    the object `data` is already a `refinery.lib.structures.StructReader`, then it will be passed
+    as `reader`. Otherwise, the argument will be wrapped in a `refinery.lib.structures.StructReader`.
+    Before initialization of the struct, the member `bar` of the newly created structure will be
+    set to the value `29`.
+    """
     def __init__(self, data): pass
