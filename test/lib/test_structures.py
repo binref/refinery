@@ -11,10 +11,13 @@ from .. import TestBase
 class TestStructures(TestBase):
 
     def test_memoryfile_bytes(self):
-        buffers = (
-            B'Binary Refinery',
-            memoryview(bytearray(B'Binary Refinery')).toreadonly()
-        )
+        buffers = [
+            B'Binary Refinery'
+        ]
+        buffers.append(memoryview(buffers[0]))
+        if hasattr(memoryview, 'toreadonly'):
+            # Python 3.8 addition
+            buffers.append(memoryview(bytearray(buffers[0])).toreadonly())
         for b in buffers:
             with MemoryFile(b) as mem:
                 self.assertFalse(mem.writable())
