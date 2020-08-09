@@ -196,6 +196,12 @@ class StructReader(MemoryFile):
         self._nbits = 0
         self.bitorder = bitorder(bo)
 
+    def set_bitorder_big(self):
+        self.bitorder = bitorder.big
+
+    def set_bitorder_little(self):
+        self.bitorder = bitorder.little
+
     @property
     def byteorder_format(self) -> str:
         return '<>'[int(self.bitorder is bitorder.big)]
@@ -301,6 +307,16 @@ class StructReader(MemoryFile):
         for k in range(nbits - 1, -1, -1):
             yield chunk >> k & 1
 
+    def read_flags(self, nbits: int, reverse=False) -> Iterable[bool]:
+        """
+        Identical to `refinery.lib.structures.StructReader.read_bits` with every bit value cast to a boolean.
+        """
+        bits = list(self.read_bits(nbits))
+        if reverse:
+            bits.reverse()
+        for bit in bits:
+            yield bool(bit)
+
     def read_struct(self, format: str) -> Union[Tuple, int, bool, float, bytes]:
         """
         Read structured data from the stream in any format supported by the `struct` module. If the `format`
@@ -343,10 +359,12 @@ class StructMeta(type):
         original__init__ = cls.__init__
 
         @functools.wraps(original__init__)
-        def wrapped__init__(self, data):
+        def wrapped__init__(self, data, *args, **kwargs):
             if not isinstance(data, StructReader):
                 data = StructReader(data)
-            return original__init__(self, data)
+            for key, value in kwargs.items:
+                setattr(self, key, value)
+            original__init__(self, data, *args)
 
         cls.__init__ = wrapped__init__
 
