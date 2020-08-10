@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.3.5
+- Using `pip install --install-option=library binary-refinery` or a `REFINERY_PREFIX` environment variable with value `!` will now install the binary refinery without any command line scripts, only as a library.
+
 ## Version 0.3.4 - bugfix release
 
 ## Version 0.3.3 - bugfix release
