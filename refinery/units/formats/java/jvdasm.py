@@ -19,7 +19,7 @@ class jvdasm(PathExtractorUnit):
     _OPC_STRLEN = max(len(op.name) for op in opc)
 
     def _hex(self, bytestring, sep=''):
-        return sep.join('{x:02x}' for x in bytestring)
+        return sep.join(F'{x:02x}' for x in bytestring)
 
     def unpack(self, data):
         jc = JvClassFile(data)
