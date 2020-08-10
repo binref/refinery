@@ -5,6 +5,7 @@ import os
 import io
 import pyperclip
 import tempfile
+import time
 import hashlib
 import zlib
 
@@ -225,17 +226,23 @@ class TestDump(TestUnitBase):
             B'bar/bok'
         ]))
         with tempfile.TemporaryDirectory() as root:
+            paths = [
+                os.path.join(root, 'foo', 'baz'),
+                os.path.join(root, 'foo', 'baf'),
+                os.path.join(root, 'bar', 'bok')
+            ]
             with temporary_chwd(root) as root:
                 dump = self.load('{path}')
                 self.ldu('xtzip')[dump](archive)
-
-                self.assertTrue(os.path.exists(os.path.join(root, 'foo', 'baz')))
-                self.assertTrue(os.path.exists(os.path.join(root, 'foo', 'baf')))
-                self.assertTrue(os.path.exists(os.path.join(root, 'bar', 'bok')))
-
+                self.assertTrue(all(os.path.exists(p) for p in paths))
                 for word in ('baz', 'baf'):
                     with open(os.path.join(root, 'foo', word), 'r') as stream:
                         self.assertEqual(stream.read(), word)
+            for p in paths:
+                os.unlink(p)
+            os.rmdir(os.path.join(root, 'foo'))
+            os.rmdir(os.path.join(root, 'bar'))
+            time.sleep(.1)
 
     def test_force_mode(self):
         with tempfile.TemporaryDirectory() as root:
