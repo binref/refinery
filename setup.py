@@ -22,6 +22,11 @@ def normalize_name(name, separator='-'):
 
 
 def main():
+    global PREFIX
+    try: sys.argv.remove('library')
+    except ValueError: pass
+    else: PREFIX = '!'
+
     if sys.version_info < (3, 7):
         print('ERROR: Python version at least 3.7 is required.', file=sys.stderr)
         sys.exit(0xFADE)
@@ -41,6 +46,21 @@ def main():
                 return F'({GITHUB}blob/master/{link})'
         readme = README.read()
         readme = re.sub(R'(?<=\])\((?!\w+://)(.*?)\)', complete_link, readme)
+
+    if PREFIX == '!':
+        console_scripts = []
+    else:
+        console_scripts = [
+            '{}{}={}:{}.run'.format(
+                PREFIX,
+                normalize_name(item.__qualname__),
+                item.__module__,
+                item.__qualname__
+            )
+            for item in loader.get_all_entry_points()
+        ] + [
+            'binre=refinery.explore:explorer'
+        ]
 
     setuptools.setup(
         name='binary-refinery',
@@ -64,17 +84,7 @@ def main():
         ),
         install_requires=requirements,
         entry_points={
-            'console_scripts': [
-                '{}{}={}:{}.run'.format(
-                    PREFIX,
-                    normalize_name(item.__qualname__),
-                    item.__module__,
-                    item.__qualname__
-                )
-                for item in loader.get_all_entry_points()
-            ] + [
-                'binre=refinery.explore:explorer'
-            ]
+            'console_scripts': console_scripts
         }
     )
 

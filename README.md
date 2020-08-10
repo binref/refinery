@@ -26,7 +26,7 @@ The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [3-Clau
 
 The refinery requires at **Python 3.7**. Since binary refinery introduces a large number of new commands, there is a good chance that some of these will clash on some systems. Therefore, you have the option to choose a _prefix_ for the installation, which will be put in front of every command shim that is installed. For example, if you choose `r.` as your prefix, then the [emit](refinery/emit.py) command would be `r.emit` in your terminal. An added benefit is that you can type `r.` and hammer <kbd>Tab</kbd> twice to get a list of all available refinery commands.
 
-Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket.
+Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket. If you specify the special prefix `!` (a single exclamation mark), then the refinery will be installed in library mode and no commands will be created at all.
 
 ### Automated Installation
 
@@ -44,7 +44,11 @@ To install refinery manually, simply set the environment variable `REFINERY_PREF
 ```
 REFINERY_PREFIX=r. pip3 install -e binary-refinery
 ```
-to install refinery into the current Python environment with prefix `r.`.
+to install refinery into the current Python environment with prefix `r.`. As mentioned above, the special prefix `!` will have the effect that no shell commands are created and the refinery will be installed only as a library. An alternative way to achieve this is to specify the `library` install option for installation with pip:
+```
+pip install --install-option=library binary-refinery
+```
+This way, it is also possible to install the `binary-refinery` package as a library mode dependency in other Python projects.
 
 ### Updating
 
