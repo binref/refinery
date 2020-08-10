@@ -18,6 +18,9 @@ class jvdasm(PathExtractorUnit):
     """
     _OPC_STRLEN = max(len(op.name) for op in opc)
 
+    def _hex(self, bytestring, sep=''):
+        return sep.join('{x:02x}' for x in bytestring)
+
     def unpack(self, data):
         jc = JvClassFile(data)
         tt = '  '
@@ -33,21 +36,21 @@ class jvdasm(PathExtractorUnit):
                 args, retval = re.match(R'^\((.*?)\)(.*?)$', method.descriptor).groups()
                 print(F'{jc.this!s}::{method!s}{method.descriptor}', file=display)
                 for op in code.disassembly:
+                    olen = len(op.raw)
                     if op.table is None:
-                        opch = op.raw.hex(' ')
                         args = ', '.join(repr(a) for a in op.arguments)
                     else:
                         ow = 4 if op.code is opc.tableswitch else 8
-                        olen = len(op.raw) - (len(op.table) - 1) * ow
-                        opch = op.raw[:olen].hex(' ')
+                        olen = olen - (len(op.table) - 1) * ow
                         args = F'defaultjmp => {op.table[None]:#010x}'
                         jmps = []
                         for k, (key, jmp) in enumerate(op.table.items()):
                             if key is None:
                                 continue
-                            raw = op.raw[olen + k * ow: olen + k * ow + ow].hex(' ')
+                            raw = self._hex(op.raw[olen + k * ow: olen + k * ow + ow], ' ')
                             jmps.append(F'{tt}{raw!s:<{opcw+15}} {key:#010x} => {jmp:#010x}')
                         args = '\n'.join((args, *jmps))
+                    opch = self._hex(op.raw[:olen], ' ')
                     if len(opch) > 14:
                         opch += F'\n{tt}{tt:<15}'
                     print(F'{tt}{opch:<15}{op.code!r:<{opcw}} {args}', file=display)
