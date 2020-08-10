@@ -7,8 +7,9 @@ import struct
 import functools
 import io
 import enum
+import weakref
 
-from typing import Union, Tuple, Optional, Iterable, ByteString
+from typing import Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
 
 
 class EOF(ValueError):
@@ -240,7 +241,7 @@ class StructReader(MemoryFile):
         """
         return not self._nbits
 
-    def byte_align(self) -> Tuple[int, int]:
+    def byte_align(self, blocksize=1) -> Tuple[int, int]:
         """
         This method clears the internal bit buffer and moves the cursor to the next byte. It returns a
         tuple containing the size and contents of the bit buffer.
@@ -249,6 +250,8 @@ class StructReader(MemoryFile):
         bbits = self._bbits
         self._nbits = 0
         self._bbits = 0
+        mod = self._cursor % blocksize
+        self.seekrel(mod and blocksize - mod)
         return nbits, bbits
 
     def read_integer(self, length) -> int:
@@ -323,18 +326,19 @@ class StructReader(MemoryFile):
         for bit in bits:
             yield bool(bit)
 
-    def read_struct(self, format: str) -> Union[Tuple, int, bool, float, bytes]:
+    def read_struct(self, format: str, unwrap=False) -> Union[Tuple, int, bool, float, bytes]:
         """
         Read structured data from the stream in any format supported by the `struct` module. If the `format`
         argument does not specify a byte order, then `refinery.lib.structures.StructReader.bitorder` will be
-        used to determine a format.
+        used to determine a format. If the `unwrap` parameter is `True`, a single unpacked value will be
+        returned as a scalar, not as a tuple with one element.
         """
         if not format:
             raise ValueError('no format specified')
         if format[:1] not in '<!=@>':
             format = F'{self.byteorder_format}{format}'
         data = struct.unpack(format, self.read_bytes(struct.calcsize(format)))
-        if len(data) == 1:
+        if unwrap and len(data) == 1:
             return data[0]
         return data
 
@@ -347,12 +351,12 @@ class StructReader(MemoryFile):
     def u16(self) -> int: return self.read_integer(16)
     def u32(self) -> int: return self.read_integer(32)
     def u64(self) -> int: return self.read_integer(64)
-    def i16(self) -> int: return self.read_struct('h')
-    def i32(self) -> int: return self.read_struct('l')
-    def i64(self) -> int: return self.read_struct('q')
+    def i16(self) -> int: return self.read_struct('h', True)
+    def i32(self) -> int: return self.read_struct('l', True)
+    def i64(self) -> int: return self.read_struct('q', True)
 
     def read_byte(self) -> int: return self.read_integer(8)
-    def read_char(self) -> int: return self.read_struct('b')
+    def read_char(self) -> int: return self.read_struct('b', True)
 
 
 class StructMeta(type):
@@ -392,3 +396,34 @@ class Struct(metaclass=StructMeta):
     set to the value `29`.
     """
     def __init__(self, data): pass
+
+
+AttrType = TypeVar('AttrType')
+
+
+class PerInstanceAttribute(Generic[AttrType]):
+    def resolve(self, parent, value: Any) -> AttrType:
+        return value
+
+    def __init__(self):
+        self.__set: Dict[int, Any] = {}
+        self.__get: Dict[int, AttrType] = {}
+
+    def __set__(self, parent: Any, value: Any) -> None:
+        pid = id(parent)
+        if pid not in self.__set:
+            def cleanup(self, pid):
+                self.__set.pop(pid, None)
+                self.__get.pop(pid, None)
+            self.__set[pid] = value
+            weakref.finalize(parent, cleanup, self, id(parent))
+
+    def __get__(self, parent, tp=None) -> AttrType:
+        pid = id(parent)
+        if pid not in self.__get:
+            try:
+                seed = self.__set[pid]
+            except KeyError as K:
+                raise AttributeError from K
+            self.__get[pid] = self.resolve(parent, seed)
+        return self.__get[pid]

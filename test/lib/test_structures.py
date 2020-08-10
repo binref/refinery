@@ -133,6 +133,6 @@ class TestStructures(TestBase):
         self.assertEqual(sr.i32(), 0xDEFACED)
         self.assertEqual(sr.u32(), 0xC0CAC01A)
         self.assertEqual(sr.i64(), -0o1337)
-        self.assertAlmostEqual(sr.read_struct('f'), 2076.171875)
-        self.assertAlmostEqual(sr.read_struct('d'), math.pi)
+        self.assertAlmostEqual(sr.read_struct('f', True), 2076.171875)
+        self.assertAlmostEqual(sr.read_struct('d', True), math.pi)
         self.assertTrue(sr.eof)
