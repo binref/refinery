@@ -45,8 +45,4 @@ class rex(RegexUnit, PatternExtractor):
 
     def process(self, data):
         self.log_debug('regular expression:', self.args.regex)
-        yield from self.matches_filtered(
-            memoryview(data),
-            self.args.regex,
-            *self.args.transformation
-        )
+        yield from self.matches_filtered(memoryview(data), self.args.regex, *self.args.transformation)

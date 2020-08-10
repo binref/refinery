@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import re
-
 from . import RegexUnit
 
 
@@ -15,4 +13,4 @@ class resplit(RegexUnit):
         super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase)
 
     def process(self, data):
-        yield from re.split(self.args.regex, data)
+        yield from self.args.regex.split(data)

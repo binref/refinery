@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import re
-
 from ...lib.argformats import utf8
 from . import arg, RegexUnit, TransformSubstitutionFactory
 
@@ -26,4 +24,4 @@ class resub(RegexUnit):
     def process(self, data):
         self.log_info('pattern:', self.args.regex)
         self.log_info('replace:', self.args.subst)
-        return re.sub(self.args.regex, TransformSubstitutionFactory(self.args.subst), data)
+        return self.args.regex.sub(TransformSubstitutionFactory(self.args.subst), data)

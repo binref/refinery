@@ -267,9 +267,9 @@ class RegexUnit(Unit, abstract=True):
             help='Ignore capitalization for alphabetic characters.') = False,
         **keywords
     ):
-        regex_flags = B'm' if multiline else B's'
-        if ignorecase: regex_flags += B'i'
+        flags = re.MULTILINE if multiline else re.DOTALL
+        if ignorecase:
+            flags |= re.IGNORECASE
         if isinstance(regex, str):
             regex = regex.encode(self.codec)
-        regex = B'(?%s)%s' % (regex_flags, regex)
-        super().__init__(regex=regex, **keywords)
+        super().__init__(regex=re.compile(regex, flags=flags), **keywords)
