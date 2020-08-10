@@ -1,10 +1,11 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.3.2
 - It is now possible to use local refinery units (i.e. a Python script in the current director which contains a refinery unit that is not abstract) for multibin prefixes and in any other situation where units are dynamically loaded.
 - The `pesect` unit was added.
 - The `resub` and `resplit` units no longer offer options that have no bearing on their behavior.
 - The `lz4` unit was added with a pure Python implementation of LZ4 decompression.
+- The `jvdasm` unit for disassembling Java class files was added.
 
 ## Version 0.3.0
 - The `autoxor` unit was added.
