@@ -1026,15 +1026,17 @@ class Unit(metaclass=Executable, abstract=True):
 
     @classmethod
     def _output(cls, *messages) -> None:
-        def transform(x):
-            try: x = x()
-            except TypeError: pass
-            if isinstance(x, str):
-                return x
-            if isinstance(x, (bytes, bytearray, memoryview)):
+        def transform(message):
+            if callable(message):
+                message = message()
+            if isinstance(message, str):
+                return message
+            if isbuffer(message):
                 import codecs
-                return codecs.decode(x, cls.codec, errors='backslashreplace')
-            return str(x)
+                return codecs.decode(message, cls.codec, errors='backslashreplace')
+            else:
+                import pprint
+                return pprint.pformat(message)
         message = ' '.join(transform(msg) for msg in messages)
         print(F'{cls.name}: {message}', file=sys.stderr)
 
