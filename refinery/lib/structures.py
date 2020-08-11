@@ -45,7 +45,9 @@ class MemoryFile(io.RawIOBase):
 
     __slots__ = ['_data', '_cursor']
 
-    def __init__(self, data: ByteString):
+    def __init__(self, data: Optional[ByteString] = None):
+        if data is None:
+            data = bytearray()
         self._data = data
         self._cursor = 0
 

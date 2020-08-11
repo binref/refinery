@@ -136,3 +136,12 @@ class TestStructures(TestBase):
         self.assertAlmostEqual(sr.read_struct('f', True), 2076.171875)
         self.assertAlmostEqual(sr.read_struct('d', True), math.pi)
         self.assertTrue(sr.eof)
+
+    def test_string_builder(self):
+        builder = MemoryFile()
+        self.assertTrue(builder.writable())
+        builder.write(B'The binary refinery ')
+        builder.write(B'refines the finer binaries.')
+        builder.seekrel(-1)
+        builder.write(B'!')
+        self.assertEqual(builder.getbuffer(), B'The binary refinery refines the finer binaries!')
