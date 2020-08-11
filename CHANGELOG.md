@@ -3,6 +3,7 @@
 ## Current Build
 - The `ifrex` unit was added.
 - The `jvstr` unit was added.
+- A source distribution manifest was added to fix errors that occurred during source installs.
 
 ## Version 0.3.5
 - Using `pip install --install-option=library binary-refinery` or a `REFINERY_PREFIX` environment variable with value `!` will now install the binary refinery without any command line scripts, only as a library.
