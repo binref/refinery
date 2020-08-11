@@ -1,6 +1,6 @@
 # Binary Refinery Changelog
 
-## Current Build
+## Version 0.3.6
 - The `ifrex` unit was added.
 - The `jvstr` unit was added.
 - A source distribution manifest was added to fix errors that occurred during source installs.

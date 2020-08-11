@@ -64,7 +64,7 @@ def main():
 
     setuptools.setup(
         name='binary-refinery',
-        version='0.3.5',
+        version='0.3.6',
         author='Jesko Hüttenhain',
         description='A toolkit to transform and refine (mostly) binary data.',
         long_description=readme,
@@ -73,7 +73,8 @@ def main():
         python_requires='>=3.7',
         classifiers=[
             'Development Status :: 3 - Alpha',
-            'License :: Other/Proprietary License',
+            'Environment :: Console',
+            'License :: OSI Approved :: BSD License',
             'Operating System :: OS Independent',
             'Programming Language :: Python :: 3 :: Only',
             'Topic :: System :: Shells',
