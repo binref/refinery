@@ -48,7 +48,10 @@ to install refinery into the current Python environment with prefix `r.`. As men
 ```
 pip install --install-option=library binary-refinery
 ```
-This way, it is also possible to install the `binary-refinery` package as a library mode dependency in other Python projects.
+This way, it is also possible to install the `binary-refinery` package as a library mode dependency in other Python projects. Note that the use of `--install-option` will force installation of a source distribution. If some of the refinery [dependencies](requirements.txt) are giving you a hard time, you can switch back to wheels for those by running the command as follows:
+```
+pip install --install-option=library --prefer-binary binary-refinery
+```
 
 ### Updating
 
