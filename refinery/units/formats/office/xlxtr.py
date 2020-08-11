@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import io
 import openpyxl
 import xlrd
 import re
@@ -9,7 +8,7 @@ import math
 import functools
 
 from ... import arg, Unit
-
+from ....lib.structures import MemoryFile
 
 defusedxml.defuse_stdlib()
 
@@ -150,7 +149,7 @@ class xlxtr(Unit):
     def process(self, data):
         try:
             workbook = openpyxl.load_workbook(
-                io.BytesIO(data),
+                MemoryFile(data),
                 read_only=True
             )
         except Exception:

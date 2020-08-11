@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import io
 import zipfile
 
 from . import arg, PathExtractorUnit, UnpackResult
+from ...lib.structures import MemoryFile
 
 
 class xtzip(PathExtractorUnit):
@@ -17,7 +17,7 @@ class xtzip(PathExtractorUnit):
         super().__init__(*paths, list=list, join=join, pwd=pwd)
 
     def unpack(self, data):
-        with io.BytesIO(data) as stream:
+        with MemoryFile(data) as stream:
             with zipfile.ZipFile(stream) as archive:
                 for info in archive.infolist():
                     if info.is_dir():

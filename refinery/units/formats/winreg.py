@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import io
-
 try:
     from Registry.Registry import Registry
 except ModuleNotFoundError:
     Registry = None
 
 from . import PathExtractorUnit, UnpackResult
+from ...lib.structures import MemoryFile
 
 
 class winreg(PathExtractorUnit):
@@ -25,5 +24,5 @@ class winreg(PathExtractorUnit):
             yield from self._walk(subkey, *path, subkey.name())
 
     def unpack(self, data):
-        with io.BytesIO(data) as stream:
+        with MemoryFile(data) as stream:
             yield from self._walk(Registry(stream).root())

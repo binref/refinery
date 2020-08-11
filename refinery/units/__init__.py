@@ -23,7 +23,6 @@ the script is executed.
 """
 import sys
 import os
-import io
 import inspect
 
 from enum import IntEnum, Enum
@@ -45,6 +44,7 @@ from argparse import (
 from ..lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
 from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead, autoinvoke, skipfirst, isbuffer
 from ..lib.frame import Framed, Chunk
+from ..lib.structures import MemoryFile
 
 
 class ArgparseError(ValueError):
@@ -965,8 +965,8 @@ class Unit(metaclass=Executable, abstract=True):
         return op(data)
 
     def __call__(self, data: Union[ByteString, Chunk, None] = None) -> bytes:
-        with io.BytesIO(data) if data else open(os.devnull, 'rb') as stdin:
-            with io.BytesIO() as stdout:
+        with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
+            with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
 
     def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:

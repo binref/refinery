@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import PIL.Image
-import io
 
 from .. import Unit
+from ...lib.structures import MemoryFile
 
 
 class binpng(Unit):
@@ -12,7 +12,7 @@ class binpng(Unit):
     of a given PNG image file and outputs these values as bytes.
     """
     def process(self, data):
-        image = PIL.Image.open(io.BytesIO(data))
+        image = PIL.Image.open(MemoryFile(data))
         pixelmap, width, height = image.load(), *image.size
         return bytes(code
             for i in range(width)

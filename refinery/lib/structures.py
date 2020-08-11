@@ -99,6 +99,9 @@ class MemoryFile(io.RawIOBase):
         return isinstance(self._data, bytearray)
 
     def read(self, size=-1) -> ByteString:
+        return self.read1(size)
+
+    def read1(self, size=-1) -> ByteString:
         beginning = self._cursor
         if size is None or size < 0:
             self._cursor = len(self._data)
@@ -147,6 +150,9 @@ class MemoryFile(io.RawIOBase):
         return self.seek(offset, io.SEEK_CUR)
 
     def getbuffer(self) -> ByteString:
+        return self._data
+
+    def getvalue(self) -> ByteString:
         return self._data
 
     def seek(self, offset, whence=io.SEEK_SET) -> int:
@@ -219,7 +225,7 @@ class StructReader(MemoryFile):
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read(self, size: Optional[int] = None):
+    def read1(self, size: Optional[int] = None):
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
@@ -230,7 +236,7 @@ class StructReader(MemoryFile):
         """
         if not self.byte_aligned:
             raise StructReader.Unaligned('buffer is not byte-aligned')
-        data = super().read(size)
+        data = super().read1(size)
         if len(data) != size:
             raise EOF(data)
         return data

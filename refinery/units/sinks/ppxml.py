@@ -7,6 +7,7 @@ from xml.parsers import expat
 from defusedxml.ElementTree import parse as ParseXML, XMLParser
 
 from .. import arg, Unit
+from ...lib.structures import MemoryFile
 
 
 class ForgivingXMLParser(XMLParser):
@@ -60,7 +61,7 @@ class ppxml(Unit):
 
         pad = self.args.indent * ' '
         etm = {}
-        dom = ParseXML(io.BytesIO(data), parser=ForgivingXMLParser(etm))
+        dom = ParseXML(MemoryFile(data), parser=ForgivingXMLParser(etm))
 
         def indent(element, level=0, more_sibs=False):
             """

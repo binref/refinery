@@ -63,6 +63,8 @@ class pemeta(Unit):
         cert, info = pesig()(data), {}
 
         try:
+            if not isinstance(cert, bytes):
+                cert = bytes(cert)
             signature = cms.ContentInfo.load(cert)
         except Exception as E:
             raise ValueError(F'PKCS7 parser failed with error: {E!s}')
