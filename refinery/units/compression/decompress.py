@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
+from .. import arg, Unit, RefineryPartialResult
 from ...lib.types import INF
 
 from .ap import aplib
@@ -48,8 +48,7 @@ class decompress(Unit):
         current_ratio = 1
 
         class result:
-            _MIN_RATIO = self.args.min_ratio
-            _LOG_DEBUG = self.log_debug
+            unit = self
 
             def __init__(self, engine, cutoff=0, prefix=None):
                 feed = data
@@ -65,6 +64,8 @@ class decompress(Unit):
 
                 try:
                     self.result = engine.process(feed)
+                except RefineryPartialResult as pr:
+                    self.result = pr.partial
                 except Exception:
                     self.result = B''
 
@@ -79,16 +80,16 @@ class decompress(Unit):
 
             def schedule(self):
                 nonlocal best, current_ratio
-                if self.ratio >= self._MIN_RATIO:
+                if self.ratio >= self.unit.args.min_ratio:
                     return
                 prefix = hex(self.prefix[0]) if self.prefix else None
                 r = 1 if self.unmodified and best and not best.unmodified else 0.9
                 if self.engine.__class__ is lznt1:
                     r /= 2
                 if not best or self.ratio / current_ratio < r:
-                    self._LOG_DEBUG(
+                    self.unit.log_info(lambda: (
                         F'obtained {self.ratio:.2f} compression ratio with: prefix={prefix}, '
-                        F'cutoff={self.cutoff}, engine={self.engine.name}')
+                        F'cutoff={self.cutoff}, engine={self.engine.name}'))
                     best = self
                     current_ratio = self.ratio
 
