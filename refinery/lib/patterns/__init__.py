@@ -274,7 +274,7 @@ class indicators(PatternEnum):
     "Bitcoin addresses"
     pem = pattern(pattern_pem)
     "A pattern matching PEM encoded cryptographic parameters"
-    xmr = alphabet('[1-9A-HJ-NP-Za-km-z]', prefix='4[0-9AB]', at_least=93, at_most=93)
+    xmr = alphabet('[1-9A-HJ-NP-Za-km-z]', prefix='4[0-9AB]', at_least=90, at_most=120)
     "Monero addresses"
     path = pattern(pattern_path)
     "Windows and Linux path names"

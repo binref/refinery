@@ -50,9 +50,8 @@ class deob_ps1_format(Deobfuscator):
                         try:
                             index = int(part[1:-1])
                             arg = args[index]
-                        except IndexError:
-                            self.log_debug(F'only found {len(args)} arguments and format sequence {index}, aborting.')
-                            raise
+                        except IndexError as IE:
+                            raise IndexError(F'only found {len(args)} arguments and format sequence {index}, aborting.') from IE
 
                         it = iter(arg)
                         buffer.append(next(it))

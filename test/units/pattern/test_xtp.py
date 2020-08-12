@@ -80,3 +80,8 @@ class TestPatternExtractor(TestUnitBase):
     def test_url_with_tilde(self):
         url = B'http://www.htz.klmp.cv.gov.edu/~drjay/obbx/grades.txt'
         self.assertEqual(self.load('url')(url), url)
+
+    def test_monero_address(self):
+        addr = B'4BrL51JCc9NGQ71kWhnYoDRffsDZy7m1HUU7MRU4nUMXAHNFBEJhkTZV9HdaL4gfuNBxLPc3BeMkLGaPbF5vWtANQni58KYZqH43YSDeqY'
+        data = B'payment is made to the wallet %s.' % addr
+        self.assertEqual(addr, self.load('xmr')(data))
