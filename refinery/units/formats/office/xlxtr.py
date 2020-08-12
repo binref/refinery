@@ -4,7 +4,6 @@ import openpyxl
 import xlrd
 import re
 import defusedxml
-import math
 import functools
 
 from ... import arg, Unit
