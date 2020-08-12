@@ -177,6 +177,21 @@ class TestMetaProperties(TestUnitBase):
         with self.assertRaises(Exception):
             unit(B'y')
 
+    def test_pdoc(self):
+        from refinery.lib import loader
+        from refinery import aes
+        from refinery import rex
+        from refinery import b64
+        from refinery.units.crypto.cipher.aes import aes as aes_
+        from refinery.units.pattern.rex import rex as rex_
+        from refinery.units.encoding.b64 import b64 as b64_
+        self.assertIs(aes, aes_)
+        self.assertIs(b64, b64_)
+        self.assertIs(rex, rex_)
+        self.assertIs(aes, loader.get_entry_point('aes'))
+        self.assertIs(b64, loader.get_entry_point('b64'))
+        self.assertIs(rex, loader.get_entry_point('rex'))
+
 
 class TestSimpleInvertible(TestUnitBase):
     exceptions = ['vbe', 'recode', 'u16', 'cp1252', 'stretch']
