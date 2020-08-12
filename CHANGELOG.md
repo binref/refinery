@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.3.7
+- Removes the `--install-option` capability introduced in 0.3.5, see [pip/#8748](https://github.com/pypa/pip/issues/8748) for more information.
+- The `xttar` unit was added.
+- The `lzma` unit can now return partial results for buffers with junk bytes at the end.
+
 ## Version 0.3.6
 - The `ifrex` unit was added.
 - The `jvstr` unit was added.
