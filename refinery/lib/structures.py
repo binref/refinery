@@ -89,7 +89,7 @@ class MemoryFile(io.RawIOBase):
 
     @property
     def eof(self) -> bool:
-        return self._cursor >= len(self._data)
+        return self.closed() or self._cursor >= len(self._data)
 
     def writable(self):
         if self.closed():

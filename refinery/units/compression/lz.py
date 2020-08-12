@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 import lzma as lzma_
 
-from .. import arg, Unit
+from .. import arg, Unit, RefineryPartialResult
 from ...lib.argformats import OptionFactory, extract_options
+from ...lib.structures import MemoryFile
 
 __all__ = ['lzma']
 
@@ -80,4 +81,26 @@ class lzma(Unit):
         if self.args.raw:
             keywords['filters'] = filters
         lz = lzma_.LZMADecompressor(mode, **keywords)
-        return lz.decompress(data)
+        with MemoryFile() as output:
+            pos, size = 0, 4096
+            with MemoryFile(data) as stream:
+                while not stream.eof and not stream.closed():
+                    pos = stream.tell()
+                    try:
+                        chunk = lz.decompress(stream.read(size))
+                    except lzma_.LZMAError as error:
+                        self.log_debug(error.args)
+                        if size > 1:
+                            lz = lzma_.LZMADecompressor(mode, **keywords)
+                            stream.seek(0)
+                            output.seek(0)
+                            if pos > 0:
+                                output.write(lz.decompress(stream.read(pos)))
+                            self.log_debug('decompression error, reverting to one byte at a time')
+                            size = 1
+                        else:
+                            remaining = len(stream.getbuffer()) - pos
+                            raise RefineryPartialResult(F'compression failed with {remaining} bytes remaining', output.getvalue())
+                    else:
+                        output.write(chunk)
+            return output.getvalue()
