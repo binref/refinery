@@ -44,14 +44,7 @@ To install refinery manually, simply set the environment variable `REFINERY_PREF
 ```
 REFINERY_PREFIX=r. pip3 install -e binary-refinery
 ```
-to install refinery into the current Python environment with prefix `r.`. As mentioned above, the special prefix `!` will have the effect that no shell commands are created and the refinery will be installed only as a library. An alternative way to achieve this is to specify the `library` install option for installation with pip:
-```
-pip install --install-option=library binary-refinery
-```
-This way, it is also possible to install the `binary-refinery` package as a library mode dependency in other Python projects. Note that the use of `--install-option` will force installation of a source distribution. If some of the refinery [dependencies](requirements.txt) are giving you a hard time, you can switch back to wheels for those by running the command as follows:
-```
-pip install --install-option=library --prefer-binary binary-refinery
-```
+to install refinery into the current Python environment with prefix `r.`. As mentioned above, the special prefix `!` will have the effect that no shell commands are created and the refinery will be installed only as a library.
 
 ### Updating
 

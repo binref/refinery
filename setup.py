@@ -22,11 +22,6 @@ def normalize_name(name, separator='-'):
 
 
 def main():
-    global PREFIX
-    try: sys.argv.remove('library')
-    except ValueError: pass
-    else: PREFIX = '!'
-
     if sys.version_info < (3, 7):
         print('ERROR: Python version at least 3.7 is required.', file=sys.stderr)
         sys.exit(0xFADE)
@@ -34,7 +29,7 @@ def main():
     def magic(x):
         return '{}-win64'.format(x) if os.name == 'nt' and x == 'python-magic' else x
 
-    requirements = [magic(l.strip()) for l in open('requirements.txt', 'r')]
+    requirements = [magic(r.strip()) for r in open('requirements.txt', 'r')]
     requirements = [r for r in requirements if r]
 
     with open('README.md', 'r', encoding='UTF8') as README:
