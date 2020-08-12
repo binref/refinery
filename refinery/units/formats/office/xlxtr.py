@@ -129,7 +129,9 @@ class xlxtr(Unit):
 
     def _process_xlsx(self, wb):
         if not self.args.refs:
-            self._display_sheet_names(wb.sheetnames)
+            for name in wb.sheetnames:
+                yield name.encode(self.codec)
+            return
         for ref in self.args.refs:
             sh = wb.worksheets[ref.get_sheet_index(wb.sheetnames)]
             for cell in ref:
@@ -137,14 +139,6 @@ class xlxtr(Unit):
                 value = sh.cell(*cell).value
                 if value:
                     yield value.encode(self.codec)
-
-    def _display_sheet_names(self, sheets):
-        sheets = list(sheets)
-        if not sheets:
-            return
-        width = int(math.log(len(sheets), 10)) + 1
-        for k, name in enumerate(sheets):
-            self.output(F'sheet {k:{width}d}:', name)
 
     def process(self, data):
         try:
