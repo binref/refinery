@@ -10,13 +10,11 @@ class rex(RegexUnit, PatternExtractor):
     individual output and standard forking settings apply. Two additional special
     multibin handlers are available for regular expressions:
     """
-    @staticmethod
-    def _xmeta(t):
+    @classmethod
+    def _xmeta(cls, t):
         def meta_transform(match):
-            meta = match.groupdict()
             data = t(match) if callable(t) else t
-            meta.update(data=data)
-            return meta
+            return cls.output_with_metadata(data, **match.groupdict())
         return meta_transform
 
     def __init__(

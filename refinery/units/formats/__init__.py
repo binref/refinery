@@ -123,10 +123,7 @@ class PathExtractorUnit(Unit, abstract=True):
                     continue
                 else:
                     self.log_info(path)
-                yield dict(
-                    data=result.get_data(),
-                    path=path
-                )
+                yield self.output_with_metadata(result.get_data(), path=path)
 
 
 class MemoryExtractorUnit(Unit, abstract=True):

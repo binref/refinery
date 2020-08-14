@@ -478,13 +478,6 @@ class Executable(type):
 
     def __new__(mcs, name, bases, nmspc, abstract=False):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
-            def chunkify(item):
-                if isinstance(item, Chunk):
-                    return item
-                if isinstance(item, dict):
-                    return Chunk(item.pop('data', None), meta=item)
-                return Chunk(item)
-
             @wraps(operation)
             def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
                 if -self.args:
@@ -499,8 +492,8 @@ class Executable(type):
                     except StopIteration:
                         pass
                 if wrapped.chunked:
-                    return (chunkify(r) for r in operation(self, data))
-                return chunkify(operation(self, data))
+                    return (self.output_with_metadata(r) for r in operation(self, data))
+                return self.output_with_metadata(operation(self, data))
             wrapped.chunked = inspect.isgeneratorfunction(operation)
             return wrapped
 
@@ -886,15 +879,8 @@ class Unit(metaclass=Executable, abstract=True):
 
         def cname(x): return x.lower().replace('-', '')
 
-        if self.isatty and cname(self.codec) != cname(sys.stdout.encoding):
-            def recode(chunk):
-                import codecs
-                return codecs.encode(
-                    codecs.decode(chunk, self.codec, errors='backslashreplace'),
-                    sys.stdout.encoding
-                )
-        else:
-            def recode(chunk): return chunk
+        recode = self.isatty and cname(self.codec) != cname(sys.stdout.encoding)
+        if recode: import codecs
 
         for last, chunk in lookahead(self):
             if (
@@ -903,9 +889,17 @@ class Unit(metaclass=Executable, abstract=True):
                 and not chunk.endswith(B'\n')
                 and not self.args.squeeze
             ):
-                chunk += B'\n'
+                chunk.extend(B'\n')
+            if recode:
+                try:
+                    chunk = codecs.encode(
+                        codecs.decode(chunk, self.codec, errors='backslashreplace'),
+                        sys.stdout.encoding
+                    )
+                except Exception:
+                    pass
             try:
-                self._target.write(recode(chunk))
+                self._target.write(chunk)
                 self._target.flush()
             except AttributeError:
                 pass
@@ -968,6 +962,13 @@ class Unit(metaclass=Executable, abstract=True):
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
+
+    @classmethod
+    def output_with_metadata(cls, data: Union[Chunk, ByteString], **meta) -> Chunk:
+        if isinstance(data, Chunk):
+            data.meta.update(meta)
+            return data
+        return Chunk(data, meta=meta)
 
     def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
         """
