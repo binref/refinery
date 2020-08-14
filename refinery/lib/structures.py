@@ -135,9 +135,9 @@ class MemoryFile(io.RawIOBase):
                 yield line
 
     def readinto1(self, b) -> int:
-        rest = self.read()
-        size = len(rest)
-        b[:] = rest
+        data = self.read(len(b))
+        size = len(data)
+        b[:size] = data
         return size
 
     def readinto(self, b) -> int:
@@ -215,6 +215,12 @@ class StructReader(MemoryFile):
 
     def set_bitorder_little(self):
         self.bitorder = bitorder.little
+
+    def readinto(self, b):
+        size = super().readinto(b)
+        if size != len(b):
+            raise EOF
+        return size
 
     @property
     def byteorder_format(self) -> str:
