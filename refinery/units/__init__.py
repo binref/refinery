@@ -492,8 +492,8 @@ class Executable(type):
                     except StopIteration:
                         pass
                 if wrapped.chunked:
-                    return (self.output_with_metadata(r) for r in operation(self, data))
-                return self.output_with_metadata(operation(self, data))
+                    return (self.labelled(r) for r in operation(self, data))
+                return self.labelled(operation(self, data))
             wrapped.chunked = inspect.isgeneratorfunction(operation)
             return wrapped
 
@@ -964,7 +964,11 @@ class Unit(metaclass=Executable, abstract=True):
                 return (stdin | self | stdout).getvalue()
 
     @classmethod
-    def output_with_metadata(cls, data: Union[Chunk, ByteString], **meta) -> Chunk:
+    def labelled(cls, data: Union[Chunk, ByteString], **meta) -> Chunk:
+        """
+        This class method can be used to label a chunk of binary output with metadata. This
+        metadata will be visible inside pipeline frames, see `refinery.lib.frame`.
+        """
         if isinstance(data, Chunk):
             data.meta.update(meta)
             return data

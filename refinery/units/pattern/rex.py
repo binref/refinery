@@ -14,7 +14,7 @@ class rex(RegexUnit, PatternExtractor):
     def _xmeta(cls, t):
         def meta_transform(match):
             data = t(match) if callable(t) else t
-            return cls.output_with_metadata(data, **match.groupdict())
+            return cls.labelled(data, **match.groupdict())
         return meta_transform
 
     def __init__(

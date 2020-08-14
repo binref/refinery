@@ -16,4 +16,4 @@ class mput(Unit):
         super().__init__(name=name, value=value)
 
     def process(self, data):
-        return self.output_with_metadata(data, **{self.args.name: self.args.value})
+        return self.labelled(data, **{self.args.name: self.args.value})
