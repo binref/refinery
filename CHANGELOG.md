@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.3.8
+- The interface of the memory slicing units `peslice` and `elfslice` has changed.
+- Python expression parser and numeric arguments have been refactored.
+
 ## Version 0.3.7
 - Removes the `--install-option` capability introduced in 0.3.5, see [pip/#8748](https://github.com/pypa/pip/issues/8748) for more information.
 - The `xttar` unit was added.
