@@ -4,7 +4,7 @@ from .. import arg, Unit
 from ...lib.tools import isbuffer
 
 from os.path import isfile
-from glob import glob
+from glob import iglob
 from io import BytesIO
 
 
@@ -80,7 +80,7 @@ class fread(Unit):
         for mask in self.args.filenames:
             mask = mask.format_map(metamap)
             self.log_debug('scanning for mask:', mask)
-            for filename in glob(mask, recursive=True):
+            for filename in iglob(mask, recursive=True):
                 if not isfile(filename):
                     continue
                 try:
