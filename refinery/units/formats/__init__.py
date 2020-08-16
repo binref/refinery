@@ -132,28 +132,17 @@ class MemoryExtractorUnit(Unit, abstract=True):
         self,
         offset: arg(type=virtualaddr,
             help='Specify virtual offset as either .section:OFFSET or just a virtual address in hex.'),
-        end : arg('-e', group='END', type=virtualaddr,
-            help='Read bytes until this offset, which has to be located after the starting offset.') = None,
-        take  : arg.number('-t', group='END', help='The number of bytes to read.') = 0,
+        count : arg.number(metavar='count', help='The maximum number of bytes to read.') = 0,
         utf16 : arg.switch('-u', group='END', help='Read the memory at the given offset as an UTF16 string.') = False,
-        ascii : arg.switch('-a', group='END', help='Read the memory at the given offset as an ASCII string.') = False
+        ascii : arg.switch('-a', group='END', help='Read the memory at the given offset as an ASCII string.') = False,
     ):
-        if sum(1 for p in (end, take, utf16, ascii) if p) > 1:
-            raise ValueError('Only one of end, take, utf16, and ascii may be specified.')
+        if utf16 and ascii:
+            raise ValueError('Only one of utf16 and ascii may be specified.')
         return self.superinit(super(), **vars())
 
     def _read_from_memory(self, data, offset_oracle):
         start, end = offset_oracle(self.args.offset)
-        if self.args.end:
-            end, _ = offset_oracle(self.args.end)
-            if end < start:
-                raise ValueError(
-                    F'The end offset 0x{end:08X} lies {start-end} bytes '
-                    F'before the start offset 0x{start:08X}.'
-                )
-        elif self.args.take:
-            end = start + self.args.take
-        elif self.args.ascii:
+        if self.args.ascii:
             end = data.find(B'\0', start)
             if end < 0:
                 raise EndOfStringNotFound
@@ -163,4 +152,7 @@ class MemoryExtractorUnit(Unit, abstract=True):
                     break
             else:
                 raise EndOfStringNotFound
+        if self.args.count:
+            lbound = start + self.args.count
+            end = lbound if end is None else min(end, lbound)
         return data[start:end]
