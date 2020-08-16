@@ -21,9 +21,6 @@ class blockop(ArithmeticUnit):
     after the update of each block, respectively.
     """
 
-    _PARSER_OPERATION = PythonExpression('B', 'A', 'S', 'N', 'V')
-    _PARSER_SEEDVALUE = PythonExpression('N')
-
     @staticmethod
     def _parse_op(definition):
         """
@@ -33,7 +30,7 @@ class blockop(ArithmeticUnit):
         """
         def wrapper(B, S, N, *V):
             return wrapper.parsed(B=B, A=V[0], N=N, S=S, V=V) if V else wrapper.parsed(B=B, S=S)
-        wrapper.parsed = blockop._PARSER_OPERATION(definition)
+        wrapper.parsed = PythonExpression(definition, *'BASNV')
         return wrapper
 
     def __init__(
@@ -64,7 +61,7 @@ class blockop(ArithmeticUnit):
                 epilogue = expression
 
         if isinstance(seed, str):
-            seed = self._PARSER_SEEDVALUE(seed)
+            seed = PythonExpression(seed, 'N')
 
         super().__init__(
             *argument,

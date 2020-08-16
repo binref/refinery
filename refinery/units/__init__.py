@@ -1038,7 +1038,10 @@ class Unit(metaclass=Executable, abstract=True):
                 return message
             if isbuffer(message):
                 import codecs
-                return codecs.decode(message, cls.codec, errors='backslashreplace')
+                pmsg: str = codecs.decode(message, cls.codec, errors='backslashreplace')
+                if not pmsg.isprintable():
+                    pmsg = message.hex()
+                return pmsg
             else:
                 import pprint
                 return pprint.pformat(message)

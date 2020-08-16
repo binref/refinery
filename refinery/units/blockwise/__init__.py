@@ -7,7 +7,7 @@ algorithms can be found in `refinery.units.crypto.cipher`.
 from itertools import cycle
 
 from .. import arg, Unit
-from ...lib.argformats import numbin
+from ...lib.argformats import numseq
 from ...lib import chunks
 
 
@@ -87,7 +87,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     operate = NotImplemented
     inplace = NotImplemented
 
-    def __init__(self, *argument: arg(type=numbin, help=(
+    def __init__(self, *argument: arg(type=numseq, help=(
         'A single numeric expression which provides the right argument to the operation, '
         'where the left argument is each block in the input data. This argument can also '
         'contain a sequence of bytes which is then split into blocks of the same size as '

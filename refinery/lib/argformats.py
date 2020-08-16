@@ -44,7 +44,7 @@ This module implements all argument parser types for the binary refinery. Notabl
 command line use are the following:
 
 - `refinery.lib.argformats.DelayedBinaryArgument` (used almost everywhere)
-- `refinery.lib.argformats.DelayedNumbinArgument` (used by children of `refinery.units.blockwise.ArithmeticUnit`)
+- `refinery.lib.argformats.DelayedNumSeqArgument` (used by children of `refinery.units.blockwise.ArithmeticUnit`)
 - `refinery.lib.argformats.DelayedRegexpArgument` (used by `refinery.rex`, `refinery.resub`)
 
 All of the above classes inherit from `refinery.lib.argformats.DelayedArgument`. The following
@@ -141,49 +141,50 @@ class PythonExpression:
         ast.USub
     }
 
-    def __init__(self, *variables):
-        self.variables = set(variables)
-
-    def __call__(self, definition):
+    def __init__(self, definition, *variables):
+        variables = set(variables)
         try:
             expression = ast.parse(definition)
             nodes = ast.walk(expression)
         except Exception:
             raise ArgumentTypeError(F'The provided expression could not be parsed: {definition!s}')
-
         if type(next(nodes)) != ast.Module:
             raise ArgumentTypeError(F'unknown error parsing the expression: {definition!s}')
-
         if type(next(nodes)) != ast.Expr:
             raise ArgumentTypeError(F'not a valid Python expression: {definition!s}')
-
         nodes = list(nodes)
         types = set(type(node) for node in nodes)
         names = set(node.id for node in nodes if type(node) == ast.Name)
-
         if not types <= self._ALLOWED_NODE_TYPES:
             raise ArgumentTypeError(
                 'the following operations are not allowed: {}'.format(
                     ', '.join(t.__name__ for t in types - self._ALLOWED_NODE_TYPES))
             )
-
-        if not names <= self.variables:
+        if not names <= variables:
             raise ArgumentTypeError(
                 'the following variable names are unknown: {}'.format(
-                    ', '.join(names - self.variables))
+                    ', '.join(names - variables))
             )
 
-        if not self.variables:
-            return eval(definition)
-        else:
-            def evaluator(**kw): return eval(definition, None, kw)
-            return evaluator
+        self.variables = names
+        self.definition = definition
+
+    def __str__(self):
+        return self.definition
+
+    def __call__(self, **values):
+        for v in self.variables:
+            if v not in values:
+                raise ValueError(F'unbound variable {v}, cannot evaluate')
+        return eval(self.definition, None, values)
+
+    @classmethod
+    def evaluate(cls, definition, **values):
+        expression = cls(definition, *list(values))
+        return expression(**values)
 
 
-_PYTHON_EXPRESSION = PythonExpression()
-
-
-def sliceobj(expression: Union[int, str]) -> slice:
+def sliceobj(expression: Union[int, str], **variables) -> slice:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
@@ -196,7 +197,7 @@ def sliceobj(expression: Union[int, str]) -> slice:
         sliced = expression.split(':')
         if not sliced or len(sliced) > 3:
             raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
-        sliced = [None if not t else _PYTHON_EXPRESSION(t) for t in sliced]
+        sliced = [None if not t else PythonExpression.evaluate(t, **variables) for t in sliced]
     if len(sliced) == 1:
         k = sliced[0]
         return slice(k, k + 1) if k + 1 else slice(k, None, None)
@@ -517,8 +518,7 @@ class DelayedBinaryArgument(DelayedArgument):
         as a `refinery.lib.argformats.sliceobj`. The result contains the corresponding slice
         of the input data.
         """
-        bounds = sliceobj(region)
-        return lambda d: d[bounds]
+        return lambda d: d[sliceobj(region, **d.meta)]
 
     @handler.register('x', 'cut', final=True)
     def cut(self, region: str) -> bytes:
@@ -526,15 +526,19 @@ class DelayedBinaryArgument(DelayedArgument):
         `x:region` and `cut:region` work like `refinery.lib.argformats.DelayedBinaryArgument.copy`,
         but the corresponding bytes are also removed from the input data.
         """
-        def extract(data: bytearray):
-            result = data[bounds]
+        def extract(data: Union[bytearray, Chunk]):
+            try:
+                meta = data.meta
+            except AttributeError:
+                meta = {}
+            bounds = sliceobj(region, **meta)
+            result = bytearray(data[bounds])
             data[bounds] = []
             return result
-        bounds = sliceobj(region)
         return extract
 
     def _interpret_variable(self, name: str, obj: Any):
-        if isinstance(obj, (bytes, bytearray, memoryview)):
+        if isbuffer(obj) or isinstance(obj, (list, tuple, set, int)):
             return obj
         if isinstance(obj, str):
             return utf8(obj)
@@ -579,15 +583,13 @@ def multibin(expression: Union[str, bytes, bytearray]) -> Union[bytes, DelayedBi
     return arg
 
 
-class DelayedNumbinArgument(DelayedArgument):
+class DelayedNumSeqArgument(DelayedArgument):
     """
-    A parser for sequences of numeric arguments. As `refinery.lib.argformats.DelayedNumbinArgument.handler`
+    A parser for sequences of numeric arguments. As `refinery.lib.argformats.DelayedNumSeqArgument.handler`
     uses `refinery.lib.argformats.multibin`, it is possible to use any handler specified in
     `refinery.lib.argformats.DelayedBinaryArgument` as long as these handlers precede any of the handlers
     defined here.
     """
-
-    _EV_PARSER = PythonExpression('N')
 
     def _mbin(self, expr: str) -> bytes:
         binary = multibin(expr)
@@ -603,7 +605,7 @@ class DelayedNumbinArgument(DelayedArgument):
         if isinstance(unknown, int):
             return (unknown,)
         raise ArgumentTypeError(
-            F'numbin parser encountered {unknown} of type {type(unknown).__name__}, '
+            F'numseq parser encountered {unknown} of type {type(unknown).__name__}, '
             F'but only integers are supported.'
         )
 
@@ -614,8 +616,7 @@ class DelayedNumbinArgument(DelayedArgument):
         and uses `refinery.lib.argformats.multibin` to parse it if that fails.
         """
         try:
-            ev = self._EV_PARSER(expression)
-            return self._iter(ev())
+            return self._iter(PythonExpression.evaluate(expression))
         except Exception:
             return self._mbin(expression)
 
@@ -631,40 +632,35 @@ class DelayedNumbinArgument(DelayedArgument):
                 expression = expression.decode('ascii')
             except AttributeError:
                 return expression
-        ev = self._EV_PARSER(expression)
-        try:
-            return self._iter(ev())
-        except Exception:
+        ev = PythonExpression(expression, 'N')
+        if 'N' in ev.variables:
             return lambda d: self._iter(ev(N=len(d)))
+        return self._iter(ev())
 
     @handler.register('unpack', final=True)
-    def unpack(self, expression: str) -> Iterable[int]:
+    def unpack(self, expression: str, size=None) -> Iterable[int]:
         """
-        Final modifier `unpack:[#]size:expression`; uses `refinery.lib.chunks.unpack` to
+        Final modifier `unpack[size]:expression`; uses `refinery.lib.chunks.unpack` to
         convert a sequence of bytes into a sequence of numbers by unpacking them. The `expression`
         parameter is parsed with `refinery.lib.argformats.multibin` yielding this byte string.
-        The `size` has to be an integer expression specifying the size of each encoded number in
-        bytes. The optional hash tag modifier preceding the size indicates that the parser
-        should use big endian rather than the default, little endian.
+        The optional parameter `size` has to be an integer expression whose absolute value gives
+        the size of each encoded number in bytes. Its default value is `0`, which corresponds to
+        choosing the size automatically in the following manner: If the length of the buffer is
+        uneven, the value `1` is chosen. If the length modulo `4` is nonzero, the value `2` is
+        chosen. If the length is divisible by `4`, then `4` is chosen.
         """
         from .chunks import unpack
-        size, expression = expression.split(':', 1)
-        bigendian = False
-        if size.startswith('#'):
-            bigendian = True
-            size = size[1:]
-        try:
-            size = int(size, 0)
-        except ValueError as E:
-            raise ArgumentTypeError(
-                'the syntax is unpack:[!]size:bytes where size is an integer '
-                'and bytes a multibin expression. You can specify the exclamation '
-                'mark to use network (big endian) byte order.'
-            ) from E
+        size = int(size, 0) if size else 0
+        obig = size < 0
+        size = abs(size)
         mbin = self._mbin(expression)
-        if not callable(mbin):
-            return list(unpack(mbin, size, bigendian))
-        return lambda d: list(unpack(mbin(d), size, bigendian))
+        if not callable(mbin) and size:
+            return list(unpack(mbin, size, obig))
+        def delayed(d): # noqa
+            data = mbin(d) if callable(mbin) else mbin
+            size = {1: 1, 2: 2, 3: 1, 0: 4}[len(data) % 4]
+            return list(unpack(data, size, False))
+        return delayed
 
     @handler.register('inc')
     def inc(self, it: Iterable[int], wrap=None) -> Iterable[int]:
@@ -683,7 +679,7 @@ class DelayedNumbinArgument(DelayedArgument):
     @handler.register('dec')
     def dec(self, it: Iterable[int], wrap=None) -> Iterable[int]:
         """
-        Identical to `refinery.lib.argformats.DelayedNumbinArgument.inc`, but the counter
+        Identical to `refinery.lib.argformats.DelayedNumSeqArgument.inc`, but the counter
         is subtracted from `it`.
         """
         def delay(_):
@@ -781,9 +777,10 @@ class DelayedNumberArgument(DelayedArgument):
     `refinery.lib.argformats.DelayedBinaryArgument` as long as these handlers precede any of
     the handlers defined here.
     """
-    def __init__(self, expression: str, min: int, max: int):
+    def __init__(self, expression: str, min: int, max: int, bin: bool = False):
         self.min = min
         self.max = max
+        self.bin = bin
         super().__init__(expression)
 
     def _mbin(self, converter: DelayedType[int], expr: str) -> MaybeDelayedType[int]:
@@ -807,11 +804,11 @@ class DelayedNumberArgument(DelayedArgument):
         The default handler: Attempts to parse the input expression as an integer.
         """
         def parse(b):
-            e = b.decode('utf8')
-            t = _PYTHON_EXPRESSION(e)
-            if isinstance(t, int):
-                return t
-            raise ValueError(F'the expression with value {e} is not an integer')
+            expression = PythonExpression(b.decode('utf8'))
+            t = expression()
+            if self.bin and not isinstance(t, int):
+                raise ValueError(F'the expression with value {expression} is not an integer')
+            return t
         return self._mbin(parse, expression)
 
     @handler.register('be', final=True)
@@ -819,7 +816,7 @@ class DelayedNumberArgument(DelayedArgument):
         def be(b: ByteString): return int.from_bytes(b, 'big')
         return self._mbin(be, expression)
 
-    @handler.register('le', 'unpack', final=True)
+    @handler.register('le', final=True)
     def le(self, expression: str) -> int:
         def le(b: ByteString): return int.from_bytes(b, 'little')
         return self._mbin(le, expression)
@@ -853,13 +850,23 @@ expressions.
 """
 
 
-def numbin(expression: Union[int, str]) -> Union[Iterable[int], DelayedNumbinArgument]:
+def numbin(expression: Union[int, str]) -> Union[ByteString, int, DelayedNumberArgument]:
     """
-    This is the argument parser type that uses `refinery.lib.argformats.DelayedNumbinArgument`.
+    An argument parser using `refinery.lib.argformats.DelayedNumberArgument` but also allowing
+    binary arguments. The result is either a byte string or a number.
+    """
+    arg = DelayedNumberArgument(expression, None, None, True)
+    with suppress(TooLazy): return arg()
+    return arg
+
+
+def numseq(expression: Union[int, str]) -> Union[Iterable[int], DelayedNumSeqArgument]:
+    """
+    This is the argument parser type that uses `refinery.lib.argformats.DelayedNumSeqArgument`.
     """
     if isinstance(expression, int):
         return (expression,)
-    arg = DelayedNumbinArgument(expression)
+    arg = DelayedNumSeqArgument(expression)
     with suppress(TooLazy):
         return arg()
     return arg
