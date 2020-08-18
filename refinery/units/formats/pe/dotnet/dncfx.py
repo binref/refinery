@@ -17,11 +17,11 @@ class dncfx(Unit):
     Each decrypted string is returned as a single output.
     """
     _PATTERN_ARRAY_INIT = (
-        br'(\x1F.|\x20....)'      # load size of a chunk
-        br'\x8D.\x00\x00\x01'     # create a UInt32 array
-        br'\x25'                  # dup
-        br'\xD0%s\x04'            # ldtoken: RVA of array data
-        br'\x28.\x00\x00.'        # call to InitializeArray
+        BR'(\x1F.|\x20....)'      # load size of a chunk
+        BR'\x8D.\x00\x00\x01'     # create a UInt32 array
+        BR'\x25'                  # dup
+        BR'\xD0%s\x04'            # ldtoken: RVA of array data
+        BR'\x28.\x00\x00.'        # call to InitializeArray
     )
 
     def process(self, data):
@@ -48,7 +48,7 @@ class dncfx(Unit):
             offset = header.pe.get_offset_from_rva(entry.RVA)
             index = struct.pack('<I', entry.Field.Index)
             strings_found = 0
-            for match in re.finditer(self._PATTERN_ARRAY_INIT % index[:3], data, flags=re.DOTALL):
+            for match in re.finditer(self._PATTERN_ARRAY_INIT % re.escape(index[:3]), data, flags=re.DOTALL):
                 ms = match.start()
 
                 def sortkey(t):
