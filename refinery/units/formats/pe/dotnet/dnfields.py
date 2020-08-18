@@ -56,7 +56,7 @@ class dnfields(PathExtractorUnit):
                 continue
             typename, count, size = guess
             totalsize = count * size
-            name = F'F{k:0{iwidth}d}:{rv.RVA:04X}:{typename}[{count}]'
+            name = F'F{k:0{iwidth}d}:{rv.RVA:08X}:{typename}[{count}]'
             if fname.isprintable():
                 name = F'{name}:{fname}'
             else:
