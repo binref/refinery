@@ -20,14 +20,7 @@ class emit(Unit):
         if not self.args.data:
             import pyperclip
             data = pyperclip.paste()
-            try:
-                data = data.encode(self.codec)
-            except AttributeError:
-                # data is None
-                data = B''
-            except UnicodeDecodeError:
-                data = data.encode('utf-16le')
-            yield data
+            yield data and data.encode(self.codec, 'replace') or B''
         else:
             yield from self.args.data
 
