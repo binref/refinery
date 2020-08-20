@@ -23,12 +23,13 @@ class couple(Unit):
         self, *commandline : arg(nargs='...', metavar='(all remaining)',
             help='An arbitrary command line to be executed.'),
         buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
+        cmdline: arg('-c', help='pass incoming data as a commandline argument to the process, not via stdin.') = False,
         timeout: arg('-t', metavar='T',
             help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
     ):
         if not commandline:
             raise ValueError('you need to provide a command line.')
-        super().__init__(commandline=commandline, buffer=buffer, timeout=timeout)
+        super().__init__(commandline=commandline, cmdline=cmdline, buffer=buffer, timeout=timeout)
 
     def process(self, data):
         def shlexjoin():
@@ -36,6 +37,11 @@ class couple(Unit):
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
         commandline = [cmd.decode(self.codec) for cmd in self.args.commandline]
+
+        if self.args.cmdline:
+            commandline.append(data.decode(self.codec))
+            data = None
+
         self.log_debug(shlexjoin)
 
         posix = 'posix' in sys.builtin_module_names
@@ -75,7 +81,8 @@ class couple(Unit):
         recvout.start()
         recverr.start()
 
-        process.stdin.write(data)
+        if data:
+            process.stdin.write(data)
         process.stdin.close()
         start = process_time()
 
