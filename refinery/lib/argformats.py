@@ -518,7 +518,9 @@ class DelayedBinaryArgument(DelayedArgument):
         as a `refinery.lib.argformats.sliceobj`. The result contains the corresponding slice
         of the input data.
         """
-        return lambda d: d[sliceobj(region, **d.meta)]
+        if not region or region.lower() == 'all':
+            region = ':'
+        return lambda d: memoryview(d)[sliceobj(region, **d.meta)]
 
     @handler.register('x', 'cut', final=True)
     def cut(self, region: str) -> bytes:
