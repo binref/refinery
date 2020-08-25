@@ -8,6 +8,26 @@ import hashlib
 from . import HashUnit
 
 
+class md4(HashUnit):
+    """
+    Returns the MD5 hash of the input data.
+    """
+    @classmethod
+    def _algorithm(cls, data):
+        from Crypto.Hash import MD4
+        return MD4.new(data)
+
+
+class md2(HashUnit):
+    """
+    Returns the MD5 hash of the input data.
+    """
+    @classmethod
+    def _algorithm(cls, data):
+        from Crypto.Hash import MD2
+        return MD2.new(data)
+
+
 class md5(HashUnit):
     """
     Returns the MD5 hash of the input data.

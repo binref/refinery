@@ -38,13 +38,12 @@ class KeyDerivation(Unit, abstract=True):
         self,
         size: arg(help='The number of bytes to generate.', type=number),
         salt: arg(help='Salt for the derivation.'),
-        iter: arg.number('-I', help='Number of iterations; default is {default}.') = None,
-        hash: arg.option('-H', choices=HASH, help=(
-            'Specify the hash algorithm, default is {default}. '
-            'May be any of the following: {choices}')) = None
+        hash: arg.option(choices=HASH, metavar='hash',
+            help='Specify one of these algorithms (default is {default}): {choices}') = None,
+        iter: arg.number(metavar='iter', help='Number of iterations; default is {default}.') = None,
+        **kw
     ):
-        return super().__init__(salt=salt, size=size, iter=iter, hash=makeinstance(HASH, hash))
+        return super().__init__(salt=salt, size=size, iter=iter, hash=makeinstance(HASH, hash), **kw)
 
     @property
-    def hash(self):
-        return self.args.hash.value
+    def hash(self): return self.args.hash.value
