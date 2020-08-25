@@ -115,7 +115,7 @@ class xtp(PatternExtractor):
                     return None
             ip = ip_address(value.decode(self.codec))
             if not ip.is_global:
-                if self.args.filter > 1 or not ip.is_private:
+                if self.args.filter > 3 or not ip.is_private:
                     return None
         elif name in ('url', 'socket', 'domain', 'subdomain'):
             ioc = value.decode(self.codec)
