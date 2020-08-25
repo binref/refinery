@@ -23,13 +23,14 @@ class couple(Unit):
         self, *commandline : arg(nargs='...', metavar='(all remaining)',
             help='An arbitrary command line to be executed.'),
         buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
+        noerror: arg('-e', help='do not merge stdin and stderr; stderr will only be output if -v is also specified.') = False,
         cmdline: arg('-c', help='pass incoming data as a commandline argument to the process, not via stdin.') = False,
         timeout: arg('-t', metavar='T',
             help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
     ):
         if not commandline:
             raise ValueError('you need to provide a command line.')
-        super().__init__(commandline=commandline, cmdline=cmdline, buffer=buffer, timeout=timeout)
+        super().__init__(commandline=commandline, cmdline=cmdline, noerror=noerror, buffer=buffer, timeout=timeout)
 
     def process(self, data):
         def shlexjoin():
@@ -96,9 +97,14 @@ class couple(Unit):
         errbuf = io.BytesIO()
 
         while True:
-
-            err = queue_read(qerr)
             out = queue_read(qout)
+            err = None
+
+            if self.args.noerror:
+                err = queue_read(qerr)
+            else:
+                out = out or queue_read(qerr)
+
             if err and self.log_info():
                 errbuf.write(err)
                 errbuf.seek(0)
