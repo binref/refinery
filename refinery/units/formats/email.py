@@ -23,7 +23,7 @@ class xtmail(PathExtractorUnit):
         jh = defaultdict(list)
         for key, value in head:
             jh[key].append(mw(''.join(t.lstrip() for t in value.splitlines(False))))
-        jh = {k: v[0] if len(v) == 1 else v for k, v in jh.items()}
+        jh = {k: v[0] if len(v) == 1 else [t for t in v if t] for k, v in jh.items()}
         yield UnpackResult('HEAD.TXT',
             lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h).encode(self.codec))
         yield UnpackResult('HEAD.JSON',
@@ -60,6 +60,6 @@ class xtmail(PathExtractorUnit):
     def unpack(self, data):
         try:
             yield from self._get_parts_outlook(data)
-        except Exception as e:
-            self.log_debug(F'failed parsing input as Outlook message: {e}')
+        except Exception:
+            self.log_debug('failed parsing input as Outlook message')
             yield from self._get_parts_regular(data)
