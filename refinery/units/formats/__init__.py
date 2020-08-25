@@ -104,7 +104,6 @@ class PathExtractorUnit(Unit, abstract=True):
                 results.append(result)
 
         for p in self.args.patterns:
-            self.log_debug('checking pattern:', p.pattern)
             for result in results:
                 path = result.path
                 if not p.check(path):
