@@ -5,7 +5,7 @@ Reference:
 https://docs.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptderivekey
 """
 from ... import RefineryPartialResult
-from . import KeyDerivation
+from . import KeyDerivation, HASH
 
 
 class CryptDeriveKey(KeyDerivation):
@@ -14,11 +14,15 @@ class CryptDeriveKey(KeyDerivation):
     """
 
     def __init__(self, size, hash='MD5'):
+        if size > 21:
+            raise ValueError('The CryptDeriveKey specification only provides keys up to length 21.')
         super().__init__(size=size, salt=None, hash=hash)
 
     def process(self, data):
         def digest(x):
             return self.hash.new(x).digest()
+        if self.args.hash in (HASH.SHA224, HASH.SHA256, HASH.SHA384, HASH.SHA512):
+            return digest(data)[:self.args.size]
         max_size = 2 * self.hash.digest_size
         value = digest(data)
         del data
