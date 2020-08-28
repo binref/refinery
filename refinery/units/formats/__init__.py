@@ -13,6 +13,7 @@ from typing import ByteString, Iterable, Callable, Union
 
 from .. import arg, Unit
 from ...lib.argformats import virtualaddr
+from ...lib.tools import isbuffer
 
 
 def pathspec(expression):
@@ -80,8 +81,27 @@ class PathExtractorUnit(Unit, abstract=True):
     def _check_reachable(self, path: str) -> bool:
         return any(p.reach(path) for p in self.args.patterns)
 
-    def _check_path(self, path: str) -> bool:
-        return any(p.check(path) for p in self.args.patterns)
+    def _check_data(self, item: UnpackResult) -> bool:
+        if not isbuffer(item.get_data()):
+            self.log_warn('discarding item with invalid contents.')
+            return False
+        return True
+
+    def _check_path(self, item: UnpackResult) -> bool:
+        if not isinstance(item.path, str):
+            if not self._check_data(item):
+                return False
+            else:
+                from ...lib.mime import file_extension_from_data
+                self.__unknown += 1
+                self.log_warn('received an attachment without file name!')
+                ext = file_extension_from_data(item.data)
+                item.path = F'UNKNOWN{self.__unknown:02d}.{ext}'
+        if not any(p.check(item.path) for p in self.args.patterns):
+            return False
+        elif self.args.list:
+            return True
+        return self._check_data(item)
 
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
         raise NotImplementedError
@@ -96,12 +116,10 @@ class PathExtractorUnit(Unit, abstract=True):
 
         results = []
         paths = collections.defaultdict(set)
+        self.__unknown = 0
 
         for result in self.unpack(data):
-            if self._check_path(result.path):
-                if not self.args.list:
-                    result.get_data()
-                results.append(result)
+            if self._check_path(result): results.append(result)
 
         for p in self.args.patterns:
             for result in results:
