@@ -3,7 +3,7 @@
 from copy import copy
 
 from .. import arg, Unit
-from ...lib.tools import lookahead, make_buffer_mutable
+from ...lib.tools import lookahead
 
 
 class snip(Unit):
@@ -22,9 +22,8 @@ class snip(Unit):
     ):
         super().__init__(slices=slices, remove=remove)
 
-    def process(self, data):
+    def process(self, data: bytearray):
         if self.args.remove:
-            data = make_buffer_mutable(data)
             for last, bounds in lookahead(self.args.slices):
                 chunk = data if last else copy(data)
                 del chunk[bounds]

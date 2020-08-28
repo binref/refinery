@@ -28,7 +28,7 @@ import inspect
 from enum import IntEnum, Enum
 from functools import wraps
 from collections import OrderedDict
-from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check
+from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
 from argparse import (
     ArgumentParser,
     ArgumentError,
@@ -481,6 +481,13 @@ class Executable(type):
             @wraps(operation)
             def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
                 data = self.args @ data
+                typespec = get_type_hints(operation)
+                typespec.pop('return', None)
+                if typespec:
+                    assert len(typespec) == 1
+                    dt = next(iter(typespec.values()))
+                    if isinstance(dt, type) and not isinstance(data, dt):
+                        data = dt(data)
                 if wrapped.chunked:
                     return (self.labelled(r) for r in operation(self, data))
                 return self.labelled(operation(self, data))
