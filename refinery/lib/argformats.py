@@ -429,8 +429,8 @@ class DelayedArgument(LazyEvaluation):
                 if data is not None:
                     raise
                 raise TooLazy from v
-            except Exception as E:
-                raise ArgumentTypeError(F'failed to apply modifier {name} to incoming data: {E}') from E
+            except AttributeError as AE:
+                raise ArgumentTypeError(F'failed to apply modifier {name} to incoming data: {AE}') from AE
             if callable(arg):
                 if data is None:
                     raise TooLazy

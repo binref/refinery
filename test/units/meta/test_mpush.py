@@ -19,8 +19,8 @@ class TestMetaPushPop(TestUnitBase):
         self.assertEqual(pl(), B'FOO FOO BAR')
 
     def test_variable_in_modifier(self):
-        pl = L('mpush [[') | L('mpop x ]') | L('cca cca[var:x]:T') | L('rev ]]')
-        self.assertEqual(pl(B'x'), B'xTx')
+        pl = L('mpush [[') | L('mpop x ]') | L('cca cca[cca[var:x]:Q]:T') | L('rev ]]')
+        self.assertEqual(pl(B'x'), B'xQTx')
 
     def test_variable_outside_modifier(self):
         pl = L('mpush [[') | L('mpop x ]') | L('cca T') | L('cca var:x') | L('rev ]')

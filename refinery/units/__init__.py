@@ -480,17 +480,7 @@ class Executable(type):
         def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
             @wraps(operation)
             def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
-                if -self.args:
-                    if not isinstance(data, bytearray):
-                        data = bytearray(data)
-                    self.args @= data
-                else:
-                    try:
-                        dt = next(iter(operation.__annotations__.values()))
-                        if dt in (bytes, bytearray, memoryview) and not isinstance(data, dt):
-                            data = dt(data)
-                    except StopIteration:
-                        pass
+                data = self.args @ data
                 if wrapped.chunked:
                     return (self.labelled(r) for r in operation(self, data))
                 return self.labelled(operation(self, data))
@@ -636,6 +626,8 @@ class DelayedArgumentProxy:
     can be computed only as soon as input data becomes available and which also have to be
     recomputed for each input.
     """
+    class PendingUpdate:
+        pass
 
     def __copy__(self):
         cls = self.__class__
@@ -665,21 +657,25 @@ class DelayedArgumentProxy:
             _guid=None,
         )
 
-    def __neg__(self):
-        return not self._done
-
-    def __imatmul__(self, data: bytearray):
+    def __matmul__(self, data: bytearray):
         """
         Lock the current arguments for the given input `data`.
         """
+        if self._done: return data
+        if not isinstance(data, bytearray):
+            data = bytearray(data)
         identifier = id(data)
-        if not self._done and identifier != self._guid:
-            self._store(_guid=identifier)
-            for name in self._argo:
-                value = getattr(self._argv, name, None)
-                if value and pending(value):
-                    self._args[name] = manifest(value, data)
-        return self
+        if identifier == self._guid:
+            return data
+        for name in self._argo:
+            value = getattr(self._argv, name, None)
+            if value is self.PendingUpdate:
+                raise RuntimeError(F'Attempting to resolve {name} while an update for this argument is in flight')
+            if value and pending(value):
+                self._args[name] = self.PendingUpdate
+                self._args[name] = manifest(value, data)
+        self._store(_guid=identifier)
+        return data
 
     def _store(self, **kwargs):
         self.__dict__.update(kwargs)
