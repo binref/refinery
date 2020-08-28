@@ -87,6 +87,10 @@ DelayedType = Callable[[ByteString], FinalType]
 MaybeDelayedType = Union[DelayedType, FinalType]
 
 
+class VariablesMissing(ArgumentTypeError):
+    pass
+
+
 class PythonExpression:
     """
     Implements a parser for any Python expression with a prescribed set of variable
@@ -161,7 +165,7 @@ class PythonExpression:
                     ', '.join(t.__name__ for t in types - self._ALLOWED_NODE_TYPES))
             )
         if not names <= variables:
-            raise ArgumentTypeError(
+            raise VariablesMissing(
                 'the following variable names are unknown: {}'.format(
                     ', '.join(names - variables))
             )
@@ -197,7 +201,12 @@ def sliceobj(expression: Union[int, str], **variables) -> slice:
         sliced = expression.split(':')
         if not sliced or len(sliced) > 3:
             raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
-        sliced = [None if not t else PythonExpression.evaluate(t, **variables) for t in sliced]
+        try:
+            sliced = [None if not t else PythonExpression.evaluate(t, **variables) for t in sliced]
+        except VariablesMissing:
+            class SliceAgain(LazyEvaluation):
+                def __call__(self, data): return sliceobj(expression, **data.meta)
+            return SliceAgain()
     if len(sliced) == 1:
         k = sliced[0]
         return slice(k, k + 1) if k + 1 else slice(k, None, None)

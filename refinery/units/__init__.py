@@ -409,6 +409,41 @@ class ArgumentSpecification(OrderedDict):
         self[dest] = argument
 
 
+def UnitProcessorBoilerplate(
+    operation: Callable[[Any, ByteString], Any]
+) -> Callable[[ByteString], Any]:
+    @wraps(operation)
+    def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+        data = self.args @ data
+        typespec = get_type_hints(operation)
+        typespec.pop('return', None)
+        if typespec:
+            assert len(typespec) == 1
+            dt = next(iter(typespec.values()))
+            if isinstance(dt, type) and not isinstance(data, dt):
+                data = dt(data)
+        if wrapped.chunked:
+            return (self.labelled(r) for r in operation(self, data))
+        return self.labelled(operation(self, data))
+    wrapped.chunked = inspect.isgeneratorfunction(operation)
+    return wrapped
+
+
+def UnitFilterBoilerplate(
+    operation : Callable[[Any, Iterable[Chunk]], Iterable[Chunk]]
+) -> Callable[[Any, Iterable[Chunk]], Iterable[Chunk]]:
+    @wraps(operation)
+    def peekfilter(self, chunks: Iterable[Chunk]) -> Iterable[Chunk]:
+        def rewind(*head):
+            yield from head
+            yield from it
+        it = iter(chunks)
+        for head in it:
+            yield from operation(self, rewind(self.args @ head))
+            break
+    return peekfilter
+
+
 class Executable(type):
     """
     This is the metaclass for refinery units. A class which is of this type is
@@ -477,35 +512,19 @@ class Executable(type):
         return args
 
     def __new__(mcs, name, bases, nmspc, abstract=False):
-        def normalize(operation: Callable[[Any, ByteString], Any]) -> Callable[[ByteString], Any]:
-            @wraps(operation)
-            def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
-                data = self.args @ data
-                typespec = get_type_hints(operation)
-                typespec.pop('return', None)
-                if typespec:
-                    assert len(typespec) == 1
-                    dt = next(iter(typespec.values()))
-                    if isinstance(dt, type) and not isinstance(data, dt):
-                        data = dt(data)
-                if wrapped.chunked:
-                    return (self.labelled(r) for r in operation(self, data))
-                return self.labelled(operation(self, data))
-            wrapped.chunked = inspect.isgeneratorfunction(operation)
-            return wrapped
-
+        def decorate(**decorations):
+            for method, decorator in decorations.items():
+                try: nmspc[method] = decorator(nmspc[method])
+                except KeyError: pass
+        decorate(
+            filter=UnitFilterBoilerplate,
+            process=UnitProcessorBoilerplate,
+            reverse=UnitProcessorBoilerplate,
+            __init__=no_type_check
+        )
         nmspc.setdefault('__doc__', '')
-
-        try: nmspc['__init__'] = no_type_check(nmspc['__init__'])
-        except KeyError: pass
-
-        for op in ('process', 'reverse'):
-            if op in nmspc:
-                nmspc[op] = normalize(nmspc[op])
-
         if not abstract and Entry not in bases:
             bases = bases + (Entry,)
-
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
     def __init__(cls, name, bases, nmspc, abstract=False):
