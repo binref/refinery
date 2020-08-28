@@ -3,8 +3,6 @@
 """
 File type related functions.
 """
-import mimetypes
-
 from .magic import magic, magicparse
 
 
@@ -236,8 +234,6 @@ FileTypeMap = {
 
 
 def file_extension(mime, default='bin'):
-    ext = mimetypes.guess_extension(mime, strict=False)
-    if ext: return ext[1:]
     return FileTypeMap.get(mime, default)
 
 
