@@ -209,3 +209,15 @@ def splitchunks(data: ByteString, size: int, truncate=False) -> Iterable[ByteStr
         total -= len(data) % size
     for k in range(0, total, size):
         yield data[k:k + size]
+
+
+def make_buffer_mutable(data: ByteString):
+    """
+    Returns a mutable version of the input data. Already mutable inputs are returned
+    as themselves, i.e. no copy operation occurs in these cases.
+    """
+    if isinstance(data, bytearray):
+        return data
+    if isinstance(data, memoryview) and not data.readonly:
+        return data
+    return bytearray(data)
