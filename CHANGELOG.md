@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.3.9 
+- adds `md2` and `md4` hashing algorithms
+- the `CryptDeriveKey` unit now also mirrors the API call for SHA2 based hashing algorithms
+- message type attachments in Outlook email formats are now supported by `xtmail`
+
 ## Version 0.3.8
 - The interface of the memory slicing units `peslice` and `elfslice` has changed.
 - Python expression parser and numeric arguments have been refactored.
