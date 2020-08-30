@@ -239,6 +239,7 @@ class virtualaddr:
                 if not address_string.startswith('0x'):
                     address_string = F'0x{address}'
 
+
 def utf8(x):
     """
     Returns the UTF8 encoding of the given string.

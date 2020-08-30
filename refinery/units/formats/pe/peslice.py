@@ -11,7 +11,7 @@ class peslice(MemoryExtractorUnit):
     """
 
     def __init__(
-        self, offset, count=0, marker=B'', utf16=False, ascii=False,
+        self, offset, count=0, until=B'', ascii=False, utf16=False,
         base: arg.number('-b', help='Optionally specify a custom base address.') = 0
     ):
         self.superinit(super(), **vars())

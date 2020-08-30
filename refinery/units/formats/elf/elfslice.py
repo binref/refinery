@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import io
 from elftools.elf.elffile import ELFFile
 
 from .. import MemoryExtractorUnit
