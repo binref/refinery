@@ -4,14 +4,19 @@ import io
 from elftools.elf.elffile import ELFFile
 
 from .. import MemoryExtractorUnit
+from ....lib.structures import MemoryFile
 
 
 class elfslice(MemoryExtractorUnit):
     """
     Extract data from ELF executables based on virtual offsets.
     """
-
-    def _get_file_offset(self, elf, offset):
+    @staticmethod
+    def _get_buffer_range(data, offset):
+        try:
+            elf = ELFFile(MemoryFile(data))
+        except Exception:
+            raise ValueError('unable to parse input as ELF file')
         addr = offset.address
         if offset.section:
             for section in elf.iter_sections():
@@ -28,16 +33,3 @@ class elfslice(MemoryExtractorUnit):
                 return segment.header.p_offset + delta, None
         else:
             raise ValueError('unable to find offset.')
-
-    def _slice(self, off):
-        end = off + self.args.limit if self.args.limit else None
-        return slice(off, end)
-
-    def process(self, data):
-        try:
-            elf = ELFFile(io.BytesIO(data))
-        except Exception:
-            raise ValueError('unable to parse input as ELF file')
-
-        return self._read_from_memory(data,
-            lambda addr: self._get_file_offset(elf, addr))

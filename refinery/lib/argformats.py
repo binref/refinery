@@ -228,18 +228,16 @@ class virtualaddr:
             if not address:
                 self.address = 0
                 return
-        try:
-            address = address.upper()
-            if address.endswith('H'):
-                address = F'0x{address[:-1]}'
-            self.address = number[0:](address)
-        except Exception:
-            pass
-        try:
-            self.address = number(F'0x{address}')
-        except ValueError:
-            raise ArgumentTypeError(F'could not parse {address} as hexadecimal integer')
-
+        address_string = address
+        for normalized in (False, True):
+            try:
+                self.address = number[0:](address_string)
+            except (ValueError, ArgumentTypeError) as VE:
+                if normalized:
+                    raise ArgumentTypeError(F'could not parse {address} as an address in hexadecimal notation.') from VE
+                address_string = address.lower().rstrip('h')
+                if not address_string.startswith('0x'):
+                    address_string = F'0x{address}'
 
 def utf8(x):
     """

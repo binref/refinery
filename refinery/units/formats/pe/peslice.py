@@ -11,15 +11,18 @@ class peslice(MemoryExtractorUnit):
     """
 
     def __init__(
-        self, offset, count=0, utf16=False, ascii=False,
+        self, offset, count=0, marker=B'', utf16=False, ascii=False,
         base: arg.number('-b', help='Optionally specify a custom base address.') = 0
     ):
         self.superinit(super(), **vars())
         self.args.base = base
 
-    def _get_file_offset(self, pe, offset):
-        addr = offset.address
-        end = None
+    def _get_buffer_range(self, data, offset):
+        try:
+            pe = pefile.PE(data=data, fast_load=True)
+        except Exception:
+            raise ValueError('unable to parse input as PE file')
+        addr, end = offset.address, None
         if offset.section:
             name = offset.section.encode('latin-1')
             for section in pe.sections:
@@ -34,12 +37,3 @@ class peslice(MemoryExtractorUnit):
             base = self.args.base or pe.OPTIONAL_HEADER.ImageBase
             addr = pe.get_offset_from_rva(addr - base)
         return addr, end
-
-    def process(self, data):
-        try:
-            pe = pefile.PE(data=data, fast_load=True)
-        except Exception:
-            raise ValueError('unable to parse input as PE file')
-
-        return self._read_from_memory(data,
-            lambda addr: self._get_file_offset(pe, addr))

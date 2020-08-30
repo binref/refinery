@@ -150,25 +150,30 @@ class MemoryExtractorUnit(Unit, abstract=True):
         offset: arg(type=virtualaddr,
             help='Specify virtual offset as either .section:OFFSET or just a virtual address in hex.'),
         count : arg.number(metavar='count', help='The maximum number of bytes to read.') = 0,
+        marker: arg('-t', group='END', help='Read the memory until the specified marker is read.') = B'',
         utf16 : arg.switch('-u', group='END', help='Read the memory at the given offset as an UTF16 string.') = False,
         ascii : arg.switch('-a', group='END', help='Read the memory at the given offset as an ASCII string.') = False,
     ):
-        if utf16 and ascii:
-            raise ValueError('Only one of utf16 and ascii may be specified.')
-        return self.superinit(super(), **vars())
+        if sum(1 for t in (marker, utf16, ascii) if t) > 1:
+            raise ValueError('Only one of utf16, ascii, and marker may be specified.')
+        if utf16: marker = B'\0\0'
+        if ascii: marker = B'\0'
 
-    def _read_from_memory(self, data, offset_oracle):
-        start, end = offset_oracle(self.args.offset)
-        if self.args.ascii:
-            end = data.find(B'\0', start)
-            if end < 0:
-                raise EndOfStringNotFound
-        elif self.args.utf16:
-            for end in range(start, len(data), 2):
-                if not data[end] and not data[end + 1]:
+        return super().__init__(offset=offset, count=count, marker=marker)
+
+    def _get_buffer_range(self, data, offset):
+        return 0, 0
+
+    def process(self, data):
+        start, end = self._get_buffer_range(data, self.args.offset)
+        if self.args.marker:
+            end = start - 1
+            blocksize = len(self.args.marker) 
+            while True:
+                end = data.find(self.args.marker, end + 1)
+                if (end < start): raise EndOfStringNotFound
+                if (end - start) % blocksize == 0:
                     break
-            else:
-                raise EndOfStringNotFound
         if self.args.count:
             lbound = start + self.args.count
             end = lbound if end is None else min(end, lbound)
