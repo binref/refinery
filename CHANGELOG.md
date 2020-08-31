@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.3.11
+- The `peslice`, `elfslice`, and `pesect` units have been removed.
+- In their place, the cross-format units `vsnip` and `vsect` can now be used to extract data from virtual addresses and sections of PE, ELF, and MachO files.
+
 ## Version 0.3.10 - bugfix release
 
 ## Version 0.3.9 
