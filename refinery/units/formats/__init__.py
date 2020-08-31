@@ -12,7 +12,6 @@ from zlib import adler32
 from typing import ByteString, Iterable, Callable, Union
 
 from .. import arg, Unit
-from ...lib.argformats import virtualaddr
 from ...lib.tools import isbuffer
 
 
@@ -141,45 +140,3 @@ class PathExtractorUnit(Unit, abstract=True):
                 else:
                     self.log_info(path)
                 yield self.labelled(result.get_data(), path=path)
-
-
-class MemoryExtractorUnit(Unit, abstract=True):
-
-    def __init__(
-        self,
-        offset: arg(type=virtualaddr,
-            help='Specify virtual offset as either .section:OFFSET or just a virtual address in hex.'),
-        count : arg.number(metavar='count', help='The maximum number of bytes to read.') = 0,
-        until : arg('-t', metavar='T', group='END', help=(
-            'Read from memory until the sequence T is read. The size of the returned data is a multiple'
-            ' of the length of T.'
-        )) = B'',
-        ascii : arg.switch('-a', group='END',
-            help='Read an ASCII string; equivalent to -th:00') = False,
-        utf16 : arg.switch('-u', group='END',
-            help='Read an UTF16 string; equivalent to -th:0000') = False,
-    ):
-        if sum(1 for t in (until, utf16, ascii) if t) > 1:
-            raise ValueError('Only one of utf16, ascii, and until may be specified.')
-        if utf16: until = B'\0\0'
-        if ascii: until = B'\0'
-
-        return super().__init__(offset=offset, count=count, until=until)
-
-    def _get_buffer_range(self, data, offset):
-        return 0, 0
-
-    def process(self, data):
-        start, end = self._get_buffer_range(data, self.args.offset)
-        if self.args.until:
-            end = start - 1
-            blocksize = len(self.args.until)
-            while True:
-                end = data.find(self.args.until, end + 1)
-                if (end < start): raise EndOfStringNotFound
-                if (end - start) % blocksize == 0:
-                    break
-        if self.args.count:
-            lbound = start + self.args.count
-            end = lbound if end is None else min(end, lbound)
-        return data[start:end]

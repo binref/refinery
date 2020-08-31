@@ -213,33 +213,6 @@ def sliceobj(expression: Union[int, str], **variables) -> slice:
     return slice(*sliced)
 
 
-class virtualaddr:
-    """
-    Represents a virtual address; used by `refinery.peslice` and
-    `refinery.elfslice` to reference offsets in executable file
-    formats as they would appear in memory.
-    """
-    def __init__(self, address='0'):
-        try:
-            self.section, address = address.split(':')
-        except ValueError:
-            self.section = None
-        else:
-            if not address:
-                self.address = 0
-                return
-        address_string = address
-        for normalized in (False, True):
-            try:
-                self.address = number[0:](address_string)
-            except (ValueError, ArgumentTypeError) as VE:
-                if normalized:
-                    raise ArgumentTypeError(F'could not parse {address} as an address in hexadecimal notation.') from VE
-                address_string = address.lower().rstrip('h')
-                if not address_string.startswith('0x'):
-                    address_string = F'0x{address}'
-
-
 def utf8(x):
     """
     Returns the UTF8 encoding of the given string.
@@ -830,6 +803,10 @@ class DelayedNumberArgument(DelayedArgument):
     def le(self, expression: str) -> int:
         def le(b: ByteString): return int.from_bytes(b, 'little')
         return self._mbin(le, expression)
+
+    @handler.register('h', 'H', final=True)
+    def hex(self, expression: str) -> int:
+        return int(expression.upper().rstrip('H'), 16)
 
 
 class number:
