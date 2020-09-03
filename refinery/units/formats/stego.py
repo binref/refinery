@@ -15,7 +15,7 @@ class PIXEL_PART(IntEnum):
     a = 3
 
 
-class binpng(Unit):
+class stegeo(Unit):
     """
     Decodes the RGBA (red/green/blue/alpha) values of the pixels of a given image file and
     outputs these values as bytes. Each column of the image is transformed and output as and
