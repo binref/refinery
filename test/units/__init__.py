@@ -15,7 +15,8 @@ class TestUnitBase(TestBase):
     def load(self, *args, **kwargs):
         name = self._relative_module_path(self.__class__.__module__)
         try:
-            entry = getattr(refinery, name)
+            basename = name.rsplit('.', 1)[-1]
+            entry = getattr(refinery, basename)
         except AttributeError:
             from refinery.lib.loader import get_all_entry_points
             for entry in get_all_entry_points():
