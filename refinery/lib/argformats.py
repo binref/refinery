@@ -786,7 +786,9 @@ class DelayedNumberArgument(DelayedArgument):
         """
         The default handler: Attempts to parse the input expression as an integer.
         """
-        def parse(b):
+        def parse(b: Union[int, ByteString]) -> int:
+            if isinstance(b, int):
+                return b
             expression = PythonExpression(b.decode('utf8'))
             t = expression()
             if self.bin and not isinstance(t, int):
