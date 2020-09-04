@@ -45,13 +45,17 @@ class lprefix(Unit):
         super().__init__(
             strict=strict,
             prefix=prefix,
-            parser=PythonExpression(derive or 'N', 'N'),
+            derive=derive,
             limit=limit,
             header=int(header)
         )
 
     def process(self, data):
-        parse = self.args.parser
+        try:
+            meta = data.meta
+        except AttributeError:
+            meta = {}
+        parse = PythonExpression(self.args.derive or 'N', 'N', *meta)
         hsize = calcsize(self.args.prefix) if self.args.header > 1 else 0
         with StructReader(memoryview(data)) as mf:
             try:
@@ -61,7 +65,7 @@ class lprefix(Unit):
                     if count > self.args.limit:
                         raise EOF
                     size = mf.read_struct(self.args.prefix, unwrap=True)
-                    size = parse(N=size)
+                    size = parse(N=size, **meta)
                     if self.args.header:
                         size += hsize
                         mf.seek(position)
