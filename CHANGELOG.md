@@ -1,5 +1,11 @@
 # Binary Refinery Changelog
 
+## Version 0.3.12
+- The `gz` unit was deprecated because the `zl` unit covers its usecase (and does a better job at it).
+- The `lprefix` unit for parsing length-prefixed data was added.
+- Parsing of managed .NET string resources via the `dnmr` unit was fixed, these would previously be returned unparsed.
+- The `binpng` unit has been improved and renamed to `stego`, a more flexible unit to extract data from images.
+
 ## Version 0.3.11
 - The `peslice`, `elfslice`, and `pesect` units have been removed.
 - In their place, the cross-format units `vsnip` and `vsect` can now be used to extract data from virtual addresses and sections of PE, ELF, and MachO files.
