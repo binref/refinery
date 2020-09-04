@@ -6,7 +6,6 @@ from string import ascii_letters, digits
 from enum import Enum
 
 from .. import arg, Unit
-from ...lib.enumeration import makeinstance
 
 __all__ = ['asm']
 
@@ -41,7 +40,7 @@ class asm(Unit):
         zeros : arg.switch('-z', help='disassemble zero byte patches') = True,
         width : arg.number('-w', bound=(3, None), help='number of data bytes to put in one row, {default} by default') = 15
     ):
-        mode = makeinstance(ARCH, mode)
+        mode = arg.as_option(mode, ARCH)
         self.superinit(super(), **vars())
 
     def _printable(self, b):

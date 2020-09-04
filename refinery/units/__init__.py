@@ -185,6 +185,22 @@ class arg(Argument):
         return super().__rmatmul__(method)
 
     @staticmethod
+    def as_option(value: Optional[Any], cls: Enum) -> Enum:
+        if value is None or isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            try: return cls[value]
+            except KeyError: pass
+            needle = value.upper()
+            for item in cls:
+                if item.name.upper() == needle:
+                    return item
+        try:
+            return cls(value)
+        except Exception as E:
+            raise ValueError(F'Could not transform {value} into a {cls.__name__}.') from E
+
+    @staticmethod
     def switch(
         *args: str, off=False,
         help : Union[omit, str] = omit,

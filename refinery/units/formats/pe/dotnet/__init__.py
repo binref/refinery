@@ -13,7 +13,6 @@ from ....encoding.esc import esc
 from ....encoding.url import url
 from ....encoding.b64 import b64
 
-from .....lib.enumeration import makeinstance
 from .....lib.json import BytesAsArrayEncoder
 from .....lib.dotnet.types import Blob
 
@@ -58,8 +57,8 @@ class JSONEncoderUnit(Unit, abstract=True):
             'available algorithms are: {choices}.')) = None,
         **keywords
     ):
-        encode = makeinstance(UNIT, encode)
-        digest = makeinstance(HASH, digest)
+        encode = arg.as_option(encode, UNIT)
+        digest = arg.as_option(digest, HASH)
 
         super().__init__(**keywords)
 

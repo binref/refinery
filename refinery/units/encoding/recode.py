@@ -3,7 +3,6 @@
 import codecs
 import enum
 
-from ...lib.enumeration import makeinstance
 from .. import arg, Unit
 
 
@@ -37,8 +36,8 @@ class recode(Unit):
         super().__init__(
             decode=decode,
             encode=encode,
-            decerr=makeinstance(Handler, decerr or errors or 'STRICT').value,
-            encerr=makeinstance(Handler, encerr or errors or 'STRICT').value
+            decerr=arg.as_option(decerr or errors or 'STRICT', Handler).value,
+            encerr=arg.as_option(encerr or errors or 'STRICT', Handler).value
         )
 
     def detect(self, data):

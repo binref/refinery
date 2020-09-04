@@ -6,7 +6,6 @@ modifiers for multibin expressions that can be passed as key arguments to
 modules in `refinery.units.crypto.cipher`.
 """
 from ... import arg, Unit
-from ....lib.enumeration import makeinstance
 from ....lib.argformats import number
 
 try:
@@ -43,7 +42,7 @@ class KeyDerivation(Unit, abstract=True):
         iter: arg.number(metavar='iter', help='Number of iterations; default is {default}.') = None,
         **kw
     ):
-        return super().__init__(salt=salt, size=size, iter=iter, hash=makeinstance(HASH, hash), **kw)
+        return super().__init__(salt=salt, size=size, iter=iter, hash=arg.as_option(hash, HASH), **kw)
 
     @property
     def hash(self): return self.args.hash.value
