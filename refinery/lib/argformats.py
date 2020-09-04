@@ -87,8 +87,8 @@ DelayedType = Callable[[ByteString], FinalType]
 MaybeDelayedType = Union[DelayedType, FinalType]
 
 
-class VariablesMissing(ArgumentTypeError):
-    pass
+class ParserError(ArgumentTypeError): pass
+class VariablesMissing(ParserError): pass
 
 
 class PythonExpression:
@@ -151,16 +151,16 @@ class PythonExpression:
             expression = ast.parse(definition)
             nodes = ast.walk(expression)
         except Exception:
-            raise ArgumentTypeError(F'The provided expression could not be parsed: {definition!s}')
+            raise ParserError(F'The provided expression could not be parsed: {definition!s}')
         if type(next(nodes)) != ast.Module:
-            raise ArgumentTypeError(F'unknown error parsing the expression: {definition!s}')
+            raise ParserError(F'unknown error parsing the expression: {definition!s}')
         if type(next(nodes)) != ast.Expr:
-            raise ArgumentTypeError(F'not a valid Python expression: {definition!s}')
+            raise ParserError(F'not a valid Python expression: {definition!s}')
         nodes = list(nodes)
         types = set(type(node) for node in nodes)
         names = set(node.id for node in nodes if type(node) == ast.Name)
         if not types <= self._ALLOWED_NODE_TYPES:
-            raise ArgumentTypeError(
+            raise ParserError(
                 'the following operations are not allowed: {}'.format(
                     ', '.join(t.__name__ for t in types - self._ALLOWED_NODE_TYPES))
             )
@@ -822,10 +822,17 @@ class number:
     def __call__(self, value):
         if isinstance(value, int):
             return value
-        value = DelayedNumberArgument(value, self.min, self.max)
-        with suppress(TooLazy):
-            return value()
-        return value
+        try:
+            delay = DelayedNumberArgument(value, self.min, self.max)
+            return delay()
+        except TooLazy:
+            return delay
+        except ParserError:
+            import re
+            match = re.fullmatch('(?:0x)?([A-F0-9]+)H?', value, flags=re.IGNORECASE)
+            if not match:
+                raise
+            return number(F'0x{match[1]}')
 
 
 number = number()
