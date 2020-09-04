@@ -165,18 +165,24 @@ class arg(Argument):
     def update_help(self):
         if 'help' not in self.kwargs:
             return
-        formatting = {}
-        choices = self.kwargs.get('choices', None)
-        if choices is not None:
-            formatting.update(choices=', '.join(self.kwargs['choices']))
-        default = self.kwargs.get('default', None)
-        if default is not None:
-            try:
-                formatting.update(default=F'H:{default.hex()}')
-            except AttributeError:
-                formatting.update(default=str(default))
+
+        class formatting(dict):
+            arg = self
+
+            def __missing__(self, key):
+                if key == 'choices':
+                    return ', '.join(self.arg.kwargs['choices'])
+                if key == 'default':
+                    default = self.arg.kwargs['default']
+                    if isbuffer(default):
+                        return F'H:{default.hex()}'
+                    return str(default)
+                if key == 'varname':
+                    return self.arg.kwargs.get('metavar', self.arg.destination)
+
         try:
-            self.kwargs['help'] = self.kwargs['help'].format(**formatting)
+            self.kwargs.update(
+                help=self.kwargs['help'].format_map(formatting()))
         except Exception:
             pass
 
