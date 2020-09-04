@@ -13,8 +13,7 @@ class dnmr(PathExtractorUnit):
         self, *paths, list=False, join=False,
         raw: arg.switch('-r', help='Do not deserialize the managed resource entry data.') = False
     ):
-        super().__init__(*paths, list=list, join=join)
-        self.args.raw = raw
+        super().__init__(*paths, list=list, join=join, raw=raw)
 
     def unpack(self, data):
         try:
@@ -26,5 +25,10 @@ class dnmr(PathExtractorUnit):
         for entry in managed:
             if entry.Error:
                 self.log_warn(F'entry {entry.Name} carried error message: {entry.Error}')
-            yield UnpackResult(entry.Name,
-                entry.Value if not self.args.raw and isbuffer(entry.Value) else entry.Data)
+            data = entry.Data
+            if not self.args.raw:
+                if isinstance(entry.Value, str):
+                    data = entry.Value.encode('utf-16le')
+                elif isbuffer(entry.Value):
+                    data = entry.Value
+            yield UnpackResult(entry.Name, data)
