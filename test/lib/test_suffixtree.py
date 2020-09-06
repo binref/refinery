@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from refinery.lib.suffixtree import SuffixTree
+from .. import TestBase
+
+
+class TestSuffixTree(TestBase):
+
+    def test_1(self):
+        data = B'The binary refinery refines binaries and includes fine rhymery.'
+        tree = SuffixTree(data)
+        self.assertEqual(
+            [s.suffix for s in tree.leaves],
+            [data[k:] for k in range(len(data))]
+        )
