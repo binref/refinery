@@ -21,24 +21,22 @@ class vsnip(Unit):
     """
 
     def __init__(
-        self,
-        address: arg.number(metavar='address', help='Specify the virtual address of the data as a number.'),
-        count  : arg.number(metavar='count', help='The maximum number of bytes to read.') = 0,
-        until  : arg('-t', metavar='T', group='END',
-            help='Read until sequence T is read. The size of the output is a multiple of the length of T.') = B'',
-        ascii  : arg.switch('-a', group='END',
-            help='Read an ASCII string; equivalent to -th:00') = False,
-        utf16  : arg.switch('-u', group='END',
-            help='Read an UTF16 string; equivalent to -th:0000') = False,
-        base   : arg.number('-b', metavar='B', help='Optionally specify a custom base address B.') = None,
+        self, address: arg.number(metavar='address', help='Specify the virtual address of the data as a number.'),
+        count: arg.number(metavar='count', help='The maximum number of bytes to read.') = 0,
+        align: arg.number('-g', help='Only stop reading if the number of bytes is a multiple of {varname}.') = 1,
+        until: arg.binary('-t', group='END', help='Read until sequence {varname} is read.') = B'',
+        ascii: arg.switch('-a', group='END', help='Read an ASCII string; equivalent to -th:00') = False,
+        utf16: arg.switch('-u', group='END', help='Read an UTF16 string; equivalent to -g2 -th:0000') = False,
+        base : arg.number('-b', metavar='B', help='Optionally specify a custom base address B.') = None,
     ):
         if sum(1 for t in (until, utf16, ascii) if t) > 1:
             raise ValueError('Only one of utf16, ascii, and until can be specified.')
         if ascii:
             until = B'\0'
         if utf16:
+            align = 2
             until = B'\0\0'
-        return super().__init__(address=address, count=count, until=until, base=base)
+        return super().__init__(address=address, count=count, align=align, until=until, base=base)
 
     def process(self, data):
         offset, lbound = exeroute(
@@ -54,12 +52,12 @@ class vsnip(Unit):
             end = lbound
         else:
             end = offset - 1
-            blocksize = len(self.args.until)
+            align = self.args.align
             while True:
                 end = data.find(self.args.until, end + 1)
                 if end not in range(offset, lbound):
                     raise EndOfStringNotFound
-                if (end - offset) % blocksize == 0:
+                if (end - offset) % align == 0:
                     break
 
         if self.args.count:

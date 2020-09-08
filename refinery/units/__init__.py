@@ -220,6 +220,19 @@ class arg(Argument):
         return arg(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
 
     @staticmethod
+    def binary(
+        *args: str,
+        help : Union[omit, str] = omit,
+        dest : Union[omit, str] = omit,
+        metavar : Optional[str] = None,
+        group: Optional[str] = None,
+    ) -> Argument:
+        """
+        Used to add argparse arguments that contain binary data.
+        """
+        return arg(*args, group=group, help=help, dest=dest, type=multibin, metavar=metavar or 'B')
+
+    @staticmethod
     def number(
         *args: str,
         bound: Union[omit, Tuple[int, int]] = omit,
