@@ -30,6 +30,7 @@ class pemeta(Unit):
         signatures : arg('-S', help='Parse digital signatures.') = False,
         timestamps : arg('-T', help='Extract time stamps.') = False,
         version    : arg('-V', help='Parse the VERSION resource.') = False,
+        timeraw    : arg('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
     ):
         super().__init__(
             debug=all or debug,
@@ -37,6 +38,7 @@ class pemeta(Unit):
             signatures=all or signatures,
             timestamps=all or timestamps,
             version=all or version,
+            timeraw=timeraw
         )
 
     def _ensure_string(self, x):
@@ -169,9 +171,15 @@ class pemeta(Unit):
         exports, debug, and resource directory. The resource time stamp is also parsed as
         a DOS time stamp and returned as the "Delphi" time stamp.
         """
-        def dt(ts):
-            # parse as UTC but then forget time zone information
-            return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+        if self.args.timeraw:
+            def dt(ts): return ts
+        else:
+            def dt(ts):
+                # parse as UTC but then forget time zone information
+                return datetime.fromtimestamp(
+                    ts,
+                    tz=timezone.utc
+                ).replace(tzinfo=None)
 
         pe = self._getpe(data)
         pe.parse_data_directories(directories=[
@@ -207,7 +215,12 @@ class pemeta(Unit):
                     info.update(Delphi=dos)
                     info.update(RsrcTS=dt(res_timestamp))
 
-        return {key: str(value) for key, value in info.items()}
+        def norm(value):
+            if isinstance(value, int):
+                return value
+            return str(value)
+
+        return {key: norm(value) for key, value in info.items()}
 
     def parse_dotnet(self, data):
         """
