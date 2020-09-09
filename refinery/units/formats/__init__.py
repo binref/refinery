@@ -41,15 +41,17 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, pp, regex=False):
+    def __init__(self, pp, fuzzy=False, regex=False):
         if isinstance(pp, re.Pattern):
             self.stops = []
             self.pattern = pp
-        else:
-            if not regex:
-                self.stops = [pp[:k] for k, c in enumerate(pp) if c in '/*?']
-                pp = fnmatch.translate(pp)
-            self.pattern = re.compile(pp)
+            return
+        elif not regex:
+            if fuzzy and not pp.startswith('*') and not pp.endswith('*'):
+                pp = F'*{pp}*'
+            self.stops = [pp[:k] for k, c in enumerate(pp) if c in '/*?']
+            pp = fnmatch.translate(pp)
+        self.pattern = re.compile(pp)
 
     def reach(self, path):
         if not self.stops:
@@ -73,9 +75,19 @@ class PathExtractorUnit(Unit, abstract=True):
         list : arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join : arg.switch('-j', help='Join path names from container with previous path names.') = False,
         regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
+        fuzzy: arg.switch('-z', help='Wrap wildcard expressions in asterixes automatically '
+            '(no effect on regular expressions).') = False,
         **keywords
     ):
-        super().__init__(patterns=[PathPattern(p) for p in paths], list=list, join=join, **keywords)
+        super().__init__(
+            patterns=[
+                PathPattern(p, fuzzy, regex)
+                for p in paths
+            ],
+            list=list,
+            join=join,
+            **keywords
+        )
 
     def _check_reachable(self, path: str) -> bool:
         return any(p.reach(path) for p in self.args.patterns)
