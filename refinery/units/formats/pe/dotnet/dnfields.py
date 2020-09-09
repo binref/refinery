@@ -50,9 +50,27 @@ class dnfields(PathExtractorUnit):
             index = rv.Field.Index
             field = tables.Field[index - 1]
             fname = field.Name
-            guess = self._guess_field_info(tables, data, index)
+            if len(field.Signature) == 2:
+                # Crude signature parser for non-array case. Reference:
+                # https://www.codeproject.com/Articles/42649/NET-File-Format-Signatures-Under-the-Hood-Part-1
+                # https://www.codeproject.com/Articles/42655/NET-file-format-Signatures-under-the-hood-Part-2
+                guess = {
+                    0x03: ('Char',   1, 1),  # noqa
+                    0x04: ('SByte',  1, 1),  # noqa
+                    0x05: ('Byte',   1, 1),  # noqa
+                    0x06: ('Int16',  1, 2),  # noqa
+                    0x07: ('UInt16', 1, 2),  # noqa
+                    0x08: ('Int32',  1, 4),  # noqa
+                    0x09: ('UInt32', 1, 4),  # noqa
+                    0x0A: ('Int64',  1, 8),  # noqa
+                    0x0B: ('UInt64', 1, 8),  # noqa
+                    0x0C: ('Single', 1, 4),  # noqa
+                    0x0D: ('Double', 1, 8),  # noqa
+                }.get(field.Signature[1], None)
+            else:
+                guess = self._guess_field_info(tables, data, index)
             if guess is None:
-                self.log_debug(lambda: F'field {k:0{iwidth}d}: unable to guess type information')
+                self.log_debug(lambda: F'field {k:0{iwidth}d} name {field.Signature}: unable to guess type information')
                 continue
             typename, count, size = guess
             totalsize = count * size
