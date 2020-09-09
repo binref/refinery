@@ -5,7 +5,7 @@ import textwrap
 
 from . import arg, HexViewer, get_terminal_size
 from ...lib.types import INF
-from ...lib.tools import entropy
+from ...lib.tools import entropy, isbuffer
 
 
 class peek(HexViewer):
@@ -36,6 +36,25 @@ class peek(HexViewer):
         if not sys.stdout.isatty():
             self.log_info('forwarding input to next unit')
             yield data
+
+    def _peekmeta(self, data, linewidth, sep):
+        try:
+            meta = data.meta
+        except AttributeError:
+            return
+        if not meta:
+            return
+        width = max(len(name) for name in data.meta)
+        if not self.args.brief:
+            yield sep
+        for name, value in data.meta.items():
+            if isbuffer(value):
+                decoded: str = value.decode(self.codec, 'backslashreplace')
+                value = decoded if decoded.isprintable() else F'H:{value.hex()}'
+            metavar = F'{name:>{width}} : {value!s}'
+            if len(metavar) > linewidth:
+                metavar = metavar[:linewidth - 3] + '...'
+            yield metavar
 
     def _peeklines(self, data):
         import codecs
@@ -110,6 +129,8 @@ class peek(HexViewer):
             yield from textwrap.wrap(header, width)
         else:
             yield header
+
+        yield from self._peekmeta(data, width, separator('METADATA'))
 
         if dump:
             yield separator(F'CODEC={working_codec}' if working_codec else 'HEXDUMP')
