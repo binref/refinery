@@ -62,7 +62,7 @@ class lprefix(Unit):
                 count = size = 0
                 while not mf.eof:
                     position = mf.tell()
-                    if count > self.args.limit:
+                    if count >= self.args.limit:
                         raise EOF
                     size = mf.read_struct(self.args.prefix, unwrap=True)
                     size = parse(N=size, **meta)
