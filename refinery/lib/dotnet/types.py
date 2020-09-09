@@ -9,7 +9,9 @@ import time
 import base64
 
 from io import BytesIO
-from future.utils import with_metaclass
+from typing import Type, TypeVar
+
+T = TypeVar('T')
 
 
 class RepresentedByNameOnly(type):
@@ -55,7 +57,7 @@ class TimeZone_Local(datetime.tzinfo):
         return time.tzname[self._is_dst(dt)]
 
 
-class MetaBox(with_metaclass(RepresentedByNameOnly)):
+class MetaBox(metaclass=RepresentedByNameOnly):
     pass
 
 
@@ -138,24 +140,26 @@ class StreamReader(BytesIO):
     def checkpoint(self):
 
         class streamframe:
-            def __enter__(sf):
-                self.rewind = self.tell()
-                return sf
+            reader = self
 
-            def __exit__(sf, type, value, tb):
-                self.seek(self.rewind)
+            def __enter__(self):
+                self.rewind = self.reader.tell()
+                return self
+
+            def __exit__(self, type, value, tb):
+                self.reader.seek(self.rewind)
                 return False
 
         return streamframe()
 
-    def expect(self, parser, **kw):
+    def expect(self, parser: Type[T], **kw) -> T:
         return unpack(self.expect_with_meta(parser, **kw))
 
-    def expect_with_meta(self, parser, **kw):
+    def expect_with_meta(self, parser: Type[T], **kw) -> T:
         return parser(self, **kw)
 
 
-class Blob(with_metaclass(RepresentedByNameOnly)):
+class Blob(metaclass=RepresentedByNameOnly):
     def __init__(self, reader, size=None):
         self._size = 0
         if size is None:
