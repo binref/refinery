@@ -449,7 +449,6 @@ def UnitProcessorBoilerplate(
 ) -> Callable[[ByteString], Any]:
     @wraps(operation)
     def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
-        data = self.args @ data
         typespec = get_type_hints(operation)
         typespec.pop('return', None)
         if typespec:
@@ -457,10 +456,10 @@ def UnitProcessorBoilerplate(
             dt = next(iter(typespec.values()))
             if isinstance(dt, type) and not isinstance(data, dt):
                 data = dt(data)
-        if wrapped.chunked:
-            return (self.labelled(r) for r in operation(self, data))
-        return self.labelled(operation(self, data))
-    wrapped.chunked = inspect.isgeneratorfunction(operation)
+        result = operation(self, data)
+        if not inspect.isgenerator(result):
+            return self.labelled(result)
+        return (self.labelled(r) for r in result)
     return wrapped
 
 
@@ -846,11 +845,9 @@ class Unit(metaclass=Executable, abstract=True):
         if self._framed:
             return self._framed
 
-        op = self.reverse if self.args.reverse else self.process
-
         def normalized_action(data: ByteString) -> Iterable[ByteString]:
             try:
-                result = op(data)
+                result = self.act(data)
                 if inspect.isgenerator(result):
                     yield from filter(lambda x: x is not None, result)
                 elif result is not None:
@@ -1013,7 +1010,7 @@ class Unit(metaclass=Executable, abstract=True):
 
     def act(self, data: Union[Chunk, ByteString]) -> Union[ByteString, Chunk, None]:
         op = self.reverse if self.args.reverse else self.process
-        return op(data)
+        return op(self.args @ data)
 
     def __call__(self, data: Union[ByteString, Chunk, None] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
@@ -1119,7 +1116,7 @@ class Unit(metaclass=Executable, abstract=True):
         if cls.is_reversible:
             base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
 
-        if cls.process.chunked or (cls.is_reversible and cls.reverse.chunked):
+        if inspect.isgeneratorfunction(cls.process) or (cls.is_reversible and inspect.isgeneratorfunction(cls.reverse)):
             base.add_argument('-Z', '--squeeze', action='store_true', help='Fuse outputs, do not insert line breaks.')
 
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
