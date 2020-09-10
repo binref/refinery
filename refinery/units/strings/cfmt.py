@@ -42,14 +42,16 @@ class cfmt(Unit):
                 return result
 
         formatter = formatter()
+        result = []
 
-        for result in self.args.format:
+        for fstr in self.args.format:
             try:
-                result %= data
+                result.append(fstr % data)
             except TypeError as T:
                 self.log_debug(str(T))
             try:
-                result %= formatter
+                result.append(fstr % formatter)
             except TypeError as T:
                 self.log_debug(str(T))
-            yield result
+
+        return B' '.join(result)
