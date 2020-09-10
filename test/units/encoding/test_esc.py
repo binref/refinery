@@ -1,9 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from refinery.units.encoding.esc import esc
 from .. import TestUnitBase
 
 
 class TestEscaping(TestUnitBase):
+
+    def test_quoted_string_01(self):
+        unit = esc(quoted=True)
+        self.assertEqual(unit.process(RB'"r\x65\x66\x69\x6ee\x72\x79"'), B'refinery')
+
+    def test_quoted_string_02(self):
+        unit = esc(quoted=True, hex=True)
+        result = unit.reverse(RB'refinery')
+        self.assertEqual(result, BR'"\x72\x65\x66\x69\x6e\x65\x72\x79"')
+
+    def test_quoted_string_03(self):
+        unit = esc(quoted=True, hex=False)
+        result = unit.reverse(B'binary\n\a\t.."refinery"!')
+        self.assertEqual(result, BR'"binary\n\a\t..\"refinery\"!"')
+
+    def test_quoted_string_04(self):
+        unit = esc(quoted=True)
+        with self.assertRaises(ValueError):
+            unit(RB'"r\x65\x66\x69\x6ee\x72\x79')
 
     def test_inversion_simple(self):
         unit = self.load()
