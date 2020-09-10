@@ -630,19 +630,30 @@ class Executable(type):
         return cls().__ror__(other)
 
     @property
+    def is_multiplex(cls) -> bool:
+        """
+        This proprety is `True` if and only if the unit's `process` or `reverse` method is a generator, i.e.
+        when the unit can generate multiple outputs.
+        """
+        if inspect.isgeneratorfunction(inspect.unwrap(cls.process)):
+            return True
+        if not cls.is_reversible:
+            return False
+        return inspect.isgeneratorfunction(inspect.unwrap(cls.reverse))
+
+    @property
     def is_reversible(cls) -> bool:
         """
-        This property is `True` if and only if the unit has a member function
-        named `reverse`. By convention, this member function implements the
-        inverse of `refinery.units.Unit.process`.
+        This property is `True` if and only if the unit has a member function named `reverse`. By convention,
+        this member function implements the inverse of `refinery.units.Unit.process`.
         """
         return hasattr(cls, 'reverse')
 
     @property
     def codec(cls) -> str:
         """
-        The default codec for encoding textual information between units.
-        The value of this property is hardcoded to `UTF8`.
+        The default codec for encoding textual information between units. The value of this property is
+        hardcoded to `UTF8`.
         """
         return 'UTF8'
 
@@ -1116,7 +1127,7 @@ class Unit(metaclass=Executable, abstract=True):
         if cls.is_reversible:
             base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
 
-        if inspect.isgeneratorfunction(cls.process) or (cls.is_reversible and inspect.isgeneratorfunction(cls.reverse)):
+        if cls.is_multiplex:
             base.add_argument('-Z', '--squeeze', action='store_true', help='Fuse outputs, do not insert line breaks.')
 
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
