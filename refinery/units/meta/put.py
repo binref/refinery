@@ -5,7 +5,7 @@ from ...lib.argformats import numseq
 from ...lib.tools import isbuffer
 
 
-class mput(Unit):
+class put(Unit):
     """
     Can be used to add a meta variable to the processed chunk. Note that meta variables
     cease to exist outside a frame.

@@ -3,13 +3,13 @@
 from ..strings.rep import rep
 
 
-class mpush(rep):
+class push(rep):
     """
     The unit operates almost exactly as `refinery.rep`, except that the last copy of the
     data is moved out of scope. This chunk is considered the "original" data, while all
     other chunks are to be used as intermediate results. For example:
 
-        emit key=value | mpush [[| rex =(.*)$ $1 | mpop v ]| repl var:v censored ]
+        emit key=value | push [[| rex =(.*)$ $1 | pop v ]| repl var:v censored ]
 
     will output `key=censored`. The application of `refinery.rex` turns the (duplicated)
     data into just the value, which is then stored in the variable `v`. The application

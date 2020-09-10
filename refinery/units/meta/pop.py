@@ -5,7 +5,7 @@ import itertools
 from .. import arg, Unit
 
 
-class mpop(Unit):
+class pop(Unit):
     """
     In processing order, remove visible chunks from the current frame and store
     their contents in the given meta variables.
