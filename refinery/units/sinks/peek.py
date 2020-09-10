@@ -52,7 +52,7 @@ class peek(HexViewer):
                 try:
                     decoded: str = value.decode(self.codec)
                     assert decoded.isprintable()
-                except UnicodeDecodeError: 
+                except UnicodeDecodeError:
                     decoded = None
                 except AssertionError:
                     decoded = None
