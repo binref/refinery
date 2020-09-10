@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.3.13
+- The `mpush`, `mpop`, and `mput` units have been renamed to simply `push`, `pop`, and `put`.
+- The `autoxor` unit has been transformed into the `drp` unit, the behavior of `autoxor` can be achieved using `xor drp:copy:all`.
+- Data types of .NET fields are better detected by `dnfields` now, but a proper parser for type signatures is still missing.
+
 ## Version 0.3.12
 - The `gz` unit was deprecated because the `zl` unit covers its usecase (and does a better job at it).
 - The `lprefix` unit for parsing length-prefixed data was added.
