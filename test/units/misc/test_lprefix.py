@@ -30,4 +30,3 @@ class TestLengthPrefix(TestUnitBase):
         self.assertEqual(unit(pack), body)
         unit = self.load('=4xL3x', header=1, derive='N+11')
         self.assertEqual(unit(pack), pack)
-
