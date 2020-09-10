@@ -49,8 +49,14 @@ class peek(HexViewer):
             yield sep
         for name, value in data.meta.items():
             if isbuffer(value):
-                decoded: str = value.decode(self.codec, 'backslashreplace')
-                value = decoded if decoded.isprintable() else F'H:{value.hex()}'
+                try:
+                    decoded: str = value.decode(self.codec)
+                    assert decoded.isprintable()
+                except UnicodeDecodeError: 
+                    decoded = None
+                except AssertionError:
+                    decoded = None
+                value = decoded or F'H:{value.hex()}'
             metavar = F'{name:>{width}} : {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
@@ -130,10 +136,10 @@ class peek(HexViewer):
         else:
             yield header
 
-        yield from self._peekmeta(data, width, separator('METADATA'))
+        yield from self._peekmeta(data, width, separator())
 
         if dump:
-            yield separator(F'CODEC={working_codec}' if working_codec else 'HEXDUMP')
+            yield separator(F'CODEC={working_codec}' if working_codec else None)
             yield from dump
 
         if self.separate:
