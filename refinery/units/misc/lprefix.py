@@ -69,6 +69,7 @@ class lprefix(Unit):
                     if self.args.header:
                         size += hsize
                         mf.seek(position)
+                    self.log_info(F'reading chunk of size: {size}')
                     yield mf.read(size)
                     count += 1
             except EOF as eof:
