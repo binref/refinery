@@ -5,53 +5,32 @@ from .. import arg, Unit
 
 class cfmt(Unit):
     """
-    Transform a given chunk by applying a format string operation. Two types of string format
-    operations are performed. First, the unit attempts to pass the incoming data as the only
-    formatting option, which will only succeed if the formatting string contains exactly one
-    placeholder of the form `%b`. Next, the unit will pass a mapping object as the formatting
-    option which contains all incoming metadata. The incoming data can be accessed from this
-    mapping object under the name `data`, or using the empty string. For example, the
-    following formatting option will print the value of the meta variable "path", followed by
-    a colon, a space, and the first five bytes of the incoming data:
+    Transform a given chunk by applying a format string operation. The positional format
+    string placeholder `{}` will be replaced by the incoming data, named placeholders have
+    to be present as meta variables in the current chunk. For example, the following
+    pipeline can be used to print all files in a given directory with their corresponding
+    SHA-256 hash:
 
-        "%(path)b: %(data).5b"
+        fread ** [| sha256 -t | cfmt {} {path} ]]
 
-    The following would produce the same output:
-
-        "%%(path)b: %.5b"
-
-    But note that `%%` had to be used for the meta variable substitution because the first
-    formatting operation (which does not use a mapping object) requires escaping the percent
-    sign.
+    By default, format string arguments are simply joined along a space character to form
+    a single format string.
     """
 
-    def __init__(self, *format: arg(help='Binary format strings.')):
-        super().__init__(format=format)
+    def __init__(
+        self,
+        *formats: arg(help='Format strings.', type=str, metavar='format'),
+        separator: arg('-s', group='SEP', metavar='S',
+            help='Separator to insert between format strings. The default is a space character.') = ' ',
+        multiplex: arg.switch('-m', group='SEP',
+            help='Do not join the format strings along the separator, generate one output for each.') = False
+    ):
+        if not multiplex:
+            formats = [separator.join(formats)]
+        super().__init__(formats=formats)
 
     def process(self, data):
-
-        class formatter(dict):
-            unit = self
-
-            def __missing__(self, key):
-                if key.lower() == b'data' or not key:
-                    return data
-                result = data[key.decode('utf8')]
-                if isinstance(result, str):
-                    return result.encode(self.unit.codec)
-                return result
-
-        formatter = formatter()
-        result = []
-
-        for fstr in self.args.format:
-            try:
-                result.append(fstr % data)
-            except TypeError as T:
-                self.log_debug(str(T))
-            try:
-                result.append(fstr % formatter)
-            except TypeError as T:
-                self.log_debug(str(T))
-
-        return B' '.join(result)
+        meta = getattr(data, 'meta', {})
+        data = data.decode('latin-1')
+        for spec in self.args.formats:
+            yield spec.format(data, **meta).encode('latin-1')
