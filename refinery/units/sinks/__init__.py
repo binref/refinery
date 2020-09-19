@@ -61,13 +61,19 @@ class HexViewer(Unit, abstract=True):
                     continue
                 elif prevcount > 0:
                     msg = F' repeats {prevcount} times '
-                    yield F'{".":.>{address_width}}: {msg:=^{3*columns-1}}  {"":=<{columns}}'
+                    msg = F'{msg:=^{3*columns-1}}  {"":=<{columns}}'
+                    if self.args.hexaddr:
+                        msg = F'{".":.>{address_width}}: {msg}'
+                    yield msg
                     prevcount = 0
 
             dump = ' '.join(F'{b:02X}' for b in chunk)
             read = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
 
-            yield F'{k*columns:0{address_width}X}: {dump:<{3*columns}} {read:<{columns}}'
+            msg = F'{dump:<{3*columns}} {read:<{columns}}'
+            if self.args.hexaddr:
+                msg = F'{k*columns:0{address_width}X}: {msg}'
+            yield msg
 
             if not self.args.expand:
                 previous = chunk
