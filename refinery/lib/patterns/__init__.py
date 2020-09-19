@@ -42,7 +42,7 @@ class alphabet(pattern):
             count = '{{{},{}}}(?!{})'.format(at_least, at_most, repeat)
 
         pattern.__init__(self,
-            R'(?<!(?:{r})){b}(?:{r}){c}{a}'.format(
+            R'{b}(?:{r}){c}{a}'.format(
                 r=repeat,
                 b=prefix,
                 c=count,
@@ -155,6 +155,7 @@ pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}
 
 pattern_pathpart_nospace = R'[-\w+,.;@\]\[\^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=pattern_pathpart_nospace)
+pattern_nix_path_element = R'(?:{n} ){{0,1}}{n}'.format(n=pattern_pathpart_nospace)
 pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]{2,}%'
 
 pattern_win_path = R'(?:{s})(?P<pathsep>[\\\/])(?:{p}(?P=pathsep))*{p}\b'.format(
@@ -167,7 +168,7 @@ pattern_win_path = R'(?:{s})(?P<pathsep>[\\\/])(?:{p}(?P=pathsep))*{p}\b'.format
     p=pattern_win_path_element
 )
 
-pattern_nix_path = R'\b/?(?:{n}/){{2,}}{n}\b'.format(n=pattern_pathpart_nospace)
+pattern_nix_path = R'\b/?(?:{n}/){{2,}}{n}\b'.format(n=pattern_nix_path_element)
 pattern_path = R'(?:{nix})|(?:{win})'.format(
     nix=pattern_nix_path,
     win=pattern_win_path
