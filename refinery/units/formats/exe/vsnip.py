@@ -69,7 +69,9 @@ class vsnip(Unit):
         self.log_info(F'using base address: 0x{truebase:X}')
         if self.args.base is None:
             return addr
-        return addr - self.args.base + truebase
+        rebased = addr - self.args.base + truebase
+        self.log_info(F'rebased to address: 0x{rebased:X}')
+        return rebased
 
     def _get_buffer_range_elf(self, elf):
         addr = self._rebase(
