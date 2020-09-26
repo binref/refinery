@@ -39,8 +39,8 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        if len(self.args.key) not in self.key_sizes:
-            raise ValueError(F'the key has length {len(self.args.key)}')
+        if self.key_sizes and len(self.args.key) not in self.key_sizes:
+            raise ValueError(F'the given key has an invalid length of {len(self.args.key)} bytes.')
         return self.decrypt(data)
 
     def reverse(self, data: ByteString) -> ByteString:
@@ -49,8 +49,8 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
 class StreamCipherUnit(CipherUnit, abstract=True):
 
-    def __init__(self, key):
-        super().__init__(key=key)
+    def __init__(self, key, **keywords):
+        super().__init__(key=key, **keywords)
 
     def keystream(self) -> Iterable[int]:
         raise NotImplementedError
