@@ -5,7 +5,9 @@ from ... import Unit
 
 
 class kblob(Unit):
-    """Extracts a key from a Microsoft Crypto API BLOB structure."""
+    """
+    Extracts a key from a Microsoft Crypto API BLOB structure.
+    """
 
     def process(self, data):
         blob = CRYPTOKEY(data)
