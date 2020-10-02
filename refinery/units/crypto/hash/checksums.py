@@ -15,7 +15,7 @@ class crc32(HashUnit):
     """
     @classmethod
     def _algorithm(cls, data: bytes) -> bytes:
-        return struct.pack('<I', zlib.crc32(data))
+        return struct.pack('>I', zlib.crc32(data))
 
 
 class adler32(HashUnit):
@@ -24,4 +24,4 @@ class adler32(HashUnit):
     """
     @classmethod
     def _algorithm(cls, data: bytes) -> bytes:
-        return struct.pack('<I', zlib.adler32(data))
+        return struct.pack('>I', zlib.adler32(data))
