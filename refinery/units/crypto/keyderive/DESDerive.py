@@ -38,7 +38,7 @@ class DESDerive(KeyDerivation):
             password = password.ljust(n + 7 - ((n - 1) % 8), b'\0')
             des = DES.new(key, DES.MODE_ECB)
             for k in range(0, n, 8):
-                key = des.encrypt(strxor(password[k:k + 8], key))
+                key[:] = des.encrypt(strxor(password[k:k + 8], key))
             des_set_odd_parity(key)
 
         if self.args.size > 8:
