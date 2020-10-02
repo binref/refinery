@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.3.14
+- The `cfmt` unit has been reworked to support more common modern Python format string syntax.
+- The output of `crc32` and `adler32` checksum hashes has been altered to use the correct byte order.
+- The `rabbit` unit was added which implements the RABBIT stream cipher.
+
 ## Version 0.3.13
 - The `mpush`, `mpop`, and `mput` units have been renamed to simply `push`, `pop`, and `put`.
 - The `autoxor` unit has been transformed into the `drp` unit, the behavior of `autoxor` can be achieved using `xor drp:copy:all`.
