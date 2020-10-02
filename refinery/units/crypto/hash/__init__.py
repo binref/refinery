@@ -14,5 +14,9 @@ class HashUnit(Unit, abstract=True):
         super().__init__(text=text)
 
     def process(self, data: bytes) -> bytes:
-        digest = self._algorithm(data).digest()
-        return digest.hex().encode(self.codec) if self.args.text else digest
+        digest = self._algorithm(data)
+        try: digest = digest.digest()
+        except AttributeError: pass
+        if self.args.text:
+            digest = digest.hex().encode(self.codec)
+        return digest
