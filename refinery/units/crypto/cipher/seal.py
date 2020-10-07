@@ -10,6 +10,8 @@ import struct
 from typing import Iterable
 
 from . import StreamCipherUnit
+from ....lib.crypto import rotr32
+
 
 __all__ = ['seal']
 
@@ -96,18 +98,14 @@ class SEAL_Cipher:
 
     def __iter__(self):
 
-        def rotr(k, n):
-            return 0xFFFFFFFF & ((n >> k) | (n << 32 - k))
-
         def rotr9(n):
-            n &= 0xFFFFFFFF
-            return 0xFFFFFFFF & ((n >> 9) | (n << 23))
+            return 0xFFFFFFFF & (((n & 0xFFFFFFF) >> 9) | (n << 23))
 
         while True:
-            a =     (      self.counter_outside) ^ self.R[4 * self.counter_inside + 0] # noqa
-            b = rotr(0x08, self.counter_outside) ^ self.R[4 * self.counter_inside + 1] # noqa
-            c = rotr(0x10, self.counter_outside) ^ self.R[4 * self.counter_inside + 2] # noqa
-            d = rotr(0x18, self.counter_outside) ^ self.R[4 * self.counter_inside + 3] # noqa
+            a =       (      self.counter_outside) ^ self.R[4 * self.counter_inside + 0] # noqa
+            b = rotr32(0x08, self.counter_outside) ^ self.R[4 * self.counter_inside + 1] # noqa
+            c = rotr32(0x10, self.counter_outside) ^ self.R[4 * self.counter_inside + 2] # noqa
+            d = rotr32(0x18, self.counter_outside) ^ self.R[4 * self.counter_inside + 3] # noqa
 
             def warp():
                 nonlocal a, b, c, d

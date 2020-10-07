@@ -174,9 +174,11 @@ class arg(Argument):
                     return ', '.join(self.arg.kwargs['choices'])
                 if key == 'default':
                     default = self.arg.kwargs['default']
-                    if isbuffer(default):
-                        return F'H:{default.hex()}'
-                    return str(default)
+                    if not isbuffer(default):
+                        return str(default)
+                    if default.isalnum():
+                        return default.decode('latin-1')
+                    return F'H:{default.hex()}'
                 if key == 'varname':
                     return self.arg.kwargs.get('metavar', self.arg.destination)
 

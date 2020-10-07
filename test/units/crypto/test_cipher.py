@@ -34,10 +34,10 @@ class TestCipherUnits(TestUnitBase):
             data = self.generate_random_buffer(buffersize)
             key = self.generate_random_buffer(32)
             for n in (8, 12, 24):
-                S = self.ldu('chacha', key=key, nonce=self.generate_random_buffer(n))
+                S = self.ldu('chacha20', key=key, nonce=self.generate_random_buffer(n))
                 self.assertEqual(S(S(data)), data)
             with self.assertRaises(ValueError):
-                S = self.ldu('chacha', key=key, nonce=B'FLABBERGAST')
+                S = self.ldu('chacha20', key=key, nonce=B'FLABBERGAST')
                 S(data)
 
     def test_xtea(self):

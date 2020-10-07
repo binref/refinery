@@ -167,7 +167,7 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
-    def __init__(self, mode, key, iv=B'', padding=None):          
+    def __init__(self, mode, key, iv=B'', padding=None):
         super().__init__(key=key, iv=iv, padding=padding, mode=self._bcmspec_(mode))
 
     def _get_cipher_instance(self, **optionals) -> Any:
@@ -193,11 +193,21 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             return self._stdcipher_.new(key=self.args.key, **optionals)
 
 
-class LatinStreamCipher(StandardCipherUnit):
+class LatinCipherUnit(StreamCipherUnit, abstract=True):
+    key_sizes = 16, 32
 
-    def __init__(self, key, nonce:
-        arg('-N', help='Specify the one-time use nonce; the default value is "REFINERY".') = B'REFINERY'
+    def __init__(
+        self, key,
+        nonce: arg(help='The nonce. Default is the string {default}.') = B'REFINERY',
+        magic: arg('-m', help='The magic constant; depends on the key size by default.') = B'',
+        offset: arg.number('-x', help='Optionally specify the stream index, default is {default}.') = 0,
+        rounds: arg.number('-r', help='The number of rounds. Has to be an even number.') = 20,
     ):
+        super().__init__(key=key, nonce=nonce, magic=magic, offset=offset, rounds=rounds)
+
+
+class LatinCipherStandardUnit(StandardCipherUnit):
+    def __init__(self, key, nonce: arg(help='The nonce. Default is the string {default}.') = B'REFINERY'):
         super().__init__(key, nonce=nonce)
 
     def _get_cipher_instance(self, **optionals) -> Any:

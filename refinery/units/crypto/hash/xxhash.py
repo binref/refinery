@@ -37,6 +37,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import struct
 
 from . import HashUnit
+from ....lib.crypto import rotl32
 
 
 class xxhash:
@@ -47,12 +48,8 @@ class xxhash:
     PRIME5 = 0x165667B1
 
     @classmethod
-    def rotl32(cls, x, n):
-        return (((x << n) & 0xFFFFFFFF) | (x >> (32 - n)))
-
-    @classmethod
     def xxhround(cls, a, b):
-        return (cls.rotl32(a + b * cls.PRIME2 & 0xFFFFFFFF, 13) * cls.PRIME1) & 0xFFFFFFFF
+        return (rotl32(a + b * cls.PRIME2 & 0xFFFFFFFF, 13) * cls.PRIME1) & 0xFFFFFFFF
 
     @classmethod
     def xxhavalance(cls, h32):
@@ -116,7 +113,7 @@ class xxhash:
     def intdigest(self):
         v1, v2, v3, v4 = self.v1, self.v2, self.v3, self.v4
         if self.total_len >= 16:
-            h32 = self.rotl32(v1, 1) + self.rotl32(v2, 7) + self.rotl32(v3, 12) + self.rotl32(v4, 18)
+            h32 = rotl32(v1, 1) + rotl32(v2, 7) + rotl32(v3, 12) + rotl32(v4, 18)
         else:
             h32 = v3 + self.PRIME5
         h32 += self.total_len
@@ -125,12 +122,12 @@ class xxhash:
             val, = struct.unpack('<I', self.mem[i:i + 4])
             h32 += val * self.PRIME3
             h32 &= 0xFFFFFFFF
-            h32 = self.rotl32(h32, 17) * self.PRIME4
+            h32 = rotl32(h32, 17) * self.PRIME4
             i += 4
         for c in self.mem[i:self.memsize]:
             h32 += c * self.PRIME5
             h32 &= 0xFFFFFFFF
-            h32 = self.rotl32(h32, 11) * self.PRIME1
+            h32 = rotl32(h32, 11) * self.PRIME1
         return self.xxhavalance(h32)
 
     def digest(self):
