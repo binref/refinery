@@ -99,10 +99,15 @@ class dump(Unit):
         else:
             return open(filename, 'wb')
 
-    def _close(self):
-        if not self.stream or self.args.stream:
+    def __del__(self):
+        self._close(force=True)
+
+    def _close(self, force=False):
+        if not self.stream:
             return
         self.stream.flush()
+        if self.args.stream and not force:
+            return
         self.stream.close()
         self.stream = None
 

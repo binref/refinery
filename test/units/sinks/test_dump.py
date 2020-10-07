@@ -59,7 +59,8 @@ class TestDump(TestUnitBase):
                 list(stream | L('chop 32')[dump])
             self.assertTrue(os.path.exists(path))
             with open(path, 'rb') as result:
-                self.assertEqual(result.read(), data)
+                contents = result.read()
+                self.assertEqual(contents, data)
 
     def test_invalid_arguments(self):
         with self.assertRaises(ValueError):
