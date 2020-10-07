@@ -49,15 +49,13 @@ class dump(Unit):
             nf = Formatter()
             self.formatted = any(any(t.isalnum() for t in fields)
                 for f in filenames for _, fields, *__ in nf.parse(f) if fields)
+        self.stream = None
         self._reset()
 
     def _reset(self):
-        self.stream = None
         self.exhausted = False
-        if self.formatted:
-            self.paths = cycle(self.args.filenames)
-        else:
-            self.paths = iter(self.args.filenames)
+        self.paths = cycle(self.args.filenames) if self.formatted else iter(self.args.filenames)
+        self._close()
 
     @property
     def _paste(self):
@@ -102,10 +100,11 @@ class dump(Unit):
             return open(filename, 'wb')
 
     def _close(self):
-        if self.stream:
-            self.stream.flush()
-            self.stream.close()
-            self.stream = None
+        if not self.stream or self.args.stream:
+            return
+        self.stream.flush()
+        self.stream.close()
+        self.stream = None
 
     def _format(self, filename, data, index=0, **meta):
         class DelayedFormatter(dict):
@@ -153,8 +152,7 @@ class dump(Unit):
             else:
                 self.stream.write(data)
                 self.log_debug(F'wrote 0x{len(data):08X} bytes')
-                if not self.args.stream:
-                    self._close()
+                self._close()
             forward_input_data = self.args.tee
         else:
             forward_input_data = self.args.tee or not self.isatty
