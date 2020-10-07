@@ -110,8 +110,6 @@ class xlxtr(Unit):
             if re.search(R'^[A-Z]+:', entry) or '***' in entry:
                 self.log_info(entry)
 
-        if not self.args.refs:
-            self._display_sheet_names(wb.sheet_names())
         for ref in self.args.refs:
             sh = wb.sheet_by_index(ref.get_sheet_index(wb.sheet_names()))
             for cell in ref:
