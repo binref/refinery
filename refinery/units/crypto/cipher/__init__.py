@@ -5,6 +5,7 @@ Implements several popular block and stream ciphers.
 """
 from typing import Iterable, Any, ByteString
 from Crypto.Util.Padding import pad, unpad
+from Crypto.Util import Counter
 
 from ... import arg, Unit, Executable, RefineryCriticalException, RefineryPartialResult
 from ....lib.argformats import OptionFactory, extract_options
@@ -166,12 +167,18 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
-    def __init__(self, mode, key, iv=B'', padding=None):
+    def __init__(self, mode, key, iv=B'', padding=None):          
         super().__init__(key=key, iv=iv, padding=padding, mode=self._bcmspec_(mode))
 
     def _get_cipher_instance(self, **optionals) -> Any:
-        if not self.args.mode.name == 'ECB':
-            optionals['IV'] = self.iv
+        if self.args.mode.name != 'ECB':
+            if self.args.mode.name not in ('CTR', 'CCM', 'EAX', 'GCM'):
+                optionals['IV'] = self.iv
+            else:
+                counter = Counter.new(self.blocksize * 8,
+                    initial_value=int.from_bytes(self.iv, 'big'))
+                optionals['counter'] = counter
+                self.log_info('converting vector to counter')
             self.log_info('initial vector:', self.iv.hex())
         if self.args.mode:
             optionals['mode'] = self.args.mode.value
