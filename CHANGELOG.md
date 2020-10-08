@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.3.15
+- The `salsa` and `chacha` cipher units now have pure Python implementations that allow you to specify the number of rounds. The PyCryptodome interfaces still exist, now as units `salsa20` and `chacha20`.
+- The `HMAC` unit was added to support simple HMAC based key derivation.
+- The `dump` unit stream mode has been adjusted so that it is possible to write consecutive data to a file inside a nested frame.
+
 ## Version 0.3.14
 - The `cfmt` unit has been reworked to support more common modern Python format string syntax.
 - The output of `crc32` and `adler32` checksum hashes has been altered to use the correct byte order.
