@@ -4,6 +4,7 @@ import os
 import os.path
 
 from itertools import cycle
+from string import Formatter
 
 from .. import arg, Unit, RefineryCriticalException
 from ...lib.mime import file_extension_from_data, NoMagicAvailable
@@ -33,33 +34,37 @@ class dump(Unit):
     """
 
     def __init__(
-        self, *filenames: str,
+        self, *files: arg(metavar='file', type=str, help='Optionally formatted filename.'),
         tee    : arg.switch('-t', help='Forward all inputs to STDOUT.') = False,
         stream : arg.switch('-s', help='Dump all incoming data to the same file.') = False,
         plain  : arg.switch('-p', help='Never apply any formatting to file names.') = False,
         force  : arg.switch('-f', help='Remove files if necessary to create dump path.') = False,
     ):
-        if stream and len(filenames) != 1:
+        if stream and len(files) != 1:
             raise ValueError('Can only use exactly one file in stream mode.')
-        super().__init__(filenames=filenames, tee=tee, stream=stream, force=force)
-        if plain:
-            self.formatted = False
-        else:
-            from string import Formatter
-            nf = Formatter()
-            self.formatted = any(any(t.isalnum() for t in fields)
-                for f in filenames for _, fields, *__ in nf.parse(f) if fields)
+        super().__init__(files=files, tee=tee, stream=stream, force=force)
         self.stream = None
+        self._formatted = not plain and any(self.has_format(f) for f in files)
         self._reset()
+
+    @staticmethod
+    def has_format(filename):
+        if not isinstance(filename, str):
+            return False
+        formatter = Formatter()
+        return any(
+            any(t.isalnum() for t in fields)
+            for _, fields, *__ in formatter.parse(filename) if fields
+        )
 
     def _reset(self):
         self.exhausted = False
-        self.paths = cycle(self.args.filenames) if self.formatted else iter(self.args.filenames)
+        self.paths = cycle(self.args.files) if self._formatted else iter(self.args.files)
         self._close()
 
     @property
     def _paste(self):
-        return not self.args.filenames
+        return not self.args.files
 
     def _components(self, path):
         def _reversed_components(path):
@@ -73,40 +78,40 @@ class dump(Unit):
         components.reverse()
         return components
 
-    def _open(self, filename, unc=False):
-        filename = os.path.abspath(filename)
-        base = os.path.dirname(filename)
+    def _open(self, path, unc=False):
+        if hasattr(path, 'close'):
+            return path
+        path = os.path.abspath(path)
+        base = os.path.dirname(path)
         if not unc:
-            self.log_info('opening:', filename)
+            self.log_info('opening:', path)
         try:
             os.makedirs(base, exist_ok=True)
         except FileExistsError:
-            path, components = '', self._components(filename)
+            part, components = '', self._components(path)
             while components:
                 component, *components = components
-                path = os.path.join(path, component)
-                if os.path.exists(path) and os.path.isfile(path):
+                part = os.path.join(part, component)
+                if os.path.exists(part) and os.path.isfile(part):
                     if self.args.force:
-                        os.unlink(path)
-                        return self._open(filename, unc)
+                        os.unlink(part)
+                        return self._open(path, unc)
                     break
-            raise RefineryCriticalException(F'Unable to dump to {filename} because {path} is a file.')
+            raise RefineryCriticalException(F'Unable to dump to {path} because {part} is a file.')
         except FileNotFoundError:
             if unc or os.name != 'nt':
                 raise
-            filename = F'\\\\?\\{filename}'
-            return self._open(filename, unc=True)
+            path = F'\\\\?\\{path}'
+            return self._open(path, unc=True)
         else:
-            return open(filename, 'wb')
+            mode = 'ab' if self.args.stream else 'wb'
+            return open(path, mode)
 
-    def __del__(self):
-        self._close(force=True)
-
-    def _close(self, force=False):
+    def _close(self, final=False):
         if not self.stream:
             return
         self.stream.flush()
-        if self.args.stream and not force:
+        if self.args.stream and not final:
             return
         self.stream.close()
         self.stream = None
@@ -148,11 +153,11 @@ class dump(Unit):
                 # This should happen only when the unit is called from Python code
                 # rather than via the command line.
                 try:
-                    filename = next(self.paths)
+                    path = next(self.paths)
                 except StopIteration:
                     raise RefineryCriticalException('the list of filenames was exhausted.')
                 else:
-                    with self._open(filename) as stream:
+                    with self._open(path) as stream:
                         stream.write(data)
             else:
                 self.stream.write(data)
@@ -183,14 +188,14 @@ class dump(Unit):
                 continue
             if not self.args.stream or not self.stream:
                 try:
-                    filename = next(self.paths)
+                    path = next(self.paths)
                 except StopIteration:
                     self.exhausted = True
                 else:
-                    if self.formatted:
-                        filename = self._format(filename, chunk, index, **chunk.meta)
-                    self.stream = self._open(filename)
+                    if self.has_format(path):
+                        path = self._format(path, chunk, index, **chunk.meta)
+                    self.stream = self._open(path)
             yield chunk
 
-        self._close()
+        self._close(final=True)
         self.exhausted = True
