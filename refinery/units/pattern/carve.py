@@ -11,18 +11,28 @@ class carve(PatternExtractor):
     def __init__(
         self, format: arg.choice(choices=[p.name for p in formats], metavar='format',
             help='Specify one of the following formats: {choices}'),
+        unique: arg.switch('-q', help='Yield only match only once.') = False,
         decode: arg.switch('-d', help='Automatically decode known patterns.') = False,
         single: arg.switch('-s', help='Only get the biggest match; equivalent to -qlt1') = False,
         min=1, max=None, len=None,
-        stripspace=False, duplicates=False, longest=False, take=None, utf16=True, ascii=True
+        stripspace=False, longest=False, take=None, utf16=True, ascii=True
     ):
         if single:
-            take = 1           # noqa warning about unused variable
-            duplicates = False # noqa warning about unused variable
-            longest = True     # noqa warning about unused variable
-        del single
-        self.superinit(super(), **vars())
-        self.args.format = formats[format]
+            take = 1
+            longest = True
+            unique = True
+        super().__init__(
+            min=min,
+            max=max,
+            len=len,
+            stripspace=stripspace,
+            duplicates=not unique,
+            longest=longest,
+            take=take,
+            ascii=ascii,
+            utf16=utf16,
+            format=formats[format]
+        )
         if not decode:
             decoder = NotImplemented
         elif self.args.format is formats.string:

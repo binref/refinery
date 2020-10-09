@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import base64
+import inspect
 
 from .. import TestUnitBase
 
@@ -14,6 +15,31 @@ class TestCarve(TestUnitBase):
             self.generate_random_buffer(12)
         )
         self.assertEqual(unit(data), b'VG9vIG11Y2ggdGVjaG5vbG9neSwgaW4gdG9vIGxpdHRsZSB0aW1lLg==')
+
+    def test_extract_strings(self):
+        def multibytes(c):
+            return inspect.getdoc(c).encode('utf8')
+
+        @multibytes
+        class data:
+            """
+            puts("----------------------------");
+            puts("   Testing Output:");
+            puts(" Usage: ./invoke filename");
+            puts("----------------------------");
+            """
+
+        @multibytes
+        class goal:
+            """
+            ----------------------------
+               Testing Output:
+             Usage: ./invoke filename
+            ----------------------------
+            """
+
+        unit = self.load('string', decode=True)
+        self.assertEqual(unit(data), goal)
 
     def test_extract_hex_01(self):
         unit = self.load('hex', stripspace=True, longest=True, take=1)
