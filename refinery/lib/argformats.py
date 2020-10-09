@@ -145,8 +145,8 @@ class PythonExpression:
         ast.USub
     }
 
-    def __init__(self, definition, *variables):
-        variables = set(variables)
+    def __init__(self, definition, *variables, **constants):
+        variables = set(variables) | set(constants)
         try:
             expression = ast.parse(definition)
             nodes = ast.walk(expression)
@@ -171,12 +171,14 @@ class PythonExpression:
             )
 
         self.variables = names
+        self.constants = constants
         self.definition = definition
 
     def __str__(self):
         return self.definition
 
     def __call__(self, **values):
+        values.update(self.constants)
         for v in self.variables:
             if v not in values:
                 raise ValueError(F'unbound variable {v}, cannot evaluate')
@@ -540,7 +542,7 @@ class DelayedBinaryArgument(DelayedArgument):
             return self._interpret_variable(name, result)
         return extract
 
-    @handler.register('pop', final=True)
+    @handler.register('xvar', final=True)
     def meta_pop(self, name: str) -> bytes:
         """
         Extracts data from a meta field in a chunk.
