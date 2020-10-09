@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from codecs import encode, decode
 from .. import arg, Unit
 
 
@@ -25,8 +26,13 @@ class cfmt(Unit):
         multiplex: arg.switch('-m', group='SEP',
             help='Do not join the format strings along the separator, generate one output for each.') = False
     ):
+        def fixfmt(fmt):
+            if not isinstance(fmt, str):
+                fmt = fmt.decode(self.codec)
+            return decode(encode(fmt, 'latin-1', 'backslashreplace'), 'unicode-escape')
+        formats = [fixfmt(f) for f in formats]
         if not multiplex:
-            formats = [separator.join(formats)]
+            formats = [fixfmt(separator).join(formats)]
         super().__init__(formats=formats)
 
     def process(self, data):
