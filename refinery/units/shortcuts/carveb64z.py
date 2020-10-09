@@ -11,7 +11,7 @@ class carveb64z(carve):
     """
     def __init__(
         self, single: arg.switch('-m', '--multi', help='Process all base64 strings instead of just the longest.') = True,
-        min=1, max=None, stripspace=False, duplicates=False, longest=False, take=None, utf16=True, ascii=True
+        min=1, max=None, stripspace=False, unique=False, longest=False, take=None, utf16=True, ascii=True
     ):
         self.superinit(super(), format='b64', decode=True, **vars())
         self.decompressor = decompress()
