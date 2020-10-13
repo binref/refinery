@@ -46,7 +46,7 @@ class trim(Unit):
         synch = True
         mview = memoryview(data)
 
-        while dirty:
+        while dirty and data:
             dirty = False
 
             if self.args.strip:
