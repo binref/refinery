@@ -144,8 +144,11 @@ class StandardCipherExecutable(CipherExecutable):
                 )
             cls._bcmspec_ = OptionFactory(modes, ignorecase=True)
             cls._argspec_['mode'].merge_all(arg(
-                dest='mode', type=str.upper, metavar='mode', choices=list(modes),
-                help='Choose cipher mode to be used. Possible values are: {}.'.format(', '.join(modes))
+                '-M', '--mode', type=str.upper, metavar='MODE', nargs=arg.delete, choices=list(modes),
+                help=(
+                    'Choose cipher mode to be used. Possible values are: {}. By default, the CBC mode'
+                    '  is used when an IV is is provided, and ECB otherwise.'.format(', '.join(modes))
+                )
             ))
 
 
@@ -167,8 +170,9 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
-    def __init__(self, mode, key, iv=B'', padding=None):
-        super().__init__(key=key, iv=iv, padding=padding, mode=self._bcmspec_(mode))
+    def __init__(self, key, iv=B'', padding=None, mode=None):
+        mode = self._bcmspec_(mode or iv and 'CBC' or 'ECB')
+        super().__init__(key=key, iv=iv, padding=padding, mode=mode)
 
     def _get_cipher_instance(self, **optionals) -> Any:
         if self.args.mode.name != 'ECB':
