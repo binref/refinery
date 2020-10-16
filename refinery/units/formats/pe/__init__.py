@@ -5,11 +5,12 @@ A package containing Portable Executable (PE) file related units.
 """
 from pefile import PE, DIRECTORY_ENTRY
 from typing import Union, ByteString
+from .. import arg, Unit
 
 IMAGE_DIRECTORY_ENTRY_SECURITY = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
 
 
-def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, directories=True, cert=True) -> int:
+def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, directories=True, certificate=True) -> int:
     """
     This fuction determines the size of a PE file, optionally taking into account the
     pefile module overlay computation, section information, data directory information,
@@ -30,7 +31,7 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
         for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
     ) or 0
 
-    if cert:
+    if certificate:
         # The certificate overlay is given as a file offset
         # rather than a virtual address.
         cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[IMAGE_DIRECTORY_ENTRY_SECURITY]
@@ -44,3 +45,15 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
         directories_value,
         cert_value
     )
+
+
+class OverlayUnit(Unit, abstract=True):
+    def __init__(self, conservative: arg.switch('-c', help='Consider only section size to determine overlay.') = False):
+        super().__init__(conservative=conservative)
+
+    def _get_size(self, data):
+        return get_pe_size(
+            data,
+            directories=not self.args.conservative,
+            certificate=not self.args.conservative,
+        )
