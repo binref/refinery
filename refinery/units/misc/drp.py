@@ -28,16 +28,18 @@ class drp(Unit):
     in a chunk of data. The unit computes a suffix tree which may require a lot of
     memory for large buffers.
     """
-    def process(self, data):
-        scan = SuffixTree(memoryview(data))
+    @staticmethod
+    def leafcount(node: Node):
+        if not node.children:
+            return 1
+        return sum(drp.leafcount(c) for c in node)
 
-        def leafcount(node: Node):
-            if not node.children:
-                return 1
-            return sum(leafcount(c) for c in node)
+    def process(self, data):
+        with stackdepth(len(data)):
+            scan = SuffixTree(memoryview(data))
 
         with stackdepth(len(scan.data)):
-            prevalence = {bytes(node.label): leafcount(node) for node in scan}
+            prevalence = {bytes(node.label): drp.leafcount(node) for node in scan}
 
         del scan
         mean = np.fromiter(prevalence.values(), dtype=np.float).mean()
