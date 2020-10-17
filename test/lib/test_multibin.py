@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.lib.argformats import multibin
+from refinery.lib.loader import load_detached as L
 
 from .. import TestBase
 
@@ -60,3 +61,12 @@ class TestFraming(TestBase):
     def test_range_modifier(self):
         m = multibin('range:0x31:0x39+1')
         self.assertEqual(m, B'123456789')
+
+    def test_subtraction_range(self):
+        data = B'\xC0\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F'
+        data = data + self.generate_random_buffer(50)
+        sub1 = L('put k x::1 [') | L('sub add[var:k]:range::10 ]')
+        sub2 = L('sub   x::1  ') | L('sub range::10')
+        out1 = bytes(sub1(data))
+        out2 = bytes(sub2(data))
+        self.assertEqual(out1, out2)
