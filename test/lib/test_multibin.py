@@ -18,23 +18,23 @@ class TestFraming(TestBase):
     def test_encrypted_buffer(self):
         key = b'encryptioniseasy'
         iv = b'iviviviviviviviv'
-        alice = self.ldu('aes', 'CBC', key, iv=iv)
+        alice = self.ldu('aes', key, iv=iv)
         plaintext = self.generate_random_buffer(200)
         encrypted = alice.reverse(plaintext)
 
         # bob expects the key first, then the iv
-        bob = self.ldu('aes', 'CBC', 'x::16', '--iv', 'x::16')
+        bob = self.ldu('aes', 'x::16', '--iv', 'x::16')
         self.assertEqual(plaintext, bob(key + iv + encrypted))
 
         # charlie expects the iv first, then the key
-        charlie = self.ldu('aes', 'CBC', '--iv', 'x::16', 'x::16')
+        charlie = self.ldu('aes', '--iv', 'x::16', 'x::16')
         self.assertEqual(plaintext, charlie(iv + key + encrypted))
 
     def test_bytes_arguments(self):
         key = self.generate_random_buffer(16)
         iv = self.generate_random_buffer(16)
         data = self.generate_random_buffer(512)
-        aes = self.ldu('aes', 'CBC', key, iv=iv)
+        aes = self.ldu('aes', key, iv=iv)
         self.assertEqual(aes.decrypt(aes.encrypt(data)), data)
 
     def test_invalid_multibin_modifier(self):

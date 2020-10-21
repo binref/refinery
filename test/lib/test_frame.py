@@ -104,7 +104,7 @@ class TestFraming(TestBase):
 
     def test_continue_after_error(self):
         T = self.generate_random_buffer(16)
-        aes = self.ldu('aes', 'CBC', key=T, iv=T, quiet=True)
+        aes = self.ldu('aes', key=T, iv=T, quiet=True)
         msg = [self.generate_random_buffer(3 * 16) for _ in range(12)]
         hidden = msg[7]
         msg[7] = aes.reverse(hidden)

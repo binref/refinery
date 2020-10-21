@@ -9,25 +9,25 @@ class TestAES(TestUnitBase):
 
     def test_panic(self):
         data = B'BINARY REFINERY REFINES BINARIES FINER THAN BINARY TOOLS'
-        pp = L('aes -R CBC range:16 --iv rep[16]:H:AC') | L('ccp rep[16]:H:AC') | L('aes CBC range:16 --iv x::16')
+        pp = L('aes -R range:16 --iv rep[16]:H:AC') | L('ccp rep[16]:H:AC') | L('aes range:16 --iv x::16')
         self.assertEqual(pp(data), data)
 
     def test_invertible_01(self):
-        cipher = L('aes CBC PBKDF2[32,s4ltY]:p4$$w0rd')
+        cipher = L('aes PBKDF2[32,s4ltY]:p4$$w0rd')
         test = self.generate_random_buffer(200)
         self.assertEqual(cipher.process(cipher.reverse(test)), test)
 
     def test_invertible_02(self):
-        cipher = self.load('cbc', 'PBKDF2[32,s4ltY]:p4$$w0rd', iv=(b'MYIV' * 4))
+        cipher = self.load('PBKDF2[32,s4ltY]:p4$$w0rd', iv=(b'MYIV' * 4))
         test = self.generate_random_buffer(200)
         self.assertEqual(cipher.process(cipher.reverse(test)), test)
 
-    def test_cbc(self):
+    def test_gcm(self):
         K = self.generate_random_buffer(16)
         V = self.generate_random_buffer(16)
         M = self.generate_random_buffer(5 * 16)
-        D = self.load('cbc', key=K, iv=V)
-        E = self.load('CBC', key=K, iv=V, reverse=True)
+        D = self.load(mode='gcm', key=K, iv=V)
+        E = self.load(mode='GCM', key=K, iv=V, reverse=True)
         self.assertEqual(M, D(E(M)))
 
     def test_cbc_ciphertext_stealing(self):
@@ -37,11 +37,11 @@ class TestAES(TestUnitBase):
         # flake8: noqa
         D = L('chop 0x10') [
             L('pick :~1 :~2:~0') | L('scope ~0') | L('rep') | L('scope ~1') 
-                | L('aes -PRAW ECB H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('snip 11:')
-        ] | L('aes CBC -PRAW H:C0CAC01AFACEBEA75DEFACEDBEEFCACE')
+                | L('aes -P=RAW -M=ECB H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('snip 11:')
+        ] | L('aes -M=CBC -P=RAW H:C0CAC01AFACEBEA75DEFACEDBEEFCACE')
 
         # flake8: noqa
-        E = L('pad -b 16') | L('aes -RPRAW CBC H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('chop 16') [
+        E = L('pad -b 16') | L('aes -R -P=RAW -M=CBC H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('chop 16') [
                 L('pick :(-2) (-1) (-2)') ]
 
         C = E(M)[:N]
@@ -62,5 +62,5 @@ class TestAES(TestUnitBase):
             'BC 22 F1 83 E5 D2 5E F4 15 82 73 33 AB 48 B3 48 D1 CC DB 42 D3 4C 19 5A'  #  ."....^...s3.H.H...B.L.Z
             '32 64 64 DE 76 3E 4F 11 43 56 02 91 24 6C B9 E8 22 8E ED 0E 6F 06 59 B1'  #  2dd.v>O.CV..$l.."...o.Y.
         )
-        unit = self.load('ctr', padding='RAW', key=b'sdaagsdagdsgddsg', iv=b'sdagdasghaswqwet')
+        unit = self.load(mode='CTR', padding='RAW', key=b'sdaagsdagdsgddsg', iv=b'sdagdasghaswqwet')
         self.assertIn(b'your files have been encrypted with military grade algorithms', unit(data))

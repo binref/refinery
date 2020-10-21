@@ -13,13 +13,13 @@ class TestRex(TestUnitBase):
     def test_nested_substitution_expressions(self):
         unit = self.load(
             R'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
-            R'$(1 | hex | aes ECB $(2 | hex | xor $3 | hex -R) | trim -r 00)'
+            R'$(1 | hex | aes H:$(2 | hex | xor $3 | hex -R) | trim -r 00)'
         )
         msg = B'Too much technology, in too little time.'
         aeskey = self.generate_random_buffer(16)
         hex_op = self.ldu('hex')
         xor_op = self.ldu('xor', '0x4D')
-        aes_op = self.ldu('aes', '-R', 'ECB', hex_op.reverse(aeskey).upper().decode('UTF8'))
+        aes_op = self.ldu('aes', '-R', 'H:' + hex_op.reverse(aeskey).upper().decode('UTF8'))
         data = aes_op(msg)
         data = B'%s-%s-%d' % (hex_op.reverse(data), hex_op.reverse(xor_op(aeskey)), 0x4D)
         result = unit(data)

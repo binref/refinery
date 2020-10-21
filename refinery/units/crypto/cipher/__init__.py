@@ -172,28 +172,40 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
     def __init__(self, key, iv=B'', padding=None, mode=None):
         mode = self._bcmspec_(mode or iv and 'CBC' or 'ECB')
+        if iv:
+            if mode.name == 'ECB':
+                raise ValueError('No initialization vector can be specified for ECB mode.')
+            bounds = {
+                'CCM': (7, 14),
+                'OCB': (1, 16),
+                'CTR': (1, 17),
+            }.get(mode.name, None)
+            if bounds and len(iv) not in range(*bounds):
+                raise ValueError(F'Invalid nonce length, must be in {bounds} for {mode.name}.')
         super().__init__(key=key, iv=iv, padding=padding, mode=mode)
 
     def _get_cipher_instance(self, **optionals) -> Any:
-        if self.args.mode.name != 'ECB':
-            if self.args.mode.name not in ('CTR', 'CCM', 'EAX', 'GCM'):
-                optionals['IV'] = self.iv
-            else:
+        mode = self.args.mode.name
+        if mode != 'ECB':
+            if mode == 'CTR' and len(self.iv) == 16:
                 counter = Counter.new(self.blocksize * 8,
                     initial_value=int.from_bytes(self.iv, 'big'))
                 optionals['counter'] = counter
-                self.log_info('converting vector to counter')
+            elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
+                optionals['nonce'] = self.iv
+            elif mode in ('CBC', 'CFB', 'OFB', 'OPENPGP'):
+                optionals['iv'] = self.iv
             self.log_info('initial vector:', self.iv.hex())
         if self.args.mode:
             optionals['mode'] = self.args.mode.value
         try:
             return super()._get_cipher_instance(**optionals)
         except TypeError:
-            if 'IV' not in optionals:
+            if 'iv' not in optionals:
                 raise
-            del optionals['IV']
+            del optionals['iv']
             if self.iv:
-                self.log_info('ignoring IV for mode', self.args.mode)
+                self.log_info('ignoring iv for mode', self.args.mode)
             return self._stdcipher_.new(key=self.args.key, **optionals)
 
 
