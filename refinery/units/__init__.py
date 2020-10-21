@@ -1373,7 +1373,10 @@ class Unit(metaclass=Executable, abstract=True):
             except ArgparseError as ap:
                 ap.parser.error_commandline(str(ap))
             except Exception as msg:
+                import traceback
                 cls._output('initialization failed:', msg)
+                for line in traceback.format_exc().splitlines(keepends=False):
+                    cls._output(line)
                 return
 
             try:
