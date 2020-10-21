@@ -58,6 +58,11 @@ class TestPack(TestUnitBase):
             B'\n'.join([B'CAC0', B'1AC0'])
         )
 
+    def test_pack_reverse_03(self):
+        packer = self.load('-B4')
+        unpack = self.load('-B4', '-R', '16')
+        self.assertEqual(unpack(packer(B'0x4512')), B'4512')
+
     def test_pack_hexdump(self):
         dump = (
             'dump: 000: 4D 5A 90 00 03 00 00 00 04 00 00 00 FF FF 00 00\n'

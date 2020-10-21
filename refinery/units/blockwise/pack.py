@@ -56,7 +56,7 @@ class pack(BlockTransformation):
                 0x10: b'0x'
             }.get(base, B'')
 
-        converter = base_unit(base, self.args.bigendian)
+        converter = base_unit(base, not self.args.bigendian)
 
         for n in self.chunk(data, raw=True):
             yield prefix + converter.reverse(n)
