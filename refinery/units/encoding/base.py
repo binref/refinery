@@ -1,33 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from .. import arg, Unit
-from ...lib.argformats import number
 
 
 class base(Unit):
     """
-    Encodes and decodes integers in arbitrary base, using the letters of the
-    alphabet as an additional possible 26 digits. The largest base that can
-    be represented in this manner is 36.
+    Encodes and decodes integers in arbitrary base.
     """
 
-    _DIGITS = B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    _DEFAULT_APHABET = B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
     def __init__(
         self,
-        base: arg(type=number[2:36], help=(
-            'Base to be used for conversion; default value of 0 uses common '
-            'python syntax such as the 0x prefix for hexadecimal.')) = 0,
-        bigendian: arg('-e', '--lend', help=(
-            'Use little endian instead of the default big endian byte order')) = True
+        base: arg.number(bound=(2, None), metavar='base', help=(
+            'Base to be used for conversion; The value defaults to the length of the alphabet '
+            'if given, or 0 otherwise. Base 0 treats the input as a Python integer literal.')) = 0,
+        little_endian: arg('-e', help='Use little endian instead byte order.') = False,
+        alphabet: arg('-a', metavar='STR', help=(
+            'The alphabet of digits. Has to have length at least equal to the chosen base. '
+            'The default is: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.')) = B'',
     ):
-        if base and base not in range(2, 37):
-            raise ValueError('base may only be an integer between 2 and 36')
-        super().__init__(base=base, bigendian=bigendian)
+        if alphabet:
+            if len(alphabet) < 2:
+                raise ValueError('an alphabet with at least two digits is required')
+            if not base:
+                base = len(alphabet)
+        else:
+            alphabet = self._DEFAULT_APHABET
+        if base and base not in range(2, len(alphabet) + 1):
+            raise ValueError(F'base may only be an integer between 2 and {len(alphabet)}')
+        super().__init__(base=base, little_endian=little_endian, alphabet=alphabet)
 
     @property
     def byteorder(self):
-        return 'big' if self.args.bigendian else 'little'
+        return 'little' if self.args.little_endian else 'big'
 
     def reverse(self, data):
         self.log_info('using byte order', self.byteorder)
@@ -37,15 +43,15 @@ class base(Unit):
             return B'0'
         if self.args.base == 0:
             return B'0x%X' % number
-        if self.args.base > len(self._DIGITS):
+        if self.args.base > len(self.args.alphabet):
             raise ValueError(
-                F'Only {len(self._DIGITS)} available; not enough to '
+                F'Only {len(self.args.alphabet)} available; not enough to '
                 F'encode base {self.args.base}'
             )
 
         def reverse_result(number):
             while number:
-                yield self._DIGITS[number % self.args.base]
+                yield self.args.alphabet[number % self.args.base]
                 number //= self.args.base
 
         return bytes(reversed(tuple(reverse_result(number))))
