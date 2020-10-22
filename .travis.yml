@@ -12,13 +12,13 @@ jobs:
         - pip3 install flake8
       after_success: codecov
       stage: test
-      script: xvfb-run coverage run --source refinery run-tests.py
+      script: XDG_SESSION_TYPE=x11 xvfb-run coverage run --source refinery run-tests.py
     - name: "Python 3.7 on Linux"
       before_install:
         - sudo apt-get install xclip
         - sudo apt-get install xvfb
         - pip3 install flake8
-      script: xvfb-run python3 run-tests.py
+      script: XDG_SESSION_TYPE=x11 xvfb-run python3 run-tests.py
       python: 3.7
     - name: "Python 3.7+ on macOS"
       before_install:
