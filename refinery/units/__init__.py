@@ -30,10 +30,7 @@ from functools import wraps
 from collections import OrderedDict
 from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
 from argparse import (
-    ArgumentParser,
-    ArgumentError,
     Namespace,
-    RawDescriptionHelpFormatter,
     ONE_OR_MORE,
     OPTIONAL,
     REMAINDER,
@@ -42,21 +39,10 @@ from argparse import (
 )
 
 from ..lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
-from ..lib.tools import terminalfit, get_terminal_size, documentation, lookahead, autoinvoke, skipfirst, isbuffer
+from ..lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
+from ..lib.tools import documentation, lookahead, autoinvoke, skipfirst, isbuffer
 from ..lib.frame import Framed, Chunk
 from ..lib.structures import MemoryFile
-
-
-class ArgparseError(ValueError):
-    """
-    This custom exception type is thrown from the custom argument parser of
-    `refinery.units.Unit` rather than terminating program execution immediately.
-    The `parser` parameter is a reference to the argument parser that threw
-    the original argument parsing exception with the given `message`.
-    """
-    def __init__(self, parser, message):
-        self.parser = parser
-        super().__init__(message)
 
 
 class RefineryPartialResult(ValueError):
@@ -1116,9 +1102,9 @@ class Unit(metaclass=Executable, abstract=True):
         print(F'{cls.name}: {message}', file=sys.stderr)
 
     @classmethod
-    def _interface(cls, argp: ArgumentParser) -> ArgumentParser:
+    def _interface(cls, argp: ArgumentParserWithKeywordHooks) -> ArgumentParserWithKeywordHooks:
         """
-        Receives a reference to an `ArgumentParser` object. This parser will be used to parse
+        Receives a reference to an argument parser. This parser will be used to parse
         the command line for this unit into the member variable called `args`.
         """
         base = argp.add_argument_group('generic options')
@@ -1149,103 +1135,9 @@ class Unit(metaclass=Executable, abstract=True):
         return argp
 
     @classmethod
-    def argparser(cls, *args, **keywords):
-        cols = get_terminal_size()
-        args = list(args)
-
-        class ArgumentParserWithKeywordHooks(ArgumentParser):
-            def _add_action(self, action):
-
-                class RememberOrder:
-                    def __getattr__(self, name): return getattr(action, name)
-                    def __setattr__(self, name, value): return setattr(action, name, value)
-
-                    def __call__(self, parser, ns, values, opt=None):
-                        if self.dest not in parser.order:
-                            parser.order.append(self.dest)
-                        return action(parser, ns, values, opt)
-
-                if action.dest in keywords:
-                    action.required = False
-                    if callable(getattr(action, 'type', None)):
-                        value = keywords[action.dest]
-                        if value is not None and isinstance(value, str) and action.type is not str:
-                            keywords[action.dest] = action.type(keywords[action.dest])
-
-                return super()._add_action(RememberOrder())
-
-            def _parse_optional(self, arg_string):
-                if isinstance(arg_string, str):
-                    return super()._parse_optional(arg_string)
-
-            def error_commandline(self, message):
-                super().error(message)
-
-            def error(self, message):
-                parser_instance = self
-                raise ArgparseError(parser_instance, message)
-
-            def parse_args(self):
-                self.order = []
-                args_for_parser = args
-                if args and args[~0] and isinstance(args[~0], str):
-                    nestarg = args[~0]
-                    nesting = len(nestarg)
-                    if nestarg == ']' * nesting:
-                        self.set_defaults(nesting=-nesting)
-                        args_for_parser = args[:~0]
-                    elif nestarg == '[' * nesting:
-                        self.set_defaults(nesting=nesting)
-                        args_for_parser = args[:~0]
-                self.set_defaults(**keywords)
-                try:
-                    parsed = super().parse_args(args=args_for_parser)
-                except ArgumentError as e:
-                    self.error(str(e))
-                for name in keywords:
-                    param = getattr(parsed, name, None)
-                    if param != keywords[name]:
-                        self.error(
-                            F'parameter "{name}" duplicated with conflicting '
-                            F'values {param} and {keywords[name]}'
-                        )
-                for name in vars(parsed):
-                    if name not in self.order:
-                        self.order.append(name)
-                return parsed
-
-        class LineWrapRawTextHelpFormatter(RawDescriptionHelpFormatter):
-            def __init__(self, prog, indent_increment=2, max_help_position=30, width=None):
-                super().__init__(prog, indent_increment, max_help_position, width=cols)
-
-            def add_text(self, text):
-                if isinstance(text, str):
-                    text = terminalfit(text, width=cols)
-                return super().add_text(text)
-
-            def _format_action_invocation(self, action):
-                if not action.option_strings:
-                    metavar, = self._metavar_formatter(action, action.dest)(1)
-                    return metavar
-                else:
-                    parts = []
-                    if action.nargs == 0:
-                        parts.extend(action.option_strings)
-                    else:
-                        default = action.dest.upper()
-                        args_string = self._format_args(action, default)
-                        for option_string in action.option_strings:
-                            parts.append(str(option_string))
-                        parts[-1] += F' {args_string}'
-                    return ', '.join(parts)
-
+    def argparser(cls, **keywords):
         argp = ArgumentParserWithKeywordHooks(
-            prog=cls.name,
-            description=documentation(cls),
-            formatter_class=LineWrapRawTextHelpFormatter,
-            add_help=False
-        )
-
+            keywords, prog=cls.name, description=documentation(cls), add_help=False)
         argp.set_defaults(nesting=0)
         return cls._interface(argp)
 
@@ -1291,8 +1183,8 @@ class Unit(metaclass=Executable, abstract=True):
         used to parse the given list of arguments as though they were given on the command line. The parser
         results are used to construct an instance of the unit, this object is consequently returned.
         """
-        argp = cls.argparser(*args, **keywords)
-        args = argp.parse_args()
+        argp = cls.argparser(**keywords)
+        args = argp.parse_args(args)
 
         try:
             unit = autoinvoke(cls, args.__dict__)
