@@ -61,6 +61,8 @@ class xtp(PatternExtractor):
         'archive.org'         : 2,
         'azure.com'           : 1,
         'baidu.com'           : 2,
+        'comodo.net'          : 1,
+        'comodoca.com'        : 1,
         'curl.haxx.se'        : 1,
         'digicert.com'        : 1,
         'github.com'          : 3,
