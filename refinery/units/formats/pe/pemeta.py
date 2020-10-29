@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import json
 
-from functools import lru_cache
 from contextlib import suppress
 from pefile import PE, DIRECTORY_ENTRY, DEBUG_TYPE
 from datetime import datetime, timezone
@@ -41,22 +40,21 @@ class pemeta(Unit):
             timeraw=timeraw
         )
 
-    def _ensure_string(self, x):
+    @classmethod
+    def _ensure_string(cls, x):
         if not isinstance(x, str):
-            x = repr(x) if not isinstance(x, bytes) else x.decode(self.codec, 'backslashreplace')
+            x = repr(x) if not isinstance(x, bytes) else x.decode(cls.codec, 'backslashreplace')
         return x
 
-    def _parse_pedict(self, bin):
+    @classmethod
+    def _parse_pedict(cls, bin):
         return dict((
-            self._ensure_string(key),
-            self._ensure_string(val)
+            cls._ensure_string(key),
+            cls._ensure_string(val)
         ) for key, val in bin.items() if val)
 
-    @lru_cache(maxsize=1, typed=False)
-    def _getpe(self, data: bytearray) -> PE:
-        return PE(data=data, fast_load=True)
-
-    def parse_signature(self, data: bytearray) -> dict:
+    @classmethod
+    def parse_signature(cls, data: bytearray) -> dict:
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         time stamp and code signing certificates that are attached to the input PE file.
@@ -135,13 +133,13 @@ class pemeta(Unit):
                         return info
         return info
 
-    def parse_file_info(self, data: bytearray) -> dict:
+    @classmethod
+    def parse_file_info(cls, pe: PE) -> dict:
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         the version resource of an input PE file, if available.
         """
         try:
-            pe = self._getpe(data)
             pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
             FileInfoList = pe.FileInfo
         except AttributeError:
@@ -150,14 +148,14 @@ class pemeta(Unit):
             for FileInfoEntry in FileInfo:
                 with suppress(AttributeError):
                     for StringTableEntry in FileInfoEntry.StringTable:
-                        StringTableEntryParsed = self._parse_pedict(StringTableEntry.entries)
+                        StringTableEntryParsed = cls._parse_pedict(StringTableEntry.entries)
                         with suppress(AttributeError):
                             LangID = StringTableEntry.entries.get('LangID', None) or StringTableEntry.LangID
                             LangID = int(LangID, 0x10) if not isinstance(LangID, int) else LangID
                             LangHi = LangID >> 0x10
                             LangLo = LangID & 0xFFFF
-                            Language = self._LCID.get(LangHi, 'Language Neutral')
-                            Charset = self._CHARSET.get(LangLo, 'Unknown Charset')
+                            Language = cls._LCID.get(LangHi, 'Language Neutral')
+                            Charset = cls._CHARSET.get(LangLo, 'Unknown Charset')
                             StringTableEntryParsed.update(
                                 LangID=F'{LangID:08X}',
                                 Charset=Charset,
@@ -165,13 +163,14 @@ class pemeta(Unit):
                             )
                         return StringTableEntryParsed
 
-    def parse_time_stamps(self, data: bytearray) -> dict:
+    @classmethod
+    def parse_time_stamps(cls, pe: PE, raw_time_stamps: bool) -> dict:
         """
         Extracts time stamps from the PE header (link time), as well as from the imports,
         exports, debug, and resource directory. The resource time stamp is also parsed as
         a DOS time stamp and returned as the "Delphi" time stamp.
         """
-        if self.args.timeraw:
+        if raw_time_stamps:
             def dt(ts): return ts
         else:
             def dt(ts):
@@ -181,7 +180,6 @@ class pemeta(Unit):
                     tz=timezone.utc
                 ).replace(tzinfo=None)
 
-        pe = self._getpe(data)
         pe.parse_data_directories(directories=[
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT'],
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
@@ -222,12 +220,13 @@ class pemeta(Unit):
 
         return {key: norm(value) for key, value in info.items()}
 
-    def parse_dotnet(self, data):
+    @classmethod
+    def parse_dotnet(cls, pe, data):
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         the .NET metadata of an input PE file.
         """
-        header = DotNetHeader(data, pe=self._getpe(data))
+        header = DotNetHeader(data, pe=pe)
         tables = header.meta.Streams.Tables
         info = dict(
             RuntimeVersion=F'{header.head.MajorRuntimeVersion}.{header.head.MinorRuntimeVersion}',
@@ -253,9 +252,9 @@ class pemeta(Unit):
 
         return info
 
-    def parse_debug_data(self, data):
+    @classmethod
+    def parse_debug_data(cls, pe):
         result = {}
-        pe = self._getpe(data)
         pe.parse_data_directories(directories=[
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DEBUG']])
         for dbg in pe.DIRECTORY_ENTRY_DEBUG:
@@ -266,17 +265,18 @@ class pemeta(Unit):
                 if 0 in pdb:
                     pdb = pdb[:pdb.index(0)]
                 result.update(
-                    PdbPath=pdb.decode(self.codec),
+                    PdbPath=pdb.decode(cls.codec),
                     PdbAge=dbg.entry.Age
                 )
         return result
 
     def process(self, data):
         result = {}
+        pe = PE(data=data, fast_load=True)
 
         if self.args.version:
             try:
-                file_info = self.parse_file_info(data)
+                file_info = self.parse_file_info(pe)
             except Exception as E:
                 self.log_info(F'failed to obtain file info resource: {E!s}')
             else:
@@ -284,7 +284,7 @@ class pemeta(Unit):
                     result['FileInfo'] = file_info
         if self.args.dotnet:
             try:
-                dnet_info = self.parse_dotnet(data)
+                dnet_info = self.parse_dotnet(pe, data)
             except Exception as E:
                 self.log_info(F'failed to obtain .NET information: {E!s}')
             else:
@@ -292,7 +292,7 @@ class pemeta(Unit):
                     result['DotNet'] = dnet_info
         if self.args.debug:
             try:
-                debug_info = self.parse_debug_data(data)
+                debug_info = self.parse_debug_data(pe)
             except Exception as E:
                 self.log_info(F'failed to parse debug directory: {E!s}')
             else:
@@ -306,7 +306,7 @@ class pemeta(Unit):
                 signature = self.parse_signature(data)
 
         if self.args.timestamps:
-            ts = self.parse_time_stamps(data)
+            ts = self.parse_time_stamps(pe, self.args.timeraw)
             with suppress(KeyError):
                 ts.update(Signed=signature['Timestamp'])
             result.update(TimeStamp=ts)
