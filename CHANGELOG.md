@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.3.16
+- The interface for cipher units has been changed; the encryption mode is no longer a mandatory argument. Better handling of various cipher block chaining modes has been implemented.
+- Conservative option added to `peoverlay` and `pestrip`.
+
 ## Version 0.3.15
 - The `salsa` and `chacha` cipher units now have pure Python implementations that allow you to specify the number of rounds. The PyCryptodome interfaces still exist, now as units `salsa20` and `chacha20`.
 - The `HMAC` unit was added to support simple HMAC based key derivation.
