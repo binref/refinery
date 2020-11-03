@@ -41,33 +41,33 @@ def des_set_odd_parity(key: bytearray):
     key[:] = (_DES_PARITYTABLE[b] for b in key)
 
 
-def rotr64(x: int, c: int):
+def rotl64(x: int, c: int):
     return ((x << c) | (x >> (0x40 - c))) & 0xFFFFFFFF
 
 
-def rotr32(x: int, c: int):
+def rotl32(x: int, c: int):
     return ((x << c) | (x >> (0x20 - c))) & 0xFFFFFFFF
 
 
-def rotr16(x: int, c: int):
+def rotl16(x: int, c: int):
     return ((x << c) | (x >> (0x10 - c))) & 0xFFFFFFFF
 
 
-def rotr08(x: int, c: int):
+def rotl08(x: int, c: int):
     return ((x << c) | (x >> (0x08 - c))) & 0xFFFFFFFF
 
 
-def rotl64(x: int, c: int):
+def rotr64(x: int, c: int):
     return (x << (0x40 - c) & 0xFFFFFFFF) | (x >> c)
 
 
-def rotl32(x: int, c: int):
+def rotr32(x: int, c: int):
     return (x << (0x20 - c) & 0xFFFFFFFF) | (x >> c)
 
 
-def rotl16(x: int, c: int):
+def rotr16(x: int, c: int):
     return (x << (0x10 - c) & 0xFFFFFFFF) | (x >> c)
 
 
-def rotl08(x: int, c: int):
+def rotr08(x: int, c: int):
     return (x << (0x08 - c) & 0xFFFFFFFF) | (x >> c)

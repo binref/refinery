@@ -5,7 +5,7 @@ from typing import List, Iterable
 
 from .salsa import LatinCipher
 from . import LatinCipherUnit, LatinCipherStandardUnit
-from ....lib.crypto import rotr32
+from ....lib.crypto import rotl32
 
 
 class ChaChaCipher(LatinCipher):
@@ -27,10 +27,10 @@ class ChaChaCipher(LatinCipher):
 
     @staticmethod
     def quarter(x: List[int], a: int, b: int, c: int, d: int) -> None:
-        x[a] = x[a] + x[b] & 0xFFFFFFFF; x[d] = rotr32(x[d] ^ x[a] & 0xFFFFFFFF, 0x10) # noqa
-        x[c] = x[c] + x[d] & 0xFFFFFFFF; x[b] = rotr32(x[b] ^ x[c] & 0xFFFFFFFF, 0x0C) # noqa
-        x[a] = x[a] + x[b] & 0xFFFFFFFF; x[d] = rotr32(x[d] ^ x[a] & 0xFFFFFFFF, 0x08) # noqa
-        x[c] = x[c] + x[d] & 0xFFFFFFFF; x[b] = rotr32(x[b] ^ x[c] & 0xFFFFFFFF, 0x07) # noqa
+        x[a] = x[a] + x[b] & 0xFFFFFFFF; x[d] = rotl32(x[d] ^ x[a] & 0xFFFFFFFF, 0x10) # noqa
+        x[c] = x[c] + x[d] & 0xFFFFFFFF; x[b] = rotl32(x[b] ^ x[c] & 0xFFFFFFFF, 0x0C) # noqa
+        x[a] = x[a] + x[b] & 0xFFFFFFFF; x[d] = rotl32(x[d] ^ x[a] & 0xFFFFFFFF, 0x08) # noqa
+        x[c] = x[c] + x[d] & 0xFFFFFFFF; x[b] = rotl32(x[b] ^ x[c] & 0xFFFFFFFF, 0x07) # noqa
 
 
 class chacha20(LatinCipherStandardUnit, cipher=ChaCha20):

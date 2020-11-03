@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import List, ByteString, Optional, Iterable
 
 from . import LatinCipherUnit, LatinCipherStandardUnit
-from ....lib.crypto import rotr32
+from ....lib.crypto import rotl32
 
 
 class LatinCipher(ABC):
@@ -88,10 +88,10 @@ class SalsaCipher(LatinCipher):
 
     @staticmethod
     def quarter(x: List[int], a: int, b: int, c: int, d: int) -> None:
-        x[b] ^= rotr32(x[a] + x[d] & 0xFFFFFFFF, 0x07)
-        x[c] ^= rotr32(x[b] + x[a] & 0xFFFFFFFF, 0x09)
-        x[d] ^= rotr32(x[c] + x[b] & 0xFFFFFFFF, 0x0D)
-        x[a] ^= rotr32(x[d] + x[c] & 0xFFFFFFFF, 0x12)
+        x[b] ^= rotl32(x[a] + x[d] & 0xFFFFFFFF, 0x07)
+        x[c] ^= rotl32(x[b] + x[a] & 0xFFFFFFFF, 0x09)
+        x[d] ^= rotl32(x[c] + x[b] & 0xFFFFFFFF, 0x0D)
+        x[a] ^= rotl32(x[d] + x[c] & 0xFFFFFFFF, 0x12)
 
 
 class salsa(LatinCipherUnit):
