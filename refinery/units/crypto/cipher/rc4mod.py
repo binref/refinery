@@ -13,20 +13,24 @@ class rc4mod(StreamCipherUnit):
 
     def __init__(
         self, key, *,
-        size: arg.number('-t', help='Table size, {default} by default.', bound=(0x100, None)) = 0x100
+        size: arg.number('-t', help='Table size, {default} by default.', bound=(1, None)) = 0x100
     ):
         super().__init__(key=key, size=size)
 
     def keystream(self):
         size = self.args.size
-        tablerange = range(size)
+        tablerange = range(max(size, 0x100))
         b, table = 0, bytearray(k & 0xFF for k in tablerange)
         for a, keybyte in zip(tablerange, cycle(self.args.key)):
-            b = (b + keybyte + table[a]) % size
-            table[a], table[b] = table[b], table[a]
+            t = table[a]
+            b = (b + keybyte + t) % size
+            table[a] = table[b]
+            table[b] = t
         b, a = 0, 0
         while True:
             a = (a + 1) % size
-            b = (b + table[a]) % size
-            table[a], table[b] = table[b], table[a]
-            yield table[(table[a] + table[b]) % size]
+            t = table[a]
+            b = (b + t) % size
+            table[a] = table[b]
+            table[b] = t
+            yield table[(table[a] + t) % size]
