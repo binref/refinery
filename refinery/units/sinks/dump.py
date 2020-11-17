@@ -184,7 +184,7 @@ class dump(Unit):
             return
 
         for index, chunk in enumerate(chunks, 1):
-            if self.exhausted:
+            if self.exhausted or not chunk.visible:
                 continue
             if not self.args.stream or not self.stream:
                 try:
