@@ -15,7 +15,7 @@ class carve_pe(Unit):
     Executable (PE) file.
     """
     def process(self, data):
-        cursor = 1
+        cursor = 0
         mv = memoryview(data)
 
         while True:
