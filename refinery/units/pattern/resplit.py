@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import RegexUnit
+from . import arg, RegexUnit
 
 
 class resplit(RegexUnit):
@@ -9,8 +9,15 @@ class resplit(RegexUnit):
     chunks between the separators. By default, the input is split along line breaks.
     """
 
-    def __init__(self, regex=RB'\r?\n', multiline=False, ignorecase=False):
-        super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase)
+    def __init__(
+        self, regex=RB'\r?\n', multiline=False, ignorecase=False,
+        count: arg.number('-c', help='Specify the maximum number of splits to perform.') = 0
+    ):
+        super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase, count=count)
 
     def process(self, data):
-        yield from self.args.regex.split(data)
+        split = self.args.regex.split
+        if self.args.count:
+            from functools import partial
+            split = partial(split, maxsplit=self.args.count)
+        yield from split(data)

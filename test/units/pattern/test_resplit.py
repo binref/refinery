@@ -9,3 +9,7 @@ class TestRegexSplitter(TestUnitBase):
     def test_change_separator(self):
         pl = L('emit eeny,meeny,miny,moe') | L('resplit (,) [') | L('scope 1::2') | L('cfmt - ]')
         self.assertEqual(pl(), B'eeny-meeny-miny-moe')
+
+    def test_count_restriction(self):
+        pl = L('emit eeny,meeny,miny,moe') | L('resplit -c1 ,')
+        self.assertEqual(pl(), B'eeny\nmeeny,miny,moe')
