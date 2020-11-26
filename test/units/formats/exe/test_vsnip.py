@@ -13,7 +13,7 @@ class TestVirtualAddressSnip(TestUnitBase):
 
     def test_pe_02(self):
         data = self.download_from_malshare('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')
-        unit = self.load(0x0140002030, count=22)
+        unit = self.load(slice(0x0140002030, 22))
         self.assertEqual(unit(data), B'You will never see me.')
 
     def test_elf_01(self):
@@ -23,8 +23,8 @@ class TestVirtualAddressSnip(TestUnitBase):
 
     def test_elf_02(self):
         data = self.download_from_malshare('c5ba314fbf02989af9e2b5edb48626aede10f2d4569095a542ed0f2033068117')
-        addr = bytes(reversed(self.load(0x0804F188, count=4)(data))).hex()
-        unit = self.load(F'H:{addr}', ascii=True)
+        addr = bytes(reversed(self.load(slice(0x0804F188, 4))(data))).hex()
+        unit = self.load(F'0x{addr}', ascii=True)
         self.assertEqual(unit(data), B'MY ID IS %d, Upper ID is %d')
 
     def test_macho(self):

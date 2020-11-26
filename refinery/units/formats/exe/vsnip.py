@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from . import exeroute
 from .... import arg, Unit
+from ....lib.argformats import sliceobj
+
+from . import exeroute
 
 
 class EndOfStringNotFound(ValueError):
@@ -15,55 +17,70 @@ class CompartmentNotFound(ValueError):
         super().__init__(F'could not find any {kind} containing address 0x{addr:X}.')
 
 
+class MemoryArea:
+    def __init__(self, slice: slice):
+        if slice.start is None:
+            self.start = slice.stop
+            self.count = None
+            self.align = 1
+        else:
+            self.start = slice.start
+            self.count = slice.stop
+            self.align = slice.step or 1
+
+
 class vsnip(Unit):
     """
     Extract data from PE, ELF, and MachO files based on virtual offsets.
     """
 
     def __init__(
-        self, address: arg.number(metavar='address', help='Specify the virtual address of the data as a number.'),
-        count: arg.number(metavar='count', help='The maximum number of bytes to read.') = 0,
-        align: arg.number('-g', help='Only stop reading if the number of bytes is a multiple of {varname}.') = 1,
+        self, addresses: arg(type=sliceobj, nargs='+', metavar='start:count:align', help=(
+            'Use Python slice syntax to describe an area of virtual memory to read. If a chunksize is '
+            'specified, then the unit will always read a multiple of that number of bytes')),
+        ascii: arg.switch('-a', group='END', help='Read ASCII strings; equivalent to -th:00') = False,
+        utf16: arg.switch('-u', group='END', help='Read UTF16 strings; equivalent to -th:0000 (also sets chunksize to 2)') = False,
         until: arg.binary('-t', group='END', help='Read until sequence {varname} is read.') = B'',
-        ascii: arg.switch('-a', group='END', help='Read an ASCII string; equivalent to -th:00') = False,
-        utf16: arg.switch('-u', group='END', help='Read an UTF16 string; equivalent to -g2 -th:0000') = False,
-        base : arg.number('-b', metavar='B', help='Optionally specify a custom base address B.') = None,
+        base : arg.number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
     ):
         if sum(1 for t in (until, utf16, ascii) if t) > 1:
             raise ValueError('Only one of utf16, ascii, and until can be specified.')
         if ascii:
             until = B'\0'
         if utf16:
-            align = 2
+            addresses = tuple(slice(a.start, a.stop, 2) for a in addresses)               
             until = B'\0\0'
-        return super().__init__(address=address, count=count, align=align, until=until, base=base)
+        return super().__init__(addresses=[MemoryArea(a) for a in addresses], until=until, base=base)
 
     def process(self, data):
-        offset, lbound = exeroute(
-            data,
-            self._get_buffer_range_elf,
-            self._get_buffer_range_macho,
-            self._get_buffer_range_pe
-        )
+        for area in self.args.addresses:
+            area: MemoryArea
+            offset, lbound = exeroute(
+                data,
+                self._get_buffer_range_elf,
+                self._get_buffer_range_macho,
+                self._get_buffer_range_pe,
+                area.start
+            )
 
-        lbound = lbound or len(data)
+            lbound = lbound or len(data)
 
-        if not self.args.until:
-            end = lbound
-        else:
-            end = offset - 1
-            align = self.args.align
-            while True:
-                end = data.find(self.args.until, end + 1)
-                if end not in range(offset, lbound):
-                    raise EndOfStringNotFound
-                if (end - offset) % align == 0:
-                    break
+            if not self.args.until:
+                end = lbound
+            else:
+                end = offset - 1
+                align = area.align
+                while True:
+                    end = data.find(self.args.until, end + 1)
+                    if end not in range(offset, lbound):
+                        raise EndOfStringNotFound
+                    if (end - offset) % align == 0:
+                        break
 
-        if self.args.count:
-            end = min(end, offset + self.args.count)
+            if area.count:
+                end = min(end, offset + area.count)
 
-        return data[offset:end]
+            yield data[offset:end]
 
     def _rebase(self, addr, truebase):
         self.log_info(F'using base address: 0x{truebase:X}')
@@ -73,9 +90,9 @@ class vsnip(Unit):
         self.log_info(F'rebased to address: 0x{rebased:X}')
         return rebased
 
-    def _get_buffer_range_elf(self, elf):
+    def _get_buffer_range_elf(self, elf, address):
         addr = self._rebase(
-            self.args.address,
+            address,
             min(s.header.p_vaddr for s in elf.iter_segments() if s.header.p_type == 'PT_LOAD')
         )
         for segment in elf.iter_segments():
@@ -87,20 +104,20 @@ class vsnip(Unit):
                 return offset + delta, offset + segment.header.p_filesz
         raise CompartmentNotFound(addr)
 
-    def _get_buffer_range_macho(self, macho):
+    def _get_buffer_range_macho(self, macho, address):
         for header in macho.headers:
             segments = [segment for header, segment, sections in header.commands
                 if header.get_cmd_name().startswith('LC_SEGMENT') and segment.filesize > 0]
-            addr = self._rebase(self.args.address, min(segment.vmaddr for segment in segments))
+            addr = self._rebase(address, min(segment.vmaddr for segment in segments))
             for segment in segments:
                 if addr in range(segment.vmaddr, segment.vmaddr + segment.vmsize):
                     offset = addr - segment.vmaddr
                     return offset + segment.fileoff, segment.fileoff + segment.filesize
-        raise CompartmentNotFound(addr)
+        raise CompartmentNotFound(address)
 
-    def _get_buffer_range_pe(self, pe):
+    def _get_buffer_range_pe(self, pe, address):
         base = pe.OPTIONAL_HEADER.ImageBase
-        addr = self._rebase(self.args.address, base) - base
+        addr = self._rebase(address, base) - base
         offset = pe.get_offset_from_rva(addr)
         for section in pe.sections:
             if offset in range(section.PointerToRawData, section.PointerToRawData + section.SizeOfRawData):

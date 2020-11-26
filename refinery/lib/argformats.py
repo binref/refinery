@@ -190,13 +190,15 @@ class PythonExpression:
         return expression(**values)
 
 
-def sliceobj(expression: Union[int, str], **variables) -> slice:
+def sliceobj(expression: Union[int, str, slice], **variables) -> slice:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
     argument format type will process the string `0x11:0x11+4*0x34` as the slice
     object `slice(17, 225, None)`.
     """
+    if isinstance(expression, slice):
+        return expression
     if isinstance(expression, int):
         sliced = (expression,)
     else:
