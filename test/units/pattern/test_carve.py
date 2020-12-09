@@ -8,6 +8,17 @@ from .. import TestUnitBase
 
 class TestCarve(TestUnitBase):
 
+    def test_interlaced_utf16(self):
+        data = 'Binary Refinery:'.encode('utf-16le') + B'HALT' + 'Refining Binaries.'.encode('utf-16le') + B'\xF0\x0F'
+        for unit in (
+            self.load('printable', longest=True, take=2),
+            self.load('printable', ascii=False)
+        ):
+            self.assertEqual(unit(data), (
+                B'Binary Refinery:\n'
+                B'Refining Binaries.'
+            ))
+
     def test_extract_base64(self):
         unit = self.load('b64', longest=True, take=1)
         data = B'%s-(VG9vIG11Y2ggdGVjaG5vbG9neSwgaW4gdG9vIGxpdHRsZSB0aW1lLg==),%s' % (
