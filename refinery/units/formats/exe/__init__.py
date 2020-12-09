@@ -10,7 +10,7 @@ class ParsingFailure(ValueError):
         super().__init__(F'unable to parse input as {kind} file')
 
 
-def exeroute(data, handler_elf, handler_macho, handler_pe):
+def exeroute(data, handler_elf, handler_macho, handler_pe, *args, **kwargs):
     if data[:2] == B'MZ':
         from pefile import PE as PEFile
 
@@ -19,7 +19,7 @@ def exeroute(data, handler_elf, handler_macho, handler_pe):
         except Exception as E:
             raise ParsingFailure('PE') from E
         else:
-            return handler_pe(parsed)
+            return handler_pe(parsed, *args, **kwargs)
 
     if data[:4] == B'\x7FELF':
         from ....lib.structures import MemoryFile
@@ -30,7 +30,7 @@ def exeroute(data, handler_elf, handler_macho, handler_pe):
         except Exception as E:
             raise ParsingFailure('ELF') from E
         else:
-            return handler_elf(parsed)
+            return handler_elf(parsed, *args, **kwargs)
 
     if set(data[:4]) <= {0xFE, 0xED, 0xFA, 0xCE, 0xCF}:
         from ....lib.structures import MemoryFile
@@ -52,6 +52,6 @@ def exeroute(data, handler_elf, handler_macho, handler_pe):
         except Exception as E:
             raise ParsingFailure('MachO') from E
         else:
-            return handler_macho(parsed)
+            return handler_macho(parsed, *args, **kwargs)
 
     raise ValueError('Unknown executable format')
