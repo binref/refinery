@@ -11,15 +11,11 @@ from hashlib import blake2b
 
 from ...lib.types import INF, AST
 from ...lib.argformats import regexp
+from ...lib.loader import load_commandline
 from .. import arg, Unit
 
 
-def _lazy_load(cmd: bytes):
-    from ...lib.loader import load_commandline
-    return load_commandline(cmd.decode('UTF8'))
-
-
-def TransformSubstitutionFactory(fmt):
+class TransformSubstitutionFactory:
     """
     Produces a substitution callable for `refinery.resub` and `refinery.rex`.
 
@@ -41,95 +37,100 @@ def TransformSubstitutionFactory(fmt):
     bytes of the first match group.
     """
 
-    def unescape_dollars(s):
-        return re.sub(RB'(\$+)\$', lambda m: m[1], s)
+    @staticmethod
+    def unescape(s): return re.sub(RB'(\$+)\$', lambda m: m[1], s)
 
-    class PipeLine:
-        def __init__(self, argument, seam, pipeline):
-            if not argument.isdigit():
-                raise ValueError(F'argument "{argument}" is not a digit!')
+    def __init__(self, formatting, meta, root=True):
+        class PipeLine:
+            def __init__(self, argument, seam, pipeline):
+                if argument.isdigit():
+                    self.indexarg = True
+                    self.argument = int(argument, 10)
+                else:
+                    self.indexarg = False
+                    self.argument = argument
+                self.blueprints = [TransformSubstitutionFactory(command, meta, root=False) for command in pipeline]
+                self.seam = TransformSubstitutionFactory.unescape(seam)
 
-            def parse_pipeline():
-                for command in pipeline:
-                    unit = TransformSubstitutionFactory(command)
-                    if type(unit) == bytes:
-                        unit = _lazy_load(unit)
-                    yield unit
-
-            self.argument = int(argument, 10)
-            self.seam = unescape_dollars(seam)
-            self.units = list(parse_pipeline())
-
-        def __call__(self, match):
-            data = match.group(self.argument)
-            for unit in self.units:
-                try:
+            def __call__(self, match):
+                if self.indexarg:
+                    data = match.group(self.argument)
+                else:
+                    data = match.groupdict().get(self.argument)
+                    if data is None: data = meta[self.argument]
+                for blueprint in self.blueprints:
+                    unit = blueprint(match)
                     data = unit(data)
-                except AttributeError:
-                    unit = _lazy_load(unit(match))
-                    data = unit(data)
-            return self.seam + data
+                return self.seam + data
 
-    try:
-        fmt = fmt.decode('UNICODE_ESCAPE')
-    except AttributeError:
-        if not isinstance(fmt, str):
-            raise
+        try:
+            formatting = formatting.decode('UNICODE_ESCAPE')
+        except AttributeError:
+            if not isinstance(formatting, str):
+                raise ValueError(F'The specified format {formatting!r} is not a string.')
 
-    fmt = fmt.encode('UTF8')
-    escapes = {m.start() + 1 for m in re.finditer(BR'\$\$', fmt)}
-    processors = []
-    offset = stop = 0
-    pattern = re.compile(BR'\$(\d+|\(\d+)')
+        formatting = formatting.encode('UTF8')
+        escapes = {m.start() + 1 for m in re.finditer(BR'\$\$', formatting)}
+        pipelines = []
+        offset = stop = 0
+        pattern = re.compile(BR'\$(\w+|\(\w+)')
 
-    while True:
-        expression = pattern.search(fmt, stop)
-        if not expression:
-            break
-        start, stop = expression.span()
-        if start in escapes:
-            continue
-        argument = expression[1]
-        if not argument.isdigit():
-            level = 1
-            poles = [expression.start() + 2]
-            while level > 0:
-                if stop > len(fmt):
-                    raise ValueError(F'unbalanced parentheses at {stop} for expression: {fmt}')
-                if fmt[stop:stop + 1] == B'(':
-                    level += 1
-                if fmt[stop:stop + 1] == B')':
-                    level -= 1
-                if fmt[stop:stop + 1] == B'|' and level == 1:
-                    poles.append(stop + 1)
-                stop += 1
+        while True:
+            expression = pattern.search(formatting, stop)
+            if not expression:
+                break
+            start, stop = expression.span()
+            if start in escapes:
+                continue
+            argument = expression[1]
+            if argument.startswith(B'('):
+                level = 1
+                poles = [expression.start() + 2]
+                while level > 0:
+                    if stop > len(formatting):
+                        raise ValueError(F'unbalanced parentheses at {stop} for expression: {formatting}')
+                    if formatting[stop:stop + 1] == B'(':
+                        level += 1
+                    if formatting[stop:stop + 1] == B')':
+                        level -= 1
+                    if formatting[stop:stop + 1] == B'|' and level == 1:
+                        poles.append(stop + 1)
+                    stop += 1
 
-            poles.append(stop)
-            pipeline = [
-                fmt[a:b - 1].decode('UTF8').strip()
-                for a, b in zip(poles, poles[1:])
-            ]
+                poles.append(stop)
+                pipeline = [
+                    formatting[a:b - 1].decode('UTF8').strip()
+                    for a, b in zip(poles, poles[1:])
+                ]
+                argument = pipeline.pop(0)
+            else:
+                pipeline = []
 
-            argument = pipeline.pop(0)
+            pipelines.append(PipeLine(
+                argument,
+                formatting[offset:start],
+                pipeline
+            ))
+            offset = stop
+
+        assert offset or not pipelines
+        self.root = root
+        self.pipelines = pipelines
+        self.epilog = self.unescape(formatting[offset:])
+        self.unitcache = None
+
+    def __call__(self, match):
+        if self.pipelines:
+            result = B''.join(p(match) for p in self.pipelines) + self.epilog
         else:
-            pipeline = []
-
-        processors.append(PipeLine(
-            argument,
-            fmt[offset:start],
-            pipeline
-        ))
-        offset = stop
-
-    epilog = unescape_dollars(fmt[offset:])
-
-    if not offset:
-        transformation = epilog
-    else:
-        def transformation(match):
-            return B''.join(p(match) for p in processors) + epilog
-
-    return transformation
+            unit = self.unitcache
+            if unit:
+                return unit
+            result = self.epilog
+        if self.root:
+            return result
+        self.unitcache = unit = load_commandline(result.decode('utf8'))
+        return unit
 
 
 class PatternExtractorBase(Unit, abstract=True):

@@ -24,4 +24,9 @@ class resub(RegexUnit):
     def process(self, data):
         self.log_info('pattern:', self.args.regex)
         self.log_info('replace:', self.args.subst)
-        return self.args.regex.sub(TransformSubstitutionFactory(self.args.subst), data)
+        try:
+            meta = data.meta
+        except AttributeError:
+            meta = {}
+        repl = TransformSubstitutionFactory(self.args.subst, meta)
+        return self.args.regex.sub(repl, data)

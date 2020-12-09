@@ -10,13 +10,6 @@ class rex(RegexUnit, PatternExtractor):
     individual output and standard forking settings apply. Two additional special
     multibin handlers are available for regular expressions:
     """
-    @classmethod
-    def _xmeta(cls, t):
-        def meta_transform(match):
-            data = t(match) if callable(t) else t
-            return cls.labelled(data, **match.groupdict())
-        return meta_transform
-
     def __init__(
         self, regex,
         # TODO: Use positional only in Python 3.8
@@ -31,9 +24,6 @@ class rex(RegexUnit, PatternExtractor):
         multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
         longest=False, take=None
     ):
-        transformation = [self._xmeta(TransformSubstitutionFactory(t)) for t in transformation]
-        if not transformation:
-            transformation.append(self._xmeta(lambda m: m[0]))
         utf16 = unicode          # noqa
         ascii = True             # noqa
         duplicates = not unique  # noqa
@@ -42,5 +32,11 @@ class rex(RegexUnit, PatternExtractor):
         self.superinit(super(), **vars())
 
     def process(self, data):
+        try:
+            meta = data.meta
+        except AttributeError:
+            meta = {}
         self.log_debug('regular expression:', self.args.regex)
-        yield from self.matches_filtered(memoryview(data), self.args.regex, *self.args.transformation)
+        transformations = [TransformSubstitutionFactory(t, meta) for t in self.args.transformation] or [lambda m: m[0]]
+        transformations = [lambda m: self.labelled(t(m), **m.groupdict()) for t in transformations]
+        yield from self.matches_filtered(memoryview(data), self.args.regex, *transformations)
