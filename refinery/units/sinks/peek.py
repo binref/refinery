@@ -28,7 +28,8 @@ class peek(HexViewer):
         lines = INF if all else lines
         super(peek, self).__init__(
             hexaddr=hexaddr, expand=expand, width=width, lines=lines, decode=decode, esc=esc, brief=brief)
-        self.separate = True
+        self._sep = True
+        self._idx = None
 
     def process(self, data):
         for line in self._peeklines(data):
@@ -52,12 +53,15 @@ class peek(HexViewer):
                 try:
                     decoded: str = value.decode(self.codec)
                     assert decoded.isprintable()
+                    decoded = F's:{decoded}'
                 except UnicodeDecodeError:
                     decoded = None
                 except AssertionError:
                     decoded = None
-                value = decoded or F'H:{value.hex()}'
-            metavar = F'{name:>{width}} : {value!s}'
+                value = decoded or F'h:{value.hex()}'
+            elif isinstance(value, int):
+                value = F'e:0x{value:X}'
+            metavar = F'{name:>{width}} = {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
             yield metavar
@@ -78,6 +82,8 @@ class peek(HexViewer):
 
         if magic is not None:
             peeks.append(magic)
+        if self._idx is not None:
+            peeks.insert(0, F'item {self._idx:02d}')
 
         header = ', '.join(peeks)
 
@@ -142,11 +148,14 @@ class peek(HexViewer):
             yield separator(F'CODEC={working_codec}' if working_codec else None)
             yield from dump
 
-        if self.separate:
+        if self._sep:
             yield separator()
 
     def filter(self, inputs):
         from ...lib.tools import lookahead
-        for last, item in lookahead(inputs):
-            self.separate = last
+        for last, (index, item) in lookahead(enumerate(inputs)):
+            self._sep = last
+            if not last or index:
+                self._idx = index
             yield item
+        self._idx = None
