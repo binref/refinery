@@ -79,6 +79,7 @@ class PathExtractorUnit(Unit, abstract=True):
             '(no effect on regular expressions).') = False,
         **keywords
     ):
+        paths = paths or ['*']
         super().__init__(
             patterns=[
                 PathPattern(p, fuzzy, regex)
@@ -135,6 +136,7 @@ class PathExtractorUnit(Unit, abstract=True):
         for p in self.args.patterns:
             for result in results:
                 path = result.path
+                path = '/'.join(path.split('\\'))
                 if not p.check(path):
                     continue
                 if not self.args.list:
@@ -145,7 +147,9 @@ class PathExtractorUnit(Unit, abstract=True):
                         self.log_warn('duplicate path with different contents:', path)
                     paths[path].add(csum)
                 if self.args.join:
-                    path = os.path.join(root, path)
+                    if '\\' in root:
+                        root = '/'.join(root.split('\\'))
+                    path = F'{root}/{path}'
                 if self.args.list:
                     yield path.encode(self.codec)
                     continue
