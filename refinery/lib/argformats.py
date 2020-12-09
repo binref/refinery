@@ -607,7 +607,7 @@ class DelayedNumSeqArgument(DelayedArgument):
         except Exception:
             return self._mbin(expression)
 
-    @handler.register('ev')
+    @handler.register('e', 'eval')
     def ev(self, expression: Union[str, ByteString]) -> Iterable[int]:
         """
         Final modifier `ev:expression`; uses a `refinery.lib.argformats.PythonExpression`
