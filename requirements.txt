@@ -5,6 +5,7 @@ colorama
 defusedxml
 extract_msg
 javaobj-py3>=0.4.0.1
+jsbeautifier
 macholib
 msgpack
 numpy==1.19.3
