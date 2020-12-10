@@ -14,7 +14,7 @@ class TestCarvePE(TestUnitBase):
             '426ace19debaba6f262dcd3ce429dc8fc0b233f3fa02262375c4641d9f466709',
         ]]
 
-        unit = self.load()
+        unit = self.load(recursive=True, keep_root=True)
         data = self.generate_random_buffer(312)
 
         data += samples[0]
