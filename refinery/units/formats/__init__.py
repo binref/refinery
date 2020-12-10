@@ -5,7 +5,6 @@ A package containing several sub-packages for various data formats.
 """
 import fnmatch
 import re
-import os
 import collections
 
 from zlib import adler32

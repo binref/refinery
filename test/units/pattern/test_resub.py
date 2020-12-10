@@ -94,9 +94,9 @@ class TestRegexSubstitution(TestUnitBase):
         self.assertEqual(resub(B'FOOP FOOZ'), B'P$1 Z$1')
 
     def test_dollar_escapes_02(self):
-        resub = self.load(R'FOO(.)', '$$$x$1$(1|hex -R)$$1')
-        self.assertEqual(resub(B'FOO3 FOO2'), B'$$x333$1 $$x232$1')
+        resub = self.load(R'FOO(.)', '$$$$x$1$(1|hex -R)$$1')
+        self.assertEqual(resub(B'FOO3 FOO2'), B'$$$x333$1 $$$x232$1')
 
     def test_dollar_escapes_03(self):
-        resub = self.load(R'FOO(.)', '$$$$$$$$$x$1$$$')
-        self.assertEqual(resub(B'FOOP'), B'$$$$$$$$xP$$')
+        resub = self.load(R'FOO(.)', '$$$$$$$$x$1$$$')
+        self.assertEqual(resub(B'FOOP'), B'$$$$$$$xP$$')

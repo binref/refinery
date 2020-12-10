@@ -48,7 +48,7 @@ class vsnip(Unit):
         if ascii:
             until = B'\0'
         if utf16:
-            addresses = tuple(slice(a.start, a.stop, 2) for a in addresses)               
+            addresses = tuple(slice(a.start, a.stop, 2) for a in addresses)
             until = B'\0\0'
         return super().__init__(addresses=[MemoryArea(a) for a in addresses], until=until, base=base)
 
