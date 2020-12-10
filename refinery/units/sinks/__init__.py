@@ -12,10 +12,11 @@ class HexViewer(Unit, abstract=True):
         self,
         hexaddr : arg.switch('-A', '--no-addr', help='Do not show addresses in hexdump', off=True) = True,
         width   : arg.number('-W', help='Specify the number of hexadecimal characters to use in preview.') = 0,
+        dense   : arg.switch('-D', help='Do not insert spaces in hexdump.') = False,
         expand  : arg.switch('-E', help='Do not compress sequences of identical lines in hexdump') = False,
         **kwargs
     ):
-        super().__init__(hexaddr=hexaddr, width=width, expand=expand, **kwargs)
+        super().__init__(hexaddr=hexaddr, width=width, dense=dense, expand=expand, **kwargs)
 
     def hexaddr_size(self, total):
         addr_width = 16
@@ -44,9 +45,9 @@ class HexViewer(Unit, abstract=True):
                 if self.args.hexaddr:
                     columns -= self.hexaddr_size(total)
                     columns -= 1  # for the separator
-                columns = (columns - 2) // 4
+                q = 3 if self.args.dense else 4
+                columns = (columns - 2) // q
 
-        columns = min(columns, len(data))
         lines = itertools.zip_longest(*([iter(data)] * columns))
         address_width = max(self.hexaddr_size(total), 4)
         previous = None
@@ -67,10 +68,12 @@ class HexViewer(Unit, abstract=True):
                     yield msg
                     prevcount = 0
 
-            dump = ' '.join(F'{b:02X}' for b in chunk)
+            sepr = '' if self.args.dense else ' '
+            dump = sepr.join(F'{b:02X}' for b in chunk)
             read = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
 
-            msg = F'{dump:<{3*columns}} {read:<{columns}}'
+            q = 2 if self.args.dense else 3
+            msg = F'{dump:<{q*columns}} {read:<{columns}}'
             if self.args.hexaddr:
                 msg = F'{k*columns:0{address_width}X}: {msg}'
             yield msg

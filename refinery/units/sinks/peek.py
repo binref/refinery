@@ -20,14 +20,15 @@ class peek(HexViewer):
         self,
         lines  : arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
         all    : arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
+        brief  : arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
         decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         esc    : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
-        brief  : arg('-b', group='MODE', help='One line peek, implies --lines=0.') = False,
-        hexaddr=True, expand=False, width=0
+        hexaddr=True, dense=False, expand=False, width=0
     ):
-        lines = INF if all else lines
+        lines = 1 if brief else INF if all else lines
+        dense = dense or brief
         super(peek, self).__init__(
-            hexaddr=hexaddr, expand=expand, width=width, lines=lines, decode=decode, esc=esc, brief=brief)
+            hexaddr=hexaddr and not brief, expand=expand, width=width, dense=dense, lines=lines, decode=decode, esc=esc, brief=brief)
         self._sep = True
         self._idx = None
 
@@ -91,7 +92,7 @@ class peek(HexViewer):
         termsize = get_terminal_size()
         working_codec = None
 
-        if data and not self.args.brief:
+        if data:
             if self.args.decode:
                 for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
                     try:
@@ -145,8 +146,11 @@ class peek(HexViewer):
         yield from self._peekmeta(data, width, separator())
 
         if dump:
-            yield separator(F'CODEC={working_codec}' if working_codec else None)
-            yield from dump
+            if not self.args.brief:
+                yield separator(F'CODEC={working_codec}' if working_codec else None)
+                yield from dump
+            else:
+                yield F'data = {next(iter(dump)).strip()}'
 
         if self._sep:
             yield separator()
