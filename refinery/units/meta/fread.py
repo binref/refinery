@@ -92,7 +92,7 @@ class fread(Unit):
                         else:
                             data = stream.read()
                             self.log_info(lambda: F'reading: {filename} ({len(data)} bytes)')
-                            yield self.labelled(data, path=filename)
+                            yield self.labelled(data, path='/'.join(filename.split('\\')))
                 except PermissionError:
                     self.log_warn('permission denied:', filename)
                 except FileNotFoundError:
