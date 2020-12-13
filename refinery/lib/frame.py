@@ -91,15 +91,16 @@ __all__ = [
     'FrameUnpacker'
 ]
 
-MAGIC = bytes.fromhex(
-    os.environ.get('REFINERY_FRAME_MAGIC', 'C0CAC01AC0DE'))
-
 
 class Chunk(bytearray):
     """
     Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
     receives an iterable of `refinery.lib.frame.Chunk`s.
     """
+
+    Magic = bytes.fromhex(
+        os.environ.get('REFINERY_FRAME_MAGIC', 'C0CAC01AC0DE'))
+
     def __init__(
         self,
         data: ByteString,
@@ -242,7 +243,7 @@ class Chunk(bytearray):
 
     def __getitem__(self, bounds):
         if isinstance(bounds, str):
-            return self._meta.get(bounds, None)
+            return self._meta[bounds]
         return bytearray.__getitem__(self, bounds)
 
     def __setitem__(self, bounds, value):
@@ -280,8 +281,8 @@ class FrameUnpacker:
         self.finished = False
         self.trunk = ()
         self._next = Chunk(bytearray(), ())
-        buffer = stream and stream.read(len(MAGIC)) or B''
-        if buffer == MAGIC:
+        buffer = stream and stream.read(len(Chunk.Magic)) or B''
+        if buffer == Chunk.Magic:
             self.framed = True
             self.stream = stream
             self.unpacker = msgpack.Unpacker(
@@ -423,7 +424,7 @@ class Framed:
             return
 
         if self.nested > 0:
-            yield MAGIC
+            yield Chunk.Magic
             rest = (0,) * (self.nested - 1)
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
@@ -440,7 +441,7 @@ class Framed:
             return
 
         if self.nested == 0:
-            yield MAGIC
+            yield Chunk.Magic
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
                     if not chunk.visible:
@@ -454,7 +455,7 @@ class Framed:
 
         if gauge:
             buffer = io.BytesIO()
-            yield MAGIC
+            yield Chunk.Magic
         while self.unpack.nextframe():
             while True:
                 for chunk in self._apply_filter():
