@@ -437,13 +437,20 @@ def UnitProcessorBoilerplate(
 ) -> Callable[[ByteString], Any]:
     @wraps(operation)
     def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+        ChunkType = Chunk
+        if data is None:
+            data = B''
         typespec = get_type_hints(operation)
         typespec.pop('return', None)
-        if typespec:
-            assert len(typespec) == 1
-            dt = next(iter(typespec.values()))
-            if isinstance(dt, type) and not isinstance(data, dt):
-                data = dt(data)
+        if typespec and len(typespec) == 1:
+            SpecType = next(iter(typespec.values()))
+            if isinstance(SpecType, str):
+                try: SpecType = eval(SpecType)
+                except Exception: pass
+            if isinstance(SpecType, type):
+                ChunkType = SpecType
+        if not isinstance(data, ChunkType):
+            data = ChunkType(data)
         result = operation(self, data)
         if not inspect.isgenerator(result):
             return self.labelled(result)

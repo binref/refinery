@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from codecs import encode, decode
 from .. import arg, Unit
+from ...lib.tools import isbuffer
 
 
 class cfmt(Unit):
@@ -36,7 +37,19 @@ class cfmt(Unit):
         super().__init__(formats=formats)
 
     def process(self, data):
+        class bwrap:
+            codec = self.codec
+            def __init__(self, data): self.data = data
+            def __repr__(self): return self.data.hex()
+
+            def __str__(self):
+                try:
+                    return self.data.decode(self.codec)
+                except UnicodeDecodeError:
+                    return self.data.decode('ascii', 'backslashreplace')
+
         meta = getattr(data, 'meta', {})
         data = data.decode('latin-1')
+        meta = meta and {key: bwrap(value) if isbuffer(value) else value for key, value in meta.items()}
         for spec in self.args.formats:
-            yield spec.format(data, **meta).encode('latin-1')
+            yield spec.format(data, **meta).encode(self.codec)
