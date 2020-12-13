@@ -63,13 +63,10 @@ class TransformSubstitutionFactory:
                     data = unit(data)
                 return self.seam + data
 
-        try:
-            formatting = formatting.decode('UNICODE_ESCAPE')
-        except AttributeError:
-            if not isinstance(formatting, str):
-                raise ValueError(F'The specified format {formatting!r} is not a string.')
+        if not isinstance(formatting, str):
+            formatting = formatting.decode('unicode-escape')
 
-        formatting = formatting.encode('UTF8')
+        formatting = formatting.encode('latin-1', 'backslashreplace')
         escapes = {m.start() + 1 for m in re.finditer(BR'\$\$', formatting)}
         pipelines = []
         offset = stop = 0

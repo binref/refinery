@@ -100,3 +100,8 @@ class TestRegexSubstitution(TestUnitBase):
     def test_dollar_escapes_03(self):
         resub = self.load(R'FOO(.)', '$$$$$$$$x$1$$$')
         self.assertEqual(resub(B'FOOP'), B'$$$$$$$xP$$')
+
+    def test_binary_replacement(self):
+        resub = self.load(R'yara:(FEED)(BAAD)(F00D)', R'$1\xBE\xEF')
+        data = bytes.fromhex('AAAAAAFEEDBAADF00DAAAAAA')
+        self.assertEqual(resub(data).hex().upper(), 'AAAAAAFEEDBEEFAAAAAA')
