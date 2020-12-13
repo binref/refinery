@@ -118,12 +118,10 @@ class PathExtractorUnit(Unit, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-
-        if self.args.join:
-            try:
-                root = data['path']
-            except (KeyError, TypeError):
-                root = ''
+        try:
+            root = data['path']
+        except KeyError:
+            root = ''
 
         results = []
         paths = collections.defaultdict(set)
@@ -145,7 +143,7 @@ class PathExtractorUnit(Unit, abstract=True):
                             continue
                         self.log_warn('duplicate path with different contents:', path)
                     paths[path].add(csum)
-                if self.args.join:
+                if self.args.join and root:
                     if '\\' in root:
                         root = '/'.join(root.split('\\'))
                     path = F'{root}/{path}'
