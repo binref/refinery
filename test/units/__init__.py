@@ -12,7 +12,7 @@ class TestUnitBase(TestBase):
             path = [x[4:].lstrip('_-.') if x.startswith('test') else x for x in path]
         return '.'.join(path)
 
-    def load(self, *args, **kwargs):
+    def load(self, *args, **kwargs) -> refinery.Unit:
         name = self._relative_module_path(self.__class__.__module__)
         try:
             basename = name.rsplit('.', 1)[-1]
