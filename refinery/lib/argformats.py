@@ -742,7 +742,7 @@ class DelayedRegexpArgument(DelayedArgument):
             return B'.{%s}' % B','.join(t.strip() for t in rng[1:-1].split(B'-'))
 
         pattern = re.split(BR'(\[\s*\d+(?:\s*-\s*\d+)?\s*\])', pattern)
-        pattern[0::2] = [re.sub(BR'[A-F0-9?]{2}', y2r, c) for c in pattern[::2]]
+        pattern[0::2] = [re.sub(BR'[A-Fa-f0-9?]{2}', y2r, c) for c in pattern[::2]]
         pattern[1::2] = [yara_range(b) for b in pattern[1::2]]
         return B''.join(pattern)
 
