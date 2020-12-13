@@ -45,6 +45,11 @@ class MemoryFile(io.RawIOBase):
 
     __slots__ = ['_data', '_cursor']
 
+    class SEEK(int, enum.Enum):
+        CUR = io.SEEK_CUR
+        END = io.SEEK_END
+        SET = io.SEEK_SET
+
     def __init__(self, data: Optional[ByteString] = None):
         if data is None:
             data = bytearray()
