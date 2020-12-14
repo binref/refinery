@@ -258,11 +258,12 @@ class PatternExtractor(PatternExtractorBase, abstract=True):
 class RegexUnit(Unit, abstract=True):
 
     def __init__(
-        self, regex : arg(type=regexp, help='Regular expression to match.'),
-        multiline   : arg.switch('-M',
+        self, regex: arg(type=regexp, help='Regular expression to match.'),
+        multiline: arg.switch('-M',
             help='Caret and dollar match the beginning and end of a line, a dot does not match line breaks.') = False,
-        ignorecase  : arg.switch('-I',
+        ignorecase: arg.switch('-I',
             help='Ignore capitalization for alphabetic characters.') = False,
+        count: arg.number('-c', help='Specify the maximum number of operations to perform.') = 0,
         **keywords
     ):
         flags = re.MULTILINE if multiline else re.DOTALL
@@ -270,4 +271,4 @@ class RegexUnit(Unit, abstract=True):
             flags |= re.IGNORECASE
         if isinstance(regex, str):
             regex = regex.encode(self.codec)
-        super().__init__(regex=re.compile(regex, flags=flags), **keywords)
+        super().__init__(regex=re.compile(regex, flags=flags), count=count, **keywords)

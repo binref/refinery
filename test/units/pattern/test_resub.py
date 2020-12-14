@@ -105,3 +105,8 @@ class TestRegexSubstitution(TestUnitBase):
         resub = self.load(R'yara:(FEED)(BAAD)(F00D)', R'$1\xBE\xEF')
         data = bytes.fromhex('AAAAAAFEEDBAADF00DAAAAAA')
         self.assertEqual(resub(data).hex().upper(), 'AAAAAAFEEDBEEFAAAAAA')
+
+    def test_substitution_count_limit(self):
+        resub = self.load('E(.)', 'AH$1', count=2)
+        data = B'BINERY REFINERY'
+        self.assertEqual(resub(data), B'BINAHRY RAHFINERY')

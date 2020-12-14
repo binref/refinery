@@ -17,9 +17,10 @@ class resub(RegexUnit):
             'Matches are removed (replaced by an empty string) by default.'
         )) = B'',
         multiline=False,
-        ignorecase=False
+        ignorecase=False,
+        count=0
     ):
-        super().__init__(regex=regex, subst=subst, multiline=multiline, ignorecase=ignorecase)
+        super().__init__(regex=regex, subst=subst, multiline=multiline, ignorecase=ignorecase, count=count)
 
     def process(self, data):
         self.log_info('pattern:', self.args.regex)
@@ -29,4 +30,8 @@ class resub(RegexUnit):
         except AttributeError:
             meta = {}
         repl = TransformSubstitutionFactory(self.args.subst, meta)
-        return self.args.regex.sub(repl, data)
+        sub = self.args.regex.sub
+        if self.args.count:
+            from functools import partial
+            sub = partial(sub, count=self.args.count)
+        return sub(repl, data)

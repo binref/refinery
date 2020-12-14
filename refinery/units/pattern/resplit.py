@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, RegexUnit
+from . import RegexUnit
 
 
 class resplit(RegexUnit):
@@ -10,8 +10,7 @@ class resplit(RegexUnit):
     """
 
     def __init__(
-        self, regex=RB'\r?\n', multiline=False, ignorecase=False,
-        count: arg.number('-c', help='Specify the maximum number of splits to perform.') = 0
+        self, regex=RB'\r?\n', multiline=False, ignorecase=False, count=0
     ):
         super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase, count=count)
 
