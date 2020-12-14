@@ -155,8 +155,13 @@ class __pdoc__(dict):
 
 
 __all__ = ['Unit', 'arg', '__pdoc__']
-__all__ += [x for x, _ in sorted(_cache.units.items(), key=lambda x:x[1])]
 
 
 def __getattr__(name):
     return _cache[name]
+
+
+def __dir__():
+    if len(__all__) < 5:
+        __all__.extend(x for x, _ in sorted(_cache.units.items(), key=lambda x: x[1]))
+    return __all__
