@@ -8,6 +8,7 @@ import sys
 
 import refinery.lib.loader as loader
 
+
 PREFIX = os.getenv('REFINERY_PREFIX') or ''
 GITHUB = 'https://github.com/binref/refinery/'
 GITRAW = 'https://raw.githubusercontent.com/binref/refinery/'
@@ -59,7 +60,7 @@ def main():
 
     setuptools.setup(
         name='binary-refinery',
-        version='0.3.16',
+        version='0.3.17',
         author='Jesko Hüttenhain',
         description='A toolkit to transform and refine (mostly) binary data.',
         long_description=readme,

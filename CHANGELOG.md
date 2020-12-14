@@ -1,5 +1,14 @@
 # Binary Refinery Changelog
 
+## Version 0.3.17
+- Using hex escape sequences in the replacement string for `resub` now works as expected.
+- The `yara:` modifier for regular expression based units now accepts lowercase hex characters.
+- The `imphash` unit's performance was improved slightly.
+- Additional options for the `pecarve` unit.
+- Adds the `ppjscript` unit (wrapper around [jsbeautifier][]).
+- The `vsnip` unit can now extract more than one memory region.
+- Adds a count restriction to the `resplit` and `resub` units.
+
 ## Version 0.3.16
 - The interface for cipher units has been changed; the encryption mode is no longer a mandatory argument. Better handling of various cipher block chaining modes has been implemented.
 - Conservative option added to `peoverlay` and `pestrip`.
@@ -172,4 +181,5 @@
 [python-registry-gh]: https://github.com/williballenthin/python-registry
 [javaobj-issue-29]: https://github.com/tcalmant/python-javaobj/issues/29
 [javaobj]: https://pypi.org/project/javaobj-py3/
+[jsbeautifier]: https://pypi.org/project/jsbeautifier/
 [malshare]: https://www.malshare.com/
