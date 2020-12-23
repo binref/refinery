@@ -150,7 +150,7 @@ class peek(HexViewer):
                 yield separator(F'CODEC={working_codec}' if working_codec else None)
                 yield from dump
             else:
-                yield F'data = {next(iter(dump)).strip()}'
+                yield next(iter(dump)).strip()
 
         if self._sep:
             yield separator()
