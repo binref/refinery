@@ -21,9 +21,9 @@ class lprefix(Unit):
         self,
         prefix: arg(nargs='?', type=str,
             help='Choose a Python format string to extract the prefix, default is "{default}".') = 'L',
-        limit: arg.number('limit', metavar='limit',
-            help='Only decode up to a given number of chunks and treat the rest as leftover data.') = INF,
-        strict: arg.switch('-t', help='Discard any leftover data with invalid length prefix.') = False,
+        limit : arg.number('-L', help='Only decode up to {varname} chunks and treat the rest as leftover data.') = INF,
+        strict: arg.switch('-S', help='Discard any leftover data with invalid length prefix.') = False,
+        single: arg.switch('-s', help='Equivalent to --strict --limit=1.') = False,
         header: arg('-H', action='count', default=0, help=(
             'Treat the parsed prefix as part of the body. Specify twice to strip the header afterwards.'
         )) = 0,
@@ -32,6 +32,9 @@ class lprefix(Unit):
             'prefix that was read. The value of this expression is used as the actual number of bytes. '
             'The default expression is "N".')) = None
     ):
+        if single:
+            strict = True
+            limit = 1
         if not prefix:
             raise ValueError('an empty prefix was specified')
         if prefix[0] not in '<!=@>':
