@@ -88,6 +88,7 @@ class dump(Unit):
         try:
             os.makedirs(base, exist_ok=True)
         except FileExistsError:
+            self.log_debug('existed:', path)
             part, components = '', self._components(path)
             while components:
                 component, *components = components
@@ -103,6 +104,11 @@ class dump(Unit):
                 raise
             path = F'\\\\?\\{path}'
             return self._open(path, unc=True)
+        except OSError as e:
+            if not self.log_info():
+                self.log_warn('opening:', path)
+            self.log_warn('errored:', e.args[1])
+            return open(os.devnull, 'wb')
         else:
             mode = 'ab' if self.args.stream else 'wb'
             return open(path, mode)
