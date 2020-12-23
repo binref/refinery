@@ -25,9 +25,7 @@ class lprefix(Unit):
             help='Only decode up to a given number of chunks and treat the rest as leftover data.') = INF,
         strict: arg.switch('-t', help='Discard any leftover data with invalid length prefix.') = False,
         header: arg('-H', action='count', default=0, help=(
-            'Treat the parsed prefix as part of the body. Specify twice to automatically add the size of '
-            'the prefix to the calculated length (i.e. the parsed length from the header specifies the '
-            'length of the chunk body, but the output should include both head and body.'
+            'Treat the parsed prefix as part of the body. Specify twice to strip the header afterwards.'
         )) = 0,
         derive: arg('-d', metavar='d(N)', type=str, help=(
             'Provide an arithmetic Python expression involving the variable N which represents the length '
@@ -58,8 +56,8 @@ class lprefix(Unit):
         parse = PythonExpression(self.args.derive or 'N', 'N', *meta)
         hsize = calcsize(self.args.prefix) if self.args.header > 1 else 0
         with StructReader(memoryview(data)) as mf:
+            count = size = position = 0
             try:
-                count = size = 0
                 while not mf.eof:
                     position = mf.tell()
                     if count >= self.args.limit:
@@ -67,15 +65,18 @@ class lprefix(Unit):
                     size = mf.read_struct(self.args.prefix, unwrap=True)
                     size = parse(N=size, **meta)
                     if self.args.header:
-                        size += hsize
-                        mf.seek(position)
+                        if self.args.header > 1:
+                            size -= hsize
+                        else:
+                            size += hsize
+                            mf.seek(position)
                     self.log_info(F'reading chunk of size: {size}')
                     yield mf.read(size)
                     count += 1
             except EOF as eof:
-                if len(eof.rest) < size:
-                    self.log_info(F'attempted to read 0x{size:X} bytes, got only 0x{len(eof.rest):X}.')
                 if self.args.strict:
                     return
+                if len(eof.rest) < size:
+                    self.log_warn(F'attempted to read 0x{size:X} bytes, got only 0x{len(eof.rest):X}.')
                 mf.seek(position)
                 yield mf.read()
