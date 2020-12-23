@@ -16,6 +16,7 @@ class winreg(PathExtractorUnit):
     def _walk(self, key, *path):
         here = '/'.join(path)
         if not self._check_reachable(here):
+            self.log_debug(F'pruning search at {here}')
             return
         for value in key.values():
             vpath = F'{here}/{value.name()}'
@@ -25,4 +26,5 @@ class winreg(PathExtractorUnit):
 
     def unpack(self, data):
         with MemoryFile(data) as stream:
-            yield from self._walk(Registry(stream).root())
+            root = Registry(stream).root()
+            yield from self._walk(root, root.name())

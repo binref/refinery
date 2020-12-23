@@ -53,7 +53,7 @@ class PathPattern:
         self.pattern = re.compile(pp)
 
     def reach(self, path):
-        if not self.stops:
+        if not any(self.stops):
             return True
         for stop in self.stops:
             if fnmatch.fnmatch(path, stop):
@@ -62,6 +62,9 @@ class PathPattern:
 
     def check(self, path):
         return self.pattern.fullmatch(path)
+
+    def __repr__(self):
+        return F'<PathPattern:{"//".join(self.stops) or "RE"}>'
 
 
 class PathExtractorUnit(Unit, abstract=True):
