@@ -10,7 +10,7 @@ from .. import arg, Unit
 IMAGE_DIRECTORY_ENTRY_SECURITY = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
 
 
-def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, directories=True, certificate=True) -> int:
+def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, directories=True, certificate=True, memdump=False) -> int:
     """
     This fuction determines the size of a PE file, optionally taking into account the
     pefile module overlay computation, section information, data directory information,
@@ -23,6 +23,11 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
 
     sections_value = sections and max(
         s.PointerToRawData + s.SizeOfRawData
+        for s in pe.sections
+    ) or 0
+
+    memdump_value = memdump and max(
+        s.VirtualAddress + s.Misc_VirtualSize
         for s in pe.sections
     ) or 0
 
@@ -43,7 +48,8 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
         overlay_value,
         sections_value,
         directories_value,
-        cert_value
+        cert_value,
+        memdump_value
     )
 
 

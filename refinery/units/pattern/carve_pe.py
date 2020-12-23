@@ -17,9 +17,10 @@ class carve_pe(Unit):
     def __init__(
         self,
         recursive: arg.switch('-r', help='Also extract PE files that are contained in already extracted PEs.') = False,
-        keep_root: arg.switch('-R', help='If the input chunk is itself a PE, include it as an output chunk.') = False
+        keep_root: arg.switch('-R', help='If the input chunk is itself a PE, include it as an output chunk.') = False,
+        memdump  : arg.switch('-m', help='Use the virtual memory layout of a PE file to calculate its size.') = False
     ):
-        super().__init__(recursive=recursive, keep_root=keep_root)
+        super().__init__(recursive=recursive, keep_root=keep_root, memdump=memdump)
 
     def process(self, data):
         cursor = 0
@@ -38,7 +39,7 @@ class carve_pe(Unit):
                 self.log_debug('parsing of PE header at 0x{p:08X} failed:', err)
                 continue
 
-            pesize = get_pe_size(pe)
+            pesize = get_pe_size(pe, memdump=self.args.memdump)
             pedata = mv[p:p + pesize]
 
             try:
