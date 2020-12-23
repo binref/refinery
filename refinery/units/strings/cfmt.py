@@ -1,8 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import ByteString, Dict, Any
 from codecs import encode, decode
 from .. import arg, Unit
 from ...lib.tools import isbuffer
+
+
+class ByteStringWrapper:
+    def __init__(self, string: ByteString, codec: str):
+        self.string = string
+        self.codec = codec
+
+    def __repr__(self):
+        return self.string.hex().upper()
+
+    def __str__(self):
+        try:
+            return self.string.decode(self.codec)
+        except UnicodeDecodeError:
+            return self.string.decode('ascii', 'backslashreplace')
+
+    @classmethod
+    def FormatMap(cls, data: ByteString, codec: str) -> Dict[str, Any]:
+        meta = getattr(data, 'meta', {})
+        return meta and {key: cls(value, codec) if isbuffer(value) else value for key, value in meta.items()}
 
 
 class cfmt(Unit):
@@ -37,19 +58,7 @@ class cfmt(Unit):
         super().__init__(formats=formats)
 
     def process(self, data):
-        class bwrap:
-            codec = self.codec
-            def __init__(self, data): self.data = data
-            def __repr__(self): return self.data.hex()
-
-            def __str__(self):
-                try:
-                    return self.data.decode(self.codec)
-                except UnicodeDecodeError:
-                    return self.data.decode('ascii', 'backslashreplace')
-
-        meta = getattr(data, 'meta', {})
-        data = data.decode('latin-1')
-        meta = meta and {key: bwrap(value) if isbuffer(value) else value for key, value in meta.items()}
+        meta = ByteStringWrapper.FormatMap(data, self.codec)
+        data = ByteStringWrapper(data, self.codec)
         for spec in self.args.formats:
             yield spec.format(data, **meta).encode(self.codec)

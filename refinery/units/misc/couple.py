@@ -6,22 +6,22 @@ import os
 from subprocess import PIPE, Popen
 
 from .. import arg, Unit, RefineryPartialResult
+from ..strings.cfmt import ByteStringWrapper
 
 
 class couple(Unit):
     """
-    Turns any command into a refinery unit. Data is processed by feeding it to the
-    standard input of a process spawned from the given command line, and then reading
-    the standard output of that process as the result of the operation. The main
-    purpose of this unit is to allow using the syntax from `refinery.lib.frame` with
-    other command line tools. By default, `refinery.couple` streams the output from
-    the executed command as individual outputs, but the `buffer` option can be set to
-    buffer all output of a single execution.
+    Turns any command into a refinery unit. Data is processed by feeding it to the standard input of a process spawned from
+    the given command line, and then reading the standard output of that process as the result of the operation. The main
+    purpose of this unit is to allow using the syntax from `refinery.lib.frame` with other command line tools. By default,
+    `refinery.couple` streams the output from the executed command as individual outputs, but the `buffer` option can be set
+    to buffer all output of a single execution.
     """
 
     def __init__(
-        self, *commandline : arg(nargs='...', metavar='(all remaining)',
-            help='An arbitrary command line to be executed.'),
+        self, *commandline : arg(nargs='...', metavar='(all remaining)', help=(
+            'All remaining command line tokens form an arbitrary command line to be executed. Use format string syntax '
+            'to insert meta variables and incoming data chunks.')),
         buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
         noerror: arg('-e', help='do not merge stdin and stderr; stderr will only be output if -v is also specified.') = False,
         cmdline: arg('-c', help='pass incoming data as a commandline argument to the process, not via stdin.') = False,
@@ -37,7 +37,11 @@ class couple(Unit):
             import shlex
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
-        commandline = [cmd.decode(self.codec) for cmd in self.args.commandline]
+        meta = ByteStringWrapper.FormatMap(data, self.codec)
+        commandline = [
+            cmd.decode(self.codec).format(ByteStringWrapper(data, self.codec), **meta)
+            for cmd in self.args.commandline
+        ]
 
         if self.args.cmdline:
             commandline.append(data.decode(self.codec))
