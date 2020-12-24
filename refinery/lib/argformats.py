@@ -19,7 +19,7 @@ are:
 - `s:string` disables all further preprocessing and interprets `string` as an UTF8 encoded string
 - `u:string` same, but as an UTF16-LE encoded string
 - `h:string` assumes that `string` is a hexadecimal string of even length and returns the decoded byte sequence.
-- any unit's name can be prefixed to the string, i.e. `esc:\n` corresponds to the line break character.
+- any unit's name can be prefixed to the string, i.e. `esc:\\n` corresponds to the line break character.
 
 If a multibin argument does not use any handler, refinery first interprets the string as the path
 of an existing file on disk and attempts to return the contents of this file. If this fails, the
