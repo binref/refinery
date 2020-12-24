@@ -31,8 +31,11 @@ expression. Indeed, `copy` and `cut` expect the remaining string to be in Python
 expression `copy:0:1` would, for example, represent the first byte of the input data. With `copy`,
 this data is copied out of the input and used for the argument. With `cut`, this data is removed
 from the input data and used for the argument. All `cut` operations are performed in the order in
-which the arguments are specified on the command line. For example, `emit Test | cca x::1 x::1`
-will output `stTe`.
+which the arguments are specified on the command line. For example:
+```
+emit 1234 | cca x::1 x::1
+```
+will output the string `3412`.
 
 The modifiers `s`, `u`, `h`, `copy` (or `c`), and `cut` (or `x`) along with using unit modifiers
 should cover most use cases. To learn about other existing modifiers, refer to the rest of this
@@ -532,9 +535,10 @@ class DelayedBinaryArgument(DelayedArgument):
         raise ValueError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion to bytes is known.')
 
     @handler.register('var', final=True)
-    def meta_get(self, name: str) -> bytes:
+    def var(self, name: str) -> bytes:
         """
-        Contains the value of a meta variable. The variable remains attached to the chunk.
+        The final handler `var:name` contains the value of the meta variable `name`.
+        The variable remains attached to the chunk.
         """
         def extract(data: Chunk):
             try:
@@ -545,9 +549,11 @@ class DelayedBinaryArgument(DelayedArgument):
         return extract
 
     @handler.register('xvar', final=True)
-    def meta_pop(self, name: str) -> bytes:
+    def xvar(self, name: str) -> bytes:
         """
-        Extracts data from a meta field in a chunk.
+        The final handler `xvar:name` contains the value of the meta variable `name`.
+        The variable is removed from the chunk and no longer available to subsequent
+        units.
         """
         def extract(data: Chunk):
             try:
@@ -610,9 +616,9 @@ class DelayedNumSeqArgument(DelayedArgument):
     @handler.register('e', 'eval')
     def ev(self, expression: Union[str, ByteString]) -> Iterable[int]:
         """
-        Final modifier `ev:expression`; uses a `refinery.lib.argformats.PythonExpression`
-        parser to process expressions that may contain the variable `N` whose value will be
-        the size of the input data.
+        Final modifier `e:expression` or `eval:expression`; uses a `refinery.lib.argformats.PythonExpression`
+        parser to process expressions that may contain the variable `N` whose value will be the size of the
+        input data.
         """
         if not isinstance(expression, str):
             try:
@@ -652,7 +658,7 @@ class DelayedNumSeqArgument(DelayedArgument):
     @handler.register('inc')
     def inc(self, it: Iterable[int], wrap=None) -> Iterable[int]:
         """
-        The modifier `inc:it` or `inc(wrap):it` expects a sequence `it` of integers
+        The modifier `inc:it` or `inc[wrap]:it` expects a sequence `it` of integers
         (a binary string is interpreted as the sequence of its byte values), iterates it
         cyclically and perpetually adds an increasing counter to the result. If `wrap`
         is specified, then the counter is reduced modulo this number.

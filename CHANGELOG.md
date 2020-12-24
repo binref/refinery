@@ -1,5 +1,11 @@
 # Binary Refinery Changelog
 
+## Version 0.3.19 - bufgfix release
+
+## Version 0.3.18
+- Changes the interface for the frame squeeze mechanic
+- Adds option to `pefile` to compute carve size based on virtual section sizes & offsets.
+
 ## Version 0.3.17
 - Using hex escape sequences in the replacement string for `resub` now works as expected.
 - The `yara:` modifier for regular expression based units now accepts lowercase hex characters.

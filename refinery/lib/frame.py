@@ -54,6 +54,45 @@ breaks:
     FOO.FOO.
     FOO.FOO.
 
+### Squeezing
+
+Inside a frame, application of a `refinery.Unit` with multiple outputs will substitute the
+input by the corresponding list of outputs. For example,
+
+    $ emit OOOOOOOO | chop 4 [| chop 2 | ccp F ]]
+
+has the exact same output as the following command:
+
+    $ emit 00000000 | chop 2 [| ccp F ]]
+
+In the first case, we create the frame `[OOOO, OOOO]` and then apply `chop 2` to each chunk,
+which results in the frame `[OO, OO, OO, OO]`. Now, consider the example
+
+    $ emit OOCLOOCL | chop 4 [| snip 2::-1 3: ]]
+    COO
+    L
+    COO
+    L
+
+With what we have learned so far, if we wanted it to spell `COOL` twice instead,we would have
+to use the following and slightly awkward syntax:
+
+    $ emit OOCLOOCL | chop 4 [| snip 2::-1 3 [| nop ]| sep ]
+    COOL
+    COOL
+
+This is because the `snip` command, by default, will simply insert the list `[COO, L]` into
+the complete frame, creating the output sequence `[COO, L, COO, L]` and all of these chunks
+will be separated by line breaks. For this reason, the squeeze syntax exists. If the brackets
+at the end of a refinery command are prefixed by the sequence `[]`, i.e. an opening bracket
+followed directly by a closing one, then all outputs of the unit are fused into a single
+output chunk by concatenating them. In our example:
+
+    $ emit OOCLOOCL | chop 4 [| snip 2::-1 3 []]]
+    COOL
+    COOL
+
+
 ### Scoping
 
 It is possible to alter the **visibility** of `refinery.lib.frame.Chunk`, primarily by
@@ -75,10 +114,10 @@ Note that `refinery.sep` makes all chunks in the frame visible by default, becau
 intended to sit at the end of a frame. Otherwise, `NaNaNaNaNaNaNaNa` and `Batman` in the
 above example would not be separated by a dash.
 """
-import io
 import os
 
 from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
+from refinery.lib.structures import MemoryFile
 
 try:
     import msgpack
@@ -375,9 +414,6 @@ class Framed:
         self.nesting = nesting
         self.squeeze = squeeze
 
-        if squeeze and nesting:
-            raise ValueError('Squeezing requires zero nesting.')
-
     def _apply_filter(self) -> Iterable[Chunk]:
 
         it = iter(self.unpack)
@@ -416,13 +452,33 @@ class Framed:
         return self.nesting + self.unpack.gauge < 0
 
     def _generate_chunks(self, parent: Chunk):
-        for item in self.action(parent):
-            item = item.__copy__()
-            item.inherit(parent)
-            yield item
+        if not self.squeeze:
+            for item in self.action(parent):
+                item = item.__copy__()
+                item.inherit(parent)
+                yield item
+            return
+        it = self.action(parent)
+        try:
+            header = next(it)
+        except StopIteration:
+            return
+        else:
+            header.inherit(parent)
+            buffer = MemoryFile(header)
+            buffer.seek(len(header))
+        for item in it:
+            buffer.write(item)
+        yield header
 
     def _generate_bytes(self, data: ByteString):
-        yield from self.action(data)
+        if not self.squeeze:
+            yield from self.action(data)
+            return
+        buffer = MemoryFile(bytearray())
+        for item in self.action(data):
+            buffer.write(item)
+        yield buffer.getbuffer()
 
     def __iter__(self):
         if self.unpack.finished:
@@ -437,24 +493,6 @@ class Framed:
                         continue
                     for result in self._generate_chunks(chunk):
                         yield result.nest(k, *rest).pack()
-        elif self.squeeze:
-            if self.unpack.framed:
-                yield Chunk.Magic
-            buffer = io.BytesIO()
-            while self.unpack.nextframe():
-                for chunk in self._apply_filter():
-                    if not chunk.visible:
-                        yield chunk.pack()
-                        continue
-                    for result in self._generate_bytes(chunk):
-                        buffer.write(result)
-                    if not self.unpack.framed:
-                        yield buffer.getbuffer()
-                    else:
-                        mv = memoryview(buffer.getbuffer())
-                        chunk[:] = mv[:buffer.tell()]
-                        yield chunk.pack()
-                    buffer.seek(0)
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
@@ -469,30 +507,27 @@ class Framed:
                         yield result.pack()
         else:
             gauge = max(self.unpack.gauge + self.nesting, 0)
-            buffer = io.BytesIO()
+            trunk = MemoryFile(Chunk(bytearray()))
             if gauge:
                 yield Chunk.Magic
             while self.unpack.nextframe():
-                chunk = None
                 while True:
                     for chunk in self._apply_filter():
+                        trunk.getvalue().inherit(chunk)
                         results = self._generate_bytes(chunk) if chunk.visible else (chunk,)
+                        if not gauge:
+                            yield from results
+                            continue
                         for result in results:
-                            if not gauge:
-                                yield result
-                                continue
-                            buffer.write(result)
+                            trunk.write(result)
                     if self.unpack.peek[:gauge + 1] != self.unpack.trunk[:gauge + 1]:
                         break
                     if not self.unpack.nextframe():
                         break
-                if gauge:
-                    buffer.truncate(buffer.tell())
-                    collapsed = buffer.getvalue()
-                    if chunk is None:
-                        chunk = Chunk(collapsed, self.unpack.trunk[:gauge])
-                    else:
-                        chunk[:] = collapsed
-                        chunk.truncate(gauge)
-                    yield chunk.pack()
-                    buffer.seek(0)
+                if not gauge:
+                    continue
+                trunk.truncate()
+                chunk = trunk.getvalue()
+                chunk.truncate(gauge)
+                yield chunk.pack()
+                trunk.seek(0)
