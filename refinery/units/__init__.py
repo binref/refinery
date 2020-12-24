@@ -867,6 +867,7 @@ class Unit(metaclass=Executable, abstract=True):
             normalized_action,
             self.source,
             self.args.nesting,
+            self.args.squeeze,
             self.filter
         )
         return self._framed
@@ -940,22 +941,18 @@ class Unit(metaclass=Executable, abstract=True):
         def cname(x): return x.lower().replace('-', '')
 
         recode = self.isatty and cname(self.codec) != cname(sys.stdout.encoding)
-        if recode: import codecs
+        chunk = None
 
         for last, chunk in lookahead(self):
             if (
                 not last
                 and (self._framehandler.unframed or self._framehandler.framebreak)
                 and not chunk.endswith(B'\n')
-                and not self.args.squeeze
             ):
                 chunk.extend(B'\n')
             if recode:
                 try:
-                    chunk = codecs.encode(
-                        codecs.decode(chunk, self.codec, errors='backslashreplace'),
-                        sys.stdout.encoding
-                    )
+                    chunk = chunk.decode(chunk, self.codec, errors='backslashreplace').encode(sys.stdout.encoding)
                 except Exception:
                     pass
             try:
@@ -973,7 +970,7 @@ class Unit(metaclass=Executable, abstract=True):
                 break
 
         try:
-            if self.isatty and not chunk.endswith(B'\n'):
+            if self.isatty and chunk and not chunk.endswith(B'\n'):
                 self._target.write(B'\n')
                 self._target.flush()
         except (NameError, AttributeError):
@@ -1123,7 +1120,7 @@ class Unit(metaclass=Executable, abstract=True):
             base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
 
         if cls.is_multiplex:
-            base.add_argument('-Z', '--squeeze', action='store_true', help='Fuse outputs, do not insert line breaks.')
+            base.add_argument('-Z', '--squeeze', action='store_true', help=SUPPRESS)
 
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
@@ -1197,18 +1194,17 @@ class Unit(metaclass=Executable, abstract=True):
             unit = autoinvoke(cls, args.__dict__)
         except ValueError as E:
             argp.error(str(E))
+        else:
+            unit.args._store(_argo=argp.order)
+            unit.args.quiet = args.quiet
 
-        unit.args._store(_argo=argp.order)
-        unit.args.quiet = args.quiet
-
-        unit.args.squeeze = args.squeeze
-        unit.args.dtiming = args.dtiming
-        unit.args.nesting = args.nesting
-        unit.args.reverse = args.reverse
-        unit.args.devnull = args.devnull
-        unit.args.verbose = args.verbose
-
-        return unit
+            unit.args.squeeze = args.squeeze
+            unit.args.dtiming = args.dtiming
+            unit.args.nesting = args.nesting
+            unit.args.reverse = args.reverse
+            unit.args.devnull = args.devnull
+            unit.args.verbose = args.verbose
+            return unit
 
     def __copy__(self):
         cls = self.__class__

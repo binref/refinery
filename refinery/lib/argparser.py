@@ -103,7 +103,10 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         if args and args[~0] and isinstance(args[~0], str):
             nestarg = args[~0]
             nesting = len(nestarg)
-            if nestarg == ']' * nesting:
+            if nestarg == '[]':
+                self.set_defaults(squeeze=True)
+                del args[~0:]
+            elif nestarg == ']' * nesting:
                 self.set_defaults(nesting=-nesting)
                 del args[~0:]
             elif nestarg == '[' * nesting:

@@ -21,11 +21,13 @@ class TestLengthPrefix(TestUnitBase):
             self.assertEqual(list(unit.process(data)), chunks[:-1])
 
     def test_modified_value(self):
-        body = self.generate_random_buffer(3133)
-        head = struct.pack('=HbbLbH', 12, 6, 6, 3133, 0, 0xBEEF)
+        size = 10
+        body = B'BABALUGA' * size
+        size = size * 8
+        head = struct.pack('=HbbLbH', 12, 6, 6, size, 0, 0xBEEF)
         pack = head + body
-        unit = self.load('=4xL3x', header=2)
-        self.assertEqual(unit(pack), pack)
+        unit = self.load('=4xL3x', header=2, limit=1)
+        self.assertEqual(unit(pack), body[:-11])
         unit = self.load('=4xL3x')
         self.assertEqual(unit(pack), body)
         unit = self.load('=4xL3x', header=1, derive='N+11')

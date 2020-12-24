@@ -363,15 +363,20 @@ class Framed:
     """
     def __init__(
         self,
-        action: Callable[[bytearray], Iterable[Chunk]],
-        stream: BinaryIO,
-        nested: int = 0,
-        filter: Optional[Callable[[Iterable[Chunk]], Iterable[Chunk]]] = None,
+        action : Callable[[bytearray], Iterable[Chunk]],
+        stream : BinaryIO,
+        nesting: int = 0,
+        squeeze: bool = False,
+        filter : Optional[Callable[[Iterable[Chunk]], Iterable[Chunk]]] = None,
     ):
         self.unpack = FrameUnpacker(stream)
         self.action = action
-        self.nested = nested
         self.filter = filter
+        self.nesting = nesting
+        self.squeeze = squeeze
+
+        if squeeze and nesting:
+            raise ValueError('Squeezing requires zero nesting.')
 
     def _apply_filter(self) -> Iterable[Chunk]:
 
@@ -398,7 +403,7 @@ class Framed:
         """
         This property is true if the output data is not framed.
         """
-        return self.nested < 1 and not self.unpack.framed
+        return self.nesting < 1 and not self.unpack.framed
 
     @property
     def framebreak(self) -> bool:
@@ -408,7 +413,7 @@ class Framed:
         this. In practice, it means that the user has provided more closing brakcets
         than were required to close all open frames.
         """
-        return self.nested + self.unpack.gauge < 0
+        return self.nesting + self.unpack.gauge < 0
 
     def _generate_chunks(self, parent: Chunk):
         for item in self.action(parent):
@@ -422,10 +427,9 @@ class Framed:
     def __iter__(self):
         if self.unpack.finished:
             return
-
-        if self.nested > 0:
+        if self.nesting > 0:
             yield Chunk.Magic
-            rest = (0,) * (self.nested - 1)
+            rest = (0,) * (self.nesting - 1)
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
                     if not chunk.visible:
@@ -433,14 +437,28 @@ class Framed:
                         continue
                     for result in self._generate_chunks(chunk):
                         yield result.nest(k, *rest).pack()
-            return
-
+        elif self.squeeze:
+            if self.unpack.framed:
+                yield Chunk.Magic
+            buffer = io.BytesIO()
+            while self.unpack.nextframe():
+                for chunk in self._apply_filter():
+                    if not chunk.visible:
+                        yield chunk.pack()
+                        continue
+                    for result in self._generate_bytes(chunk):
+                        buffer.write(result)
+                    if not self.unpack.framed:
+                        yield buffer.getbuffer()
+                    else:
+                        mv = memoryview(buffer.getbuffer())
+                        chunk[:] = mv[:buffer.tell()]
+                        yield chunk.pack()
+                    buffer.seek(0)
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
-            return
-
-        if self.nested == 0:
+        elif self.nesting == 0:
             yield Chunk.Magic
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
@@ -449,33 +467,32 @@ class Framed:
                         continue
                     for result in self._generate_chunks(chunk):
                         yield result.pack()
-            return
-
-        gauge = max(self.unpack.gauge + self.nested, 0)
-
-        if gauge:
+        else:
+            gauge = max(self.unpack.gauge + self.nesting, 0)
             buffer = io.BytesIO()
-            yield Chunk.Magic
-        while self.unpack.nextframe():
-            while True:
-                for chunk in self._apply_filter():
-                    results = self._generate_bytes(chunk) if chunk.visible else (chunk,)
-                    for result in results:
-                        if not gauge:
-                            yield result
-                            continue
-                        buffer.write(result)
-                if self.unpack.peek[:gauge + 1] != self.unpack.trunk[:gauge + 1]:
-                    break
-                if not self.unpack.nextframe():
-                    break
             if gauge:
-                buffer.truncate(buffer.tell())
-                collapsed = buffer.getvalue()
-                try:
-                    chunk[:] = collapsed
-                    chunk.truncate(gauge)
-                except NameError:
-                    chunk = Chunk(collapsed, self.unpack.trunk[:gauge])
-                yield chunk.pack()
-                buffer.seek(0)
+                yield Chunk.Magic
+            while self.unpack.nextframe():
+                chunk = None
+                while True:
+                    for chunk in self._apply_filter():
+                        results = self._generate_bytes(chunk) if chunk.visible else (chunk,)
+                        for result in results:
+                            if not gauge:
+                                yield result
+                                continue
+                            buffer.write(result)
+                    if self.unpack.peek[:gauge + 1] != self.unpack.trunk[:gauge + 1]:
+                        break
+                    if not self.unpack.nextframe():
+                        break
+                if gauge:
+                    buffer.truncate(buffer.tell())
+                    collapsed = buffer.getvalue()
+                    if chunk is None:
+                        chunk = Chunk(collapsed, self.unpack.trunk[:gauge])
+                    else:
+                        chunk[:] = collapsed
+                        chunk.truncate(gauge)
+                    yield chunk.pack()
+                    buffer.seek(0)
