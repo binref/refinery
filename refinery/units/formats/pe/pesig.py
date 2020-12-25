@@ -17,9 +17,6 @@ class pesig(Unit):
     def __init__(self): pass
 
     def process(self, data: bytearray) -> bytearray:
-        """
-        Extracts the raw digital signature from a PE file.
-        """
         pe = PE(data=data, fast_load=True)
         pe.parse_data_directories(directories=[self._SECDIRID])
         security = pe.OPTIONAL_HEADER.DATA_DIRECTORY[self._SECDIRID]

@@ -29,17 +29,17 @@ class drp(Unit):
     memory for large buffers.
     """
     @staticmethod
-    def leafcount(node: Node):
+    def _leafcount(node: Node):
         if not node.children:
             return 1
-        return sum(drp.leafcount(c) for c in node)
+        return sum(drp._leafcount(c) for c in node)
 
     def process(self, data):
         with stackdepth(len(data)):
             scan = SuffixTree(memoryview(data))
 
         with stackdepth(len(scan.data)):
-            prevalence = {bytes(node.label): drp.leafcount(node) for node in scan}
+            prevalence = {bytes(node.label): drp._leafcount(node) for node in scan}
 
         del scan
         mean = np.fromiter(prevalence.values(), dtype=np.float).mean()

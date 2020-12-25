@@ -96,17 +96,18 @@ class _cache:
 @_singleton
 class __pdoc__(dict):
     OVERRIDES = {
-        'deobfuscate': False,
+        'bytestream': False,
         'decrypt': False,
+        'deobfuscate': False,
+        'ecb': False,
         'encrypt': False,
         'filter': '',
+        'inplace': False,
         'interface': '',
         'keystream': False,
-        'ecb': False,
-        'bytestream': False,
         'operate': False,
-        'inplace': False,
         'reverse': False,
+        'unpack': False,
     }
 
     def __init__(self, *a, **kw):
@@ -154,7 +155,7 @@ class __pdoc__(dict):
         return super().items()
 
 
-__all__ = [Unit.__name__, arg.__name__, '__pdoc__'] + [x for x, _ in sorted(_cache.units.items(), key=lambda x: x[1])]
+__all__ = [x for x, _ in sorted(_cache.units.items(), key=lambda x: x[1])] + [Unit.__name__, arg.__name__, '__pdoc__']
 
 
 def __getattr__(name):

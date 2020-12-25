@@ -34,7 +34,7 @@ class urlguards(Unit):
     }
 
     @unguard(r'https?://urldefense(?:\.proofpoint)?\.com/v([12])/url\?([:;/_=!?#&.,\w\%\-\+|]+)')
-    def proofpointV2(self, match):
+    def _proofpointV2(self, match):
         version = int(match[1])
         self.log_info('proofpoint match:', version)
         argmatch = re.match(
@@ -51,7 +51,7 @@ class urlguards(Unit):
         return unescape(unquote(encoded))
 
     @unguard(r'https?://urldefense(?:\.proofpoint)?\.com/v3/__(.+?)__;(.*?)![-\w!?$]+')
-    def proofpointV3(self, match):
+    def _proofpointV3(self, match):
         data = unquote(match[1])
         cmap = match[2] + '=' * (-len(match[2]) % 4)
         cmap = urlsafe_b64decode(cmap).decode('UTF-8')
@@ -74,7 +74,7 @@ class urlguards(Unit):
         return result + data[cursor:]
 
     @unguard(r'https?://\w+.safelinks\.protection\.outlook\.com/([:;/_=!?#&.,\w\%\-\+|]+)')
-    def outlook(self, match):
+    def _outlook(self, match):
         result = match[0]
         self.log_info('outlook match:', result)
         parsed = urlparse(result)
@@ -86,11 +86,11 @@ class urlguards(Unit):
         return result
 
     @unguard(r'https?://outlook.office.com/actions/ei\?u=([:;/_=!?#&.,\w\%\-\+|]+)')
-    def outlook_image_proxy(self, match):
+    def _outlook_image_proxy(self, match):
         return unquote(match[1])
 
     @unguard(r'https?://(?:[\w-]+\.)?trendmicro.com(?::\d+)?/wis/clicktime/v[12]/(?:query|clickthrough)[:;/_=!?#&.,\w\%\-\+|]+')
-    def trendmicro(self, match):
+    def _trendmicro(self, match):
         result = match[0]
         self.log_info('trendmicro match:', result)
         parsed = urlparse(result)
@@ -106,11 +106,11 @@ class urlguards(Unit):
         newsize, size = 0, len(data)
         while newsize != size:
             for handler in (
-                self.proofpointV2,
-                self.proofpointV3,
-                self.outlook,
-                self.outlook_image_proxy,
-                self.trendmicro
+                self._proofpointV2,
+                self._proofpointV3,
+                self._outlook,
+                self._outlook_image_proxy,
+                self._trendmicro
             ):
                 data = handler(data)
             size = newsize

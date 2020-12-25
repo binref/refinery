@@ -11,15 +11,99 @@ approach to implement `refinery.hex`:
     from refinery import Unit
 
     class hex(Unit):
-        def process(self, data):
-            return bytes.fromhex(data.decode('ascii'))
-
-        def reverse(self, data):
-            return data.hex().encode(self.codec)
+        def process(self, data): return bytes.fromhex(data.decode('ascii'))
+        def reverse(self, data): return data.hex().encode(self.codec)
 
 The above script can be run from the command line. Since `hex` is not marked as
 abstract, its inherited `refinery.units.Unit.run` method will be invoked when
 the script is executed.
+
+### Command Line Parameters
+
+If you want your custom refinery unit to accept command line parameters, you can
+write an initialization routine. For example, the following unit implements a very
+simple XOR unit (albeit less versatile than the already existing `refinery.xor`):
+
+    from refinery import Unit, arg
+    import itertools
+
+    class rollxor(Unit):
+        def __init__(self, key: arg(help='Encryption key')):
+            pass
+
+        def process(self, data: bytearray):
+            key = itertools.cycle(self.args.key)
+            for k, b in enumerate(data):
+                data[k] ^= next(key)
+            return data
+
+The `refinery.arg` decorator is optional and only used here to provide a help
+message on the command line. The example also shows that the `__init__` code can be
+left empty: In this case, refinery automatically adds boilerplate code that copies
+all `__init__` parameters to the `args` member variable of the unit. In this case,
+the constructor will be completed to have the following code:
+
+        def __init__(self, key: arg(help='Encryption key')):
+            super().__init__(key=key)
+
+The option of writing an empty `__init__` was added because it is rarely needed to
+perform any processing of the input arguments. The command line help for this unit
+will look as follows:
+
+    usage: rollxor [-h] [-Q] [-0] [-v] key
+
+    positional arguments:
+      key            Encryption key
+
+    generic options:
+      -h, --help     Show this help message and exit.
+      -Q, --quiet    Disables all log output.
+      -0, --devnull  Do not produce any output.
+      -v, --verbose  Specify up to two times to increase log level.
+
+### Refinery Syntax in Code
+
+Refinery units can be used in Python code (and a Python repl) in nearly the same way
+as on the command line. As one example, consider the following unit that can decode
+base64 with a custom alphabet using `refinery.map` and `refinery.b64`:
+
+    from refinery import Unit, b64, map
+
+    class b64custom(Unit):
+        _b64alphabet = (
+            B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            B'abcdefghijklmnopqrstuvwxyz'
+            B'0123456789+/'
+        )
+
+        def __init__(self, alphabet=_b64alphabet):
+            if len(alphabet) != 64:
+                raise ValueError('Alphabet size must be 64')
+            super().__init__(alphabet=alphabet)
+
+        def process(self, data):
+            return data | map(self.args.alphabet, self._b64alphabet) | b64
+
+        def reverse(self, data):
+            return data | -b64 | map(self._b64alphabet, self.args.alphabet)
+
+The syntax does not work exactly as on the command line, but it has been designed to
+be as similar as possible:
+
+- The binary or operator `|` can be used to combine units into pipelines.
+- Combining a pipeline from the left with a byte string or io stream object will
+  invoke it, the result of the operation is the final output.
+- Unary negation of a reversible unit is equivalent to using the `-R` switch for
+  reverse mode.
+
+If you want to use frames in code, simply omit any pipe before a square bracked. For
+example, the first example from the `refinery.lib.frame` documentation translates to
+the following Python code:
+
+    In [1]: from refinery import *
+
+    In [2]: B'OOOOOOOO' | chop(2) [ ccp(B'F') | cca(B'.') ]
+    Out[2]: bytearray(b'FOO.FOO.FOO.FOO.')
 """
 import sys
 import os
@@ -28,7 +112,7 @@ import inspect
 from enum import IntEnum, Enum
 from functools import wraps
 from collections import OrderedDict
-from typing import Iterable, BinaryIO, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
+from typing import Iterable, BinaryIO, Type, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
 from argparse import (
     Namespace,
     ONE_OR_MORE,
@@ -621,6 +705,9 @@ class Executable(type):
     def __or__(cls, other):
         return cls().__or__(other)
 
+    def __neg__(cls):
+        return -cls()
+
     def __ror__(cls, other):
         return cls().__ror__(other)
 
@@ -911,15 +998,25 @@ class Unit(metaclass=Executable, abstract=True):
         except AttributeError:
             return self
 
-    def __getitem__(self, unit: 'Unit'):
+    def __getitem__(self, unit: Union['Unit', Type['Unit'], slice]):
         if isinstance(unit, type):
             unit = unit()
         alpha = self.__copy__()
+        if isinstance(unit, slice):
+            if unit.start or unit.stop or unit.step:
+                raise ValueError
+            alpha.args.squeeze = True
+            return alpha
         omega = unit.__copy__()
         alpha.args.nesting += 1
         omega.args.nesting -= 1
         omega.nozzle.source = alpha
         return omega
+
+    def __neg__(self):
+        copy = self.__copy__()
+        copy.args.reverse = True
+        return copy
 
     def __ror__(self, stream: Union[BinaryIO, ByteString]):
         if not isbuffer(stream):

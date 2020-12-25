@@ -31,7 +31,7 @@
   body {
     background-color: ${color_bg};
     color: ${color_fg};
-    font-size: 12pt;
+    font-size: 16pt;
   }
 
   @font-face {
@@ -52,7 +52,7 @@
   }
 
   #sidebar {
-    padding: 30px;
+    padding: 1vw;
     overflow: hidden;
   }
 
@@ -77,6 +77,9 @@
 
   h1, h2, h3, h4, h5 {
     font-weight: 300;
+  }
+  hr {
+    display: none;
   }
   h1 {
     font-size: 2.5em;
@@ -158,20 +161,15 @@
     #index code {
       background: transparent;
     }
-    #index h3 {
-      border-bottom: 1px solid ${color_fg};
-    }
     #index ul {
+      list-style-type: square;
       padding: 0;
     }
     // #index h4 { font-weight: bold; }
     #index h4 + ul {
       margin-bottom:.6em;
     }
-    /* Make TOC lists have 2+ columns when viewport is wide enough.
-       Assuming ~20-character identifiers and ~30% wide sidebar. */
-    @media (min-width: 200ex) { #index .two-column { column-count: 2 } }
-    @media (min-width: 300ex) { #index .two-column { column-count: 3 } }
+
 
   dl {
     margin-bottom: 2em;
@@ -305,12 +303,11 @@
     #content {
       width: 70%;
       max-width: 100ch;
-      padding: 3em 4em;
-      border-left: 1px solid ${color_fg};
+      padding: 1vw;
     }
     main {
       display: flex;
-      flex-direction: row-reverse;
+      flex-direction: row;
       justify-content: flex-end;
     }
     .toc ul ul,

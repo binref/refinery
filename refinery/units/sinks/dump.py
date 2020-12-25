@@ -44,11 +44,11 @@ class dump(Unit):
             raise ValueError('Can only use exactly one file in stream mode.')
         super().__init__(files=files, tee=tee, stream=stream, force=force)
         self.stream = None
-        self._formatted = not plain and any(self.has_format(f) for f in files)
+        self._formatted = not plain and any(self._has_format(f) for f in files)
         self._reset()
 
     @staticmethod
-    def has_format(filename):
+    def _has_format(filename):
         if not isinstance(filename, str):
             return False
         formatter = Formatter()
@@ -198,7 +198,7 @@ class dump(Unit):
                 except StopIteration:
                     self.exhausted = True
                 else:
-                    if self.has_format(path):
+                    if self._has_format(path):
                         path = self._format(path, chunk, index, **chunk.meta)
                     self.stream = self._open(path)
             yield chunk

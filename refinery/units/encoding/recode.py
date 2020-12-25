@@ -40,7 +40,7 @@ class recode(Unit):
             encerr=arg.as_option(encerr or errors or 'STRICT', Handler).value
         )
 
-    def detect(self, data):
+    def _detect(self, data):
         mv = memoryview(data)
         if not any(mv[1::2]): return 'utf-16le'
         if not any(mv[0::2]): return 'utf-16be'
@@ -51,7 +51,7 @@ class recode(Unit):
         return codec
 
     def _recode(self, enc, dec, encerr, decerr, data):
-        dec = dec or self.detect(data)
+        dec = dec or self._detect(data)
         return codecs.encode(codecs.decode(data, dec, errors=decerr), enc, errors=encerr)
 
     def reverse(self, data):
