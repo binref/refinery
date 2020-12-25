@@ -101,11 +101,23 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 
 Extract indicators from all files recursively enumerated inside the current directory:
 ```
-fread ./**/* [| xtp -qn6 ipv4 socket url email | dedup ]]
+fread "**" [| xtp -qn6 ipv4 socket url email | dedup ]]
+```
+Extract the largest piece of base64 encoded data from a BLOB and decode it:
+```
+emit sample.exe | carve -ds b64
 ```
 Convert the hard-coded IP address `0xC0A80C2A` in network byte order to a readable format:
 ```
 emit 0xC0A80C2A | pack -EB4 | pack -R [| sep . ]
+```
+Recursively list all files in the current directory SHA-256 hash:
+```
+fread "**" [| sha256 -t | cfmt {} {path} ]]
+```
+List PE file sections with their corresponding SHA-256 hash:
+```
+emit sample.exe | vsect [| sha256 -t | cfmt {} {path} ]]
 ```
 Extract the PowerShell payload from [a malicious XLS macro dropper](https://malshare.com/sample.php?action=detail&hash=c5e1106f9654a23320132cbc61b3f29d):
 ```
