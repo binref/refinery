@@ -27,7 +27,7 @@ simple XOR unit (albeit less versatile than the already existing `refinery.xor`)
     from refinery import Unit, arg
     import itertools
 
-    class rollxor(Unit):
+    class myxor (Unit):
         def __init__(self, key: arg(help='Encryption key')):
             pass
 
@@ -50,7 +50,7 @@ The option of writing an empty `__init__` was added because it is rarely needed 
 perform any processing of the input arguments. The command line help for this unit
 will look as follows:
 
-    usage: rollxor [-h] [-Q] [-0] [-v] key
+    usage: myxor [-h] [-Q] [-0] [-v] key
 
     positional arguments:
       key            Encryption key
@@ -149,7 +149,7 @@ class RefineryCriticalException(RuntimeError):
 
 class Entry:
     """
-    An empty class maker. Any entry point unit (i.e. any unit that can be executed
+    An empty class marker. Any entry point unit (i.e. any unit that can be executed
     via the command line) is an instance of this class.
     """
     pass
