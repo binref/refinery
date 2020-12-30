@@ -11,7 +11,7 @@ class carve(PatternExtractor):
     def __init__(
         self, format: arg.choice(choices=[p.name for p in formats], metavar='format',
             help='Specify one of the following formats: {choices}'),
-        unique: arg.switch('-q', help='Yield only match only once.') = False,
+        unique: arg.switch('-q', help='Yield every match only once.') = False,
         decode: arg.switch('-d', help='Automatically decode known patterns.') = False,
         single: arg.switch('-s', help='Only get the biggest match; equivalent to -qlt1') = False,
         min=1, max=None, len=None,
