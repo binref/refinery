@@ -9,6 +9,7 @@ jsbeautifier
 macholib
 msgpack
 numpy==1.19.3
+olefile
 openpyxl
 pefile
 phpserialize 

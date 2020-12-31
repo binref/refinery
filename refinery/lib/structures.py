@@ -3,13 +3,18 @@
 """
 Interfaces and classes to read structured data.
 """
+from __future__ import annotations
+
 import struct
 import functools
 import io
 import enum
 import weakref
 
-from typing import Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
+from typing import Literal, Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
+
+
+T = TypeVar('T', bound=ByteString)
 
 
 class EOF(ValueError):
@@ -37,41 +42,46 @@ class StreamDetour:
         self._stream.seek(self._cursor, io.SEEK_SET)
 
 
-class MemoryFile(io.RawIOBase):
+class MemoryFile(Generic[T]):
     """
     A thin wrapper around (potentially mutable) byte sequences which gives it the
     features of a file-like object.
     """
 
-    __slots__ = ['_data', '_cursor']
+    __slots__ = '_data', '_cursor'
+
+    closed: bool
+    _data: T
+    _cursor: int
 
     class SEEK(int, enum.Enum):
         CUR = io.SEEK_CUR
         END = io.SEEK_END
         SET = io.SEEK_SET
 
-    def __init__(self, data: Optional[ByteString] = None):
+    def __init__(self, data: Optional[T] = None) -> None:
         if data is None:
             data = bytearray()
         self._data = data
         self._cursor = 0
 
-    def close(self):
+    def close(self) -> None:
         self._data = None
 
-    def closed(self):
+    @property
+    def closed(self) -> bool:
         return self._data is None
 
-    def __enter__(self):
+    def __enter__(self) -> MemoryFile:
         return self
 
-    def __exit__(self, ex_type, ex_value, trace):
+    def __exit__(self, ex_type, ex_value, trace) -> bool:
         return False
 
-    def flush(self):
+    def flush(self) -> None:
         pass
 
-    def isatty(self):
+    def isatty(self) -> bool:
         return False
 
     def __iter__(self):
@@ -86,27 +96,27 @@ class MemoryFile(io.RawIOBase):
     def fileno(self) -> int:
         raise OSError
 
-    def readable(self):
-        return not self.closed()
+    def readable(self) -> bool:
+        return not self.closed
 
-    def seekable(self):
-        return not self.closed()
+    def seekable(self) -> bool:
+        return not self.closed
 
     @property
     def eof(self) -> bool:
-        return self.closed() or self._cursor >= len(self._data)
+        return self.closed or self._cursor >= len(self._data)
 
-    def writable(self):
-        if self.closed():
+    def writable(self) -> bool:
+        if self.closed:
             return False
         if isinstance(self._data, memoryview):
             return not self._data.readonly
         return isinstance(self._data, bytearray)
 
-    def read(self, size=-1) -> ByteString:
+    def read(self, size: int = -1) -> T:
         return self.read1(size)
 
-    def read1(self, size=-1) -> ByteString:
+    def read1(self, size: int = -1) -> T:
         beginning = self._cursor
         if size is None or size < 0:
             self._cursor = len(self._data)
@@ -121,7 +131,7 @@ class MemoryFile(io.RawIOBase):
             if self._data[k] == 0xA: return k
         return -1
 
-    def readline(self, size=-1) -> ByteString:
+    def readline(self, size: int = -1) -> T:
         beginning, end = self._cursor, len(self._data)
         if size is not None and size >= 0:
             end = beginning + size
@@ -129,7 +139,7 @@ class MemoryFile(io.RawIOBase):
         self._cursor = end if p < 0 else p + 1
         return self._data[beginning:self._cursor]
 
-    def readlines(self, hint=-1) -> Iterable[ByteString]:
+    def readlines(self, hint: int = -1) -> Iterable[T]:
         if hint is None or hint < 0:
             yield from self
         else:
@@ -151,16 +161,16 @@ class MemoryFile(io.RawIOBase):
     def tell(self) -> int:
         return self._cursor
 
-    def seekrel(self, offset) -> int:
+    def seekrel(self, offset: int) -> int:
         return self.seek(offset, io.SEEK_CUR)
 
-    def getbuffer(self) -> ByteString:
+    def getbuffer(self) -> T:
         return self._data
 
-    def getvalue(self) -> ByteString:
+    def getvalue(self) -> T:
         return self._data
 
-    def seek(self, offset, whence=io.SEEK_SET) -> int:
+    def seek(self, offset: int, whence=io.SEEK_SET) -> int:
         if whence == io.SEEK_SET:
             if offset < 0:
                 raise ValueError('no negative offsets allowed for SEEK_SET.')
@@ -173,7 +183,7 @@ class MemoryFile(io.RawIOBase):
         self._cursor = min(self._cursor, len(self._data))
         return self._cursor
 
-    def writelines(self, lines) -> None:
+    def writelines(self, lines: Iterable[ByteString]) -> None:
         for line in lines:
             self.write(line)
 
@@ -184,7 +194,7 @@ class MemoryFile(io.RawIOBase):
             self._cursor = size
         del self._data[self._cursor:]
 
-    def write(self, data) -> int:
+    def write(self, data: ByteString) -> int:
         beginning = self._cursor
         self._cursor += len(data)
         try:
@@ -200,16 +210,18 @@ class bitorder(str, enum.Enum):
     little = 'little'
 
 
-class StructReader(MemoryFile):
+class StructReader(MemoryFile[T]):
     """
     An extension of a `refinery.lib.structures.MemoryFile` which provides methods to
     read structured data.
     """
 
+    __slots__ = '_bbits', '_nbits', 'bitorder'
+
     class Unaligned(RuntimeError):
         pass
 
-    def __init__(self, data: Union[bytearray, bytes, memoryview], bo='little'):
+    def __init__(self, data: Union[bytearray, bytes, memoryview], bo: Literal['big', 'little'] = 'little'):
         super().__init__(data)
         self._bbits = 0
         self._nbits = 0
@@ -217,11 +229,13 @@ class StructReader(MemoryFile):
 
     def set_bitorder_big(self):
         self.bitorder = bitorder.big
+        return self
 
     def set_bitorder_little(self):
         self.bitorder = bitorder.little
+        return self
 
-    def readinto(self, b):
+    def readinto(self, b) -> int:
         size = super().readinto(b)
         if size != len(b):
             raise EOF
@@ -231,12 +245,12 @@ class StructReader(MemoryFile):
     def byteorder_format(self) -> str:
         return '<>'[int(self.bitorder is bitorder.big)]
 
-    def seek(self, offset, whence=io.SEEK_SET):
+    def seek(self, offset, whence=io.SEEK_SET) -> int:
         self._bbits = 0
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read1(self, size: Optional[int] = None):
+    def read1(self, size: Optional[int] = None) -> T:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
@@ -260,7 +274,7 @@ class StructReader(MemoryFile):
         """
         return not self._nbits
 
-    def byte_align(self, blocksize=1) -> Tuple[int, int]:
+    def byte_align(self, blocksize: int = 1) -> Tuple[int, int]:
         """
         This method clears the internal bit buffer and moves the cursor to the next byte. It returns a
         tuple containing the size and contents of the bit buffer.
@@ -273,7 +287,7 @@ class StructReader(MemoryFile):
         self.seekrel(mod and blocksize - mod)
         return nbits, bbits
 
-    def read_integer(self, length) -> int:
+    def read_integer(self, length: int) -> int:
         """
         Read `length` many bits from the underlying stream as an integer.
         """
@@ -310,12 +324,15 @@ class StructReader(MemoryFile):
         self._bbits = excess
         return result
 
-    def read_bytes(self, size) -> bytes:
+    def read_bytes(self, size: int) -> bytes:
         """
         The method reads `size` many bytes from the underlying stream starting at the current bit.
         """
         if self.byte_aligned:
-            return self.read(size)
+            data = self.read(size)
+            if not isinstance(data, bytes):
+                data = bytes(data)
+            return data
         return self.read_integer(size * 8).to_bytes(size, self.bitorder)
 
     def read_bit(self) -> int:

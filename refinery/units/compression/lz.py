@@ -84,7 +84,7 @@ class lzma(Unit):
         with MemoryFile() as output:
             pos, size = 0, 4096
             with MemoryFile(data) as stream:
-                while not stream.eof and not stream.closed():
+                while not stream.eof and not stream.closed:
                     pos = stream.tell()
                     try:
                         chunk = lz.decompress(stream.read(size))

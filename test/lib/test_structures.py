@@ -78,7 +78,7 @@ class TestStructures(TestBase):
             self.assertFalse(mem.writable())
             self.assertFalse(mem.readable())
             self.assertFalse(mem.seekable())
-            self.assertTrue(mem.closed())
+            self.assertTrue(mem.closed)
 
     def test_bitreader_be(self):
         data = 0b01010_10011101_0100100001_1111_0111101010000101010101010010010111100000101001010101100000001110010111110100111000_101
