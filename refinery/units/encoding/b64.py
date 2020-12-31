@@ -20,9 +20,8 @@ class b64(Unit):
     def reverse(self, data):
         return base64.b64encode(data, altchars=self.altchars)
 
-    def process(self, data):
+    def process(self, data: bytearray):
         if len(data) <= 1:
             raise ValueError('single byte can not be base64-decoded.')
-        if data:
-            data += B'=' * (-len(data) % 4)
-            return base64.b64decode(data, altchars=self.altchars)
+        data.extend(B'===')
+        return base64.b64decode(data, altchars=self.altchars)
