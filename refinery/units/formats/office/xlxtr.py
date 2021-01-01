@@ -3,11 +3,14 @@
 import openpyxl
 import xlrd
 import re
+import io
 import defusedxml
+import itertools
 import functools
 
 from ... import arg, Unit
 from ....lib.structures import MemoryFile
+from .. import UnpackResult, PathExtractorUnit
 
 defusedxml.defuse_stdlib()
 
@@ -76,7 +79,7 @@ class SheetReference:
                 break
 
 
-class xlxtr(Unit):
+class xlxtr(PathExtractorUnit):
     """
     Extract data from Microsoft Excel documents, both Legacy and new XML type
     documents. A sheet reference is of the form `B1` or `1.2`, both specifying
@@ -87,64 +90,89 @@ class xlxtr(Unit):
     Note that indices are 1-based.
     """
 
-    def __init__(self, *refs: arg(metavar='reference', type=SheetReference, help=(
-        'A sheet reference to be extracted. '
-        'If no sheet references are given, the unit lists all sheet names.'
-    ))):
-        super().__init__(refs=refs)
+    def __init__(
+        self, *paths, list=False, join=False, regex=False, fuzzy=False,
+        rows: arg.switch(help='Group results by row instead of column.') = False,
+    ):
+        super().__init__(*paths, list=list, join=join, regex=regex, fuzzy=fuzzy, rows=rows)
+
+    # def __init__(self, *refs: arg(metavar='reference', type=SheetReference, help=(
+    #     'A sheet reference to be extracted. '
+    #     'If no sheet references are given, the unit lists all sheet names.'
+    # ))):
+    #     super().__init__(refs=refs)
+
+    def _row_col_iter(self, nrows, ncols):
+        outer, inner = range(ncols), range(nrows)
+        if self.args.rows:
+            outer, inner = inner, outer
+        for col, row in itertools.product(outer, inner):
+            if self.args.rows:
+                row, col = col, row
+                yield str(row), self._col_translate(col), col, row
+            else:
+                yield self._col_translate(col), str(row), col, row
+
+    @staticmethod
+    def _col_translate(index):
+        alphabetic = ''
+        index += 1
+        while index:
+            index, letter = divmod(index - 1, 26)
+            alphabetic = chr(0x41 + letter) + alphabetic
+        return alphabetic
+
+    def _get_value(self, callable, col, row):
+        try:
+            value = callable(row, col)
+        except IndexError:
+            return None
+        if not value:
+            return None
+        if isinstance(value, str):
+            value = value.encode(self.codec)
+        else:
+            typename = type(value).__name__
+            self.log_warn(F'unable to handle value of type {typename} in ({col},{row}):', value)
+            raise ValueError
+        return value
 
     def _process_legacy(self, data):
-        import io
-
-        logfile = io.StringIO()
-        wb = xlrd.open_workbook(
-            file_contents=data,
-            logfile=logfile,
-            verbosity=self.args.verbose - 1,
-            on_demand=True
-        )
-
-        logfile.seek(0)
-        for entry in logfile:
-            entry = entry.strip()
-            if re.search(R'^[A-Z]+:', entry) or '***' in entry:
-                self.log_info(entry)
-
-        for ref in self.args.refs:
-            sh = wb.sheet_by_index(ref.get_sheet_index(wb.sheet_names()))
-            for cell in ref:
-                self.log_debug('emitting cell: ({},{})'.format(*cell))
-                col, row = cell
-                try:
-                    value = sh.cell_value(col - 1, row - 1)
-                except IndexError:
-                    continue
-                if isinstance(value, str):
-                    yield value.encode(self.codec)
-                else:
-                    self.log_warn(F'value not a string in ({col},{row}):', value)
-
-    def _process_xlsx(self, wb):
-        if not self.args.refs:
-            for name in wb.sheetnames:
-                yield name.encode(self.codec)
-            return
-        for ref in self.args.refs:
-            sh = wb.worksheets[ref.get_sheet_index(wb.sheetnames)]
-            for cell in ref:
-                self.log_debug('emitting cell: ({},{})'.format(*cell))
-                value = sh.cell(*cell).value
-                if value:
-                    yield value.encode(self.codec)
-
-    def process(self, data):
-        try:
-            workbook = openpyxl.load_workbook(
-                MemoryFile(data),
-                read_only=True
+        with io.StringIO() as logfile:
+            wb = xlrd.open_workbook(
+                file_contents=data,
+                logfile=logfile,
+                verbosity=self.args.verbose - 1,
+                on_demand=True
             )
+            logfile.seek(0)
+            for entry in logfile:
+                entry = entry.strip()
+                if re.search(R'^[A-Z]+:', entry) or '***' in entry:
+                    self.log_info(entry)
+        for name in wb.sheet_names():
+            sheet = wb.sheet_by_name(name)
+            self.log_info(F'iterating {sheet.ncols} columns and {sheet.nrows} rows')
+            for outer, inner, col, row in self._row_col_iter(sheet.nrows, sheet.ncols):
+                value = self._get_value(sheet.cell_value, col, row)
+                if value is not None:
+                    yield UnpackResult(F'{name}/{outer}/{inner}', value)
+
+    def _process_xlsx(self, data):
+        workbook = openpyxl.load_workbook(MemoryFile(data), read_only=True)
+        for name in workbook.sheetnames:
+            sheet = workbook.worksheets[name]
+            cells = [row for row in sheet.iter_rows(values_only=True)]
+            nrows = len(cells)
+            ncols = max(len(row) for row in cells)
+            for outer, inner, col, row in self._row_col_iter(nrows, ncols):
+                value = self._get_value(lambda c, r: cells[r][c], col, row)
+                if value is not None:
+                    yield UnpackResult(F'{name}/{outer}/{inner}', value)
+
+    def unpack(self, data):
+        try:
+            yield from self._process_xlsx(data)
         except Exception:
             self.log_info('reverting to xlrd module')
             yield from self._process_legacy(data)
-        else:
-            yield from self._process_xlsx(workbook)
