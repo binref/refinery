@@ -29,9 +29,10 @@ class UnpackResult:
             self.data = self.data()
         return self.data
 
-    def __init__(self, path: str, data: Union[ByteString, Callable[[], ByteString]]):
+    def __init__(self, path: str, data: Union[ByteString, Callable[[], ByteString]], **meta):
         self.path = path
         self.data = data
+        self.meta = meta
 
 
 class EndOfStringNotFound(ValueError):
@@ -48,7 +49,7 @@ class PathPattern:
         elif not regex:
             if fuzzy and not pp.startswith('*') and not pp.endswith('*'):
                 pp = F'*{pp}*'
-            self.stops = [pp[:k] for k, c in enumerate(pp) if c in '/*?']
+            self.stops = [stop for stop in re.split(R'(.*?[/*?])', pp) if stop]
             pp = fnmatch.translate(pp)
         self.pattern = re.compile(pp)
 
@@ -136,7 +137,8 @@ class PathExtractorUnit(Unit, abstract=True):
         for p in self.args.patterns:
             for result in results:
                 path = result.path
-                path = '/'.join(path.split('\\'))
+                if '\\' in path:
+                    path = '/'.join(path.split('\\'))
                 if not p.check(path):
                     continue
                 if not self.args.list:
@@ -155,4 +157,4 @@ class PathExtractorUnit(Unit, abstract=True):
                     continue
                 else:
                     self.log_info(path)
-                yield self.labelled(result.get_data(), path=path)
+                yield self.labelled(result.get_data(), path=path, **result.meta)
