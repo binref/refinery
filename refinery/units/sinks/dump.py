@@ -8,6 +8,7 @@ from string import Formatter
 
 from .. import arg, Unit, RefineryCriticalException
 from ...lib.mime import file_extension_from_data, NoMagicAvailable
+from ..strings.cfmt import ByteStringWrapper
 
 
 class dump(Unit):
@@ -199,7 +200,8 @@ class dump(Unit):
                     self.exhausted = True
                 else:
                     if self._has_format(path):
-                        path = self._format(path, chunk, index, **chunk.meta)
+                        meta = ByteStringWrapper.FormatMap(chunk, self.codec)
+                        path = self._format(path, chunk, index, **meta)
                     self.stream = self._open(path)
             yield chunk
 
