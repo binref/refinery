@@ -617,18 +617,19 @@ class DelayedNumSeqArgument(DelayedArgument):
     def ev(self, expression: Union[str, ByteString]) -> Iterable[int]:
         """
         Final modifier `e:expression` or `eval:expression`; uses a `refinery.lib.argformats.PythonExpression`
-        parser to process expressions that may contain the variable `N` whose value will be the size of the
-        input data.
+        parser to process expressions. The expression can contain any meta variable that is attached to the
+        chunk. The `refinery.trivia` unit can be used to attach information such as chunk size and the chunk
+        index within the current frame (see `refinery.lib.frame`).
         """
         if not isinstance(expression, str):
             try:
                 expression = expression.decode('ascii')
             except AttributeError:
-                return expression
-        ev = PythonExpression(expression, 'N')
-        if 'N' in ev.variables:
-            return lambda d: self._iter(ev(N=len(d)))
-        return self._iter(ev())
+                raise ValueError(F'Unexpected input to eval handler: {expression!r}')
+        evaluator = PythonExpression(expression)
+        if evaluator.variables:
+            return lambda d: self._iter(evaluator(**d))
+        return self._iter(evaluator())
 
     @handler.register('unpack', final=True)
     def unpack(self, expression: str, size=None) -> Iterable[int]:
