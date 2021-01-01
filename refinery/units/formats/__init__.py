@@ -80,6 +80,8 @@ class PathExtractorUnit(Unit, abstract=True):
         regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
         fuzzy: arg.switch('-z', help='Wrap wildcard expressions in asterixes automatically '
             '(no effect on regular expressions).') = False,
+        meta: arg('-m', metavar='NAME',
+            help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
         **keywords
     ):
         paths = paths or ['*']
@@ -90,6 +92,7 @@ class PathExtractorUnit(Unit, abstract=True):
             ],
             list=list,
             join=join,
+            meta=meta,
             **keywords
         )
 
@@ -122,14 +125,15 @@ class PathExtractorUnit(Unit, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        try:
-            root = data['path']
-        except KeyError:
-            root = ''
-
         results = []
+        metavar = self.args.meta.decode(self.codec)
         paths = collections.defaultdict(set)
         self.__unknown = 0
+
+        try:
+            root = data[metavar]
+        except KeyError:
+            root = ''
 
         for result in self.unpack(data):
             if self._check_path(result): results.append(result)
@@ -157,4 +161,5 @@ class PathExtractorUnit(Unit, abstract=True):
                     continue
                 else:
                     self.log_info(path)
-                yield self.labelled(result.get_data(), path=path, **result.meta)
+                result.meta[metavar] = path
+                yield self.labelled(result.get_data(), **result.meta)

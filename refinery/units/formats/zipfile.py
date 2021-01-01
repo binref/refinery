@@ -11,7 +11,7 @@ class xtzip(PathExtractorUnit):
     Extract files from a Zip archive.
     """
     def __init__(
-        self, *paths, list=False, join=False,
+        self, *paths, list=False, join=False, meta=b'path',
         pwd: arg('-p', help='Optionally specify an extraction password.') = B''
     ):
         super().__init__(*paths, list=list, join=join, pwd=pwd)
