@@ -54,14 +54,13 @@ class peek(HexViewer):
                 try:
                     decoded: str = value.decode(self.codec)
                     assert decoded.isprintable()
-                    decoded = F's:{decoded}'
                 except UnicodeDecodeError:
                     decoded = None
                 except AssertionError:
                     decoded = None
                 value = decoded or F'h:{value.hex()}'
             elif isinstance(value, int):
-                value = F'e:0x{value:X}'
+                value = F'0x{value:X}'
             metavar = F'{name:>{width}} = {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
