@@ -11,7 +11,7 @@ import io
 import enum
 import weakref
 
-from typing import Literal, Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
+from typing import Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
 
 
 T = TypeVar('T', bound=ByteString)
@@ -221,7 +221,7 @@ class StructReader(MemoryFile[T]):
     class Unaligned(RuntimeError):
         pass
 
-    def __init__(self, data: Union[bytearray, bytes, memoryview], bo: Literal['big', 'little'] = 'little'):
+    def __init__(self, data: Union[bytearray, bytes, memoryview], bo: str = 'little'):
         super().__init__(data)
         self._bbits = 0
         self._nbits = 0
