@@ -148,7 +148,8 @@ class PythonExpression:
         ast.USub
     }
 
-    def __init__(self, definition, *variables, **constants):
+    def __init__(self, definition, *variables, constants=None, all_variables_allowed=False):
+        constants = constants or {}
         variables = set(variables) | set(constants)
         try:
             expression = ast.parse(definition)
@@ -167,7 +168,7 @@ class PythonExpression:
                 'the following operations are not allowed: {}'.format(
                     ', '.join(t.__name__ for t in types - self._ALLOWED_NODE_TYPES))
             )
-        if not names <= variables:
+        if not all_variables_allowed and not names <= variables:
             raise VariablesMissing(
                 'the following variable names are unknown: {}'.format(
                     ', '.join(names - variables))
@@ -626,9 +627,11 @@ class DelayedNumSeqArgument(DelayedArgument):
                 expression = expression.decode('ascii')
             except AttributeError:
                 raise ValueError(F'Unexpected input to eval handler: {expression!r}')
-        evaluator = PythonExpression(expression)
+        evaluator = PythonExpression(expression, all_variables_allowed=True)
         if evaluator.variables:
-            return lambda d: self._iter(evaluator(**d))
+            def finalize(chunk):
+                return self._iter(evaluator(**chunk.meta))
+            return finalize
         return self._iter(evaluator())
 
     @handler.register('unpack', final=True)
