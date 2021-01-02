@@ -1,5 +1,12 @@
 # Binary Refinery Changelog
 
+## Version 0.3.21
+- Adds the `xtdoc` unit which can extract more files from Office documents than `xtzip`.
+- Adds the `trivia` unit which can be used to attach certain meta variables. Moving forward, this will be the preferred way to access simple invariants of a binary chunk. For now, it can attach the integer variables `size` and `index`, containing the size of the data in bytes and the chunk index within the current frame, respectively. The `eval:` handler for numeric multibin values no longer accepts the special variable `N` to represent the chunk size as this functionality can be recovered by preprocessing each chunk with `trivia` and using the variable `size` instead of `N`.
+- The `carve-pe` unit is now a path extractor unit (TL/DR: More command line options).
+
+## Version 0.3.20 - documentation
+
 ## Version 0.3.19 - bufgfix release
 
 ## Version 0.3.18
