@@ -40,3 +40,11 @@ class TestCarvePE(TestUnitBase):
             '84ecbad107cfa8012799c66f98d0e20fb3b8fb269d8c5c198a0f76f25e2c7902')
         for a, b in zip(samples, result):
             self.assertEqual(a, b)
+
+    def test_incomplete_header(self):
+        unit = self.load(keep_root=True)
+        data = bytes.fromhex(
+            '4D 5A 90 00 03 00 00 00 04 00 00 00 FF FF 00 00 B8 00 00 00 00 00 00 00'  # MZ......................
+            '40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00'  # @.......................
+        )
+        self.assertEqual(unit(data), B'')

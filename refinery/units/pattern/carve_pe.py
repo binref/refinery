@@ -35,20 +35,23 @@ class carve_pe(PathExtractorUnit):
         mv = memoryview(data)
 
         while True:
-            p = data.find(B'MZ', cursor)
-            if p < cursor: break
-            cursor = p + 2
-            k, = unpack('H', mv[p + 0x3C:p + 0x3E])
-            if mv[p + k:p + k + 2] != B'PE':
+            offset = data.find(B'MZ', cursor)
+            if offset < cursor: break
+            cursor = offset + 2
+            ntoffset = mv[offset + 0x3C:offset + 0x3E]
+            if len(ntoffset) < 2:
+                return
+            ntoffset, = unpack('H', ntoffset)
+            if mv[offset + ntoffset:offset + ntoffset + 2] != B'PE':
                 continue
             try:
-                pe = PE(data=data[p:], fast_load=True)
+                pe = PE(data=data[offset:], fast_load=True)
             except PEFormatError as err:
                 self.log_debug('parsing of PE header at 0x{p:08X} failed:', err)
                 continue
 
             pesize = get_pe_size(pe, memdump=self.args.memdump)
-            pedata = mv[p:p + pesize]
+            pedata = mv[offset:offset + pesize]
             info = {}
             if self.args.fileinfo:
                 try: info = pemeta.parse_file_info(pe) or {}
@@ -57,15 +60,15 @@ class carve_pe(PathExtractorUnit):
                 path = info['OriginalFilename']
             except KeyError:
                 extension = 'exe' if pe.is_exe() else 'dll' if pe.is_dll() else 'sys'
-                path = F'carve-0x{p:08X}.{extension}'
+                path = F'carve-0x{offset:08X}.{extension}'
 
-            if p > 0 or self.args.keep_root:
-                yield UnpackResult(path, pedata, offset=p)
-                self.log_info(F'extracted PE file of size 0x{pesize:08X} from 0x{p:08X}')
+            if offset > 0 or self.args.keep_root:
+                yield UnpackResult(path, pedata, offset=offset)
+                self.log_info(F'extracted PE file of size 0x{pesize:08X} from 0x{offset:08X}')
             else:
-                self.log_info(F'ignored root file of size 0x{pesize:08X} from 0x{p:08X}')
+                self.log_info(F'ignored root file of size 0x{pesize:08X} from 0x{offset:08X}')
 
-            if not p or self.args.recursive:
+            if not offset or self.args.recursive:
                 cursor += pe.OPTIONAL_HEADER.SizeOfHeaders
             else:
                 cursor += pesize
