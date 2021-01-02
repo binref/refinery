@@ -36,5 +36,5 @@ class rex(RegexUnit, PatternExtractor):
             meta = {}
         self.log_debug('regular expression:', self.args.regex)
         transformations = [TransformSubstitutionFactory(t, meta) for t in self.args.transformation] or [lambda m: m[0]]
-        transformations = [lambda m: self.labelled(t(m), **m.groupdict()) for t in transformations]
+        transformations = [lambda m, mt=t: self.labelled(mt(m), **m.groupdict()) for t in transformations]
         yield from self.matches_filtered(memoryview(data), self.args.regex, *transformations)

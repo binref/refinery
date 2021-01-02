@@ -61,3 +61,8 @@ class TestRex(TestUnitBase):
         for test in tests:
             result = unit(test)
             self.assertEqual(result, test)
+
+    def test_multiple_outputs(self):
+        data = b'AXBXC'
+        unit = self.load('(.)X(.)X(.)', '1$1', '2$2', '3$3', '[]')
+        self.assertEqual(unit(data), B''.join((B'1A', B'2B', B'3C')))
