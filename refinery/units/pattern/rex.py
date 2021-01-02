@@ -6,9 +6,7 @@ from . import arg, RegexUnit, PatternExtractor, TransformSubstitutionFactory
 
 class rex(RegexUnit, PatternExtractor):
     """
-    A binary grep which can apply a transformation to each match. Each match is an
-    individual output and standard forking settings apply. Two additional special
-    multibin handlers are available for regular expressions:
+    A binary grep which can apply a transformation to each match. Each match is an individual output.
     """
     def __init__(
         self, regex,
