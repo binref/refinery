@@ -626,7 +626,7 @@ class DelayedNumSeqArgument(DelayedArgument):
             try:
                 expression = expression.decode('ascii')
             except AttributeError:
-                raise ValueError(F'Unexpected input to eval handler: {expression!r}')
+                return expression
         evaluator = PythonExpression(expression, all_variables_allowed=True)
         if evaluator.variables:
             def finalize(chunk):
