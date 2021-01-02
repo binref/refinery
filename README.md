@@ -84,44 +84,60 @@ A complete reference of all units is [available on the front page of the documen
 
 ## Examples
 
-### AES Encryption
+### General Purpose
 
-Assume that `data` is a file which was encrypted with 256 bit AES in CBC mode. The key was derived from the secret passphrase `swordfish` using the PBKDF2 key derivation routine using the salt `s4lty`. The IV is prefixed to the buffer as the first 16 bytes. It can be decrypted with the following pipeline:
+Extract the largest piece of base64 encoded data from a BLOB and decode it:
 ```
-emit data | aes --mode cbc --iv cut::16 PBKDF2[32,s4lty]:swordfish
-```
-Here, both `cut:0:16` and `PBKDF2[32,s4lty]:swordfish` are multibin arguments that use a special handler. In this case, `cut:0:16` extracts the slice `0:16` (i.e. the first 16 bytes) from the input data - after application of this multibin handler, the input data has the first 16 bytes removed and the argument `iv` is set to these exact 16 bytes. The final argument specifies the 32 byte encryption key: The handler `PBKDF2[32,s4lty]` on the other hand instructs refinery to create an instance of the PBKDF2 unit as if it had been given the command line parameters `32` and `s4lty` in this order and process the byte string `swordfish` with this unit. As a simple test, the following pipeline will encrypt and decrypt a sample piece of text:
-```
-emit "Once upon a time, at the foot of a great mountain ..." ^
-    | aes PBKDF2[32,s4lty]:swordfish --iv md5:X -R | ccp md5:X ^
-    | aes PBKDF2[32,s4lty]:swordfish --iv cut:0:16 
+emit file.exe | carve -ds b64
 ```
 
-### Grab Bag of Examples
+Carve a ZIP file from a buffer, pick a DLL from it, and display information about it:
+```
+emit file.bin | carve-zip | xtzip file.dll | pemeta
+```
+
+List PE file sections with their corresponding SHA-256 hash:
+```
+emit file.exe | vsect [| sha256 -t | cfmt {} {path} ]]
+```
+
+Recursively list all files in the current directory SHA-256 hash:
+```
+fread "**" [| sha256 -t | cfmt {} {path} ]]
+```
 
 Extract indicators from all files recursively enumerated inside the current directory:
 ```
 fread "**" [| xtp -qn6 ipv4 socket url email | dedup ]]
 ```
-Extract the largest piece of base64 encoded data from a BLOB and decode it:
-```
-emit sample.exe | carve -ds b64
-```
+
 Convert the hard-coded IP address `0xC0A80C2A` in network byte order to a readable format:
 ```
 emit 0xC0A80C2A | pack -EB4 | pack -R [| sep . ]
 ```
-Recursively list all files in the current directory SHA-256 hash:
+
+Perform a single byte XOR brute force and attempt to extract a PE file payload in every iteration:
 ```
-fread "**" [| sha256 -t | cfmt {} {path} ]]
+emit file.bin | rep 0x100 [| trivia | xor var:index | carve-pe -R | peek | dump ]
 ```
-List PE file sections with their corresponding SHA-256 hash:
+
+## Malware Config Examples
+
+Extract a RemCos C2 server:
 ```
-emit sample.exe | vsect [| sha256 -t | cfmt {} {path} ]]
+emit c0019718c4d4538452affb97c70d16b7af3e4816d059010c277c4e579075c944 |
+ perc SETTINGS [| put keylen unpack:cut::1 | rc4 cut::keylen | xtp socket ]
 ```
-Extract the PowerShell payload from [a malicious XLS macro dropper](https://malshare.com/sample.php?action=detail&hash=c5e1106f9654a23320132cbc61b3f29d):
+
+Extract an AgentTesla configuration:
 ```
-emit MIL0001781108.xls            \
+emit fb47a566911905d37bdb464a08ca66b9078f18f10411ce019e9d5ab747571b40 |
+ dnfields [| aes x::32 --iv x::16 -Q ]]| rex -M "((??email))\n(.*)\n(.*)\n:Zone" addr=$1 pass=$2 host=$3
+```
+
+Extract the PowerShell payload from a malicious XLS macro dropper:
+```
+emit 81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b \
 [| xlxtr 9.5:11.5 15.15 12.5:14.5 \
  [| scope -n 3                    \
   | chop -t 5                     \
@@ -138,15 +154,28 @@ And get the domains for the next stage:
 ```
 emit payload.ps1 | carveb64z | deob-ps1 | carveb64z | deob-ps1 | xtp -f domain
 ```
-Exctract the configuration of [unpacked HawkEye samples](https://malshare.com/sample.php?action=detail&hash=30ae8004a14f188d40c024124022d63d):
+Exctract the configuration of unpacked HawkEye samples:
 ```
-emit 30ae8004a14f188d40c024124022d63d                \
+emit ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c \
 | xtp guid                                           \
 [| PBKDF2 48 rep[8]:H:00                             \
  | cca perc[RCDATA]:30ae8004a14f188d40c024124022d63d \
  | aes -Q CBC x::32 --iv x::16                       \
 ]                                                    \
 | dnds
+```
+
+### AES Encryption
+
+Assume that `data` is a file which was encrypted with 256 bit AES in CBC mode. The key was derived from the secret passphrase `swordfish` using the PBKDF2 key derivation routine using the salt `s4lty`. The IV is prefixed to the buffer as the first 16 bytes. It can be decrypted with the following pipeline:
+```
+emit data | aes --mode cbc --iv cut::16 PBKDF2[32,s4lty]:swordfish
+```
+Here, both `cut:0:16` and `PBKDF2[32,s4lty]:swordfish` are multibin arguments that use a special handler. In this case, `cut:0:16` extracts the slice `0:16` (i.e. the first 16 bytes) from the input data - after application of this multibin handler, the input data has the first 16 bytes removed and the argument `iv` is set to these exact 16 bytes. The final argument specifies the 32 byte encryption key: The handler `PBKDF2[32,s4lty]` on the other hand instructs refinery to create an instance of the PBKDF2 unit as if it had been given the command line parameters `32` and `s4lty` in this order and process the byte string `swordfish` with this unit. As a simple test, the following pipeline will encrypt and decrypt a sample piece of text:
+```
+emit "Once upon a time, at the foot of a great mountain ..." ^
+    | aes PBKDF2[32,s4lty]:swordfish --iv md5:X -R | ccp md5:X ^
+    | aes PBKDF2[32,s4lty]:swordfish --iv cut:0:16 
 ```
 
 
