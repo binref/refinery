@@ -40,9 +40,9 @@ Some known issues arise when [setup-venv.py](setup-venv.py) is instructed to cre
 
 ### Manual Installation
 
-To install refinery manually, simply set the environment variable `REFINERY_PREFIX` to the prefix you want and use pip. For example:
+To install or update refinery manually, simply set the environment variable `REFINERY_PREFIX` to the prefix you want and use pip. For example:
 ```
-REFINERY_PREFIX=r. pip3 install -e binary-refinery
+REFINERY_PREFIX=r. pip3 install -U binary-refinery
 ```
 to install refinery into the current Python environment with prefix `r.`. As mentioned above, the special prefix `!` will have the effect that no shell commands are created and the refinery will be installed only as a library.
 
