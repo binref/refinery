@@ -13,7 +13,7 @@ class blz(Unit):
     implementation: It requires a lot of time & memory.
     """
     def _begin(self, data):
-        self._src = StructReader(memoryview(data).toreadonly())
+        self._src = StructReader(memoryview(data))
         self._dst = MemoryFile(bytearray())
         return self
 
