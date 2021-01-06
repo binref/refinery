@@ -116,6 +116,13 @@ class MemoryFile(Generic[T]):
     def read(self, size: int = -1) -> T:
         return self.read1(size)
 
+    def peek(self, size: int = -1) -> memoryview:
+        cursor = self._cursor
+        mv = memoryview(self._data)
+        if size is None or size < 0:
+            return mv[cursor:]
+        return mv[cursor:cursor + size]
+
     def read1(self, size: int = -1) -> T:
         beginning = self._cursor
         if size is None or size < 0:
