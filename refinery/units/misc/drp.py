@@ -28,35 +28,39 @@ class drp(Unit):
     in a chunk of data. The unit computes a suffix tree which may require a lot of
     memory for large buffers.
     """
-    @staticmethod
-    def _leafcount(node: Node):
-        if not node.children:
-            return 1
-        return sum(drp._leafcount(c) for c in node)
-
     def process(self, data):
         with stackdepth(len(data)):
-            scan = SuffixTree(memoryview(data))
+            tree = SuffixTree(memoryview(data))
+            scan = {}
 
-        with stackdepth(len(scan.data)):
-            prevalence = {bytes(node.label): drp._leafcount(node) for node in scan}
+        def leafcount(node: Node):
+            if not node.children:
+                return 1
+            try:
+                return scan[node]
+            except KeyError:
+                scan[node] = count = sum(leafcount(c) for c in node)
+                return count
 
-        del scan
-        mean = np.fromiter(prevalence.values(), dtype=np.float).mean()
+        with stackdepth(len(tree.data)):
+            scan = {bytes(node.label): leafcount(node) for node in tree}
 
-        for pattern, performance in list(prevalence.items()):
+        del tree
+        mean = np.fromiter(scan.values(), dtype=np.float).mean()
+
+        for pattern, performance in list(scan.items()):
             if performance < mean:
-                prevalence.pop(pattern)
+                scan.pop(pattern)
 
-        patterns = set(prevalence)
+        patterns = set(scan)
         finished = False
 
         while not finished:
             finished = True
             for r in patterns:
                 for p in patterns:
-                    if r in p and prevalence[r] > prevalence[p] > prevalence[r] - mean:
-                        prevalence.pop(r)
+                    if r in p and scan[r] > scan[p] > scan[r] - mean:
+                        scan.pop(r)
                         patterns.discard(r)
                         finished = False
                         break
@@ -66,7 +70,7 @@ class drp(Unit):
         best_patterns = []
         best_performance = 0
 
-        for pattern, count in prevalence.items():
+        for pattern, count in scan.items():
             performance = len(pattern) * count
             if performance >= best_performance:
                 if performance > best_performance:

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from abc import ABCMeta
 from io import BytesIO
-from typing import ByteString, List, Dict, Optional
+from typing import Any, ByteString, Iterable, List, Dict, Optional
 
 
 class NodeMeta(ABCMeta):
@@ -34,8 +34,9 @@ class Node(metaclass=NodeMeta):
 
     @property
     def rootpath(self) -> Iterable[Node]:
-        if self.link is not None:
-            yield from self.link.rootpath
+        if self.link is None:
+            return
+        yield from self.link.rootpath
         yield self
 
     def visualize(self, depth=0, **kwargs):
@@ -61,12 +62,6 @@ class Node(metaclass=NodeMeta):
         for child in self.children.values():
             child.fixlinks()
             child.link = self
-
-    def __hash__(self) -> int:
-        return hash((self.start, self.end))
-
-    def __eq__(self, node) -> bool:
-        return hash(self) == hash(node)
 
     def __repr__(self) -> str:
         label = bytes(self.label).decode('utf8', errors='backslashreplace')
@@ -129,7 +124,7 @@ class SuffixTree:
 
         self.root.fixlinks()
 
-    def __iter__(self) -> Itarable[Node]:
+    def __iter__(self) -> Iterable[Node]:
         yield from self.root.children.values()
 
     def traversable(self, node):
