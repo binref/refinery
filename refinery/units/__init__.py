@@ -1108,11 +1108,11 @@ class Unit(metaclass=Executable, abstract=True):
         except StopIteration:
             return B''
 
-    def act(self, data: Union[Chunk, ByteString]) -> Union[ByteString, Chunk, None]:
+    def act(self, data: Union[Chunk, ByteString]) -> Union[ByteString, Chunk, Type[None]]:
         op = self.reverse if self.args.reverse else self.process
         return op(self.args @ data)
 
-    def __call__(self, data: Union[ByteString, Chunk, None] = None) -> bytes:
+    def __call__(self, data: Union[ByteString, Chunk, Type[None]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
