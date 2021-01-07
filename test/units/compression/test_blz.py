@@ -18,3 +18,9 @@ class TestBriefLZ(TestUnitBase):
         X = M | C
         self.assertEqual(len(X), 29)
         self.assertEqual(X | D, M)
+
+    def test_malware_sample(self):
+        C = self.load(reverse=True)
+        D = self.load()
+        M = self.download_from_malshare('2579bc4cd0d5f76d1a2937a0e0eb0256f2a9f2f8a30c1da694be66bfa04dc740')
+        self.assertEqual(M | C | D, M)

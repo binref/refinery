@@ -204,7 +204,7 @@ class blz(Unit):
             length = 0
             offset = 0
             sector = None
-            while node.children:
+            while node.children and length < len(rest):
                 for child in node.children.values():
                     if tree.data[child.start] == rest[length]:
                         node = child
