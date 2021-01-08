@@ -1,8 +1,6 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-tlds = [
- 'xn\\-\\-vermgensberatung\\-pwb',
+tlds = ['xn\\-\\-vermgensberatung\\-pwb',
  'xn\\-\\-vermgensberater\\-ctb',
  'xn\\-\\-clchc0ea0b2g2a9gcd',
  'xn\\-\\-w4r85el8fhu5dnra',

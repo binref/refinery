@@ -14,7 +14,7 @@ template = '''
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 {variable} = {contents}
-'''
+'''.lstrip()
 
 
 def normalize(data, *required):
@@ -35,5 +35,5 @@ if __name__ == '__main__':
     with open(os.path.join('.', 'refinery', 'lib', 'patterns', 'tlds.py'), 'w') as stream:
         stream.write(template.format(
             variable='tlds',
-            contents=pprint.pformat(tlds).replace('[', '[\n ')
+            contents=pprint.pformat(tlds)
         ))
