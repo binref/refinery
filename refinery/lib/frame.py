@@ -114,6 +114,7 @@ Note that `refinery.sep` makes all chunks in the frame visible by default, becau
 intended to sit at the end of a frame. Otherwise, `NaNaNaNaNaNaNaNa` and `Batman` in the
 above example would not be separated by a dash.
 """
+import copy
 import os
 
 from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
@@ -251,6 +252,7 @@ class Chunk(bytearray):
         for key, value in parent._meta.items():
             if key not in self._meta:
                 self._meta[key] = value
+        return self
 
     @classmethod
     def unpack(cls, stream):
@@ -295,10 +297,9 @@ class Chunk(bytearray):
         return Chunk(self, self._path, self._view, self._meta, self._fill)
 
     def __deepcopy__(self, memo):
-        from copy import deepcopy
         copy = Chunk(self, self._path, self._view, self._fill)
         memo[id(self)] = copy
-        copy._meta = deepcopy(self._meta, memo)
+        copy._meta = copy.deepcopy(self._meta, memo)
         return copy
 
 
@@ -454,9 +455,7 @@ class Framed:
     def _generate_chunks(self, parent: Chunk):
         if not self.squeeze:
             for item in self.action(parent):
-                item = item.__copy__()
-                item.inherit(parent)
-                yield item
+                yield copy.copy(item).inherit(parent)
             return
         it = self.action(parent)
         try:
