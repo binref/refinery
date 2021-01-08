@@ -74,20 +74,21 @@ second example, the expression
 will be parsed as the hexadecimal representation of the SHA256 hash of the file `foobar.txt`.
 """
 import ast
+import itertools
 
-from itertools import cycle, count, chain
 from argparse import ArgumentTypeError
 from contextlib import suppress
-from functools import update_wrapper
+from functools import update_wrapper, reduce
 from typing import Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 
 from ..lib.frame import Chunk
 from ..lib.tools import isbuffer
 from ..lib.loader import resolve, EntryNotFound
 
-FinalType = TypeVar('T')
+FinalType = TypeVar('FinalType')
+
 DelayedType = Callable[[ByteString], FinalType]
-MaybeDelayedType = Union[DelayedType, FinalType]
+MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 
 
 class ParserError(ArgumentTypeError): pass
@@ -185,7 +186,7 @@ class PythonExpression:
         values.update(self.constants)
         for v in self.variables:
             if v not in values:
-                raise ValueError(F'unbound variable {v}, cannot evaluate')
+                raise VariableMissing(v)
         return eval(self.definition, None, values)
 
     @classmethod
@@ -316,6 +317,10 @@ class DelayedArgumentDispatch:
             unit = self._get_unit(modifier, *args)
             if not unit:
                 raise ArgumentTypeError(F'failed to build unit {modifier}')
+            # if isinstance(data, str):
+            #     data = data.encode(unit.codec)
+            # if not isbuffer(data):
+            #     raise ArgumentTypeError(F'Argument {data!r} could not be converted to a byte string.')
             result = unit.act(data)
             return result if isbuffer(result) else B''.join(result)
 
@@ -350,6 +355,7 @@ class DelayedArgument(LazyEvaluation):
     _ARG_SPLIT_TOKEN = ','
 
     def __init__(self, expression: str):
+        self.expression = expression
         self.modifiers = []
         self.finalized = False
         while not self.finalized:
@@ -406,7 +412,7 @@ class DelayedArgument(LazyEvaluation):
         arg = self.seed
         mod = iter(self.modifiers)
         if not self.finalized:
-            mod = chain(((None, ()),), mod)
+            mod = itertools.chain(((None, ()),), mod)
         for name, arguments in mod:
             if isbuffer(arg):
                 arg = Chunk(arg)
@@ -577,6 +583,16 @@ def multibin(expression: Union[str, bytes, bytearray]) -> Union[bytes, DelayedBi
     return arg
 
 
+def LazyPythonExpression(expression: str, process: Optional[Callable] = None, **constants) -> MaybeDelayedType[Any]:
+    process = process or (lambda x: x)
+    parsed = PythonExpression(expression, constants=constants, all_variables_allowed=True)
+    if parsed.variables:
+        def evaluate(data: Chunk):
+            return process(parsed(**data.meta))
+        return evaluate
+    return process(parsed())
+
+
 class DelayedNumSeqArgument(DelayedArgument):
     """
     A parser for sequences of numeric arguments. As `refinery.lib.argformats.DelayedNumSeqArgument.handler`
@@ -610,12 +626,12 @@ class DelayedNumSeqArgument(DelayedArgument):
         and uses `refinery.lib.argformats.multibin` to parse it if that fails.
         """
         try:
-            return self._iter(PythonExpression.evaluate(expression))
+            return LazyPythonExpression(expression, self._iter)
         except Exception:
             return self._mbin(expression)
 
     @handler.register('e', 'eval')
-    def ev(self, expression: Union[str, ByteString]) -> Iterable[int]:
+    def eval(self, expression: Union[str, ByteString]) -> Iterable[int]:
         """
         Final modifier `e:expression` or `eval:expression`; uses a `refinery.lib.argformats.PythonExpression`
         parser to process expressions. The expression can contain any meta variable that is attached to the
@@ -627,12 +643,7 @@ class DelayedNumSeqArgument(DelayedArgument):
                 expression = expression.decode('ascii')
             except AttributeError:
                 return expression
-        evaluator = PythonExpression(expression, all_variables_allowed=True)
-        if evaluator.variables:
-            def finalize(chunk):
-                return self._iter(evaluator(**chunk.meta))
-            return finalize
-        return self._iter(evaluator())
+        return LazyPythonExpression(expression, self._iter)
 
     @handler.register('unpack', final=True)
     def unpack(self, expression: str, size=None) -> Iterable[int]:
@@ -662,28 +673,52 @@ class DelayedNumSeqArgument(DelayedArgument):
     @handler.register('inc')
     def inc(self, it: Iterable[int], wrap=None) -> Iterable[int]:
         """
-        The modifier `inc:it` or `inc[wrap]:it` expects a sequence `it` of integers
-        (a binary string is interpreted as the sequence of its byte values), iterates it
-        cyclically and perpetually adds an increasing counter to the result. If `wrap`
-        is specified, then the counter is reduced modulo this number.
+        The modifier `inc:it` or `inc[N]:it` expects a sequence `it` of integers (a binary string
+        is interpreted as the sequence of its byte values), iterates it cyclically and perpetually
+        adds an increasing counter to the result. If the number `N` is specified, then the counter
+        is reduced modulo `N`.
         """
         def delay(_):
-            k = cycle(range(number(wrap))) if wrap else count()
-            for item in cycle(it):
+            k = itertools.cycle(range(number(wrap))) if wrap else itertools.count()
+            for item in itertools.cycle(it):
                 yield item + next(k)
         return delay
 
     @handler.register('dec')
     def dec(self, it: Iterable[int], wrap=None) -> Iterable[int]:
         """
-        Identical to `refinery.lib.argformats.DelayedNumSeqArgument.inc`, but the counter
-        is subtracted from `it`.
+        Identical to `refinery.lib.argformats.DelayedNumSeqArgument.inc`, but the counter is
+        subtracted from `it`.
         """
         def delay(_):
-            k = cycle(range(number(wrap))) if wrap else count()
-            for item in cycle(it):
+            k = itertools.cycle(range(number(wrap))) if wrap else itertools.count()
+            for item in itertools.cycle(it):
                 yield item - next(k)
         return delay
+
+    @handler.register('take')
+    def take(self, it: Iterable[int], bounds: Optional[str] = None):
+        bounds = bounds and sliceobj(bounds) or slice(1, None)
+        return itertools.islice(it, bounds.start, bounds.stop, bounds.step)
+
+    @handler.register('fsm', final=True)
+    def fsm(self, node: str, seed: Optional[str] = None, sink: Optional[str] = None) -> Iterable[int]:
+        node = PythonExpression(node, all_variables_allowed=True)
+        seed = seed and PythonExpression(seed, all_variables_allowed=True)
+        sink = sink and PythonExpression(sink)
+
+        def finalize(data: Optional[Chunk] = None):
+            args = data and data.meta or {}
+            S = seed and seed(**args) or 0
+            T = sink and sink(**args)
+            while S != T:
+                yield S
+                S = node(S=S, **args)
+
+        try:
+            return finalize()
+        except VariableMissing:
+            return finalize
 
 
 class DelayedRegexpArgument(DelayedArgument):
@@ -774,26 +809,34 @@ class DelayedNumberArgument(DelayedArgument):
     `refinery.lib.argformats.DelayedBinaryArgument` as long as these handlers precede any of
     the handlers defined here.
     """
-    def __init__(self, expression: str, min: int, max: int, bin: bool = False):
+    def __init__(self, expression: str, min: int, max: int):
         self.min = min
         self.max = max
-        self.bin = bin
         super().__init__(expression)
 
-    def _mbin(self, converter: DelayedType[int], expr: str) -> MaybeDelayedType[int]:
-        def bound_checked_converter(b: ByteString):
-            value = converter(b)
-            if self.min is not None and value < self.min or self.max is not None and value > self.max:
-                a = '-∞' if self.min is None else self.min
-                b = '∞' if self.max is None else self.max
-                raise ValueError(F'value {value} is out of bounds [{a}, {b}]')
-            return value
+    def _bound_check(self, value: int):
+        if not isinstance(value, int):
+            raise ValueError(F'the expression with value {self.expression} is not an integer')
+        if self.min is not None and value < self.min or self.max is not None and value > self.max:
+            a = '-∞' if self.min is None else self.min
+            b = '∞' if self.max is None else self.max
+            raise ValueError(F'value {value} is out of bounds [{a}, {b}]')
+        return value
+
+    def _mbin(self, converter: Callable, expr: str) -> MaybeDelayedType[int]:
         binary = multibin(expr)
         if not binary:
             raise ArgumentTypeError('received empty binary argument')
-        if callable(binary):
-            return lambda d: bound_checked_converter(binary(d))
-        return bound_checked_converter(binary)
+        if not callable(binary):
+            return converter(binary)
+
+        def finalize(data):
+            converted = converter(binary(data))
+            if not callable(converted):
+                return converted
+            return converted(data)
+
+        return finalize
 
     @DelayedArgumentDispatch
     def handler(self, expression: str) -> int:
@@ -803,11 +846,7 @@ class DelayedNumberArgument(DelayedArgument):
         def parse(b: Union[int, ByteString]) -> int:
             if isinstance(b, int):
                 return b
-            expression = PythonExpression(b.decode('utf8'))
-            t = expression()
-            if self.bin and not isinstance(t, int):
-                raise ValueError(F'the expression with value {expression} is not an integer')
-            return t
+            return LazyPythonExpression(b.decode('utf8'), self._bound_check)
         return self._mbin(parse, expression)
 
     @handler.register('be', final=True)
@@ -823,6 +862,27 @@ class DelayedNumberArgument(DelayedArgument):
     @handler.register('h', 'H', final=True)
     def hex(self, expression: str) -> int:
         return int(expression.upper().rstrip('H'), 16)
+
+    @handler.register('reduce')
+    def reduce(self, it: Iterable[int], reduction: str, seed: Optional[str] = None):
+        """
+        The handler `reduce[reduction, seed=0]` has two parameters. The string `reduction` is a
+        Python expression that involves the two special variables `S` (the state) and `B`
+        (the current block value). This expression is evaluated for every `B` in the incoming
+        integer sequence and assigned back to `S`. The starting value of `S` is given by `seed`,
+        which has a default value of `0` and must also be given as a Python expression.
+        """
+        seed = seed and PythonExpression(seed, all_variables_allowed=True)
+        reduction = PythonExpression(reduction, all_variables_allowed=True)
+
+        def finalize(data: Optional[Chunk] = None):
+            args = data and data.meta or {}
+            return reduce(lambda S, B: reduction(S=S, B=B, **args), it, seed and seed(**args) or 0),
+
+        try:
+            return finalize()
+        except VariableMissing:
+            return finalize
 
 
 class number:
@@ -840,15 +900,16 @@ class number:
             return value
         try:
             delay = DelayedNumberArgument(value, self.min, self.max)
-            return delay()
-        except TooLazy:
-            return delay
         except ParserError:
             import re
             match = re.fullmatch('(?:0x)?([A-F0-9]+)H?', value, flags=re.IGNORECASE)
             if not match:
                 raise
             return number(F'0x{match[1]}')
+        try:
+            return delay()
+        except TooLazy:
+            return delay
 
 
 number = number()
@@ -858,16 +919,6 @@ to parse expressions with integer value. This singleton can be slice accessed to
 create new number parsers, e.g. `number[0:]` will refuse to parse negative integer
 expressions.
 """
-
-
-def numbin(expression: Union[int, str]) -> Union[ByteString, int, DelayedNumberArgument]:
-    """
-    An argument parser using `refinery.lib.argformats.DelayedNumberArgument` but also allowing
-    binary arguments. The result is either a byte string or a number.
-    """
-    arg = DelayedNumberArgument(expression, None, None, True)
-    with suppress(TooLazy): return arg()
-    return arg
 
 
 def numseq(expression: Union[int, str]) -> Union[Iterable[int], DelayedNumSeqArgument]:
