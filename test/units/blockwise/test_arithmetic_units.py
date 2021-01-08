@@ -15,6 +15,10 @@ class TestArguments(TestUnitBase):
         sub = self.ldu('sub', '12')
         self.assertEqual(sub(add(b'buffer')), b'buffer')
 
+    def test_sequence_argument(self):
+        add = self.ldu('add', '(1,2,3)')
+        self.assertEqual(add(B'\0\0\0\0\0\0\0'), b'\x01\x02\x03\x01\x02\x03\x01')
+
 
 class TestArithmeticUnits(TestUnitBase):
 
