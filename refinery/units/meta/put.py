@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import itertools
+
 from .. import arg, Unit
 from ...lib.argformats import numseq
 from ...lib.tools import isbuffer
@@ -20,11 +22,16 @@ class put(Unit):
 
     def process(self, data):
         value = self.args.value
-        if not isbuffer(value):
-            if isinstance(value, (list, tuple, set)):
-                if len(value) == 1:
-                    value = next(iter(value))
-            elif not isinstance(value, int):
-                raise NotImplementedError('metadata can currently not handle unbounded integer iterables.')
+        if not isinstance(value, int) and not isbuffer(value):
+            try:
+                len(value)
+            except TypeError:
+                if isinstance(value, itertools.repeat):
+                    value = next(value)
+                if not isinstance(value, int):
+                    raise NotImplementedError(F'Unsupported value {value!r}; expected integer.')
+            else:
+                if not isinstance(value, list):
+                    value = list(value)
         self.log_debug(F'storing {type(value).__name__}:', value)
         return self.labelled(data, **{self.args.name: value})
