@@ -105,6 +105,8 @@ the following Python code:
     In [2]: B'OOOOOOOO' | chop(2) [ ccp(B'F') | cca(B'.') ]
     Out[2]: bytearray(b'FOO.FOO.FOO.FOO.')
 """
+from __future__ import annotations
+
 import sys
 import os
 import inspect
@@ -112,7 +114,7 @@ import inspect
 from enum import IntEnum, Enum
 from functools import wraps
 from collections import OrderedDict
-from typing import Iterable, BinaryIO, Type, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
+from typing import Iterable, BinaryIO, Type, TypeVar, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
 from argparse import (
     Namespace,
     ONE_OR_MORE,
@@ -516,11 +518,13 @@ class ArgumentSpecification(OrderedDict):
         self[dest] = argument
 
 
-def UnitProcessorBoilerplate(
-    operation: Callable[[Any, ByteString], Any]
-) -> Callable[[ByteString], Any]:
+DataType = TypeVar('DataType', bound=ByteString)
+ProcType = Callable[['Unit', ByteString], Optional[Union[DataType, Iterable[DataType]]]]
+
+
+def UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]:
     @wraps(operation)
-    def wrapped(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+    def wrapped(self, data: ByteString) -> Optional[Union[Chunk, Iterable[Chunk]]]:
         ChunkType = Chunk
         if data is None:
             data = B''
@@ -902,15 +906,15 @@ class Unit(metaclass=Executable, abstract=True):
 
     def _exception_handler(self, exception: BaseException):
         if self.log_level <= LogLevel.DETACHED:
-            raise
+            raise exception
         elif isinstance(exception, RefineryCriticalException):
             self.log_warn(F'critical error, terminating: {exception}')
-            raise
+            raise exception
         elif isinstance(exception, VariableMissing):
             self.log_warn('critical error:', exception)
             raise RefineryCriticalException
         elif isinstance(exception, GeneratorExit):
-            raise
+            raise exception
         elif isinstance(exception, RefineryPartialResult):
             if not self.log_level:
                 return None
@@ -938,7 +942,7 @@ class Unit(metaclass=Executable, abstract=True):
         if self._framed:
             return self._framed
 
-        def normalized_action(data: ByteString) -> Iterable[ByteString]:
+        def normalized_action(data: ByteString) -> Iterable[Chunk]:
             try:
                 result = self.act(data)
                 if inspect.isgenerator(result):
@@ -948,7 +952,7 @@ class Unit(metaclass=Executable, abstract=True):
             except BaseException as B:
                 result = self._exception_handler(B)
                 if result is not None:
-                    yield result
+                    yield self.labelled(result, error=str(B))
 
         self._framed = Framed(
             normalized_action,
@@ -987,7 +991,7 @@ class Unit(metaclass=Executable, abstract=True):
         self._source = stream
 
     @property
-    def nozzle(self) -> 'Unit':
+    def nozzle(self) -> Unit:
         """
         The nozzle is defined recursively as the nozzle of `refinery.units.Unit.source`
         and `self` if no such thing exists. In other words, it is the leftmost unit in
@@ -998,7 +1002,7 @@ class Unit(metaclass=Executable, abstract=True):
         except AttributeError:
             return self
 
-    def __getitem__(self, unit: Union['Unit', Type['Unit'], slice]):
+    def __getitem__(self, unit: Union[Unit, Type[Unit], slice]):
         if isinstance(unit, type):
             unit = unit()
         alpha = self.__copy__()
@@ -1024,7 +1028,7 @@ class Unit(metaclass=Executable, abstract=True):
             return self
         return self(stream)
 
-    def __or__(self, stream: Union[BinaryIO, 'Unit']):
+    def __or__(self, stream: Union[BinaryIO, Unit]):
         try:
             if isinstance(stream, type):
                 stream = stream()
@@ -1108,11 +1112,11 @@ class Unit(metaclass=Executable, abstract=True):
         except StopIteration:
             return B''
 
-    def act(self, data: Union[Chunk, ByteString]) -> Union[ByteString, Chunk, Type[None]]:
+    def act(self, data: Union[Chunk, ByteString]) -> Optional[Chunk]:
         op = self.reverse if self.args.reverse else self.process
         return op(self.args @ data)
 
-    def __call__(self, data: Union[ByteString, Chunk, Type[None]] = None) -> bytes:
+    def __call__(self, data: Optional[Union[ByteString, Chunk]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
@@ -1364,6 +1368,7 @@ class Unit(metaclass=Executable, abstract=True):
                 unit = cls.assemble(*argv)
             except ArgparseError as ap:
                 ap.parser.error_commandline(str(ap))
+                return
             except Exception as msg:
                 import traceback
                 cls._output('initialization failed:', msg)
