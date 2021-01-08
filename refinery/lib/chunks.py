@@ -4,9 +4,10 @@
 Routines to help interpret large binary buffers as arrays of numbers, stored
 as consecutive sequences of bytes, all with the same length and byte order.
 """
+from typing import Iterable
 
 
-def unpack(data: bytes, blocksize, bigendian=False):
+def unpack(data: bytes, blocksize: int, bigendian: bool = False):
     """
     Returns an iterable of integers which have been unpacked from the given `data`
     buffer as chunks of `blocksize` many bytes.
@@ -33,14 +34,14 @@ def unpack(data: bytes, blocksize, bigendian=False):
         return (int.from_bytes(block, byteorder) for block in blocks)
 
 
-def pack(data, blocksize, bigendian=False):
+def pack(data: Iterable[int], blocksize: int, bigendian: bool = False) -> bytearray:
     """
     Returns a bytes object which contains the packed representation of the
     integers in `data`, where each item is encoded using `blocksize` many
     bytes. The numbers are assumed to fit this encoding.
     """
     if blocksize == 1:
-        return bytes(data)
+        return bytearray(data)
     if blocksize in (2, 4, 8):
         try:
             import numpy
