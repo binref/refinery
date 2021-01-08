@@ -3,6 +3,7 @@
 import itertools
 
 from .. import arg, Unit
+from . import check_variable_name
 
 
 class pop(Unit):
@@ -14,6 +15,8 @@ class pop(Unit):
         self,
         *names: arg(type=str, metavar='name', help='The meta variable names.')
     ):
+        for name in names:
+            check_variable_name(name)
         super().__init__(names=names)
 
     def process(self, data):

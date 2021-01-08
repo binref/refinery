@@ -3,8 +3,21 @@
 """
 A package for units that operate primarily on frames of several of inputs.
 """
+from typing import NoReturn, Union
+
 from .. import arg, Unit
 from ...lib.argformats import sliceobj
+
+
+def check_variable_name(name: str) -> Union[NoReturn, str]:
+    """
+    All single-letter, uppercase variable names are reserved.
+    """
+    if len(name) == 1 and ord(name[0]) in range(65, 90 + 1):
+        raise ValueError('Single uppercase letter variable names are reserved.')
+    if not name.isprintable():
+        raise ValueError('Variable names must consist of printable characters.')
+    return name
 
 
 class FrameSlicer(Unit, abstract=True):

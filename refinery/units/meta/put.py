@@ -3,6 +3,7 @@
 from .. import arg, Unit
 from ...lib.argformats import numseq
 from ...lib.tools import isbuffer
+from . import check_variable_name
 
 
 class put(Unit):
@@ -15,7 +16,7 @@ class put(Unit):
         name : arg(help='The name of the variable to be used.', type=str),
         value: arg(help='The value for the variable.', type=numseq)
     ):
-        super().__init__(name=name, value=value)
+        super().__init__(name=check_variable_name(name), value=value)
 
     def process(self, data):
         value = self.args.value
