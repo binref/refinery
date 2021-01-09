@@ -906,6 +906,8 @@ class Unit(metaclass=Executable, abstract=True):
 
     def _exception_handler(self, exception: BaseException):
         if self.log_level <= LogLevel.DETACHED:
+            if isinstance(exception, RefineryPartialResult) and not self.args.lenient:
+                return None
             raise exception
         elif isinstance(exception, RefineryCriticalException):
             self.log_warn(F'critical error, terminating: {exception}')

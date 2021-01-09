@@ -37,7 +37,7 @@ class perc(PathExtractorUnit):
         def fixpath(p: str):
             if regex or not p.isidentifier():
                 return p
-            return FR'^.*?{re.escape(p)}.*$'
+            return re.compile(FR'^.*?{re.escape(p)}.*$')
         super().__init__(*(fixpath(p) for p in paths), list=list, join=join)
 
     def _search(self, pe, directory, level=0, *parts):

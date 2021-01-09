@@ -134,7 +134,8 @@ class PathExtractorUnit(Unit, abstract=True):
             root = ''
 
         for result in self.unpack(data):
-            if self._check_path(result): results.append(result)
+            if self._check_path(result):
+                results.append(result)
 
         for p in self.args.patterns:
             for result in results:
