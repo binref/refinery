@@ -34,11 +34,11 @@ class perc(PathExtractorUnit):
     Extract PE file resources.
     """
     def __init__(self, *paths, list=False, join=False, regex=False, meta=b'path'):
-        def fixpath(p):
+        def fixpath(p: str):
             if regex or not p.isidentifier():
                 return p
             return FR'^.*?{re.escape(p)}.*$'
-        super().__init__(*(fixpath(p) for p in paths), regex=True, list=list, join=join)
+        super().__init__(*(fixpath(p) for p in paths), list=list, join=join)
 
     def _search(self, pe, directory, level=0, *parts):
         if level >= 3:
