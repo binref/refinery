@@ -116,7 +116,7 @@ from functools import wraps
 from collections import OrderedDict
 from typing import Iterable, BinaryIO, Type, TypeVar, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
 from argparse import (
-    Namespace,
+    ArgumentTypeError, Namespace,
     ONE_OR_MORE,
     OPTIONAL,
     REMAINDER,
@@ -916,9 +916,10 @@ class Unit(metaclass=Executable, abstract=True):
         elif isinstance(exception, GeneratorExit):
             raise exception
         elif isinstance(exception, RefineryPartialResult):
-            if not self.log_level:
+            warning_enabled = self.log_warn(F'error, partial result returned: {exception}')
+            if not self.args.lenient:
                 return None
-            elif not self.log_warn(F'error, partial result returned: {exception}'):
+            if not warning_enabled:
                 raise exception
             return exception.partial
         else:
@@ -1214,20 +1215,17 @@ class Unit(metaclass=Executable, abstract=True):
         """
         base = argp.add_argument_group('generic options')
 
-        base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
         base.set_defaults(reverse=False, squeeze=False)
-
-        if cls.is_reversible:
-            base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
-
-        if cls.is_multiplex:
-            base.add_argument('-Z', '--squeeze', action='store_true', help=SUPPRESS)
-
+        base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
+        base.add_argument('-L', '--lenient', action='store_true', help='Allow partial results as output.')
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
         base.add_argument('-v', '--verbose', action='count', default=LogLevel.WARN,
             help='Specify up to two times to increase log level.')
         argp.add_argument('--debug-timing', dest='dtiming', action='store_true', help=SUPPRESS)
+
+        if cls.is_reversible:
+            base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
 
         groups = {None: argp}
 
@@ -1298,6 +1296,7 @@ class Unit(metaclass=Executable, abstract=True):
         else:
             unit.args._store(_argo=argp.order)
             unit.args.quiet = args.quiet
+            unit.args.lenient = args.lenient
 
             unit.args.squeeze = args.squeeze
             unit.args.dtiming = args.dtiming
@@ -1397,6 +1396,8 @@ class Unit(metaclass=Executable, abstract=True):
             try:
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
                     source | unit | output
+            except ArgumentTypeError as E:
+                unit.output('delayed argument initialization failed:', str(E))
             except KeyboardInterrupt:
                 unit.output('aborting due to keyboard interrupt')
             except OSError:

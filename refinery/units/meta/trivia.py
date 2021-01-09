@@ -10,7 +10,7 @@ class trivia(Unit):
     """
     def __init__(
         self,
-        size  : arg.switch('-L', help='The size of the chunk.') = False,
+        size  : arg.switch('-S', help='The size of the chunk.') = False,
         index : arg.switch('-I', help='Index of the chunk in the current frame.') = False,
     ):
         if not any((size, index)):

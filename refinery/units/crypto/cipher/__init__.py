@@ -70,10 +70,10 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
-        self, key, iv: arg('-I', '--iv', help=(
+        self, key, iv: arg('-i', '--iv', help=(
             'Specifies the initialization vector. If none is specified, then a block '
             'of zero bytes is used.')) = B'',
-        padding: arg.choice('-P', choices=['PKCS7', 'ISO7816', 'X923', 'RAW'],
+        padding: arg.choice('-p', choices=['PKCS7', 'ISO7816', 'X923', 'RAW'],
             nargs=1, metavar='ALG', help=(
             'Choose a padding algorithm ({choices}). The RAW algorithm does nothing. '
             'By default, all other algorithms are attempted. In most cases, the data '
@@ -144,7 +144,7 @@ class StandardCipherExecutable(CipherExecutable):
                 )
             cls._bcmspec_ = OptionFactory(modes, ignorecase=True)
             cls._argspec_['mode'].merge_all(arg(
-                '-M', '--mode', type=str.upper, metavar='MODE', nargs=arg.delete, choices=list(modes),
+                '-m', '--mode', type=str.upper, metavar='MODE', nargs=arg.delete, choices=list(modes),
                 help=(
                     'Choose cipher mode to be used. Possible values are: {}. By default, the CBC mode'
                     '  is used when an IV is is provided, and ECB otherwise.'.format(', '.join(modes))

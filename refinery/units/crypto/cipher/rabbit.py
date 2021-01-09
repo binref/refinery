@@ -91,7 +91,7 @@ class rabbit(StreamCipherUnit):
     """
     key_sizes = 16
 
-    def __init__(self, key, iv: arg('-I', '--iv', help='Optional initialization vector.') = B''):
+    def __init__(self, key, iv: arg('-i', '--iv', help='Optional initialization vector.') = B''):
         super().__init__(key=key, iv=iv)
 
     def keystream(self) -> Iterable[int]:
