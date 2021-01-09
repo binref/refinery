@@ -41,13 +41,13 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, pp, fuzzy=False, regex=False):
+    def __init__(self, pp, regex=False):
         if isinstance(pp, re.Pattern):
             self.stops = []
             self.pattern = pp
             return
         elif not regex:
-            if fuzzy and not pp.startswith('*') and not pp.endswith('*'):
+            if not pp.startswith('*') and not pp.endswith('*'):
                 pp = F'*{pp}*'
             self.stops = [stop for stop in re.split(R'(.*?[/*?])', pp) if stop]
             pp = fnmatch.translate(pp)
@@ -71,23 +71,21 @@ class PathPattern:
 class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(self, *paths: arg(
-        metavar='path', nargs='*', default=['*'], type=pathspec, help=(
+        metavar='path', nargs='*', default=(), type=pathspec, help=(
             'Wildcard pattern for the name of the item to be extracted. Each item is returned'
             ' as a separate output of this unit. Paths may contain wildcards. The default is '
-            'a single asterix, which means that every item will be extracted.')),
+            'a single wildcard, which means that every item will be extracted.')),
         list : arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join : arg.switch('-j', help='Join path names from container with previous path names.') = False,
         regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
-        fuzzy: arg.switch('-z', help='Wrap wildcard expressions in asterixes automatically '
-            '(no effect on regular expressions).') = False,
         meta: arg('-m', metavar='NAME',
             help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
         **keywords
     ):
-        paths = paths or ['*']
+        paths = paths or (['.*'] if regex else ['*'])
         super().__init__(
             patterns=[
-                PathPattern(p, fuzzy, regex)
+                PathPattern(p, regex)
                 for p in paths
             ],
             list=list,
