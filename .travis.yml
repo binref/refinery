@@ -27,7 +27,6 @@ jobs:
         - pip3 install flake8
       os: osx
       script: python3 -m unittest discover -p test_*.py
-      osx_image: xcode11.3
       language: shell
     - name: "Python 3.8 on Windows"
       os: windows
