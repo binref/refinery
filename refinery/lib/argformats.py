@@ -83,7 +83,7 @@ from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, reduce, lru_cache
 from typing import AnyStr, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
-from typing import get_type_hints, get_origin, get_args
+from typing import get_type_hints
 
 from ..lib.frame import Chunk
 from ..lib.tools import isbuffer
@@ -343,10 +343,8 @@ class DelayedArgumentDispatch:
             handler = self.default if modifier is None else self.handlers[modifier]
             name = next(itertools.islice(inspect.signature(handler).parameters.values(), 1, None)).name
             hint = get_type_hints(handler).get(name, None)
-            if hint is not None and get_origin(hint) is get_origin(Iterable):
-                base = get_args(hint)
-                if base and isinstance(base[0], type) and isinstance(data, base[0]):
-                    data = (data,)
+            if hint == Iterable[type(data)]:
+                data = (data,)
             return handler(instance, data, *args)
         except KeyError:
             unit = self._get_unit(modifier, *args)
