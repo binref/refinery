@@ -23,8 +23,8 @@ def normalize_name(name, separator='-'):
 
 
 def main():
-    if sys.version_info < (3, 7):
-        print('ERROR: Python version at least 3.7 is required.', file=sys.stderr)
+    if sys.version_info < (3, 8):
+        print('ERROR: Python version at least 3.8 is required.', file=sys.stderr)
         sys.exit(0xFADE)
 
     def magic(x):
@@ -66,7 +66,7 @@ def main():
         long_description=readme,
         long_description_content_type='text/markdown',
         url=GITHUB,
-        python_requires='>=3.7',
+        python_requires='>=3.8',
         classifiers=[
             'Development Status :: 3 - Alpha',
             'Environment :: Console',
