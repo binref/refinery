@@ -136,9 +136,9 @@ class PatternExtractorBase(Unit, abstract=True):
         self,
         min        : arg.number('-n', help='Matches must have length at least N.') = 1,
         max        : arg.number('-N', help='Matches must have length at most N.') = None,
-        len        : arg.number('-e', help='Matches must be of length N.') = None,
-        stripspace : arg.switch('-s', help='Strip all whitespace from input data.') = False,
-        duplicates : arg.switch('-d', help='Yield every (transformed) match, even when it was found before.') = False,
+        len        : arg.number('-E', help='Matches must be of length N.') = None,
+        stripspace : arg.switch('-S', help='Strip all whitespace from input data.') = False,
+        duplicates : arg.switch('-D', help='Yield every (transformed) Match, even when it was found before.') = False,
         longest    : arg.switch('-l', help='Sort results by length.') = False,
         take       : arg.number('-t', help='Return only the first N occurrences in order of appearance.') = None,
         **keywords
@@ -259,9 +259,9 @@ class RegexUnit(Unit, abstract=True):
 
     def __init__(
         self, regex: arg(type=regexp, help='Regular expression to match.'),
-        multiline: arg.switch('-m',
+        multiline: arg.switch('-M',
             help='Caret and dollar match the beginning and end of a line, a dot does not match line breaks.') = False,
-        ignorecase: arg.switch('-i',
+        ignorecase: arg.switch('-I',
             help='Ignore capitalization for alphabetic characters.') = False,
         count: arg.number('-c', help='Specify the maximum number of operations to perform.') = 0,
         **keywords
