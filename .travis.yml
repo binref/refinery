@@ -13,6 +13,14 @@ jobs:
       after_success: codecov
       stage: test
       script: XDG_SESSION_TYPE=x11 xvfb-run coverage run --source refinery run-tests.py
+    - name: "Python 3.9 on Linux"
+      python: 3.9
+      before_install:
+        - sudo apt-get install xclip
+        - sudo apt-get install xvfb
+        - pip3 install codecov
+        - pip3 install flake8
+      script: python3 -m unittest discover -p test_*.py
     - name: "Python 3.8+ on macOS"
       before_install:
         - brew install libmagic
@@ -30,6 +38,12 @@ jobs:
         - python -m pip install --upgrade pip flake8
     - name: "Python 3.9 on Windows"
       python: 3.9
+      os: windows
+      language: shell
+      env: PATH=/c/Python39:/c/Python39/Scripts:$PATH
+      before_install:
+        - choco install python --version 3.9 -y
+        - python -m pip install --upgrade pip flake8
     - name: "Deploy Documentation"
       python: 3.8
       stage: deploy
