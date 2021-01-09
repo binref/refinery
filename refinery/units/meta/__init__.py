@@ -3,13 +3,11 @@
 """
 A package for units that operate primarily on frames of several of inputs.
 """
-from typing import NoReturn, Union
-
 from .. import arg, Unit
 from ...lib.argformats import sliceobj
 
 
-def check_variable_name(name: str) -> Union[NoReturn, str]:
+def check_variable_name(name: str) -> str:
     """
     All single-letter, uppercase variable names are reserved.
     """
