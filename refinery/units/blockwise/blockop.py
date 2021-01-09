@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ...lib.argformats import PythonExpression
-from . import ArithmeticUnit, NoNumpy
+from . import arg, ArithmeticUnit, NoNumpy
 
 
 class blockop(ArithmeticUnit):
