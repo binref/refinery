@@ -26,7 +26,7 @@ class TestLengthPrefix(TestUnitBase):
         size = size * 8
         head = struct.pack('=HbbLbH', 12, 6, 6, size, 0, 0xBEEF)
         pack = head + body
-        unit = self.load('=4xL3x', header=2, limit=1)
+        unit = self.load('=4xL3x', header=2, count=1)
         self.assertEqual(unit(pack), body[:-11])
         unit = self.load('=4xL3x')
         self.assertEqual(unit(pack), body)
