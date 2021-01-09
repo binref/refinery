@@ -18,7 +18,7 @@ are:
 
 - `s:string` disables all further preprocessing and interprets `string` as an UTF8 encoded string
 - `u:string` same, but as an UTF16-LE encoded string
-- `h:string` assumes that `string` is a hexadecimal string of even length and returns the decoded byte sequence.
+- `h:string` assumes that `string` is a hexadecimal string and returns the decoded byte sequence.
 - any unit's name can be prefixed to the string, i.e. `esc:\\n` corresponds to the line break character.
 
 If a multibin argument does not use any handler, refinery first interprets the string as the path
@@ -97,6 +97,15 @@ MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 
 class ParserError(ArgumentTypeError): pass
 class VariablesMissing(ParserError): pass
+
+
+class RepeatedInteger(int):
+    """
+    This class serves as a dual-purpose result for `refinery.lib.argformats.numseq`
+    types. It is an integer, but can be infinitely iterated.
+    """
+    def __iter__(self):
+        while True: yield self
 
 
 class PythonExpression:
@@ -235,7 +244,7 @@ def utf8(x):
     return x.encode('UTF8')
 
 
-class IncompatibleHandler(ValueError):
+class IncompatibleHandler(ArgumentTypeError):
     """
     This exception is generated when `refinery.lib.argformats.DelayedArgument` handlers
     are chained in an incompatible way.
@@ -260,7 +269,7 @@ class TooLazy(Exception):
     pass
 
 
-class VariableMissing(RuntimeError):
+class VariableMissing(ArgumentTypeError):
     def __init__(self, name):
         super().__init__(F'The variable {name} is not defined.')
         self.name = name
@@ -545,8 +554,6 @@ class DelayedArgument(LazyEvaluation):
         as a `refinery.lib.argformats.sliceobj`. The result contains the corresponding slice
         of the input data.
         """
-        if not region or region.lower() == 'all':
-            region = ':'
         return lambda d: memoryview(d)[sliceobj(region, **d.meta)]
 
     @handler.register('x', 'cut', final=True)
@@ -567,11 +574,15 @@ class DelayedArgument(LazyEvaluation):
         return extract
 
     def _interpret_variable(self, name: str, obj: Any):
-        if isbuffer(obj) or isinstance(obj, (list, tuple, set, int)):
+        if isbuffer(obj) or isinstance(obj, int):
             return obj
         if isinstance(obj, str):
             return utf8(obj)
-        raise ValueError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion to bytes is known.')
+        if isinstance(obj, (tuple, set, frozenset)):
+            obj = list(obj)
+        if isinstance(obj, list):
+            return obj
+        raise ArgumentTypeError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion is known.')
 
     @handler.register('var', final=True)
     def var(self, name: str) -> bytes:
@@ -582,8 +593,8 @@ class DelayedArgument(LazyEvaluation):
         def extract(data: Chunk):
             try:
                 result = data.meta[name]
-            except KeyError as K:
-                raise VariableMissing(name) from K
+            except KeyError:
+                raise VariableMissing(name)
             return self._interpret_variable(name, result)
         return extract
 
@@ -617,21 +628,55 @@ class DelayedArgument(LazyEvaluation):
                 return expression
         return LazyPythonExpression(expression)
 
-    @handler.register('unpack')
-    def unpack(self, binary: ByteString, size=None) -> Iterable[int]:
+    @handler.register('btoi')
+    def btoi(self, binary: ByteString, size=None) -> Iterable[int]:
         """
-        Final modifier `unpack[size]:expression`; uses `refinery.lib.chunks.unpack` to
-        convert a sequence of bytes into a sequence of numbers by unpacking them. The `expression`
-        parameter is parsed with `refinery.lib.argformats.multibin` yielding this byte string.
-        The optional parameter `size` has to be an integer expression whose absolute value gives
-        the size of each encoded number in bytes. Its default value is `0`, which corresponds to
-        choosing the size automatically in the following manner: If the length of the buffer is
-        uneven, the value `1` is chosen. If the length modulo `4` is nonzero, the value `2` is
-        chosen. If the length is divisible by `4`, then `4` is chosen.
+        The modifier `btoi[size=0]:data` uses `refinery.lib.chunks.unpack` to convert a sequence
+        of bytes into a sequence of integers by unpacking them. The `expression` parameter is parsed
+        with `refinery.lib.argformats.multibin` yielding this byte string. The optional parameter
+        `size` has to be an integer expression whose absolute value gives the size of each encoded
+        number in bytes. Its default value is `0`, which corresponds to choosing the size
+        automatically in the following manner: If the length of the buffer is uneven, the value `1`
+        is chosen. If the length modulo `4` is nonzero, the value `2` is chosen. If the length is
+        divisible by `4`, then `4` is chosen. To unpack as big endian as opposed to the default
+        little endian, a negative `size` has to be specified. The absolute value of `size` will be
+        used.
         """
         from . import chunks
         size = int(size, 0) if size else 0
-        return list(chunks.unpack(binary, abs(size), size < 0))
+        bigE = size < 0
+        size = abs(size)
+        if not size:
+            n = len(binary)
+            if n % 2:
+                size = 1
+            elif n % 4:
+                size = 2
+            else:
+                size = 4
+        return list(chunks.unpack(binary, size, bigE))
+
+    @handler.register('itob')
+    def itob(self, integers: Iterable[int], size=None) -> ByteString:
+        """
+        The modifier `itob[size=0]:integers` is the inverse of `btoi` and works in the same way,
+        except that the case `size=0` is handled in the following way: The handler inspects all
+        integers in the input and determines the minimum block size required to pack all of them.
+        """
+        from . import chunks
+        size = int(size, 0) if size else 0
+        bigE = size < 0
+        size = abs(size)
+        if not size:
+            def byte_length(n: int):
+                width, overflow = divmod(n.bit_length(), 8)
+                if overflow: width += 1
+                return width
+            if not isinstance(integers, list):
+                integers = list(integers)
+            size = max(byte_length(n) for n in integers)
+            size = max(size, 1)
+        return chunks.pack(integers, size, bigE)
 
     @handler.register('inc')
     def inc(self, it: Iterable[int], wrap=None) -> Iterable[int]:
@@ -760,7 +805,13 @@ class DelayedArgument(LazyEvaluation):
 class DelayedBinaryArgument(DelayedArgument):
 
     def __call__(self, data: Optional[ByteString] = None) -> bytes:
-        return super().__call__(data=data)
+        value = super().__call__(data=data)
+        if not isbuffer(value):
+            raise ArgumentTypeError(
+                F'The expression {self.expression} returned a value of type {type(value).__name__}, '
+                R'which could not be converted to a byte string.'
+            )
+        return value
 
 
 class DelayedNumSeqArgument(DelayedArgument):
@@ -787,7 +838,8 @@ class DelayedNumSeqArgument(DelayedArgument):
         value = super().__call__(data)
         if hasattr(value, '__iter__'):
             try:
-                len(value)
+                if len(value) == 1:
+                    return RepeatedInteger(next(iter(value)))
             except TypeError:
                 def rewind():
                     yield top
@@ -802,7 +854,7 @@ class DelayedNumSeqArgument(DelayedArgument):
                     raise ArgumentTypeError(F'Not all elements of {value!r}, computed from {self.expression}, are integers.')
                 return value
         if isinstance(value, int):
-            return itertools.repeat(value)
+            return RepeatedInteger(value)
         raise ArgumentTypeError(
             F'The value {value} computed from {self.expression} is of type {type(value).__name__} but the unit requested an '
             R'integer or a sequence of integers.'
@@ -906,11 +958,11 @@ class DelayedNumberArgument(DelayedArgument):
         value = super().__call__(data)
         if not isinstance(value, int):
             tv = type(value).__name__
-            raise ValueError(F'The value {value} computed from {self.expression} is of type {tv}, it should be an integer.')
+            raise ArgumentTypeError(F'The value {value} computed from {self.expression} is of type {tv}, it should be an integer.')
         if self.min is not None and value < self.min or self.max is not None and value > self.max:
             a = '-∞' if self.min is None else self.min
             b = '∞' if self.max is None else self.max
-            raise ValueError(F'value {value} is out of bounds [{a}, {b}]')
+            raise ArgumentTypeError(F'value {value} is out of bounds [{a}, {b}]')
         return value
 
     def default_handler(self, expression: str) -> int:
@@ -974,7 +1026,7 @@ def multibin(expression: Union[str, bytes, bytearray]) -> Union[bytes, DelayedAr
     """
     if not isinstance(expression, str):
         return bytes(expression)
-    arg = DelayedArgument(expression)
+    arg = DelayedBinaryArgument(expression)
     with suppress(TooLazy):
         return arg()
     return arg

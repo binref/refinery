@@ -29,3 +29,7 @@ class TestArgumentFormats(TestBase):
     def test_skip_first_character_of_cyclic_key(self):
         key = argformats.DelayedArgument('take[1:16]:cycle:KITTY')()
         self.assertEqual(key, B'ITTYKITTYKITTYK')
+
+    def test_itob(self):
+        data = argformats.DelayedArgument('itob:take[:4]:accu[0x1337]:A')()
+        self.assertEqual(data, bytes.fromhex('3713371337133713'))
