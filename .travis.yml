@@ -20,7 +20,7 @@ jobs:
         - sudo apt-get install xvfb
         - pip3 install codecov
         - pip3 install flake8
-      script: python3 -m unittest discover -p test_*.py
+      script: XDG_SESSION_TYPE=x11 xvfb-run python3 -m unittest discover -p test_*.py
     - name: "Python 3.8+ on macOS"
       before_install:
         - brew install libmagic
