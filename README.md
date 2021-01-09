@@ -125,14 +125,14 @@ emit file.bin | rep 0x100 [| trivia | xor var:index | carve-pe -R | peek | dump 
 
 Extract a RemCos C2 server:
 ```
-emit c0019718c4d4538452affb97c70d16b7af3e4816d059010c277c4e579075c944 |
- perc SETTINGS [| put keylen unpack:cut::1 | rc4 cut::keylen | xtp socket ]
+emit c0019718c4d4538452affb97c70d16b7af3e4816d059010c277c4e579075c944
+  | perc SETTINGS [| put keylen cut::1 | rc4 cut::keylen | xtp socket ]
 ```
 
 Extract an AgentTesla configuration:
 ```
-emit fb47a566911905d37bdb464a08ca66b9078f18f10411ce019e9d5ab747571b40 |
- dnfields [| aes x::32 --iv x::16 -Q ]]| rex -M "((??email))\n(.*)\n(.*)\n:Zone" addr=$1 pass=$2 host=$3
+emit fb47a566911905d37bdb464a08ca66b9078f18f10411ce019e9d5ab747571b40
+  | dnfields [| aes x::32 --iv x::16 -Q ]]| rex -m "((??email))\n(.*)\n(.*)\n:Zone" addr=$1 pass=$2 host=$3
 ```
 
 Extract the PowerShell payload from a malicious XLS macro dropper:
@@ -157,12 +157,7 @@ emit payload.ps1 | carveb64z | deob-ps1 | carveb64z | deob-ps1 | xtp -f domain
 Exctract the configuration of unpacked HawkEye samples:
 ```
 emit ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c \
-| xtp guid                                           \
-[| PBKDF2 48 rep[8]:H:00                             \
- | cca perc[RCDATA]:30ae8004a14f188d40c024124022d63d \
- | aes -Q CBC x::32 --iv x::16                       \
-]                                                    \
-| dnds
+  | put cfg perc[RCDATA]:c:: [| xtp guid | PBKDF2 48 rep[8]:h:00 | cca xvar:cfg | aes -Q x::32 --iv x::16 ]| dnds
 ```
 
 ### AES Encryption
