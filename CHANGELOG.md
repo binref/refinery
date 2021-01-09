@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+## Version 0.3.23
+- Unification of (nearly) all multibin handlers. Only the `yara:` and `escape:` handlers remain to regular expression type arguments.
+- Adds the multibin handlers `accu`, `reduce`, `cycle`, and `take`.
+- Alters the `le` and `be` handlers to support both conversion from integer to byte string and vice versa.
+- Renames the `unpack` handler to `btoi` and adds the `btoi` handler which performs the inverse operation.
+- Command line switches for the `lprefix` unit changed.
+- Adds the global `--lenient` option which is now required to admit partial results as output.
+
 ## Version 0.3.22
 - Adds the `blz` unit for BriefLZ compression and decompression.
 
