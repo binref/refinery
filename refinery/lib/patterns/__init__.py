@@ -118,7 +118,7 @@ pattern_domain_df = format_domain_defang.format(repeat='{0,20}', tlds=__TLDS)
 
 pattern_version = '|'.join('.' * k + 'version' + '.' * (10 - k) for k in range(10))
 
-pattern_octet = R'(?:1\d\d|2[1-4]\d|25[1-5]|[1-9]?\d)'
+pattern_octet = R'(?:1\d\d|2[0-4]\d|25[0-5]|[1-9]?\d)'
 pattern_ipv4 = R'(?<!\.|\d)(?:{o}\.){{3}}{o}(?![\d\.])'.format(o=pattern_octet)
 pattern_ipv4_df = R'(?:{o}{d}){{3}}{o}'.format(o=pattern_octet, d=R'(?:\[\.\]|\.)')
 

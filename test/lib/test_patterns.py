@@ -10,3 +10,6 @@ class TestIndicators(TestBase):
 
     def test_ipv4_too_large_ocets(self):
         self.assertFalse(re.fullmatch(indicators.ipv4.pattern, '127.0.0.288'))
+
+    def test_ipv4_almost_too_large_ocet(self):
+        self.assertTrue(re.fullmatch(indicators.ipv4.pattern, '13.203.240.255'))
