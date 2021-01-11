@@ -834,6 +834,8 @@ class DelayedNumSeqArgument(DelayedArgument):
 
     def __call__(self, data: Optional[Union[ByteString, Chunk]] = None) -> Iterable[int]:
         value = super().__call__(data)
+        if isbuffer(value):
+            return value
         if hasattr(value, '__iter__'):
             try:
                 if len(value) == 1:
