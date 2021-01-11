@@ -100,7 +100,7 @@ class blz(Unit):
                     offset = self._src.read(1)[0] + 1
                     delta = offset + 0x100 * sector
                     available = self._dst.tell()
-                    if delta not in range(available):
+                    if delta not in range(available + 1):
                         raise RefineryPartialResult(
                             F'Requested rewind by 0x{delta:08X} bytes with only 0x{available:08X} bytes in output buffer.',
                             partial=self._dst.getvalue())
@@ -214,7 +214,7 @@ class blz(Unit):
                 offset = node.start - length
                 length = node.end + 1 - offset
             length = min(remaining, length)
-            if offset and length >= 4:
+            if length >= 4:
                 sector, offset = divmod(cursor - offset - 1, 0x100)
             bitcount += 1
             bitstore <<= 1
