@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.lib.loader import load_detached as L
+import refinery as r
 from .. import TestUnitBase
 
 
@@ -25,3 +26,7 @@ class TestMetaPushPop(TestUnitBase):
     def test_variable_outside_modifier(self):
         pl = L('push [[') | L('pop x ]') | L('cca T') | L('cca var:x') | L('rev ]')
         self.assertEqual(pl(B'x'), B'xTx')
+
+    def test_push_pop_in_frame(self):
+        pl = L('rex . [') | L('push [') | L('pop copy ]') | L('swap copy ]')
+        self.assertEqual(pl(B'foobar'), B'foobar')

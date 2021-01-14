@@ -506,27 +506,26 @@ class Framed:
                         yield result.pack()
         else:
             gauge = max(self.unpack.gauge + self.nesting, 0)
-            trunk = MemoryFile(Chunk(bytearray()))
+            trunk = None
             if gauge:
                 yield Chunk.Magic
             while self.unpack.nextframe():
                 while True:
                     for chunk in self._apply_filter():
-                        trunk.getvalue().inherit(chunk)
+                        if not trunk:
+                            trunk = Chunk(bytearray(), chunk.path, chunk.view, chunk.meta, chunk.fill)
                         results = self._generate_bytes(chunk) if chunk.visible else (chunk,)
                         if not gauge:
                             yield from results
                             continue
                         for result in results:
-                            trunk.write(result)
+                            trunk.extend(result)
                     if self.unpack.peek[:gauge + 1] != self.unpack.trunk[:gauge + 1]:
                         break
                     if not self.unpack.nextframe():
                         break
-                if not gauge:
+                if not gauge or not trunk:
                     continue
-                trunk.truncate()
-                chunk = trunk.getvalue()
-                chunk.truncate(gauge)
-                yield chunk.pack()
-                trunk.seek(0)
+                trunk.truncate(gauge)
+                yield trunk.pack()
+                trunk = None
