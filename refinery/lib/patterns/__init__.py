@@ -138,7 +138,7 @@ pattern_url = ''.join([
     R'([a-zA-Z]{2,20}?://'                    # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
-    pattern_socket + '?',
+    pattern_hostname,
     R'(?:[/?#](?:[~/_=?&.,\w\%\-](?![a-zA-Z]{2,20}://))*)?)'
 ])
 
@@ -146,7 +146,7 @@ pattern_url_df = ''.join([
     R'([a-zA-Z]{2,20}?(?:\[:\]|:)//'          # scheme
     R'(?:[^"\'\s\x00-\x20\x7E-\xFF]{1,256}?'  # username
     R'(?::[^"\'\s\x00-\x20\x7E-\xFF]{0,256}?)?@)?',
-    pattern_socket + '?',
+    pattern_hostname_df,
     R'(?:[/?#](?:[/_=?&.,\w\%\-](?![a-zA-Z]{2,20}://))*)?)'
 ])
 

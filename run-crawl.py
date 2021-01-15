@@ -25,7 +25,7 @@ def normalize(data, *required):
 if __name__ == '__main__':
     session = requests.session()
     tlds = session.get('https://data.iana.org/TLD/tlds-alpha-by-domain.txt').text
-    tlds = {t.strip() for t in tlds.split('\n') if '#' not in t} | {'bit', 'onion'}
+    tlds = {t.strip() for t in tlds.split('\n') if '#' not in t} | {'bit', 'onion', 'sys'}
     tlds = {item.lower() for item in tlds if item}
     tlds = {re.escape(item) for item in set(tlds)}
     tlds.update(old_tlds)
