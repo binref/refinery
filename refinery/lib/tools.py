@@ -21,8 +21,7 @@ def format_size(num: int, align=False) -> str:
     unit = None
     result = num
     for unit in [None, 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
-        tip = 1 if unit is None else 0.1
-        if result / step < tip:
+        if unit and result / step <= 0.1:
             break
         result /= step
     if unit is None:
