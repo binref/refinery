@@ -4,12 +4,10 @@
 Contains all units that can work on blocks a fixed length. Note that block cipher
 algorithms can be found in `refinery.units.crypto.cipher`.
 """
-import itertools
-from typing import Iterable
-
 from .. import arg, Unit
 from ...lib.argformats import numseq
 from ...lib import chunks
+from ...lib.tools import infinitize
 
 
 class NoNumpy(Exception):
@@ -88,16 +86,6 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     operate = NotImplemented
     inplace = NotImplemented
 
-    @staticmethod
-    def infinitize(it: Iterable):
-        if not isinstance(it, (
-            itertools.cycle,
-            itertools.repeat,
-            itertools.count
-        )):
-            return itertools.cycle(it)
-        return it
-
     def __init__(self, *argument: arg(type=numseq, help=(
         'A single numeric expression which provides the right argument to the operation, '
         'where the left argument is each block in the input data. This argument can also '
@@ -126,7 +114,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             if isinstance(buffer, int):
                 self.log_info('detected numeric argument')
                 return buffer & self.fmask
-            return numpy.fromiter(self.infinitize(buffer), dtype, blocks)
+            return numpy.fromiter(infinitize(buffer), dtype, blocks)
 
         rest = data[blocks * self.args.blocksize:]
         data = numpy.frombuffer(memoryview(data), dtype, blocks)
@@ -150,7 +138,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         else:
             self.log_debug('successfully used numpy to process data in ecb mode')
             return result
-        self._arg = [self.infinitize(a) for a in self.args.argument]
+        self._arg = [infinitize(a) for a in self.args.argument]
         return super().process(data)
 
     def process_block(self, block):

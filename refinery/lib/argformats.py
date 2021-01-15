@@ -86,7 +86,7 @@ from typing import AnyStr, Optional, Tuple, Union, Mapping, Any, List, TypeVar, 
 from typing import get_type_hints
 
 from ..lib.frame import Chunk
-from ..lib.tools import isbuffer
+from ..lib.tools import isbuffer, infinitize
 from ..lib.loader import resolve, EntryNotFound
 
 FinalType = TypeVar('FinalType')
@@ -686,7 +686,7 @@ class DelayedArgument(LazyEvaluation):
         """
         def delay(_):
             k = itertools.cycle(range(number(wrap))) if wrap else itertools.count()
-            for item in itertools.cycle(it):
+            for item in infinitize(it):
                 yield item + next(k)
         return delay
 
@@ -698,7 +698,7 @@ class DelayedArgument(LazyEvaluation):
         """
         def delay(_):
             k = itertools.cycle(range(number(wrap))) if wrap else itertools.count()
-            for item in itertools.cycle(it):
+            for item in infinitize(it):
                 yield item - next(k)
         return delay
 

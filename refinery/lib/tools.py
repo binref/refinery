@@ -4,6 +4,7 @@
 Miscellaneous helper functions.
 """
 import inspect
+import itertools
 import os
 import sys
 
@@ -227,3 +228,13 @@ def make_buffer_mutable(data: ByteString):
     if isinstance(data, memoryview) and not data.readonly:
         return data
     return bytearray(data)
+
+
+def infinitize(it):
+    if not isinstance(it, (
+        itertools.cycle,
+        itertools.repeat,
+        itertools.count
+    )):
+        return itertools.cycle(it)
+    return it
