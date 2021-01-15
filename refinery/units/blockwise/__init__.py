@@ -95,6 +95,10 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     ):
         super().__init__(bigendian=bigendian, blocksize=blocksize, argument=argument, **kw)
 
+    def _normalize_argument(self, it):
+        for block in infinitize(it):
+            yield block & self.fmask
+
     def process_ecb_fast(self, data):
         """
         Attempts to perform the operation more quickly by using numpy arrays.
@@ -114,7 +118,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             if isinstance(buffer, int):
                 self.log_info('detected numeric argument')
                 return buffer & self.fmask
-            return numpy.fromiter(infinitize(buffer), dtype, blocks)
+            return numpy.fromiter(self._normalize_argument(buffer), dtype, blocks)
 
         rest = data[blocks * self.args.blocksize:]
         data = numpy.frombuffer(memoryview(data), dtype, blocks)
@@ -138,11 +142,11 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         else:
             self.log_debug('successfully used numpy to process data in ecb mode')
             return result
-        self._arg = [infinitize(a) for a in self.args.argument]
+        self._arg = [self._normalize_argument(a) for a in self.args.argument]
         return super().process(data)
 
     def process_block(self, block):
-        return self.operate(block, *(next(a) & self.fmask for a in self._arg)) & self.fmask
+        return self.operate(block, *(next(a) for a in self._arg)) & self.fmask
 
 
 class UnaryOperation(ArithmeticUnit, abstract=True):

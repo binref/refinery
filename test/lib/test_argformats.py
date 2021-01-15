@@ -33,3 +33,9 @@ class TestArgumentFormats(TestBase):
     def test_itob(self):
         data = argformats.DelayedArgument('itob:take[:4]:accu[0x1337]:A')()
         self.assertEqual(data, bytes.fromhex('3713371337133713'))
+
+    def test_accu_reduction(self):
+        xor1 = self.ldu('xor', 'accu[12]:(A*7+23)')
+        xor2 = self.ldu('xor', 'accu[12]:(A*7+23)&0xFF')
+        data = bytearray(48)
+        self.assertEqual(xor1(data), xor2(data))
