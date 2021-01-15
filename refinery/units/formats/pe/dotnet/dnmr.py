@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ... import arg, PathExtractorUnit, UnpackResult
+from .... import RefineryPartialResult
 from .....lib.tools import isbuffer
 from .....lib.dotnet.resources import NetStructuredResources, NoManagedResource
 
@@ -21,7 +22,7 @@ class dnmr(PathExtractorUnit):
         except NoManagedResource:
             managed = None
         if not managed:
-            raise ValueError('no managed resources found.')
+            raise RefineryPartialResult('no managed resources found', partial=data)
         for entry in managed:
             if entry.Error:
                 self.log_warn(F'entry {entry.Name} carried error message: {entry.Error}')
