@@ -11,22 +11,28 @@ from typing import ByteString, Iterable
 from math import log
 
 
-def format_size(num: int, align=False, default='{} BYTE') -> str:
+def format_size(num: int, align=False) -> str:
     """
     Given a number of bytes, produce a human-readable expression for this
     size using common units such as kB and MB.
     """
     step = 1000.0
+    unit = None
     result = num
-    for unit in ['#B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
-        if result / step < 0.1:
+    for unit in [None, 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
+        tip = 1 if unit is None else 0.1
+        if result / step < tip:
             break
         result /= step
-    if unit == '#B' and not align:
-        return default.format(num)
+    if unit is None:
+        width = 3 if align else ''
+        return F'{result:{width}} BYTES'
     else:
         width = 6 if align else ''
         return F'{result:{width}.3f} {unit}'
+
+
+format_size.width = 9
 
 
 def lookahead(iterator):
