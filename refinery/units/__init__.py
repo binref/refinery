@@ -918,11 +918,9 @@ class Unit(metaclass=Executable, abstract=True):
         elif isinstance(exception, GeneratorExit):
             raise exception
         elif isinstance(exception, RefineryPartialResult):
-            warning_enabled = self.log_warn(F'error, partial result returned: {exception}')
+            self.log_warn(F'error, partial result returned: {exception}')
             if not self.args.lenient:
                 return None
-            if not warning_enabled:
-                raise exception
             return exception.partial
         else:
             self.log_warn(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
