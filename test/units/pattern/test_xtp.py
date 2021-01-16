@@ -85,3 +85,23 @@ class TestPatternExtractor(TestUnitBase):
         addr = B'4BrL51JCc9NGQ71kWhnYoDRffsDZy7m1HUU7MRU4nUMXAHNFBEJhkTZV9HdaL4gfuNBxLPc3BeMkLGaPbF5vWtANQni58KYZqH43YSDeqY'
         data = B'payment is made to the wallet %s.' % addr
         self.assertEqual(addr, self.load('xmr')(data))
+
+    def test_weird(self):
+        data = (
+            B'"https://local.sys/data/t:ffa0",'
+            B'"https://local.sys/data/t:ffa6",'
+            B'"https://local.sys/data/t:d141",'
+            B'"https://local.sys/data/t:dc55",'
+            B'"https://local.sys/data/t:59ee",'
+            B'"https://local.sys/data/t:ed29",'
+            B'"https://local.sys/data/t:dc9b",'
+            B'"https://local.sys/data/t:f928",'
+            B'"https://local.sys/data/t:2594",'
+            B'"https://local.sys/data/t:3693",'
+            B'"https://local.sys/data/t:5698",'
+            B'"https://local.sys/data/t:561c",'
+            B'"https://local.sys/data/t:5627",'
+            B'"https://local.sys/data/t:562f",'
+        )
+        unit = self.load('url')
+        self.assertEqual(len(list(unit.process(data))), 14)

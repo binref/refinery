@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+import itertools
 
 from .. import arg, Unit
 from ...lib.patterns import defanged, indicators
@@ -12,7 +13,7 @@ class defang(Unit):
     expression by `[.]`. For example, `127.0.0.1` will be replaced by `127.0.0[.]1`.
     """
 
-    WHITELIST = [
+    _WHITELIST = [
         B'wscript.shell',
     ]
 
@@ -41,7 +42,7 @@ class defang(Unit):
                 return self._quote(replace_hostname(hostname[0], False))
             self.log_info('replace:', hostname)
             host = hostname.rsplit(B':')[0].lower()
-            if host in self.WHITELIST:
+            if host in self._WHITELIST:
                 return hostname
             return B'[.]'.join(hostname.rsplit(B'.', 1))
 
@@ -56,13 +57,24 @@ class defang(Unit):
             q = B'/'.join(q)
             return self._quote(p + sep + q)
 
-        analyze = indicators.url.split(data)
-        analyze[1::2] = [replace_url(t) for t in analyze[1::2]]
+        urlsplit = indicators.url.split(data)
+        step = indicators.url.value.compiled.groups + 1
+        urlsplit[1::step] = [replace_url(t) for t in itertools.islice(iter(urlsplit), 1, None, step)]
 
         if not self.args.url_only:
-            analyze[0::2] = [
+            urlsplit[0::step] = [
                 indicators.hostname.sub(replace_hostname, t)
-                for t in analyze[0::2]
+                for t in itertools.islice(iter(urlsplit), 0, None, step)
             ]
 
-        return B''.join(analyze)
+        def fuse(urlsplit):
+            txt = itertools.islice(iter(urlsplit), 0, None, step)
+            url = itertools.islice(iter(urlsplit), 1, None, step)
+            while True:
+                try:
+                    yield next(txt)
+                    yield next(url)
+                except StopIteration:
+                    break
+
+        return B''.join(fuse(urlsplit))
