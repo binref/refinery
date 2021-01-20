@@ -28,3 +28,7 @@ class TestFormatString(TestUnitBase):
     def test_everything_trimmed(self):
         trim = self.load(b'\0')
         self.assertEqual(trim(bytearray(201)), B'')
+
+    def test_trim_from_variable(self):
+        pipe = self.ldu('put', 'junk', 'cut:-1:') [ self.ldu('trim', 'var:junk', left=False) ] # noqa
+        self.assertEqual(pipe(B'AAAAAABBBBBB'), B'AAAAAA')

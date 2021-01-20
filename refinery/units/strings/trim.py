@@ -13,49 +13,49 @@ class trim(Unit):
         left: arg.switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
         right: arg.switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True
     ):
-        if not junk:
+        super().__init__(junk=junk, left=left, right=right)
+
+    def process(self, data: bytearray):
+        dirty = True
+        synch = True
+        strip = None
+        mview = memoryview(data)
+        junks = self.args.junk
+
+        if not junks:
             import string
             strips = string.whitespace.encode('ascii')
         else:
-            strips = bytes(j[0] for j in junk if len(j) == 1)
-            junk = [j for j in junk if len(j) >= 2]
-
-        strip = None
+            strips = bytes(j[0] for j in junks if len(j) == 1)
+            junk = [j for j in junks if len(j) >= 2]
 
         if strips:
-            if left and right:
+            if self.args.left and self.args.right:
                 def strip(b):
                     if b[0] in strips or b[-1] in strips:
                         return True, b.strip(strips)
                     return False, b
-            elif left:
+            elif self.args.left:
                 def strip(b):
                     if b[0] in strips:
                         return True, b.lstrip(strips)
                     return False, b
-            elif right:
+            elif self.args.right:
                 def strip(b):
                     if b[-1] in strips:
                         return True, b.rstrip(strips)
                     return False, b
 
-        super().__init__(strip=strip, junk=junk, left=left, right=right)
-
-    def process(self, data: bytearray):
-        dirty = True
-        synch = True
-        mview = memoryview(data)
-
         while dirty and data:
             dirty = False
 
-            if self.args.strip:
-                dirty, data = self.args.strip(data)
+            if strip:
+                dirty, data = strip(data)
                 if dirty:
                     mview = memoryview(data)
                     synch = True
 
-            for junk in self.args.junk:
+            for junk in junks:
 
                 # For large repeated patches of junk, performance is increased significantly by
                 # performing less comparisons in Python code. The following code determines a
