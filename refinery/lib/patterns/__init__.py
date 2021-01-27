@@ -152,7 +152,8 @@ _pattern_defanged_hostname = _pattern_defanged_socket + '?'
 _pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-zA-Z0-9])'
 _pattern_float = R'[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?'
 _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
-_pattern_ps1str = R'''(?:"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
+_pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
+
 _pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
 
 _pattern_vbe = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
@@ -242,6 +243,8 @@ class formats(PatternEnum):
     "Encoded Visual Basic Scripts"
     anum = alphabet(R'[a-zA-Z0-9]')
     "Sequences of alpha-numeric characters"
+    b32 = pattern('[A-Z2-7]+|[a-z2-7+]')
+    "Base32 encoded strings"
     b64 = alphabet(R'[0-9a-zA-Z\+\/]', postfix=R'[0-9a-zA-Z\+\/]{0,3}={0,3}')
     "Base64 encoded strings"
     b64u = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}')
