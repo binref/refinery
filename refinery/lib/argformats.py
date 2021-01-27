@@ -233,7 +233,7 @@ def sliceobj(expression: Union[int, str, slice], **variables) -> slice:
                     return sliceobj(expression, **data.meta)
             if variables:
                 raise
-            raise SliceAgain()
+            return SliceAgain()
     if len(sliced) == 1:
         k = sliced[0]
         return slice(k, k + 1) if k + 1 else slice(k, None, None)

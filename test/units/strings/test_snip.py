@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from refinery.lib.loader import load_commandline as L
 from .. import TestUnitBase
 
 
@@ -27,3 +28,9 @@ class TestSnip(TestUnitBase):
             [bytes(t) for t in unit.process(data)],
             [B'12121212121312', B'02020202020302']
         )
+
+    def test_snip_can_use_variables(self):
+        pipeline = L(R'rex "#(?P<index>\d+)" ABCDEFGHIJKLMNOPQRSTUVWXYZ')[
+            L('put index eval:var:index') | L('snip index:index+1')
+        ]
+        self.assertEqual(pipeline(B'#17#4#5_#8-#13#4#17.#24!'), B'REFINERY')
