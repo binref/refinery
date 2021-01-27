@@ -9,6 +9,7 @@ from .lz import lzma
 from .lznt1 import lznt1
 from .zl import zl
 from .lz4 import lz4
+from .blz import blz
 
 
 class decompress(Unit):
@@ -39,7 +40,7 @@ class decompress(Unit):
             raise ValueError('The compression factor must be nonnegative.')
         super().__init__(tolerance=tolerance, prepend=prepend, min_ratio=min_ratio)
         self.engines = [
-            engine() for engine in [zl, lzma, aplib, bz2, lz4, lznt1]
+            engine() for engine in [zl, lzma, aplib, bz2, blz, lz4, lznt1]
         ]
 
     def process(self, data):
