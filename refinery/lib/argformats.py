@@ -229,8 +229,11 @@ def sliceobj(expression: Union[int, str, slice], **variables) -> slice:
             sliced = [None if not t else PythonExpression.evaluate(t, **variables) for t in sliced]
         except VariablesMissing:
             class SliceAgain(LazyEvaluation):
-                def __call__(self, data): return sliceobj(expression, **data.meta)
-            return SliceAgain()
+                def __call__(self, data):
+                    return sliceobj(expression, **data.meta)
+            if variables:
+                raise
+            raise SliceAgain()
     if len(sliced) == 1:
         k = sliced[0]
         return slice(k, k + 1) if k + 1 else slice(k, None, None)
@@ -707,7 +710,7 @@ class DelayedArgument(LazyEvaluation):
         """
         The handler `take[start:stop:step]` expects an integer sequence as input and applies a slice
         to it. Slices are given in Python syntax, so `take[::2]` will extract every second item from
-        the incoming data.
+        the incoming data. The default sequence is `1:`, i.e. skipping the first element.
         """
         bounds = bounds and sliceobj(bounds) or slice(1, None)
         try:
