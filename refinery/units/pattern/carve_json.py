@@ -29,8 +29,10 @@ class JSONCarver:
         while True:
             start = self.data.find(B'{', self.cursor)
             if not self.dictonly:
-                lpos = self.data.find(B'[', self.cursor)
-                start = lpos if start < 0 else min(lpos, start)
+                start_list = self.data.find(B'[', self.cursor)
+                start_dict = start % len(self.data)
+                if start_dict > start_list >= 0:
+                    start = start_list
             if start < self.cursor:
                 raise StopIteration
             self.cursor = start + 1
