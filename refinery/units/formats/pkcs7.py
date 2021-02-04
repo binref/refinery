@@ -3,6 +3,7 @@
 import asn1crypto
 import asn1crypto.cms
 import asn1crypto.core
+import asn1crypto.x509
 
 from ...lib.json import BytesAsArrayEncoder
 
@@ -57,6 +58,8 @@ class PKCS7Encoder(BytesAsArrayEncoder):
             return list(obj)
         if isinstance(obj, asn1crypto.core.Any):
             return obj.dump()
+        if isinstance(obj, asn1crypto.cms.CertificateChoices):
+            return asn1crypto.x509.Certificate.load(obj.dump())
         if isinstance(obj, asn1crypto.core.Asn1Value):
             return obj.dump()
         raise ValueError(F'Unable to determine JSON encoding of {obj.__class__.__name__} object.')

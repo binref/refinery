@@ -14,6 +14,8 @@ class TestTarFileExtractor(TestUnitBase):
         result = unit(self.SIGNATURE1)
         result = json.loads(result)
         self.assertEqual(result['content']['signer_infos'][0]['unsigned_attrs'][1]['type'], 'microsoft_nested_signature')
+        self.assertTrue(all(isinstance(item, dict) for item in result['content']['certificates']),
+            'failed parsing at least one certificate')
 
     SIGNATURE1 = lzma.decompress(base64.b85decode(
         B'{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;5WAvF<k%{AcE^E=O>Sa;=U-fb<qk}DiB}`2VL~3W}sd*dR+R0{)~K^oc2*Lvmqciwus=;'
