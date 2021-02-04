@@ -5,8 +5,6 @@ import json
 from contextlib import suppress
 from pefile import PE, DIRECTORY_ENTRY, DEBUG_TYPE
 from datetime import datetime, timezone
-from asn1crypto import cms
-from asn1crypto import x509
 
 from ....lib.dotnet.header import DotNetHeader
 from ... import arg, Unit
