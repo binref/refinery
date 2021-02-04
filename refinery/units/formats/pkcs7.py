@@ -57,7 +57,7 @@ class PKCS7Encoder(BytesAsArrayEncoder):
             return list(obj)
         if isinstance(obj, asn1crypto.core.Any):
             return obj.dump()
-        raise ValueError('Unable to parse data ask PKCS7')
+        raise ValueError('Unable to parse data as PKCS7')
 
 
 class pkcs7(Unit):
