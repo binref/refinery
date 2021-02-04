@@ -46,3 +46,12 @@ class TestPEMeta(TestUnitBase):
         result = json.loads(unit(data))
 
         self.assertNotIn('Signature', result)
+
+    def test_adware_sample(self):
+        data = self.download_from_malshare('7fa4aeffba01ad34ed2fa4b77d3dee11fd881075f37a5b840e15ec86bef320ab')
+        unit = self.load()
+        result = json.loads(unit(data))
+
+        self.assertIn('Signature', result)
+        self.assertIn('Serial', result['Signature'])
+        self.assertEqual(result['Signature']['Serial'], '0ce8111784c41955f33511aeb28c9ab8')

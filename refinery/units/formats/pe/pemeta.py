@@ -59,78 +59,66 @@ class pemeta(Unit):
         Extracts a JSON-serializable and human readable dictionary with information about
         time stamp and code signing certificates that are attached to the input PE file.
         """
-        from .pesig import pesig
-        cert, info = pesig()(data), {}
+        from refinery.units.formats.pkcs7 import pkcs7
+        from refinery.units.formats.pe.pesig import pesig
 
         try:
-            if not isinstance(cert, bytes):
-                cert = bytes(cert)
-            signature = cms.ContentInfo.load(cert)
+            signature = json.loads(data | pesig | pkcs7)
         except Exception as E:
             raise ValueError(F'PKCS7 parser failed with error: {E!s}')
 
-        def tscrawl(entry, native):
-            with suppress(KeyError, TypeError):
-                if entry['type'] == 'signing_time':
-                    return entry['values']
-            try:
-                keys = list(entry)
-                assert all(isinstance(k, str) for k in keys)
-            except Exception:
-                try:
-                    length = len(entry)
-                except TypeError:
-                    return None
+        info = {}
 
-                for k in range(length):
-                    try:
-                        item = entry[k]
-                    except IndexError:
+        def find_timestamps(entry):
+            if isinstance(entry, dict):
+                if set(entry.keys()) == {'type', 'value'}:
+                    if entry['type'] == 'signing_time':
+                        return {'Timestamp': entry['value']}
+                for value in entry.values():
+                    result = find_timestamps(value)
+                    if result is None:
                         continue
-                    results = tscrawl(item, native)
-                    if results:
-                        return results
-            else:
-                for key in keys:
-                    value = entry[key]
-                    results = tscrawl(value, native)
-                    if isinstance(results, list) and len(results) == 1:
-                        result = dict(Timestamp=str(results[0]))
-                        with suppress(Exception):
-                            acc = entry if native else entry.native
-                            result['Timestamp Issuer'] = acc['sid']['issuer']['common_name']
-                        return result
-                    elif results is not None:
-                        return results
+                    with suppress(KeyError):
+                        result.setdefault('Timestamp Issuer', entry['sid']['issuer']['common_name'])
+                    return result
+            elif isinstance(entry, list):
+                for value in entry:
+                    result = find_timestamps(value)
+                    if result is None:
+                        continue
+                    return result
 
+        timestamp_info = find_timestamps(signature)
+        if timestamp_info is not None:
+            info.update(timestamp_info)
+
+        try:
+            certificates = signature['content']['certificates']
+        except KeyError:
+            return info
+
+        for certificate in certificates:
             with suppress(Exception):
-                return tscrawl(entry.native, True)
-
-        timestamps = []
-        for signer in signature['content']['signer_infos']:
-            ts = tscrawl(signer, False)
-            if ts is not None:
-                timestamps.append(ts)
-        if len(timestamps) == 1:
-            info.update(timestamps[0])
-
-        with suppress(Exception):
-            for entry in signature['content']['certificates']:
-                cert = x509.Certificate.load(entry.dump())
-                if cert.ca: continue
-                tbs = cert.native['tbs_certificate']
+                tbs = certificate['tbs_certificate']
+                primary_signature = False
                 for extension in tbs['extensions']:
                     if extension['extn_id'] == 'extended_key_usage' and 'code_signing' in extension['extn_value']:
-                        Serial = F'{tbs["serial_number"]:x}'
-                        if len(Serial) % 2:
-                            Serial = '0' + Serial
-                        tbs = dict(
-                            Issuer=tbs['issuer']['common_name'],
-                            Subject=tbs['subject']['common_name'],
-                            Serial=Serial,
-                        )
-                        info.update(tbs)
-                        return info
+                        primary_signature = True
+                    if extension['extn_id'] == 'key_usage' and 'key_cert_sign' in extension['extn_value']:
+                        primary_signature = False
+                        break
+                if not primary_signature:
+                    continue
+                serial = int(tbs['serial_number'], 0)
+                serial = F'{serial:x}'
+                if len(serial) % 2:
+                    serial = '0' + serial
+                info.update(
+                    Issuer=tbs['issuer']['common_name'],
+                    Subject=tbs['subject']['common_name'],
+                    Serial=serial,
+                )
+                return info
         return info
 
     @classmethod
