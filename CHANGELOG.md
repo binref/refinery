@@ -1,5 +1,11 @@
 # Binary Refinery Changelog
 
+## Version 0.3.24
+- Adds the `xtrtf` unit to extract embedded objects from RTF documents.
+- Adds the `officecrypt` unit to decode password-protected Office documents.
+- Improves PKCS7 parsing and fixes some cases where `pemeta` did not display the details of the digital signature.
+- Adds brieflz support to the universal `decompress` unit.
+
 ## Version 0.3.23
 - Unification of (nearly) all multibin handlers. Only the `yara:` and `escape:` handlers remain to regular expression type arguments.
 - Adds the multibin handlers `accu`, `reduce`, `cycle`, and `take`.
