@@ -11,6 +11,7 @@ msgpack
 msoffcrypto-tool
 numpy==1.19.3
 olefile
+oletools
 openpyxl
 pefile
 phpserialize 
