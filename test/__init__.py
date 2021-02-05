@@ -5,7 +5,7 @@ import random
 import refinery
 import logging
 import string
-
+import urllib.request
 
 __all__ = ['refinery', 'TestBase', 'NameUnknownException']
 
@@ -16,7 +16,7 @@ class NameUnknownException(Exception):
 
 
 class TestBase(unittest.TestCase):
-    _MALSHARE_CACHE = {}
+    _SAMPLE_CACHE = {}
 
     def ldu(self, name, *args, **kwargs):
         unit = refinery.lib.loader.load(name, *args, **kwargs)
@@ -31,15 +31,14 @@ class TestBase(unittest.TestCase):
         return ''.join(string.printable[
             random.randrange(0, len(string.printable))] for _ in range(size)).encode('UTF8')
 
-    def download_from_malshare(self, sha256hash):
-        import urllib.request
-        if sha256hash in self._MALSHARE_CACHE:
-            return self._MALSHARE_CACHE[sha256hash]
+    def download_sample(self, sha256hash):
+        if sha256hash in self._SAMPLE_CACHE:
+            return self._SAMPLE_CACHE[sha256hash]
         key = os.environ['MALSHARE_API']
         req = urllib.request.Request(
             F'https://malshare.com/api.php?api_key={key}&action=getfile&hash={sha256hash}')
         with urllib.request.urlopen(req) as response:
-            result = self._MALSHARE_CACHE[sha256hash] = response.read()
+            result = self._SAMPLE_CACHE[sha256hash] = response.read()
         return result
 
     def setUp(self):

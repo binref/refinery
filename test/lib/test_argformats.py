@@ -39,3 +39,7 @@ class TestArgumentFormats(TestBase):
         xor2 = self.ldu('xor', 'accu[12]:(A*7+23)&0xFF')
         data = bytearray(48)
         self.assertEqual(xor1(data), xor2(data))
+
+    def test_range_can_use_variables(self):
+        pipeline = self.ldu('put', 't', 0x30) [ self.ldu('xor', 'range:t:t+5') ] # noqa
+        self.assertEqual(pipeline(bytearray(10)), B'012345012345')

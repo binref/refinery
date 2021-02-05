@@ -10,7 +10,7 @@ class TestAutoXOR(TestUnitBase):
     def test_pe_file(self):
         key = B'\x47'
         xor = refinery.xor(key)
-        data = xor(self.download_from_malshare('81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b'))
+        data = xor(self.download_sample('81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b'))
         unit = self.load()
         self.assertEqual(unit(data), key)
 

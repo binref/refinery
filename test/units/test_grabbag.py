@@ -11,7 +11,7 @@ from refinery.lib.loader import load_detached as L
 class TestGrabBagExamples(TestBase):
 
     def test_example_01_maldoc(self):
-        data = self.download_from_malshare('81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b')
+        data = self.download_sample('81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b')
 
         # flake8: noqa
         pipeline = L('xlxtr 9.5:11.5 15.15 12.5:14.5') [
@@ -38,7 +38,7 @@ class TestGrabBagExamples(TestBase):
         )
 
     def test_example_02_hawkeye_config(self):
-        data = self.download_from_malshare('ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c')
+        data = self.download_sample('ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c')
         rsrc = L('perc RCDATA')(data)
 
         pipeline = L('xtp guid') [

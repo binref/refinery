@@ -7,7 +7,7 @@ from ... import TestUnitBase
 class TestPEMeta(TestUnitBase):
 
     def test_rw_dotnet_sample(self):
-        data = self.download_from_malshare('426ace19debaba6f262dcd3ce429dc8fc0b233f3fa02262375c4641d9f466709')
+        data = self.download_sample('426ace19debaba6f262dcd3ce429dc8fc0b233f3fa02262375c4641d9f466709')
         unit = self.load()
         result = json.loads(unit(data))
 
@@ -25,7 +25,7 @@ class TestPEMeta(TestUnitBase):
         self.assertEqual(result['Signature']['Serial'], '07fb45d9f70b5529036097b4f4e14370')
 
     def test_rw_delphi_sample(self):
-        data = self.download_from_malshare('ce1cd24a782932e1c28c030da741a21729a3c5930d8358079b0f91747dd0d832')
+        data = self.download_sample('ce1cd24a782932e1c28c030da741a21729a3c5930d8358079b0f91747dd0d832')
         unit = self.load()
         result = json.loads(unit(data))
 
@@ -48,7 +48,7 @@ class TestPEMeta(TestUnitBase):
         self.assertNotIn('Signature', result)
 
     def test_adware_sample(self):
-        data = self.download_from_malshare('7fa4aeffba01ad34ed2fa4b77d3dee11fd881075f37a5b840e15ec86bef320ab')
+        data = self.download_sample('7fa4aeffba01ad34ed2fa4b77d3dee11fd881075f37a5b840e15ec86bef320ab')
         unit = self.load()
         result = json.loads(unit(data))
 

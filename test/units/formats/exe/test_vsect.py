@@ -10,7 +10,7 @@ class TestVirtualAddressSnip(TestUnitBase):
 
     def test_pe(self):
         unit = self.load(list=True)
-        data = self.download_from_malshare('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')
+        data = self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')
         self.assertSetEqual(
             {bytes(name) for name in unit(data).split(B'\n')},
             {B'.text', B'.rdata', B'.pdata', B'.rsrc'}
@@ -20,7 +20,7 @@ class TestVirtualAddressSnip(TestUnitBase):
 
     def test_elf(self):
         unit = self.load(list=True)
-        data = self.download_from_malshare('c5ba314fbf02989af9e2b5edb48626aede10f2d4569095a542ed0f2033068117')
+        data = self.download_sample('c5ba314fbf02989af9e2b5edb48626aede10f2d4569095a542ed0f2033068117')
         self.assertSetEqual(
             {
                 bytes(name)

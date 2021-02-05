@@ -13,7 +13,7 @@ class TestDotNetHeaderParser(TestUnitBase):
         unit_both = self.load()
         unit_meta = self.load(user=False)
         unit_user = self.load(meta=False)
-        data = self.download_from_malshare('ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c')
+        data = self.download_sample('ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c')
 
         data_both = unit_both(data)
         data_meta = unit_meta(data)

@@ -9,7 +9,7 @@ class TestConfuserXDecryptor(TestUnitBase):
 
     def test_hawkeye(self):
         unit = self.load()
-        data = self.download_from_malshare('094e7d3e6aebf99663993e342401423dff3f444c332eae0b8f0d9eeda1b809a7')
+        data = self.download_sample('094e7d3e6aebf99663993e342401423dff3f444c332eae0b8f0d9eeda1b809a7')
         with io.BytesIO(data) as sample:
             strings = list(sample | unit)
 

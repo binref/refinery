@@ -8,7 +8,7 @@ class TestCarvePE(TestUnitBase):
 
     def test_wikipedia_unicode_example(self):
 
-        samples = [self.download_from_malshare(h) for h in [
+        samples = [self.download_sample(h) for h in [
             'c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916',
             'ce1cd24a782932e1c28c030da741a21729a3c5930d8358079b0f91747dd0d832',
             '426ace19debaba6f262dcd3ce429dc8fc0b233f3fa02262375c4641d9f466709',

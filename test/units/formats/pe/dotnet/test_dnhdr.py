@@ -9,7 +9,7 @@ class TestDotNetHeaderParser(TestUnitBase):
 
     def test_hawkeye_header_01(self):
         unit = self.load()
-        data = self.download_from_malshare('ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c')
+        data = self.download_sample('ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c')
         header = json.loads(unit(data))
         streams = header['Meta']['Streams']
 
@@ -23,7 +23,7 @@ class TestDotNetHeaderParser(TestUnitBase):
 
     def test_hawkeye_header_02(self):
         unit = self.load()
-        data = self.download_from_malshare('094e7d3e6aebf99663993e342401423dff3f444c332eae0b8f0d9eeda1b809a7')
+        data = self.download_sample('094e7d3e6aebf99663993e342401423dff3f444c332eae0b8f0d9eeda1b809a7')
         header = json.loads(unit(data))
         streams = header['Meta']['Streams']
 
