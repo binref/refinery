@@ -58,7 +58,21 @@ class base(Unit):
 
     def process(self, data):
         data = data.strip()
-        number = int(data, self.args.base)
-        size, rest = divmod(number.bit_length(), 8)
-        if rest: size += 1
-        return number.to_bytes(size, byteorder=self.byteorder)
+        base = self.args.base
+        defaults = self._DEFAULT_APHABET[:base]
+        alphabet = self.args.alphabet[:base]
+        if len(alphabet) == len(defaults):
+            if alphabet != defaults:
+                self.log_info('translating input data to a default alphabet for faster conversion')
+                data = data.translate(bytes.maketrans(alphabet, defaults))
+            result = int(data, self.args.base)
+        else:
+            self.log_warn('very long alphabet, unable to use built-ins; reverting to (slow) fallback.')
+            result = 0
+            alphabet = {digit: k for k, digit in enumerate(alphabet)}
+            for digit in data:
+                result *= base
+                result += alphabet[digit]
+        size, rest = divmod(result.bit_length(), 8)
+        size += int(bool(rest))
+        return result.to_bytes(size, byteorder=self.byteorder)
