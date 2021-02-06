@@ -29,9 +29,6 @@ class deob_ps1(IterativeDeobfuscator):
         deob_ps1_uncurly
     ]]
 
-    def __init__(self, timeout):
-        super().__init__(timeout)
-
     def deobfuscate(self, data):
         for u in self._SUBUNITS:
             u.log_level = self.log_level

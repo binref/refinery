@@ -1,10 +1,11 @@
-import sys
+import hashlib
+import logging
 import os
-import unittest
 import random
 import refinery
-import logging
 import string
+import sys
+import unittest
 import urllib.request
 
 __all__ = ['refinery', 'TestBase', 'NameUnknownException']
@@ -32,13 +33,24 @@ class TestBase(unittest.TestCase):
             random.randrange(0, len(string.printable))] for _ in range(size)).encode('UTF8')
 
     def download_sample(self, sha256hash):
+        sha256hash = sha256hash.lower()
         if sha256hash in self._SAMPLE_CACHE:
             return self._SAMPLE_CACHE[sha256hash]
-        key = os.environ['MALSHARE_API']
         req = urllib.request.Request(
-            F'https://malshare.com/api.php?api_key={key}&action=getfile&hash={sha256hash}')
-        with urllib.request.urlopen(req) as response:
-            result = self._SAMPLE_CACHE[sha256hash] = response.read()
+            F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true')
+        try:
+            with urllib.request.urlopen(req) as response:
+                decryptor = refinery.aes(mode='CBC', key=B'REFINERYTESTDATA')
+                result = decryptor(response.read())
+                if not result or hashlib.sha256(result).hexdigest().lower() != sha256hash:
+                    raise ValueError
+        except Exception:
+            key = os.environ['MALSHARE_API']
+            req = urllib.request.Request(
+                F'https://malshare.com/api.php?api_key={key}&action=getfile&hash={sha256hash}')
+            with urllib.request.urlopen(req) as response:
+                result = response.read()
+        self._SAMPLE_CACHE[sha256hash] = result
         return result
 
     def setUp(self):
