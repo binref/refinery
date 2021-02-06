@@ -7,5 +7,5 @@ from .. import TestUnitBase
 class TestIfRex(TestUnitBase):
 
     def test_filter_identifier_letters(self):
-        pl = L('emit range:256') | L('chop 1')[self.load('\\w')]
+        pl = L('emit range::256') | L('chop 1')[self.load('\\w')]
         self.assertEqual(pl(), B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz')

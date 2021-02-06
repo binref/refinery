@@ -538,12 +538,22 @@ class DelayedArgument(LazyEvaluation):
         `bounds` is just a single integer, it is interpreted as the upper bound for a sequence
         of bytes starting at zero.
         """
-        def compute_range(data: Chunk):
-            bounds = sliceobj(region, **data.meta)
-            if bounds.stop is None:
-                return itertools.islice(itertools.count(), bounds.start, None, bounds.step)
-            return range(bounds.start or 0, bounds.stop, bounds.step or 1)
-        return compute_range
+        def compute_range(data: Optional[Chunk] = None):
+            meta = data and getattr(data, 'meta', None) or {}
+            bounds = sliceobj(region, **meta)
+            start = bounds.start or 0
+            stop = bounds.stop
+            step = bounds.step or 1
+            if stop is None:
+                return itertools.islice(itertools.count(), start, None, step)
+            result = range(start, stop, step)
+            if 0 <= start and stop <= 0x100:
+                result = bytearray(result)
+            return result
+        try:
+            return compute_range()
+        except TooLazy:
+            return compute_range
 
     @handler.register('c', 'copy', final=True)
     def copy(self, region: str) -> bytes:
