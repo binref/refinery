@@ -96,7 +96,7 @@ MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 
 
 class ParserError(ArgumentTypeError): pass
-class VariablesMissing(ParserError): pass
+class ParserVariableMissing(ParserError): pass
 
 
 class RepeatedInteger(int):
@@ -186,7 +186,7 @@ class PythonExpression:
                     ', '.join(t.__name__ for t in types - self._ALLOWED_NODE_TYPES))
             )
         if not all_variables_allowed and not names <= variables:
-            raise VariablesMissing(
+            raise ParserVariableMissing(
                 'the following variable names are unknown: {}'.format(
                     ', '.join(names - variables))
             )
@@ -210,7 +210,7 @@ class PythonExpression:
         return expression(**values)
 
 
-def sliceobj(expression: Union[int, str, slice], **variables) -> slice:
+def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False) -> slice:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
@@ -226,17 +226,20 @@ def sliceobj(expression: Union[int, str, slice], **variables) -> slice:
         if not sliced or len(sliced) > 3:
             raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
         try:
-            sliced = [None if not t else PythonExpression.evaluate(t, **variables) for t in sliced]
-        except VariablesMissing:
+            kwargs = variables or {}
+            sliced = [None if not t else PythonExpression.evaluate(t, **kwargs) for t in sliced]
+        except ParserVariableMissing:
             class SliceAgain(LazyEvaluation):
                 def __call__(self, data):
-                    return sliceobj(expression, **data.meta)
-            if variables:
+                    return sliceobj(expression, data.meta)
+            if variables is not None:
                 raise
             return SliceAgain()
     if len(sliced) == 1:
         k = sliced[0]
-        return slice(k, k + 1) if k + 1 else slice(k, None, None)
+        if not range:
+            return slice(k, k + 1) if k + 1 else slice(k, None, None)
+        return slice(0, k)
     return slice(*sliced)
 
 
@@ -540,7 +543,7 @@ class DelayedArgument(LazyEvaluation):
         """
         def compute_range(data: Optional[Chunk] = None):
             meta = data and getattr(data, 'meta', None) or {}
-            bounds = sliceobj(region, **meta)
+            bounds = sliceobj(region, meta, range=True)
             start = bounds.start or 0
             stop = bounds.stop
             step = bounds.step or 1
@@ -552,7 +555,7 @@ class DelayedArgument(LazyEvaluation):
             return result
         try:
             return compute_range()
-        except TooLazy:
+        except ParserVariableMissing:
             return compute_range
 
     @handler.register('c', 'copy', final=True)
@@ -562,7 +565,7 @@ class DelayedArgument(LazyEvaluation):
         as a `refinery.lib.argformats.sliceobj`. The result contains the corresponding slice
         of the input data.
         """
-        return lambda d: memoryview(d)[sliceobj(region, **d.meta)]
+        return lambda d: memoryview(d)[sliceobj(region, d.meta)]
 
     @handler.register('x', 'cut', final=True)
     def cut(self, region: str) -> bytes:
@@ -575,7 +578,7 @@ class DelayedArgument(LazyEvaluation):
                 meta = data.meta
             except AttributeError:
                 meta = {}
-            bounds = sliceobj(region, **meta)
+            bounds = sliceobj(region, meta)
             result = bytearray(data[bounds])
             data[bounds] = []
             return result
