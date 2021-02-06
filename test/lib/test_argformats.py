@@ -41,5 +41,9 @@ class TestArgumentFormats(TestBase):
         self.assertEqual(xor1(data), xor2(data))
 
     def test_range_can_use_variables(self):
-        pipeline = self.ldu('put', 't', 0x30) [ self.ldu('xor', 'range:t:t+5') ] # noqa
-        self.assertEqual(pipeline(bytearray(10)), B'012345012345')
+        pipeline = self.ldu('put', 't', 0x30) [ self.ldu('xor', 'range:t:t+6') ] # noqa
+        self.assertEqual(pipeline(bytearray(10)), B'0123450123')
+
+    def test_range_can_be_infinite(self):
+        pipeline = self.ldu('put', 't', 0x30) [ self.ldu('xor', 'range:t:') ] # noqa
+        self.assertEqual(pipeline(bytearray(10)), B'0123456789')

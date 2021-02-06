@@ -538,15 +538,12 @@ class DelayedArgument(LazyEvaluation):
         `bounds` is just a single integer, it is interpreted as the upper bound for a sequence
         of bytes starting at zero.
         """
-        try:
-            bounds = number(region)
-            return bytearray(range(bounds))
-        except (ValueError, ArgumentTypeError):
-            pass
-        bounds = sliceobj(region)
-        if bounds.stop is None:
-            raise ArgumentTypeError('cannot generate unbounded byte sequence.')
-        return bytearray(range(bounds.start or 0, bounds.stop, bounds.step or 1))
+        def compute_range(data: Chunk):
+            bounds = sliceobj(region, **data.meta)
+            if bounds.stop is None:
+                return itertools.islice(itertools.count(), bounds.start, None, bounds.step)
+            return range(bounds.start or 0, bounds.stop, bounds.step or 1)
+        return compute_range
 
     @handler.register('c', 'copy', final=True)
     def copy(self, region: str) -> bytes:
@@ -1016,7 +1013,7 @@ def numseq(expression: Union[int, str]) -> Union[Iterable[int], DelayedNumSeqArg
     This is the argument parser type that uses `refinery.lib.argformats.DelayedNumSeqArgument`.
     """
     if isinstance(expression, int):
-        return (expression,)
+        return RepeatedInteger(expression)
     arg = DelayedNumSeqArgument(expression)
     with suppress(TooLazy):
         return arg()
