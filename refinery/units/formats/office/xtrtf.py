@@ -3,7 +3,7 @@
 from oletools.rtfobj import RtfObjParser, RtfObject
 from oletools.oleobj import OleObject
 
-from . import PathExtractorUnit, UnpackResult
+from .. import PathExtractorUnit, UnpackResult
 
 
 class xtrtf(PathExtractorUnit):
