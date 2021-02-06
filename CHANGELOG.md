@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.3.25 - bugfix release
+
 ## Version 0.3.24
 - Adds the `xtrtf` unit to extract embedded objects from RTF documents.
 - Adds the `officecrypt` unit to decode password-protected Office documents.
