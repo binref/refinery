@@ -90,11 +90,6 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
 
     @property
     def iv(self) -> ByteString:
-        if len(self.args.iv) != self.blocksize:
-            raise ValueError(
-                F'The IV has length {len(self.args.iv)} but the block size '
-                F'is {self.blocksize}.'
-            )
         return self.args.iv
 
     def reverse(self, data: ByteString) -> ByteString:
@@ -194,6 +189,9 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
                 optionals['nonce'] = self.iv
             elif mode in ('CBC', 'CFB', 'OFB', 'OPENPGP'):
+                iv = self.iv
+                if len(iv) != self.blocksize:
+                    raise ValueError(F'The IV has length {len(self.args.iv)} but the block size is {self.blocksize}.')
                 optionals['iv'] = self.iv
             self.log_info('initial vector:', self.iv.hex())
         if self.args.mode:

@@ -24,7 +24,7 @@ class TestAES(TestUnitBase):
 
     def test_gcm(self):
         K = self.generate_random_buffer(16)
-        V = self.generate_random_buffer(16)
+        V = self.generate_random_buffer(12)
         M = self.generate_random_buffer(5 * 16)
         D = self.load(mode='gcm', key=K, iv=V)
         E = self.load(mode='GCM', key=K, iv=V, reverse=True)
