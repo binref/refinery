@@ -26,7 +26,6 @@ class peek(HexViewer):
         hexaddr=True, dense=False, expand=False, width=0
     ):
         lines = 1 if brief else INF if all else lines
-        dense = dense or brief
         super(peek, self).__init__(
             hexaddr=hexaddr and not brief, expand=expand, width=width, dense=dense, lines=lines, decode=decode, esc=esc, brief=brief)
         self._sep = True
@@ -47,8 +46,7 @@ class peek(HexViewer):
         if not meta:
             return
         width = max(len(name) for name in data.meta)
-        if not self.args.brief:
-            yield sep
+        yield sep
         for name, value in data.meta.items():
             if isbuffer(value):
                 try:
@@ -73,23 +71,30 @@ class peek(HexViewer):
         from ...lib.tools import format_size
         from ...lib.magic import magicparse
 
-        peeks = [
-            F'{entropy(memoryview(data)) * 100:05.2f}% entropy',
-            format_size(len(data), align=not self.args.lines)
-        ]
-
-        magic = magicparse(data)
-
-        if magic is not None:
-            peeks.append(magic)
-        if self._idx is not None:
-            peeks.insert(0, F'item {self._idx:02d}')
+        if self.args.brief:
+            peeks = []
+        else:
+            peeks = [
+                F'{entropy(memoryview(data)) * 100:05.2f}% entropy',
+                format_size(len(data), align=not self.args.lines)
+            ]
+            magic = magicparse(data)
+            if magic is not None:
+                peeks.append(magic)
+            if self._idx is not None:
+                peeks.insert(0, F'item {self._idx:02d}')
 
         header = ', '.join(peeks)
-
         dump = None
         termsize = get_terminal_size()
         working_codec = None
+
+        if self.args.brief:
+            wmod = -format_size.width - 2
+            if self._idx is not None:
+                wmod -= 6
+        else:
+            wmod = 0
 
         if data:
             if self.args.decode:
@@ -113,7 +118,7 @@ class peek(HexViewer):
                         line.rstrip('\r')
                         for chunk in textwrap.wrap(
                             decoded,
-                            width,
+                            width + wmod,
                             break_on_hyphens=False,
                             replace_whitespace=False
                         )
@@ -124,7 +129,7 @@ class peek(HexViewer):
 
             if not dump:
                 total = abs(self.args.lines * termsize // 3)
-                dump = self.hexdump(data, total=total)
+                dump = self.hexdump(data, total=total, width=wmod)
 
             dump = list(itertools.islice(dump, 0, abs(self.args.lines)))
 
@@ -135,23 +140,26 @@ class peek(HexViewer):
                 return width * '-'
             return F'--{title}' + '-' * (width - len(title) - 2)
 
-        yield separator()
-
-        if width:
-            yield from textwrap.wrap(header, width)
-        else:
-            yield header
-
-        yield from self._peekmeta(data, width, separator())
+        if not self.args.brief:
+            yield separator()
+            if width:
+                yield from textwrap.wrap(header, width + wmod)
+            else:
+                yield header
+            yield from self._peekmeta(data, width, separator())
 
         if dump:
             if not self.args.brief:
                 yield separator(F'CODEC={working_codec}' if working_codec else None)
                 yield from dump
             else:
-                yield next(iter(dump)).strip()
+                brief = next(iter(dump))
+                brief = F'{format_size(len(data), True)}: {brief}'
+                if self._idx is not None:
+                    brief = F'#{self._idx:03d}: {brief}'
+                yield brief
 
-        if self._sep:
+        if self._sep and not self.args.brief:
             yield separator()
 
     def filter(self, inputs):

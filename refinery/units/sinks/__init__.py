@@ -26,19 +26,21 @@ class HexViewer(Unit, abstract=True):
                 break
         return addr_width
 
-    def hexdump(self, data, total=None):
+    def hexdump(self, data, total=None, width=0):
         import re
 
         total = total or len(data)
+        width = width + self.args.width
 
-        if self.args.width:
-            columns = self.args.width
+        if width > 0:
+            columns = width
         else:
             # this will default to 16 byte wide output if
             # stdout is not a terminal or if its width can
             # not be determined for other reasons.
             try:
-                columns = get_terminal_size() or 75
+                columns = width + get_terminal_size() or 75
+                columns = max(2, columns)
             except OSError:
                 columns = 16
             else:
