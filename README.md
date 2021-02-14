@@ -24,7 +24,7 @@ The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [3-Clau
 
 ### Installing the Refinery
 
-The refinery requires at **Python 3.7**. Since binary refinery introduces a large number of new commands, there is a good chance that some of these will clash on some systems. Therefore, you have the option to choose a _prefix_ for the installation, which will be put in front of every command shim that is installed. For example, if you choose `r.` as your prefix, then the [emit](refinery/emit.py) command would be `r.emit` in your terminal. An added benefit is that you can type `r.` and hammer <kbd>Tab</kbd> twice to get a list of all available refinery commands.
+The refinery requires at least **Python 3.7**. Since binary refinery introduces a large number of new commands, there is a good chance that some of these will clash on some systems. Therefore, you have the option to choose a _prefix_ for the installation, which will be put in front of every command shim that is installed. For example, if you choose `r.` as your prefix, then the [emit](refinery/emit.py) command would be `r.emit` in your terminal. An added benefit is that you can type `r.` and hammer <kbd>Tab</kbd> twice to get a list of all available refinery commands.
 
 Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket. If you specify the special prefix `!` (a single exclamation mark), then the refinery will be installed in library mode and no commands will be created at all.
 
