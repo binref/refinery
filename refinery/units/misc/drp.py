@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import numpy as np
+import collections
 import sys
 
-from .. import Unit
-from ...lib.suffixtree import SuffixTree, Node
+from .. import arg, Unit
+from ...lib.suffixtree import SuffixTree
 
 
 class stackdepth:
@@ -28,61 +28,81 @@ class drp(Unit):
     in a chunk of data. The unit computes a suffix tree which may require a lot of
     memory for large buffers.
     """
-    def process(self, data):
+    def __init__(self,
+        consecutive: arg.switch('-c', help='Assume that the repeating pattern is consecutive when observable.') = False,
+        chunksize: arg.number(metavar='chunksize', help='Maximum number of bytes to inspect at once. The default is {default}') = 1024
+    ):
+        super().__init__(chunksize=chunksize, consecutive=consecutive)
+
+    def _get_patterns(self, data):
         with stackdepth(len(data)):
-            tree = SuffixTree(memoryview(data))
-            scan = {}
-
-        def leafcount(node: Node):
-            if not node.children:
-                return 1
-            try:
-                return scan[node]
-            except KeyError:
-                scan[node] = count = sum(leafcount(c) for c in node)
-                return count
-
-        with stackdepth(len(tree.data)):
-            scan = {bytes(node.label): leafcount(node) for node in tree}
-
-        del tree
-        mean = np.fromiter(scan.values(), dtype=np.float).mean()
-
-        for pattern, performance in list(scan.items()):
-            if performance < mean:
-                scan.pop(pattern)
-
-        patterns = set(scan)
-        finished = False
-
-        while not finished:
-            finished = True
-            for r in patterns:
-                for p in patterns:
-                    if r in p and scan[r] > scan[p] > scan[r] - mean:
-                        scan.pop(r)
-                        patterns.discard(r)
-                        finished = False
+            tree = SuffixTree(data)
+        patterns = {}
+        shadowed = collections.defaultdict(int)
+        cursor = 0
+        while cursor < len(data):
+            node = tree.root
+            rest = data[cursor:]
+            remaining = len(rest)
+            length = 0
+            offset = None
+            while node.children and length < remaining:
+                for child in node.children.values():
+                    if tree.data[child.start] == rest[length]:
+                        node = child
                         break
-                if not finished:
+                if node.start >= cursor:
                     break
+                offset = node.start - length
+                length = node.end + 1 - offset
+            if offset is None:
+                cursor += 1
+                continue
+            length = min(remaining, length)
+            pattern = rest[:length].tobytes()
+            shadowed[pattern] = 1
+            patterns[pattern] = patterns.get(pattern, 0) + 1
+            cursor += length
+        del tree
+        for child in patterns:
+            for parent, count in patterns.items():
+                if len(parent) <= len(child):
+                    continue
+                shadowed[child] += count * parent.count(child)
+        for child in patterns:
+            patterns[child] += shadowed[child]
+        return {
+            pattern: len(pattern) * count
+            for pattern, count in patterns.items()
+        }
 
-        best_patterns = []
-        best_performance = 0
-
-        for pattern, count in scan.items():
-            performance = len(pattern) * count
-            if performance >= best_performance:
-                if performance > best_performance:
-                    best_patterns[:] = []
-                best_performance = performance
-                best_patterns.append(pattern)
-
-        assert best_patterns, 'did not find a single pattern'
-
+    def process(self, data):
+        memview = memoryview(data)
+        patterns = collections.defaultdict(int)
+        chunksize = self.args.chunksize
+        for k in range(0, len(memview), chunksize):
+            for p, count in self._get_patterns(memview[k:k + chunksize]).items():
+                patterns[p] += count
+        if not patterns:
+            raise RuntimeError('unexpected state: no repeating sequences found')
+        self.log_debug('evaluating pattern performance')
+        scan_max_performance = max(patterns.values())
+        best_patterns = [
+            sequence for sequence, performance in patterns.items()
+            if performance >= scan_max_performance
+        ]
         if len(best_patterns) > 1:
             self.log_warn('could not determine unique best repeating pattern, returning the first of these:')
             for k, p in enumerate(best_patterns):
                 self.log_warn(F'{k:02d}.: {p.hex()}')
-
-        return best_patterns[0]
+        result = best_patterns[0]
+        if self.args.consecutive:
+            offset = 0
+            for byte in result[1:]:
+                if byte == result[offset]:
+                    offset += 1
+                else:
+                    offset = 0
+            if offset > 0:
+                result = result[:-offset]
+        return result

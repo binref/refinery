@@ -38,3 +38,21 @@ class TestAutoXOR(TestUnitBase):
         )
         unit = self.load()
         self.assertEqual(unit(data), B'#(:')
+
+    def test_xor_key_visibility(self):
+        data = bytes.fromhex(
+            '67 71 0D FD 07 03 9C FC C2 CF F0 1B D2 31 AD FA 67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB'  # gq...........1..gq.........w.8-.
+            '67 71 0D 05 F8 FC 63 DB C2 CF F0 77 BF 38 2D FB 67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB'  # gq....c....w.8-.gq.........w.8-.
+            '67 71 0D F1 07 03 9C FC C2 CF F0 77 97 38 2D FB 67 71 0D FD 07 03 9C FC C2 CF F0 1B D2 31 AD FA'  # gq.........w.8-.gq...........1..
+            '67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB 67 71 0D 06 F8 FC 63 DB C2 CF F0 77 BF 38 2D FB'  # gq.........w.8-.gq....c....w.8-.
+            '67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB 67 71 0D F1 07 03 9C FC C2 CF F0 CE AB 38 2D FB'  # gq.........w.8-.gq...........8-.
+            '94 DB 45 7C 3A 4B 17 36 31 65 B8 FA 82 B3 E7 08 CD 39 80 CC 07 03 9C FC C2 CF F0 CF B4 38 2D FB'  # ..E|:K.61e.......9...........8-.
+            '67 71 0D FB 07 03 9C FC C2 CF F0 67 D0 31 AD FA 67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB'  # gq.........g.1..gq.........w.8-.
+            '67 71 0D E4 07 03 9C 00 3D 30 0F 7D BF 38 2D FB 67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB'  # gq......=0.}.8-.gq.........w.8-.
+            '67 71 0D F1 07 03 9C FC C2 CF F0 FF AC 38 2D FB 67 71 0D F9 07 03 9C FC C2 CF F0 6D D0 31 AD FA'  # gq...........8-.gq.........m.1..
+            '67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB 67 71 0D 02 F8 FC 63 11 3D 30 0F 7F BF 38 2D FB'  # gq.........w.8-.gq....c.=0...8-.
+        )
+        unit1 = self.load()
+        self.assertEqual(unit1(data), bytes.fromhex(
+            'F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB 67 71 0D'
+        ))
