@@ -4,7 +4,7 @@ import re
 
 from . import arg, BlockTransformation
 from ...lib.argformats import number
-from ...lib.patterns import formats
+from ...lib.patterns import formats, make_hexline_pattern
 from ..encoding.base import base as base_unit
 
 
@@ -24,14 +24,12 @@ class pack(BlockTransformation):
             'Find only numbers in given base. Default of 0 means that '
             'common expressions for hexadecimal, octal and binary are '
             'accepted.')) = 0,
-        hexdump : arg.switch('-x', help='Parse only pairs of hexadecimal digits surrounded by whitespace.') = False,
         prefix  : arg.switch('-r', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.') = False,
         strict  : arg.switch('-s', help='Only parse integers that fit in one block of the given block size.') = False,
         bigendian=False, blocksize=1
     ):
         super().__init__(
-            base=0x10 if hexdump else base,
-            hexdump=hexdump,
+            base=base,
             prefix=prefix,
             strict=strict,
             bigendian=bigendian,
@@ -73,12 +71,7 @@ class pack(BlockTransformation):
                     continue
                 yield M
 
-        if self.args.hexdump:
-            pattern = re.compile(
-                BR'(?:\W|\s|^)(?:0x)?([0-9a-f]{%i})h?(?=\s|$)' % (self.args.blocksize * 2),
-                re.IGNORECASE
-            )
-        elif self.args.base == 0:
+        if self.args.base == 0:
             pattern = formats.integer
         elif self.args.base <= 10:
             pattern = re.compile(B'[-+]?[0-%d]{1,64}' % (self.args.base - 1))
