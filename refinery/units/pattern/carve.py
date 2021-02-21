@@ -44,8 +44,8 @@ class carve(PatternExtractor):
             from ..encoding.hex import hex
             decoder = hex()
         elif self.args.format is formats.hexdump:
-            from ..blockwise.pack import pack
-            decoder = pack(0x10, hexdump=True)
+            from ..formats.hexdmp import hexdmp
+            decoder = hexdmp()
         elif self.args.format is formats.intarray:
             from ..blockwise.pack import pack
             decoder = pack()
