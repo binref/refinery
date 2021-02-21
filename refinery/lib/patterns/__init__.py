@@ -162,7 +162,7 @@ _part_url_credentials = (
     R'(?:(?P<url_username>[^"\'\s\x00-\x20\x7E-\xFF]{1,256})?'
     R'(?::(?P<url_password>[^"\'\s\x00-\x20\x7E-\xFF]{0,256})?)?@)?'
 )
-_prefix_serrated_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20})?:\/\/)' + _part_url_credentials
+_prefix_serrated_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20}:)?\/\/)' + _part_url_credentials
 _prefix_defanged_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20})?(?:\[:\]|:)\/\/)' + _part_url_credentials
 _suffix_combined_url = R'(?P<url_path>[/?#](?:[#/=:;$!?&.,\w\+\%\-\*\'~@()](?![a-zA-Z]{2,20}://))*)?'
 
@@ -193,13 +193,18 @@ _pattern_any_path = R'(?:{nix})|(?:{win})'.format(
     win=_pattern_win_path
 )
 
-_pattern_hexline = R'(?:{s}+\s+)?\s*{h}(?:\s+{s}+)?'.format(
-    h=tokenize(
-        R'(?:0x)?[0-9a-f]{2}h?',
-        sep=R'[- \t\/:;,\\]{1,3}'
-    ).pattern,
-    s=R'[-\w:;,#\.\$\?!\/\\=\(\)\[\]\{\}]'
-)
+
+def make_hexline_pattern(blocksize: int) -> str:
+    return R'(?:{s}+\s+)?\s*({h})(?:[ \t]+(.+?))?'.format(
+        h=tokenize(
+            RF'(?:0[xX])?[0-9a-fA-F]{{{2 * blocksize}}}h?',
+            sep=R'[- \t\/:;,\\]{1,3}'
+        ).pattern,
+        s=R'[-\w:;,#\.\$\?!\/\\=\(\)\[\]\{\}]'
+    )
+
+
+_pattern_hexline = make_hexline_pattern(1)
 
 _pattern_pem = (
     R'-----BEGIN(?:\s[A-Z0-9]+)+-----{n}'
