@@ -28,7 +28,8 @@ class drp(Unit):
     in a chunk of data. The unit computes a suffix tree which may require a lot of
     memory for large buffers.
     """
-    def __init__(self,
+    def __init__(
+        self,
         consecutive: arg.switch('-c', help='Assume that the repeating pattern is consecutive when observable.') = False,
         chunksize: arg.number(metavar='chunksize', help='Maximum number of bytes to inspect at once. The default is {default}') = 1024
     ):
