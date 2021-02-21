@@ -194,7 +194,7 @@ class TestMetaProperties(TestUnitBase):
 
 
 class TestSimpleInvertible(TestUnitBase):
-    exceptions = ['vbe', 'recode', 'u16', 'cp1252', 'stretch']
+    exceptions = ['vbe', 'recode', 'u16', 'cp1252', 'stretch', 'hexdmp']
 
     def setUp(self):
         super().setUp()
