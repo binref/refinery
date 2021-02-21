@@ -4,6 +4,7 @@ import re
 
 from . import arg, BlockTransformation
 from ...lib.argformats import number
+from ...lib.patterns import formats
 from ..encoding.base import base as base_unit
 
 
