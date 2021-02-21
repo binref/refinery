@@ -1,7 +1,11 @@
 # Binary Refinery Changelog
 
-## Version 0.3.25 - bugfix release
+## Version 0.3.26
+- The `hexview` unit was removed, instead the `hexdmp` unit was created. By default, this unit converts hexdumps back to binary, the previous functionality of `hexview` is now available as the reverse operation of `hexdmp`.
+- Adds the `dnblob` unit.
+- The `drp` unit underwent major refactoring with the goal to improve both speed and quality of results. Two options were added to help control these new settings.
 
+## Version 0.3.25 - bugfix release
 ## Version 0.3.24
 - Adds the `xtrtf` unit to extract embedded objects from RTF documents.
 - Adds the `officecrypt` unit to decode password-protected Office documents.
