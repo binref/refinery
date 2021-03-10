@@ -232,6 +232,12 @@ class pemeta(Unit):
                 )
             )
 
+        try:
+            entry = header.head.EntryPointToken + pe.OPTIONAL_HEADER.ImageBase
+            info.update(EntryPoint=F'{entry:08X}')
+        except AttributeError:
+            pass
+
         if len(tables.Module) == 1:
             module = tables.Module[0]
             info.update(ModuleName=module.Name)
