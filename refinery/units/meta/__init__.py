@@ -36,7 +36,7 @@ class ConditionalUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        negate: arg.switch('--not', '-n', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
+        negate: arg.switch('-n', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
         **kwargs
     ):
         super().__init__(negate=negate, **kwargs)
