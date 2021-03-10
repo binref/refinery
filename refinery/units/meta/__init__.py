@@ -36,10 +36,10 @@ class IfElseFilter(Unit, abstract=True):
 
     def __init__(
         self,
-        drop: arg.switch('-d', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
+        negate: arg.switch('--not', '-n', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
         **kwargs
     ):
-        super().__init__(drop=drop, **kwargs)
+        super().__init__(negate=negate, **kwargs)
 
     @abc.abstractmethod
     def match(self, chunk) -> bool:
@@ -47,6 +47,6 @@ class IfElseFilter(Unit, abstract=True):
 
     def filter(self, inputs):
         for chunk in inputs:
-            if self.match(chunk) is self.args.drop:
+            if self.match(chunk) is self.args.negate:
                 continue
             yield chunk

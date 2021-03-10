@@ -10,11 +10,11 @@ class ifrex(RegexUnit, IfElseFilter):
     regular expression.
     """
     def __init__(
-        self, regex, multiline=False, ignorecase=False, drop=False,
+        self, regex, multiline=False, ignorecase=False, negate=False,
         match: arg.switch('-m',
             help='Perform a full match rather than matching anywhere in the chunk.') = False
     ):
-        super().__init__(regex=regex, drop=drop, multiline=multiline, ignorecase=ignorecase, match=match)
+        super().__init__(regex=regex, negate=negate, multiline=multiline, ignorecase=ignorecase, match=match)
 
     def match(self, chunk):
         return bool(self._matcher(chunk))
