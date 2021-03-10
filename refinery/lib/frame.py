@@ -56,7 +56,7 @@ breaks:
 
 ### Squeezing
 
-Inside a frame, application of a `refinery.Unit` with multiple outputs will substitute the
+Inside a frame, application of a `refinery.units.Unit` with multiple outputs will substitute the
 input by the corresponding list of outputs. For example,
 
     $ emit OOOOOOOO | chop 4 [| chop 2 | ccp F ]]

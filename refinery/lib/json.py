@@ -77,11 +77,9 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
     @classmethod
     def handled(cls, obj) -> bool:
         """
-        Returns whether the given object can be handled by the decoder.
-        When a `refinery.lib.json.JSONCustomEncoder` is used inside a
-        `refinery.lib.json.AllowBasicTypeOverwrites` context, then it is
-        possible to return `True` for basic types such as `list` to
-        provide custom encodings of these types.
+        Returns whether the given object can be handled by the decoder. When a `refinery.lib.json.JSONEncoderEx` is used as
+        a context manager, then it is possible to return `True` for basic types such as `list` to provide custom encodings of
+        these types.
         """
         return False
 

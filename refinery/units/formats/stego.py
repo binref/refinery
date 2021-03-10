@@ -19,7 +19,7 @@ class stego(Unit):
     """
     Decodes the RGBA (red/green/blue/alpha) values of the pixels of a given image file and
     outputs these values as bytes. Each column of the image is transformed and output as and
-    individual chunk. To obtain the data in rows, the `refinery.transform` unit can be used.
+    individual chunk. To obtain the data in rows, the `refinery.transpose` unit can be used.
     """
     def __init__(
         self,

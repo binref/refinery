@@ -107,6 +107,7 @@ the following Python code:
 """
 from __future__ import annotations
 
+import abc
 import sys
 import os
 import inspect
@@ -562,6 +563,12 @@ def UnitFilterBoilerplate(
     return peekfilter
 
 
+def _singleton(cls): return cls()
+@_singleton # noqa
+class _NoReverseImplemented:
+    def __call__(*_): raise NotImplementedError
+
+
 class Executable(ABCMeta):
     """
     This is the metaclass for refinery units. A class which is of this type is
@@ -632,17 +639,24 @@ class Executable(ABCMeta):
     def __new__(mcs, name, bases, nmspc, abstract=False):
         def decorate(**decorations):
             for method, decorator in decorations.items():
-                try: nmspc[method] = decorator(nmspc[method])
-                except KeyError: pass
+                try:
+                    old = nmspc[method]
+                except KeyError:
+                    continue
+                if getattr(old, '__isabstractmethod__', False):
+                    continue
+                nmspc[method] = decorator(old)
         decorate(
             filter=UnitFilterBoilerplate,
             process=UnitProcessorBoilerplate,
             reverse=UnitProcessorBoilerplate,
-            __init__=no_type_check
+            __init__=no_type_check,
         )
-        nmspc.setdefault('__doc__', '')
         if not abstract and Entry not in bases:
             bases = bases + (Entry,)
+            if not bases[0].is_reversible:
+                nmspc.setdefault('reverse', _NoReverseImplemented)
+        nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
     def __init__(cls, name, bases, nmspc, abstract=False):
@@ -666,7 +680,12 @@ class Executable(ABCMeta):
                 p for p in parameters.values() if p.kind != p.VAR_KEYWORD))
             cls.__init__ = init
 
-        if cls.__init__.__code__.co_code == (lambda: None).__code__.co_code:
+        try:
+            initcode = cls.__init__.__code__.co_code
+        except AttributeError:
+            initcode = None
+
+        if initcode == (lambda: None).__code__.co_code:
             base = bases[0]
             head = []
             defs = {}
@@ -734,7 +753,12 @@ class Executable(ABCMeta):
         This property is `True` if and only if the unit has a member function named `reverse`. By convention,
         this member function implements the inverse of `refinery.units.Unit.process`.
         """
-        return hasattr(cls, 'reverse')
+        if cls.reverse is _NoReverseImplemented:
+            return False
+        try:
+            return not cls.reverse.__isabstractmethod__
+        except AttributeError:
+            return True
 
     @property
     def codec(cls) -> str:
@@ -865,7 +889,41 @@ class DelayedArgumentProxy:
         return setattr(self._argv, name, value)
 
 
-class Unit(metaclass=Executable, abstract=True):
+class UnitBase(metaclass=Executable, abstract=True):
+    """
+    This base class is an abstract interface specifying the abstract methods that have
+    to be present on any unit. All actual units should inherit from its only child class
+    `refinery.units.Unit`.
+    """
+
+    @abc.abstractmethod
+    def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+        """
+        This routine is overridden by children of `refinery.units.Unit` to define how
+        the unit processes a given chunk of binary data.
+        """
+
+    @abc.abstractmethod
+    def reverse(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+        """
+        If this routine is overridden by children of `refinery.units.Unit`, then it must
+        implement an operation that reverses the `refinery.units.Unit.process` operation.
+        The absence of an overload for this function is ignored for non-abstract children of
+        `refinery.units.UnitBase`.
+        """
+
+    @abc.abstractmethod
+    def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
+        """
+        Receives an iterable of `refinery.lib.frame.Chunk`s and yields only those that
+        should be processed. The default implementation returns the iterator without
+        change; this member function is designed to be overloaded by child classes of
+        `refinery.units.Unit` to allow inspection of an entire frame layer and altering
+        it before `refinery.units.Unit.process` is called on the individual chunks.
+        """
+
+
+class Unit(UnitBase, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
     available options and the handling for multiple inputs and outputs. All units
@@ -966,13 +1024,6 @@ class Unit(metaclass=Executable, abstract=True):
         return self._framed
 
     def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
-        """
-        Receives an iterable of `refinery.lib.frame.Chunk`s and yields only those that
-        should be processed. The default implementation returns the iterator without
-        change; this member function is designed to be overloaded by child classes of
-        `refinery.units.Unit` to allow inspection of an entire frame layer and altering
-        it before `refinery.units.Unit.process` is called on the individual chunks.
-        """
         return inputs
 
     @property
@@ -1135,10 +1186,6 @@ class Unit(metaclass=Executable, abstract=True):
         return Chunk(data, meta=meta)
 
     def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
-        """
-        This routine is overridden by children of `refinery.units.Unit` to define how
-        the unit processes a given chunk of binary data.
-        """
         return data
 
     def log_warn(self, *messages) -> bool:

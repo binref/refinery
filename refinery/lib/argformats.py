@@ -814,6 +814,10 @@ class DelayedArgument(LazyEvaluation):
 
 
 class DelayedBinaryArgument(DelayedArgument):
+    """
+    A parser for binary arguments. It does not implement any handlers beyond the default handlers that
+    are implemented in `refinery.lib.argformats.DelayedArgument`.
+    """
 
     def __call__(self, data: Optional[ByteString] = None) -> bytes:
         value = super().__call__(data=data)
@@ -827,10 +831,9 @@ class DelayedBinaryArgument(DelayedArgument):
 
 class DelayedNumSeqArgument(DelayedArgument):
     """
-    A parser for sequences of numeric arguments. As `refinery.lib.argformats.DelayedNumSeqArgument.handler`
-    uses `refinery.lib.argformats.multibin`, it is possible to use any handler specified in
-    `refinery.lib.argformats.DelayedBinaryArgument` as long as these handlers precede any of the handlers
-    defined here.
+    A parser for sequences of numeric arguments. It does not implement any handlers beyond the default
+    handlers that are implemented in `refinery.lib.argformats.DelayedArgument`, but the default handler
+    attempts to evalue the input as a Python expression.
     """
 
     def default_handler(self, expression: str) -> Iterable[int]:
@@ -876,7 +879,8 @@ class DelayedNumSeqArgument(DelayedArgument):
 
 class DelayedRegexpArgument(DelayedArgument):
     """
-    A parser for regular expressions arguments.
+    A parser for regular expressions arguments. It implements two additional handlers beyond the ones
+    inherited from `refinery.lib.argformats.DelayedArgument`.
     """
 
     @DelayedArgumentDispatch.Inherit(DelayedArgument)
@@ -957,10 +961,10 @@ class DelayedRegexpArgument(DelayedArgument):
 
 class DelayedNumberArgument(DelayedArgument):
     """
-    A parser for numeric arguments. As `refinery.lib.argformats.DelayedNumberArgument.handler`
-    uses `refinery.lib.argformats.multibin`, it is possible to use any handler specified in
-    `refinery.lib.argformats.DelayedBinaryArgument` as long as these handlers precede any of
-    the handlers defined here.
+    A parser for numeric arguments. Implements no handlers beyond the ones inherited from its parent
+    `refinery.lib.argformats.DelayedArgument`. The final handler output is expected to be an integer.
+    The class can be initialized with numerical bounds and checks the validity of the input after
+    having evaluated all handlers.
     """
     def __init__(self, expression: str, min: int, max: int):
         self.min = min

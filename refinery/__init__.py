@@ -95,21 +95,6 @@ class _cache:
 
 @_singleton
 class __pdoc__(dict):
-    OVERRIDES = {
-        'bytestream': False,
-        'decrypt': False,
-        'deobfuscate': False,
-        'ecb': False,
-        'encrypt': False,
-        'filter': '',
-        'inplace': False,
-        'interface': '',
-        'keystream': False,
-        'operate': False,
-        'reverse': False,
-        'unpack': False,
-    }
-
     def __init__(self, *a, **kw):
         super().__init__()
         self._loaded = False
@@ -135,11 +120,16 @@ class __pdoc__(dict):
         self['Unit'] = False
         for name in _cache.units:
             unit = _cache[name]
-            for attribute, description in self.OVERRIDES.items():
-                at = getattr(unit, attribute, None)
-                bt = getattr(unit.mro()[1], attribute, None)
-                if at and at is not bt:
-                    self[F'{name}.{attribute}'] = description
+            for base in unit.mro():
+                try:
+                    abstractmethods = base.__abstractmethods__
+                except AttributeError:
+                    break
+                for method in abstractmethods:
+                    at = getattr(unit, method, None)
+                    bt = getattr(unit.mro()[1], method, None)
+                    if at and at is not bt:
+                        self[F'{name}.{method}'] = False
             hlp = get_help_string(unit, width=74)
             hlp = hlp.replace('\x60', '')
             hlp = self._strip_globals(hlp).strip()
