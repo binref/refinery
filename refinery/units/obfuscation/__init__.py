@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import abc
 import re
 import io
 
@@ -55,6 +56,7 @@ class Deobfuscator(Unit, abstract=True):
     def process(self, data: str) -> str:
         return self.deobfuscate(data)
 
+    @abc.abstractmethod
     def deobfuscate(self, data: str) -> str:
         return data
 

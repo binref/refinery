@@ -74,11 +74,11 @@ class blockop(ArithmeticUnit):
         )
 
     @property
-    def ecb(self):
+    def _is_ecb(self):
         return not self.args.epilogue and not self.args.prologue
 
     def process_ecb_fast(self, data):
-        if not self.ecb:
+        if not self._is_ecb:
             raise NoNumpy
         return super().process_ecb_fast(data)
 
@@ -96,3 +96,6 @@ class blockop(ArithmeticUnit):
         if self.args.epilogue:
             self._state = self.args.epilogue(block, self._state, self._total, *args)
         return block
+
+    def inplace(self, block, *args) -> None:
+        super().inplace(block, *args)

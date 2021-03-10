@@ -4,6 +4,8 @@
 Contains all units that can work on blocks a fixed length. Note that block cipher
 algorithms can be found in `refinery.units.crypto.cipher`.
 """
+import abc
+
 from .. import arg, Unit
 from ...lib.argformats import numseq
 from ...lib import chunks
@@ -14,7 +16,7 @@ class NoNumpy(Exception):
     pass
 
 
-class BlockTransformation(Unit, abstract=True):
+class BlockTransformationBase(Unit, abstract=True):
 
     def __init__(
         self,
@@ -28,6 +30,10 @@ class BlockTransformation(Unit, abstract=True):
 
     @property
     def bytestream(self):
+        """
+        Indicates whether or not the block size is equal to 1, i.e. whether the unit is operating
+        on a stream of bytes. In this case, many operations can be simplified.
+        """
         return self.args.blocksize == 1
 
     @property
@@ -69,11 +75,15 @@ class BlockTransformation(Unit, abstract=True):
 
         return B''.join(bytefilter(data))
 
+
+class BlockTransformation(BlockTransformationBase, abstract=True):
+
     def process(self, data):
         return self.unchunk(
             self.process_block(b) for b in self.chunk(data)
         ) + self.rest(data)
 
+    @abc.abstractmethod
     def process_block(self, block):
         """
         A blockwise operation implements this routine to process each block, which
@@ -83,8 +93,6 @@ class BlockTransformation(Unit, abstract=True):
 
 
 class ArithmeticUnit(BlockTransformation, abstract=True):
-    operate = NotImplemented
-    inplace = NotImplemented
 
     def __init__(self, *argument: arg(type=numseq, help=(
         'A single numeric expression which provides the right argument to the operation, '
@@ -98,6 +106,17 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     def _normalize_argument(self, it):
         for block in infinitize(it):
             yield block & self.fmask
+
+    @abc.abstractmethod
+    def operate(self, block, *args) -> int:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def inplace(self, block, *args) -> None:
+        tmp = self.operate(block, *args)
+        if tmp.dtype != block.dtype:
+            tmp = tmp.astype(block.dtype)
+        block[:] = tmp
 
     def process_ecb_fast(self, data):
         """
@@ -123,13 +142,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         rest = data[blocks * self.args.blocksize:]
         data = numpy.frombuffer(memoryview(data), dtype, blocks)
         args = [nparg(a) for a in self.args.argument]
-
-        if self.inplace is NotImplemented:
-            data = self.operate(data, *args)
-            if data.dtype != dtype:
-                data = data.astype(dtype)
-        else:
-            self.inplace(data, *args)
+        self.inplace(data, *args)
         return data.tobytes() + rest
 
     def process(self, data):
@@ -154,8 +167,14 @@ class UnaryOperation(ArithmeticUnit, abstract=True):
         super().__init__(
             bigendian=bigendian, blocksize=blocksize)
 
+    def inplace(self, block) -> None:
+        super().inplace(block)
+
 
 class BinaryOperation(ArithmeticUnit, abstract=True):
     def __init__(self, argument: arg(nargs=arg.delete), bigendian=False, blocksize=1):
         super().__init__(argument,
             bigendian=bigendian, blocksize=blocksize)
+
+    def inplace(self, block, argument) -> None:
+        super().inplace(block, argument)

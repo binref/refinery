@@ -3,6 +3,8 @@
 """
 Implements several popular block and stream ciphers.
 """
+import abc
+
 from typing import Iterable, Any, ByteString
 from Crypto.Util.Padding import pad, unpad
 from Crypto.Util import Counter
@@ -33,9 +35,11 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
     def __init__(self, key: arg(help='The encryption key.'), **keywords):
         super().__init__(key=key, **keywords)
 
+    @abc.abstractmethod
     def decrypt(self, data: ByteString) -> ByteString:
         raise NotImplementedError
 
+    @abc.abstractmethod
     def encrypt(self, data: ByteString) -> ByteString:
         raise NotImplementedError
 
@@ -53,6 +57,7 @@ class StreamCipherUnit(CipherUnit, abstract=True):
     def __init__(self, key, **keywords):
         super().__init__(key=key, **keywords)
 
+    @abc.abstractmethod
     def keystream(self) -> Iterable[int]:
         raise NotImplementedError
 

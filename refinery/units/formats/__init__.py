@@ -3,6 +3,7 @@
 """
 A package containing several sub-packages for various data formats.
 """
+import abc
 import fnmatch
 import re
 import collections
@@ -119,6 +120,7 @@ class PathExtractorUnit(Unit, abstract=True):
             return True
         return self._check_data(item)
 
+    @abc.abstractmethod
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
         raise NotImplementedError
 

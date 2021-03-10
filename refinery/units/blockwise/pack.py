@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 import re
 
-from . import arg, BlockTransformation
+from . import arg, BlockTransformationBase
 from ...lib.argformats import number
 from ...lib.patterns import formats
 from ..encoding.base import base as base_unit
 
 
-class pack(BlockTransformation):
+class pack(BlockTransformationBase):
     """
     Scans the input data for numeric constants and packs them into a binary
     format. This is useful to convert the textual representation of an array of

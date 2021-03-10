@@ -111,6 +111,7 @@ import sys
 import os
 import inspect
 
+from abc import ABCMeta
 from enum import IntEnum, Enum
 from functools import wraps
 from collections import OrderedDict
@@ -561,7 +562,7 @@ def UnitFilterBoilerplate(
     return peekfilter
 
 
-class Executable(type):
+class Executable(ABCMeta):
     """
     This is the metaclass for refinery units. A class which is of this type is
     required to implement a method `run()`. If the class is created in the

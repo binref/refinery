@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, BlockTransformation
+from . import arg, BlockTransformationBase
 
 
-class transpose(BlockTransformation):
+class transpose(BlockTransformationBase):
     """
     Interprets the sequence of blocks as rows of a matrix and returns the
     blocks that correspond to the columns of this matrix.

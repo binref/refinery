@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import BlockTransformation
+from . import BlockTransformationBase
 
 
-class rev(BlockTransformation):
+class rev(BlockTransformationBase):
     """
     The blocks of the input data are output in reverse order. If the length of
     the input data is not a multiple of the block size, the data is truncated.
