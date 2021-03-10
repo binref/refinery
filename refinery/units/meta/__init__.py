@@ -32,7 +32,7 @@ class FrameSlicer(Unit, abstract=True):
                 raise ValueError('negative slice steps are not supported here')
 
 
-class IfElseFilter(Unit, abstract=True):
+class ConditionalUnit(Unit, abstract=True):
 
     def __init__(
         self,

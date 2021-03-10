@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ..pattern import arg, RegexUnit
-from . import IfElseFilter
+from . import ConditionalUnit
 
 
-class ifrex(RegexUnit, IfElseFilter):
+class ifrex(RegexUnit, ConditionalUnit):
     """
     Filter incoming chunks by discarding those that do not match the given
     regular expression.
