@@ -3,6 +3,8 @@
 """
 A package for units that operate primarily on frames of several of inputs.
 """
+import abc
+
 from .. import arg, Unit
 from ...lib.argformats import sliceobj
 
@@ -28,3 +30,23 @@ class FrameSlicer(Unit, abstract=True):
         for s in self.args.slice:
             if s.step and s.step < 0:
                 raise ValueError('negative slice steps are not supported here')
+
+
+class IfElseFilter(Unit, abstract=True):
+
+    def __init__(
+        self,
+        drop: arg.switch('-d', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
+        **kwargs
+    ):
+        super().__init__(drop=drop, **kwargs)
+
+    @abc.abstractmethod
+    def match(self, chunk) -> bool:
+        ...
+
+    def filter(self, inputs):
+        for chunk in inputs:
+            if self.match(chunk) is self.args.drop:
+                continue
+            yield chunk

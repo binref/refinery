@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ..pattern import arg, RegexUnit
+from . import IfElseFilter
 
 
-class ifrex(RegexUnit):
+class ifrex(RegexUnit, IfElseFilter):
     """
     Filter incoming chunks by discarding those that do not match the given
     regular expression.
@@ -15,7 +16,9 @@ class ifrex(RegexUnit):
     ):
         super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase, match=match)
 
+    def match(self, chunk):
+        return bool(self._matcher(chunk))
+
     def filter(self, inputs):
-        matcher = self.args.regex.fullmatch if self.args.match else self.args.regex.search
-        for chunk in inputs:
-            if matcher(chunk): yield chunk
+        self._matcher = self.args.regex.fullmatch if self.args.match else self.args.regex.search
+        yield from super().filter(inputs)
