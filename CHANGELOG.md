@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.3.27
+- Adds the `ifexpr` and `ifstr` units for filtering framed data.
+- The `pemeta` unit now also extracts the `EntryPointToken` field from the .NET header.
+
 ## Version 0.3.26
 - The `hexview` unit was removed, instead the `hexdmp` unit was created. By default, this unit converts hexdumps back to binary, the previous functionality of `hexview` is now available as the reverse operation of `hexdmp`.
 - Adds the `dnblob` unit.
