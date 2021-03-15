@@ -26,9 +26,8 @@ class hexdmp(HexViewer):
             decoded.extend(decoded_line)
             if not txt:
                 continue
-            if len(txt) != len(decoded_line):
-                txt = re.search(BR'^\s*', decoded_line).group(0).decode(self.codec) + txt
-            if len(txt) != len(decoded_line):
+            stripped_txt = txt.strip()
+            if len(decoded_line) not in range(len(stripped_txt), len(txt) + 1):
                 self.log_warn(F'preview size {len(txt)} does not match decoding: {hex} {txt}')
         return decoded
 
