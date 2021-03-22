@@ -13,7 +13,7 @@ from datetime import datetime
 from .. import Unit
 
 
-class PKCS7Encoder(BytesAsArrayEncoder):
+class ParsedASN1ToJSON(BytesAsArrayEncoder):
 
     @classmethod
     def _is_bigint(cls, obj):
@@ -71,5 +71,5 @@ class pkcs7(Unit):
     """
     def process(self, data: bytes):
         signature = asn1crypto.cms.ContentInfo.load(data)
-        with PKCS7Encoder as encoder:
+        with ParsedASN1ToJSON as encoder:
             return encoder.dumps(signature).encode(self.codec)
