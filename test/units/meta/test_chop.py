@@ -7,8 +7,6 @@ class TestChop(TestUnitBase):
 
     def test_check_invalid_args(self):
         with self.assertRaises(Exception):
-            self.load('--', '-200')
-        with self.assertRaises(Exception):
             self.load(B'FOOBAR')
         with self.assertRaises(Exception):
             self.load(0)
