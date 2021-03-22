@@ -79,3 +79,29 @@ class TestHexDmp(TestUnitBase):
         for size in (20, 200, 400):
             data = self.generate_random_buffer(size)
             self.assertEqual(pack(dump(data)), data)
+
+    def test_hex_byte_in_text_preview(self):
+        data = (
+            '000000000018DE80  DC 2A 01 00 8B 45 20 48 8D 4D 10 48 C1 E0 20 48  Ü*...E H.M.HÁà H  \n'
+            '000000000018DE90  33 45 20 48 33 45 10 48 33 C1 48 B9 FF FF FF FF  3E H3E.H3ÁH¹ÿÿÿÿ  \n'
+            '000000000018DEA0  FF FF 00 00 48 23 C1 48 B9 33 A2 DF 2D 99 2B 00  ÿÿ..H#ÁH¹3¢ß-.+.  \n'
+        ).encode('utf8')
+        unit = self.load()
+        self.assertEqual(unit(data), bytes.fromhex(
+            'DC 2A 01 00 8B 45 20 48 8D 4D 10 48 C1 E0 20 48'
+            '33 45 20 48 33 45 10 48 33 C1 48 B9 FF FF FF FF'
+            'FF FF 00 00 48 23 C1 48 B9 33 A2 DF 2D 99 2B 00'
+        ))
+
+    def test_unknown(self):
+        data = (
+            '000000000018F4D0  3B 63 73 6D E0 75 1E 83 7B 18 04 75 18 8B 43 20  ;csmàu..{..u..C   \n'
+            '000000000018F4E0  2D 20 05 93 19 83 F8 02 77 0B 48 83 7B 30 00 0F  - ....ø.w.H.{0..  \n'
+            '000000000018F4F0  84 88 03 00 00 E8 BA F8 FF FF 48 83 78 38 00 74  .....èºøÿÿH.x8.t  \n'
+        ).encode('utf8')
+        unit = self.load()
+        self.assertEqual(unit(data), bytes.fromhex(
+            '3B 63 73 6D E0 75 1E 83 7B 18 04 75 18 8B 43 20'
+            '2D 20 05 93 19 83 F8 02 77 0B 48 83 7B 30 00 0F'
+            '84 88 03 00 00 E8 BA F8 FF FF 48 83 78 38 00 74'
+        ))
