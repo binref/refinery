@@ -48,16 +48,10 @@ class rsa(Unit):
             swapkeys = True
             padding = PAD.PKCS10
 
-        super().__init__(textbook=textbook, padding=padding, swapkeys=swapkeys)
+        super().__init__(key=key, textbook=textbook, padding=padding, swapkeys=swapkeys)
 
-        try:
-            blob = CRYPTOKEY(key)
-        except ValueError:
-            self.key: RSA.RsaKey = RSA.import_key(key)
-        else:
-            if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
-                raise ValueError(F'The provided key is of invalid type {blob.header.type!s}, the algorithm is {blob.header.algorithm!s}.')
-            self.key: RSA.RsaKey = blob.key.convert()
+        self._key_hash = None
+        self._key_object = None
 
     @property
     def blocksize(self) -> int:
@@ -180,8 +174,6 @@ class rsa(Unit):
         else:
             raise ValueError(F'Invalid padding value: {self._pads!r}')
 
-        return result
-
     def _encrypt_block(self, data):
         if self._pads in {PAD.AUTO, PAD.OAEP}:
             try:
@@ -197,6 +189,23 @@ class rsa(Unit):
             data = self._pad_pkcs10(data)
 
         return self._encrypt_raw(data)
+
+    @property
+    def key(self) -> RSA.RsaKey:
+        key = self.args.key
+        kh = hash(key)
+        if kh == self._key_hash:
+            return self._key_object
+        self._key_hash = kh
+        try:
+            blob = CRYPTOKEY(key)
+        except ValueError:
+            self._key_object = key_object = RSA.import_key(key)
+        else:
+            if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
+                raise ValueError(F'The provided key is of invalid type {blob.header.type!s}, the algorithm is {blob.header.algorithm!s}.')
+            self._key_object = key_object = blob.key.convert()
+        return key_object
 
     def process(self, data):
         if not self.key.has_private():
