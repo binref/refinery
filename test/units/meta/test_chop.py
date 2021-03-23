@@ -7,9 +7,11 @@ class TestChop(TestUnitBase):
 
     def test_check_invalid_args(self):
         with self.assertRaises(Exception):
-            self.load(B'FOOBAR')
+            self.load(-1)()
         with self.assertRaises(Exception):
-            self.load(0)
+            self.load(B'FOOBAR')()
+        with self.assertRaises(Exception):
+            self.load(0)()
 
     def test_simple_chunk_with_custom_separator(self):
         for n in range(1, 20):
