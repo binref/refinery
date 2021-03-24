@@ -255,3 +255,15 @@ class TestDump(TestUnitBase):
                 self.assertTrue(os.path.exists(os.path.join(root, 'A', 'B')))
                 with open(os.path.join(root, 'A', 'B'), 'r') as stream:
                     self.assertEqual(stream.read(), 'B')
+
+    def test_duplicate_metavars(self):
+        with tempfile.TemporaryDirectory() as root:
+            with temporary_chwd(root) as root:
+                dump = self.load('A{index}')
+                tv = self.ldu('trivia')
+                pipeline = self.ldu('emit', 'data0', 'data1')[tv | dump]
+                pipeline()
+                self.assertTrue(os.path.exists(os.path.join(root, 'A0')))
+                self.assertTrue(os.path.exists(os.path.join(root, 'A1')))
+                with open(os.path.join(root, 'A1'), 'r') as stream:
+                    self.assertEqual(stream.read(), 'data1')

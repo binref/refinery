@@ -201,7 +201,8 @@ class dump(Unit):
                 else:
                     if self._has_format(path):
                         meta = ByteStringWrapper.FormatMap(chunk, self.codec)
-                        path = self._format(path, chunk, index, **meta)
+                        meta.setdefault('index', index)
+                        path = self._format(path, chunk, **meta)
                     self.stream = self._open(path)
             yield chunk
 
