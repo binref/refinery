@@ -118,7 +118,7 @@ emit 0xC0A80C2A | pack -EB4 | pack -R [| sep . ]
 
 Perform a single byte XOR brute force and attempt to extract a PE file payload in every iteration:
 ```
-emit file.bin | rep 0x100 [| trivia | xor var:index | carve-pe -R | peek | dump ]
+emit file.bin | rep 0x100 [|cm| xor var:index | carve-pe -R | peek | dump ]
 ```
 
 ## Malware Config Examples
