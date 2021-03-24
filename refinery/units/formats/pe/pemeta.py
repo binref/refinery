@@ -3,10 +3,19 @@
 import json
 
 from contextlib import suppress
-from pefile import PE, DIRECTORY_ENTRY, DEBUG_TYPE
 from datetime import datetime, timezone
 
+from pefile import (
+    DEBUG_TYPE,
+    DIRECTORY_ENTRY,
+    image_characteristics,
+    MACHINE_TYPE,
+    SUBSYSTEM_TYPE,
+    PE,
+)
+
 from ....lib.dotnet.header import DotNetHeader
+from ....lib.json import flattened
 from ... import arg, Unit
 
 
@@ -27,6 +36,8 @@ class pemeta(Unit):
         signatures : arg('-S', help='Parse digital signatures.') = False,
         timestamps : arg('-T', help='Extract time stamps.') = False,
         version    : arg('-V', help='Parse the VERSION resource.') = False,
+        header     : arg('-H', help='Parse data from the PE header.') = False,
+        tabular    : arg('-t', help='Print information in a table rather than as JSON') = False,
         timeraw    : arg('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
     ):
         super().__init__(
@@ -35,7 +46,9 @@ class pemeta(Unit):
             signatures=all or signatures,
             timestamps=all or timestamps,
             version=all or version,
-            timeraw=timeraw
+            header=all or header,
+            timeraw=timeraw,
+            tabular=tabular,
         )
 
     @classmethod
@@ -120,7 +133,7 @@ class pemeta(Unit):
         return info
 
     @classmethod
-    def parse_file_info(cls, pe: PE) -> dict:
+    def parse_version(cls, pe: PE, data) -> dict:
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         the version resource of an input PE file, if available.
@@ -148,6 +161,44 @@ class pemeta(Unit):
                                 Language=Language
                             )
                         return StringTableEntryParsed
+
+    @classmethod
+    def parse_header(cls, pe: PE, data) -> dict:
+        def format_macro_name(name: str, prefix, convert=True):
+            name = name.split('_')[prefix:]
+            if convert:
+                for k, part in enumerate(name):
+                    name[k] = part.upper() if len(part) <= 3 else part.capitalize()
+            return ' '.join(name)
+
+        characteristics = [
+            name for name, mask in image_characteristics
+            if pe.FILE_HEADER.Characteristics & mask
+        ]
+        header_information = {
+            'Machine': format_macro_name(MACHINE_TYPE[pe.FILE_HEADER.Machine], 3, False),
+            'Subsystem': format_macro_name(SUBSYSTEM_TYPE[pe.OPTIONAL_HEADER.Subsystem], 2),
+        }
+        for typespec, flag in {
+            'EXE': 'IMAGE_FILE_EXECUTABLE_IMAGE',
+            'DLL': 'IMAGE_FILE_DLL',
+            'SYS': 'IMAGE_FILE_SYSTEM'
+        }.items():
+            if flag in characteristics:
+                header_information['Type'] = typespec
+        address_width = None
+        if 'IMAGE_FILE_16BIT_MACHINE' in characteristics:
+            address_width = 4
+        elif pe.FILE_HEADER.Machine == MACHINE_TYPE['IMAGE_FILE_MACHINE_I386']:
+            address_width = 8
+        elif pe.FILE_HEADER.Machine == MACHINE_TYPE['IMAGE_FILE_MACHINE_AMD64']:
+            address_width = 16
+        if address_width:
+            header_information['Bits'] = 4 * address_width
+        else:
+            address_width = 16
+        header_information['ImageBase'] = F'0x{pe.OPTIONAL_HEADER.ImageBase:0{address_width}}'
+        return header_information
 
     @classmethod
     def parse_time_stamps(cls, pe: PE, raw_time_stamps: bool) -> dict:
@@ -207,7 +258,7 @@ class pemeta(Unit):
         return {key: norm(value) for key, value in info.items()}
 
     @classmethod
-    def parse_dotnet(cls, pe, data):
+    def parse_dotnet(cls, pe: PE, data):
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         the .NET metadata of an input PE file.
@@ -219,6 +270,8 @@ class pemeta(Unit):
             Version=F'{header.meta.MajorVersion}.{header.meta.MinorVersion}',
             VersionString=header.meta.VersionString
         )
+
+        info['Flags'] = [name for name, check in header.head.KnownFlags.items() if check]
 
         if len(tables.Assembly) == 1:
             assembly = tables.Assembly[0]
@@ -234,7 +287,7 @@ class pemeta(Unit):
 
         try:
             entry = header.head.EntryPointToken + pe.OPTIONAL_HEADER.ImageBase
-            info.update(EntryPoint=F'{entry:08X}')
+            info.update(EntryPoint=F'0x{entry:08X}')
         except AttributeError:
             pass
 
@@ -245,7 +298,7 @@ class pemeta(Unit):
         return info
 
     @classmethod
-    def parse_debug_data(cls, pe):
+    def parse_debug(cls, pe: PE, data):
         result = {}
         pe.parse_data_directories(directories=[
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DEBUG']])
@@ -266,30 +319,21 @@ class pemeta(Unit):
         result = {}
         pe = PE(data=data, fast_load=True)
 
-        if self.args.version:
+        for switch, resolver, name in [
+            (self.args.debug,   self.parse_debug,    'Debug'),    # noqa
+            (self.args.dotnet,  self.parse_dotnet,   'DotNet'),   # noqa
+            (self.args.header,  self.parse_header,   'Header'),   # noqa
+            (self.args.version, self.parse_version,  'Version'),  # noqa
+        ]:
+            if not switch:
+                continue
             try:
-                file_info = self.parse_file_info(pe)
+                info = resolver(pe, data)
             except Exception as E:
-                self.log_info(F'failed to obtain file info resource: {E!s}')
-            else:
-                if file_info:
-                    result['FileInfo'] = file_info
-        if self.args.dotnet:
-            try:
-                dnet_info = self.parse_dotnet(pe, data)
-            except Exception as E:
-                self.log_info(F'failed to obtain .NET information: {E!s}')
-            else:
-                if dnet_info:
-                    result['DotNet'] = dnet_info
-        if self.args.debug:
-            try:
-                debug_info = self.parse_debug_data(pe)
-            except Exception as E:
-                self.log_info(F'failed to parse debug directory: {E!s}')
-            else:
-                if debug_info:
-                    result['Debug'] = debug_info
+                self.log_info(F'failed to obtain {name}: {E!s}')
+                continue
+            if info:
+                result[name] = info
 
         signature = {}
 
@@ -306,7 +350,13 @@ class pemeta(Unit):
         if signature and self.args.signatures:
             result['Signature'] = signature
 
-        return json.dumps(result, indent=4, ensure_ascii=False).encode(self.codec)
+        if self.args.tabular:
+            table = list(flattened(result, 'PE'))
+            width = max(len(key) for key, _ in table)
+            for key, value in table:
+                yield F'{key:<{width}} : {value!s}'.encode(self.codec)
+        else:
+            yield json.dumps(result, indent=4, ensure_ascii=False).encode(self.codec)
 
     _LCID = {
         0x0436: 'Afrikaans-South Africa',

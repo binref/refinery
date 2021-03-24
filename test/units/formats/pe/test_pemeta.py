@@ -11,16 +11,21 @@ class TestPEMeta(TestUnitBase):
         unit = self.load()
         result = json.loads(unit(data))
 
-        self.assertIn('FileInfo', result)
+        self.assertIn('Version', result)
+        self.assertIn('Header', result)
         self.assertIn('DotNet', result)
         self.assertIn('TimeStamp', result)
         self.assertIn('Signature', result)
 
-        self.assertEqual(result['FileInfo']['ProductName'], 'shimgenerator')
+        self.assertEqual(result['Version']['ProductName'], 'shimgenerator')
         self.assertEqual(result['DotNet']['ModuleName'], 'shimgen.exe')
 
         self.assertEqual(result['TimeStamp']['Linker'][:19], '2017-06-03 22:05:18')
         self.assertEqual(result['TimeStamp']['Signed'][:19], '2019-06-03 21:07:55')
+
+        self.assertEqual(result['Header']['Subsystem'], 'Windows CUI')
+        self.assertEqual(result['Header']['Type'], 'EXE')
+        self.assertEqual(result['Header']['ImageBase'], '0x04194304')
 
         self.assertEqual(result['Signature']['Serial'], '07fb45d9f70b5529036097b4f4e14370')
 
