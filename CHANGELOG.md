@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+## Version 0.3.28
+- The `trivia` unit was renamed to `cm` for _"common meta"_.
+- The `pemeta` unit can now display PE header information, .NET header flags, and supports a table view instead of the JSON output.
+- Python expressions all across multibin arguments no longer restrict the operators that can be used.  
+- The domain regular expression was updated with new TLDs and the artificial TDLs `.coin` and `.bazar`.
+- The `terminate` unit was added.
+- The `struct` unit was added.
+
 ## Version 0.3.27
 - Adds the `ifexpr` and `ifstr` units for filtering framed data.
 - The `pemeta` unit now also extracts the `EntryPointToken` field from the .NET header.
