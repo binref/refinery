@@ -32,7 +32,7 @@ class cm(Unit):
         args = {
             'size'    : size,
             'index'   : index,
-            'mime'   : mime,
+            'mime'    : mime,
             'entropy' : entropy,
             'crc32'   : crc32 or hashes,
             'sha1'    : sha1 or hashes,
