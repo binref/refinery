@@ -823,6 +823,12 @@ class DelayedArgumentProxy:
         )
         return clone
 
+    def __iter__(self):
+        yield from self._args
+
+    def __getitem__(self, key):
+        return self._args[key]
+
     def __init__(self, argv, argo):
         args = {}
         done = True
