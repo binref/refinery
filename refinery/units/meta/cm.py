@@ -9,10 +9,11 @@ from ...lib.mime import FileMagicInfo, NoMagicAvailable
 from ...lib.tools import entropy
 
 
-class trivia(Unit):
+class cm(Unit):
     """
-    Populates the set of meta variables of the current chunk with various pieces of information. The
-    unit has no effect outside a frame. If no option is given, the unit populates all variables.
+    The Common Meta variables unit populates the set of meta variables of the current chunk with commonly
+    used metadata. The unit has no effect outside a frame. If no option is given, the unit populates all
+    available variables.
     """
     def __init__(
         self,
