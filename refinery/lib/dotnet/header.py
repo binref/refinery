@@ -673,12 +673,12 @@ class NetDirectory(Struct):
         self.ManagedNativeHeader = self.expect(ImageDataDirectory)
         # Known Flags
         self.KnownFlags = dict(
-            ILONLY=((self.Flags >> 0) & 1 == 1),
+            IL_ONLY=((self.Flags >> 0) & 1 == 1),
             REQUIRE_32BIT=((self.Flags >> 1) & 1 == 1),
             IL_LIBRARY=((self.Flags >> 2) & 1 == 1),
-            STRONGNAMESIGNED=((self.Flags >> 3) & 1 == 1),
+            STRONG_NAME_SIGNED=((self.Flags >> 3) & 1 == 1),
             NATIVE_ENTRYPOINT=((self.Flags >> 4) & 1 == 1),
-            TRACKDEBUGDATA=((self.Flags >> 16) & 1 == 1)
+            TRACK_DEBUG_DATA=((self.Flags >> 16) & 1 == 1)
         )
 
 
