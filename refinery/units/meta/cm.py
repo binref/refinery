@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import hashlib
-import zlib
-
 from .. import arg, Unit
-
-from ...lib.mime import FileMagicInfo, NoMagicAvailable
-from ...lib.tools import entropy
+from ...lib.meta import LazyMetaOracleFactory
 
 
 class cm(Unit):
@@ -20,7 +15,7 @@ class cm(Unit):
         invert  : arg.switch('-x', help='populate only options that have not been specified') = False,
         size    : arg.switch('-S', help='size of the chunk') = False,
         index   : arg.switch('-I', help='index of the chunk in the current frame') = False,
-        mime    : arg.switch('-M', help='add MIME type and guessed file extension') = False,
+        ext     : arg.switch('-F', help='guess file extension') = False,
         entropy : arg.switch('-E', help='compute data entropy') = False,
         sha1    : arg.switch('-1', help='compute hash: SHA-1') = False,
         sha256  : arg.switch('-2', help='compute hash: SHA-256') = False,
@@ -32,7 +27,7 @@ class cm(Unit):
         args = {
             'size'    : size,
             'index'   : index,
-            'mime'    : mime,
+            'ext'     : ext,
             'entropy' : entropy,
             'crc32'   : crc32 or hashes,
             'sha1'    : sha1 or hashes,
@@ -53,31 +48,20 @@ class cm(Unit):
         return data
 
     def filter(self, chunks):
-        index = 0
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             if not chunk.visible:
                 continue
-            if self.args.size:
-                chunk['size'] = len(chunk)
-            if self.args.mime:
-                try:
-                    info = FileMagicInfo(chunk)
-                except NoMagicAvailable:
-                    self.log_warn('libmagic not available on this system')
-                else:
-                    chunk['mime'] = info.mime
-                    chunk['ext'] = info.extension
-            if self.args.index:
-                chunk['index'] = index
-                index += 1
-            if self.args.entropy:
-                chunk['entropy'] = entropy(chunk)
-            if self.args.crc32:
-                chunk['crc32'] = F'{zlib.crc32(chunk)&0xFFFFFFFF:08X}'
-            if self.args.sha1:
-                chunk['sha1'] = hashlib.sha1(chunk).hexdigest()
-            if self.args.sha256:
-                chunk['sha256'] = hashlib.sha256(chunk).hexdigest()
-            if self.args.md5:
-                chunk['md5'] = hashlib.md5(chunk).hexdigest()
+            oracle = LazyMetaOracleFactory(chunk)(index=index)
+            for option in (
+                'size',
+                'index',
+                'ext',
+                'entropy',
+                'crc32',
+                'sha1',
+                'sha256',
+                'md5',
+            ):
+                if self.args[option]:
+                    chunk[option] = oracle[option]
             yield chunk

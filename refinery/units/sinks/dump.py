@@ -7,20 +7,20 @@ from itertools import cycle
 from string import Formatter
 
 from .. import arg, Unit, RefineryCriticalException
-from ...lib.mime import FileMagicInfo, NoMagicAvailable
+from ...lib.meta import LazyMetaOracleFactory
 from ..strings.cfmt import ByteStringWrapper
 
 
 class dump(Unit):
     """
     Dump incoming data to files on disk. It is possible to specify filenames with format fields.
-    The following format fields are supported. Additionally, any metadata field on an incoming chunk
-    can also be used.
+    Any metadata field on an incoming chunk is available. Additionally, any field that can be
+    populated by the `refinery.cm` unit is also available. These include the following:
 
         {ext}    : Automatically guessed file extension
         {crc32}  : CRC32 checksum of the data
-        {index}  : Index of the data in the input stream, starting at 1
-        {length} : Size of the data in bytes
+        {index}  : Index of the data in the input stream, starting at 0
+        {size}   : Size of the data in bytes
         {md5}    : MD5 hash of the data
         {sha1}   : SHA1 hash of the data
         {sha256} : SHA-256 hash of the data
@@ -124,30 +124,14 @@ class dump(Unit):
         self.stream = None
 
     def _format(self, filename, data, index=0, **meta):
-        class DelayedFormatter(dict):
-            dmp = self
-
+        class DelayedFormatter(LazyMetaOracleFactory(data, path='sha256')):
             def __missing__(self, key):
-                if key == 'crc32':
-                    from zlib import crc32
-                    return F'{crc32(data) & 0xFFFFFFFF:08X}'
-                if key == 'ext':
-                    try:
-                        return FileMagicInfo(data).extension
-                    except NoMagicAvailable:
-                        self.dmp.log_warn('no magic library available, using default extension .bin')
-                        return 'bin'
-                if key == 'path':
-                    key = 'sha256'
-                if key in ('md5', 'sha1', 'sha256'):
-                    import hashlib
-                    algorithm = getattr(hashlib, key)
-                    return algorithm(data).hexdigest()
-                return '{' + key + '}'
+                try:
+                    return super().__missing__(key)
+                except KeyError:
+                    return F'{{{key}}}'
 
-        return filename.format_map(
-            DelayedFormatter(dict(index=index, length=len(data), **meta))
-        )
+        return filename.format_map(DelayedFormatter(index=index, **meta))
 
     def process(self, data):
         if not self.exhausted:
