@@ -59,6 +59,8 @@ class peek(HexViewer):
                 value = decoded or F'h:{value.hex()}'
             elif isinstance(value, int):
                 value = F'0x{value:X}'
+            elif isinstance(value, float):
+                value = F'{value*100:.2f}%' if 0 <= value <= 1 else F'{value:.4f}'
             metavar = F'{name:>{width}} = {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
