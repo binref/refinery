@@ -76,6 +76,7 @@ will be parsed as the hexadecimal representation of the SHA256 hash of the file 
 from __future__ import annotations
 
 import ast
+import builtins
 import itertools
 import inspect
 
@@ -117,54 +118,6 @@ class PythonExpression:
     were present, or a callable which expects keyword arguments corresponding to the
     permitted variable names.
     """
-
-    _ALLOWED_NODE_TYPES = {
-        ast.Add,
-        ast.BinOp,
-        ast.BitAnd,
-        ast.BitAnd,
-        ast.BitOr,
-        ast.BitXor,
-        ast.BoolOp,
-        ast.Compare,
-        ast.Constant,
-        ast.Div,
-        ast.Eq,
-        ast.FloorDiv,
-        ast.Gt,
-        ast.GtE,
-        ast.IfExp,
-        ast.In,
-        ast.Index,
-        ast.Invert,
-        ast.Is,
-        ast.IsNot,
-        ast.LShift,
-        ast.List,
-        ast.Load,
-        ast.Lt,
-        ast.LtE,
-        ast.MatMult,
-        ast.Mod,
-        ast.Mult,
-        ast.Name,
-        ast.Not,
-        ast.NotEq,
-        ast.NotIn,
-        ast.Num,
-        ast.Or,
-        ast.Pow,
-        ast.RShift,
-        ast.Slice,
-        ast.Str,
-        ast.Sub,
-        ast.Subscript,
-        ast.Tuple,
-        ast.UAdd,
-        ast.USub,
-        ast.UnaryOp,
-    }
-
     def __init__(self, definition: AnyStr, *variables, constants=None, all_variables_allowed=False):
         self.definition = definition
         if not isinstance(definition, str):
@@ -180,14 +133,9 @@ class PythonExpression:
             raise ParserError(F'unknown error parsing the expression: {definition!s}')
         if type(next(nodes)) != ast.Expr:
             raise ParserError(F'not a valid Python expression: {definition!s}')
-        nodes = list(nodes)
-        types = set(type(node) for node in nodes)
-        names = set(node.id for node in nodes if type(node) == ast.Name)
-        if not types <= self._ALLOWED_NODE_TYPES:
-            raise ParserError(
-                'the following operations are not allowed: {}'.format(
-                    ', '.join(t.__name__ for t in types - self._ALLOWED_NODE_TYPES))
-            )
+        names = {node.id for node in nodes if isinstance(node, ast.Name)}
+        names.difference_update(dir(builtins))
+        names.difference_update(globals())
         if not all_variables_allowed and not names <= variables:
             raise ParserVariableMissing(
                 'the following variable names are unknown: {}'.format(
