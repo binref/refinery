@@ -4,6 +4,8 @@
 In order to represent arbitrary data as JSON, these classes help extend the built-in
 json module in order to support custom encoding of already serializable types.
 """
+from typing import List, Tuple
+
 import uuid
 import json
 import re
@@ -104,3 +106,17 @@ class BytesAsArrayEncoder(JSONEncoderEx):
         if self._is_byte_array(obj):
             return self.encode_bytes(obj)
         return super().default(obj)
+
+
+def flattened(data: dict, prefix='') -> List[Tuple[str, str]]:
+    def flatten(cursor, prefix):
+        if isinstance(cursor, dict):
+            for key, value in cursor.items():
+                yield from flatten(value, F'{prefix}.{key}')
+        elif isinstance(cursor, list):
+            width = len(F'{len(cursor):X}')
+            for key, value in enumerate(cursor):
+                yield from flatten(value, F'{prefix}[0x{key:{width}X}]')
+        else:
+            yield (prefix, str(cursor))
+    yield from flatten(data, prefix)
