@@ -237,20 +237,33 @@ def file_extension(mime, default='bin'):
     return FileTypeMap.get(mime, default)
 
 
-def file_extension_from_data(data, default='bin'):
-    if not magic:
-        raise NoMagicAvailable
-    if not isinstance(data, bytes):
-        data = bytes(data)
-    mime = magicparse(data, mime=True)
-    mime = mime.split(';')[0].lower()
-    extension = file_extension(mime)
-    if extension == 'exe':
-        return 'dll' if '(DLL)' in magicparse(data) else 'exe'
-    compression = dict(gz='gzip').get(extension, extension)
-    if compression in ('gzip', 'bz2'):
-        from importlib import import_module
-        decompressor = import_module(compression)
-        decompressed = decompressor.decompress(data)
-        extension = F'{file_extension_from_data(decompressed, default)}.{extension}'
-    return extension
+class FileMagicInfo:
+    extension: str
+    description: str
+    mime: str
+
+    def __init__(self, data, default='bin'):
+        if not magic:
+            raise NoMagicAvailable
+        if not isinstance(data, bytes):
+            data = bytes(data)
+        mime = magicparse(data, mime=True)
+        self.mime = mime.split(';')[0].lower()
+        self.description = magicparse(data)
+        try:
+            extension = FileTypeMap[self.mime]
+        except KeyError:
+            extension = default
+        if self.description == 'Microsoft OOXML':
+            extension = 'docx'
+        if extension == 'exe':
+            extension = 'dll' if '(DLL)' in self.description else 'exe'
+        else:
+            compression = dict(gz='gzip').get(extension, extension)
+            if compression in ('gzip', 'bz2'):
+                from importlib import import_module
+                decompressor = import_module(compression)
+                decompressed = decompressor.decompress(data)
+                inner = FileMagicInfo(decompressed, default).extension
+                extension = F'{inner}.{extension}'
+        self.extension = extension

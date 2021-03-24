@@ -109,10 +109,10 @@ class PathExtractorUnit(Unit, abstract=True):
             if not self._check_data(item):
                 return False
             else:
-                from ...lib.mime import file_extension_from_data
+                from ...lib.mime import FileMagicInfo
                 self.__unknown += 1
                 self.log_warn('received an attachment without file name!')
-                ext = file_extension_from_data(item.data)
+                ext = FileMagicInfo(item.data).extension
                 item.path = F'UNKNOWN{self.__unknown:02d}.{ext}'
         if not any(p.check(item.path) for p in self.args.patterns):
             return False

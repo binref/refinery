@@ -7,7 +7,7 @@ from itertools import cycle
 from string import Formatter
 
 from .. import arg, Unit, RefineryCriticalException
-from ...lib.mime import file_extension_from_data, NoMagicAvailable
+from ...lib.mime import FileMagicInfo, NoMagicAvailable
 from ..strings.cfmt import ByteStringWrapper
 
 
@@ -133,7 +133,7 @@ class dump(Unit):
                     return F'{crc32(data) & 0xFFFFFFFF:08X}'
                 if key == 'ext':
                     try:
-                        return file_extension_from_data(data)
+                        return FileMagicInfo(data).extension
                     except NoMagicAvailable:
                         self.dmp.log_warn('no magic library available, using default extension .bin')
                         return 'bin'
