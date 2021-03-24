@@ -22,9 +22,9 @@ class cm(Unit):
         index   : arg.switch('-I', help='index of the chunk in the current frame') = False,
         mime    : arg.switch('-M', help='add MIME type and guessed file extension') = False,
         entropy : arg.switch('-E', help='compute data entropy') = False,
-        crc32   : arg.switch('-3', help='compute hash: CRC32') = False,
         sha1    : arg.switch('-1', help='compute hash: SHA-1') = False,
         sha256  : arg.switch('-2', help='compute hash: SHA-256') = False,
+        crc32   : arg.switch('-3', help='compute hash: CRC32') = False,
         md5     : arg.switch('-5', help='compute hash: MD5') = False,
         hashes  : arg.switch('-H', help='compute all common hashes') = False,
 
