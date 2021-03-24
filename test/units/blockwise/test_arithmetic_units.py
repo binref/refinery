@@ -35,9 +35,9 @@ class TestArithmeticUnits(TestUnitBase):
         self.assertEqual(add(bytes(12)), B'\x00\xBE\xEF' * 4)
 
     def test_handler_ev(self):
-        trivia = self.ldu('trivia')
+        cm = self.ldu('cm')
         xor = self.ldu('xor', 'e:size,0xB0,0x12')
-        self.assertEqual(trivia[xor](bytes(0x54)), 28 * B'\x54\xB0\x12')
+        self.assertEqual(cm[xor](bytes(0x54)), 28 * B'\x54\xB0\x12')
 
     def test_argument_reset(self):
         xor = self.ldu('xor', 'inc:eval:1+1')

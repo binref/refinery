@@ -632,7 +632,7 @@ class DelayedArgument(LazyEvaluation):
         """
         Final modifier `e:expression` or `eval:expression`; uses a `refinery.lib.argformats.PythonExpression`
         parser to process expressions. The expression can contain any meta variable that is attached to the
-        chunk. The `refinery.trivia` unit can be used to attach information such as chunk size and the chunk
+        chunk. The `refinery.cm` unit can be used to attach information such as chunk size and the chunk
         index within the current frame (see `refinery.lib.frame`).
         """
         if not isinstance(expression, str):

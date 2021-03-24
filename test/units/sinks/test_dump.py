@@ -260,7 +260,7 @@ class TestDump(TestUnitBase):
         with tempfile.TemporaryDirectory() as root:
             with temporary_chwd(root) as root:
                 dump = self.load('A{index}')
-                tv = self.ldu('trivia')
+                tv = self.ldu('cm')
                 pipeline = self.ldu('emit', 'data0', 'data1')[tv | dump]
                 pipeline()
                 self.assertTrue(os.path.exists(os.path.join(root, 'A0')))
