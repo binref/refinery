@@ -6,6 +6,23 @@ from ...lib.argformats import PythonExpression
 from . import arg, ArithmeticUnit, NoNumpy
 
 
+class IndexCounter:
+    mask: int
+    index: int
+
+    def init(self, mask):
+        self.mask = mask
+        self.index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        index = self.index
+        self.index = index + 1 & self.mask
+        return index
+
+
 class blockop(ArithmeticUnit):
     """
     This unit allows you to specify a custom Python expression where the following variables are allowed.
@@ -13,6 +30,7 @@ class blockop(ArithmeticUnit):
     - the variable `A`: same as `V[0]`
     - the variable `B`: current block
     - the variable `N`: number of bytes in the input
+    - the variable `I`: current index in the input
     - the variable `S`: an optional seed value for an internal state
     - the variable `V`: the vector of arguments
 
@@ -28,9 +46,9 @@ class blockop(ArithmeticUnit):
         parse the expressions that can be passed to `refinery.blockop`. Essentially, these
         are Python expressions which can contain variables `B`, `A`, `S`, and `V`.
         """
-        def wrapper(B, S, N, *V):
-            return wrapper.parsed(B=B, A=V[0], N=N, S=S, V=V) if V else wrapper.parsed(B=B, S=S)
-        wrapper.parsed = PythonExpression(definition, *'BASNV')
+        def wrapper(J, B, S, N, *V):
+            return wrapper.parsed(I=J, B=B, A=V[0], N=N, S=S, V=V) if V else wrapper.parsed(I=J, B=B, S=S)
+        wrapper.parsed = PythonExpression(definition, *'IBASNV')
         return wrapper
 
     def __init__(
@@ -63,7 +81,10 @@ class blockop(ArithmeticUnit):
         if isinstance(seed, str):
             seed = PythonExpression(seed, 'N')
 
+        self._index = IndexCounter()
+
         super().__init__(
+            self._index,
             *argument,
             bigendian=bigendian,
             blocksize=blocksize,
@@ -83,18 +104,19 @@ class blockop(ArithmeticUnit):
         return super().process_ecb_fast(data)
 
     def process(self, data):
+        self._index.init(self.fmask)
         self._total = len(data)
         self._state = self.args.seed
         if callable(self._state):
             self._state = self._state(N=self._total)
         return super().process(data)
 
-    def operate(self, block, *args):
+    def operate(self, block, index, *args):
         if self.args.prologue:
-            self._state = self.args.prologue(block, self._state, self._total, *args)
-        block = self.args.operation(block, self._state, self._total, *args) & self.fmask
+            self._state = self.args.prologue(index, block, self._state, self._total, *args)
+        block = self.args.operation(index, block, self._state, self._total, *args) & self.fmask
         if self.args.epilogue:
-            self._state = self.args.epilogue(block, self._state, self._total, *args)
+            self._state = self.args.epilogue(index, block, self._state, self._total, *args)
         return block
 
     def inplace(self, block, *args) -> None:
