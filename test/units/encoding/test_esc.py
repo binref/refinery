@@ -43,12 +43,12 @@ class TestEscaping(TestUnitBase):
     def test_escape_not_greedy(self):
         unit = self.load()
         data = B'H\\x\\y\\x20\\u\\u0020!'
-        self.assertEqual(unit(data), B'H\\xy \\u \x00!')
+        self.assertEqual(unit(data), B'H\\xy \\u !')
 
     def test_escape_greedy(self):
         unit = self.load(greedy=True)
         data = B'H\\x\\y\\x20\\u\\u0020!'
-        self.assertEqual(unit(data), B'Hxy u \x00!')
+        self.assertEqual(unit(data), B'Hxy u !')
 
     def test_zalgo_text(self):
 

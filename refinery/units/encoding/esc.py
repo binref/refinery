@@ -40,7 +40,8 @@ class esc(Unit):
         hex     : arg.switch('-x', help='Hex encode everything, do not use C escape sequences.') = False,
         unicode : arg.switch('-u', help='Use unicode escape sequences and UTF-8 encoding.') = False,
         greedy  : arg.switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.') = False,
-        quoted  : arg.switch('-q', help='Remove enclosing quotes while decoding and add them for encoding.') = False
+        quoted  : arg.switch('-q', help='Remove enclosing quotes while decoding and add them for encoding.') = False,
+        expand  : arg.switch('-p', help='Decode sequences of the form \\uHHLL as two bytes when the upper byte is nonzero.') = False,
     ) -> Unit: pass  # noqa
 
     def process(self, data):
@@ -57,7 +58,11 @@ class esc(Unit):
             c = match[1]
             if len(c) > 1:
                 if c[0] in B'u':  # unicode
-                    return bytes((int(c[3:5], 16), int(c[1:3], 16)))
+                    upper = int(c[1:3], 16)
+                    lower = int(c[3:5], 16)
+                    if self.args.expand:
+                        return bytes((upper, lower))
+                    return bytes((lower,))
                 if c[0] in B'x':  # hexadecimal
                     return bytes((int(c[1:3], 16),))
             elif c in B'ux':
