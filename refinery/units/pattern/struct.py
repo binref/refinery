@@ -3,6 +3,7 @@
 import struct as struct_
 
 from .. import Unit, arg
+from ...units.strings.cfmt import ByteStringWrapper
 
 
 class struct(Unit):
@@ -29,6 +30,8 @@ class struct(Unit):
     def process(self, data: bytearray):
         try:
             spec = self.args.spec
+            meta = ByteStringWrapper.FormatMap(data, self.codec)
+            spec = spec.format_map(meta)
             size = struct_.calcsize(spec)
         except struct_.error:
             raise ValueError(F'The format {spec} is not a valid Python struct definition.')
