@@ -21,22 +21,20 @@ from ... import arg, Unit
 
 class pemeta(Unit):
     """
-    Extract metadata from PE files, including:
-
-    - File version resource
-    - Code signature information
-    - Timestamps
-    - If present, .NET header information
+    Extract metadata from PE files. By default, all information except for imports and exports are
+    extracted.
     """
     def __init__(
         self, all : arg('-c', '--custom',
-            help='Unless enabled, everything will be extracted.') = True,
+            help='Unless enabled, all default categories will be extracted.') = True,
         debug      : arg('-D', help='Parse the PDB path from the debug directory.') = False,
         dotnet     : arg('-N', help='Parse the .NET header.') = False,
         signatures : arg('-S', help='Parse digital signatures.') = False,
         timestamps : arg('-T', help='Extract time stamps.') = False,
         version    : arg('-V', help='Parse the VERSION resource.') = False,
         header     : arg('-H', help='Parse data from the PE header.') = False,
+        exports    : arg('-E', help='List all exported functions.') = False,
+        imports    : arg('-I', help='List all imported functions.') = False,
         tabular    : arg('-t', help='Print information in a table rather than as JSON') = False,
         timeraw    : arg('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
     ):
@@ -47,6 +45,8 @@ class pemeta(Unit):
             timestamps=all or timestamps,
             version=all or version,
             header=all or header,
+            imports=imports,
+            exports=exports,
             timeraw=timeraw,
             tabular=tabular,
         )
@@ -138,12 +138,8 @@ class pemeta(Unit):
         Extracts a JSON-serializable and human readable dictionary with information about
         the version resource of an input PE file, if available.
         """
-        try:
-            pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
-            FileInfoList = pe.FileInfo
-        except AttributeError:
-            return None
-        for FileInfo in FileInfoList:
+        pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+        for FileInfo in pe.FileInfo:
             for FileInfoEntry in FileInfo:
                 with suppress(AttributeError):
                     for StringTableEntry in FileInfoEntry.StringTable:
@@ -161,6 +157,28 @@ class pemeta(Unit):
                                 Language=Language
                             )
                         return StringTableEntryParsed
+
+    @classmethod
+    def parse_exports(cls, pe: PE, data) -> list:
+        pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
+        info = []
+        for k, exp in enumerate(pe.DIRECTORY_ENTRY_EXPORT.symbols):
+            if not exp.name:
+                info.append(F'@{k}')
+            else:
+                info.append(exp.name.decode('ascii'))
+        return info
+
+    @classmethod
+    def parse_imports(cls, pe: PE, data) -> list:
+        pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT']])
+        info = []
+        for k, exp in enumerate(pe.DIRECTORY_ENTRY_IMPORT.symbols):
+            if not exp.name:
+                info.append(F'@{k}')
+            else:
+                info.append(exp.name.decode('ascii'))
+        return info
 
     @classmethod
     def parse_header(cls, pe: PE, data) -> dict:
@@ -324,9 +342,12 @@ class pemeta(Unit):
             (self.args.dotnet,  self.parse_dotnet,   'DotNet'),   # noqa
             (self.args.header,  self.parse_header,   'Header'),   # noqa
             (self.args.version, self.parse_version,  'Version'),  # noqa
+            (self.args.imports, self.parse_imports,  'Imports'),  # noqa
+            (self.args.exports, self.parse_exports,  'Exports'),  # noqa
         ]:
             if not switch:
                 continue
+            self.log_debug(F'parsing: {name}')
             try:
                 info = resolver(pe, data)
             except Exception as E:
@@ -350,6 +371,8 @@ class pemeta(Unit):
         if signature and self.args.signatures:
             result['Signature'] = signature
 
+        if not result:
+            return None
         if self.args.tabular:
             table = list(flattened(result, 'PE'))
             width = max(len(key) for key, _ in table)
