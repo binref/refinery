@@ -31,35 +31,47 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
         for s in pe.sections
     ) or 0
 
-    directories_value = directories and max(
-        pe.get_offset_from_rva(d.VirtualAddress) + d.Size
-        for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
-    ) or 0
+    cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[IMAGE_DIRECTORY_ENTRY_SECURITY]
 
-    if certificate:
-        # The certificate overlay is given as a file offset
-        # rather than a virtual address.
-        cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[IMAGE_DIRECTORY_ENTRY_SECURITY]
-        cert_value = cert_entry.VirtualAddress + cert_entry.Size
+    if directories:
+        directories_value = max(
+            pe.get_offset_from_rva(d.VirtualAddress) + d.Size
+            for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
+            if d.name != 'IMAGE_DIRECTORY_ENTRY_SECURITY'
+        )
+        if certificate:
+            # The certificate overlay is given as a file offset
+            # rather than a virtual address.
+            cert_value = cert_entry.VirtualAddress + cert_entry.Size
+        else:
+            cert_value = cert_entry.VirtualAddress
+        directories_value = max(directories_value, cert_value)
     else:
-        cert_value = 0
+        directories_value = 0
 
     return max(
         overlay_value,
         sections_value,
         directories_value,
-        cert_value,
         memdump_value
     )
 
 
 class OverlayUnit(Unit, abstract=True):
-    def __init__(self, conservative: arg.switch('-c', help='Consider only section size to determine overlay.') = False):
-        super().__init__(conservative=conservative)
+    def __init__(
+        self,
+        certificate: arg.switch('--no-cert', '-c',
+            help='Do not include digital signatures for the size computation.') = True,
+        directories: arg.switch('--no-dirs', '-d',
+            help='Do not include any data directories for size computation (implies --no-cert).') = True,
+        memdump: arg.switch('-m', help='Assume that the file data was a memory-mapped PE file.') = False,
+    ):
+        super().__init__(certificate=certificate, directories=directories, memdump=memdump)
 
     def _get_size(self, data):
         return get_pe_size(
             data,
-            directories=not self.args.conservative,
-            certificate=not self.args.conservative,
+            directories=self.args.directories,
+            certificate=self.args.certificate,
+            memdump=self.args.memdump
         )
