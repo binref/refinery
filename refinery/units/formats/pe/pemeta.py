@@ -191,6 +191,14 @@ class pemeta(Unit):
                     name[k] = part.upper() if len(part) <= 3 else part.capitalize()
             return ' '.join(name)
 
+        major = pe.OPTIONAL_HEADER.MajorOperatingSystemVersion
+        minor = pe.OPTIONAL_HEADER.MinorOperatingSystemVersion
+        version = cls._WINVER.get(major, {0: 'Unknown'})
+        try:
+            MinimumOS = version[minor]
+        except LookupError:
+            MinimumOS = version[0]
+
         characteristics = [
             name for name, mask in image_characteristics
             if pe.FILE_HEADER.Characteristics & mask
@@ -198,6 +206,7 @@ class pemeta(Unit):
         header_information = {
             'Machine': format_macro_name(MACHINE_TYPE[pe.FILE_HEADER.Machine], 3, False),
             'Subsystem': format_macro_name(SUBSYSTEM_TYPE[pe.OPTIONAL_HEADER.Subsystem], 2),
+            'MinimumOS': MinimumOS,
         }
         for typespec, flag in {
             'EXE': 'IMAGE_FILE_EXECUTABLE_IMAGE',
@@ -623,4 +632,32 @@ class pemeta(Unit):
         0x04E6: 'Turkish',
         0x04E7: 'Hebrew',
         0x04E8: 'Arabic',
+    }
+
+    _WINVER = {
+        3: {
+            0x00: 'Windows NT 3',
+            0x0A: 'Windows NT 3.1',
+            0x32: 'Windows NT 3.5',
+            0x33: 'Windows NT 3.51',
+        },
+        4: {
+            0x00: 'Windows 95',
+            0x0A: 'Windows 98',
+        },
+        5: {
+            0x00: 'Windows 2000',
+            0x5A: 'Windows Me',
+            0x01: 'Windows XP',
+            0x02: 'Windows Server 2003',
+        },
+        6: {
+            0x00: 'Windows Vista',
+            0x01: 'Windows 7',
+            0x02: 'Windows 8',
+            0x03: 'Windows 8.1',
+        },
+        10: {
+            0x00: 'Windows 10',
+        }
     }
