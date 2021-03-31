@@ -172,12 +172,14 @@ class pemeta(Unit):
     @classmethod
     def parse_imports(cls, pe: PE, data) -> list:
         pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT']])
-        info = []
-        for k, exp in enumerate(pe.DIRECTORY_ENTRY_IMPORT.symbols):
-            if not exp.name:
-                info.append(F'@{k}')
-            else:
-                info.append(exp.name.decode('ascii'))
+        info = {}
+        for idd in pe.DIRECTORY_ENTRY_IMPORT:
+            dll = idd.dll.decode('ascii')
+            if dll.lower().endswith('.dll'):
+                dll = dll[:-4]
+            imports = info.setdefault(dll, [])
+            for imp in idd.imports:
+                imports.append(imp.name.decode('ascii'))
         return info
 
     @classmethod

@@ -116,7 +116,7 @@ def flattened(data: dict, prefix='') -> List[Tuple[str, str]]:
         elif isinstance(cursor, list):
             width = len(F'{len(cursor):X}')
             for key, value in enumerate(cursor):
-                yield from flatten(value, F'{prefix}[0x{key:{width}X}]')
+                yield from flatten(value, F'{prefix}[0x0{key:{width}X}]')
         else:
             yield (prefix, str(cursor))
     yield from flatten(data, prefix)
