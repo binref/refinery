@@ -9,7 +9,8 @@ from xml.etree.ElementTree import ElementTree
 
 
 def ForgivingParse(data, entities=None) -> ElementTree:
-    entities = entities or {}
+    if entities is None:
+        entities = {}
     try:
         return ParseXML(MemoryFile(data), parser=ForgivingXMLParser(entities))
     except ParseError as PE:
