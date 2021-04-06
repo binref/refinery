@@ -79,6 +79,12 @@ class ALGORITHMS(_ENUM):
     CALG_TLS1PRF               = 0x0000800a # noqa
 
 
+class BCRYPT_MAGIC(_ENUM):
+    BCRYPT_RSAPUBLIC_MAGIC      = 0x31415352 # noqa
+    BCRYPT_RSAPRIVATE_MAGIC     = 0x32415352 # noqa
+    BCRYPT_RSAFULLPRIVATE_MAGIC = 0x33415352 # noqa
+
+
 class BLOBHEADER(Struct):
     def __init__(self, reader: StructReader):
         t, self.version, self.reserved, a = reader.read_struct('BBHI')
@@ -102,6 +108,49 @@ class SIMPLEBLOB(Struct):
         if self.magic != B'\0\0\xA4\0':
             raise ValueError(F'Invalid magic bytes: {self.magic.hex(":").upper()}')
         self.data = reader.read(0x100)
+
+
+class BCRYPT_RSAKEY_BLOB(Struct):
+    def __init__(self, reader: StructReader):
+        magic, bits, e_size, n_size, p_size, q_size = reader.read_struct('<6L')
+        e_size *= 8
+        n_size *= 8
+        self.magic = BCRYPT_MAGIC(magic)
+        reader.set_bitorder_big()
+        self.exponent = reader.read_integer(e_size)
+        self.modulus = reader.read_integer(n_size)
+        self.bit_size = bits
+        if self.has_private_key:
+            p_size *= 8
+            q_size *= 8
+            self.prime1 = reader.read_integer(p_size)
+            self.prime2 = reader.read_integer(q_size)
+            if self.magic is BCRYPT_MAGIC.BCRYPT_RSAFULLPRIVATE_MAGIC:
+                self.exp1 = reader.read_integer(p_size)
+                self.exp2 = reader.read_integer(q_size)
+                self.coefficient = reader.read_integer(p_size)
+                self.exp_private = reader.read_integer(n_size)
+            else:
+                self.exp1 = None
+                self.exp2 = None
+                self.coefficient = None
+                self.exp_private = None
+        else:
+            self.prime1 = None
+            self.prime2 = None
+
+    @property
+    def has_private_key(self):
+        return self.magic in (
+            BCRYPT_MAGIC.BCRYPT_RSAPRIVATE_MAGIC,
+            BCRYPT_MAGIC.BCRYPT_RSAFULLPRIVATE_MAGIC
+        )
+
+    def convert(self):
+        components = self.modulus, self.exponent
+        if self.has_private_key:
+            components += self.exp_private, self.prime1, self.prime2
+        return RSA.construct(components)
 
 
 class RSAPUBKEY(Struct):

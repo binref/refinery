@@ -433,6 +433,8 @@ class arg(Argument):
             return cls(*guessed_pos_args, **guessed_kwd_args)
 
         if default is not pt.empty:
+            if isinstance(default, Enum):
+                default = default.name
             if isinstance(default, (list, tuple)):
                 guessed_kwd_args.setdefault('nargs', ZERO_OR_MORE)
                 if not pt.default:

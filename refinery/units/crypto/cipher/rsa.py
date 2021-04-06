@@ -2,13 +2,46 @@
 # -*- coding: utf-8 -*-
 from ... import arg, Unit
 from ....lib.tools import splitchunks
-from ....lib.mscrypto import CRYPTOKEY, TYPES
+from ....lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
+from ....lib.xml import ForgivingParse
 
+from base64 import b64decode
 from contextlib import suppress
 from enum import IntEnum
 from Crypto.Random import get_random_bytes
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.PublicKey import RSA
+from Crypto.Util import number
+
+
+def normalize_rsa_key(key):
+    try:
+        dom = ForgivingParse(key)
+    except ValueError:
+        pass
+    else:
+        data = {child.tag.upper(): number.bytes_to_long(b64decode(child.text)) for child in dom.getroot()}
+        components = (data['MODULUS'], data['EXPONENT'])
+        if 'D' in data:
+            components += data['D'],
+        if 'P' in data and 'Q' in data:
+            components += data['P'], data['Q']
+        return RSA.construct(components)
+    try:
+        blob = CRYPTOKEY(key)
+    except ValueError:
+        pass
+    else:
+        if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
+            raise ValueError(F'The provided key is of invalid type {blob.header.type!s}, the algorithm is {blob.header.algorithm!s}.')
+        return blob.key.convert()
+
+    try:
+        blob = BCRYPT_RSAKEY_BLOB(key)
+    except ValueError:
+        return RSA.import_key(key)
+    else:
+        return blob.convert()
 
 
 class PAD(IntEnum):
@@ -51,7 +84,7 @@ class rsa(Unit):
         super().__init__(key=key, textbook=textbook, padding=padding, swapkeys=swapkeys)
 
         self._key_hash = None
-        self._key_object = None
+        self._key_data = None
 
     @property
     def blocksize(self) -> int:
@@ -192,20 +225,12 @@ class rsa(Unit):
 
     @property
     def key(self) -> RSA.RsaKey:
-        key = self.args.key
-        kh = hash(key)
-        if kh == self._key_hash:
-            return self._key_object
-        self._key_hash = kh
-        try:
-            blob = CRYPTOKEY(key)
-        except ValueError:
-            self._key_object = key_object = RSA.import_key(key)
-        else:
-            if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
-                raise ValueError(F'The provided key is of invalid type {blob.header.type!s}, the algorithm is {blob.header.algorithm!s}.')
-            self._key_object = key_object = blob.key.convert()
-        return key_object
+        key_blob = self.args.key
+        key_hash = hash(key_blob)
+        if key_hash != self._key_hash:
+            self._key_hash = key_hash
+            self._key_data = normalize_rsa_key(key_blob)
+        return self._key_data
 
     def process(self, data):
         if not self.key.has_private():
