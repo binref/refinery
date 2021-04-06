@@ -29,7 +29,7 @@ class put(Unit):
                 if isinstance(value, itertools.repeat):
                     value = next(value)
                 if not isinstance(value, int):
-                    raise NotImplementedError(F'Unsupported value {value!r}; expected integer.')
+                    raise NotImplementedError(F'put does not support {value.__class__.__name__} values.')
             else:
                 if not isinstance(value, list):
                     value = list(value)
