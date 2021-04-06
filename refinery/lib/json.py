@@ -112,11 +112,12 @@ def flattened(data: dict, prefix='') -> List[Tuple[str, str]]:
     def flatten(cursor, prefix):
         if isinstance(cursor, dict):
             for key, value in cursor.items():
-                yield from flatten(value, F'{prefix}.{key}')
+                new_prefix = key if not prefix else F'{prefix}.{key}'
+                yield from flatten(value, new_prefix)
         elif isinstance(cursor, list):
-            width = len(F'{len(cursor):X}')
+            width = len(F'{len(cursor)-1:X}')
             for key, value in enumerate(cursor):
-                yield from flatten(value, F'{prefix}[0x0{key:{width}X}]')
+                yield from flatten(value, F'{prefix}[0x{key:0{width}X}]')
         else:
             yield (prefix, str(cursor))
     yield from flatten(data, prefix)
