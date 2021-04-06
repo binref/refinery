@@ -53,9 +53,12 @@ class rsakey(Unit):
         if key.has_private():
             decoded = DerSequence()
             decoded.decode(key.export_key('DER'))
-            it = itertools.islice(decoded, 3)
+            it = itertools.islice(decoded, 3, None)
             for v in ('D', 'P', 'Q', 'DP', 'DQ', 'InverseQ'):
-                components[v] = next(it)
+                try:
+                    components[v] = next(it)
+                except StopIteration:
+                    break
         if out is RSAFormat.XKMS:
             for tag in components:
                 components[tag] = base64.b64encode(number.long_to_bytes(components[tag])).decode('ascii')
