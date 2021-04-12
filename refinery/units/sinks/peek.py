@@ -73,18 +73,20 @@ class peek(HexViewer):
         from ...lib.tools import format_size
         from ...lib.magic import magicparse
 
-        if self.args.brief:
-            peeks = []
-        else:
-            peeks = [
-                F'{entropy(memoryview(data)) * 100:05.2f}% entropy',
-                format_size(len(data), align=not self.args.lines)
-            ]
-            magic = magicparse(data)
-            if magic is not None:
-                peeks.append(magic)
+        peeks = []
+        if not self.args.brief:
             if self._idx is not None:
-                peeks.insert(0, F'item {self._idx:02d}')
+                peeks.append(F'item {self._idx:02d}')
+            elif not data:
+                return
+            if not data:
+                peeks.append('empty buffer')
+            else:
+                peeks.append(F'{entropy(memoryview(data)) * 100:05.2f}% entropy')
+                peeks.append(format_size(len(data), align=not self.args.lines))
+                magic = magicparse(data)
+                if magic is not None:
+                    peeks.append(magic)
 
         header = ', '.join(peeks)
         dump = None
