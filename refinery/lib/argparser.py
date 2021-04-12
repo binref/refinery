@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import sys
+
 from argparse import (
     ArgumentParser,
     ArgumentError,
     RawDescriptionHelpFormatter,
 )
+
+from typing import IO, Optional
 
 from ..lib.tools import terminalfit, get_terminal_size
 
@@ -75,6 +79,12 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
             formatter_class=LineWrapRawTextHelpFormatter)
         self._keywords = keywords
         self.order = []
+
+    def print_help(self, file: Optional[IO[str]] = None) -> None:
+        if file is None:
+            sys.stdout.close()
+            file = sys.stderr
+        return super().print_help(file=file)
 
     def _add_action(self, action):
         keywords = self._keywords
