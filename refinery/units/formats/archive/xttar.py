@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import tarfile
 
-from ...lib.structures import MemoryFile
-from . import PathExtractorUnit, UnpackResult
+from ....lib.structures import MemoryFile
+from .. import PathExtractorUnit, UnpackResult
 
 
 class xttar(PathExtractorUnit):

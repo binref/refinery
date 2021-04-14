@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import zipfile
 
-from . import arg, PathExtractorUnit, UnpackResult
-from ...lib.structures import MemoryFile
+from .. import arg, PathExtractorUnit, UnpackResult
+from ....lib.structures import MemoryFile
 
 
 class xtzip(PathExtractorUnit):
