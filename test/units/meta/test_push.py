@@ -30,3 +30,7 @@ class TestMetaPushPop(TestUnitBase):
     def test_push_pop_in_frame(self):
         pl = L('rex . [') | L('push [') | L('pop copy ]') | L('swap copy ]')
         self.assertEqual(pl(B'foobar'), B'foobar')
+
+    def test_pop_discard(self):
+        pl = L('emit A B C D E [') | L('pop a b 2') | L('cca var:a') | L('cca var:b ]') # noqa
+        self.assertEqual(pl(), B'EAB')
