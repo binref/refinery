@@ -20,7 +20,9 @@ class xtzip(PathExtractorUnit):
         with MemoryFile(data) as stream:
             with zipfile.ZipFile(stream) as archive:
                 for info in archive.infolist():
+                    def xt(info=info, pwd=self.args.pwd):
+                        return archive.read(info.filename, pwd=pwd)
                     if info.is_dir():
                         continue
-                    yield UnpackResult(info.filename,
-                        lambda info=info, pwd=self.args.pwd: archive.read(info.filename, pwd=pwd))
+                    date = '{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}'.format(*info.date_time)
+                    yield UnpackResult(info.filename, xt, date=date)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import tarfile
+import datetime
 
 from ....lib.structures import MemoryFile
 from .. import PathExtractorUnit, UnpackResult
@@ -19,4 +20,5 @@ class xttar(PathExtractorUnit):
                     extractor = archive.extractfile(info)
                     if extractor is None:
                         continue
-                    yield UnpackResult(info.name, lambda e=extractor: e.read())
+                    date = datetime.datetime.fromtimestamp(info.mtime).isoformat(' ', 'seconds')
+                    yield UnpackResult(info.name, lambda e=extractor: e.read(), date=date)

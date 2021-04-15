@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import acefile
-import io
 
 from .. import arg, PathExtractorUnit, UnpackResult
 from ....lib.structures import MemoryFile
@@ -21,6 +20,7 @@ class xtace(PathExtractorUnit):
         with MemoryFile(data, read_as_bytes=True) as stream:
             with acefile.open(stream) as ace:
                 for member in ace.getmembers():
+                    member: acefile.AceMember
                     kw = dict(date=member.datetime.isoformat(' ', 'seconds'))
                     if member.comment:
                         kw['comment'] = member.comment
