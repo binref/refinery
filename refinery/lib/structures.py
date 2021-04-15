@@ -47,10 +47,9 @@ class MemoryFile(Generic[T]):
     A thin wrapper around (potentially mutable) byte sequences which gives it the
     features of a file-like object.
     """
-
-    __slots__ = '_data', '_cursor'
-
     closed: bool
+    read_as_bytes: bool
+
     _data: T
     _cursor: int
 
@@ -59,11 +58,12 @@ class MemoryFile(Generic[T]):
         END = io.SEEK_END
         SET = io.SEEK_SET
 
-    def __init__(self, data: Optional[T] = None) -> None:
+    def __init__(self, data: Optional[T] = None, read_as_bytes=False) -> None:
         if data is None:
             data = bytearray()
         self._data = data
         self._cursor = 0
+        self.read_as_bytes = read_as_bytes
 
     def close(self) -> None:
         self._data = None
@@ -129,7 +129,10 @@ class MemoryFile(Generic[T]):
             self._cursor = len(self._data)
         else:
             self._cursor = min(self._cursor + size, len(self._data))
-        return self._data[beginning:self._cursor]
+        result = self._data[beginning:self._cursor]
+        if self.read_as_bytes and not isinstance(result, bytes):
+            result = bytes(result)
+        return result
 
     def _find_linebreak(self, beginning: int, end: int) -> int:
         if not isinstance(self._data, memoryview):
@@ -144,7 +147,10 @@ class MemoryFile(Generic[T]):
             end = beginning + size
         p = self._find_linebreak(beginning, end)
         self._cursor = end if p < 0 else p + 1
-        return self._data[beginning:self._cursor]
+        result = self._data[beginning:self._cursor]
+        if self.read_as_bytes and not isinstance(result, bytes):
+            result = bytes(result)
+        return result
 
     def readlines(self, hint: int = -1) -> Iterable[T]:
         if hint is None or hint < 0:
