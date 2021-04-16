@@ -191,7 +191,7 @@ class pemeta(Unit):
                     if result is None:
                         continue
                     with suppress(KeyError):
-                        result.setdefault('Timestamp Issuer', entry['sid']['issuer']['common_name'])
+                        result.setdefault('TimestampIssuer', entry['sid']['issuer']['common_name'])
                     return result
             elif isinstance(entry, list):
                 for value in entry:
@@ -225,11 +225,12 @@ class pemeta(Unit):
                 serial = F'{serial:x}'
                 if len(serial) % 2:
                     serial = '0' + serial
-                info.update(
-                    Issuer=tbs['issuer']['common_name'],
-                    Subject=tbs['subject']['common_name'],
-                    Serial=serial,
-                )
+                subject = tbs['subject']
+                location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
+                info.update(Subject=subject['common_name'])
+                if any(location):
+                    info.update(SubjectLocation=', '.join(filter(None, location)))
+                info.update(Issuer=tbs['issuer']['common_name'], Serial=serial)
                 return info
         return info
 
