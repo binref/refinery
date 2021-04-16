@@ -17,7 +17,7 @@ class xtdoc(PathExtractorUnit):
                 oledoc = olefile.OleFileIO(stream)
             except OSError as error:
                 self.log_info(F'error, {error}, treating input as zip file')
-                from ..xtzip import xtzip
+                from ..archive.xtzip import xtzip
                 yield from xtzip().unpack(data)
                 return
             for item in oledoc.listdir():
