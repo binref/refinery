@@ -22,4 +22,4 @@ pyelftools
 pyperclip
 python-magic
 python-registry
-xlrd
+xlrd2

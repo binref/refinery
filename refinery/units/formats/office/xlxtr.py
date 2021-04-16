@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import openpyxl
-import xlrd
+import xlrd2 as xlrd
 import re
 import io
 import defusedxml
