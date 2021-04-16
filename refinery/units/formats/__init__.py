@@ -158,7 +158,7 @@ class PathExtractorUnit(Unit, abstract=True):
                         root = '/'.join(root.split('\\'))
                     path = F'{root}/{path}'
                 if self.args.list:
-                    yield path.encode(self.codec)
+                    yield self.labelled(path.encode(self.codec), **result.meta)
                     continue
                 else:
                     self.log_info(path)
