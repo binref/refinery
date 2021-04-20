@@ -68,7 +68,8 @@ class SheetReference:
         return row, col
 
     def __init__(self, sheet_reference):
-        self.lbound = self.ubound = None
+        self.lbound = 1, 1
+        self.ubound = None
         self.sheet, token = self._parse_sheet(sheet_reference)
         if not token:
             return
@@ -89,6 +90,20 @@ class SheetReference:
             return self.sheet == index
         return self.sheet == name or fnmatch(name, self.sheet)
 
+    def cells(self, nrows, ncols):
+        if self.ubound is not None:
+            nrows, ncols = self.ubound
+        row, col = self.lbound
+        column_start = col
+        while True:
+            yield row, col
+            if col < ncols:
+                col += 1
+            elif row < nrows:
+                row, col = row + 1, column_start
+            else:
+                break
+
     def __contains__(self, ref):
         if self.lbound is None and self.ubound is None:
             return True
@@ -101,17 +116,6 @@ class SheetReference:
             return False
         return True
 
-    def __iter__(self):
-        x, y = self.lbound[0], self.lbound[1]
-        while True:
-            yield x, y
-            if y < self.ubound[1]:
-                y += 1
-            elif x < self.ubound[0]:
-                x, y = x + 1, self.lbound[1]
-            else:
-                break
-
 
 class xlxtr(Unit):
     """
@@ -121,18 +125,18 @@ class xlxtr(Unit):
     hashtag, i.e. `sheet#B1:C12` or `1#B1:C12`. Note that indices are 1-based. To get all elements of one sheet, use `sheet#`. The unit
     If parsing a sheet reference fails, the script will assume that the given reference specifies a sheet.
     """
-    def __init__(self, *refs: arg(metavar='reference', type=SheetReference, help=(
+    def __init__(self, *references: arg(metavar='reference', type=SheetReference, help=(
         'A sheet reference to be extracted. '
         'If no sheet references are given, the unit lists all sheet names.'
     ))):
-        super().__init__(refs=refs)
+        super().__init__(references=references)
 
     def _rcmatch(self, sheet_index, sheet_name, row, col):
         assert row > 0
         assert col > 0
-        if not self.args.refs:
+        if not self.args.references:
             return True
-        for ref in self.args.refs:
+        for ref in self.args.references:
             ref: SheetReference
             if not ref.match(sheet_index, sheet_name):
                 continue
@@ -141,15 +145,15 @@ class xlxtr(Unit):
         else:
             return False
 
-    def _get_value(self, sheet_index, sheet, callable, col, row):
-        if not self._rcmatch(sheet_index, sheet, row + 1, col + 1):
+    def _get_value(self, sheet_index, sheet, callable, row, col):
+        if col <= 0 or row <= 0:
+            raise ValueError(F'invalid cell reference ({row}, {col}) - indices must be positive numbers')
+        if not self._rcmatch(sheet_index, sheet, row, col):
             return
         try:
-            value = callable(row, col)
+            value = callable(row - 1, col - 1)
         except IndexError:
             return
-        row += 1
-        col += 1
         if not value:
             return
         if isinstance(value, float):
@@ -171,23 +175,29 @@ class xlxtr(Unit):
                 entry = entry.strip()
                 if re.search(R'^[A-Z]+:', entry) or '***' in entry:
                     self.log_info(entry)
-        for k, name in enumerate(wb.sheet_names()):
-            sheet = wb.sheet_by_name(name)
-            self.log_info(F'iterating {sheet.ncols} columns and {sheet.nrows} rows')
-            for row in range(sheet.nrows):
-                for col in range(sheet.ncols):
-                    yield from self._get_value(k, name, sheet.cell_value, col, row)
+        for ref in self.args.references:
+            ref: SheetReference
+            for k, name in enumerate(wb.sheet_names()):
+                if not ref.match(k, name):
+                    continue
+                sheet = wb.sheet_by_name(name)
+                self.log_info(F'iterating {sheet.ncols} columns and {sheet.nrows} rows')
+                for row, col in ref.cells(sheet.nrows, sheet.ncols):
+                    yield from self._get_value(k, name, sheet.cell_value, row, col)
 
     def _process_new(self, data):
         workbook = openpyxl.load_workbook(MemoryFile(data), read_only=True)
-        for k, name in enumerate(workbook.sheetnames):
-            sheet = workbook.get_sheet_by_name(name)
-            cells = [row for row in sheet.iter_rows(values_only=True)]
-            nrows = len(cells)
-            ncols = max(len(row) for row in cells)
-            for row in range(nrows):
-                for col in range(ncols):
-                    yield from self._get_value(k, name, lambda r, c: cells[r][c], col, row)
+        for ref in self.args.references:
+            ref: SheetReference
+            for k, name in enumerate(workbook.sheetnames):
+                if not ref.match(k, name):
+                    continue
+                sheet = workbook.get_sheet_by_name(name)
+                cells = [row for row in sheet.iter_rows(values_only=True)]
+                nrows = len(cells)
+                ncols = max(len(row) for row in cells)
+                for row, col in ref.cells(nrows, ncols):
+                    yield from self._get_value(k, name, lambda r, c: cells[r][c], row, col)
 
     def process(self, data):
         try:
