@@ -5,6 +5,17 @@ import lzma
 
 from ... import TestUnitBase
 
+from refinery.units.formats.office.xlxtr import _ref2rc, _rc2ref
+
+
+class TestCellIndexConverter(TestUnitBase):
+    def test_concistency(self):
+        for row in range(1, 12):
+            for col in range(1, 12):
+                ref = _rc2ref(row, col)
+                r, c = _ref2rc(ref)
+                self.assertEqual((r, c), (row, col), F'({row},{col}) -> {ref} -> ({r}, {c}) != ({row},{col})')
+
 
 class TestExcelExtractor(TestUnitBase):
 
