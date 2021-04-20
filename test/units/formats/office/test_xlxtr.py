@@ -22,10 +22,7 @@ class TestExcelExtractor(TestUnitBase):
     def test_regular_xlsx(self):
         data = self.TEST_XLSX
         unit = self.load()
-        result = unit(data)
-        result = result.decode(unit.codec)
-        result = set(result.split('\n'))
-        self.assertSetEqual(result, {'Binary', 'Refinery'})
+        self.assertEqual(unit(data), B'Binary\nRefinery.\nBinary Refinery.')
         xl1 = self.load('A1', 'R33', squeeze=True)(data)
         xl2 = self.load('2#E10')(data)
         xl3 = self.load('Refinery#E10')(data)

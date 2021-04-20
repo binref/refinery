@@ -42,7 +42,7 @@ class SheetReference:
         try:
             sheet, token = token.rsplit('#', 1)
         except ValueError:
-            sheet = 0
+            sheet = None
         else:
             try:
                 sheet = int(sheet, 0) - 1
@@ -61,15 +61,21 @@ class SheetReference:
     @staticmethod
     def _parse_token(token):
         try:
-            return _ref2rc(token)
+            row, col = _ref2rc(token)
         except ValueError:
-            pass
-        row, col = (int(x, 0) for x in token.split('.'))
+            row, col = (int(x, 0) for x in token.split('.'))
+        if row <= 0:
+            raise ValueError(F'row must be positive, {row} is an invalid value')
+        if col <= 0:
+            raise ValueError(F'col must be positive, {col} is an invalid value')
         return row, col
 
-    def __init__(self, sheet_reference):
+    def __init__(self, sheet_reference=None):
         self.lbound = 1, 1
         self.ubound = None
+        if sheet_reference is None:
+            self.sheet = None
+            return
         self.sheet, token = self._parse_sheet(sheet_reference)
         if not token:
             return
@@ -86,6 +92,8 @@ class SheetReference:
             self.ubound = (row_max, col_max)
 
     def match(self, index: int, name: str):
+        if self.sheet is None:
+            return True
         if isinstance(self.sheet, int):
             return self.sheet == index
         return self.sheet == name or fnmatch(name, self.sheet)
@@ -97,15 +105,15 @@ class SheetReference:
         column_start = col
         while True:
             yield row, col
-            if col < ncols:
+            if col <= ncols:
                 col += 1
-            elif row < nrows:
+            elif row <= nrows:
                 row, col = row + 1, column_start
             else:
                 break
 
     def __contains__(self, ref):
-        if self.lbound is None and self.ubound is None:
+        if self.ubound is None:
             return True
         if not isinstance(ref, tuple):
             ref = self._parse_token(ref)
@@ -129,6 +137,8 @@ class xlxtr(Unit):
         'A sheet reference to be extracted. '
         'If no sheet references are given, the unit lists all sheet names.'
     ))):
+        if not references:
+            references = [SheetReference('*')]
         super().__init__(references=references)
 
     def _rcmatch(self, sheet_index, sheet_name, row, col):
