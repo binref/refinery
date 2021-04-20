@@ -98,17 +98,17 @@ class SheetReference:
             return self.sheet == index
         return self.sheet == name or fnmatch(name, self.sheet)
 
-    def cells(self, nrows, ncols):
+    def cells(self, row_max, col_max):
         if self.ubound is not None:
-            nrows, ncols = self.ubound
+            row_max, col_max = self.ubound
         row, col = self.lbound
-        column_start = col
+        colstart = col
         while True:
             yield row, col
-            if col <= ncols:
+            if col < col_max:
                 col += 1
-            elif row <= nrows:
-                row, col = row + 1, column_start
+            elif row < row_max:
+                row, col = row + 1, colstart
             else:
                 break
 

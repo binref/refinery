@@ -19,12 +19,16 @@ class _popcount:
         if self.count < 1:
             raise ValueError(F'Popcounts must be positive integer numbers, {self.count} is invalid.')
 
+    def reset(self):
+        self.current = self.count
+        return self
+
     def into(self, meta, item):
-        if self.count < 1:
+        if self.current < 1:
             return False
         if self.name:
             meta[self.name] = item
-        self.count -= 1
+        self.current -= 1
         return True
 
 
@@ -52,7 +56,7 @@ class pop(Unit):
         remaining = iter(self.args.names)
 
         it = iter(chunks)
-        pop: _popcount = next(remaining)
+        pop: _popcount = next(remaining).reset()
 
         for chunk in it:
             if not chunk.visible:
@@ -61,7 +65,7 @@ class pop(Unit):
                 continue
             try:
                 while not pop.into(variables, chunk):
-                    pop = next(remaining)
+                    pop = next(remaining).reset()
             except StopIteration:
                 invisible.append(chunk)
                 break
