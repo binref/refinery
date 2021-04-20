@@ -1,25 +1,46 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from fnmatch import fnmatch
 import openpyxl
 import xlrd2 as xlrd
 import re
 import io
 import defusedxml
-import itertools
 import functools
 
 from ... import arg, Unit
 from ....lib.structures import MemoryFile
-from .. import UnpackResult, PathExtractorUnit
+
 
 defusedxml.defuse_stdlib()
 
 
+def _ref2rc(ref: str):
+    match = re.match(R'^([A-Z]+)(\d+)$', ref)
+    if not match:
+        raise ValueError
+    col = functools.reduce(lambda acc, c: (acc * 26) + c, (ord(c) - 0x40 for c in match[1]), 0)
+    row = int(match[2], 10)
+    return row, col
+
+
+def _rc2ref(row: int, col: int):
+    if row <= 0:
+        raise ValueError
+    if col <= 0:
+        raise ValueError
+    alphabetic = ''
+    while col:
+        col, letter = divmod(col - 1, 26)
+        alphabetic = chr(0x41 + letter) + alphabetic
+    return F'{alphabetic}{row}'
+
+
 class SheetReference:
 
-    def _parse_sheet(self, token):
+    def _parse_sheet(self, token: str):
         try:
-            sheet, token = token.split('#')
+            sheet, token = token.rsplit('#', 1)
         except ValueError:
             sheet = 0
         else:
@@ -37,142 +58,140 @@ class SheetReference:
         except ValueError:
             return token, token
 
-    def _parse_token(self, token):
-        match = re.match(R'^([A-Z]+)(\d+)$', token)
-        if not match:
-            row, col = (int(x, 0) for x in token.split('.'))
-        else:
-            col = functools.reduce(
-                lambda acc, c: (acc * 26) + c,
-                (ord(c) - 0x40 for c in match[1]),
-                0
-            )
-            row = int(match[2], 10)
+    @staticmethod
+    def _parse_token(token):
+        try:
+            return _ref2rc(token)
+        except ValueError:
+            pass
+        row, col = (int(x, 0) for x in token.split('.'))
         return row, col
 
-    def __init__(self, token):
-        self.sheet, token = self._parse_sheet(token)
-        start, stop = (self._parse_token(x) for x in self._parse_range(token))
-        if start > stop:
-            self.stop = start
-            self.start = stop
+    def __init__(self, sheet_reference):
+        self.lbound = self.ubound = None
+        self.sheet, token = self._parse_sheet(sheet_reference)
+        if not token:
+            return
+        try:
+            start, stop = (self._parse_token(x) for x in self._parse_range(token))
+        except Exception:
+            self.sheet = sheet_reference
         else:
-            self.stop = stop
-            self.start = start
+            row_min = min(start[0], stop[0])
+            col_min = min(start[1], stop[1])
+            row_max = max(start[0], stop[0])
+            col_max = max(start[1], stop[1])
+            self.lbound = (row_min, col_min)
+            self.ubound = (row_max, col_max)
 
-    def get_sheet_index(self, names):
-        return self.sheet if isinstance(self.sheet, int) else names.index(self.sheet)
+    def match(self, index: int, name: str):
+        if isinstance(self.sheet, int):
+            return self.sheet == index
+        return self.sheet == name or fnmatch(name, self.sheet)
+
+    def __contains__(self, ref):
+        if self.lbound is None and self.ubound is None:
+            return True
+        if not isinstance(ref, tuple):
+            ref = self._parse_token(ref)
+        row, col = ref
+        if row not in range(self.lbound[0], self.ubound[0] + 1):
+            return False
+        if col not in range(self.lbound[1], self.ubound[1] + 1):
+            return False
+        return True
 
     def __iter__(self):
-        xmin = min(self.start[0], self.stop[0])
-        ymin = min(self.start[1], self.stop[1])
-        xmax = max(self.start[0], self.stop[0])
-        ymax = max(self.start[1], self.stop[1])
-        x, y = xmin, ymin
+        x, y = self.lbound[0], self.lbound[1]
         while True:
             yield x, y
-            if y < ymax:
+            if y < self.ubound[1]:
                 y += 1
-            elif x < xmax:
-                x, y = x + 1, ymin
+            elif x < self.ubound[0]:
+                x, y = x + 1, self.lbound[1]
             else:
                 break
 
 
-class xlxtr(PathExtractorUnit):
+class xlxtr(Unit):
     """
-    Extract data from Microsoft Excel documents, both Legacy and new XML type
-    documents. A sheet reference is of the form `B1` or `1.2`, both specifying
-    the first cell of the second column. A cell range can be specified as
-    `B1:C12`, or `1.2:C12`, or `1.2:12.3`. Finally, the unit will always refer
-    to the first sheet in the document and to change this, specify the sheet
-    name or index separated by a hashtag, i.e. `sheet#B1:C12` or `1#B1:C12`.
-    Note that indices are 1-based.
+    Extract data from Microsoft Excel documents, both Legacy and new XML type documents. A sheet reference is of the form `B1` or `1.2`,
+    both specifying the first cell of the second column. A cell range can be specified as `B1:C12`, or `1.2:C12`, or `1.2:12.3`. Finally,
+    the unit will always refer to the first sheet in the document and to change this, specify the sheet name or index separated by a
+    hashtag, i.e. `sheet#B1:C12` or `1#B1:C12`. Note that indices are 1-based. To get all elements of one sheet, use `sheet#`. The unit
+    If parsing a sheet reference fails, the script will assume that the given reference specifies a sheet.
     """
+    def __init__(self, *refs: arg(metavar='reference', type=SheetReference, help=(
+        'A sheet reference to be extracted. '
+        'If no sheet references are given, the unit lists all sheet names.'
+    ))):
+        super().__init__(refs=refs)
 
-    def __init__(
-        self, *paths, list=False, join=False, regex=False, fuzzy=False,
-        rows: arg.switch(help='Group results by row instead of column.') = False,
-    ):
-        super().__init__(*paths, list=list, join=join, regex=regex, fuzzy=fuzzy, rows=rows)
+    def _rcmatch(self, sheet_index, sheet_name, row, col):
+        assert row > 0
+        assert col > 0
+        if not self.args.refs:
+            return True
+        for ref in self.args.refs:
+            ref: SheetReference
+            if not ref.match(sheet_index, sheet_name):
+                continue
+            if (row, col) in ref:
+                return True
+        else:
+            return False
 
-    # def __init__(self, *refs: arg(metavar='reference', type=SheetReference, help=(
-    #     'A sheet reference to be extracted. '
-    #     'If no sheet references are given, the unit lists all sheet names.'
-    # ))):
-    #     super().__init__(refs=refs)
-
-    def _row_col_iter(self, nrows, ncols):
-        outer, inner = range(ncols), range(nrows)
-        if self.args.rows:
-            outer, inner = inner, outer
-        for col, row in itertools.product(outer, inner):
-            if self.args.rows:
-                row, col = col, row
-                yield str(row), self._col_translate(col), col, row
-            else:
-                yield self._col_translate(col), str(row), col, row
-
-    @staticmethod
-    def _col_translate(index):
-        alphabetic = ''
-        index += 1
-        while index:
-            index, letter = divmod(index - 1, 26)
-            alphabetic = chr(0x41 + letter) + alphabetic
-        return alphabetic
-
-    def _get_value(self, callable, col, row):
+    def _get_value(self, sheet_index, sheet, callable, col, row):
+        if not self._rcmatch(sheet_index, sheet, row + 1, col + 1):
+            return
         try:
             value = callable(row, col)
         except IndexError:
-            return None
+            return
+        row += 1
+        col += 1
         if not value:
-            return None
-        if isinstance(value, str):
-            value = value.encode(self.codec)
-        else:
-            typename = type(value).__name__
-            self.log_warn(F'unable to handle value of type {typename} in ({col},{row}):', value)
-            raise ValueError
-        return value
+            return
+        if isinstance(value, float):
+            if float(int(value)) == value:
+                value = int(value)
+        yield self.labelled(
+            str(value).encode(self.codec),
+            row=row,
+            col=col,
+            ref=_rc2ref(row, col),
+            sheet=sheet
+        )
 
-    def _process_legacy(self, data):
+    def _process_old(self, data):
         with io.StringIO() as logfile:
-            wb = xlrd.open_workbook(
-                file_contents=data,
-                logfile=logfile,
-                verbosity=self.args.verbose - 1,
-                on_demand=True
-            )
+            wb = xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=self.args.verbose - 1, on_demand=True)
             logfile.seek(0)
             for entry in logfile:
                 entry = entry.strip()
                 if re.search(R'^[A-Z]+:', entry) or '***' in entry:
                     self.log_info(entry)
-        for name in wb.sheet_names():
+        for k, name in enumerate(wb.sheet_names()):
             sheet = wb.sheet_by_name(name)
             self.log_info(F'iterating {sheet.ncols} columns and {sheet.nrows} rows')
-            for outer, inner, col, row in self._row_col_iter(sheet.nrows, sheet.ncols):
-                value = self._get_value(sheet.cell_value, col, row)
-                if value is not None:
-                    yield UnpackResult(F'{name}/{outer}/{inner}', value)
+            for row in range(sheet.nrows):
+                for col in range(sheet.ncols):
+                    yield from self._get_value(k, name, sheet.cell_value, col, row)
 
-    def _process_xlsx(self, data):
+    def _process_new(self, data):
         workbook = openpyxl.load_workbook(MemoryFile(data), read_only=True)
-        for name in workbook.sheetnames:
-            sheet = workbook.worksheets[name]
+        for k, name in enumerate(workbook.sheetnames):
+            sheet = workbook.get_sheet_by_name(name)
             cells = [row for row in sheet.iter_rows(values_only=True)]
             nrows = len(cells)
             ncols = max(len(row) for row in cells)
-            for outer, inner, col, row in self._row_col_iter(nrows, ncols):
-                value = self._get_value(lambda c, r: cells[r][c], col, row)
-                if value is not None:
-                    yield UnpackResult(F'{name}/{outer}/{inner}', value)
+            for row in range(nrows):
+                for col in range(ncols):
+                    yield from self._get_value(k, name, lambda r, c: cells[r][c], col, row)
 
-    def unpack(self, data):
+    def process(self, data):
         try:
-            yield from self._process_xlsx(data)
-        except Exception:
-            self.log_info('reverting to xlrd module')
-            yield from self._process_legacy(data)
+            yield from self._process_new(data)
+        except Exception as e:
+            self.log_info(F'reverting to xlrd module due to exception: {e!s}')
+            yield from self._process_old(data)
