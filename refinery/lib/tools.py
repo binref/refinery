@@ -5,6 +5,7 @@ Miscellaneous helper functions.
 """
 import inspect
 import itertools
+import functools
 import os
 import sys
 
@@ -237,3 +238,7 @@ def infinitize(it):
     )):
         return itertools.cycle(it)
     return it
+
+
+def cached_property(p):
+    return property(functools.lru_cache(maxsize=1)(p))

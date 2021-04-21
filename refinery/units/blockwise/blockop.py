@@ -18,8 +18,7 @@ class IndexCounter:
         return self
 
     def __next__(self):
-        index = self.index
-        self.index = index + 1 & self.mask
+        self.index = index = self.index + 1 & self.mask
         return index
 
 
@@ -63,7 +62,7 @@ class blockop(ArithmeticUnit):
         inc: arg('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
         dec: arg('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
         cbc: arg('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
-        bigendian=False, blocksize=1
+        bigendian=False, blocksize=1, precision=None
     ):
         for flag, flag_is_set, expression in [
             ('--cbc', cbc, '(B)'),
@@ -88,6 +87,7 @@ class blockop(ArithmeticUnit):
             *argument,
             bigendian=bigendian,
             blocksize=blocksize,
+            precision=precision,
             operation=self._parse_op(operation),
             seed=seed,
             prologue=prologue and self._parse_op(prologue),

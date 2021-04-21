@@ -5,15 +5,21 @@ Contains all units that can work on blocks a fixed length. Note that block ciphe
 algorithms can be found in `refinery.units.crypto.cipher`.
 """
 import abc
+import itertools
 
 from .. import arg, Unit
 from ...lib.argformats import numseq
 from ...lib import chunks
-from ...lib.tools import infinitize
+from ...lib.tools import infinitize, cached_property
 
 
 class NoNumpy(Exception):
     pass
+
+
+class NoMask:
+    def __rand__(self, other):
+        return other
 
 
 class BlockTransformationBase(Unit, abstract=True):
@@ -22,13 +28,18 @@ class BlockTransformationBase(Unit, abstract=True):
         self,
         bigendian: arg.switch('-E', help='Read chunks in big endian.') = False,
         blocksize: arg.number('-B', help='The size of each block in bytes, default is 1.') = 1,
+        precision: arg.number('-P', help=(
+            'The size of the variables used for computing the result. By default, this is equal to the block size. The value may be '
+            'zero, indicating that arbitrary precision is required.')) = None,
         **keywords
     ):
         if blocksize < 1:
             raise ValueError('Block size can not be less than 1.')
-        super().__init__(bigendian=bigendian, blocksize=blocksize, **keywords)
+        if precision is None:
+            precision = blocksize
+        super().__init__(bigendian=bigendian, blocksize=blocksize, precision=precision, **keywords)
 
-    @property
+    @cached_property
     def bytestream(self):
         """
         Indicates whether or not the block size is equal to 1, i.e. whether the unit is operating
@@ -36,13 +47,19 @@ class BlockTransformationBase(Unit, abstract=True):
         """
         return self.args.blocksize == 1
 
-    @property
+    @cached_property
     def fbits(self):
-        return 8 * self.args.blocksize
+        size = self.args.precision
+        if not size:
+            raise AttributeError('arbitrary precision state has no bit size.')
+        return 8 * size
 
-    @property
+    @cached_property
     def fmask(self):
-        return (1 << self.fbits) - 1
+        try:
+            return (1 << self.fbits) - 1
+        except AttributeError:
+            return NoMask()
 
     def rest(self, data):
         if self.bytestream:
@@ -99,9 +116,9 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         'where the left argument is each block in the input data. This argument can also '
         'contain a sequence of bytes which is then split into blocks of the same size as '
         'the input data and used cyclically.')),
-        bigendian=False, blocksize=1, **kw
+        bigendian=False, blocksize=1, precision=None, **kw
     ):
-        super().__init__(bigendian=bigendian, blocksize=blocksize, argument=argument, **kw)
+        super().__init__(bigendian=bigendian, blocksize=blocksize, precision=precision, argument=argument, **kw)
 
     def _normalize_argument(self, it):
         for block in infinitize(it):
@@ -128,7 +145,11 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             raise NoNumpy
 
         order = '<>'[self.args.bigendian]
-        dtype = numpy.dtype(F'{order}u{self.args.blocksize}')
+        try:
+            dtype = numpy.dtype(F'{order}u{self.args.precision}')
+        except TypeError:
+            dtype = numpy.dtype('O')
+        stype = numpy.dtype(F'{order}u{self.args.blocksize}')
         blocks = len(data) // self.args.blocksize
 
         def nparg(buffer):
@@ -137,12 +158,21 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             if isinstance(buffer, int):
                 self.log_info('detected numeric argument')
                 return buffer & self.fmask
-            return numpy.fromiter(self._normalize_argument(buffer), dtype, blocks)
+            infty = self._normalize_argument(buffer)
+            if not self.args.precision:
+                return numpy.array(list(itertools.islice(infty, blocks)), dtype=dtype)
+            else:
+                return numpy.fromiter(infty, dtype, blocks)
 
         rest = data[blocks * self.args.blocksize:]
-        data = numpy.frombuffer(memoryview(data), dtype, blocks)
+
+        data = numpy.frombuffer(memoryview(data), stype, blocks)
+        if stype != dtype:
+            data = data.astype(dtype)
         args = [nparg(a) for a in self.args.argument]
         self.inplace(data, *args)
+        if stype != dtype:
+            data = data.astype(stype)
         return data.tobytes() + rest
 
     def process(self, data):
