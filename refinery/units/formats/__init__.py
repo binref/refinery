@@ -9,7 +9,7 @@ import re
 import collections
 
 from zlib import adler32
-from typing import ByteString, Iterable, Callable, Union
+from typing import ByteString, Iterable, Callable, List, Union
 
 from .. import arg, Unit
 from ...lib.tools import isbuffer
@@ -79,7 +79,7 @@ class PathExtractorUnit(Unit, abstract=True):
         list : arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join : arg.switch('-j', help='Join path names from container with previous path names.') = False,
         regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
-        meta: arg('-m', metavar='NAME',
+        path: arg('-P', metavar='NAME',
             help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
         **keywords
     ):
@@ -91,7 +91,7 @@ class PathExtractorUnit(Unit, abstract=True):
             ],
             list=list,
             join=join,
-            meta=meta,
+            path=path,
             **keywords
         )
 
@@ -125,8 +125,8 @@ class PathExtractorUnit(Unit, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        results = []
-        metavar = self.args.meta.decode(self.codec)
+        results: List[UnpackResult] = []
+        metavar = self.args.path.decode(self.codec)
         paths = collections.defaultdict(set)
         self.__unknown = 0
 

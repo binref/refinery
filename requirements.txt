@@ -1,3 +1,4 @@
+Pillow
 acefile
 asn1crypto
 capstone
@@ -16,7 +17,7 @@ oletools
 openpyxl
 pefile
 phpserialize 
-Pillow
+py7zr
 pycryptodome
 pyelftools
 pyperclip
