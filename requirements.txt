@@ -18,6 +18,7 @@ openpyxl
 pefile
 phpserialize 
 py7zr
+pycdlib
 pycryptodome
 pyelftools
 pyperclip
