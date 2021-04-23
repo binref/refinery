@@ -21,12 +21,18 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
 
     overlay_value = overlay and pe.get_overlay_data_start_offset() or 0
 
-    sections_value = sections and max(
+    def mmax(sequence):
+        try:
+            return max(sequence)
+        except Exception:
+            return 0
+
+    sections_value = sections and mmax(
         s.PointerToRawData + s.SizeOfRawData
         for s in pe.sections
     ) or 0
 
-    memdump_value = memdump and max(
+    memdump_value = memdump and mmax(
         s.VirtualAddress + s.Misc_VirtualSize
         for s in pe.sections
     ) or 0
@@ -34,7 +40,7 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
     cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[IMAGE_DIRECTORY_ENTRY_SECURITY]
 
     if directories:
-        directories_value = max(
+        directories_value = mmax(
             pe.get_offset_from_rva(d.VirtualAddress) + d.Size
             for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
             if d.name != 'IMAGE_DIRECTORY_ENTRY_SECURITY'
