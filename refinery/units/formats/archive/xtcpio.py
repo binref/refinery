@@ -27,11 +27,10 @@ class CPIOEntry(Struct):
         self.rdev = readint(4), readint(4)
         namesize = readint(4)
         self.checksum = readint(4)
-        self.name = bytes(reader.read(namesize)).decode('ascii')
-        start = reader.tell()
-        padding = -start % 4
-        reader.seekrel(padding)
-        self.data = reader.read()
+        self.name = bytes(reader.read(namesize)).decode('ascii').rstrip('\0')
+        reader.byte_align(4)
+        self.data = reader.read(self.size)
+        reader.byte_align(4)
 
 
 class xtcpio(ArchiveUnit):
@@ -43,4 +42,6 @@ class xtcpio(ArchiveUnit):
             with suppress(EOF): return CPIOEntry(reader)
         reader = StructReader(memoryview(data))
         for entry in iter(cpio, None):
+            if entry.name == 'TRAILER!!!':
+                break
             yield self._pack(entry.name, entry.mtime, entry.data)
