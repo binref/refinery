@@ -16,7 +16,8 @@ class dnfields(PathExtractorUnit):
     type.
     """
     _SIZEMAP = {
-        '^s?byte|char$'  : 1,
+        '^s?byte$'       : 1,
+        '^s?char$'       : 2,
         '^[us]?int.?16$' : 2,
         '^[us]?int.?32$' : 4,
         '^[us]?int.?64$' : 8,
