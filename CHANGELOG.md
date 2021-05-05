@@ -1,5 +1,15 @@
 # Binary Refinery Changelog
 
+## Version 0.3.29
+- Meta variables are now allowed in `struct` formats, and `struct` assumes no alignment by default.
+- The `pemeta` unit now has support for RICH header data.
+- The `rsakey` unit was added.
+- The `pop` unit was extended by an option to discard chunks.
+- Several new archive extractors are now available: `xt7z`, `xtace`, `xtiso`, and `xtcpio`.
+- The `xlxtr` unit was refactored and generates more metadata.
+- The `sorted` unit can sort by metadata variables now.
+- The `swap` unit can now swap with an empty variable, which will empty the chunk body.
+
 ## Version 0.3.28
 - The `trivia` unit was renamed to `cm` for _"common meta"_.
 - The `pemeta` unit can now display PE header information, .NET header flags, and supports a table view instead of the JSON output.
