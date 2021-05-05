@@ -77,7 +77,7 @@ class peek(HexViewer):
         if not self.args.brief:
             if self._idx is not None:
                 peeks.append(F'item {self._idx:02d}')
-            elif not data and not hasattr(data, 'meta') or not data.meta:
+            elif not data and not getattr(data, 'meta', None):
                 return
             if data:
                 peeks.append(F'{entropy(memoryview(data)) * 100:05.2f}% entropy')
