@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import io
 
+from refinery.units import Unit
 from refinery.lib.frame import FrameUnpacker
 from refinery.lib.loader import load_detached as L
 
@@ -111,3 +112,18 @@ class TestFraming(TestBase):
         pipeline = self.ldu('emit', data=msg)[aes]
         self.assertEqual(aes(msg[7]), hidden)
         self.assertEqual(pipeline(B''), hidden)
+
+    def test_empty_chunk(self):
+        result = None
+
+        class t(Unit):
+            def process(self, data):
+                nonlocal result
+                result = data.meta['test']
+                return data
+
+        swap = self.ldu('swap', 'test')
+        ergo = b'test-data' | swap [ t ] # noqa
+
+        self.assertEqual(ergo, b'')
+        self.assertEqual(result, B'test-data')
