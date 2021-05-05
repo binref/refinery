@@ -77,11 +77,9 @@ class peek(HexViewer):
         if not self.args.brief:
             if self._idx is not None:
                 peeks.append(F'item {self._idx:02d}')
-            elif not data:
+            elif not data and not hasattr(data, 'meta') or not data.meta:
                 return
-            if not data:
-                peeks.append('empty buffer')
-            else:
+            if data:
                 peeks.append(F'{entropy(memoryview(data)) * 100:05.2f}% entropy')
                 peeks.append(format_size(len(data), align=not self.args.lines))
                 magic = magicparse(data)
@@ -145,11 +143,12 @@ class peek(HexViewer):
             return F'--{title}' + '-' * (width - len(title) - 2)
 
         if not self.args.brief:
-            yield separator()
-            if width:
-                yield from textwrap.wrap(header, width + wmod)
-            else:
-                yield header
+            if header:
+                yield separator()
+                if width:
+                    yield from textwrap.wrap(header, width + wmod)
+                else:
+                    yield header
             yield from self._peekmeta(data, width, separator())
 
         if dump:
