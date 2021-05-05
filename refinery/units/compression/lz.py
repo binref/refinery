@@ -88,15 +88,15 @@ class lzma(Unit):
                     pos = stream.tell()
                     try:
                         chunk = lz.decompress(stream.read(size))
-                    except lzma_.LZMAError as error:
-                        self.log_debug(error.args)
+                    except (EOFError, lzma_.LZMAError) as error:
                         if size > 1:
                             lz = lzma_.LZMADecompressor(mode, **keywords)
                             stream.seek(0)
                             output.seek(0)
                             if pos > 0:
                                 output.write(lz.decompress(stream.read(pos)))
-                            self.log_debug('decompression error, reverting to one byte at a time')
+                            msg = error.args[0] if len(error.args) == 1 else error.__class__.__name__
+                            self.log_debug(F'decompression error, reverting to one byte at a time: {msg}')
                             size = 1
                         else:
                             remaining = len(stream.getbuffer()) - pos
