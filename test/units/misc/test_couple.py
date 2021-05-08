@@ -56,4 +56,4 @@ class TestCoupler(TestUnitBase):
         self.assertEqual(
             self.load(*self.sleep, '1', timeout=2)(), B'')
         with self.assertRaises(RuntimeError):
-            self.load(*self.sleep, '1', timeout=0.95)()
+            self.load(*self.sleep, '1', timeout=0.7)()
