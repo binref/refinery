@@ -14,7 +14,7 @@ class hexdmp(HexViewer):
     converts it back to binary.
     """
     _ENCODED_BYTES = re.compile(
-        '\\s'                     # encoded byte patches must be prefixed by white space
+        '(?:\\s|^)'               # encoded byte patches must be prefixed by white space
         '[A-Fa-f0-9]{2}(\\s+)'    # encoded byte followed by whitespace
         '[A-Fa-f0-9]{2}'          # at least one more encoded byte
         '(?:\\1[A-Fa-f0-9]{2})*'  # more encoded bytes using the same spacing
