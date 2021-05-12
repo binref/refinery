@@ -160,9 +160,18 @@ def autoinvoke(method, keywords: dict):
         try:
             value = keywords.pop(p.name)
         except KeyError:
-            continue
-        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            if p.kind is p.VAR_KEYWORD:
+                continue
+            value = p.default
+            if value is p.empty:
+                raise ValueError(F'missing required parameter {p.name}')
+        if p.kind is p.POSITIONAL_OR_KEYWORD or p.kind is p.POSITIONAL_ONLY:
+            if value == p.default:
+                # when equality holds, we force identity
+                value = p.default
             posargs.append(value)
+        elif p.default == value:
+            continue
         elif p.kind is p.VAR_POSITIONAL:
             varargs = value
         elif p.kind is p.KEYWORD_ONLY:

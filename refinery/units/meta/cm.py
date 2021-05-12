@@ -4,17 +4,25 @@ from .. import arg, Unit
 from ...lib.meta import LazyMetaOracleFactory
 
 
+def _singleton(c): return c()
+@_singleton # noqa
+class TrueWhenNoArgumentsGiven:
+    def __bool__(self): return False
+    def __eq__(self, other): return other is False
+
+
 class cm(Unit):
     """
     The Common Meta variables unit populates the set of meta variables of the current chunk with commonly
-    used metadata. The unit has no effect outside a frame. If no option is given, the unit populates all
-    available variables.
+    used metadata. The unit has no effect outside a frame. If no option is given, the unit populates only
+    the size and index fields.
     """
     def __init__(
         self,
-        invert  : arg.switch('-x', help='populate only options that have not been specified') = False,
-        size    : arg.switch('-S', help='size of the chunk') = False,
-        index   : arg.switch('-I', help='index of the chunk in the current frame') = False,
+        invert  : arg.switch('-x', group='ALL', help='populate only options that have not been specified') = False,
+        all     : arg.switch('-a', group='ALL', help='populate all options') = False,
+        size    : arg.switch('-S', help='size of the chunk') = TrueWhenNoArgumentsGiven,
+        index   : arg.switch('-I', help='index of the chunk in the current frame') = TrueWhenNoArgumentsGiven,
         ext     : arg.switch('-F', help='guess file extension') = False,
         entropy : arg.switch('-E', help='compute data entropy') = False,
         sha1    : arg.switch('-1', help='compute hash: SHA-1') = False,
@@ -22,7 +30,6 @@ class cm(Unit):
         crc32   : arg.switch('-3', help='compute hash: CRC32') = False,
         md5     : arg.switch('-5', help='compute hash: MD5') = False,
         hashes  : arg.switch('-H', help='compute all common hashes') = False,
-
     ):
         args = {
             'size'    : size,
@@ -34,11 +41,16 @@ class cm(Unit):
             'sha256'  : sha256 or hashes,
             'md5'     : md5 or hashes,
         }
-        if not any(args.values()):
+        if all:
             if invert:
-                raise ValueError('the --invert option can only be specified with another option.')
+                raise ValueError('invert and all are both enabled, resulting in empty configuration.')
             for key in args:
                 args[key] = True
+        elif not any(args.values()):
+            if invert:
+                raise ValueError('the --invert option can only be specified with another option.')
+            for key, value in args.items():
+                args[key] = value is TrueWhenNoArgumentsGiven
         elif invert:
             for key in args:
                 args[key] = not args[key]
