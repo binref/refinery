@@ -155,6 +155,8 @@ _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 _pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
 
 _pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
+_pattern_urlenc_hard = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
+_pattern_urlenc_soft = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
 
 _pattern_vbe = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
@@ -238,6 +240,10 @@ class formats(PatternEnum):
     "PowerShell escaped string literal"
     printable = alphabet(R'[ -~]')
     "Any sequence of printable characters"
+    urlencstrict = pattern(_pattern_urlenc_hard)
+    "Any sequence of url-encoded characters"
+    urlenc = pattern(_pattern_urlenc_soft)
+    "Any sequence of url-encoded characters"
     intarray = tokenize(_pattern_integer, sep=R'\s*[;,]\s*', bound='')
     "Sequences of integers, separated by commas or semicolons"
     word = alphabet(R'\\w')
@@ -252,7 +258,7 @@ class formats(PatternEnum):
     "Base32 encoded strings"
     b64 = alphabet(R'[0-9a-zA-Z\+\/]', postfix=R'[0-9a-zA-Z\+\/]{0,3}={0,3}')
     "Base64 encoded strings"
-    b64u = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}')
+    b64url = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}')
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]')
     "Hexadecimal strings"
