@@ -19,5 +19,8 @@ class xtzip(ArchiveUnit):
                         return archive.read(info.filename, pwd=pwd)
                     if info.is_dir():
                         continue
-                    date = datetime.datetime(*info.date_time)
+                    try:
+                        date = datetime.datetime(*info.date_time)
+                    except Exception:
+                        date = None
                     yield self._pack(info.filename, date, xt)
