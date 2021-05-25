@@ -177,6 +177,12 @@ class MemoryFile(Generic[T], io.IOBase):
     def seekrel(self, offset: int) -> int:
         return self.seek(offset, io.SEEK_CUR)
 
+    def seekset(self, offset: int) -> int:
+        if offset < 0:
+            return self.seek(offset, io.SEEK_END)
+        else:
+            return self.seek(offset, io.SEEK_SET)
+
     def getbuffer(self) -> T:
         return self._data
 
