@@ -24,9 +24,9 @@ class xtmail(PathExtractorUnit):
         for key, value in head:
             jh[key].append(mw(''.join(t.lstrip() for t in value.splitlines(False))))
         jh = {k: v[0] if len(v) == 1 else [t for t in v if t] for k, v in jh.items()}
-        yield UnpackResult('HEAD.TXT',
+        yield UnpackResult('headers.txt',
             lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h).encode(self.codec))
-        yield UnpackResult('HEAD.JSN',
+        yield UnpackResult('headers.json',
             lambda jsn=jh: json.dumps(jsn, indent=4).encode(self.codec))
 
     def _get_parts_outlook(self, data):
@@ -34,26 +34,27 @@ class xtmail(PathExtractorUnit):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
         def make_message(name, msg):
+            self.output(dir(msg))
             if msg.body:
-                yield UnpackResult(F'{name}.TXT', ensure_bytes(msg.body))
+                yield UnpackResult(F'{name}.txt', ensure_bytes(msg.body))
             if msg.htmlBody:
-                yield UnpackResult(F'{name}.HTM', ensure_bytes(msg.htmlBody))
+                yield UnpackResult(F'{name}.htm', ensure_bytes(msg.htmlBody))
 
         msgcount = 0
 
         with Message(bytes(data)) as msg:
             yield from self._get_headparts(msg.header.items())
-            yield from make_message('BODY', msg)
+            yield from make_message('body', msg)
             for attachment in msg.attachments:
                 if attachment.type == 'msg':
                     msgcount += 1
-                    yield from make_message(F'MSG{msgcount:d}', attachment.data)
+                    yield from make_message(F'attachments/msg_{msgcount:d}', attachment.data)
                     continue
                 if not isbuffer(attachment.data):
                     self.log_warn(F'unknown attachment of type {attachment.type}, please report this!')
                     continue
                 path = attachment.longFilename or attachment.shortFilename
-                yield UnpackResult(path, attachment.data)
+                yield UnpackResult(F'attachments/{path}', attachment.data)
 
     def _get_parts_regular(self, data):
         msg = BytesParser().parsebytes(data)
@@ -66,7 +67,10 @@ class xtmail(PathExtractorUnit):
             if data is None:
                 continue
             if path is None:
-                path = F'BODY.{file_extension(part.get_content_subtype(), "TXT").upper()}'
+                extension = file_extension(part.get_content_type(), 'txt')
+                path = F'body.{extension}'
+            else:
+                path = F'attachments/{path}'
             yield UnpackResult(path, data)
 
     def unpack(self, data):
