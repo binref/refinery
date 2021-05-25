@@ -103,7 +103,21 @@ class xtp(PatternExtractor):
         'wscript.shell',
     ]
 
+    _BRACKETING = {
+        B"'"[0]: B"'",
+        B'"'[0]: B'"',
+        B'('[0]: B')',
+        B'{'[0]: B'}',
+        B'['[0]: B']',
+        B'<'[0]: B'>',
+    }
+
     def _check_match(self, data, pos, name, value):
+        term = self._BRACKETING.get(data[pos - 1], None)
+        if term:
+            pos = value.rfind(term)
+            if pos > 0 and len(value) - pos <= 3:
+                value = value[:pos]
         if name == 'ipv4':
             ocets = [int(x) for x in value.split(B'.')]
             if ocets.count(0) >= 3:
@@ -121,13 +135,21 @@ class xtp(PatternExtractor):
                     return None
         elif name in ('url', 'socket', 'domain', 'subdomain'):
             ioc = value.decode(self.codec)
-            if '://' not in ioc: ioc = F'TCP://{ioc}'
-            host = urlparse(ioc).netloc.split(':', 1)[0]
-            hlow = host.lower()
+            if '://' not in ioc: ioc = F'://{ioc}'
+            parts = urlparse(ioc)
+            host, _, _ = parts.netloc.partition(':')
+            hl = host.lower()
             for white, level in self._LEGITIMATE_HOSTS.items():
-                if level <= self.args.filter and hlow == white or hlow.endswith(F'.{white}'):
+                if level <= self.args.filter and hl == white or hl.endswith(F'.{white}'):
                     return None
-            if any(hlow == w for w in self._DOMAIN_WHITELIST):
+            if name == 'url':
+                scheme = parts.scheme.lower()
+                for p in ('http', 'https', 'ftp', 'file', 'mailto'):
+                    if scheme.endswith(p):
+                        pos = scheme.find(p)
+                        value = value[pos:]
+                        break
+            if any(hl == w for w in self._DOMAIN_WHITELIST):
                 return None
             if name.endswith('domain'):
                 hostparts = host.split('.')
