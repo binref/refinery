@@ -1,6 +1,7 @@
 __pycache__
 __init__.pkl
 venv*
+temp*
 html
 build
 dist
