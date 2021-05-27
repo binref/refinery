@@ -111,6 +111,7 @@ _format_defanged_domain = (
     R'[a-zA-Z0-9\_][a-zA-Z0-9\-\_]{{1,62}}(?:\[\.\]|\.){tlds}'
 )
 
+_pattern_utf8 = R'(?:[\x00-\x7F]|[\xC0-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF7][\x80-\xBF]{3})+'
 
 _pattern_serrated_domain = _format_serrated_domain.format(repeat='{0,20}', tlds=_TLDS)
 _pattern_defanged_domain = _format_defanged_domain.format(repeat='{0,20}', tlds=_TLDS)
@@ -264,6 +265,8 @@ class formats(PatternEnum):
     "Hexadecimal strings"
     HEX = alphabet(R'[0-9A-F]')
     "Uppercase hexadecimal strings"
+    utf8 = pattern(_pattern_utf8)
+    "A sequence of bytes that can be decoded as UTF8."
     hexdump = tokenize(_pattern_hexline, bound='', sep=R'\s*\n')
     """
     This pattern matches a typical hexdump output where hexadecimally encoded
