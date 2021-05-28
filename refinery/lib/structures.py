@@ -10,7 +10,9 @@ import functools
 import io
 import enum
 import weakref
+import contextlib
 
+from refinery.lib.tools import cached_property
 from typing import Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
 
 
@@ -224,9 +226,9 @@ class MemoryFile(Generic[T], io.IOBase):
         return len(data)
 
 
-class bitorder(str, enum.Enum):
-    big = 'big'
-    little = 'little'
+class order(str, enum.Enum):
+    big = '>'
+    little = '<'
 
 
 class StructReader(MemoryFile[T]):
@@ -235,24 +237,23 @@ class StructReader(MemoryFile[T]):
     read structured data.
     """
 
-    __slots__ = '_bbits', '_nbits', 'bitorder'
-
     class Unaligned(RuntimeError):
         pass
 
-    def __init__(self, data: Union[bytearray, bytes, memoryview], bo: str = 'little'):
+    def __init__(self, data: Union[bytearray, bytes, memoryview], bigendian: bool = False):
         super().__init__(data)
         self._bbits = 0
         self._nbits = 0
-        self.bitorder = bitorder(bo)
+        self.bigendian = bigendian
 
-    def set_bitorder_big(self):
-        self.bitorder = bitorder.big
-        return self
-
-    def set_bitorder_little(self):
-        self.bitorder = bitorder.little
-        return self
+    @property
+    @contextlib.contextmanager
+    def be(self):
+        self.bigendian = True
+        try:
+            yield self
+        finally:
+            self.bigendian = False
 
     def readinto(self, b) -> int:
         size = super().readinto(b)
@@ -260,9 +261,13 @@ class StructReader(MemoryFile[T]):
             raise EOF
         return size
 
-    @property
+    @cached_property
     def byteorder_format(self) -> str:
-        return '<>'[int(self.bitorder is bitorder.big)]
+        return '>' if self.bigendian else '<'
+
+    @cached_property
+    def byteorder_name(self) -> str:
+        return 'big' if self.bigendian else 'little'
 
     def seek(self, offset, whence=io.SEEK_SET) -> int:
         self._bbits = 0
@@ -312,12 +317,12 @@ class StructReader(MemoryFile[T]):
         """
         if length < self._nbits:
             self._nbits -= length
-            if self.bitorder is bitorder.little:
-                result = self._bbits & 2 ** length - 1
-                self._bbits >>= length
-            else:
+            if self.bigendian:
                 result = self._bbits >> self._nbits
                 self._bbits ^= result << self._nbits
+            else:
+                result = self._bbits & 2 ** length - 1
+                self._bbits >>= length
             return result
         nbits, bbits = self.byte_align()
         required = length - nbits
@@ -325,19 +330,19 @@ class StructReader(MemoryFile[T]):
         if rest:
             bytecount += 1
             rest = 8 - rest
-        result = int.from_bytes(self.read(bytecount), self.bitorder)
+        result = int.from_bytes(self.read(bytecount), self.byteorder_name)
         if not nbits and not rest:
             return result
-        if self.bitorder is bitorder.little:
-            excess   = result >> required  # noqa
-            result  ^= excess << required  # noqa
-            result <<= nbits               # noqa
-            result  |= bbits               # noqa
-        else:
+        if self.bigendian:
             rbmask   = 2 ** rest - 1       # noqa
             excess   = result & rbmask     # noqa
             result >>= rest                # noqa
             result  ^= bbits << required   # noqa
+        else:
+            excess   = result >> required  # noqa
+            result  ^= excess << required  # noqa
+            result <<= nbits               # noqa
+            result  |= bbits               # noqa
         assert excess.bit_length() <= rest
         self._nbits = rest
         self._bbits = excess
@@ -352,7 +357,7 @@ class StructReader(MemoryFile[T]):
             if not isinstance(data, bytes):
                 data = bytes(data)
             return data
-        return self.read_integer(size * 8).to_bytes(size, self.bitorder)
+        return self.read_integer(size * 8).to_bytes(size, self.byteorder_name)
 
     def read_bit(self) -> int:
         """
@@ -383,10 +388,9 @@ class StructReader(MemoryFile[T]):
 
     def read_struct(self, format: str, unwrap=False) -> Union[Tuple, int, bool, float, bytes]:
         """
-        Read structured data from the stream in any format supported by the `struct` module. If the `format`
-        argument does not specify a byte order, then `refinery.lib.structures.StructReader.bitorder` will be
-        used to determine a format. If the `unwrap` parameter is `True`, a single unpacked value will be
-        returned as a scalar, not as a tuple with one element.
+        Read structured data from the stream in any format supported by the `struct` module. The `format`
+        argument can be used to override the current byte ordering. If the `unwrap` parameter is `True`, a
+        single unpacked value will be returned as a scalar, not as a tuple with one element.
         """
         if not format:
             raise ValueError('no format specified')
@@ -412,7 +416,6 @@ class StructReader(MemoryFile[T]):
 
     def read_byte(self) -> int: return self.read_integer(8)
     def read_char(self) -> int: return self.read_struct('b', True)
-
 
 class StructMeta(type):
     """
