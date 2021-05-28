@@ -135,7 +135,7 @@ class xtp(PatternExtractor):
                     return None
         elif name in ('url', 'socket', 'domain', 'subdomain'):
             ioc = value.decode(self.codec)
-            if '://' not in ioc: ioc = F'://{ioc}'
+            if '://' not in ioc: ioc = F'tcp://{ioc}'
             parts = urlparse(ioc)
             host, _, _ = parts.netloc.partition(':')
             hl = host.lower()
