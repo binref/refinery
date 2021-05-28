@@ -6,11 +6,20 @@ Miscellaneous helper functions.
 import inspect
 import itertools
 import functools
+import logging
 import os
 import sys
 
-from typing import ByteString, Iterable
+from typing import ByteString, Iterable, TypeVar
 from math import log
+
+
+_T = TypeVar('_T')
+_D = TypeVar('_D')
+
+
+def _singleton(cls):
+    return cls()
 
 
 def format_size(num: int, align=False) -> str:
@@ -251,3 +260,27 @@ def infinitize(it):
 
 def cached_property(p):
     return property(functools.lru_cache(maxsize=1)(p))
+
+
+@_singleton
+class NoLogging:
+    def __enter__(self):
+        logging.disable(logging.CRITICAL)
+        return self
+
+    def __exit__(self, *_):
+        logging.disable(logging.NOTSET)
+
+
+def one(iterable: Iterable[_T]) -> _T:
+    it = iter(iterable)
+    try:
+        top = next(it)
+    except StopIteration:
+        raise LookupError
+    try:
+        next(it)
+    except StopIteration:
+        return top
+    else:
+        raise LookupError
