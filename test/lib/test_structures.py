@@ -86,7 +86,7 @@ class TestStructures(TestBase):
         self.assertEqual(remainder, 7)
         data = memoryview(data.to_bytes(size + 1, 'big'))
         sr = StructReader(data)
-        with sr.bigendian:
+        with sr.be:
             self.assertEqual(sr.read_bit(), 0)
             self.assertEqual(sr.read_bit(), 1)
             self.assertEqual(sr.read_bit(), 0)
