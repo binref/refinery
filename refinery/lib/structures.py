@@ -417,6 +417,7 @@ class StructReader(MemoryFile[T]):
     def read_byte(self) -> int: return self.read_integer(8)
     def read_char(self) -> int: return self.read_struct('b', True)
 
+
 class StructMeta(type):
     """
     A metaclass to facilitate the behavior outlined for `refinery.lib.structures.Struct`.
