@@ -116,7 +116,7 @@ class BCRYPT_RSAKEY_BLOB(Struct):
         e_size *= 8
         n_size *= 8
         self.magic = BCRYPT_MAGIC(magic)
-        reader.set_bitorder_big()
+        reader.bigendian = True
         self.exponent = reader.read_integer(e_size)
         self.modulus = reader.read_integer(n_size)
         self.bit_size = bits

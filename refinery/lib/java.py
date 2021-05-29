@@ -529,12 +529,12 @@ class JvException(Struct):
 
 class JvCode(Struct):
     def __init__(self, reader: StructReader):
-        reader.set_bitorder_big()
+        reader.bigendian = True
         self.max_stack = reader.u16()
         self.max_locals = reader.u16()
         self.disassembly: List[JvOpCode] = []
         with StructReader(reader.read(reader.u32())) as code:
-            code.set_bitorder_big()
+            code.bigendian = True
             while not code.eof:
                 self.disassembly.append(JvOpCode(code, pool=self.pool))
         self.exceptions = [JvException(reader) for _ in range(reader.u16())]
@@ -562,7 +562,7 @@ class JvClassFile(Struct):
     parent: JvString = Index(JvString)
 
     def __init__(self, reader: StructReader):
-        reader.set_bitorder_big()
+        reader.bigendian = True
         if reader.read(4).hex() != 'cafebabe':
             raise ValueError('class file magic missing.')
         minor = reader.u16()
