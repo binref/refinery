@@ -7,15 +7,24 @@ from . import check_variable_name
 
 
 class _popcount:
+    _MERGE_SYMBOL = '@'
 
     def __init__(self, name):
+        if name == self._MERGE_SYMBOL:
+            self.count = 1
+            self.field = ...
+            return
         try:
-            self.count = int(name, 0)
+            if isinstance(name, int):
+                count = name
+            else:
+                count = int(name, 0)
         except Exception:
             self.count = 1
-            self.name = check_variable_name(name)
+            self.field = check_variable_name(name)
         else:
-            self.name = None
+            self.count = count
+            self.field = None
         if self.count < 1:
             raise ValueError(F'Popcounts must be positive integer numbers, {self.count} is invalid.')
 
@@ -26,25 +35,32 @@ class _popcount:
     def into(self, meta, item):
         if self.current < 1:
             return False
-        if self.name:
-            meta[self.name] = item
+        if self.field:
+            if self.field is ...:
+                meta.update(item.meta)
+            else:
+                meta[self.field] = item
         self.current -= 1
         return True
 
 
 class pop(Unit):
     """
-    In processing order, remove visible chunks from the current frame and store their contents in the
-    given meta variables.
+    In processing order, remove visible chunks from the current frame and store their contents in the given
+    meta variables. All chunks in the input stream are consequently made visible again.
     """
     def __init__(
         self,
-        *names: arg(type=str, metavar='[name|count]', help=(
-            'Specify either the name of a single variable to receive the contents of an input chunk, or '
-            'an integer expression that specifies a number of values to be removed from the input without '
-            'storing them.'
+        *names: arg(type=str, metavar=F'[name|count|{_popcount._MERGE_SYMBOL}]', help=(
+            R'Specify either the name of a single variable to receive the contents of an input chunk, or '
+            R'an integer expression that specifies a number of values to be removed from the input without '
+            F'storing them. Additionally, it is possible to specify the symbol "{_popcount._MERGE_SYMBOL}" '
+            R'to remove a single chunk from the input and merge its meta data into the following ones. '
+            F'By default, a single merge is performed.'
         ))
     ):
+        if not names:
+            names = _popcount._MERGE_SYMBOL,
         super().__init__(names=[_popcount(n) for n in names])
 
     def process(self, data):
