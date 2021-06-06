@@ -77,9 +77,6 @@ class blockop(ArithmeticUnit):
                     )
                 epilogue = expression
 
-        if isinstance(seed, str):
-            seed = PythonExpression(seed, 'N')
-
         self._index = IndexCounter()
 
         super().__init__(
@@ -104,9 +101,13 @@ class blockop(ArithmeticUnit):
         return super().process_ecb_fast(data)
 
     def process(self, data):
+        seed = self.args.seed
+        meta = getattr(data, 'meta', {})
+        if isinstance(seed, str):
+            seed = PythonExpression(seed, 'N', constants=meta)
         self._index.init(self.fmask)
         self._total = len(data)
-        self._state = self.args.seed
+        self._state = seed
         if callable(self._state):
             self._state = self._state(N=self._total)
         return super().process(data)
