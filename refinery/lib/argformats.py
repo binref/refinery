@@ -119,7 +119,7 @@ class PythonExpression:
     permitted variable names.
     """
     def __init__(self, definition: AnyStr, *variables, constants=None, all_variables_allowed=False):
-        self.definition = definition
+        self.definition = definition = definition.strip()
         if not isinstance(definition, str):
             definition = definition.decode('utf8')
         constants = constants or {}
@@ -820,6 +820,10 @@ class DelayedNumSeqArgument(DelayedArgument):
                 if not all(isinstance(t, int) for t in value):
                     raise ArgumentTypeError(F'Not all elements of {value!r}, computed from {self.expression}, are integers.')
                 return value
+        if isinstance(value, float):
+            tmp = int(value)
+            if float(tmp) == value:
+                value = tmp
         if isinstance(value, int):
             return RepeatedInteger(value)
         raise ArgumentTypeError(
