@@ -16,7 +16,7 @@ from refinery.lib.tools import cached_property
 from typing import Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
 
 
-T = TypeVar('T', bound=ByteString)
+T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
 
 
 class EOF(ValueError):
@@ -240,7 +240,7 @@ class StructReader(MemoryFile[T]):
     class Unaligned(RuntimeError):
         pass
 
-    def __init__(self, data: Union[bytearray, bytes, memoryview], bigendian: bool = False):
+    def __init__(self, data: T, bigendian: bool = False):
         super().__init__(data)
         self._bbits = 0
         self._nbits = 0
@@ -416,6 +416,43 @@ class StructReader(MemoryFile[T]):
 
     def read_byte(self) -> int: return self.read_integer(8)
     def read_char(self) -> int: return self.read_struct('b', True)
+
+    def read_terminated_array(self, alignment: int, terminator: bytes):
+        pos = self.tell()
+        buf = self.getbuffer()
+        try:
+            end = pos - 1
+            while True:
+                end = buf.find(terminator, end + 1)
+                if end < 0 or not (end - pos) % alignment:
+                    break
+        except AttributeError:
+            result = bytearray()
+            while not self.eof:
+                result.append(self.read_byte())
+                if result.endswith(terminator):
+                    t = len(result) - len(terminator)
+                    if not t % alignment:
+                        result[t:] = []
+                        return result
+            self.seek(pos)
+            raise EOF
+        else:
+            data = self.read(end - pos)
+            self.seekrel(len(terminator))
+            return data
+
+    def read_c_string(self, encoding=None) -> Union[str, bytes]:
+        data = self.read_terminated_array(1, B'\0')
+        if encoding is not None:
+            data = data.decode(encoding)
+        return data
+
+    def read_w_string(self, encoding=None) -> Union[str, bytes]:
+        data = self.read_terminated_array(2, B'\0\0')
+        if encoding is not None:
+            data = data.decode(encoding)
+        return data
 
 
 class StructMeta(type):

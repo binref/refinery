@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import struct as struct_
+import re
 
 from .. import Unit, arg
 from ...units.strings.cfmt import ByteStringWrapper
+from ...lib.structures import StructReader
 
 
 class struct(Unit):
@@ -18,7 +19,9 @@ class struct(Unit):
             'Specify the structure format in Python struct syntax. For example, the string LLxxH will read '
             'two unsigned 32bit integers, then skip two bytes, and then read one unsigned 16bit integer from '
             'the input data. Three variable names have to be specified to hold these parsed values. The unit '
-            'defaults to using native byte order with no alignment.'
+            'defaults to using native byte order with no alignment. The unit supports the additional format '
+            'characters uUaA for reading null-terminated wide and ascii strings. If the format character is '
+            'uppercase, the string is decoded as UTF-16LE and LATIN1, respectively.'
         )),
         *variables: arg(metavar='variable', type=str, help=(
             'The names of the variables to receive the fields of the parsed struct, in the same order as they '
@@ -28,19 +31,34 @@ class struct(Unit):
     ):
         super().__init__(spec=spec, variables=variables, keep=keep)
 
+    def _readspec(self, data):
+        spec = self.args.spec
+        if not any(spec.startswith(f) for f in '<@=!>'):
+            spec = F'={spec}'
+        meta = ByteStringWrapper.FormatMap(data, self.codec)
+        spec = spec.format_map(meta)
+        spec = re.split('([auAU])', spec)
+        results = []
+        with StructReader(data) as reader:
+            for format in spec:
+                if not format:
+                    continue
+                elif format in 'aA':
+                    encoding = None
+                    if format.isupper():
+                        encoding = 'latin-1'
+                    results.append(reader.read_c_string(encoding))
+                elif format in 'uU':
+                    encoding = None
+                    if format.isupper():
+                        encoding = 'utf-16le'
+                    results.append(reader.read_w_string(encoding))
+                else:
+                    results.extend(reader.read_struct(format))
+            return reader.tell(), results
+
     def process(self, data: bytearray):
-        try:
-            spec = self.args.spec
-            if not any(spec.startswith(f) for f in '<@=!>'):
-                spec = F'={spec}'
-            meta = ByteStringWrapper.FormatMap(data, self.codec)
-            spec = spec.format_map(meta)
-            size = struct_.calcsize(spec)
-        except struct_.error:
-            raise ValueError(F'The format {spec} is not a valid Python struct definition.')
-        if len(data) < size:
-            raise ValueError(F'The specified structure occupies {size} bytes, but the input chunk only contains {len(data)} bytes.')
-        values = struct_.unpack(spec, data[:size])
+        size, values = self._readspec(data)
         names = self.args.variables
         if len(values) != len(names):
             raise ValueError(F'Extracted {len(values)} fields, but {len(names)} variable names were given.')
