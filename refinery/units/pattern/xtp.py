@@ -68,7 +68,7 @@ class xtp(PatternExtractor):
         'github.com'          : 3,
         'globalsign.com'      : 1,
         'globalsign.net'      : 1,
-        'google.com'          : 3,
+        'google.com'          : 4,
         'gov'                 : 2,
         'iana.org'            : 1,
         'live.com'            : 1,
@@ -81,7 +81,7 @@ class xtp(PatternExtractor):
         'purl.org'            : 1,
         'python.org'          : 1,
         'skype.com'           : 1,
-        'sourceforge.net'     : 3,
+        'sourceforge.net'     : 4,
         'sway-cdn.com'        : 1,
         'sway-extensions.com' : 1,
         'symantec.com'        : 1,
@@ -131,16 +131,16 @@ class xtp(PatternExtractor):
                     return None
             ip = ip_address(value.decode(self.codec))
             if not ip.is_global:
-                if self.args.filter > 3 or not ip.is_private:
+                if self.args.filter >= 3 or not ip.is_private:
                     return None
-        elif name in ('url', 'socket', 'domain', 'subdomain'):
+        elif name in {'url', 'socket', 'hostname', 'domain', 'subdomain'}:
             ioc = value.decode(self.codec)
             if '://' not in ioc: ioc = F'tcp://{ioc}'
             parts = urlparse(ioc)
             host, _, _ = parts.netloc.partition(':')
             hl = host.lower()
             for white, level in self._LEGITIMATE_HOSTS.items():
-                if level <= self.args.filter and hl == white or hl.endswith(F'.{white}'):
+                if self.args.filter >= level and hl == white or hl.endswith(F'.{white}'):
                     return None
             if name == 'url':
                 scheme = parts.scheme.lower()
@@ -151,8 +151,16 @@ class xtp(PatternExtractor):
                         break
             if any(hl == w for w in self._DOMAIN_WHITELIST):
                 return None
-            if name.endswith('domain'):
+            if name in {'hostname', 'domain', 'subdomain'}:
                 hostparts = host.split('.')
+                if self.args.filter >= 2:
+                    # remove hostnames where no part is longer than three characters.
+                    if all(len(p) < 4 for p in hostparts):
+                        return None
+                if self.args.filter >= 3:
+                    # remove hostnames where more than one third of the parts are mixed case.
+                    if len(hostparts) <= sum(3 for p in hostparts if p != p.lower() and p != p.upper()):
+                        return None
                 # These heuristics attempt to filter out member access to variables in
                 # scripts which can be mistaken for domains because of the TLD inflation
                 # we've had.
