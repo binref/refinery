@@ -11,8 +11,8 @@ class xttar(ArchiveUnit):
     """
     Extract files from a Tar archive.
     """
-    def __init__(self, *paths, list=False, join=False, path=b'path', date=b'date'):
-        super().__init__(*paths, list=list, join=join, path=path, date=date)
+    def __init__(self, *paths, list=False, join_path=False, drop_path=False, path=b'path', date=b'date'):
+        super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, date=date)
 
     def unpack(self, data):
         with MemoryFile(data) as stream:

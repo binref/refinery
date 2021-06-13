@@ -4,9 +4,11 @@
 A package containing several sub-packages for various data formats.
 """
 import abc
-import fnmatch
-import re
 import collections
+import fnmatch
+import os
+import re
+import uuid
 
 from zlib import adler32
 from typing import ByteString, Iterable, Callable, List, Union
@@ -77,7 +79,8 @@ class PathExtractorUnit(Unit, abstract=True):
             ' as a separate output of this unit. Paths may contain wildcards. The default is '
             'a single wildcard, which means that every item will be extracted.')),
         list : arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
-        join : arg.switch('-j', help='Join path names from container with previous path names.') = False,
+        join_path : arg.switch('-j', group='PATH', help='Join path names from container with previous path names.') = False,
+        drop_path : arg.switch('-d', group='PATH', help='Do not modify the path variable for output chunks.') = False,
         regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
         path: arg('-P', metavar='NAME',
             help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
@@ -90,7 +93,8 @@ class PathExtractorUnit(Unit, abstract=True):
                 for p in paths
             ],
             list=list,
-            join=join,
+            join=join_path,
+            drop=drop_path,
             path=path,
             **keywords
         )
@@ -110,10 +114,9 @@ class PathExtractorUnit(Unit, abstract=True):
                 return False
             else:
                 from ...lib.mime import FileMagicInfo
-                self.__unknown += 1
                 self.log_warn('received an attachment without file name!')
                 ext = FileMagicInfo(item.data).extension
-                item.path = F'UNKNOWN{self.__unknown:02d}.{ext}'
+                item.path = F'[unknown].{ext}'
         if not any(p.check(item.path) for p in self.args.patterns):
             return False
         elif self.args.list:
@@ -127,8 +130,8 @@ class PathExtractorUnit(Unit, abstract=True):
     def process(self, data: ByteString) -> ByteString:
         results: List[UnpackResult] = []
         metavar = self.args.path.decode(self.codec)
-        paths = collections.defaultdict(set)
-        self.__unknown = 0
+        occurrences = collections.defaultdict(int)
+        checksums = collections.defaultdict(set)
 
         try:
             root = data[metavar]
@@ -136,23 +139,28 @@ class PathExtractorUnit(Unit, abstract=True):
             root = ''
 
         for result in self.unpack(data):
+            path = result.path = '/'.join(result.path.split('\\'))
             if self._check_path(result):
                 results.append(result)
+                occurrences[path] += 1
 
         for p in self.args.patterns:
             for result in results:
                 path = result.path
-                if '\\' in path:
-                    path = '/'.join(path.split('\\'))
                 if not p.check(path):
                     continue
-                if not self.args.list:
-                    csum = adler32(result.get_data())
-                    if path in paths:
-                        if csum in paths[path]:
-                            continue
-                        self.log_warn('duplicate path with different contents:', path)
-                    paths[path].add(csum)
+                if occurrences[path] > 1:
+                    checksum = adler32(result.get_data())
+                    if checksum in checksums[path]:
+                        continue
+                    checksums[path].add(checksum)
+                    counter = len(checksums[path])
+                    base, extension = os.path.splitext(path)
+                    width = len(str(occurrences[path]))
+                    if any(F'{base}.v{c:0{width}d}{extension}' in occurrences for c in range(occurrences[path])):
+                        path = F'{base}.{uuid.uuid4()}{extension}'
+                    else:
+                        path = F'{base}.v{counter:0{width}d}{extension}'
                 if self.args.join and root:
                     if '\\' in root:
                         root = '/'.join(root.split('\\'))
@@ -162,5 +170,6 @@ class PathExtractorUnit(Unit, abstract=True):
                     continue
                 else:
                     self.log_info(path)
-                result.meta[metavar] = path
+                if not self.args.drop:
+                    result.meta[metavar] = path
                 yield self.labelled(result.get_data(), **result.meta)

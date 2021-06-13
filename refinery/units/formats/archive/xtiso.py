@@ -25,14 +25,14 @@ class xtiso(ArchiveUnit):
     """
     Extract files from a ISO archive.
     """
-    def __init__(self, *paths, list=False, join=False, path=b'path', date=b'date',
+    def __init__(self, *paths, list=False, join_path=False, drop_path=False, path=b'path', date=b'date',
         fs: arg.choice('-s', metavar='TYPE', choices=_ISO_FILE_SYSTEMS, help=(
             'Specify a file system ({choices}) extension to use. The default setting {default} will automatically '
             'detect the first of the other available options and use it.')) = 'auto'
     ):
         if fs not in _ISO_FILE_SYSTEMS:
             raise ValueError(F'invalid file system {fs}: must be udf, joliet, rr, iso, or auto.')
-        super().__init__(*paths, list=list, join=join, path=path, date=date, fs=fs)
+        super().__init__(*paths, list=list, join=join_path, drop_path=drop_path, path=path, date=date, fs=fs)
 
     def unpack(self, data):
         with MemoryFile(data) as stream:

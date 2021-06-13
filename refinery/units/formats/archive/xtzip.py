@@ -16,7 +16,13 @@ class xtzip(ArchiveUnit):
             with zipfile.ZipFile(stream) as archive:
                 for info in archive.infolist():
                     def xt(info=info, pwd=self.args.pwd):
-                        return archive.read(info.filename, pwd=pwd)
+                        try:
+                            return archive.read(info.filename, pwd=pwd)
+                        except RuntimeError as E:
+                            if 'password' not in str(E):
+                                raise
+                            pwdstr = pwd.decode(self.codec)
+                            raise RuntimeError(F'invalid password: {pwdstr}') from E
                     if info.is_dir():
                         continue
                     try:

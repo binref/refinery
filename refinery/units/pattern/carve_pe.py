@@ -14,7 +14,7 @@ class carve_pe(PathExtractorUnit):
     Executable (PE) file.
     """
     def __init__(
-        self, *paths, list=False, join=False, path=b'name',
+        self, *paths, list=False, join_path=False, drop_path=False, path=b'name',
         recursive: arg.switch('-r', help='Extract PE files that are contained in already extracted PEs.') = False,
         keep_root: arg.switch('-R', help='If the input chunk is itself a PE, include it as an output chunk.') = False,
         memdump  : arg.switch('-d', help='Use the virtual memory layout of a PE file to calculate its size.') = False,
@@ -23,7 +23,8 @@ class carve_pe(PathExtractorUnit):
         super().__init__(
             *paths,
             list=list,
-            join=join,
+            join_path=join_path,
+            drop_path=drop_path,
             path=path,
             recursive=recursive,
             keep_root=keep_root,
