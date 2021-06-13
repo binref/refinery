@@ -34,7 +34,6 @@ class xtmail(PathExtractorUnit):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
         def make_message(name, msg):
-            self.output(dir(msg))
             if msg.body:
                 yield UnpackResult(F'{name}.txt', ensure_bytes(msg.body))
             if msg.htmlBody:
