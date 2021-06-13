@@ -38,16 +38,14 @@ class peek(HexViewer):
             self.log_info('forwarding input to next unit')
             yield data
 
-    def _peekmeta(self, data, linewidth, sep):
-        try:
-            meta = data.meta
-        except AttributeError:
-            return
+    def _peekmeta(self, linewidth, sep, **meta):
         if not meta:
             return
-        width = max(len(name) for name in data.meta)
+        width = max(len(name) for name in meta)
         yield sep
-        for name, value in data.meta.items():
+        for name, value in meta.items():
+            if value is None:
+                continue
             if isbuffer(value):
                 try:
                     decoded: str = value.decode(self.codec)
@@ -73,20 +71,6 @@ class peek(HexViewer):
         from ...lib.tools import format_size
         from ...lib.magic import magicparse
 
-        peeks = []
-        if not self.args.brief:
-            if self._idx is not None:
-                peeks.append(F'item {self._idx:02d}')
-            elif not data and not getattr(data, 'meta', None):
-                return
-            if data:
-                peeks.append(F'{entropy(memoryview(data)) * 100:05.2f}% entropy')
-                peeks.append(format_size(len(data), align=not self.args.lines))
-                magic = magicparse(data)
-                if magic is not None:
-                    peeks.append(magic)
-
-        header = ', '.join(peeks)
         dump = None
         termsize = get_terminal_size()
         working_codec = None
@@ -143,13 +127,12 @@ class peek(HexViewer):
             return F'--{title}' + '-' * (width - len(title) - 2)
 
         if not self.args.brief:
-            if header:
-                yield separator()
-                if width:
-                    yield from textwrap.wrap(header, width + wmod)
-                else:
-                    yield header
-            yield from self._peekmeta(data, width, separator())
+            meta = getattr(data, 'meta', {})
+            size = format_size(meta.pop('size', len(data)), align=not self.args.lines)
+            type = magicparse(data)
+            if type == 'data':
+                type = None
+            yield from self._peekmeta(width, separator(), **meta, size=size, type=type)
 
         if dump:
             if not self.args.brief:
