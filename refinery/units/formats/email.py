@@ -60,10 +60,29 @@ class xtmail(PathExtractorUnit):
 
         yield from self._get_headparts(msg.items())
 
-        for part in msg.walk():
+        for k, part in enumerate(msg.walk()):
             path = part.get_filename()
-            data = part.get_payload(decode=True)
+            elog = None
+            try:
+                data = part.get_payload(decode=True)
+            except Exception as E:
+                try:
+                    data = part.get_payload(decode=False)
+                except Exception as E:
+                    elog = str(E)
+                    data = None
+                else:
+                    from refinery import carve
+                    if isinstance(data, str):
+                        data = data.encode('latin1')
+                    if isbuffer(data):
+                        data = data | carve('b64', stripspace=True, single=True, decode=True)
+                    else:
+                        elog = str(E)
+                        data = None
             if data is None:
+                if elog is not None:
+                    self.log_warn(F'could not get content of message part {k}: {elog!s}')
                 continue
             if path is None:
                 extension = file_extension(part.get_content_type(), 'txt')
