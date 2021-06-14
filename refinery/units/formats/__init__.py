@@ -128,7 +128,7 @@ class PathExtractorUnit(Unit, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        results: List[UnpackResult] = []
+        results: List[UnpackResult] = list(self.unpack(data))
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
@@ -142,29 +142,30 @@ class PathExtractorUnit(Unit, abstract=True):
                 root = '/'.join(root.split('\\'))
             root = root.rstrip('/')
 
-        for result in self.unpack(data):
+        for result in results:
             path = result.path = '/'.join(result.path.split('\\'))
-            if self._check_path(result):
-                results.append(result)
-                occurrences[path] += 1
+            occurrences[path] += 1
+
+        for result in results:
+            path = result.path
+            if occurrences[path] > 1:
+                checksum = adler32(result.get_data())
+                if checksum in checksums[path]:
+                    continue
+                checksums[path].add(checksum)
+                counter = len(checksums[path])
+                base, extension = os.path.splitext(path)
+                width = len(str(occurrences[path]))
+                if any(F'{base}.v{c:0{width}d}{extension}' in occurrences for c in range(occurrences[path])):
+                    result.path = F'{base}.{uuid.uuid4()}{extension}'
+                else:
+                    result.path = F'{base}.v{counter:0{width}d}{extension}'
 
         for p in self.args.patterns:
             for result in results:
                 path = result.path
                 if not p.check(path):
                     continue
-                if occurrences[path] > 1:
-                    checksum = adler32(result.get_data())
-                    if checksum in checksums[path]:
-                        continue
-                    checksums[path].add(checksum)
-                    counter = len(checksums[path])
-                    base, extension = os.path.splitext(path)
-                    width = len(str(occurrences[path]))
-                    if any(F'{base}.v{c:0{width}d}{extension}' in occurrences for c in range(occurrences[path])):
-                        path = F'{base}.{uuid.uuid4()}{extension}'
-                    else:
-                        path = F'{base}.v{counter:0{width}d}{extension}'
                 if self.args.join and root:
                     path = F'{root}/{path}'
                 if self.args.list:
