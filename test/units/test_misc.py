@@ -164,7 +164,7 @@ class TestMetaProperties(TestUnitBase):
         self.assertEqual(unit3(B'HEYYA'), B'HEAHEAHEAHEAHEA')
 
     def test_multiple_calls(self):
-        result = B'' | L('emit FOO BAR BAZ [') | L('rex . [') | L('pick 2 ]]')
+        result = bytes(L('emit FOO BAR BAZ [') | L('rex . [') | L('pick 2 ]]'))
         self.assertEqual(result, B'ORZ')
 
     def test_loglevel_detached_in_code_01(self):
