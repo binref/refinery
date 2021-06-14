@@ -4,8 +4,9 @@ import sys
 import textwrap
 
 from . import arg, HexViewer, get_terminal_size
+from ...lib.meta import GetMeta
 from ...lib.types import INF
-from ...lib.tools import entropy, isbuffer
+from ...lib.tools import isbuffer
 
 
 class peek(HexViewer):
@@ -127,12 +128,13 @@ class peek(HexViewer):
             return F'--{title}' + '-' * (width - len(title) - 2)
 
         if not self.args.brief:
-            meta = getattr(data, 'meta', {})
-            size = format_size(meta.pop('size', len(data)), align=not self.args.lines)
-            type = magicparse(data)
-            if type == 'data':
-                type = None
-            yield from self._peekmeta(width, separator(), **meta, size=size, type=type)
+            meta = GetMeta(data)
+            if meta['magic'] == 'data':
+                del meta['magic']
+            entropy_percent = meta['entropy'] * 100.0
+            meta['entropy'] = F'{entropy_percent:.2f}%'
+            meta['size'] = format_size(meta['size'])
+            yield from self._peekmeta(width, separator(), **meta)
 
         if dump:
             if not self.args.brief:
