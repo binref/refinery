@@ -32,7 +32,7 @@ class xtiso(ArchiveUnit):
     ):
         if fs not in _ISO_FILE_SYSTEMS:
             raise ValueError(F'invalid file system {fs}: must be udf, joliet, rr, iso, or auto.')
-        super().__init__(*paths, list=list, join=join_path, drop_path=drop_path, path=path, date=date, fs=fs)
+        super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, date=date, fs=fs)
 
     def unpack(self, data):
         with MemoryFile(data) as stream:
@@ -77,7 +77,7 @@ class xtiso(ArchiveUnit):
                             tzinfo=datetime.timezone(datetime.timedelta(minutes=15 * info.date.gmtoffset))
                         )
 
-                    def extract(iso=iso):
+                    def extract(info=info):
                         if info:
                             buffer = MemoryFile(bytearray(info.data_length))
                         else:

@@ -15,13 +15,12 @@ class xttar(ArchiveUnit):
         super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, date=date)
 
     def unpack(self, data):
-        with MemoryFile(data) as stream:
-            with tarfile.open(fileobj=stream) as archive:
-                for info in archive.getmembers():
-                    if not info.isfile():
-                        continue
-                    extractor = archive.extractfile(info)
-                    if extractor is None:
-                        continue
-                    date = datetime.datetime.fromtimestamp(info.mtime)
-                    yield self._pack(info.name, date, lambda e=extractor: e.read())
+        archive = tarfile.open(fileobj=MemoryFile(data))
+        for info in archive.getmembers():
+            if not info.isfile():
+                continue
+            extractor = archive.extractfile(info)
+            if extractor is None:
+                continue
+            date = datetime.datetime.fromtimestamp(info.mtime)
+            yield self._pack(info.name, date, lambda e=extractor: e.read())

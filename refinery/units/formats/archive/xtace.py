@@ -11,14 +11,13 @@ class xtace(ArchiveUnit):
     Extract files from an ACE archive.
     """
     def unpack(self, data):
-        with MemoryFile(data, read_as_bytes=True) as stream:
-            with acefile.open(stream) as ace:
-                for member in ace.getmembers():
-                    member: acefile.AceMember
-                    comment = {} if not member.comment else {'comment': member.comment}
-                    yield self._pack(
-                        member.filename,
-                        member.datetime,
-                        lambda a=ace: a.read(member, pwd=self.args.pwd),
-                        **comment
-                    )
+        ace = acefile.open(MemoryFile(data, read_as_bytes=True))
+        for member in ace.getmembers():
+            member: acefile.AceMember
+            comment = {} if not member.comment else {'comment': member.comment}
+            yield self._pack(
+                member.filename,
+                member.datetime,
+                lambda a=ace, m=member: a.read(m, pwd=self.args.pwd),
+                **comment
+            )

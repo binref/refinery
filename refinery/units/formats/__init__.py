@@ -102,48 +102,31 @@ class PathExtractorUnit(Unit, abstract=True):
     def _check_reachable(self, path: str) -> bool:
         return any(p.reach(path) for p in self.args.patterns)
 
-    def _check_data(self, item: UnpackResult) -> bool:
-        if not isbuffer(item.get_data()):
-            self.log_warn('discarding item with invalid contents.')
-            return False
-        return True
-
-    def _check_path(self, item: UnpackResult) -> bool:
-        if not isinstance(item.path, str):
-            if not self._check_data(item):
-                return False
-            else:
-                from ...lib.mime import FileMagicInfo
-                self.log_warn('received an attachment without file name!')
-                ext = FileMagicInfo(item.data).extension
-                item.path = F'[unknown].{ext}'
-        if not any(p.check(item.path) for p in self.args.patterns):
-            return False
-        elif self.args.list:
-            return True
-        return self._check_data(item)
-
     @abc.abstractmethod
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        results: List[UnpackResult] = list(self.unpack(data))
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
+        results: List[UnpackResult] = list(self.unpack(data))
 
         try:
             root = data[metavar]
         except KeyError:
             root = ''
         else:
-            if '\\' in root:
-                root = '/'.join(root.split('\\'))
-            root = root.rstrip('/')
+            root = '/'.join(root.split('\\')).rstrip('/')
 
         for result in results:
-            path = result.path = '/'.join(result.path.split('\\'))
+            path = '/'.join(result.path.split('\\'))
+            if not path:
+                from ...lib.mime import FileMagicInfo
+                self.log_warn('received an attachment without file name!')
+                ext = FileMagicInfo(result.get_data()).extension
+                path = F'[unknown].{ext}'
+            result.path = path
             occurrences[path] += 1
 
         for result in results:
