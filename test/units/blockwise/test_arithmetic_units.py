@@ -123,7 +123,7 @@ class TestBlockopInput(TestUnitBase):
     def test_eval_bug_01(self):
         data = bytes(range(251, 256))
         wish = bytes(((B + 5) % 255 for B in data))
-        result = data | self.ldu('blockop', '-P0', '(B+5)%255')
+        result = next(data | self.ldu('blockop', '-P0', '(B+5)%255'))
         self.assertEqual(result, wish)
 
 
