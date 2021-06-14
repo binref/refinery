@@ -14,7 +14,6 @@ from zlib import adler32
 from typing import ByteString, Iterable, Callable, List, Union
 
 from .. import arg, Unit
-from ...lib.tools import isbuffer
 
 
 def pathspec(expression):

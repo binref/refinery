@@ -70,7 +70,6 @@ class peek(HexViewer):
         import string
         import itertools
         from ...lib.tools import format_size
-        from ...lib.magic import magicparse
 
         dump = None
         termsize = get_terminal_size()
