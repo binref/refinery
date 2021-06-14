@@ -114,16 +114,7 @@ class TestFraming(TestBase):
         self.assertEqual(pipeline(B''), hidden)
 
     def test_empty_chunk(self):
-        result = None
-
-        class t(Unit):
-            def process(self, data):
-                nonlocal result
-                result = data.meta['test']
-                return data
-
         swap = self.ldu('swap', 'test')
-        ergo = b'test-data' | swap [ t ] # noqa
-
+        ergo = next(b'test-data' | swap) # noqa
         self.assertEqual(ergo, b'')
-        self.assertEqual(result, B'test-data')
+        self.assertEqual(ergo['test'], B'test-data')

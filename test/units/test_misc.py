@@ -125,7 +125,7 @@ class TestMetaProperties(TestUnitBase):
 
     def test_pipe_bytestring(self):
         from refinery.units.encoding.b64 import b64
-        self.assertEqual(b'YmluYXJ5cmVmaW5lcnk=' | b64, b'binaryrefinery')
+        self.assertEqual(bytes(b'YmluYXJ5cmVmaW5lcnk=' | b64), b'binaryrefinery')
 
     def test_custom_unit_01(self):
         class prefixer(Unit):

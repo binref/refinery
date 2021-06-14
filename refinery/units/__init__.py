@@ -1096,31 +1096,33 @@ class Unit(UnitBase, abstract=True):
         return result
 
     def __or__(self, stream: Union[BinaryIO, Unit]):
-        if isinstance(stream, list):
+        if isinstance(stream, type) and issubclass(stream, Entry):
+            stream = stream()
+        if isinstance(stream, Entry):
+            return stream.__copy__().__ror__(self)
+        elif isinstance(stream, list):
             stream.extend(self)
-            return
-        if isinstance(stream, set):
+            return stream
+        elif isinstance(stream, set):
             stream.update(self)
-            return
-        if isinstance(stream, dict):
+            return stream
+        elif isinstance(stream, dict):
             if len(stream) == 1:
                 key, check = next(iter(stream.items()))
                 if check is ...:
                     return {item[key]: item for item in self}
             raise ValueError('dict consumption target must be of format {"key": ...}')
-        if isinstance(stream, (bytearray, memoryview)):
+        elif isinstance(stream, (bytearray, memoryview)):
             with MemoryFile(stream) as stdout:
                 return (self | stdout).getvalue()
+        elif callable(stream):
+            with MemoryFile() as stdout:
+                return stream((self | stdout).getvalue())
 
-        try:
-            if isinstance(stream, type):
-                stream = stream()
-            return stream.__copy__().__ror__(self)
-        except AttributeError:
-            self._target = stream
+        if not stream.writable():
+            raise ValueError('target stream is not writable')
 
-        if not self._target.writable():
-            return
+        self._target = stream
 
         def cname(x): return x.lower().replace('-', '')
 
@@ -1140,8 +1142,8 @@ class Unit(UnitBase, abstract=True):
                 except Exception:
                     pass
             try:
-                self._target.write(chunk)
-                self._target.flush()
+                stream.write(chunk)
+                stream.flush()
             except AttributeError:
                 pass
             except (BrokenPipeError, OSError) as E:
@@ -1155,12 +1157,12 @@ class Unit(UnitBase, abstract=True):
 
         try:
             if self.isatty and chunk and not chunk.endswith(B'\n'):
-                self._target.write(B'\n')
-                self._target.flush()
+                stream.write(B'\n')
+                stream.flush()
         except (NameError, AttributeError):
             pass
 
-        return self._target
+        return stream
 
     def read(self, bytecount: int = -1) -> bytes:
         """

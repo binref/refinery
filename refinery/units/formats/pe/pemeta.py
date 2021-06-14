@@ -175,7 +175,7 @@ class pemeta(Unit):
         from refinery.units.formats.pe.pesig import pesig
 
         try:
-            signature = json.loads(data | pesig | pkcs7)
+            signature = data | pesig | pkcs7 | json.loads
         except Exception as E:
             raise ValueError(F'PKCS7 parser failed with error: {E!s}')
 
