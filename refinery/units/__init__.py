@@ -128,7 +128,7 @@ from argparse import (
 
 from ..lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
 from ..lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
-from ..lib.tools import documentation, lookahead, autoinvoke, skipfirst, isbuffer
+from ..lib.tools import documentation, isstream, lookahead, autoinvoke, skipfirst, isbuffer
 from ..lib.frame import Framed, Chunk
 from ..lib.structures import MemoryFile
 
@@ -1084,12 +1084,34 @@ class Unit(UnitBase, abstract=True):
         return copy
 
     def __ror__(self, stream: Union[BinaryIO, ByteString]):
-        if not isbuffer(stream):
+        if isstream(stream):
             self.nozzle.source = stream
             return self
-        return self(stream)
+        with MemoryFile(stream) if stream else open(os.devnull, 'rb') as stdin:
+            return (stdin | self)
+
+    def __bytes__(self):
+        with MemoryFile() as stdout:
+            result = bytes((self | stdout).getbuffer())
+        return result
 
     def __or__(self, stream: Union[BinaryIO, Unit]):
+        if isinstance(stream, list):
+            stream.extend(self)
+            return
+        if isinstance(stream, set):
+            stream.update(self)
+            return
+        if isinstance(stream, dict):
+            if len(stream) == 1:
+                key, check = next(iter(stream.items()))
+                if check is ...:
+                    return {item[key]: item for item in self}
+            raise ValueError('dict consumption target must be of format {"key": ...}')
+        if isinstance(stream, (bytearray, memoryview)):
+            with MemoryFile(stream) as stdout:
+                return (self | stdout).getvalue()
+
         try:
             if isinstance(stream, type):
                 stream = stream()

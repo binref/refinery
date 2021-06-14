@@ -65,6 +65,11 @@ class xtmail(PathExtractorUnit):
         for k, part in enumerate(msg.walk()):
             path = part.get_filename()
             elog = None
+            if path is None:
+                extension = file_extension(part.get_content_type(), 'txt')
+                path = F'body.{extension}'
+            else:
+                path = F'attachments/{path}'
             try:
                 data = part.get_payload(decode=True)
             except Exception as E:
@@ -75,10 +80,11 @@ class xtmail(PathExtractorUnit):
                     data = None
                 else:
                     from refinery import carve
+                    self.log_warn(F'manually decoding part {k}, data might be corrupted: {path}')
                     if isinstance(data, str):
                         data = data.encode('latin1')
                     if isbuffer(data):
-                        data = data | carve('b64', stripspace=True, single=True, decode=True)
+                        data = next(data | carve('b64', stripspace=True, single=True, decode=True))
                     else:
                         elog = str(E)
                         data = None
@@ -86,11 +92,6 @@ class xtmail(PathExtractorUnit):
                 if elog is not None:
                     self.log_warn(F'could not get content of message part {k}: {elog!s}')
                 continue
-            if path is None:
-                extension = file_extension(part.get_content_type(), 'txt')
-                path = F'body.{extension}'
-            else:
-                path = F'attachments/{path}'
             yield UnpackResult(path, data)
 
     def unpack(self, data):

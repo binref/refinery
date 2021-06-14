@@ -212,6 +212,10 @@ def entropy(data: bytearray) -> float:
         return 0.0 + -sum(p * log(p, 2) for p in probs) / 8.0
 
 
+def isstream(obj) -> bool:
+    return hasattr(obj, 'read')
+
+
 def isbuffer(obj) -> bool:
     """
     Test whether `obj` is an object that supports the buffer API, like a bytes
