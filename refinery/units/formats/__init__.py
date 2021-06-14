@@ -137,6 +137,10 @@ class PathExtractorUnit(Unit, abstract=True):
             root = data[metavar]
         except KeyError:
             root = ''
+        else:
+            if '\\' in root:
+                root = '/'.join(root.split('\\'))
+            root = root.rstrip('/')
 
         for result in self.unpack(data):
             path = result.path = '/'.join(result.path.split('\\'))
@@ -162,8 +166,6 @@ class PathExtractorUnit(Unit, abstract=True):
                     else:
                         path = F'{base}.v{counter:0{width}d}{extension}'
                 if self.args.join and root:
-                    if '\\' in root:
-                        root = '/'.join(root.split('\\'))
                     path = F'{root}/{path}'
                 if self.args.list:
                     yield self.labelled(path.encode(self.codec), **result.meta)
