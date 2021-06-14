@@ -7,9 +7,9 @@ from extract_msg.message import Message
 from functools import partial
 from collections import defaultdict
 
-from . import PathExtractorUnit, UnpackResult, isbuffer
+from . import PathExtractorUnit, UnpackResult
 from ...lib.mime import file_extension
-from ...lib.tools import NoLogging
+from ...lib.tools import NoLogging, isbuffer
 from ..pattern.mimewords import mimewords
 
 
