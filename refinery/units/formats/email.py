@@ -9,6 +9,7 @@ from collections import defaultdict
 
 from . import PathExtractorUnit, UnpackResult, isbuffer
 from ...lib.mime import file_extension
+from ...lib.tools import NoLogging
 from ..pattern.mimewords import mimewords
 
 
@@ -41,19 +42,20 @@ class xtmail(PathExtractorUnit):
 
         msgcount = 0
 
-        with Message(bytes(data)) as msg:
-            yield from self._get_headparts(msg.header.items())
-            yield from make_message('body', msg)
-            for attachment in msg.attachments:
-                if attachment.type == 'msg':
-                    msgcount += 1
-                    yield from make_message(F'attachments/msg_{msgcount:d}', attachment.data)
-                    continue
-                if not isbuffer(attachment.data):
-                    self.log_warn(F'unknown attachment of type {attachment.type}, please report this!')
-                    continue
-                path = attachment.longFilename or attachment.shortFilename
-                yield UnpackResult(F'attachments/{path}', attachment.data)
+        with NoLogging:
+            with Message(bytes(data)) as msg:
+                yield from self._get_headparts(msg.header.items())
+                yield from make_message('body', msg)
+                for attachment in msg.attachments:
+                    if attachment.type == 'msg':
+                        msgcount += 1
+                        yield from make_message(F'attachments/msg_{msgcount:d}', attachment.data)
+                        continue
+                    if not isbuffer(attachment.data):
+                        self.log_warn(F'unknown attachment of type {attachment.type}, please report this!')
+                        continue
+                    path = attachment.longFilename or attachment.shortFilename
+                    yield UnpackResult(F'attachments/{path}', attachment.data)
 
     def _get_parts_regular(self, data):
         msg = BytesParser().parsebytes(data)
@@ -80,7 +82,7 @@ class xtmail(PathExtractorUnit):
                     else:
                         elog = str(E)
                         data = None
-            if data is None:
+            if not data:
                 if elog is not None:
                     self.log_warn(F'could not get content of message part {k}: {elog!s}')
                 continue
