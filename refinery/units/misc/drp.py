@@ -75,6 +75,7 @@ class drp(Unit):
         return {
             pattern: len(pattern) * count
             for pattern, count in patterns.items()
+            if len(pattern) > 1
         }
 
     def process(self, data):
