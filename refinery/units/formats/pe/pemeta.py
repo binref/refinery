@@ -503,7 +503,7 @@ class pemeta(Unit):
             table = list(flattened(result, 'PE'))
             width = max(len(key) for key, _ in table)
             for key, value in table:
-                yield F'{key:<{width}} : {value!s}'.encode(self.codec)
+                yield F'{key:<{width}} : {value.rstrip()!s}'.encode(self.codec)
         else:
             yield json.dumps(result, indent=4, ensure_ascii=False).encode(self.codec)
 
