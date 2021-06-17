@@ -99,17 +99,28 @@ class peek(HexViewer):
                         continue
 
                     width = self.args.width or termsize
-                    decoded = decoded[:abs(width * self.args.lines)]
-                    dump = [
-                        line.rstrip('\r')
-                        for chunk in textwrap.wrap(
-                            decoded,
-                            width + wmod,
-                            break_on_hyphens=False,
-                            replace_whitespace=False
-                        )
-                        for line in chunk.split('\n')
-                    ]
+                    dump = []
+                    remaining = self.args.lines
+                    for paragraph in decoded.splitlines(False):
+                        if not remaining:
+                            break
+                        lines = [
+                            line for chunk in textwrap.wrap(
+                                paragraph,
+                                width + wmod,
+                                break_long_words=True,
+                                break_on_hyphens=False,
+                                drop_whitespace=False,
+                                expand_tabs=True,
+                                max_lines=abs(remaining + 1),
+                                replace_whitespace=False,
+                                tabsize=4,
+                            )
+                            for line in chunk.splitlines(keepends=False)
+                        ]
+                        remaining -= len(lines)
+                        dump.extend(lines)
+
                     working_codec = codec
                     break
 
