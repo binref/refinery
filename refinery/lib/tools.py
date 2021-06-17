@@ -77,9 +77,14 @@ def get_terminal_size():
     except (KeyError, ValueError):
         pass
     try:
-        return os.get_terminal_size(sys.stderr.fileno()).columns - 1
+        err_width = os.get_terminal_size(sys.stderr.fileno()).columns
     except OSError:
-        return 0
+        err_width = 0
+    try:
+        out_width = os.get_terminal_size(sys.stdout.fileno()).columns
+    except OSError:
+        out_width = 0
+    return max(err_width, out_width) - 1
 
 
 def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
