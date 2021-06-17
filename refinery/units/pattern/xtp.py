@@ -68,6 +68,7 @@ class xtp(PatternExtractor):
         'github.com'          : 3,
         'globalsign.com'      : 1,
         'globalsign.net'      : 1,
+        'godaddy.com'         : 1,
         'google.com'          : 4,
         'gov'                 : 2,
         'iana.org'            : 1,
