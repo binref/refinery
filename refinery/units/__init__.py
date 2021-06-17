@@ -1090,6 +1090,10 @@ class Unit(UnitBase, abstract=True):
         with MemoryFile(stream) if stream else open(os.devnull, 'rb') as stdin:
             return (stdin | self)
 
+    def __str__(self):
+        with MemoryFile() as stdout:
+            return (self | stdout).getbuffer().decode(self.codec)
+
     def __bytes__(self):
         with MemoryFile() as stdout:
             result = bytes((self | stdout).getbuffer())
