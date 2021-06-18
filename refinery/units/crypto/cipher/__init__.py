@@ -195,9 +195,12 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
                 optionals['nonce'] = self.iv
             elif mode in ('CBC', 'CFB', 'OFB', 'OPENPGP'):
                 iv = self.iv
-                if len(iv) != self.blocksize:
+                if len(iv) > self.blocksize:
+                    self.log_warn(F'The IV has length {len(self.args.iv)} and will be truncated to the blocksize {self.blocksize}.')
+                    iv = iv[:self.blocksize]
+                elif len(iv) < self.blocksize:
                     raise ValueError(F'The IV has length {len(self.args.iv)} but the block size is {self.blocksize}.')
-                optionals['iv'] = self.iv
+                optionals['iv'] = iv
             self.log_info('initial vector:', self.iv.hex())
         if self.args.mode:
             optionals['mode'] = self.args.mode.value
