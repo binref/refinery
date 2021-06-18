@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import refinery
-
 from .. import TestUnitBase
 
 
 class TestAutoXOR(TestUnitBase):
 
-    def test_pe_file(self):
-        key = B'\x47'
-        xor = refinery.xor(key)
-        data = xor(self.download_sample('81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b'))
-        unit = self.load()
-        self.assertEqual(unit(data), key)
-
     def test_english_plaintext_01(self):
-        data = B'Man has always feared the darkness, carving away at it with fire.'
+        data = B"Betty Botter's bitter batter better"
         unit = self.load()
-        self.assertEqual(unit(data), b' ')
+        self.assertEqual(unit(data), b'tter')
 
     def test_junk_obfuscation(self):
         data = (
