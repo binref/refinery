@@ -179,7 +179,7 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [argformats]: https://binref.github.io/lib/argformats.html
 [frame]: https://binref.github.io/lib/frame.html
 [license]: https://opensource.org/licenses/BSD-3-Clause
-[travis]: https://travis-ci.org/binref/refinery
+[travis]: https://travis-ci.com/binref/refinery
 [codecov]: https://codecov.io/github/binref/refinery/?branch=master
 [pypi]: https://pypi.org/project/binary-refinery/
 
