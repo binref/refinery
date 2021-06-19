@@ -78,7 +78,8 @@ class TestHexDmp(TestUnitBase):
         pack = self.load()
         for size in (20, 200, 400):
             data = self.generate_random_buffer(size)
-            self.assertEqual(pack(dump(data)), data)
+            dumped = dump(data)
+            self.assertEqual(pack(dumped), data)
 
     def test_hex_byte_in_text_preview(self):
         data = (
