@@ -1,6 +1,6 @@
 # Binary Refinery
 [![Documentation](.docbadge.svg)][docs]
-[![Test Status](https://api.travis-ci.org/repositories/binref/refinery.svg?branch=master)][travis]
+[![Test Status](https://www.travis-ci.com/binref/refinery.svg?branch=master)][travis]
 [![Code Coverage](https://codecov.io/gh/binref/refinery/branch/master/graph/badge.svg)][codecov]
 [![PyPI Version](https://badge.fury.io/py/binary-refinery.svg)][pypi]
 ```
