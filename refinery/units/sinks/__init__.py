@@ -31,6 +31,7 @@ class HexViewer(Unit, abstract=True):
 
         total = total or len(data)
         width = width + self.args.width
+        item_width = 2 if self.args.dense else 3
 
         if width > 0:
             columns = width
@@ -38,17 +39,16 @@ class HexViewer(Unit, abstract=True):
             # this will default to 16 byte wide output if
             # stdout is not a terminal or if its width can
             # not be determined for other reasons.
-            try:
-                columns = width + get_terminal_size() or 75
-                columns = max(2, columns)
-            except OSError:
+            termsize = get_terminal_size()
+            if not termsize:
                 columns = 16
             else:
+                columns = width + get_terminal_size()
+                columns = max(2, columns)
                 if self.args.hexaddr:
                     columns -= self.hexaddr_size(total)
                     columns -= 1  # for the separator
-                q = 3 if self.args.dense else 4
-                columns = (columns - 2) // q
+                columns = (columns - 2) // (item_width + 1)
 
         lines = itertools.zip_longest(*([iter(data)] * columns))
         address_width = max(self.hexaddr_size(total), 4)
@@ -74,8 +74,8 @@ class HexViewer(Unit, abstract=True):
             dump = sepr.join(F'{b:02X}' for b in chunk)
             read = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
 
-            q = 2 if self.args.dense else 3
-            msg = F'{dump:<{q*columns}} {read:<{columns}}'
+            msg = F'{dump:<{item_width*columns}} {read:<{columns}}'
+
             if self.args.hexaddr:
                 msg = F'{k*columns:0{address_width}X}: {msg}'
             yield msg

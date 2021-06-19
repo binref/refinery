@@ -70,7 +70,8 @@ def get_terminal_size():
     """
     Returns the size of the currently attached terminal. If the environment variable
     `REFINERY_TERMSIZE` is set to an integer value, it takes prescedence. If the width
-    of the terminal cannot be determined, the function returns zero.
+    of the terminal cannot be determined of if the width is less than 8 characters,
+    the function returns zero.
     """
     try:
         return int(os.environ['REFINERY_TERMSIZE'])
@@ -84,7 +85,8 @@ def get_terminal_size():
         out_width = os.get_terminal_size(sys.stdout.fileno()).columns
     except OSError:
         out_width = 0
-    return max(err_width, out_width) - 1
+    width = max(err_width, out_width)
+    return 0 if width < 9 else width - 1
 
 
 def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
