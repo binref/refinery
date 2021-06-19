@@ -54,6 +54,6 @@ class TestCoupler(TestUnitBase):
 
     def test_timeout_close(self):
         self.assertEqual(
-            self.load(*self.sleep, '1', timeout=2)(), B'')
+            self.load(*self.sleep, '1', timeout=4)(), B'')
         with self.assertRaises(RuntimeError):
-            self.load(*self.sleep, '1', timeout=0.7)()
+            self.load(*self.sleep, '1', timeout=0.5)()

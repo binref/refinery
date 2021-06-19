@@ -17,6 +17,8 @@ class couple(Unit):
     to buffer all output of a single execution.
     """
 
+    _JOIN_TIME = 0.1
+
     def __init__(
         self, *commandline : arg(nargs='...', metavar='(all remaining)', help=(
             'All remaining command line tokens form an arbitrary command line to be executed. Use format string syntax '
@@ -132,8 +134,8 @@ class couple(Unit):
                     self.log_warn('stdout receiver thread zombied')
                 break
             elif not err and not out and process.poll() is not None:
-                recverr.join(0.4)
-                recvout.join(0.4)
+                recverr.join(self._JOIN_TIME)
+                recvout.join(self._JOIN_TIME)
                 done.set()
             elif self.args.timeout:
                 if process_time() - start > self.args.timeout:
@@ -141,12 +143,13 @@ class couple(Unit):
                     done.set()
                     process.terminate()
                     for wait in range(4):
-                        if process.poll() is not None: break
-                        sleep(.1)
+                        if process.poll() is not None:
+                            break
+                        sleep(self._JOIN_TIME)
                     else:
                         self.log_warn('process termination may have failed')
-                    recverr.join(0.4)
-                    recvout.join(0.4)
+                    recverr.join(self._JOIN_TIME)
+                    recvout.join(self._JOIN_TIME)
                     if not len(result.getbuffer()):
                         result = RuntimeError('timeout reached, process had no output')
                     else:
