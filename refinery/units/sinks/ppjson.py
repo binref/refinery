@@ -37,9 +37,7 @@ class ppjson(Unit):
                 k = match.start()
                 return match.group(0 if any(k in s for s in strings) else 1)
             from ...lib.patterns import formats
-            strings = {range(*m.span()) for m in re.finditer(formats.string.pattern, data)}
+            strings = {range(*m.span()) for m in formats.string.finditer(data)}
             data = self._TRAILING_COMMA.sub(smartfix, data)
-        kwargs = dict(indent=self.args.indent)
-        if not self.args.indent:
-            kwargs.update(separators=(',', ':'))
+        kwargs = {'indent': self.args.indent} if self.args.indent else {'separators': (',', ':')}
         yield from self._output(json.loads(data), **kwargs)
