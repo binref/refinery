@@ -115,10 +115,14 @@ intended to sit at the end of a frame. Otherwise, `NaNaNaNaNaNaNaNa` and `Batman
 above example would not be separated by a dash.
 """
 import copy
+import json
+import base64
 import os
 
 from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
 from refinery.lib.structures import MemoryFile
+from refinery.lib.powershell import is_powershell_process
+from refinery.lib.tools import isbuffer
 
 try:
     import msgpack
@@ -132,15 +136,35 @@ __all__ = [
 ]
 
 
+class BytesEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isbuffer(obj):
+            return {'_bin': base64.b85encode(obj).decode('ascii')}
+        return super().default(obj)
+
+
+class BytesDecoder(json.JSONDecoder):
+    def __init__(self, *args, **kwargs):
+        json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
+
+    def object_hook(self, obj):
+        if isinstance(obj, dict) and len(obj) == 1 and '_bin' in obj:
+            return base64.b85decode(obj['_bin'])
+        return obj
+
+
+MAGIC = bytes.fromhex(os.environ.get('REFINERY_FRAME_MAGIC', 'C0CAC01AC0DE'))
+ISPS1 = is_powershell_process()
+
+if ISPS1:
+    MAGIC = B'[[%s]]' % base64.b85encode(MAGIC)
+
+
 class Chunk(bytearray):
     """
     Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
     receives an iterable of `refinery.lib.frame.Chunk`s.
     """
-
-    Magic = bytes.fromhex(
-        os.environ.get('REFINERY_FRAME_MAGIC', 'C0CAC01AC0DE'))
-
     def __init__(
         self,
         data: ByteString,
@@ -259,14 +283,21 @@ class Chunk(bytearray):
         """
         Classmethod to read a serialized chunk from an unpacker stream.
         """
-        path, view, meta, fill, data = next(stream)
+        item = next(stream)
+        if ISPS1:
+            item = json.loads(item, cls=BytesDecoder)
+        path, view, meta, fill, data = item
         return cls(data, path, view=view, meta=meta, fill=fill)
 
     def pack(self):
         """
         Return the serialized representation of this chunk.
         """
-        return msgpack.packb((self._path, self._view, self._meta, self._fill, self))
+        obj = (self._path, self._view, self._meta, self._fill, self)
+        if ISPS1:
+            packed = json.dumps(obj, cls=BytesEncoder, separators=(',', ':')) + '\n'
+            return packed.encode('utf8')
+        return msgpack.packb(obj)
 
     def __repr__(self) -> str:
         layer = '/'.join('#' if not s else str(p) for p, s in zip(self._path, self._view))
@@ -317,18 +348,15 @@ class FrameUnpacker:
     iterator over `[BOO, BAZ]`.
     """
     def __init__(self, stream: Optional[BinaryIO]):
-        import msgpack
         self.finished = False
         self.trunk = ()
         self._next = Chunk(bytearray(), ())
-        buffer = stream and stream.read(len(Chunk.Magic)) or B''
-        if buffer == Chunk.Magic:
+        buffer = stream and stream.read(len(MAGIC)) or B''
+        if buffer == MAGIC:
             self.framed = True
             self.stream = stream
-            self.unpacker = msgpack.Unpacker(
-                max_buffer_size=0xFFFFFFFF,
-                use_list=False
-            )
+            if not ISPS1:
+                self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=False)
             self._advance()
             self.gauge = len(self._next.path)
         else:
@@ -341,7 +369,8 @@ class FrameUnpacker:
     def _advance(self) -> None:
         while not self.finished:
             try:
-                self._next = Chunk.unpack(self.unpacker)
+                stream = self.stream if ISPS1 else self.unpacker
+                self._next = Chunk.unpack(stream)
                 break
             except StopIteration:
                 pass
@@ -483,7 +512,7 @@ class Framed:
         if self.unpack.finished:
             return
         if self.nesting > 0:
-            yield Chunk.Magic
+            yield MAGIC
             rest = (0,) * (self.nesting - 1)
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
@@ -496,7 +525,7 @@ class Framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
         elif self.nesting == 0:
-            yield Chunk.Magic
+            yield MAGIC
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
                     if not chunk.visible:
@@ -508,7 +537,7 @@ class Framed:
             gauge = max(self.unpack.gauge + self.nesting, 0)
             trunk = None
             if gauge:
-                yield Chunk.Magic
+                yield MAGIC
             while self.unpack.nextframe():
                 while True:
                     for chunk in self._apply_filter():
