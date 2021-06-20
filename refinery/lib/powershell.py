@@ -12,6 +12,10 @@ import os
 from typing import Iterable, get_type_hints
 
 
+class NotWindows(RuntimeError):
+    pass
+
+
 class FieldsFromTypeHints(type(ctypes.Structure)):
     def __new__(cls, name, bases, namespace):
         class AnnotationDummy:
@@ -35,7 +39,10 @@ class PROCESSENTRY32(ctypes.Structure, metaclass=FieldsFromTypeHints):
 
 
 def get_parent_processes() -> Iterable[str]:
-    k32 = ctypes.windll.kernel32
+    try:
+        k32 = ctypes.windll.kernel32
+    except AttributeError:
+        raise NotWindows
     entry = PROCESSENTRY32()
     entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
     snap = k32.CreateToolhelp32Snapshot(2, 0)
@@ -62,11 +69,14 @@ def get_parent_processes() -> Iterable[str]:
 def is_powershell_process() -> bool:
     if os.name != 'nt':
         return False
-    for process in get_parent_processes():
-        name, _ = os.path.splitext(process)
-        name = name.lower()
-        if name == 'cmd':
-            return False
-        if name == 'powershell':
-            return True
+    try:
+        for process in get_parent_processes():
+            name, _ = os.path.splitext(process)
+            name = name.lower()
+            if name == 'cmd':
+                return False
+            if name == 'powershell':
+                return True
+    except NotWindows:
+        pass
     return False
