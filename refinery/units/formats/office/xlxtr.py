@@ -202,7 +202,7 @@ class xlxtr(Unit):
             for k, name in enumerate(workbook.sheetnames):
                 if not ref.match(k, name):
                     continue
-                sheet = workbook.get_sheet_by_name(name)
+                sheet = workbook[name]
                 cells = [row for row in sheet.iter_rows(values_only=True)]
                 nrows = len(cells)
                 ncols = max(len(row) for row in cells)
