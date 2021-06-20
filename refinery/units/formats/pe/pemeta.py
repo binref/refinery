@@ -17,8 +17,8 @@ from pefile import (
 )
 
 from ....lib.dotnet.header import DotNetHeader
-from ....lib.json import flattened
 from ... import arg, Unit
+from ...sinks.ppjson import ppjson
 
 
 class VIT(str, Enum):
@@ -497,15 +497,8 @@ class pemeta(Unit):
         if signature and self.args.signatures:
             result['Signature'] = signature
 
-        if not result:
-            return None
-        if self.args.tabular:
-            table = list(flattened(result, 'PE'))
-            width = max(len(key) for key, _ in table)
-            for key, value in table:
-                yield F'{key:<{width}} : {value.rstrip()!s}'.encode(self.codec)
-        else:
-            yield json.dumps(result, indent=4, ensure_ascii=False).encode(self.codec)
+        if result:
+            yield from ppjson(tabular=self.args.tabular)._output(result, ensure_ascii=False)
 
     _LCID = {
         0x0436: 'Afrikaans-South Africa',
