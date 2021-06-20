@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import uuid
 
+from typing import Any, Dict, Iterable, List, Optional
 from xml.parsers import expat
 from defusedxml.ElementTree import parse as ParseXML, XMLParser, ParseError
 from xml.etree.ElementTree import Element, ElementTree
@@ -52,26 +55,24 @@ class ForgivingXMLParser(XMLParser):
         self.__entity.update(value)
 
 
-class XMLNodeCollection(list):
-    def __getattr__(self, tag):
-        result = self.__class__()
-        for node in self:
-            for child in node.children:
-                if child.tag != tag:
-                    continue
-                result.append(child)
-        return result
-
-
 class XMLNode:
-    __slots__ = 'tag', 'children', 'attributes', 'content', 'parent'
+    __slots__ = 'tag', 'source', 'children', 'attributes', 'content', 'parent'
+
+    attributes: Dict[str, Any]
+    children: List[XMLNode]
+    content: Optional[str]
+    parent: Optional[XMLNode]
+    source: Optional[Element]
+    subtree: Iterable[XMLNode]
+    tag: str
 
     def __init__(self, tag: str):
-        self.tag: str = tag
-        self.children = []
         self.attributes = {}
+        self.children = []
         self.content = None
         self.parent = None
+        self.source = None
+        self.tag = tag
 
     def __iter__(self):
         return iter(self.children)
@@ -83,8 +84,13 @@ class XMLNode:
         return self.attributes.get(key, default)
 
     @property
-    def subtree(self):
-        return XMLNodeCollection((self,))
+    def subtree(self) -> Iterable[XMLNode]:
+        yield self
+        for child in self.children:
+            yield from child.subtree
+
+    def write(self, stream):
+        return ElementTree(self.source).write(stream)
 
     def __enter__(self):
         return self.subtree
@@ -99,9 +105,12 @@ def parse(data) -> XMLNode:
             node = XMLNode(child.tag)
             translate(child, node, level + 1)
             node.parent = cursor
+            node.source = child
             cursor.children.append(node)
         cursor.attributes = element.attrib
         cursor.content = element.text or element.tail or ''
         return cursor
     root = ForgivingParse(data).getroot()
-    return translate(root, XMLNode(root.tag))
+    rt = translate(root, XMLNode(root.tag))
+    rt.source = root
+    return rt
