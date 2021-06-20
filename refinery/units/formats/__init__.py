@@ -43,13 +43,13 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, pp, regex=False):
+    def __init__(self, pp, regex=False, strict=False):
         if isinstance(pp, re.Pattern):
             self.stops = []
             self.pattern = pp
             return
         elif not regex:
-            if not pp.startswith('*') and not pp.endswith('*'):
+            if not strict and not pp.startswith('*') and not pp.endswith('*'):
                 pp = F'*{pp}*'
             self.stops = [stop for stop in re.split(R'(.*?[/*?])', pp) if stop]
             pp = fnmatch.translate(pp)
@@ -72,6 +72,8 @@ class PathPattern:
 
 class PathExtractorUnit(Unit, abstract=True):
 
+    _STRICT_PATH_MATCHING = False
+
     def __init__(self, *paths: arg(
         metavar='path', nargs='*', default=(), type=pathspec, help=(
             'Wildcard pattern for the name of the item to be extracted. Each item is returned'
@@ -85,12 +87,10 @@ class PathExtractorUnit(Unit, abstract=True):
             help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
         **keywords
     ):
+        strict = getattr(self.__class__, '_STRICT_PATH_MATCHING', False)
         paths = paths or (['.*'] if regex else ['*'])
         super().__init__(
-            patterns=[
-                PathPattern(p, regex)
-                for p in paths
-            ],
+            patterns=[PathPattern(p, regex, strict) for p in paths],
             list=list,
             join=join_path,
             drop=drop_path,
