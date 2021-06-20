@@ -4,7 +4,7 @@ import json
 import re
 
 from .. import arg, Unit
-from ...lib.decorators import unicoded
+from ...lib.json import flattened
 
 
 class ppjson(Unit):
@@ -12,31 +12,33 @@ class ppjson(Unit):
     Expects JSON input data and outputs it in a neatly formatted manner.
     If the indentation is set to zero, the output is minified.
     """
-    _TRAILING_COMMA = re.compile(R',\s*(}|])')
+    _TRAILING_COMMA = re.compile(BR',\s*(}|])')
 
-    def __init__(self, indent: arg.number('-i', help=(
-        'Controls the amount of space characters used for indentation in the output. Default is 4.')) = 4
+    def __init__(
+        self,
+        tabular: arg.switch('-t', group='OUT', help='Convert JSON input into a flattened table.') = False,
+        indent : arg.number('-i', group='OUT', help='Number of spaces used for indentation. Default is {default}.') = 4
     ):
-        return super().__init__(indent=indent)
+        return super().__init__(indent=indent, tabular=tabular)
 
-    @unicoded
-    def process(self, data: str) -> str:
+    def _output(self, parsed, **kwargs):
+        if self.args.tabular:
+            table = list(flattened(parsed))
+            width = max(len(key) for key, _ in table)
+            for key, value in table:
+                yield F'{key:<{width}} : {value.rstrip()!s}'.encode(self.codec)
+        else:
+            yield json.dumps(parsed, **kwargs).encode(self.codec)
+
+    def process(self, data):
         if self._TRAILING_COMMA.search(data):
-            from ...lib.patterns import formats
-
-            strings = {
-                range(*m.span())
-                for m in re.finditer(formats.string.pattern, data)
-            }
-
             def smartfix(match):
                 k = match.start()
                 return match.group(0 if any(k in s for s in strings) else 1)
-
+            from ...lib.patterns import formats
+            strings = {range(*m.span()) for m in re.finditer(formats.string.pattern, data)}
             data = self._TRAILING_COMMA.sub(smartfix, data)
-
         kwargs = dict(indent=self.args.indent)
         if not self.args.indent:
             kwargs.update(separators=(',', ':'))
-        data = json.dumps(json.loads(data), **kwargs)
-        return data if self.args.indent else data.replace('\n', '')
+        yield from self._output(json.loads(data), **kwargs)
