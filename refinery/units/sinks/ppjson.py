@@ -26,7 +26,8 @@ class ppjson(Unit):
             table = list(flattened(parsed))
             width = max(len(key) for key, _ in table)
             for key, value in table:
-                yield F'{key:<{width}} : {value.rstrip()!s}'.encode(self.codec)
+                value = str(value).rstrip()
+                yield F'{key:<{width}} : {value}'.encode(self.codec)
         else:
             yield json.dumps(parsed, **kwargs).encode(self.codec)
 
