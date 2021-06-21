@@ -19,6 +19,8 @@ class swap(Unit):
             meta = data.meta[name]
         except KeyError:
             meta = bytearray()
-        if not isbuffer(meta):
+        if isinstance(meta, str):
+            meta = meta.encode(self.codec)
+        elif not isbuffer(meta):
             raise ValueError(F'Unable to swap data with variable {name} because it has type {type(meta).__name__}.')
         return self.labelled(meta, **{name: data})
