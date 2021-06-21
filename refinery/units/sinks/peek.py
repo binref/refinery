@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 import sys
 import textwrap
+import codecs
+import string
+import itertools
 
 from . import arg, HexViewer, get_terminal_size
 from ...lib.meta import GetMeta
 from ...lib.types import INF
-from ...lib.tools import isbuffer
+from ...lib.tools import isbuffer, format_size
 
 
 class peek(HexViewer):
@@ -24,11 +27,21 @@ class peek(HexViewer):
         brief  : arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
         decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         esc    : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
+        meta   : arg('-m', help='Accumulate metadata that requires scanning the data, such as entropy and file magic.') = False,
         hexaddr=True, dense=False, expand=False, width=0
     ):
         lines = 1 if brief else INF if all else lines
         super(peek, self).__init__(
-            hexaddr=hexaddr and not brief, expand=expand, width=width, dense=dense, lines=lines, decode=decode, esc=esc, brief=brief)
+            brief=brief,
+            decode=decode,
+            dense=dense,
+            esc=esc,
+            expand=expand,
+            hexaddr=hexaddr and not brief,
+            lines=lines,
+            meta=meta,
+            width=width,
+        )
         self._sep = True
         self._idx = None
 
@@ -44,7 +57,8 @@ class peek(HexViewer):
             return
         width = max(len(name) for name in meta)
         yield sep
-        for name, value in meta.items():
+        for name in sorted(meta):
+            value = meta[name]
             if value is None:
                 continue
             if isbuffer(value):
@@ -65,72 +79,74 @@ class peek(HexViewer):
                 metavar = metavar[:linewidth - 3] + '...'
             yield metavar
 
+    def _trydecode(self, data, codec, width):
+        linecount = self.args.lines
+        result = []
+        if codec is None:
+            from ..encoding.esc import esc
+            decoded = data[:width * linecount]
+            decoded = str(decoded | -esc)
+            for k in range(0, linecount, width):
+                result.append(decoded[k:k + width])
+            return result
+        try:
+            self.log_info(F'trying to decode as {codec}.')
+            decoded = codecs.decode(data, codec, errors='strict')
+            count = sum(x in string.printable for x in decoded)
+            ratio = count / len(data)
+        except ValueError as V:
+            self.log_info('decoding failed:', V)
+            return None
+        if ratio < 0.8 or any(x in decoded for x in '\b\v'):
+            self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
+            return None
+        for paragraph in decoded.splitlines(False):
+            if not linecount:
+                break
+            linecount = [
+                line for chunk in textwrap.wrap(
+                    paragraph,
+                    width,
+                    break_long_words=True,
+                    break_on_hyphens=False,
+                    drop_whitespace=False,
+                    expand_tabs=True,
+                    max_lines=abs(linecount + 1),
+                    replace_whitespace=False,
+                    tabsize=4,
+                )
+                for line in chunk.splitlines(keepends=False)
+            ]
+            linecount -= len(linecount)
+            result.extend(linecount)
+        return result
+
     def _peeklines(self, data):
-        import codecs
-        import string
-        import itertools
-        from ...lib.tools import format_size
 
         dump = None
         termsize = get_terminal_size()
+        inner_width = width = self.args.width or termsize
         working_codec = None
 
         if self.args.brief:
-            wmod = -format_size.width - 2
+            inner_width -= format_size.width + 2
             if self._idx is not None:
-                wmod -= 6
-        else:
-            wmod = 0
+                inner_width -= 6
 
         if data:
+            if self.args.esc:
+                dump = self._trydecode(data, None, inner_width)
             if self.args.decode:
                 for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
-                    try:
-                        self.log_info(F'trying to decode as {codec}.')
-                        handler = 'backslashreplace' if self.args.esc else 'strict'
-                        decoded = codecs.decode(data, codec, errors=handler)
-                        count = sum(x in string.printable for x in decoded)
-                        ratio = count / len(data)
-                    except ValueError as V:
-                        self.log_info('decoding failed:', V)
-                        continue
-                    if ratio < 0.8 or any(x in decoded for x in '\b\v'):
-                        self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
-                        continue
-
-                    width = self.args.width or termsize
-                    dump = []
-                    remaining = self.args.lines
-                    for paragraph in decoded.splitlines(False):
-                        if not remaining:
-                            break
-                        lines = [
-                            line for chunk in textwrap.wrap(
-                                paragraph,
-                                width + wmod,
-                                break_long_words=True,
-                                break_on_hyphens=False,
-                                drop_whitespace=False,
-                                expand_tabs=True,
-                                max_lines=abs(remaining + 1),
-                                replace_whitespace=False,
-                                tabsize=4,
-                            )
-                            for line in chunk.splitlines(keepends=False)
-                        ]
-                        remaining -= len(lines)
-                        dump.extend(lines)
-
-                    working_codec = codec
-                    break
-
-            if not dump:
+                    dump = self._trydecode(data, codec, inner_width)
+                    if dump:
+                        working_codec = codec
+                        break
+            if dump is None:
                 total = abs(self.args.lines * termsize // 3)
-                dump = self.hexdump(data, total=total, width=wmod)
-
-            dump = list(itertools.islice(dump, 0, abs(self.args.lines)))
-
-        width = max(len(d) for d in dump) if self.args.width else termsize
+                dump = self.hexdump(data, total=total, width=inner_width)
+                dump = list(itertools.islice(dump, 0, abs(self.args.lines)))
+                width = max(len(line) for line in dump)
 
         def separator(title=None):
             if title is None or width <= len(title) + 8:
@@ -139,10 +155,11 @@ class peek(HexViewer):
 
         if not self.args.brief:
             meta = GetMeta(data)
-            if meta['magic'] == 'data':
-                del meta['magic']
-            entropy_percent = meta['entropy'] * 100.0
-            meta['entropy'] = F'{entropy_percent:.2f}%'
+            if self.args.meta:
+                if meta['magic'] == 'data':
+                    del meta['magic']
+                entropy_percent = meta['entropy'] * 100.0
+                meta['entropy'] = F'{entropy_percent:.2f}%'
             meta['size'] = format_size(meta['size'])
             yield from self._peekmeta(width, separator(), **meta)
 

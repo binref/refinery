@@ -9,7 +9,7 @@ from .. import TestUnitBase
 class TestPeek(TestUnitBase):
 
     def test_hex_peek(self):
-        peek = self.load(width=8, lines=14)
+        peek = self.load(width=8, lines=14, meta=True)
         sys_stderr = sys.stderr
         sys.stderr = io.StringIO()
         peek(bytes.fromhex(
