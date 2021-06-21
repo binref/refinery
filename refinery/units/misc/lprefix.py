@@ -10,12 +10,10 @@ from ...lib.argformats import PythonExpression
 
 class lprefix(Unit):
     """
-    Parse length-prefixed data. The unit repeatedly reads a length prefix from the input data and then
-    reads a number of bytes given by the length prefix. The prefix is used as a Python struct expression
-    but may only contain one format character that converts to a number when unpacked. However, using
-    alignment operations and filler bytes represented by the format character "x" can help parse more
-    complicated length prefixes. If no byte order is specified in the prefix format, the unit uses little
-    endian (no byte alignment).
+    Parse length-prefixed data. The unit repeatedly reads a length prefix from the input data and then reads a number of bytes given by
+    the length prefix. The prefix is used as a Python struct expression but may only contain one format character that converts to a number
+    when unpacked. However, using alignment operations and filler bytes represented by the format character "x" can help parse more
+    complicated length prefixes. If no byte order is specified in the prefix format, the unit uses little endian (no byte alignment).
     """
     def __init__(
         self,
@@ -24,13 +22,11 @@ class lprefix(Unit):
         count : arg.number('-c', help='Only decode up to {varname} chunks and treat the rest as leftover data.') = INF,
         strict: arg.switch('-S', help='Discard any leftover data with invalid length prefix.') = False,
         single: arg.switch('-s', help='Equivalent to --strict --count=1.') = False,
-        header: arg('-H', action='count', default=0, help=(
-            'Treat the parsed prefix as part of the body. Specify twice to strip the header afterwards.'
-        )) = 0,
-        derive: arg('-d', metavar='d(N)', type=str, help=(
-            'Provide an arithmetic Python expression involving the variable N which represents the length '
-            'prefix that was read. The value of this expression is used as the actual number of bytes. '
-            'The default expression is "N".')) = None
+        header: arg.switch('-H', help='Do not strip the header from the data but include it in the output.') = False,
+        derive: arg('-d', metavar='d(N,H)', type=str, help=(
+            'Provide an arithmetic Python expression involving the variables N and H, which represents the length prefix that was read '
+            'and the size of the header, respectively. The value of this expression is used as the actual number of bytes. The default '
+            'expression is "N".')) = None
     ):
         if single:
             strict = True
@@ -47,8 +43,8 @@ class lprefix(Unit):
             strict=strict,
             prefix=prefix,
             derive=derive,
+            header=header,
             count=count,
-            header=int(header)
         )
 
     def process(self, data):
@@ -56,8 +52,8 @@ class lprefix(Unit):
             meta = data.meta
         except AttributeError:
             meta = {}
-        parse = PythonExpression(self.args.derive or 'N', 'N', *meta)
-        hsize = calcsize(self.args.prefix) if self.args.header > 1 else 0
+        parse = PythonExpression(self.args.derive or 'N', 'N', 'H', *meta)
+        hsize = calcsize(self.args.prefix)
         with StructReader(memoryview(data)) as mf:
             count = size = position = 0
             try:
@@ -66,13 +62,9 @@ class lprefix(Unit):
                     if count >= self.args.count:
                         raise EOF
                     size = mf.read_struct(self.args.prefix, unwrap=True)
-                    size = parse(N=size, **meta)
+                    size = parse(N=size, H=hsize, **meta)
                     if self.args.header:
-                        if self.args.header > 1:
-                            size -= hsize
-                        else:
-                            size += hsize
-                            mf.seek(position)
+                        mf.seek(position)
                     self.log_info(F'reading chunk of size: {size}')
                     yield mf.read(size)
                     count += 1

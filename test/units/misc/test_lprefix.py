@@ -23,12 +23,12 @@ class TestLengthPrefix(TestUnitBase):
     def test_modified_value(self):
         size = 10
         body = B'BABALUGA' * size
-        size = size * 8
+        size = len(body)
         head = struct.pack('=HbbLbH', 12, 6, 6, size, 0, 0xBEEF)
         pack = head + body
-        unit = self.load('=4xL3x', header=2, count=1)
+        unit = self.load('=4xL3x', count=1, derive='N-11')
         self.assertEqual(unit(pack), body[:-11])
         unit = self.load('=4xL3x')
         self.assertEqual(unit(pack), body)
-        unit = self.load('=4xL3x', header=1, derive='N+11')
+        unit = self.load('=4xL3x', derive='N+11', header=True)
         self.assertEqual(unit(pack), pack)
