@@ -80,13 +80,13 @@ class peek(HexViewer):
             yield metavar
 
     def _trydecode(self, data, codec, width):
-        linecount = self.args.lines
+        remaining = linecount = self.args.lines
         result = []
         if codec is None:
             from ..encoding.esc import esc
-            decoded = data[:width * linecount]
+            decoded = data[:abs(width * linecount)]
             decoded = str(decoded | -esc)
-            for k in range(0, linecount, width):
+            for k in range(0, abs(linecount), width):
                 result.append(decoded[k:k + width])
             return result
         try:
@@ -101,9 +101,9 @@ class peek(HexViewer):
             self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
             return None
         for paragraph in decoded.splitlines(False):
-            if not linecount:
+            if not remaining:
                 break
-            linecount = [
+            wrapped = [
                 line for chunk in textwrap.wrap(
                     paragraph,
                     width,
@@ -111,15 +111,15 @@ class peek(HexViewer):
                     break_on_hyphens=False,
                     drop_whitespace=False,
                     expand_tabs=True,
-                    max_lines=abs(linecount + 1),
+                    max_lines=abs(remaining + 1),
                     replace_whitespace=False,
                     tabsize=4,
                 )
                 for line in chunk.splitlines(keepends=False)
             ]
-            linecount -= len(linecount)
-            result.extend(linecount)
-        return result
+            remaining -= len(wrapped)
+            result.extend(wrapped)
+        return result[:linecount]
 
     def _peeklines(self, data):
 

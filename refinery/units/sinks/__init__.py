@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import itertools
-from typing import Optional
 
 from .. import arg, Unit
 from ...lib.tools import get_terminal_size, lookahead
@@ -27,32 +26,20 @@ class HexViewer(Unit, abstract=True):
                 break
         return addr_width
 
-    def hexdump(self, data, total=None, width: Optional[int] = None):
+    def hexdump(self, data, total=None, width: int = 0):
         import re
 
-        if width is None:
-            width = self.args.width
         total = total or len(data)
         item_width = 2 if self.args.dense else 3
 
-        if width > 0:
-            columns = width
-        else:
-            # this will default to 16 byte wide output if
-            # stdout is not a terminal or if its width can
-            # not be determined for other reasons.
-            termsize = get_terminal_size()
-            if not termsize:
-                columns = 16
-            else:
-                columns = width + get_terminal_size()
-                columns = max(2, columns)
-                if self.args.hexaddr:
-                    columns -= self.hexaddr_size(total)
-                    columns -= 1  # for the separator
-                columns = (columns - 2) // (item_width + 1)
+        if width <= 0:
+            width = max(2, get_terminal_size() or 16)
+            if self.args.hexaddr:
+                width -= self.hexaddr_size(total)
+                width -= 1  # for the separator
+            width = (width - 2) // (item_width + 1)
 
-        lines = itertools.zip_longest(*([iter(data)] * columns))
+        lines = itertools.zip_longest(*([iter(data)] * width))
         address_width = max(self.hexaddr_size(total), 4)
         previous = None
         prevcount = 0
@@ -66,7 +53,7 @@ class HexViewer(Unit, abstract=True):
                     continue
                 elif prevcount > 0:
                     msg = F' repeats {prevcount} times '
-                    msg = F'{msg:=^{3*columns-1}}  {"":=<{columns}}'
+                    msg = F'{msg:=^{3*width-1}}  {"":=<{width}}'
                     if self.args.hexaddr:
                         msg = F'{".":.>{address_width}}: {msg}'
                     yield msg
@@ -76,10 +63,10 @@ class HexViewer(Unit, abstract=True):
             dump = sepr.join(F'{b:02X}' for b in chunk)
             read = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
 
-            msg = F'{dump:<{item_width*columns}} {read:<{columns}}'
+            msg = F'{dump:<{item_width*width}} {read:<{width}}'
 
             if self.args.hexaddr:
-                msg = F'{k*columns:0{address_width}X}: {msg}'
+                msg = F'{k*width:0{address_width}X}: {msg}'
             yield msg
 
             if not self.args.expand:
