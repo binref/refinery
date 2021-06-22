@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from ...lib.meta import GetMeta
 from ...lib.argformats import PythonExpression
 from . import arg, ArithmeticUnit, NoNumpy
 
@@ -102,9 +103,8 @@ class blockop(ArithmeticUnit):
 
     def process(self, data):
         seed = self.args.seed
-        meta = getattr(data, 'meta', {})
         if isinstance(seed, str):
-            seed = PythonExpression(seed, 'N', constants=meta)
+            seed = PythonExpression(seed, 'N', constants=GetMeta(data))
         self._index.init(self.fmask)
         self._total = len(data)
         self._state = seed

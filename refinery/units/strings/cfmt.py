@@ -4,6 +4,7 @@ from typing import ByteString, Dict, Any
 from codecs import encode, decode
 from .. import arg, Unit
 from ...lib.tools import isbuffer
+from ...lib.meta import GetMeta
 
 
 class ByteStringWrapper:
@@ -21,9 +22,12 @@ class ByteStringWrapper:
             return self.string.decode('ascii', 'backslashreplace')
 
     @classmethod
-    def FormatMap(cls, data: ByteString, codec: str) -> Dict[str, Any]:
-        meta = getattr(data, 'meta', {})
-        return meta and {key: cls(value, codec) if isbuffer(value) else value for key, value in meta.items()}
+    def FormatMap(cls, chunk: ByteString, codec: str) -> Dict[str, Any]:
+        meta = GetMeta(chunk)
+        for key, value in meta.items():
+            if isbuffer(value):
+                meta[key] = cls(value, codec)
+        return meta
 
 
 class cfmt(Unit):
@@ -60,5 +64,7 @@ class cfmt(Unit):
     def process(self, data):
         meta = ByteStringWrapper.FormatMap(data, self.codec)
         data = ByteStringWrapper(data, self.codec)
+        for spec in self.args.formats:
+            spec.format_map(meta)
         for spec in self.args.formats:
             yield spec.format(data, **meta).encode(self.codec)

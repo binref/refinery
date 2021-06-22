@@ -22,29 +22,6 @@ def _singleton(cls):
     return cls()
 
 
-def format_size(num: int, align=False) -> str:
-    """
-    Given a number of bytes, produce a human-readable expression for this
-    size using common units such as kB and MB.
-    """
-    step = 1000.0
-    unit = None
-    result = num
-    for unit in [None, 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
-        if unit and result / step <= 0.1:
-            break
-        result /= step
-    if unit is None:
-        width = 3 if align else ''
-        return F'{result:{width}} BYTES'
-    else:
-        width = 6 if align else ''
-        return F'{result:{width}.3f} {unit}'
-
-
-format_size.width = 9
-
-
 def lookahead(iterator):
     """
     Implements a new iterator from a given one which returns elements

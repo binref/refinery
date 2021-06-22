@@ -7,9 +7,9 @@ import string
 import itertools
 
 from . import arg, HexViewer, get_terminal_size
-from ...lib.meta import GetMeta
+from ...lib.meta import GetMeta, CustomStringRepresentation, SizeInt
 from ...lib.types import INF
-from ...lib.tools import isbuffer, format_size
+from ...lib.tools import isbuffer
 
 
 class peek(HexViewer):
@@ -61,7 +61,9 @@ class peek(HexViewer):
             value = meta[name]
             if value is None:
                 continue
-            if isbuffer(value):
+            if isinstance(value, CustomStringRepresentation):
+                value = str(value).strip()
+            elif isbuffer(value):
                 try:
                     decoded: str = value.decode(self.codec)
                     assert decoded.isprintable()
@@ -129,7 +131,7 @@ class peek(HexViewer):
         working_codec = None
 
         if self.args.brief:
-            inner_width -= format_size.width + 2
+            inner_width -= SizeInt.width + 2
             if self._idx is not None:
                 inner_width -= 6
 
@@ -160,7 +162,7 @@ class peek(HexViewer):
                     del meta['magic']
                 entropy_percent = meta['entropy'] * 100.0
                 meta['entropy'] = F'{entropy_percent:.2f}%'
-            meta['size'] = format_size(meta['size'])
+                meta['size'] = meta['size']
             yield from self._peekmeta(width, separator(), **meta)
 
         if dump:
@@ -169,7 +171,7 @@ class peek(HexViewer):
                 yield from dump
             else:
                 brief = next(iter(dump))
-                brief = F'{format_size(len(data), True)}: {brief}'
+                brief = F'{SizeInt(len(data))!s}: {brief}'
                 if self._idx is not None:
                     brief = F'#{self._idx:03d}: {brief}'
                 yield brief
