@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import itertools
-from typing import Optional
 
 from .. import arg, Unit
 from ...lib.tools import get_terminal_size, lookahead
@@ -27,16 +26,19 @@ class HexViewer(Unit, abstract=True):
                 break
         return addr_width
 
-    def hexdump(self, data, total=None, width: Optional[int] = None):
+    def hexdump(self, data, total=None, padding: int = 0):
         import re
 
         total = total or len(data)
         item_width = 2 if self.args.dense else 3
+        width = self.args.width
 
-        if width is None:
-            width = self.args.width
-        if not width:
-            width = max(2, get_terminal_size() or 16)
+        if padding or not width:
+            if width:
+                width = width * (item_width + 1)
+            else:
+                width = get_terminal_size() or 75
+            width = max(2, width - padding)
             if self.args.hexaddr:
                 width -= self.hexaddr_size(total)
                 width -= 1  # for the separator

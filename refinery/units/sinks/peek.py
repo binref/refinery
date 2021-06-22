@@ -126,14 +126,18 @@ class peek(HexViewer):
     def _peeklines(self, data):
 
         dump = None
-        termsize = get_terminal_size()
-        inner_width = width = self.args.width or termsize
+        termsize = get_terminal_size() or 75
+        width = self.args.width or termsize
         working_codec = None
 
-        if self.args.brief:
-            inner_width -= SizeInt.width + 2
+        if not self.args.brief:
+            padding = 0
+        else:
+            padding = SizeInt.width + 2
             if self._idx is not None:
-                inner_width -= 6
+                padding += 6
+
+        inner_width = width - padding
 
         if self.args.lines and data:
             if self.args.esc:
@@ -146,7 +150,7 @@ class peek(HexViewer):
                         break
             if dump is None:
                 total = abs(self.args.lines * termsize // 3)
-                dump = self.hexdump(data, total=total, width=inner_width)
+                dump = self.hexdump(data, total=total, padding=padding)
                 dump = list(itertools.islice(dump, 0, abs(self.args.lines)))
                 width = max(len(line) for line in dump)
 
