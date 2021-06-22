@@ -1,5 +1,18 @@
 # Binary Refinery Changelog
 
+## Version 0.3.30
+- Adds the `xtjson` and `xtxml` units for extracting data from JSON and XML files.
+- Slight redesigns of `lprefix`, `peek`, `xtmail`, and `cfmt`.
+- Refinery now has (very weak) support for PowerShell.
+- Adds the `--tabular` option to `ppjson` to produce a flattened jason output.
+- Changes to the in-code pipe syntax:
+  - `data | unit | unit`  is an iterable over output chunks
+  - `data | unit | unit | callable` invokes `callable` with a bytearray containign all concatenated chunks
+  - connected pipelines (`data | unit | ... | unit`) can be passed to `str` and `bytes`
+- Path extraction units (like `fread`, `xtzip`) offer better control over the path variable.
+- Variable merging was added to the `pop` unit.
+- The `cm` unit only populates `size` and `index` by default, never performing a full scan unless explicitly requested.
+
 ## Version 0.3.29
 - Meta variables are now allowed in `struct` formats, and `struct` assumes no alignment by default.
 - The `pemeta` unit now has support for RICH header data.
