@@ -20,5 +20,5 @@ class ifrex(RegexUnit, ConditionalUnit):
         return bool(self._matcher(chunk))
 
     def filter(self, inputs):
-        self._matcher = self.args.regex.fullmatch if self.args.match else self.args.regex.search
+        self._matcher = self.regex.fullmatch if self.args.match else self.regex.search
         yield from super().filter(inputs)

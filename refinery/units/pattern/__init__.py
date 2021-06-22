@@ -269,6 +269,12 @@ class RegexUnit(Unit, abstract=True):
         flags = re.MULTILINE if multiline else re.DOTALL
         if ignorecase:
             flags |= re.IGNORECASE
+        super().__init__(regex=regex, flags=flags, count=count, **keywords)
+
+    @property
+    def regex(self):
+        flags = self.args.flags
+        regex = self.args.regex
         if isinstance(regex, str):
             regex = regex.encode(self.codec)
-        super().__init__(regex=re.compile(regex, flags=flags), count=count, **keywords)
+        return re.compile(regex, flags=flags)

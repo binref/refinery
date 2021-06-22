@@ -13,3 +13,7 @@ class TestRegexSplitter(TestUnitBase):
     def test_count_restriction(self):
         pl = L('emit eeny,meeny,miny,moe') | L('resplit -c1 ,')
         self.assertEqual(pl(), B'eeny\nmeeny,miny,moe')
+
+    def test_multibin_argument(self):
+        pl = L('emit foobar') [ L('put split oo') | L('resplit xvar:split') ]  # noqa
+        self.assertEqual(list(pl), [b'f', b'bar'])

@@ -23,14 +23,14 @@ class resub(RegexUnit):
         super().__init__(regex=regex, subst=subst, multiline=multiline, ignorecase=ignorecase, count=count)
 
     def process(self, data):
-        self.log_info('pattern:', self.args.regex)
+        self.log_info('pattern:', self.regex)
         self.log_info('replace:', self.args.subst)
         try:
             meta = data.meta
         except AttributeError:
             meta = {}
         repl = TransformSubstitutionFactory(self.args.subst, meta)
-        sub = self.args.regex.sub
+        sub = self.regex.sub
         if self.args.count:
             from functools import partial
             sub = partial(sub, count=self.args.count)

@@ -34,7 +34,7 @@ class rex(RegexUnit, PatternExtractor):
             meta = data.meta
         except AttributeError:
             meta = {}
-        self.log_debug('regular expression:', self.args.regex)
+        self.log_debug('regular expression:', self.regex)
         transformations = [TransformSubstitutionFactory(t, meta) for t in self.args.transformation] or [lambda m: m[0]]
         transformations = [lambda m, mt=t: self.labelled(mt(m), **m.groupdict()) for t in transformations]
-        yield from self.matches_filtered(memoryview(data), self.args.regex, *transformations)
+        yield from self.matches_filtered(memoryview(data), self.regex, *transformations)
