@@ -135,7 +135,7 @@ class peek(HexViewer):
             if self._idx is not None:
                 inner_width -= 6
 
-        if data:
+        if self.args.lines and data:
             if self.args.esc:
                 dump = self._trydecode(data, None, inner_width)
             if self.args.decode:

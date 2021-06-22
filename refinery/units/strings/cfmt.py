@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from typing import ByteString, Dict, Any
 from codecs import encode, decode
+
 from .. import arg, Unit
 from ...lib.tools import isbuffer
 from ...lib.meta import GetMeta
@@ -65,6 +66,7 @@ class cfmt(Unit):
         meta = ByteStringWrapper.FormatMap(data, self.codec)
         data = ByteStringWrapper(data, self.codec)
         for spec in self.args.formats:
-            spec.format_map(meta)
+            # pre-populate fields in meta dictionary
+            spec.replace('{}', '').format_map(meta)
         for spec in self.args.formats:
             yield spec.format(data, **meta).encode(self.codec)

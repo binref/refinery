@@ -33,8 +33,10 @@ class HexViewer(Unit, abstract=True):
         total = total or len(data)
         item_width = 2 if self.args.dense else 3
 
-        if width is not None:
-            width = max(2, width or get_terminal_size() or 16)
+        if width is None:
+            width = self.args.width
+        if not width:
+            width = max(2, get_terminal_size() or 16)
             if self.args.hexaddr:
                 width -= self.hexaddr_size(total)
                 width -= 1  # for the separator
