@@ -171,7 +171,7 @@ class peek(HexViewer):
                 yield from dump
             else:
                 brief = next(iter(dump))
-                brief = F'{SizeInt(len(data))!s}: {brief}'
+                brief = F'{SizeInt(len(data))!r}: {brief}'
                 if self._idx is not None:
                     brief = F'#{self._idx:03d}: {brief}'
                 yield brief
