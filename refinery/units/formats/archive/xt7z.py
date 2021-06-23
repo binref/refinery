@@ -13,7 +13,9 @@ class xt7z(ArchiveUnit):
     def unpack(self, data):
         pwd = self.args.pwd
         pwd = pwd and {'password': pwd.decode(self.codec)} or {}
-        with MemoryFile(data) as stream:
+        mv = memoryview(data)
+        zp = max(0, data.find(B'7z\xBC\xAF\x27\x1C'))
+        with MemoryFile(mv[zp:]) as stream:
             with py7zr.SevenZipFile(stream, **pwd) as archive:
                 for info in archive.list():
                     info: py7zr.FileInfo
