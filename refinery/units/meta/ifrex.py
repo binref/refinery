@@ -19,6 +19,6 @@ class ifrex(RegexUnit, ConditionalUnit):
     def match(self, chunk):
         return bool(self._matcher(chunk))
 
-    def filter(self, inputs):
+    def filter(self, chunks):
         self._matcher = self.regex.fullmatch if self.args.match else self.regex.search
-        yield from super().filter(inputs)
+        yield from super().filter(chunks)

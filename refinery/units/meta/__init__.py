@@ -45,8 +45,8 @@ class ConditionalUnit(Unit, abstract=True):
     def match(self, chunk) -> bool:
         ...
 
-    def filter(self, inputs):
-        for chunk in inputs:
+    def filter(self, chunks):
+        for chunk in chunks:
             if self.match(chunk) is self.args.negate:
                 continue
             yield chunk

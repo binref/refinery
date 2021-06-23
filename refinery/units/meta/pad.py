@@ -44,15 +44,15 @@ class pad(Unit):
             data += pad[:missing]
             return data
 
-    def filter(self, inputs):
+    def filter(self, chunks):
         if self.relative:
             self.log_info('padding up to longest input')
-            if not isinstance(inputs, list):
-                inputs = list(inputs)
-            self._maxlen = max(len(d) for d in inputs)
+            if not isinstance(chunks, list):
+                chunks = list(chunks)
+            self._maxlen = max(len(d) for d in chunks)
         else:
             self._maxlen = None
-        yield from inputs
+        yield from chunks
 
     def process(self, data):
         if self._maxlen is not None:

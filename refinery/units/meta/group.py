@@ -16,10 +16,10 @@ class group(Unit):
         yield data
         yield from members
 
-    def filter(self, inputs):
+    def filter(self, chunks):
         members = []
         header = None
-        for chunk in inputs:
+        for chunk in chunks:
             if not chunk.visible:
                 yield chunk
                 continue

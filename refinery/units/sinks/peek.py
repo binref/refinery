@@ -183,9 +183,9 @@ class peek(HexViewer):
         if self._sep and not self.args.brief:
             yield separator()
 
-    def filter(self, inputs):
+    def filter(self, chunks):
         from ...lib.tools import lookahead
-        for last, (index, item) in lookahead(enumerate(inputs)):
+        for last, (index, item) in lookahead(enumerate(chunks)):
             self._sep = last
             if not last or index:
                 self._idx = index

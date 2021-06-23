@@ -18,7 +18,7 @@ class pick(Unit):
     )):
         super().__init__(slice=slice)
 
-    def filter(self, inputs):
+    def filter(self, chunks):
         slices = deque(self.args.slice)
         discards = 0
         consumed = False
@@ -33,13 +33,13 @@ class pick(Unit):
             if not consumed:
                 if not discardable(s):
                     self.log_debug(F'consumed input into buffer after {discards} skips')
-                    inputs = [None] * discards + list(inputs)
+                    chunks = [None] * discards + list(chunks)
                     consumed = True
 
             if consumed:
-                yield from inputs[s]
+                yield from chunks[s]
             else:
-                yield from islice(chain(repeat(None, discards), inputs), s.start, s.stop, s.step)
+                yield from islice(chain(repeat(None, discards), chunks), s.start, s.stop, s.step)
                 discards = s.stop
 
         return

@@ -18,20 +18,20 @@ class sep(Unit):
         super().__init__(separator=separator, scoped=scoped)
         self.separate = False
 
-    def filter(self, inputs):
-        it = iter(inputs)
+    def filter(self, chunks):
+        it = iter(chunks)
         try:
-            data = next(it)
+            chunk = next(it)
         except StopIteration:
             return
         self.separate = True
         for upcoming in it:
             if not self.args.scoped:
-                data.visible = True
-            yield data
-            data = upcoming
+                chunk.visible = True
+            yield chunk
+            chunk = upcoming
         self.separate = False
-        yield data
+        yield chunk
 
     def process(self, data):
         yield data
