@@ -498,7 +498,7 @@ class pemeta(Unit):
             result['Signature'] = signature
 
         if result:
-            yield from ppjson(tabular=self.args.tabular)._output(result, ensure_ascii=False)
+            yield from ppjson(tabular=self.args.tabular)._output(result, indent=4, ensure_ascii=False)
 
     _LCID = {
         0x0436: 'Afrikaans-South Africa',
