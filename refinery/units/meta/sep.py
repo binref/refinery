@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from itertools import cycle
 from .. import arg, Unit
 
 
@@ -11,12 +12,12 @@ class sep(Unit):
     """
 
     def __init__(
-        self, separator: arg(help='Separator; the default is a line break.') = B'\n',
+        self, *separators: arg(metavar='separator', help='Separator; the default is a single line break.'),
         scoped: arg.switch('-s', help=(
             'Maintain chunk scope; i.e. do not turn all input chunks visible.')) = False
     ):
-        super().__init__(separator=separator, scoped=scoped)
-        self.separate = False
+        separators = separators or [B'\n']
+        super().__init__(separators=separators, scoped=scoped)
 
     def filter(self, chunks):
         it = iter(chunks)
@@ -24,16 +25,8 @@ class sep(Unit):
             chunk = next(it)
         except StopIteration:
             return
-        self.separate = True
-        for upcoming in it:
-            if not self.args.scoped:
-                chunk.visible = True
-            yield chunk
-            chunk = upcoming
-        self.separate = False
+        separator = cycle([self.labelled(s) for s in self.args.separators])
         yield chunk
-
-    def process(self, data):
-        yield data
-        if self.separate:
-            yield self.args.separator
+        for chunk in it:
+            yield next(separator)
+            yield chunk
