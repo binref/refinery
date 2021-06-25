@@ -930,6 +930,13 @@ class UnitBase(metaclass=Executable, abstract=True):
         it before `refinery.units.Unit.process` is called on the individual chunks.
         """
 
+    @abc.abstractmethod
+    def finish(self) -> Iterable[Chunk]:
+        """
+        Child classes of `refinery.units.Unit` can overwrite this method to generate a
+        stream of chunks to be processed after the last frame has been processed.
+        """
+
 
 class Unit(UnitBase, abstract=True):
     """
@@ -1027,9 +1034,13 @@ class Unit(UnitBase, abstract=True):
             self.source,
             self.args.nesting,
             self.args.squeeze,
-            self.filter
+            self.filter,
+            self.finish,
         )
         return self._framed
+
+    def finish(self) -> Iterable[Chunk]:
+        yield from ()
 
     def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
         return inputs

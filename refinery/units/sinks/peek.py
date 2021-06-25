@@ -42,8 +42,6 @@ class peek(HexViewer):
             meta=meta,
             width=width,
         )
-        self._sep = True
-        self._idx = None
 
     def process(self, data):
         for line in self._peeklines(data):
@@ -125,39 +123,39 @@ class peek(HexViewer):
 
     def _peeklines(self, data):
 
-        dump = None
-        termsize = get_terminal_size() or 75
-        width = self.args.width or termsize
-        working_codec = None
+        codec = None
+        lines = None
+        index = data.temp
 
         if not self.args.brief:
             padding = 0
         else:
             padding = SizeInt.width + 2
-            if self._idx is not None:
+            if index is not None:
                 padding += 6
 
-        inner_width = width - padding
+        metrics = self._get_metrics(len(data), self.args.lines, padding)
 
         if self.args.lines and data:
             if self.args.esc:
-                dump = self._trydecode(data, None, inner_width)
+                lines = self._trydecode(data, None, metrics.width)
             if self.args.decode:
                 for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
-                    dump = self._trydecode(data, codec, inner_width)
-                    if dump:
-                        working_codec = codec
+                    lines = self._trydecode(data, codec, metrics.width)
+                    if lines:
+                        codec = codec
                         break
-            if dump is None:
-                total = abs(self.args.lines * termsize // 3)
-                dump = self.hexdump(data, total=total, padding=padding)
-                dump = list(itertools.islice(dump, 0, abs(self.args.lines)))
-                width = max(len(line) for line in dump)
+            if lines is None:
+                lines = list(self.hexdump(data, metrics))
 
         def separator(title=None):
-            if title is None or width <= len(title) + 8:
-                return width * '-'
-            return F'--{title}' + '-' * (width - len(title) - 2)
+            if title is None or metrics.width <= len(title) + 8:
+                return metrics.width * '-'
+            return F'--{title}' + '-' * (metrics.width - len(title) - 2)
+
+        if index is None:
+            yield separator()
+            return
 
         if not self.args.brief:
             meta = GetMeta(data)
@@ -167,27 +165,25 @@ class peek(HexViewer):
                 entropy_percent = meta['entropy'] * 100.0
                 meta['entropy'] = F'{entropy_percent:.2f}%'
                 meta['size'] = meta['size']
-            yield from self._peekmeta(width, separator(), **meta)
+            yield from self._peekmeta(metrics.width, separator(), **meta)
 
-        if dump:
+        if lines:
             if not self.args.brief:
-                yield separator(F'CODEC={working_codec}' if working_codec else None)
-                yield from dump
+                yield separator(F'CODEC={codec}' if codec else None)
+                yield from lines
             else:
-                brief = next(iter(dump))
+                brief = next(iter(lines))
                 brief = F'{SizeInt(len(data))!r}: {brief}'
                 if self._idx is not None:
                     brief = F'#{self._idx:03d}: {brief}'
                 yield brief
 
-        if self._sep and not self.args.brief:
-            yield separator()
+    def finish(self):
+        empty_chunk = self.labelled(B'')
+        empty_chunk.temp = None
+        yield empty_chunk
 
     def filter(self, chunks):
-        from ...lib.tools import lookahead
-        for last, (index, item) in lookahead(enumerate(chunks)):
-            self._sep = last
-            if not last or index:
-                self._idx = index
+        for index, item in enumerate(chunks):
+            item.temp = index
             yield item
-        self._idx = None

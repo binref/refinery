@@ -165,6 +165,8 @@ class Chunk(bytearray):
     Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
     receives an iterable of `refinery.lib.frame.Chunk`s.
     """
+    temp: Any = None
+
     def __init__(
         self,
         data: ByteString,
@@ -437,10 +439,12 @@ class Framed:
         nesting: int = 0,
         squeeze: bool = False,
         filter : Optional[Callable[[Iterable[Chunk]], Iterable[Chunk]]] = None,
+        finish : Optional[Callable[[], Iterable[Chunk]]] = None,
     ):
         self.unpack = FrameUnpacker(stream)
         self.action = action
         self.filter = filter
+        self.finish = finish
         self.nesting = nesting
         self.squeeze = squeeze
 
@@ -463,6 +467,9 @@ class Framed:
         if not self.unpack.eol:  # filter did not consume the iterable
             for _ in self.unpack:
                 pass
+
+        if self.unpack.finished and self.finish:
+            yield from self.finish()
 
     @property
     def unframed(self) -> bool:
