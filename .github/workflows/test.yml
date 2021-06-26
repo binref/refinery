@@ -43,7 +43,7 @@ jobs:
     - name: Unit tests
       if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
-        XDG_SESSION_TYPE=x11 xvfb-run --source refinery run-tests.py
+        XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py
 
   codecov:
     runs-on: ubuntu-latest
