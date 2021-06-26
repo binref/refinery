@@ -49,7 +49,8 @@ class HexViewer(Unit, abstract=True):
         if self.args.width:
             columns = self.args.width
         else:
-            width = (get_terminal_size() - 1) or 75
+            width = get_terminal_size()
+            width = width and width - 1 or 75
             columns = w2c(width)
         if not self.args.hexaddr:
             addr_width = 0
@@ -79,7 +80,7 @@ class HexViewer(Unit, abstract=True):
         def pieces(data):
             view = memoryview(data)
             for lno, offset in enumerate(range(0, len(data), columns)):
-                if lno >= line_count:
+                if lno > line_count:
                     break
                 yield lno, view[offset:offset + columns]
 
