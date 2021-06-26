@@ -1021,7 +1021,7 @@ class Unit(UnitBase, abstract=True):
             try:
                 result = self.act(data)
                 if inspect.isgenerator(result):
-                    yield from filter(lambda x: x is not None, result)
+                    yield from (x for x in result if x is not None)
                 elif result is not None:
                     yield result
             except BaseException as B:
