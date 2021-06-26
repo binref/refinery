@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from itertools import cycle
 from .. import arg, Unit
+from ...lib.tools import lookahead
 
 
 class sep(Unit):
@@ -20,13 +21,12 @@ class sep(Unit):
         super().__init__(separators=separators, scoped=scoped)
 
     def filter(self, chunks):
-        it = iter(chunks)
-        try:
-            chunk = next(it)
-        except StopIteration:
-            return
-        separator = cycle([self.labelled(s) for s in self.args.separators])
-        yield chunk
-        for chunk in it:
-            yield next(separator)
+        for (last, chunk), index in zip(lookahead(chunks), cycle(range(len(self.args.separators)))):
+            chunk.temp = index if not last else None
             yield chunk
+
+    def process(self, chunk):
+        index = chunk.temp
+        yield chunk
+        if index is not None:
+            yield self.args.separators[index]
