@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from itertools import cycle
 from .. import arg, Unit
-from ...lib.tools import lookahead
 
 
 class sep(Unit):
@@ -13,20 +11,29 @@ class sep(Unit):
     """
 
     def __init__(
-        self, *separators: arg(metavar='separator', help='Separator; the default is a single line break.'),
+        self, separator: arg(help='Separator; the default is a line break.') = B'\n',
         scoped: arg.switch('-s', help=(
             'Maintain chunk scope; i.e. do not turn all input chunks visible.')) = False
     ):
-        separators = separators or [B'\n']
-        super().__init__(separators=separators, scoped=scoped)
+        super().__init__(separator=separator, scoped=scoped)
+        self.separate = False
 
     def filter(self, chunks):
-        for (last, chunk), index in zip(lookahead(chunks), cycle(range(len(self.args.separators)))):
-            chunk.temp = index if not last else None
+        it = iter(chunks)
+        try:
+            chunk = next(it)
+        except StopIteration:
+            return
+        self.separate = True
+        for upcoming in it:
+            if not self.args.scoped:
+                chunk.visible = True
             yield chunk
-
-    def process(self, chunk):
-        index = chunk.temp
+            chunk = upcoming
+        self.separate = False
         yield chunk
-        if index is not None:
-            yield self.args.separators[index]
+
+    def process(self, data):
+        yield data
+        if self.separate:
+            yield self.args.separator
