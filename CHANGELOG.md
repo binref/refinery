@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.3.31
+- Adds the `intersection` unit.
+
 ## Version 0.3.30
 - Adds the `xtjson` and `xtxml` units for extracting data from JSON and XML files.
 - Slight redesigns of `lprefix`, `peek`, `xtmail`, and `cfmt`.
