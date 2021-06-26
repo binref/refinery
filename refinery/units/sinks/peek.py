@@ -4,12 +4,11 @@ import sys
 import textwrap
 import codecs
 import string
-import itertools
 
-from . import arg, HexViewer, get_terminal_size
+from . import arg, HexViewer
 from ...lib.meta import GetMeta, CustomStringRepresentation, SizeInt
 from ...lib.types import INF
-from ...lib.tools import isbuffer
+from ...lib.tools import isbuffer, lookahead
 
 
 class peek(HexViewer):
@@ -125,7 +124,8 @@ class peek(HexViewer):
 
         codec = None
         lines = None
-        index = data.temp
+        if data.temp:
+            last, index = data.temp
 
         if not self.args.brief:
             padding = 0
@@ -178,12 +178,10 @@ class peek(HexViewer):
                     brief = F'#{self._idx:03d}: {brief}'
                 yield brief
 
-    def finish(self):
-        empty_chunk = self.labelled(B'')
-        empty_chunk.temp = None
-        yield empty_chunk
+        if last:
+            yield separator()
 
     def filter(self, chunks):
-        for index, item in enumerate(chunks):
-            item.temp = index
+        for last, (index, item) in lookahead(enumerate(chunks)):
+            item.temp = last, index
             yield item
