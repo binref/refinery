@@ -44,18 +44,15 @@ jobs:
 
   codecov:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: [3.7]
+    needs: test
     steps:
     - uses: actions/checkout@v2
       with:
-        fetch-depth: ‘2’
+        fetch-depth: '2'
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v2
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.7'
     - name: Install dependencies
       run: |
         sudo apt-get install xclip xvfb
