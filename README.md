@@ -1,6 +1,6 @@
 # Binary Refinery
 [![Documentation](.docbadge.svg)][docs]
-[![Test Status](https://www.travis-ci.com/binref/refinery.svg?branch=master)][travis]
+[![Test Status](https://github.com/binref/refinery/actions/workflows/test.yml/badge.svg)][tests]
 [![Code Coverage](https://codecov.io/gh/binref/refinery/branch/master/graph/badge.svg)][codecov]
 [![PyPI Version](https://badge.fury.io/py/binary-refinery.svg)][pypi]
 ```
@@ -179,7 +179,7 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [argformats]: https://binref.github.io/lib/argformats.html
 [frame]: https://binref.github.io/lib/frame.html
 [license]: https://opensource.org/licenses/BSD-3-Clause
-[travis]: https://travis-ci.com/binref/refinery
+[tests]: https://github.com/binref/refinery/actions
 [codecov]: https://codecov.io/github/binref/refinery/?branch=master
 [pypi]: https://pypi.org/project/binary-refinery/
 
