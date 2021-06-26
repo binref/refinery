@@ -99,7 +99,7 @@ jobs:
         python -m pip install flake8 codecov
         pip install .
     - name: Generate code coverage
-      run:
-      - XDG_SESSION_TYPE=x11 xvfb-run coverage run --source refinery run-tests.py
+      run: |
+        XDG_SESSION_TYPE=x11 xvfb-run coverage run --source refinery run-tests.py
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v1
