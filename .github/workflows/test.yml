@@ -67,4 +67,5 @@ jobs:
         XDG_SESSION_TYPE=x11 xvfb-run coverage run --source refinery run-tests.py
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v1
-      token: ${{ secrets.CODECOV_TOKEN }}
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
