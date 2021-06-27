@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import collections
 import sys
 
 from .. import arg, Unit
 from ...lib.suffixtree import SuffixTree
+from ...lib.types import INF
 
 
 class stackdepth:
@@ -31,15 +31,24 @@ class drp(Unit):
     def __init__(
         self,
         consecutive: arg.switch('-c', help='Assume that the repeating pattern is consecutive when observable.') = False,
-        chunksize: arg.number(metavar='chunksize', help='Maximum number of bytes to inspect at once. The default is {default}') = 1024
+        min: arg.number('-n', help='Minimum size of the pattern to search for. Default is {default}.') = 1,
+        max: arg.number('-N', help='Maximum size of the pattern to search for. Default is {default}.') = INF,
+        len: arg.number('-l', help='Set the exact size of the pattern. This is equivalent to --min=N --max=N.') = None,
+        all: arg.switch('-a', help='Produce one output for each repeating pattern that was detected.') = False,
+        threshold: arg.number('-t', help='Patterns must match this performance threshold in percent, lest they be discarded.') = 20,
+        weight: arg.number('-w', help='Specifies how much longer patterns are favored over small ones. Default is {default}.') = 0,
+        buffer: arg.number('-b', help='Maximum number of bytes to inspect at once. The default is {default}.') = 1024
     ):
-        super().__init__(chunksize=chunksize, consecutive=consecutive)
+        if len is not None:
+            min = max = len
+        super().__init__(min=min, max=max, all=all, consecutive=consecutive, weight=weight, buffer=buffer, threshold=threshold)
 
     def _get_patterns(self, data):
         with stackdepth(len(data)):
             tree = SuffixTree(data)
-        patterns = {}
-        shadowed = collections.defaultdict(int)
+        min_size = self.args.min
+        max_size = self.args.max
+        patterns = set()
         cursor = 0
         while cursor < len(data):
             node = tree.root
@@ -60,51 +69,87 @@ class drp(Unit):
                 cursor += 1
                 continue
             length = min(remaining, length)
-            pattern = rest[:length].tobytes()
-            shadowed[pattern] = 1
-            patterns[pattern] = patterns.get(pattern, 0) + 1
+            if max_size >= length >= min_size:
+                pattern = rest[:length].tobytes()
+                patterns.add(pattern)
             cursor += length
         del tree
-        for child in patterns:
-            for parent, count in patterns.items():
-                if len(parent) <= len(child):
-                    continue
-                shadowed[child] += count * parent.count(child)
-        for child in patterns:
-            patterns[child] += shadowed[child]
-        return {
-            pattern: len(pattern) * count
-            for pattern, count in patterns.items()
-            if len(pattern) > 1
-        }
+        return patterns
+
+    @staticmethod
+    def _consecutive_count(data, pattern):
+        length = len(pattern)
+        if length == 1:
+            return data.count(pattern)
+        view = memoryview(data)
+        return max(sum(1 for i in range(k, len(view), length) if view[i:i + length] == pattern)
+            for k in range(len(pattern)))
+
+    @staticmethod
+    def _truncate_pattern(pattern):
+        offset = 0
+        for byte in pattern[1:]:
+            if byte == pattern[offset]:
+                offset += 1
+            else:
+                offset = 0
+        if offset > 0:
+            pattern = pattern[:-offset]
+        return pattern
 
     def process(self, data):
         memview = memoryview(data)
-        patterns = collections.defaultdict(int)
-        chunksize = self.args.chunksize
+        patterns = set()
+        chunksize = self.args.buffer
+        weight = 1 + (self.args.weight / 10)
         for k in range(0, len(memview), chunksize):
-            for p, count in self._get_patterns(memview[k:k + chunksize]).items():
-                patterns[p] += count
+            patterns |= self._get_patterns(memview[k:k + chunksize])
         if not patterns:
             raise RuntimeError('unexpected state: no repeating sequences found')
-        self.log_debug('evaluating pattern performance')
-        scan_max_performance = max(patterns.values())
-        best_patterns = [
-            sequence for sequence, performance in patterns.items()
-            if performance >= scan_max_performance
-        ]
+
+        self.log_debug('removing duplicate pattern detections')
+        duplicates = set()
+        maxlen = max(len(p) for p in patterns)
+        for pattern in sorted(patterns, key=len):
+            for k in range(2, maxlen // len(pattern) + 1):
+                repeated = pattern * k
+                if repeated in patterns:
+                    duplicates.add(repeated)
+        patterns -= duplicates
+
+        self.log_debug(F'counting coverage of {len(patterns)} patterns')
+        pattern_performance = {p: data.count(p) for p in patterns}
+
+        for consecutive in (False, True):
+            if consecutive:
+                self.log_debug(F're-counting coverage of {len(patterns)} patterns')
+                patterns = {self._truncate_pattern(p) for p in patterns}
+                pattern_performance = {p: self._consecutive_count(data, p) for p in patterns}
+
+            self.log_debug('evaluating pattern performance')
+            for pattern, count in pattern_performance.items():
+                pattern_performance[pattern] = count * (len(pattern) ** weight)
+            best_performance = max(pattern_performance.values())
+            for pattern, performance in pattern_performance.items():
+                pattern_performance[pattern] = performance / best_performance
+
+            self.log_debug('removing patterns below performance threshold')
+            threshold = self.args.threshold
+            patterns = {p for p in patterns if pattern_performance[p] * 100 >= threshold}
+
+            if not self.args.consecutive:
+                break
+
+        if self.args.all:
+            for pattern in sorted(patterns, key=pattern_performance.get, reverse=True):
+                yield self.labelled(pattern, performance=pattern_performance[pattern])
+            return
+
+        best_patterns = [p for p in patterns if pattern_performance[p] == 1.0]
+
         if len(best_patterns) > 1:
             self.log_warn('could not determine unique best repeating pattern, returning the first of these:')
-            for k, p in enumerate(best_patterns):
-                self.log_warn(F'{k:02d}.: {p.hex()}')
-        result = best_patterns[0]
-        if self.args.consecutive:
-            offset = 0
-            for byte in result[1:]:
-                if byte == result[offset]:
-                    offset += 1
-                else:
-                    offset = 0
-            if offset > 0:
-                result = result[:-offset]
-        return result
+            for k, pattern in enumerate(best_patterns):
+                self.log_warn(F'{k:02d}.: {pattern.hex()}')
+
+        yield best_patterns[0]
