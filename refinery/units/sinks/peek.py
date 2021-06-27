@@ -118,14 +118,17 @@ class peek(HexViewer):
             ]
             remaining -= len(wrapped)
             result.extend(wrapped)
-        return result[:linecount]
+        return result[:abs(linecount)]
 
     def _peeklines(self, data):
 
         codec = None
         lines = None
+        index = None
+        final = True
+
         if data.temp:
-            last, index = data.temp
+            final, index = data.temp
 
         if not self.args.brief:
             padding = 0
@@ -174,14 +177,14 @@ class peek(HexViewer):
             else:
                 brief = next(iter(lines))
                 brief = F'{SizeInt(len(data))!r}: {brief}'
-                if self._idx is not None:
-                    brief = F'#{self._idx:03d}: {brief}'
+                if index is not None:
+                    brief = F'#{index:03d}: {brief}'
                 yield brief
 
-        if last:
+        if final:
             yield separator()
 
     def filter(self, chunks):
-        for last, (index, item) in lookahead(enumerate(chunks)):
-            item.temp = last, index
+        for final, (index, item) in lookahead(enumerate(chunks)):
+            item.temp = final, index
             yield item
