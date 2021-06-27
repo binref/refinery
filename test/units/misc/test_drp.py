@@ -7,8 +7,17 @@ class TestAutoXOR(TestUnitBase):
 
     def test_english_plaintext_01(self):
         data = B"Betty Botter's bitter batter better"
-        unit = self.load(weight=2)
-        self.assertEqual(unit(data), b'tter')
+
+        for weight in range(6):
+            unit = self.load(weight=weight)
+            self.assertEqual(unit(data), b'tter')
+
+        for weight in range(2):
+            unit = self.load(weight=weight, consecutive=True)
+            self.assertEqual(unit(data), b't')
+
+        unit = self.load(weight=8)
+        self.assertEqual(unit(data), b'tter b')
 
     def test_junk_obfuscation(self):
         data = (
