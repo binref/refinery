@@ -138,29 +138,35 @@ class peek(HexViewer):
                 padding += 6
 
         metrics = self._get_metrics(len(data), self.args.lines, padding)
+        sepsize = metrics.hexdump_width
+        txtsize = metrics.argument or sepsize
 
         if self.args.lines and data:
             if self.args.esc:
-                lines = self._trydecode(data, None, metrics.width)
+                lines = self._trydecode(data, None, txtsize)
             if self.args.decode:
                 for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
-                    lines = self._trydecode(data, codec, metrics.width)
+                    lines = self._trydecode(data, codec, txtsize)
                     if lines:
                         codec = codec
                         break
             if lines is None:
                 lines = list(self.hexdump(data, metrics))
+            else:
+                sepsize = txtsize
 
         def separator(title=None):
-            if title is None or metrics.width <= len(title) + 8:
-                return metrics.width * '-'
-            return F'--{title}' + '-' * (metrics.width - len(title) - 2)
+            if title is None or sepsize <= len(title) + 8:
+                return sepsize * '-'
+            return F'--{title}' + '-' * (sepsize - len(title) - 2)
 
         if index is None:
             yield separator()
             return
 
-        if not self.args.brief:
+        if self.args.brief:
+            final = False
+        else:
             meta = GetMeta(data)
             if self.args.meta:
                 if meta['magic'] == 'data':
@@ -168,7 +174,7 @@ class peek(HexViewer):
                 entropy_percent = meta['entropy'] * 100.0
                 meta['entropy'] = F'{entropy_percent:.2f}%'
                 meta['size'] = meta['size']
-            yield from self._peekmeta(metrics.width, separator(), **meta)
+            yield from self._peekmeta(metrics.hexdump_width, separator(), **meta)
 
         if lines:
             if not self.args.brief:

@@ -10,10 +10,11 @@ from ...lib.tools import get_terminal_size, lookahead
 
 
 class HexDumpMetrics(NamedTuple):
-    width: int
-    addr_width: int
+    argument: int
+    hexdump_width: int
+    address_width: int
     line_count: int
-    columns: int
+    hex_columns: int
 
 
 _EMPTY = ''
@@ -45,9 +46,10 @@ class HexViewer(Unit, abstract=True):
             return (w - p - 1) // hw
 
         hw = self._hex_width + 1
+        argument = self.args.width
 
-        if self.args.width:
-            columns = self.args.width
+        if argument:
+            columns = argument
         else:
             width = get_terminal_size()
             width = width and width - 1 or 75
@@ -66,13 +68,13 @@ class HexViewer(Unit, abstract=True):
         if padding:
             width = width - padding
             columns = w2c(width)
-        return HexDumpMetrics(width, addr_width, line_count, columns)
+        return HexDumpMetrics(argument, width, addr_width, line_count, columns)
 
     def hexdump(self, data, metrics: Optional[HexDumpMetrics] = None):
         separator = _EMPTY if self.args.dense else _SPACE
         hex_width = self._hex_width
         metrics = metrics or self._get_metrics(len(data), INF)
-        _, addr_width, line_count, columns = metrics
+        _, _, addr_width, line_count, columns = metrics
 
         if columns <= 0:
             raise RuntimeError('Requested width is too small.')
