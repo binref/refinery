@@ -103,12 +103,12 @@ emit file.exe | vsect [| sha256 -t | cfmt {} {path} ]]
 
 Recursively list all files in the current directory SHA-256 hash:
 ```
-fread "**" [| sha256 -t | cfmt {} {path} ]]
+ef "**" [| sha256 -t | cfmt {} {path} ]]
 ```
 
 Extract indicators from all files recursively enumerated inside the current directory:
 ```
-fread "**" [| xtp -qn6 ipv4 socket url email | dedup ]]
+ef "**" [| xtp -qn6 ipv4 socket url email | dedup ]]
 ```
 
 Convert the hard-coded IP address `0xC0A80C2A` in network byte order to a readable format:

@@ -44,7 +44,7 @@ class cfmt(Unit):
     pipeline can be used to print all files in a given directory with their corresponding
     SHA-256 hash:
 
-        fread ** [| sha256 -t | cfmt {} {path} ]]
+        ef ** [| sha256 -t | cfmt {} {path} ]]
 
     By default, format string arguments are simply joined along a space character to form
     a single format string.
