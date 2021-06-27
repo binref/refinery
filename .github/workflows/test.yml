@@ -42,7 +42,7 @@ jobs:
       run: |
         XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py
 
-  deploy:
+  coverage:
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -66,13 +66,3 @@ jobs:
       uses: codecov/codecov-action@v1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-    - name: Generate documentation
-      run: |
-        python ./run-pdoc3.py --current-environment
-    - name: Upload documentation
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        personal_token: ${{ secrets.GH_PAGES_TOKEN }}
-        publish_dir: ./html/refinery
-        external_repository: binref/binref.github.io
-        publish_branch: master
