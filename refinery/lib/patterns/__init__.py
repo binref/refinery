@@ -90,6 +90,10 @@ class PatternEnum(enum.Enum):
             return getattr(self.value, name)
         raise AttributeError
 
+    @property
+    def dashname(self):
+        return self.name.replace('_', '-')
+
 
 _TLDS = R'(?i:{possible_tld})(?!(?:{dealbreakers}))'.format(
     possible_tld='|'.join(tlds),
@@ -156,8 +160,9 @@ _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 _pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
 
 _pattern_string = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
-_pattern_urlenc_hard = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
-_pattern_urlenc_soft = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
+_pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
+_pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
+_pattern_urlenc_hex = R'''(?:%[0-9a-fA-F]{2})+'''
 
 _pattern_vbe = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
@@ -178,7 +183,7 @@ _pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12
 _pattern_pathpart_nospace = R'[-\w+,.;@\]\[\^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 _pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=_pattern_pathpart_nospace)
 _pattern_nix_path_element = R'(?:{n} ){{0,1}}{n}'.format(n=_pattern_pathpart_nospace)
-_pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]{2,}%'
+_pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]*%'
 
 _pattern_win_path = R'(?:{s})(?P<pathsep>[\\\/])(?:{p}(?P=pathsep))*{p}\b'.format(
     s='|'.join([
@@ -241,19 +246,21 @@ class formats(PatternEnum):
     "PowerShell escaped string literal"
     printable = alphabet(R'[ -~]')
     "Any sequence of printable characters"
-    urlencstrict = pattern(_pattern_urlenc_hard)
-    "Any sequence of url-encoded characters"
-    urlenc = pattern(_pattern_urlenc_soft)
-    "Any sequence of url-encoded characters"
+    url_encoded_coarse = pattern(_pattern_urlenc_coarse)
+    "Any sequence of url-encoded characters, coarse variant"
+    url_encoded_narrow = pattern(_pattern_urlenc_narrow)
+    "Any sequence of url-encoded characters, narrow variant"
+    url_encoded_hex = pattern(_pattern_urlenc_hex)
+    "A hex-encoded buffer using URL escape sequences"
     intarray = tokenize(_pattern_integer, sep=R'\s*[;,]\s*', bound='')
     "Sequences of integers, separated by commas or semicolons"
     word = alphabet(R'\\w')
     "Sequences of word characters"
-    alph = alphabet(R'[a-zA-Z]')
+    letters = alphabet(R'[a-zA-Z]')
     "Sequences of alphabetic characters"
     vbe = pattern(_pattern_vbe)
     "Encoded Visual Basic Scripts"
-    anum = alphabet(R'[a-zA-Z0-9]')
+    alphanumeric = alphabet(R'[a-zA-Z0-9]')
     "Sequences of alpha-numeric characters"
     b32 = pattern('[A-Z2-7]+|[a-z2-7+]')
     "Base32 encoded strings"
@@ -263,7 +270,7 @@ class formats(PatternEnum):
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]')
     "Hexadecimal strings"
-    HEX = alphabet(R'[0-9A-F]')
+    uppercase_hex = alphabet(R'[0-9A-F]')
     "Uppercase hexadecimal strings"
     utf8 = pattern(_pattern_utf8)
     "A sequence of bytes that can be decoded as UTF8."
@@ -278,6 +285,10 @@ class formats(PatternEnum):
     """
     hexarray = tokenize(R'[0-9A-F]{2}', sep=R'\s*[;,]\s*', bound='')
     "Arrays of hexadecimal strings, separated by commas or semicolons"
+
+    @classmethod
+    def from_dashname(cls, key):
+        return getattr(cls, key.replace('-', '_'))
 
 
 class indicators(PatternEnum):
@@ -316,9 +327,12 @@ class indicators(PatternEnum):
     "Monero addresses"
     path = pattern(_pattern_any_path)
     "Windows and Linux path names"
-    evar = pattern(_pattern_win_env_variable)
+    environment_variable = pattern(_pattern_win_env_variable)
     "Windows environment variables, i.e. something like `%APPDATA%`"
 
+    @classmethod
+    def from_dashname(cls, key):
+        return getattr(cls, key.replace('-', '_'))
 
 class defanged(PatternEnum):
     """

@@ -26,7 +26,7 @@ class xtp(PatternExtractor):
         *pattern: arg('pattern', type=str, default=('hostname', 'url', 'email'), help=(
             'Choose the pattern to extract, defaults are hostname, url, and email. '
             'Use an asterix character to select all available patterns. The available '
-            'patterns are: {}'.format(', '.join(p.name for p in indicators)))),
+            'patterns are: {}'.format(', '.join(p.dashname for p in indicators)))),
         filter: arg('-f', dest='filter', action='count', help=(
             'If this setting is enabled, the xtp unit will attempt to reduce the number '
             'of false positives by certain crude heuristics. Specify multiple times to '
@@ -36,7 +36,7 @@ class xtp(PatternExtractor):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
 
         patterns = {
-            p for name in pattern for p in indicators if fnmatch(p.name, name)
+            p for name in pattern for p in indicators if fnmatch(p.dashname, name)
         }
         if indicators.hostname in patterns:
             patterns.remove(indicators.hostname)

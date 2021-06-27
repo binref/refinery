@@ -9,7 +9,7 @@ class carve(PatternExtractor):
     Extracts patches of data in particular formats from the input.
     """
     def __init__(
-        self, format: arg.choice(choices=[p.name for p in formats], metavar='format',
+        self, format: arg.choice(choices=[p.dashname for p in formats], metavar='format',
             help='Specify one of the following formats: {choices}'),
         unique: arg.switch('-q', help='Yield every match only once.') = False,
         decode: arg.switch('-d', help='Automatically decode known patterns.') = False,
@@ -31,7 +31,7 @@ class carve(PatternExtractor):
             take=take,
             ascii=ascii,
             utf16=utf16,
-            format=formats[format]
+            format=formats.from_dashname(format)
         )
         if not decode:
             decoder = NotImplemented
@@ -40,7 +40,7 @@ class carve(PatternExtractor):
                 return decoder.unesc(chunk[1:-1])
             from ..encoding.esc import esc
             decoder.unesc = esc()
-        elif self.args.format in (formats.HEX, formats.hex):
+        elif self.args.format in (formats.uppercase_hex, formats.hex):
             from ..encoding.hex import hex
             decoder = hex()
         elif self.args.format is formats.hexdump:
@@ -67,7 +67,11 @@ class carve(PatternExtractor):
         elif self.args.format is formats.vbe:
             from ..encoding.vbe import vbe
             decoder = vbe()
-        elif self.args.format in (formats.urlenc, formats.urlencstrict):
+        elif self.args.format in (
+            formats.url_encoded_hex,
+            formats.url_encoded_narrow,
+            formats.url_encoded_coarse,
+        ):
             from ..encoding.url import url
             decoder = url()
         else:
