@@ -35,5 +35,5 @@ jobs:
         git config user.name jesko
         git remote add origin https://huettenhain:$auth@github.com/binref/binref.github.io
         git add --all
-        git commit -m https://github.com/binref/refinery/commit/${{github.sha}}
+        git commit -m refinery/${{github.sha}}
         git push origin master --force
