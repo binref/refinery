@@ -5,7 +5,11 @@ from .. import Unit
 
 class intersection(Unit):
     """
-    Group incoming chunks into frames of the given size.
+    This unit can be used to compute the intersection of several frames of input chunks. It consumes all
+    frames in the current layer, interprets each as a set of input chunks, and computes their intersection.
+    After the last frame is consumed, the unit outputs one frame containing the result. Consequently, the
+    unit can only be used in frames that are nested at least two layers deep; otherwise, there is nothing
+    to intersect.
     """
     def __init__(self):
         super().__init__()
