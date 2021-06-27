@@ -21,7 +21,7 @@ class ppjson(Unit):
     ):
         return super().__init__(indent=indent, tabular=tabular)
 
-    def _output(self, parsed, **kwargs):
+    def _pretty_output(self, parsed, **kwargs):
         if self.args.tabular:
             table = list(flattened(parsed))
             width = max(len(key) for key, _ in table)
@@ -40,4 +40,4 @@ class ppjson(Unit):
             strings = {range(*m.span()) for m in formats.string.finditer(data)}
             data = self._TRAILING_COMMA.sub(smartfix, data)
         kwargs = {'indent': self.args.indent} if self.args.indent else {'separators': (',', ':')}
-        yield from self._output(json.loads(data), **kwargs)
+        yield from self._pretty_output(json.loads(data), **kwargs)
