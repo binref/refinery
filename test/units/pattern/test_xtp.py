@@ -6,7 +6,7 @@ from .. import TestUnitBase
 class TestPatternExtractor(TestUnitBase):
 
     def test_extraction_environment_variable(self):
-        unit = self.load('evar')
+        unit = self.load('environment-variable')
         self.assertEqual(b'%TEST%', unit(B'This is a %TEST% with environment variable.'))
 
     def test_extraction_domain_01(self):

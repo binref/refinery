@@ -138,7 +138,7 @@ class TestDump(TestUnitBase):
                 index=index,
                 crc32='{:08X}'.format(zlib.crc32(data) & 0xFFFFFFFF),
                 md5=hashlib.md5(data).hexdigest()
-            ) for index, data in enumerate(samples, 1)
+            ) for index, data in enumerate(samples)
         ]
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'file-{index:02d}-{foobar}-{crc32}-{md5}.{ext}')
