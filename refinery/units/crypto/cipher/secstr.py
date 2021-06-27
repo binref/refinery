@@ -29,17 +29,27 @@ class secstr(Unit):
         ) = bytes(range(1, 17)),
         iv: arg('-I', help='Optionally specify an IV to use for encryption.') = None
     ):
-        if len(key) != 0x10:
-            raise ValueError('The encryption key has to be 16 bytes long.')
-        if iv is not None and len(iv) != 0x10:
-            raise ValueError('The IV has to be 16 bytes long.')
         super().__init__(key=key, iv=iv)
 
+    @property
+    def key(self):
+        key = self.args.key
+        if len(key) != 0x10:
+            raise ValueError('The encryption key has to be 16 bytes long.')
+        return key
+
+    @property
+    def iv(self):
+        iv = self.args.iv
+        if iv is not None and len(iv) != 0x10:
+            raise ValueError('The IV has to be 16 bytes long.')
+        return iv
+
     def reverse(self, data):
-        ivec = self.args.iv or urandom(0x10)
+        ivec = self.iv or urandom(0x10)
         if len(ivec) != 0x10:
             raise ValueError(self._IVERR)
-        cipher = AES.new(self.args.key, AES.MODE_CBC, ivec)
+        cipher = AES.new(self.key, AES.MODE_CBC, ivec)
         data = data.decode('latin-1').encode('utf-16LE')
         data = cipher.encrypt(pad(data, block_size=0x10))
         data = base64.b16encode(data).lower().decode('ascii')
@@ -56,7 +66,7 @@ class secstr(Unit):
         if len(data) % 0x10 != 0:
             self.log_info('data not block-aligned, padding with zeros')
             data += B'\0' * (0x10 - len(data) % 0x10)
-        cipher = AES.new(self.args.key, AES.MODE_CBC, ivec)
+        cipher = AES.new(self.key, AES.MODE_CBC, ivec)
         data = cipher.decrypt(data)
         try:
             data = unpad(data, block_size=0x10)
