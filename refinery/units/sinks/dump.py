@@ -7,8 +7,7 @@ from itertools import cycle
 from string import Formatter
 
 from .. import arg, Unit, RefineryCriticalException
-from ...lib.meta import LazyMetaOracleFactory
-from ..strings.cfmt import ByteStringWrapper
+from ...lib.meta import GetMeta
 
 
 class dump(Unit):
@@ -123,16 +122,6 @@ class dump(Unit):
         self.stream.close()
         self.stream = None
 
-    def _format(self, filename, data, index=0, **meta):
-        class DelayedFormatter(LazyMetaOracleFactory(data, path='sha256')):
-            def __missing__(self, key):
-                try:
-                    return super().__missing__(key)
-                except KeyError:
-                    return F'{{{key}}}'
-
-        return filename.format_map(DelayedFormatter(index=index, **meta))
-
     def process(self, data):
         if not self.exhausted:
             if self._paste:
@@ -174,7 +163,7 @@ class dump(Unit):
             yield from it
             return
 
-        for index, chunk in enumerate(chunks, 1):
+        for index, chunk in enumerate(chunks, 0):
             if self.exhausted or not chunk.visible:
                 continue
             if not self.args.stream or not self.stream:
@@ -184,9 +173,9 @@ class dump(Unit):
                     self.exhausted = True
                 else:
                     if self._has_format(path):
-                        meta = ByteStringWrapper.FormatMap(chunk, self.codec)
-                        meta.setdefault('index', index)
-                        path = self._format(path, chunk, **meta)
+                        meta = GetMeta(chunk, ghost=True)
+                        meta['index'] = index
+                        path = meta.format(path, chunk)
                     self.stream = self._open(path)
             yield chunk
 

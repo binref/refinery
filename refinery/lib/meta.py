@@ -5,9 +5,12 @@ File type related functions.
 """
 import abc
 import hashlib
+import string
 import zlib
 
-from .tools import entropy
+from typing import Dict, Optional
+
+from .tools import entropy, index_of_coincidence
 from .mime import FileMagicInfo
 
 
@@ -50,12 +53,23 @@ class Percentage(float, CustomStringRepresentation):
         return F'{self*100:.2f}%' if 0 <= self <= 1 else F'{self:.4f}'
 
 
-def LazyMetaOracleFactory(chunk, **aliases):
+class GhostField:
+
+    def __init__(self, key):
+        self.key = key
+
+    def __format__(self, spec):
+        spec = spec and F':{spec}'
+        return F'{{{self.key}{spec}}}'
+
+
+def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str, str]] = None):
     """
     Create a dictionary that can be queried lazily for all potential options of the common meta
     variable unit. For example, a SHA-256 hash is computed only as soon as the oracle is accessed
     at the key 'sha256'.
     """
+    aliases = aliases or {}
 
     CUSTOM_TYPE_MAP = {
         'entropy': Percentage,
@@ -63,12 +77,17 @@ def LazyMetaOracleFactory(chunk, **aliases):
     }
 
     class LazyMetaOracle(dict):
+        @property
         def magic_info(self):
             try:
                 return self._magic_info
             except AttributeError:
                 info = self._magic_info = FileMagicInfo(chunk)
                 return info
+
+        @magic_info.setter
+        def magic_info(self, info):
+            self._magic_info = info
 
         def fix(self):
             for key, value in self.items():
@@ -77,17 +96,23 @@ def LazyMetaOracleFactory(chunk, **aliases):
                     self[key] = ctype(value)
             return self
 
+        def format(self, spec, data):
+            formatter = string.Formatter()
+            return formatter.vformat(spec, [data], self)
+
         def __missing__(self, key):
             if key == 'size':
                 return self.setdefault(key, SizeInt(len(chunk)))
             if key == 'mime':
-                return self.setdefault(key, self.magic_info().mime)
+                return self.setdefault(key, self.magic_info.mime)
             if key == 'ext':
-                return self.setdefault(key, self.magic_info().extension)
+                return self.setdefault(key, self.magic_info.extension)
             if key == 'magic':
-                return self.setdefault(key, self.magic_info().description)
+                return self.setdefault(key, self.magic_info.description)
             if key == 'entropy':
                 return self.setdefault(key, Percentage(entropy(chunk)))
+            if key == 'ic':
+                return self.setdefault(key, Percentage(index_of_coincidence(chunk)))
             if key == 'crc32':
                 return self.setdefault(key, F'{zlib.crc32(chunk)&0xFFFFFFFF:08X}')
             if key == 'sha1':
@@ -98,13 +123,16 @@ def LazyMetaOracleFactory(chunk, **aliases):
                 return self.setdefault(key, hashlib.md5(chunk).hexdigest())
             if key in aliases:
                 return self[aliases[key]]
+            if ghost:
+                return GhostField(key)
             raise KeyError(F'The meta variable {key} is unknown.')
 
     return LazyMetaOracle
 
 
-def GetMeta(chunk, *pre_populate, **aliases):
-    cls = LazyMetaOracleFactory(chunk, **aliases)
+def GetMeta(chunk, *pre_populate, ghost: bool = False, aliases: Optional[Dict[str, str]] = None):
+    aliases = aliases or None
+    cls = LazyMetaOracleFactory(chunk, ghost, aliases)
     meta = cls(**getattr(chunk, 'meta', {}))
     for key in pre_populate:
         meta[key]

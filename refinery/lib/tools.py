@@ -186,14 +186,31 @@ def entropy(data: bytearray) -> float:
         import numpy
     except ImportError:
         histogram = {b: data.count(b) for b in range(0x100)}
-        p = 1. / len(data)
-        S = [histogram[b] * p for b in histogram]
-        return 0.0 + -sum(q * log(q, 2) for q in S if q) / 8.0
+        S = [histogram[b] / len(data) for b in histogram]
+        return 0.0 + -sum(p * log(p, 2) for p in S if p) / 8.0
     else:
-        value, counts = numpy.unique(data, return_counts=True)
+        _, counts = numpy.unique(data, return_counts=True)
         probs = counts / len(data)
         # 8 bits are the maximum number of bits of information in a byte
         return 0.0 + -sum(p * log(p, 2) for p in probs) / 8.0
+
+
+def index_of_coincidence(data: bytearray) -> float:
+    """
+    Computes the index of coincidence of `data` over the alphabet of all bytes.
+    """
+    if not data: return 0.0
+    N = len(data)
+    try:
+        import numpy
+    except ImportError:
+        C = [data.count(b) for b in range(0x100)]
+    else:
+        C = numpy.histogram(
+            numpy.frombuffer(data, dtype=numpy.uint8),
+            numpy.arange(0x100))[0]
+    d = 1 / N / (N - 1)
+    return float(sum(x * (x - 1) * d for x in C))
 
 
 def isstream(obj) -> bool:
