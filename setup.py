@@ -55,7 +55,7 @@ def main():
             )
             for item in loader.get_all_entry_points()
         ] + [
-            'binre=refinery.explore:explorer'
+            'binref=refinery.explore:explorer'
         ]
 
     setuptools.setup(
