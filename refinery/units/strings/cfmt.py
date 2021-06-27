@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import string
+
 from typing import ByteString, Dict, Any
 from codecs import encode, decode
 
@@ -21,6 +23,9 @@ class ByteStringWrapper:
             return self.string.decode(self.codec)
         except UnicodeDecodeError:
             return self.string.decode('ascii', 'backslashreplace')
+
+    def __format__(self, spec):
+        return F'{self!s:{spec}}'
 
     @classmethod
     def FormatMap(cls, chunk: ByteString, codec: str) -> Dict[str, Any]:
@@ -63,10 +68,8 @@ class cfmt(Unit):
         super().__init__(formats=formats)
 
     def process(self, data):
+        formatter = string.Formatter()
         meta = ByteStringWrapper.FormatMap(data, self.codec)
         data = ByteStringWrapper(data, self.codec)
         for spec in self.args.formats:
-            # pre-populate fields in meta dictionary
-            spec.replace('{}', '').format_map(meta)
-        for spec in self.args.formats:
-            yield spec.format(data, **meta).encode(self.codec)
+            yield formatter.vformat(spec, [data], meta).encode(self.codec)
