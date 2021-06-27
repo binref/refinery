@@ -54,15 +54,15 @@ def get_terminal_size():
         return int(os.environ['REFINERY_TERMSIZE'])
     except (KeyError, ValueError):
         pass
-    try:
-        err_width = os.get_terminal_size(sys.stderr.fileno()).columns
-    except OSError:
-        err_width = 0
-    try:
-        out_width = os.get_terminal_size(sys.stdout.fileno()).columns
-    except OSError:
-        out_width = 0
-    width = max(err_width, out_width)
+    width = 0
+    for stream in (sys.stderr, sys.stdout):
+        if stream.isatty():
+            try:
+                width = os.get_terminal_size(stream.fileno()).columns
+            except Exception:
+                width = 0
+            else:
+                break
     return 0 if width < 9 else width - 1
 
 
