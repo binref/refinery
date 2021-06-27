@@ -1,4 +1,4 @@
-name: tests
+name: documentation
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
 jobs:
   docs:
     runs-on: ubuntu-latest
-    needs: test
     steps:
     - uses: actions/checkout@v2
       with:
