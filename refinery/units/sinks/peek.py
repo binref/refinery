@@ -7,6 +7,7 @@ import string
 
 from . import arg, HexViewer
 from ...lib.meta import GetMeta, CustomStringRepresentation, SizeInt
+from ...lib.mime import FileMagicInfo
 from ...lib.types import INF
 from ...lib.tools import isbuffer, lookahead
 
@@ -26,9 +27,14 @@ class peek(HexViewer):
         brief  : arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
         decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         esc    : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
-        meta   : arg('-m', help='Accumulate metadata that requires scanning the data, such as entropy and file magic.') = False,
+        meta   : arg('-m', group='META', help='Accumulate metadata that requires scanning the data, such as entropy and file magic.') = False,
+        bare   : arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
         hexaddr=True, dense=False, expand=False, width=0
     ):
+        if bare and meta:
+            raise ValueError('The bare and meta options are exclusive.')
+        if decode and esc:
+            raise ValueError('The decode and esc options are exclusive.')
         lines = 1 if brief else INF if all else lines
         super(peek, self).__init__(
             brief=brief,
@@ -39,6 +45,7 @@ class peek(HexViewer):
             hexaddr=hexaddr and not brief,
             lines=lines,
             meta=meta,
+            bare=bare,
             width=width,
         )
 
@@ -72,7 +79,7 @@ class peek(HexViewer):
             elif isinstance(value, int):
                 value = F'0x{value:X}'
             elif isinstance(value, float):
-                value = F'{value*100:.2f}%' if 0 <= value <= 1 else F'{value:.4f}'
+                value = F'{value:.4f}'
             metavar = F'{name:>{width}} = {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
@@ -166,14 +173,19 @@ class peek(HexViewer):
 
         if self.args.brief:
             final = False
-        else:
+        elif not self.args.bare:
             meta = GetMeta(data)
+            meta['size'] = meta['size']
             if self.args.meta:
-                if meta['magic'] == 'data':
-                    del meta['magic']
                 entropy_percent = meta['entropy'] * 100.0
                 meta['entropy'] = F'{entropy_percent:.2f}%'
-                meta['size'] = meta['size']
+                meta['ic']
+            else:
+                meta.magic_info = FileMagicInfo(data[:0x1000])
+            if meta['magic'] == 'data':
+                del meta['magic']
+            if index is not None:
+                meta['index'] = index
             yield from self._peekmeta(metrics.hexdump_width, separator(), **meta)
 
         if lines:
