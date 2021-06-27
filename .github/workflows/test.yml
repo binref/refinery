@@ -74,3 +74,5 @@ jobs:
       with:
         github_token: ${{ secrets.GH_PAGES_TOKEN }}
         publish_dir: ./html/refinery
+        external_repository: binref/binref.github.io
+        publish_branch: master
