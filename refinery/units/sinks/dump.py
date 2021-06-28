@@ -175,7 +175,7 @@ class dump(Unit):
                     if self._has_format(path):
                         meta = GetMeta(chunk, ghost=True)
                         meta['index'] = index
-                        path = meta.format(path, chunk)
+                        path = meta.format(path, chunk, self.codec)
                     self.stream = self._open(path)
             yield chunk
 

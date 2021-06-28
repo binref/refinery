@@ -129,10 +129,13 @@ class PythonExpression:
             nodes = ast.walk(expression)
         except Exception:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}')
-        if type(next(nodes)) != ast.Module:
-            raise ParserError(F'unknown error parsing the expression: {definition!s}')
-        if type(next(nodes)) != ast.Expr:
-            raise ParserError(F'not a valid Python expression: {definition!s}')
+        try:
+            if type(next(nodes)) != ast.Module:
+                raise ParserError(F'Unknown error parsing the expression: {definition!s}')
+            if type(next(nodes)) != ast.Expr:
+                raise ParserError(F'Not a valid Python expression: {definition!s}')
+        except StopIteration:
+            raise ParserError('The input string is not a Python expression.')
         names = {node.id for node in nodes if isinstance(node, ast.Name)}
         names.difference_update(dir(builtins))
         names.difference_update(globals())
@@ -168,6 +171,7 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
     argument format type will process the string `0x11:0x11+4*0x34` as the slice
     object `slice(17, 225, None)`.
     """
+    expression = expression or ':'
     if isinstance(expression, slice):
         return expression
     if isinstance(expression, int):

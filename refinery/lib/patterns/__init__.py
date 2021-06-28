@@ -334,6 +334,7 @@ class indicators(PatternEnum):
     def from_dashname(cls, key):
         return getattr(cls, key.replace('-', '_'))
 
+
 class defanged(PatternEnum):
     """
     An enumeration of patterns for defanged indicators. Used only by the reverse

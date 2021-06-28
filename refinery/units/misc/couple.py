@@ -5,7 +5,7 @@ import sys
 from subprocess import PIPE, Popen
 
 from .. import arg, Unit, RefineryPartialResult
-from ..strings.cfmt import ByteStringWrapper
+from ...lib.meta import GetMeta
 
 
 class couple(Unit):
@@ -38,9 +38,9 @@ class couple(Unit):
             import shlex
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
-        meta = ByteStringWrapper.FormatMap(data, self.codec)
+        meta = GetMeta(data)
         commandline = [
-            cmd.decode(self.codec).format(ByteStringWrapper(data, self.codec), **meta)
+            meta.format(cmd.decode(self.codec), data, self.codec)
             for cmd in self.args.commandline
         ]
 

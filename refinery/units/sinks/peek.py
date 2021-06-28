@@ -27,7 +27,7 @@ class peek(HexViewer):
         brief  : arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
         decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         esc    : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
-        meta   : arg('-m', group='META', help='Accumulate metadata that requires scanning the data, such as entropy and file magic.') = False,
+        meta   : arg('-m', group='META', help='Accumulate metadata that requires a full scan.') = False,
         bare   : arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
         hexaddr=True, dense=False, expand=False, width=0
     ):

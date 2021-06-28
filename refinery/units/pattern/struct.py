@@ -3,7 +3,8 @@
 import re
 
 from .. import Unit, arg
-from ...units.strings.cfmt import ByteStringWrapper
+
+from ...lib.meta import GetMeta
 from ...lib.structures import StructReader
 
 
@@ -35,9 +36,7 @@ class struct(Unit):
         spec = self.args.spec
         if not any(spec.startswith(f) for f in '<@=!>'):
             spec = F'={spec}'
-        meta = ByteStringWrapper.FormatMap(data, self.codec)
-        spec = spec.format_map(meta)
-        spec = re.split('([auAU])', spec)
+        spec = re.split('([auAU])', spec.format_map(GetMeta(data)))
         results = []
         with StructReader(data) as reader:
             for format in spec:

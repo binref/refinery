@@ -267,3 +267,21 @@ class TestDump(TestUnitBase):
                 self.assertTrue(os.path.exists(os.path.join(root, 'A1')))
                 with open(os.path.join(root, 'A1'), 'r') as stream:
                     self.assertEqual(stream.read(), 'data1')
+
+    def test_dump_listunroll(self):
+        samples = [
+            self.generate_random_buffer(124),
+            self.generate_random_buffer(2049)
+        ]
+        filenames = ['F1', 'F2']
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, 'F{[1,2][index]}')
+            dump = self.load(path)
+            meta = self.ldu('cm')
+            emit = self.ldu('emit', *samples)
+            emit [ meta | dump ] () # noqa
+            for filename, data in zip(filenames, samples):
+                result_path = os.path.join(root, filename)
+                self.assertTrue(os.path.exists(result_path))
+                with open(result_path, 'rb') as result:
+                    self.assertEqual(result.read(), data)

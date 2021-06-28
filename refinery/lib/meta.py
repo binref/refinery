@@ -5,18 +5,41 @@ File type related functions.
 """
 import abc
 import hashlib
+from io import StringIO
 import string
 import zlib
 
-from typing import Dict, Optional
+from typing import Dict, Optional, ByteString
 
-from .tools import entropy, index_of_coincidence
+from .tools import isbuffer, entropy, index_of_coincidence
 from .mime import FileMagicInfo
+from .argformats import ParserError, PythonExpression
 
 
 class CustomStringRepresentation(abc.ABC):
     @abc.abstractmethod
     def __str__(self): ...
+
+
+class ByteStringWrapper:
+    def __init__(self, string: ByteString, codec: str):
+        self.string = string
+        self.codec = codec
+
+    def __getattr__(self, key):
+        return getattr(self.string, key)
+
+    def __repr__(self):
+        return self.string.hex().upper()
+
+    def __str__(self):
+        try:
+            return self.string.decode(self.codec)
+        except UnicodeDecodeError:
+            return self.string.decode('ascii', 'backslashreplace')
+
+    def __format__(self, spec):
+        return F'{self!s:{spec}}'
 
 
 class SizeInt(int, CustomStringRepresentation):
@@ -96,9 +119,27 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
                     self[key] = ctype(value)
             return self
 
-        def format(self, spec, data):
+        def format(self, spec: str, data: ByteString, codec: str) -> str:
+            def identity(x):
+                return x
+            for key, value in self.items():
+                if isbuffer(value):
+                    self[key] = ByteStringWrapper(value, codec)
             formatter = string.Formatter()
-            return formatter.vformat(spec, [data], self)
+            data = ByteStringWrapper(data, codec)
+            with StringIO() as stream:
+                for prefix, field, modifier, conversion in formatter.parse(spec):
+                    stream.write(prefix)
+                    converter = {
+                        'a': ascii,
+                        's': str,
+                        'r': repr,
+                    }.get(conversion, identity)
+                    if field is None:
+                        continue
+                    output = converter(self[field] if field else data)
+                    stream.write(output.__format__(modifier))
+                return stream.getvalue()
 
         def __missing__(self, key):
             if key == 'size':
@@ -121,6 +162,10 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
                 return self.setdefault(key, hashlib.sha256(chunk).hexdigest())
             if key == 'md5':
                 return self.setdefault(key, hashlib.md5(chunk).hexdigest())
+            try:
+                return PythonExpression.evaluate(key, **self)
+            except ParserError:
+                pass
             if key in aliases:
                 return self[aliases[key]]
             if ghost:
