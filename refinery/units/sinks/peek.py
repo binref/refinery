@@ -136,6 +136,8 @@ class peek(HexViewer):
 
         if data.temp:
             final, index = data.temp
+        if final and not index:
+            index = None
 
         if not self.args.brief:
             padding = 0
@@ -166,10 +168,6 @@ class peek(HexViewer):
             if title is None or sepsize <= len(title) + 8:
                 return sepsize * '-'
             return F'--{title}' + '-' * (sepsize - len(title) - 2)
-
-        if index is None:
-            yield separator()
-            return
 
         if self.args.brief:
             final = False
