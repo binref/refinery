@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.3.32
+- Renames the `fread` unit to `ef`.
+- Metadata / Format string expression parsing is now more flexible.
+
 ## Version 0.3.31
 - Adds the `intersection` unit.
 
