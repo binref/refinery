@@ -69,9 +69,9 @@ class lprefix(Unit):
                     yield mf.read(size)
                     count += 1
             except EOF as eof:
-                if self.args.strict or count >= self.args.count:
+                if self.args.strict:
                     return
-                if len(eof.rest) < size:
+                if count < self.args.count and len(eof.rest) < size:
                     self.log_warn(F'attempted to read 0x{size:X} bytes, got only 0x{len(eof.rest):X}.')
                 mf.seek(position)
                 yield mf.read()
