@@ -5,7 +5,7 @@ from .. import Unit
 
 class dedup(Unit):
     """
-    Deduplicates a sequence of multiple inputs, and optionally sorts them.
+    Deduplicates a sequence of multiple inputs. The deduplication is limited to the current `refinery.lib.frame`.
     """
 
     def filter(self, chunks):
