@@ -5,7 +5,7 @@ from ...lib.argformats import PythonExpression
 from . import arg, ConditionalUnit
 
 
-class ifexpr(ConditionalUnit):
+class iff(ConditionalUnit):
     """
     Filter incoming chunks depending on whether a given Python expression evaluates
     to true.
