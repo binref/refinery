@@ -491,6 +491,7 @@ class Framed:
     def _generate_chunks(self, parent: Chunk):
         if not self.squeeze:
             for item in self.action(parent):
+                # TODO: Is this copy necessary?
                 yield copy.copy(item).inherit(parent)
             return
         it = self.action(parent)
@@ -546,22 +547,22 @@ class Framed:
             if gauge:
                 yield MAGIC
             while self.unpack.nextframe():
-                while True:
-                    for chunk in self._apply_filter():
+                for chunk in self._apply_filter():
+                    results = self._generate_chunks(chunk) if chunk.visible else (chunk,)
+                    if not gauge:
+                        yield from results
+                        continue
+                    for result in results:
                         if not trunk:
-                            trunk = Chunk(bytearray(), chunk.path, chunk.view, chunk.meta, chunk.fill)
-                        results = self._generate_bytes(chunk) if chunk.visible else (chunk,)
-                        if not gauge:
-                            yield from results
-                            continue
-                        for result in results:
+                            trunk = result
+                        elif result.path[gauge:] == trunk.path[gauge:]:
                             trunk.extend(result)
-                    if self.unpack.peek[:gauge + 1] != self.unpack.trunk[:gauge + 1]:
-                        break
-                    if not self.unpack.nextframe():
-                        break
+                        else:
+                            trunk.truncate(gauge)
+                            yield trunk.pack()
+                            trunk = result
                 if not gauge or not trunk:
                     continue
+            if trunk:
                 trunk.truncate(gauge)
                 yield trunk.pack()
-                trunk = None
