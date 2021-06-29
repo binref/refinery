@@ -46,6 +46,8 @@ class dnfields(PathExtractorUnit):
         header = DotNetHeader(data, parse_resources=False)
         tables = header.meta.Streams.Tables
         iwidth = len(str(len(tables.FieldRVA)))
+        rwidth = max(len(F'{field.RVA:X}') for field in tables.FieldRVA)
+        rwidth = max(rwidth, 4)
 
         for k, rv in enumerate(tables.FieldRVA):
             index = rv.Field.Index
@@ -75,11 +77,9 @@ class dnfields(PathExtractorUnit):
                 continue
             typename, count, size = guess
             totalsize = count * size
-            name = F'F{rv.RVA:08X}.{typename}[{count}]'
-            if fname.isprintable():
-                name = F'{name}:{fname}'
-            else:
-                fname = '<UNPRINTABLE>'
+            if not fname.isprintable():
+                fname = F'F{rv.RVA:0{rwidth}X}'
+            name = F'{fname}.{typename}[{count}]'
             self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {typename}, count: {count}, name: {fname}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
             yield UnpackResult(name, lambda t=offset, s=totalsize: data[t:t + s])
