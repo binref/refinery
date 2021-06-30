@@ -9,10 +9,10 @@ from io import StringIO
 import string
 import zlib
 
-from typing import Dict, Optional, ByteString
+from typing import Callable, Dict, Optional, ByteString, Union
 
 from .tools import isbuffer, entropy, index_of_coincidence
-from .mime import FileMagicInfo
+from .mime import get_cached_file_magic_info
 from .argformats import ParserError, PythonExpression
 
 
@@ -86,6 +86,21 @@ class GhostField:
         return F'{{{self.key}{spec}}}'
 
 
+COMMON_PROPERTIES: Dict[str, Callable[[ByteString], Union[str, int, float]]] = {
+    'mime'    : lambda chunk: get_cached_file_magic_info(chunk).mime,
+    'ext'     : lambda chunk: get_cached_file_magic_info(chunk).extension,
+    'magic'   : lambda chunk: get_cached_file_magic_info(chunk).description,
+    'size'    : lambda chunk: SizeInt(len(chunk)),
+    'entropy' : lambda chunk: Percentage(entropy(chunk)),
+    'ic'      : lambda chunk: Percentage(index_of_coincidence(chunk)),
+    'crc32'   : lambda chunk: F'{zlib.crc32(chunk)&0xFFFFFFFF:08X}',
+    'sha1'    : lambda chunk: hashlib.sha1(chunk).hexdigest(),
+    'sha256'  : lambda chunk: hashlib.sha256(chunk).hexdigest(),
+    'md5'     : lambda chunk: hashlib.md5(chunk).hexdigest(),
+    'index'   : NotImplemented,
+}
+
+
 def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str, str]] = None):
     """
     Create a dictionary that can be queried lazily for all potential options of the common meta
@@ -100,18 +115,6 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
     }
 
     class LazyMetaOracle(dict):
-        @property
-        def magic_info(self):
-            try:
-                return self._magic_info
-            except AttributeError:
-                info = self._magic_info = FileMagicInfo(chunk)
-                return info
-
-        @magic_info.setter
-        def magic_info(self, info):
-            self._magic_info = info
-
         def fix(self):
             for key, value in self.items():
                 ctype = CUSTOM_TYPE_MAP.get(key)
@@ -142,26 +145,11 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
                 return stream.getvalue()
 
         def __missing__(self, key):
-            if key == 'size':
-                return self.setdefault(key, SizeInt(len(chunk)))
-            if key == 'mime':
-                return self.setdefault(key, self.magic_info.mime)
-            if key == 'ext':
-                return self.setdefault(key, self.magic_info.extension)
-            if key == 'magic':
-                return self.setdefault(key, self.magic_info.description)
-            if key == 'entropy':
-                return self.setdefault(key, Percentage(entropy(chunk)))
-            if key == 'ic':
-                return self.setdefault(key, Percentage(index_of_coincidence(chunk)))
-            if key == 'crc32':
-                return self.setdefault(key, F'{zlib.crc32(chunk)&0xFFFFFFFF:08X}')
-            if key == 'sha1':
-                return self.setdefault(key, hashlib.sha1(chunk).hexdigest())
-            if key == 'sha256':
-                return self.setdefault(key, hashlib.sha256(chunk).hexdigest())
-            if key == 'md5':
-                return self.setdefault(key, hashlib.md5(chunk).hexdigest())
+            deduction = COMMON_PROPERTIES.get(key)
+            if deduction is NotImplemented:
+                raise KeyError(F'cannot deduce the {key} property from just the data, you have to use the cm unit.')
+            if deduction:
+                return self.setdefault(key, deduction(chunk))
             try:
                 return PythonExpression.evaluate(key, **self)
             except ParserError:

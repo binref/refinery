@@ -3,6 +3,8 @@
 """
 File type related functions.
 """
+import functools
+
 from .magic import magic, magicparse
 
 
@@ -267,3 +269,8 @@ class FileMagicInfo:
                 inner = FileMagicInfo(decompressed, default).extension
                 extension = F'{inner}.{extension}'
         self.extension = extension
+
+
+@functools.lru_cache(maxsize=None)
+def get_cached_file_magic_info(data):
+    return FileMagicInfo(data)
