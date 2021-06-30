@@ -7,7 +7,6 @@ import string
 
 from . import arg, HexViewer
 from ...lib.meta import GetMeta, CustomStringRepresentation, SizeInt
-from ...lib.mime import FileMagicInfo
 from ...lib.types import INF
 from ...lib.tools import isbuffer, lookahead
 
@@ -173,15 +172,13 @@ class peek(HexViewer):
             final = False
         elif not self.args.bare:
             meta = GetMeta(data)
-            meta['size'] = meta['size']
             if self.args.meta:
+                meta['size'] = meta['size']
+                if meta['magic'] == 'data':
+                    del meta['magic']
                 entropy_percent = meta['entropy'] * 100.0
                 meta['entropy'] = F'{entropy_percent:.2f}%'
                 meta['ic']
-            else:
-                meta.magic_info = FileMagicInfo(data[:0x1000])
-            if meta['magic'] == 'data':
-                del meta['magic']
             if index is not None:
                 meta['index'] = index
             yield from self._peekmeta(metrics.hexdump_width, separator(), **meta)
