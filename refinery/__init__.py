@@ -20,8 +20,9 @@ option. To better understand how the command line parameters are parsed, it is
 recommended to study the module documentation of the following two library
 modules, as their content is relevant for command line use of the `refinery`.
 
-- `refinery.lib.argformats`
-- `refinery.lib.frame`
+1. `refinery.lib.frame`
+2. `refinery.lib.argformats`
+3. `refinery.lib.meta`
 
 Furthermore, the module documentation of `refinery.units` contains a brief
 example of how to write simple units.

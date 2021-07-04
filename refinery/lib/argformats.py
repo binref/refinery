@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-# Multibin Syntax
-
-## Introduction
+## Multibin Syntax
 
 Many refinery units receive arguments which represent binary data, and usually these arguments can
 be given in **multibin** format, which is a special syntax which allows to preprocess data with a
@@ -41,7 +39,7 @@ The modifiers `s`, `u`, `h`, `copy` (or `c`), and `cut` (or `x`) along with usin
 should cover most use cases. To learn about other existing modifiers, refer to the rest of this
 documentation.
 
-## The Details
+## Technical Details
 
 This module implements all argument parser types for the binary refinery. Notable classes for the
 command line use are the following:
