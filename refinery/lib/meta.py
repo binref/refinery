@@ -171,6 +171,14 @@ class Percentage(float, CustomStringRepresentation):
         return F'{self*100:.2f}%'
 
 
+class HexByteString(bytes, CustomStringRepresentation):
+    def __str__(self):
+        return self.hex()
+
+    def __repr__(self):
+        return self.hex()
+
+
 COMMON_PROPERTIES: Dict[str, Callable[[ByteString], Union[str, int, float]]] = {
     'mime'    : lambda chunk: get_cached_file_magic_info(chunk).mime,
     'ext'     : lambda chunk: get_cached_file_magic_info(chunk).extension,
@@ -179,9 +187,9 @@ COMMON_PROPERTIES: Dict[str, Callable[[ByteString], Union[str, int, float]]] = {
     'entropy' : lambda chunk: Percentage(entropy(chunk)),
     'ic'      : lambda chunk: Percentage(index_of_coincidence(chunk)),
     'crc32'   : lambda chunk: F'{zlib.crc32(chunk)&0xFFFFFFFF:08X}',
-    'sha1'    : lambda chunk: hashlib.sha1(chunk).hexdigest(),
-    'sha256'  : lambda chunk: hashlib.sha256(chunk).hexdigest(),
-    'md5'     : lambda chunk: hashlib.md5(chunk).hexdigest(),
+    'sha1'    : lambda chunk: HexByteString(hashlib.sha1(chunk).digest()),
+    'sha256'  : lambda chunk: HexByteString(hashlib.sha256(chunk).digest()),
+    'md5'     : lambda chunk: HexByteString(hashlib.md5(chunk).digest()),
     'index'   : NotImplemented,
 }
 """
@@ -199,8 +207,11 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
     aliases = aliases or {}
 
     CUSTOM_TYPE_MAP = {
-        'entropy': Percentage,
-        'size': SizeInt,
+        'entropy' : Percentage,
+        'size'    : SizeInt,
+        'sha1'    : HexByteString,
+        'sha256'  : HexByteString,
+        'md5'     : HexByteString,
     }
 
     class LazyMetaOracle(dict):
