@@ -15,14 +15,11 @@ class xt7z(ArchiveUnit):
         pwd = pwd and {'password': pwd.decode(self.codec)} or {}
         mv = memoryview(data)
         zp = max(0, data.find(B'7z\xBC\xAF\x27\x1C'))
-        with MemoryFile(mv[zp:]) as stream:
-            with py7zr.SevenZipFile(stream, **pwd) as archive:
-                for info in archive.list():
-                    info: py7zr.FileInfo
-                    if info.is_directory:
-                        continue
-                    yield self._pack(
-                        info.filename,
-                        info.creationtime,
-                        lambda a=archive: a.read(info.filename).get(info.filename).read()
-                    )
+        archive = py7zr.SevenZipFile(MemoryFile(mv[zp:]), **pwd)
+        for info in archive.list():
+            def extract(archive: py7zr.SevenZipFile = archive, info: py7zr.FileInfo = info):
+                archive.reset()
+                return archive.read(info.filename).get(info.filename).read()
+            if info.is_directory:
+                continue
+            yield self._pack(info.filename, info.creationtime, extract)
