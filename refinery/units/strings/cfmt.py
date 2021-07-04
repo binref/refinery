@@ -3,7 +3,7 @@
 from codecs import encode, decode
 
 from .. import arg, Unit
-from ...lib.meta import GetMeta
+from ...lib.meta import metavars
 
 
 class cfmt(Unit):
@@ -38,6 +38,6 @@ class cfmt(Unit):
         super().__init__(formats=formats)
 
     def process(self, data):
-        meta = GetMeta(data)
+        meta = metavars(data, ghost=True)
         for spec in self.args.formats:
             yield meta.format(spec, data, self.codec).encode(self.codec)

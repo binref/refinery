@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ...lib.argformats import utf8
+from ...lib.meta import metavars
 from . import arg, RegexUnit, PatternExtractor, TransformSubstitutionFactory
 
 
@@ -30,10 +31,7 @@ class rex(RegexUnit, PatternExtractor):
         self.superinit(super(), **vars())
 
     def process(self, data):
-        try:
-            meta = data.meta
-        except AttributeError:
-            meta = {}
+        meta = metavars(data)
         self.log_debug('regular expression:', self.regex)
         transformations = [TransformSubstitutionFactory(t, meta) for t in self.args.transformation] or [lambda m: m[0]]
         transformations = [lambda m, mt=t: self.labelled(mt(m), **m.groupdict()) for t in transformations]

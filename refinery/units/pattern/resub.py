@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from ...lib.argformats import utf8
+from ...lib.meta import metavars
 from . import arg, RegexUnit, TransformSubstitutionFactory
 
 
@@ -25,10 +26,7 @@ class resub(RegexUnit):
     def process(self, data):
         self.log_info('pattern:', self.regex)
         self.log_info('replace:', self.args.subst)
-        try:
-            meta = data.meta
-        except AttributeError:
-            meta = {}
+        meta = metavars(data)
         repl = TransformSubstitutionFactory(self.args.subst, meta)
         sub = self.regex.sub
         if self.args.count:

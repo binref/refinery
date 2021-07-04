@@ -6,6 +6,7 @@ from .. import Unit, arg
 from ...lib.structures import StructReader, EOF
 from ...lib.types import INF
 from ...lib.argformats import PythonExpression
+from ...lib.meta import metavars
 
 
 class lprefix(Unit):
@@ -48,11 +49,7 @@ class lprefix(Unit):
         )
 
     def process(self, data):
-        try:
-            meta = data.meta
-        except AttributeError:
-            meta = {}
-        parse = PythonExpression(self.args.derive or 'N', 'N', 'H', *meta)
+        parse = PythonExpression(self.args.derive or 'N', 'N', 'H', constants=metavars(data))
         hsize = calcsize(self.args.prefix)
         with StructReader(memoryview(data)) as mf:
             count = size = position = 0
@@ -62,7 +59,7 @@ class lprefix(Unit):
                     if count >= self.args.count:
                         raise EOF
                     size = mf.read_struct(self.args.prefix, unwrap=True)
-                    size = parse(N=size, H=hsize, **meta)
+                    size = parse(N=size, H=hsize)
                     if self.args.header:
                         mf.seek(position)
                     self.log_info(F'reading chunk of size: {size}')

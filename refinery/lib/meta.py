@@ -88,7 +88,6 @@ from typing import Callable, Dict, Optional, ByteString, Union
 
 from .tools import isbuffer, entropy, index_of_coincidence
 from .mime import get_cached_file_magic_info
-from .argformats import ParserError, PythonExpression
 
 
 class CustomStringRepresentation(abc.ABC):
@@ -172,26 +171,6 @@ class Percentage(float, CustomStringRepresentation):
         return F'{self*100:.2f}%'
 
 
-class GhostField(str):
-    """
-    When `key := GhostField('key')` is used in a format string expression, it will be silently
-    substituted for the exact format expression that was used, with one exception: The class
-    cannot distinguish between the `repr` and `ascii` conversions. The format strings `F'{key!r}'`
-    and `F'{key!a}'` will both be equal to `'{key!r}'`.
-    """
-    def __init__(self, key):
-        self.key = key
-
-    def __str__(self):
-        return GhostField(F'{self.key}!s')
-
-    def __repr__(self):
-        return GhostField(F'{self.key}!r')
-
-    def __format__(self, spec):
-        return F'{{{self.key}{spec and F":{spec}"}}}'
-
-
 COMMON_PROPERTIES: Dict[str, Callable[[ByteString], Union[str, int, float]]] = {
     'mime'    : lambda chunk: get_cached_file_magic_info(chunk).mime,
     'ext'     : lambda chunk: get_cached_file_magic_info(chunk).extension,
@@ -233,13 +212,18 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
             return self
 
         def format(self, spec: str, data: ByteString, codec: str) -> str:
+            from .argformats import ParserError, PythonExpression
+
             def identity(x):
                 return x
+
             for key, value in self.items():
                 if isbuffer(value):
                     self[key] = ByteStringWrapper(value, codec)
+
             formatter = string.Formatter()
             data = ByteStringWrapper(data, codec)
+
             with StringIO() as stream:
                 for prefix, field, modifier, conversion in formatter.parse(spec):
                     stream.write(prefix)
@@ -250,9 +234,30 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
                     }.get(conversion, identity)
                     if field is None:
                         continue
-                    output = converter(self[field] if field else data)
+                    if not field:
+                        field = data
+                    else:
+                        try:
+                            field = self[field]
+                        except KeyError as KE:
+                            try:
+                                field = PythonExpression.evaluate(field, self)
+                            except ParserError:
+                                if not ghost:
+                                    raise KE
+                                stream.write(F'{{{field}')
+                                if conversion:
+                                    stream.write(F'!{conversion}')
+                                if modifier:
+                                    stream.write(F':{modifier}')
+                                stream.write('}')
+                                continue
+                    output = converter(field)
                     stream.write(output.__format__(modifier))
                 return stream.getvalue()
+
+        def __contains__(self, key):
+            return super().__contains__(key) or key in COMMON_PROPERTIES
 
         def __missing__(self, key):
             deduction = COMMON_PROPERTIES.get(key)
@@ -260,20 +265,14 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
                 raise KeyError(F'cannot deduce the {key} property from just the data, you have to use the cm unit.')
             if deduction:
                 return self.setdefault(key, deduction(chunk))
-            try:
-                return PythonExpression.evaluate(key, **self)
-            except ParserError:
-                pass
             if key in aliases:
                 return self[aliases[key]]
-            if ghost:
-                return GhostField(key)
             raise KeyError(F'The meta variable {key} is unknown.')
 
     return LazyMetaOracle
 
 
-def GetMeta(chunk, *pre_populate, ghost: bool = False, aliases: Optional[Dict[str, str]] = None):
+def metavars(chunk, *pre_populate, ghost: bool = False, aliases: Optional[Dict[str, str]] = None):
     """
     This method is the main function used by refinery units to get the meta variable dictionary
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`

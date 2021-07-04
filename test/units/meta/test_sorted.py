@@ -17,3 +17,8 @@ class TestSorting(TestMetaBase):
     def test_trailing_chunks(self):
         pipeline = L('rep') [ L('scope 0') | L('chop 1') [ L('sorted') ]]  # noqa
         self.assertEqual(pipeline(B'8492756031'), B'01234567898492756031')
+
+    def test_sorting_by_size(self):
+        results = list(L('emit A AA B ABA C ABABABB CD EFEW A BVB')[L('sorted size')])
+        self.assertEqual(results, [
+            B'A', B'A', B'B', B'C', B'AA', B'CD', B'ABA', B'BVB', B'EFEW', B'ABABABB'])

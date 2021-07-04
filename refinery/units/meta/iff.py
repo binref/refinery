@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ...lib.meta import GetMeta
+from ...lib.meta import metavars
 from ...lib.argformats import PythonExpression
 from . import arg, ConditionalUnit
 
@@ -20,4 +20,4 @@ class iff(ConditionalUnit):
         super().__init__(negate=negate, expression=' '.join(expression))
 
     def match(self, chunk):
-        return bool(PythonExpression.evaluate(self.args.expression, **GetMeta(chunk)))
+        return bool(PythonExpression.evaluate(self.args.expression, metavars(chunk)))

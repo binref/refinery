@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from .. import arg, Unit, RefineryCriticalException
+
 from ...lib.argformats import PythonExpression
+from ...lib.meta import metavars
 
 
 class sorted(Unit):
@@ -11,31 +13,20 @@ class sorted(Unit):
     """
 
     def __init__(
-        self,
-        key: arg('key', type=str, help='A meta variable expression to sort by instead of sorting the content.') = None,
-        length: arg.switch('-l', help='Sort items by length before sorting lexicographically.') = False
+        self, key: arg('key', type=str, help='A meta variable expression to sort by instead of sorting the content.') = None,
     ):
-        super().__init__(key=key, length=length)
+        super().__init__(key=key)
 
     def filter(self, chunks):
         sortbuffer = []
         invisibles = {}
+        key = self.args.key
 
-        if self.args.key is None:
-            if self.args.length:
-                def key(chunk):
-                    return (len(chunk), chunk)
-            else:
-                key = None
-        else:
-            expression = PythonExpression(self.args.key, all_variables_allowed=True)
-            if self.args.length:
-                def key(chunk):
-                    r = expression(**chunk.meta)
-                    return (len(r), r)
-            else:
-                def key(chunk):
-                    return expression(**chunk.meta)
+        if key is not None:
+            def _key(chunk):
+                return expression(metavars(chunk)), chunk
+            expression = PythonExpression(key, all_variables_allowed=True)
+            key = _key
 
         for k, chunk in enumerate(chunks):
             if not chunk.visible:

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from .. import arg, Unit
-from ...lib.meta import GetMeta, COMMON_PROPERTIES
+from ...lib.meta import metavars, COMMON_PROPERTIES
+from ...lib.frame import Chunk
 
 
 _COMMON_PROPERTIES_LIST = ', '.join(COMMON_PROPERTIES)
@@ -78,9 +79,10 @@ class cm(Unit):
         names = self.args.names
         reset = self.args.reset
         for index, chunk in enumerate(chunks):
+            chunk: Chunk
             if not chunk.visible:
                 continue
-            meta = GetMeta(chunk)
+            meta = metavars(chunk)
             if reset:
                 chunk.meta.clear()
             if 'index' in names:

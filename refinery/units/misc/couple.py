@@ -5,7 +5,7 @@ import sys
 from subprocess import PIPE, Popen
 
 from .. import arg, Unit, RefineryPartialResult
-from ...lib.meta import GetMeta
+from ...lib.meta import metavars
 
 
 class couple(Unit):
@@ -38,7 +38,7 @@ class couple(Unit):
             import shlex
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
-        meta = GetMeta(data)
+        meta = metavars(data, ghost=True)
         commandline = [
             meta.format(cmd.decode(self.codec), data, self.codec)
             for cmd in self.args.commandline

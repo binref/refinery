@@ -87,6 +87,7 @@ from typing import get_type_hints
 from ..lib.frame import Chunk
 from ..lib.tools import isbuffer, infinitize
 from ..lib.loader import resolve, EntryNotFound
+from ..lib.meta import metavars
 
 FinalType = TypeVar('FinalType')
 
@@ -149,17 +150,26 @@ class PythonExpression:
     def __str__(self):
         return self.definition
 
-    def __call__(self, **values):
-        values.update(self.constants)
+    def __call__(self, mapping=None, **values):
+        if mapping is not None:
+            values, tmp = mapping, values
+            values.update(tmp)
+        variables = {}
         for v in self.variables:
-            if v not in values:
-                raise VariableMissing(v)
-        return eval(self.definition, None, values)
+            try:
+                variables[v] = values[v]
+            except KeyError:
+                raise ParserVariableMissing(v)
+        variables.update(self.constants)
+        return eval(self.definition, None, variables)
 
     @classmethod
-    def evaluate(cls, definition, **values):
-        expression = cls(definition, *list(values))
-        return expression(**values)
+    def evaluate(cls, definition, values):
+        expression = cls(definition, all_variables_allowed=True)
+        for name in expression.variables:
+            if name not in values:
+                raise ParserVariableMissing(name)
+        return expression(values)
 
 
 def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False) -> slice:
@@ -180,11 +190,11 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
             raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
         try:
             kwargs = variables or {}
-            sliced = [None if not t else PythonExpression.evaluate(t, **kwargs) for t in sliced]
+            sliced = [None if not t else PythonExpression.evaluate(t, kwargs) for t in sliced]
         except ParserVariableMissing:
             class SliceAgain(LazyEvaluation):
                 def __call__(self, data):
-                    return sliceobj(expression, data.meta)
+                    return sliceobj(expression, metavars(data))
             if variables is not None:
                 raise
             return SliceAgain()
@@ -338,8 +348,8 @@ def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
     if parser.variables:
         def evaluate(data: Chunk):
             try:
-                return parser(**data.meta)
-            except VariableMissing:
+                return parser(metavars(data))
+            except ParserVariableMissing:
                 # It is possible that a byte string can accidentally look like a valid Python
                 # expression, e.g.: B0fGtH*9/HKlwT:
                 definition = parser.definition
@@ -527,11 +537,7 @@ class DelayedArgument(LazyEvaluation):
         but the corresponding bytes are also removed from the input data.
         """
         def extract(data: Union[bytearray, Chunk]):
-            try:
-                meta = data.meta
-            except AttributeError:
-                meta = {}
-            bounds = sliceobj(region, meta)
+            bounds = sliceobj(region, metavars(data))
             result = bytearray(data[bounds])
             data[bounds] = []
             return result
@@ -555,8 +561,9 @@ class DelayedArgument(LazyEvaluation):
         The variable remains attached to the chunk.
         """
         def extract(data: Chunk):
+            meta = metavars(data)
             try:
-                result = data.meta[name]
+                result = meta[name]
             except KeyError:
                 raise VariableMissing(name)
             return self._interpret_variable(name, result)
@@ -710,16 +717,17 @@ class DelayedArgument(LazyEvaluation):
 
         def finalize(data: Optional[Chunk] = None):
             @lru_cache(maxsize=512, typed=False)
-            def accumulate(A): return update(A=A, **args)
-            args = data and data.meta or {}
-            A = seed and seed(**args) or 0
+            def accumulate(A):
+                return update(args, A=A)
+            args = metavars(data)
+            A = seed and seed(args) or 0
             while True:
                 yield A
                 A = accumulate(A)
 
         try:
             return finalize()
-        except VariableMissing:
+        except ParserVariableMissing:
             return finalize
 
     @handler.register('be')
@@ -757,12 +765,12 @@ class DelayedArgument(LazyEvaluation):
         reduction = PythonExpression(reduction, all_variables_allowed=True)
 
         def finalize(data: Optional[Chunk] = None):
-            args = data and data.meta or {}
-            return reduce(lambda S, B: reduction(S=S, B=B, **args), it, seed and seed(**args) or 0)
+            args = metavars(data)
+            return reduce(lambda S, B: reduction(args, S=S, B=B), it, seed and seed(args) or 0)
 
         try:
             return finalize()
-        except VariableMissing:
+        except ParserVariableMissing:
             return finalize
 
 
@@ -788,6 +796,10 @@ class DelayedNumSeqArgument(DelayedArgument):
     handlers that are implemented in `refinery.lib.argformats.DelayedArgument`, but the default handler
     attempts to evalue the input as a Python expression.
     """
+
+    def __init__(self, expression: str, typecheck=True):
+        super().__init__(expression)
+        self.typecheck = typecheck
 
     def default_handler(self, expression: str) -> Iterable[int]:
         """
@@ -828,6 +840,8 @@ class DelayedNumSeqArgument(DelayedArgument):
                 value = tmp
         if isinstance(value, int):
             return RepeatedInteger(value)
+        if not self.typecheck:
+            return value
         raise ArgumentTypeError(
             F'The value {value} computed from {self.expression} is of type {type(value).__name__} but the unit requested an '
             R'integer or a sequence of integers.'
@@ -982,13 +996,13 @@ expressions.
 """
 
 
-def numseq(expression: Union[int, str]) -> Union[Iterable[int], DelayedNumSeqArgument]:
+def numseq(expression: Union[int, str], typecheck=True) -> Union[Iterable[int], DelayedNumSeqArgument]:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedNumSeqArgument`.
     """
     if isinstance(expression, int):
         return RepeatedInteger(expression)
-    arg = DelayedNumSeqArgument(expression)
+    arg = DelayedNumSeqArgument(expression, typecheck)
     with suppress(TooLazy):
         return arg()
     return arg

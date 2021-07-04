@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from .. import arg, Unit
 from ...lib.tools import isbuffer
+from ...lib.meta import metavars
 from . import check_variable_name
 
 
@@ -15,8 +16,9 @@ class swap(Unit):
 
     def process(self, data):
         name = self.args.name
+        meta = metavars(data)
         try:
-            meta = data.meta[name]
+            meta = meta[name]
         except KeyError:
             meta = bytearray()
         if isinstance(meta, str):

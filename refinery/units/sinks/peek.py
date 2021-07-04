@@ -6,7 +6,7 @@ import codecs
 import string
 
 from . import arg, HexViewer
-from ...lib.meta import GetMeta, CustomStringRepresentation, SizeInt
+from ...lib.meta import metavars, CustomStringRepresentation, SizeInt
 from ...lib.types import INF
 from ...lib.tools import isbuffer, lookahead
 
@@ -171,7 +171,7 @@ class peek(HexViewer):
         if self.args.brief:
             final = False
         elif not self.args.bare:
-            meta = GetMeta(data)
+            meta = metavars(data)
             if self.args.meta:
                 meta['size'] = meta['size']
                 if meta['magic'] == 'data':

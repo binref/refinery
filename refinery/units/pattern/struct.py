@@ -4,7 +4,7 @@ import re
 
 from .. import Unit, arg
 
-from ...lib.meta import GetMeta
+from ...lib.meta import metavars
 from ...lib.structures import StructReader
 
 
@@ -36,7 +36,7 @@ class struct(Unit):
         spec = self.args.spec
         if not any(spec.startswith(f) for f in '<@=!>'):
             spec = F'={spec}'
-        spec = re.split('([auAU])', spec.format_map(GetMeta(data)))
+        spec = re.split('([auAU])', spec.format_map(metavars(data)))
         results = []
         with StructReader(data) as reader:
             for format in spec:

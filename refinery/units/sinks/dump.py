@@ -7,7 +7,7 @@ from itertools import cycle
 from string import Formatter
 
 from .. import arg, Unit, RefineryCriticalException
-from ...lib.meta import GetMeta
+from ...lib.meta import metavars
 
 
 class dump(Unit):
@@ -173,7 +173,7 @@ class dump(Unit):
                     self.exhausted = True
                 else:
                     if self._has_format(path):
-                        meta = GetMeta(chunk, ghost=True)
+                        meta = metavars(chunk, ghost=True)
                         meta['index'] = index
                         path = meta.format(path, chunk, self.codec)
                     self.stream = self._open(path)
