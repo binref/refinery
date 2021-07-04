@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
-from ...lib.tools import isbuffer
-
-from os.path import isfile
+from os.path import isfile, getsize, getatime, getmtime, getctime
 from glob import iglob
-from io import BytesIO
+from datetime import datetime
+
+from ...lib.meta import metavars
+from ...lib.structures import MemoryFile
+from .. import arg, Unit
 
 
 class ef(Unit):
@@ -21,17 +22,18 @@ class ef(Unit):
             'patterns, the file mask can include format string expressions '
             'which will be substituted from the current meta variables.'
         )),
+        list: arg.switch('-l', help='Only lists files with metadata.'),
         size: arg.number('-s', help=(
             'If specified, files will be read in chunks of size N and each '
             'chunk is emitted as one element in the output list.'
         )) = 0,
-        linewise: arg.switch('-l', help=(
+        linewise: arg.switch('-w', help=(
             'Read the file linewise. By default, one line is read at a time. '
             'In line mode, the --size argument can be used to read the given '
             'number of lines in each chunk.'
         )) = False
     ):
-        super().__init__(size=size, linewise=linewise, filenames=filenames)
+        super().__init__(size=size, list=list, linewise=linewise, filenames=filenames)
 
     def _read_chunks(self, fd):
         while True:
@@ -49,7 +51,7 @@ class ef(Unit):
                     break
                 yield buffer
             return
-        with BytesIO() as out:
+        with MemoryFile() as out:
             while True:
                 for _ in range(count):
                     buffer = fd.readline()
@@ -63,25 +65,24 @@ class ef(Unit):
                 out.truncate()
 
     def process(self, data):
-        class metamap(dict):
-            def __missing__(_, key): # noqa
-                try:
-                    value = data[key]
-                    if isinstance(value, (str, int, float)):
-                        return value
-                    if isbuffer(value):
-                        return value.decode(self.codec)
-                except Exception:
-                    pass
-                return F'{{{key}}}'
-
-        metamap = metamap()
-
+        meta = metavars(data, ghost=True)
         for mask in self.args.filenames:
-            mask = mask.format_map(metamap)
+            mask = meta.format(mask, data, self.codec)
             self.log_debug('scanning for mask:', mask)
             for filename in iglob(mask, recursive=True):
                 if not isfile(filename):
+                    continue
+                if self.args.list:
+                    try:
+                        yield self.labelled(
+                            filename.encode(self.codec),
+                            size=getsize(filename),
+                            atime=datetime.fromtimestamp(getatime(filename)).isoformat(' ', 'seconds'),
+                            ctime=datetime.fromtimestamp(getctime(filename)).isoformat(' ', 'seconds'),
+                            mtime=datetime.fromtimestamp(getmtime(filename)).isoformat(' ', 'seconds'),
+                        )
+                    except OSError:
+                        self.log_warn(F'os error while scanning: {filename}')
                     continue
                 try:
                     with open(filename, 'rb') as stream:
