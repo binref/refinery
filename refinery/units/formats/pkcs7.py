@@ -16,10 +16,6 @@ from .. import Unit
 class ParsedASN1ToJSON(BytesAsArrayEncoder):
 
     @classmethod
-    def _is_bigint(cls, obj):
-        return isinstance(obj, int) and obj.bit_length() > 32
-
-    @classmethod
     def _is_keyval(cls, obj):
         return (
             isinstance(obj, dict)
@@ -31,15 +27,10 @@ class ParsedASN1ToJSON(BytesAsArrayEncoder):
     def handled(cls, obj) -> bool:
         return (
             BytesAsArrayEncoder.handled(obj)
-            or cls._is_bigint(obj)
             or cls._is_keyval(obj)
         )
 
     def default(self, obj):
-        if self._is_bigint(obj):
-            bl, up = divmod(obj.bit_length(), 8)
-            bl += int(bool(up))
-            return F'0x{obj:0{bl*2}x}'
         if self._is_keyval(obj):
             return dict(type=obj['type'], value=obj['values'][0])
         with suppress(TypeError):
