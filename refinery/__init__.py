@@ -17,8 +17,8 @@ of type `refinery.units.Entry`, i.e. they expose a shell command. The command
 line interface for each of these units is given below, this is the same text
 as would be available by executing the command with the `-h` or `--help`
 option. To better understand how the command line parameters are parsed, it is
-recommended to study the module documentation of the following two library
-modules, as their content is relevant for command line use of the `refinery`.
+recommended to study the module documentation of the following library modules,
+as their content is relevant for command line use of the `refinery`.
 
 1. `refinery.lib.frame`
 2. `refinery.lib.argformats`
