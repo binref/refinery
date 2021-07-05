@@ -209,29 +209,39 @@ class pemeta(Unit):
         except KeyError:
             return info
 
-        for certificate in certificates:
-            with suppress(Exception):
-                tbs = certificate['tbs_certificate']
-                primary_signature = False
-                for extension in tbs['extensions']:
-                    if extension['extn_id'] == 'extended_key_usage' and 'code_signing' in extension['extn_value']:
-                        primary_signature = True
-                    if extension['extn_id'] == 'key_usage' and 'key_cert_sign' in extension['extn_value']:
-                        primary_signature = False
+        if len(certificates) == 1:
+            main_certificate = certificates[0]['tbs_certificate']
+        else:
+            certificates_with_extended_use = []
+            main_certificate = None
+            for certificate in certificates:
+                with suppress(Exception):
+                    crt = certificate['tbs_certificate']
+                    ext = [e for e in crt['extensions'] if e['extn_id'] == 'extended_key_usage' and e['extn_value'] != ['time_stamping']]
+                    key = [e for e in crt['extensions'] if e['extn_id'] == 'key_usage']
+                    if ext:
+                        certificates_with_extended_use.append(crt)
+                    if any('key_cert_sign' in e['extn_value'] for e in key):
+                        continue
+                    if any('code_signing' in e['extn_value'] for e in ext):
+                        main_certificate = crt
                         break
-                if not primary_signature:
-                    continue
-                serial = int(tbs['serial_number'], 0)
-                serial = F'{serial:x}'
-                if len(serial) % 2:
-                    serial = '0' + serial
-                subject = tbs['subject']
-                location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
-                info.update(Subject=subject['common_name'])
-                if any(location):
-                    info.update(SubjectLocation=', '.join(filter(None, location)))
-                info.update(Issuer=tbs['issuer']['common_name'], Serial=serial)
-                return info
+            if main_certificate is None and len(certificates_with_extended_use) == 1:
+                main_certificate = certificates_with_extended_use[0]
+        if main_certificate:
+            serial = main_certificate['serial_number']
+            if not isinstance(serial, int):
+                serial = int(serial, 0)
+            serial = F'{serial:x}'
+            if len(serial) % 2:
+                serial = '0' + serial
+            subject = main_certificate['subject']
+            location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
+            info.update(Subject=subject['common_name'])
+            if any(location):
+                info.update(SubjectLocation=', '.join(filter(None, location)))
+            info.update(Issuer=main_certificate['issuer']['common_name'], Serial=serial)
+            return info
         return info
 
     @classmethod
