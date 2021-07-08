@@ -518,6 +518,8 @@ class Framed:
 
     def __iter__(self):
         if self.unpack.finished:
+            if self.unpack.gauge + self.nesting > 0:
+                yield MAGIC
             return
         if self.nesting > 0:
             yield MAGIC
