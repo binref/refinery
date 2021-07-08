@@ -118,7 +118,8 @@ class drp(Unit):
         patterns -= duplicates
 
         self.log_debug(F'counting coverage of {len(patterns)} patterns')
-        pattern_performance = {p: data.count(p) for p in patterns}
+        pattern_count = {p: data.count(p) for p in patterns}
+        pattern_performance = dict(pattern_count)
 
         for consecutive in (False, True):
             if consecutive:
@@ -142,7 +143,7 @@ class drp(Unit):
 
         if self.args.all:
             for pattern in sorted(patterns, key=pattern_performance.get, reverse=True):
-                yield self.labelled(pattern, performance=pattern_performance[pattern])
+                yield self.labelled(pattern, count=pattern_count[pattern])
             return
 
         best_patterns = [p for p in patterns if pattern_performance[p] == 1.0]
