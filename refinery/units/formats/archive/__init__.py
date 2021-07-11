@@ -16,6 +16,20 @@ class ArchiveUnit(PathExtractorUnit, abstract=True):
     ):
         super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, pwd=pwd, date=date, **kwargs)
 
+    _COMMON_PASSWORDS = [
+        'infected',
+        'infected',
+        'Infected',
+        'infected!',
+        'INFECTED',
+        'notinfected',
+        'virus',
+        'unzip-me',
+        'malware',
+        'dangerous',
+        'password',
+    ]
+
     def _pack(
         self,
         path: str,
