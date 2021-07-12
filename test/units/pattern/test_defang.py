@@ -35,3 +35,17 @@ class TestDefangUnit(TestUnitBase):
         data = B'Maybe 12[.]67.123.12 or 12[.]67[.]123.12 or 12.67[.]123.12 or 32.67[.]123[.]12'
         unit = self.load(reverse=True)
         self.assertEqual(unit(data), data.replace(B'[.]', B'.'))
+
+    def test_defang_defang_01(self):
+        unit = self.load()
+        u = b'http://www.example.com/'
+        v = bytes(u | unit)
+        w = bytes(v | unit)
+        self.assertEqual(v, w)
+
+    def test_defang_defang_02(self):
+        unit = self.load()
+        u = b'http://www.example.co.uk/'
+        v = bytes(u | unit)
+        w = bytes(v | unit)
+        self.assertEqual(v, w)
