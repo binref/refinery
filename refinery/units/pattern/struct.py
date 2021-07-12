@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import re
+import datetime
+import string
+import itertools
 
 from .. import Unit, arg
 
-from ...lib.meta import metavars
-from ...lib.structures import StructReader
+from ...lib.meta import SizeInt, metavars
+from ...lib.structures import EOF, StructReader
+from ...lib.argformats import ParserError, PythonExpression
+from ...lib.types import INF
+
+
+def identity(x):
+    return x
 
 
 class struct(Unit):
@@ -21,46 +29,113 @@ class struct(Unit):
             'two unsigned 32bit integers, then skip two bytes, and then read one unsigned 16bit integer from '
             'the input data. Three variable names have to be specified to hold these parsed values. The unit '
             'defaults to using native byte order with no alignment. The unit supports the additional format '
-            'characters uUaA for reading null-terminated wide and ascii strings. If the format character is '
-            'uppercase, the string is decoded as UTF-16LE and LATIN1, respectively.'
+            'characters u and a for reading null-terminated wide and ascii strings. '
+            'Additionally, this string can contain format string expressions such as "{foo:8}", to read 8 '
+            'bytes and store the result in a meta variable called "foo", or "{bar:H}" to extract an unsigned '
+            '16-bit integer into a meta variable called "bar". When a format expression is parsed, all '
+            'preceeding fields of the structure are available already. Fields that are extracted without '
+            'assigning a name are available as positional expressions. For example, the spec "xLxx{:{0}}" '
+            'will skip a byte, read a 32bit integer N, skip two more bytes, and then read N bytes. To read all '
+            'remaining bytes from the data, specify a field without format, i.e. "{}".'
         )),
-        *variables: arg(metavar='variable', type=str, help=(
-            'The names of the variables to receive the fields of the parsed struct, in the same order as they '
-            'appear in the data.'
+        *outputs: arg(metavar='output', type=str, help=(
+            'Optional format string expressions containing any of the extracted struct fields. The following '
+            'special format items are available: {/} denotes the last field that was extracted using a format '
+            'string expression, and {=} denotes all bytes that were read. The default output is {/}.'
         )),
-        keep: arg.switch('-k', help='Do not strip the parsed struct from the output data.') = False
+        until: arg('-u', metavar='E', type=str, help=(
+            'An expression evaluated on each chunk. Continue parsing only if the result is nonzero.')) = None,
+        count: arg.number('-c', help=(
+            'A limit on the number of chunks to read. The default is {default}.')) = INF,
     ):
-        super().__init__(spec=spec, variables=variables, keep=keep)
-
-    def _readspec(self, data):
-        spec = self.args.spec
-        if not any(spec.startswith(f) for f in '<@=!>'):
-            spec = F'={spec}'
-        spec = re.split('([auAU])', spec.format_map(metavars(data)))
-        results = []
-        with StructReader(data) as reader:
-            for format in spec:
-                if not format:
-                    continue
-                elif format in 'aA':
-                    encoding = None
-                    if format.isupper():
-                        encoding = 'latin-1'
-                    results.append(reader.read_c_string(encoding))
-                elif format in 'uU':
-                    encoding = None
-                    if format.isupper():
-                        encoding = 'utf-16le'
-                    results.append(reader.read_w_string(encoding))
-                else:
-                    results.extend(reader.read_struct(format))
-            return reader.tell(), results
+        outputs = outputs or ['{/}']
+        super().__init__(spec=spec, outputs=outputs, until=until, count=count)
 
     def process(self, data: bytearray):
-        size, values = self._readspec(data)
-        names = self.args.variables
-        if len(values) != len(names):
-            raise ValueError(F'Extracted {len(values)} fields, but {len(names)} variable names were given.')
-        if not self.args.keep:
-            data[:size] = []
-        return self.labelled(data, **dict(zip(names, values)))
+        formatter = string.Formatter()
+        until = self.args.until
+        until = until and PythonExpression(until, all_variables_allowed=True)
+        reader = StructReader(memoryview(data))
+        mainspec = self.args.spec
+        byteorder = mainspec[:1]
+        if byteorder in '<!=@>':
+            mainspec = mainspec[1:]
+        else:
+            byteorder = '@'
+
+        for index in itertools.count():
+
+            if reader.eof:
+                break
+            if index >= self.args.count:
+                break
+
+            meta = metavars(data, ghost=True)
+            meta['index'] = index
+            args = []
+            last = None
+            checkpoint = reader.tell()
+
+            try:
+                for prefix, name, spec, conversion in formatter.parse(mainspec):
+                    if prefix:
+                        args.extend(reader.read_struct(byteorder + prefix))
+                    if name is None:
+                        continue
+                    if spec:
+                        spec = meta.format_str(spec, self.codec, *args)
+                    try:
+                        spec = PythonExpression.evaluate(spec, meta)
+                    except ParserError:
+                        pass
+                    if not spec:
+                        value = reader.read()
+                    elif isinstance(spec, int):
+                        value = reader.read_bytes(spec)
+                    else:
+                        value = reader.read_struct(byteorder + spec)
+                        if not value:
+                            self.log_warn(F'field {name} was empty, ignoring.')
+                            continue
+                        if len(value) > 1:
+                            self.log_warn(F'parsing field {name} produced {len(value)} items, discarding all but the first one')
+                        value = value[0]
+                    if conversion == 'u':
+                        value = value.decode('utf-16le')
+                    if conversion == 's':
+                        value = value.decode('utf8')
+                    if conversion == 'a':
+                        value = value.decode('latin1')
+                    if conversion == 't':
+                        value = datetime.datetime.utcfromtimestamp(value).isoformat(' ', 'seconds')
+                    last = value
+                    if not name:
+                        args.append(value)
+                        continue
+                    if name.isdecimal():
+                        index = int(name)
+                        limit = len(args) - 1
+                        if index > limit:
+                            self.log_warn(F'cannot assign index field {name}, the highest index is {limit}')
+                        else:
+                            args[index] = value
+                        continue
+                    else:
+                        meta[name] = value
+
+                if until and not until(meta):
+                    self.log_info(F'the expression ({until}) evaluated to zero; aborting.')
+                    break
+
+                size = reader.tell() - checkpoint
+                reader.seek(checkpoint)
+
+                for template in self.args.outputs:
+                    output = meta.format_bin(template, self.codec,
+                        *args, **{'=': reader.read(size), '/': last})
+                    yield self.labelled(output, **meta)
+
+            except EOF:
+                leftover = repr(SizeInt(len(reader) - checkpoint)).strip()
+                self.log_info(F'discarding {leftover} left in buffer')
+                break

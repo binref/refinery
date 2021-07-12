@@ -67,7 +67,7 @@ class ef(Unit):
     def process(self, data):
         meta = metavars(data, ghost=True)
         for mask in self.args.filenames:
-            mask = meta.format(mask, data, self.codec)
+            mask = meta.format_str(mask, self.codec, data)
             self.log_debug('scanning for mask:', mask)
             for filename in iglob(mask, recursive=True):
                 if not isfile(filename):

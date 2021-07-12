@@ -1095,6 +1095,8 @@ class Unit(UnitBase, abstract=True):
         return copy
 
     def __ror__(self, stream: Union[BinaryIO, ByteString]):
+        if stream is None:
+            return self
         if isstream(stream):
             self.nozzle.source = stream
             return self

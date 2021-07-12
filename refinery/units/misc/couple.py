@@ -40,7 +40,7 @@ class couple(Unit):
 
         meta = metavars(data, ghost=True)
         commandline = [
-            meta.format(cmd.decode(self.codec), data, self.codec)
+            meta.format_str(cmd.decode(self.codec), self.codec, data)
             for cmd in self.args.commandline
         ]
 

@@ -40,4 +40,4 @@ class cfmt(Unit):
     def process(self, data):
         meta = metavars(data, ghost=True)
         for spec in self.args.formats:
-            yield meta.format(spec, data, self.codec).encode(self.codec)
+            yield meta.format_str(spec, self.codec, data).encode(self.codec)

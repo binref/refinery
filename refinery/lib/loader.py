@@ -5,6 +5,7 @@ Functions to help dynamically load refinery units.
 """
 import pkgutil
 import pkg_resources
+import shlex
 
 from typing import Iterable, Any
 
@@ -111,7 +112,6 @@ def load_commandline(command: str) -> Any:
     """
     Returns a unit as it would be loaded from a given command line string.
     """
-    import shlex
     module, *arguments = shlex.split(command)
     return load(module, *arguments)
 
@@ -122,3 +122,29 @@ def load_detached(command: str) -> Any:
     except that the unit has been detached from the default log level.
     """
     return load_commandline(command).detach()
+
+
+def load_pipeline(commandline: str, pipe='|'):
+    """
+    Parses a complete pipeline as given on the command line.
+    """
+    pipeline = None
+    command = []
+    for parsed, token in zip(
+        shlex.split(commandline, posix=True),
+        shlex.split(commandline, posix=False)
+    ):
+        if token == parsed and pipe in token:
+            tail, *rest = token.split(pipe)
+            *rest, parsed = rest
+            if tail:
+                command.append(tail)
+            pipeline |= load(*command)
+            command.clear()
+            for name in rest:
+                pipeline |= load(name)
+            if not parsed:
+                continue
+        command.append(parsed)
+    pipeline |= load(*command)
+    return pipeline

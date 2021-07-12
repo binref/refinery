@@ -79,15 +79,20 @@ which contains the data from that first chunk. Note that `refinery.pop` can also
 ways to merge down the metadata from chunks inside sub-pipelines.
 """
 import abc
+import contextlib
 import hashlib
 import string
 import zlib
+import codecs
+import struct
 
 from io import StringIO
 from typing import Callable, Dict, Optional, ByteString, Union
 
+from .structures import MemoryFile
 from .tools import isbuffer, entropy, index_of_coincidence
 from .mime import get_cached_file_magic_info
+from .loader import load_pipeline
 
 
 class CustomStringRepresentation(abc.ABC):
@@ -112,21 +117,56 @@ class ByteStringWrapper(CustomStringRepresentation):
     proxies attribute access to the wrapped binary string.
     """
 
-    def __init__(self, string: ByteString, codec: str):
-        self.string = string
+    def __init__(self, string: Union[str, ByteString], codec: str, error: str = 'backslashreplace'):
+        if isinstance(string, str):
+            self._binary = None
+            self._string = string
+            self._buffer = False
+        elif isbuffer(string):
+            self._binary = string
+            self._string = None
+            self._buffer = True
+        else:
+            raise TypeError(F'The argument {string!r} is not a buffer or string.')
         self.codec = codec
+        self.error = error
+
+    @property
+    def binary(self):
+        value = self._binary
+        if value is None:
+            encoded = codecs.encode(self._string, self.codec, self.error)
+            self._binary = value = memoryview(encoded)
+        return value
+
+    @property
+    def string(self):
+        value = self._string
+        if value is None:
+            self._string = value = codecs.decode(self._binary, self.codec, self.error)
+        return value
 
     def __getattr__(self, key):
-        return getattr(self.string, key)
+        return getattr(self.binary, key)
 
     def __repr__(self):
-        return self.string.hex().upper()
+        if self._buffer:
+            return self._binary.hex().upper()
+        return self._string
+
+    def __bytes__(self):
+        value = self.binary
+        if isinstance(value, memoryview):
+            value = value.obj
+        if isinstance(value, bytearray):
+            value = bytes(value)
+        return value
 
     def __str__(self):
-        return self.string.decode(self.codec, 'backslashreplace')
+        return self.string
 
     def __format__(self, spec):
-        return F'{self!s:{spec}}'
+        return self.string.__format__(spec)
 
 
 class SizeInt(int, CustomStringRepresentation):
@@ -222,49 +262,94 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
                     self[key] = ctype(value)
             return self
 
-        def format(self, spec: str, data: ByteString, codec: str) -> str:
+        def format_str(self, spec: str, codec: str, *args, **symb) -> str:
+            return self.format(spec, False, codec, *args, **symb)
+
+        def format_bin(self, spec: str, codec: str, *args, **symb) -> str:
+            return self.format(spec, True, codec, *args, **symb)
+
+        def format(self, spec: str, binary: bool, codec: str, *args, **symb) -> Union[str, bytearray]:
             from .argformats import ParserError, PythonExpression
 
             def identity(x):
                 return x
 
-            for key, value in self.items():
-                if isbuffer(value):
-                    self[key] = ByteStringWrapper(value, codec)
+            args = list(args)
+
+            for (store, it) in (
+                (args, enumerate(args)),
+                (self, self.items()),
+                (symb, symb.items()),
+            ):
+                for key, value in it:
+                    with contextlib.suppress(TypeError):
+                        store[key] = ByteStringWrapper(value, codec)
 
             formatter = string.Formatter()
-            data = ByteStringWrapper(data, codec)
+            autoindex = 0
 
-            with StringIO() as stream:
+            if binary:
+                stream = MemoryFile()
+                def putstr(s: str): stream.write(s.encode(codec))
+            else:
+                stream = StringIO()
+                putstr = stream.write
+
+            with stream:
                 for prefix, field, modifier, conversion in formatter.parse(spec):
+                    if binary:
+                        prefix = prefix.encode(codec)
                     stream.write(prefix)
-                    converter = {
-                        'a': ascii,
-                        's': str,
-                        'r': repr,
-                    }.get(conversion, identity)
                     if field is None:
                         continue
+                    value = None
                     if not field:
-                        field = data
-                    else:
+                        if not args:
+                            raise LookupError('no positional arguments given to formatter')
+                        value = args[autoindex]
+                        if autoindex < len(args) - 1:
+                            autoindex += 1
+                    if field in symb:
+                        value = symb[field]
+                    with contextlib.suppress(IndexError, ValueError):
+                        value = value or args[int(field, 0)]
+                    with contextlib.suppress(KeyError):
+                        value = value or self[field]
+                        if conversion == 'x':
+                            del self[field]
+                    if not value:
                         try:
-                            field = self[field]
-                        except KeyError as KE:
-                            try:
-                                field = PythonExpression.evaluate(field, self)
-                            except ParserError:
-                                if not ghost:
-                                    raise KE
-                                stream.write(F'{{{field}')
-                                if conversion:
-                                    stream.write(F'!{conversion}')
-                                if modifier:
-                                    stream.write(F':{modifier}')
-                                stream.write('}')
-                                continue
-                    output = converter(field)
-                    stream.write(output.__format__(modifier))
+                            value = PythonExpression.evaluate(field, self)
+                        except ParserError:
+                            if not ghost:
+                                raise KeyError(field)
+                            putstr(F'{{{field}')
+                            if conversion:
+                                putstr(F'!{conversion}')
+                            if modifier:
+                                putstr(F':{modifier}')
+                            putstr('}')
+                            continue
+                    if binary:
+                        if conversion:
+                            output = struct.pack(F'@{conversion}', value)
+                        else:
+                            if not isinstance(value, ByteStringWrapper):
+                                value = ByteStringWrapper(str(value), codec)
+                            output = value.binary
+                        modifier = modifier.strip()
+                        if modifier:
+                            output | load_pipeline(modifier) | stream.write
+                            continue
+                    else:
+                        converter = {
+                            'a': ascii,
+                            's': str,
+                            'r': repr,
+                        }.get(conversion, identity)
+                        output = converter(value)
+                        output = output.__format__(modifier)
+                    stream.write(output)
                 return stream.getvalue()
 
         def __contains__(self, key):

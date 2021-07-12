@@ -5,18 +5,20 @@ Interfaces and classes to read structured data.
 """
 from __future__ import annotations
 
-import struct
+import contextlib
+import enum
 import functools
 import io
-import enum
+import re
+import struct
 import weakref
-import contextlib
 
 from refinery.lib.tools import cached_property
-from typing import Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
+from typing import List, Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
 
 
 T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
+UnpackType = Union[int, bool, float, bytes]
 
 
 class EOF(ValueError):
@@ -88,6 +90,9 @@ class MemoryFile(Generic[T], io.IOBase):
 
     def __iter__(self):
         return self
+
+    def __len__(self):
+        return len(self._data)
 
     def __next__(self):
         line = self.readline()
@@ -246,6 +251,9 @@ class StructReader(MemoryFile[T]):
         self._nbits = 0
         self.bigendian = bigendian
 
+    def __enter__(self) -> StructReader:
+        return super().__enter__()
+
     @property
     @contextlib.contextmanager
     def be(self):
@@ -386,17 +394,29 @@ class StructReader(MemoryFile[T]):
         for bit in bits:
             yield bool(bit)
 
-    def read_struct(self, format: str, unwrap=False) -> Union[Tuple, int, bool, float, bytes]:
+    def read_struct(self, spec: str, unwrap=False) -> Union[List[UnpackType], UnpackType]:
         """
         Read structured data from the stream in any format supported by the `struct` module. The `format`
         argument can be used to override the current byte ordering. If the `unwrap` parameter is `True`, a
         single unpacked value will be returned as a scalar, not as a tuple with one element.
         """
-        if not format:
+        if not spec:
             raise ValueError('no format specified')
-        if format[:1] not in '<!=@>':
-            format = F'{self.byteorder_format}{format}'
-        data = struct.unpack(format, self.read_bytes(struct.calcsize(format)))
+        byteorder = spec[:1]
+        if byteorder in '<!=@>':
+            spec = spec[1:]
+        else:
+            byteorder = self.byteorder_format
+        data = []
+        for part in re.split('([au])', spec):
+            if part == 'a':
+                data.append(self.read_c_string())
+                continue
+            if part == 'u':
+                data.append(self.read_w_string())
+                continue
+            part = F'{byteorder}{part}'
+            data.extend(struct.unpack(part, self.read_bytes(struct.calcsize(part))))
         if unwrap and len(data) == 1:
             return data[0]
         return data
