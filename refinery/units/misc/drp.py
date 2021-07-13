@@ -37,11 +37,21 @@ class drp(Unit):
         all: arg.switch('-a', help='Produce one output for each repeating pattern that was detected.') = False,
         threshold: arg.number('-t', help='Patterns must match this performance threshold in percent, lest they be discarded.') = 20,
         weight: arg.number('-w', help='Specifies how much longer patterns are favored over small ones. Default is {default}.') = 0,
-        buffer: arg.number('-b', help='Maximum number of bytes to inspect at once. The default is {default}.') = 1024
+        buffer: arg.number('-b', group='BFR', help='Maximum number of bytes to inspect at once. The default is {default}.') = 1024,
+        chug  : arg.switch('-g', group='BFR', help='Compute the prefix tree for the entire buffer instead of chunking it.') = False
     ):
         if len is not None:
             min = max = len
-        super().__init__(min=min, max=max, all=all, consecutive=consecutive, weight=weight, buffer=buffer, threshold=threshold)
+        super().__init__(
+            min=min,
+            max=max,
+            all=all,
+            consecutive=consecutive,
+            weight=weight,
+            buffer=buffer,
+            chug=chug,
+            threshold=threshold
+        )
 
     def _get_patterns(self, data):
         with stackdepth(len(data)):
@@ -99,11 +109,15 @@ class drp(Unit):
 
     def process(self, data):
         memview = memoryview(data)
-        patterns = set()
-        chunksize = self.args.buffer
         weight = 1 + (self.args.weight / 10)
-        for k in range(0, len(memview), chunksize):
-            patterns |= self._get_patterns(memview[k:k + chunksize])
+
+        if self.args.chug:
+            patterns = self._get_patterns(memview)
+        else:
+            patterns = set()
+            chunksize = self.args.buffer
+            for k in range(0, len(memview), chunksize):
+                patterns |= self._get_patterns(memview[k:k + chunksize])
         if not patterns:
             raise RuntimeError('unexpected state: no repeating sequences found')
 
