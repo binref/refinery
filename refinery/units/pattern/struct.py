@@ -6,10 +6,11 @@ import itertools
 
 from .. import Unit, arg
 
-from ...lib.meta import SizeInt, metavars
+from ...lib.meta import ByteStringWrapper, SizeInt, metavars
 from ...lib.structures import EOF, StructReader
 from ...lib.argformats import ParserError, PythonExpression
 from ...lib.types import INF
+from ...lib.tools import isbuffer
 
 
 def identity(x):
@@ -108,7 +109,10 @@ class struct(Unit):
                         value = value.decode('latin1')
                     if conversion == 't':
                         value = datetime.datetime.utcfromtimestamp(value).isoformat(' ', 'seconds')
-                    last = value
+                    if isbuffer(value):
+                        last = ByteStringWrapper(value)
+                    elif isinstance(value, ByteStringWrapper):
+                        last = value
                     if not name:
                         args.append(value)
                         continue
@@ -132,7 +136,12 @@ class struct(Unit):
 
                 for template in self.args.outputs:
                     output = meta.format_bin(template, self.codec,
-                        *args, **{'=': reader.read(size), '/': last})
+                        *args, **{'=': reader.read(size), '/': last.binary})
+                    for _, key, _, _ in formatter.parse(template):
+                        meta.pop(key, None)
+                    for key, value in meta.items():
+                        if isinstance(value, ByteStringWrapper):
+                            meta[key] = value.binary
                     yield self.labelled(output, **meta)
 
             except EOF:

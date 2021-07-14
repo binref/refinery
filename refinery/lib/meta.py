@@ -117,7 +117,7 @@ class ByteStringWrapper(CustomStringRepresentation):
     proxies attribute access to the wrapped binary string.
     """
 
-    def __init__(self, string: Union[str, ByteString], codec: str, error: str = 'backslashreplace'):
+    def __init__(self, string: Union[str, ByteString], codec: str = 'latin1', error: str = 'backslashreplace'):
         if isinstance(string, str):
             self._binary = None
             self._string = string
@@ -265,10 +265,11 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
         def format_str(self, spec: str, codec: str, *args, **symb) -> str:
             return self.format(spec, False, codec, *args, **symb)
 
-        def format_bin(self, spec: str, codec: str, *args, **symb) -> str:
+        def format_bin(self, spec: str, codec: str, *args, **symb) -> ByteString:
             return self.format(spec, True, codec, *args, **symb)
 
-        def format(self, spec: str, binary: bool, codec: str, *args, **symb) -> Union[str, bytearray]:
+        def format(self, spec: str, binary: bool, codec: str, *args, **symb) -> Union[str, ByteString]:
+            # prevents circular import
             from .argformats import ParserError, PythonExpression
 
             def identity(x):
