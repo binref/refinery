@@ -45,11 +45,14 @@ class dnfields(PathExtractorUnit):
     def unpack(self, data):
         header = DotNetHeader(data, parse_resources=False)
         tables = header.meta.Streams.Tables
-        iwidth = len(str(len(tables.FieldRVA)))
-        rwidth = max(len(F'{field.RVA:X}') for field in tables.FieldRVA)
+        fields = tables.FieldRVA
+        if not fields:
+            return
+        iwidth = len(str(len(fields)))
+        rwidth = max(len(F'{field.RVA:X}') for field in fields)
         rwidth = max(rwidth, 4)
 
-        for k, rv in enumerate(tables.FieldRVA):
+        for k, rv in enumerate(fields):
             index = rv.Field.Index
             field = tables.Field[index - 1]
             fname = field.Name
