@@ -6,6 +6,7 @@ Functions to help dynamically load refinery units.
 import pkgutil
 import pkg_resources
 import shlex
+import functools
 
 from typing import Iterable, Any
 
@@ -124,6 +125,7 @@ def load_detached(command: str) -> Any:
     return load_commandline(command).detach()
 
 
+@functools.lru_cache(maxsize=None)
 def load_pipeline(commandline: str, pipe='|'):
     """
     Parses a complete pipeline as given on the command line.
