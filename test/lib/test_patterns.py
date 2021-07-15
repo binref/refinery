@@ -48,3 +48,7 @@ class TestFormats(TestBase):
         self.assertTrue(bool(match), 'string not found')
         self.assertTrue(data.startswith('<command:command'))
         self.assertTrue(data.endswith('</command:command>'))
+
+    def test_guid_in_path(self):
+        self.assertTrue(indicators.path.fullmatch(
+            RB'C:\Users\W10PRO~1\AppData\Local\Temp\{CAE44DB5-22DC-4A76-B334-E77C8D459505}\word_data.bin'))
