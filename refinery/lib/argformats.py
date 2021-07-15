@@ -458,14 +458,14 @@ class DelayedArgument(LazyEvaluation):
     def handler(self, expression: str) -> bytes:
         return self.default_handler(expression)
 
-    @handler.register('s', final=True)
+    @handler.register('s', 'S', final=True)
     def s(self, string: str) -> bytes:
         """
         The final modifier `s:string` returns the UTF-8 encoded representation of `string`.
         """
         return string.encode('UTF8')
 
-    @handler.register('u', final=True)
+    @handler.register('u', 'U', final=True)
     def u(self, string: str) -> bytes:
         """
         The final modifier `u:string` returns the UTF16 (little endian without BOM) encoded
@@ -473,14 +473,14 @@ class DelayedArgument(LazyEvaluation):
         """
         return string.encode('UTF-16LE')
 
-    @handler.register('a', final=True)
+    @handler.register('a', 'A', final=True)
     def a(self, string: str) -> bytes:
         """
         The final modifier `a:string` returns the latin-1 encoded representation of `string`.
         """
         return string.encode('LATIN-1')
 
-    @handler.register('H', 'h', final=True)
+    @handler.register('h', 'H', final=True)
     def h(self, string: str) -> bytes:
         """
         The final modifier `h:string` (or `H:string`) returns the hex decoding of `string`.
@@ -488,7 +488,7 @@ class DelayedArgument(LazyEvaluation):
         import base64
         return base64.b16decode(string, casefold=True)
 
-    @handler.register('f', 'file', final=True)
+    @handler.register('f', 'F', 'file', final=True)
     def file(self, path: str) -> bytes:
         """
         The final modifier `f:path` or `file:path` returns the contents of the file located
@@ -584,7 +584,7 @@ class DelayedArgument(LazyEvaluation):
             return self._interpret_variable(name, result)
         return extract
 
-    @handler.register('e', 'eval')
+    @handler.register('e', 'E', 'eval')
     def eval(self, expression: Union[str, ByteString]) -> Any:
         """
         Final modifier `e:expression` or `eval:expression`; uses a `refinery.lib.argformats.PythonExpression`
