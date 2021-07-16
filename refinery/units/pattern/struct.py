@@ -139,9 +139,6 @@ class struct(Unit):
                         *args, **{'=': reader.read(size), '/': last.binary})
                     for _, key, _, _ in formatter.parse(template):
                         meta.pop(key, None)
-                    for key, value in meta.items():
-                        if isinstance(value, ByteStringWrapper):
-                            meta[key] = value.binary
                     yield self.labelled(output, **meta)
 
             except EOF:

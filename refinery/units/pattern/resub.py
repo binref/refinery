@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from ...lib.argformats import utf8
 from ...lib.meta import metavars
-from . import arg, RegexUnit, TransformSubstitutionFactory
+from . import arg, RegexUnit
 
 
 class resub(RegexUnit):
@@ -24,10 +24,12 @@ class resub(RegexUnit):
         super().__init__(regex=regex, subst=subst, multiline=multiline, ignorecase=ignorecase, count=count)
 
     def process(self, data):
+        def repl(match):
+            return meta.format_bin(spec, self.codec, *match.groups(), **match.groupdict())
         self.log_info('pattern:', self.regex)
         self.log_info('replace:', self.args.subst)
         meta = metavars(data)
-        repl = TransformSubstitutionFactory(self.args.subst, meta)
+        spec = self.args.subst.decode(self.codec)
         sub = self.regex.sub
         if self.args.count:
             from functools import partial

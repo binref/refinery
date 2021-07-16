@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from ...lib.argformats import utf8
 from ...lib.meta import metavars
-from . import arg, RegexUnit, PatternExtractor, TransformSubstitutionFactory
+from . import arg, RegexUnit, PatternExtractor
 
 
 class rex(RegexUnit, PatternExtractor):
@@ -33,6 +33,20 @@ class rex(RegexUnit, PatternExtractor):
     def process(self, data):
         meta = metavars(data)
         self.log_debug('regular expression:', self.regex)
-        transformations = [TransformSubstitutionFactory(t, meta) for t in self.args.transformation] or [lambda m: m[0]]
-        transformations = [lambda m, mt=t: self.labelled(mt(m), **m.groupdict()) for t in transformations]
-        yield from self.matches_filtered(memoryview(data), self.regex, *transformations)
+
+        def make_transformations(specs):
+            for spec in specs:
+                def transformation(match, s=spec.decode(self.codec)):
+                    symb: dict = match.groupdict()
+                    args: list = list(match.groups())
+                    used = set()
+                    item = meta.format(s, self.codec, args, symb, True, True, used)
+                    for variable in used:
+                        symb.pop(variable, None)
+                    for name, value in meta.items():
+                        symb.setdefault(name, value)
+                    return self.labelled(item, **symb)
+                yield transformation
+
+        yield from self.matches_filtered(
+            memoryview(data), self.regex, *make_transformations(self.args.transformation))

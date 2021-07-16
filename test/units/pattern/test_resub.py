@@ -74,9 +74,9 @@ class TestRegexSubstitution(TestUnitBase):
         EndFunc
         '''.encode('ASCII')
 
-        layer1 = self.load(R'sjwakhwbtxwwb\("(.*?)"\)', R'"$(1 | resub (.)(.) $$2$$1)"')
-        layer2 = self.load(R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)', R'"$(1 | snip ::$2)"')
-        layer3 = self.load(R'\$e\(\$b\("([^"]+)"\)\)', R'$(1 | base)')
+        layer1 = self.load(R'sjwakhwbtxwwb\("(.*?)"\)', R'"{0:resub (.)(.) {{1}}{{0}}}"')
+        layer2 = self.load(R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)', R'"{0:snip ::{1}}"')
+        layer3 = self.load(R'\$e\(\$b\("([^"]+)"\)\)', R'{0:base}')
 
         autoit_refined = autoit_obfuscated
         autoit_refined = layer1(autoit_refined)
@@ -86,27 +86,15 @@ class TestRegexSubstitution(TestUnitBase):
         self.assertEqual(autoit_refined, autoit_cleaned_up)
 
     def test_resub_powershell_variables(self):
-        resub = self.load(R'\$\{(\w+)\}', '$$$1')
+        resub = self.load(R'\$\{(\w+)\}', '${0}')
         self.assertEqual(resub(B'(^& ${R} ${dAtA} (${iV}+${K}))'), B'(^& $R $dAtA ($iV+$K))')
 
-    def test_dollar_escapes_01(self):
-        resub = self.load(R'FOO(.)', '$1$$1')
-        self.assertEqual(resub(B'FOOP FOOZ'), B'P$1 Z$1')
-
-    def test_dollar_escapes_02(self):
-        resub = self.load(R'FOO(.)', '$$$$x$1$(1|hex -R)$$1')
-        self.assertEqual(resub(B'FOO3 FOO2'), B'$$$x333$1 $$$x232$1')
-
-    def test_dollar_escapes_03(self):
-        resub = self.load(R'FOO(.)', '$$$$$$$$x$1$$$')
-        self.assertEqual(resub(B'FOOP'), B'$$$$$$$xP$$')
-
     def test_binary_replacement(self):
-        resub = self.load(R'yara:(FEED)(BAAD)(F00D)', R'$1\xBE\xEF')
+        resub = self.load(R'yara:(FEED)(BAAD)(F00D)', R'{0}{BEEF!h}')
         data = bytes.fromhex('AAAAAAFEEDBAADF00DAAAAAA')
         self.assertEqual(resub(data).hex().upper(), 'AAAAAAFEEDBEEFAAAAAA')
 
     def test_substitution_count_limit(self):
-        resub = self.load('E(.)', 'AH$1', count=2)
+        resub = self.load('E(.)', 'AH{0}', count=2)
         data = B'BINERY REFINERY'
         self.assertEqual(resub(data), B'BINAHRY RAHFINERY')

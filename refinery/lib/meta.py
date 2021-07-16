@@ -84,7 +84,6 @@ import hashlib
 import string
 import zlib
 import codecs
-import struct
 
 from io import StringIO
 from typing import Callable, Dict, Optional, ByteString, Union
@@ -238,13 +237,12 @@ corresponding value on a chunk of binary input data.
 """
 
 
-def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str, str]] = None):
+class LazyMetaOracle(dict):
     """
-    Create a dictionary that can be queried lazily for all potential options of the common meta
-    variable unit. For example, a SHA-256 hash is computed only as soon as the oracle is accessed
-    at the key `'sha256'`.
+    A dictionary that can be queried lazily for all potential options of the common meta variable
+    unit. For example, a SHA-256 hash is computed only as soon as the oracle is accessed at the
+    key `'sha256'`.
     """
-    aliases = aliases or {}
 
     CUSTOM_TYPE_MAP = {
         'entropy' : Percentage,
@@ -254,130 +252,156 @@ def LazyMetaOracleFactory(chunk, ghost: bool = False, aliases: Optional[Dict[str
         'md5'     : HexByteString,
     }
 
-    class LazyMetaOracle(dict):
-        def fix(self):
-            for key, value in self.items():
-                ctype = CUSTOM_TYPE_MAP.get(key)
-                if ctype and not isinstance(value, ctype):
-                    self[key] = ctype(value)
-            return self
+    def __init__(self, chunk: ByteString, ghost: bool = False, alias: Optional[Dict[str, str]] = None, *init):
+        super().__init__(*init)
+        self.alias = alias or {}
+        self.ghost = ghost
+        self.chunk = chunk
 
-        def format_str(self, spec: str, codec: str, *args, **symb) -> str:
-            return self.format(spec, False, codec, *args, **symb)
+    def fix(self):
+        for key, value in self.items():
+            ctype = self.CUSTOM_TYPE_MAP.get(key)
+            if ctype and not isinstance(value, ctype):
+                self[key] = ctype(value)
+        return self
 
-        def format_bin(self, spec: str, codec: str, *args, **symb) -> ByteString:
-            return self.format(spec, True, codec, *args, **symb)
+    def format_str(self, spec: str, codec: str, *args, **symb) -> str:
+        return self.format(spec, codec, list(args), symb, False)
 
-        def format(self, spec: str, binary: bool, codec: str, *args, **symb) -> Union[str, ByteString]:
-            # prevents circular import
-            from .argformats import ParserError, PythonExpression
+    def format_bin(self, spec: str, codec: str, *args, **symb) -> ByteString:
+        return self.format(spec, codec, list(args), symb, True)
 
-            def identity(x):
-                return x
+    def format(
+        self,
+        spec      : str,
+        codec     : str,
+        args      : list,
+        symbols   : dict,
+        binary    : bool,
+        fixup     : bool = True,
+        variables : Optional[set] = None,
+    ) -> Union[str, ByteString]:
+        # prevents circular import
+        from .argformats import ParserError, PythonExpression
 
-            args = list(args)
+        def identity(x):
+            return x
 
+        if fixup:
             for (store, it) in (
                 (args, enumerate(args)),
                 (self, self.items()),
-                (symb, symb.items()),
+                (symbols, symbols.items()),
             ):
                 for key, value in it:
                     with contextlib.suppress(TypeError):
                         store[key] = ByteStringWrapper(value, codec)
 
-            formatter = string.Formatter()
-            autoindex = 0
+        formatter = string.Formatter()
+        autoindex = 0
 
-            if binary:
-                stream = MemoryFile()
-                def putstr(s: str): stream.write(s.encode(codec))
-            else:
-                stream = StringIO()
-                putstr = stream.write
+        if binary:
+            stream = MemoryFile()
+            def putstr(s: str): stream.write(s.encode(codec))
+        else:
+            stream = StringIO()
+            putstr = stream.write
 
-            with stream:
-                for prefix, field, modifier, conversion in formatter.parse(spec):
-                    if binary:
-                        prefix = prefix.encode(codec)
-                    stream.write(prefix)
-                    if field is None:
-                        continue
-                    value = None
-                    if not field:
-                        if not args:
-                            raise LookupError('no positional arguments given to formatter')
-                        value = args[autoindex]
-                        if autoindex < len(args) - 1:
-                            autoindex += 1
-                    if field in symb:
-                        value = symb[field]
-                    with contextlib.suppress(IndexError, ValueError):
-                        value = value or args[int(field, 0)]
-                    with contextlib.suppress(KeyError):
-                        value = value or self[field]
-                        if conversion == 'x':
-                            del self[field]
-                    if not value:
-                        try:
-                            value = PythonExpression.evaluate(field, self)
-                        except ParserError:
-                            if not ghost:
-                                raise KeyError(field)
-                            putstr(F'{{{field}')
-                            if conversion:
-                                putstr(F'!{conversion}')
-                            if modifier:
-                                putstr(F':{modifier}')
-                            putstr('}')
-                            continue
-                    if binary:
+        with stream:
+            for prefix, field, modifier, conversion in formatter.parse(spec):
+                if binary:
+                    prefix = prefix.encode(codec).decode('unicode-escape').encode('latin1')
+                stream.write(prefix)
+                if field is None:
+                    continue
+                value = None
+                if not field:
+                    if not args:
+                        raise LookupError('no positional arguments given to formatter')
+                    value = args[autoindex]
+                    if autoindex < len(args) - 1:
+                        autoindex += 1
+                if binary and conversion:
+                    if conversion == 'h':
+                        value = bytes.fromhex(field)
+                    elif conversion == 's':
+                        value = field.encode(codec)
+                    elif conversion == 'u':
+                        value = field.encode('utf-16le')
+                    elif conversion == 'a':
+                        value = field.encode('latin1')
+                    elif conversion == 'e':
+                        value = field.encode(codec).decode('unicode-escape').encode('latin1')
+                elif field in symbols:
+                    value = symbols[field]
+                    if variables:
+                        variables.add(field)
+                with contextlib.suppress(IndexError, ValueError):
+                    if value is None:
+                        value = args[int(field, 0)]
+                with contextlib.suppress(KeyError):
+                    if value is None:
+                        value = self[field]
+                        if variables:
+                            variables.add(field)
+                if value is None:
+                    try:
+                        value = PythonExpression.evaluate(field, self)
+                    except ParserError:
+                        if not self.ghost:
+                            raise KeyError(field)
+                        putstr(F'{{{field}')
                         if conversion:
-                            output = struct.pack(F'@{conversion}', value)
-                        else:
-                            if not isinstance(value, ByteStringWrapper):
-                                value = ByteStringWrapper(str(value), codec)
-                            output = value.binary
-                        modifier = modifier.strip()
+                            putstr(F'!{conversion}')
                         if modifier:
-                            output | load_pipeline(modifier) | stream.write
-                            continue
+                            putstr(F':{modifier}')
+                        putstr('}')
+                        continue
+                if binary:
+                    if isbuffer(value):
+                        output = value
                     else:
-                        converter = {
-                            'a': ascii,
-                            's': str,
-                            'r': repr,
-                        }.get(conversion, identity)
-                        output = converter(value)
-                        output = output.__format__(modifier)
-                    stream.write(output)
-                return stream.getvalue()
+                        if not isinstance(value, ByteStringWrapper):
+                            value = ByteStringWrapper(str(value), codec)
+                        output = value.binary
+                    modifier = modifier.strip()
+                    if modifier:
+                        modifier = self.format(modifier, codec, args, symbols, True, False, variables)
+                        output | load_pipeline(modifier.decode(codec)) | stream.write
+                        continue
+                else:
+                    converter = {
+                        'a': ascii,
+                        's': str,
+                        'r': repr,
+                    }.get(conversion, identity)
+                    output = converter(value)
+                    output = output.__format__(modifier)
+                stream.write(output)
+            return stream.getvalue()
 
-        def __contains__(self, key):
-            return super().__contains__(key) or key in COMMON_PROPERTIES
+    def __contains__(self, key):
+        return super().__contains__(key) or key in COMMON_PROPERTIES
 
-        def __missing__(self, key):
-            deduction = COMMON_PROPERTIES.get(key)
-            if deduction is NotImplemented:
-                raise KeyError(F'cannot deduce the {key} property from just the data, you have to use the cm unit.')
-            if deduction:
-                return self.setdefault(key, deduction(chunk))
-            if key in aliases:
-                return self[aliases[key]]
-            raise KeyError(F'The meta variable {key} is unknown.')
-
-    return LazyMetaOracle
+    def __missing__(self, key):
+        deduction = COMMON_PROPERTIES.get(key)
+        if deduction is NotImplemented:
+            raise KeyError(F'cannot deduce the {key} property from just the data, you have to use the cm unit.')
+        if deduction:
+            return self.setdefault(key, deduction(self.chunk))
+        if key in self.alias:
+            return self[self.alias[key]]
+        raise KeyError(F'The meta variable {key} is unknown.')
 
 
-def metavars(chunk, *pre_populate, ghost: bool = False, aliases: Optional[Dict[str, str]] = None):
+def metavars(chunk, *pre_populate, ghost: bool = False, alias: Optional[Dict[str, str]] = None) -> LazyMetaOracle:
     """
     This method is the main function used by refinery units to get the meta variable dictionary
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`
     so that access to common variables is always possible.
     """
-    aliases = aliases or None
-    cls = LazyMetaOracleFactory(chunk, ghost, aliases)
-    meta = cls(**getattr(chunk, 'meta', {}))
+    alias = alias or None
+    oracle = LazyMetaOracle(chunk, ghost, alias, getattr(chunk, 'meta', {}))
     for key in pre_populate:
-        meta[key]
-    return meta.fix()
+        oracle[key]
+    return oracle.fix()

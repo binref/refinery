@@ -295,6 +295,11 @@ class Chunk(bytearray):
         """
         Return the serialized representation of this chunk.
         """
+        for key, value in self._meta.items():
+            # resolve ByteStringWrapper artifacts
+            try: value = value.binary
+            except AttributeError: continue
+            self._meta[key] = value
         obj = (self._path, self._view, self._meta, self._fill, self)
         if ISPS1:
             packed = json.dumps(obj, cls=BytesEncoder, separators=(',', ':')) + '\n'
