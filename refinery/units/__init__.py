@@ -108,6 +108,7 @@ the following Python code:
 from __future__ import annotations
 
 import abc
+import copy
 import sys
 import os
 import inspect
@@ -732,7 +733,9 @@ class Executable(ABCMeta):
         return cls().__or__(other)
 
     def __neg__(cls):
-        return -cls()
+        unit = cls()
+        unit.args.reverse = True
+        return unit
 
     def __ror__(cls, other):
         return cls().__ror__(other)
@@ -1045,6 +1048,10 @@ class Unit(UnitBase, abstract=True):
     def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
         return inputs
 
+    def reset(self):
+        self._framed = None
+        self._chunks = None
+
     @property
     def source(self):
         """
@@ -1058,8 +1065,7 @@ class Unit(UnitBase, abstract=True):
         if isinstance(stream, self.__class__.__class__):
             stream = stream()
         if not isinstance(stream, self.__class__):
-            self._framed = None
-            self._chunks = None
+            self.reset()
         self._source = stream
 
     @property
@@ -1090,18 +1096,28 @@ class Unit(UnitBase, abstract=True):
         return omega
 
     def __neg__(self):
-        copy = self.__copy__()
-        copy.args.reverse = True
-        return copy
+        pipeline = []
+        cursor = self
+        while isinstance(cursor, UnitBase):
+            reversed = copy.copy(cursor)
+            reversed.args.reverse = True
+            reversed._source = None
+            reversed.reset()
+            pipeline.append(reversed)
+            cursor = cursor._source
+        reversed = None
+        while pipeline:
+            reversed = reversed | pipeline.pop()
+        return reversed
 
     def __ror__(self, stream: Union[BinaryIO, ByteString]):
         if stream is None:
             return self
-        if isstream(stream):
-            self.nozzle.source = stream
-            return self
-        with MemoryFile(stream) if stream else open(os.devnull, 'rb') as stdin:
-            return (stdin | self)
+        if not isstream(stream):
+            stream = MemoryFile(stream) if stream else open(os.devnull, 'rb')
+        self.reset()
+        self.nozzle.source = stream
+        return self
 
     def __str__(self):
         with MemoryFile() as stdout:
@@ -1405,7 +1421,7 @@ class Unit(UnitBase, abstract=True):
 
     def __copy__(self):
         cls = self.__class__
-        clone = cls.__new__(cls)
+        clone: Unit = cls.__new__(cls)
         clone.__dict__.update(self.__dict__)
     #   TODO: Preferably, units should keep all their information in args, making
     #         the above __dict__ update unnecessary.
@@ -1414,7 +1430,7 @@ class Unit(UnitBase, abstract=True):
         clone._target = None
         clone._framed = None
         clone._chunks = None
-        clone.args = self.args.__copy__()
+        clone.args = copy.copy(self.args)
         return clone
 
     def __init__(self, **keywords):
