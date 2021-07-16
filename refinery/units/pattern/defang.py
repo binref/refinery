@@ -44,21 +44,25 @@ class defang(Unit):
             host = hostname.rsplit(B':')[0].lower()
             if host in self._WHITELIST:
                 return hostname
-            return B'[.]'.join(hostname.rsplit(B'.', 1))
+            host = re.split(BR'(\[\.\]|\.)', hostname)
+            if len(host) == 1:
+                return host[0]
+            host[-2] = B'[.]'
+            return B''.join(host)
 
         def replace_url(url):
             if not url:
                 return url
             sep = B'://' if self.args.dot_only else B'[:]//'
             self.log_info('replace:', url)
-            p, q = url.split(B'://')
+            p, q = re.split(BR'(?:\[:\]|:)//', url)
             q = q.split(B'/', 1)
             q[0] = replace_hostname(q[0], False)
             q = B'/'.join(q)
             return self._quote(p + sep + q)
 
-        urlsplit = indicators.url.split(data)
-        step = indicators.url.value.compiled.groups + 1
+        urlsplit = defanged.url.split(data)
+        step = defanged.url.value.compiled.groups + 1
         urlsplit[1::step] = [replace_url(t) for t in itertools.islice(iter(urlsplit), 1, None, step)]
 
         if not self.args.url_only:
