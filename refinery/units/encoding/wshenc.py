@@ -6,7 +6,7 @@ from .. import arg, Unit
 from ...lib.patterns import formats
 
 
-class vbe(Unit):
+class wshenc(Unit):
     """
     Encoding and decoding of Visual Basic Scripts.
     """
