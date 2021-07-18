@@ -8,7 +8,7 @@ from ...lib.patterns import formats
 
 class wshenc(Unit):
     """
-    Encoding and decoding of Visual Basic Scripts.
+    Windows Scripting Host encoding and decoding of VBScript (VBS/VBE) and JScript (JS/JSE).
     """
 
     _MARKER_INIT = RB'#@~^BINREF=='
