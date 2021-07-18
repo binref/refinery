@@ -108,6 +108,13 @@ class RepeatedInteger(int):
         while True: yield self
 
 
+class LazyEvaluation:
+    """
+    Empty parent class for any unit that throws `refinery.lib.argformats.TooLazy`.
+    """
+    pass
+
+
 class PythonExpression:
     """
     Implements a parser for any Python expression with a prescribed set of variable
@@ -172,6 +179,17 @@ class PythonExpression:
         return expression(values)
 
 
+class SliceAgain(LazyEvaluation):
+    def __init__(self, expr):
+        self.expr = expr
+
+    def __call__(self, data):
+        expression = self.expr
+        if pending(expression):
+            expression = expression(data).decode('utf8')
+        return sliceobj(expression, metavars(data))
+
+
 def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False) -> slice:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
@@ -179,25 +197,28 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
     argument format type will process the string `0x11:0x11+4*0x34` as the slice
     object `slice(17, 225, None)`.
     """
-    expression = expression or ':'
     if isinstance(expression, slice):
         return expression
     if isinstance(expression, int):
-        sliced = (expression,)
-    else:
-        sliced = expression.split(':')
-        if not sliced or len(sliced) > 3:
-            raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
-        try:
-            kwargs = variables or {}
-            sliced = [None if not t else PythonExpression.evaluate(t, kwargs) for t in sliced]
-        except ParserVariableMissing:
-            class SliceAgain(LazyEvaluation):
-                def __call__(self, data):
-                    return sliceobj(expression, metavars(data))
-            if variables is not None:
-                raise
-            return SliceAgain()
+        return slice(expression, expression + 1)
+    try:
+        expression = DelayedBinaryArgument(expression)
+        expression = expression()
+    except TooLazy:
+        return SliceAgain(expression)
+
+    expression = expression.decode('utf8')
+    expression = expression or ':'
+    sliced = expression.split(':')
+    if not sliced or len(sliced) > 3:
+        raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
+    try:
+        kwargs = variables or {}
+        sliced = [None if not t else PythonExpression.evaluate(t, kwargs) for t in sliced]
+    except ParserVariableMissing:
+        if variables is not None:
+            raise
+        return SliceAgain(expression)
     if len(sliced) == 1:
         k = sliced[0]
         if not range:
@@ -242,13 +263,6 @@ class VariableMissing(ArgumentTypeError):
     def __init__(self, name):
         super().__init__(F'The variable {name} is not defined.')
         self.name = name
-
-
-class LazyEvaluation:
-    """
-    Empty parent class for any unit that throws `refinery.lib.argformats.TooLazy`.
-    """
-    pass
 
 
 class DelayedArgumentDispatch:
@@ -682,7 +696,7 @@ class DelayedArgument(LazyEvaluation):
         to it. Slices are given in Python syntax, so `take[::2]` will extract every second item from
         the incoming data. The default sequence is `1:`, i.e. skipping the first element.
         """
-        bounds = bounds and sliceobj(bounds) or slice(1, None)
+        bounds = bounds and sliceobj(bounds, {}) or slice(1, None)
         try:
             return it[bounds]
         except TypeError:

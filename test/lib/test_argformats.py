@@ -47,3 +47,7 @@ class TestArgumentFormats(TestBase):
     def test_range_can_be_infinite(self):
         pipeline = self.ldu('put', 't', 0x30) [ self.ldu('xor', 'range:t:') ] # noqa
         self.assertEqual(pipeline(bytearray(10)), B'0123456789')
+
+    def test_slices_can_be_variables(self):
+        pipeline = self.ldu('put', 'rg', '2:') [ self.ldu('snip', 'var:rg') ] # noqa
+        self.assertEqual(pipeline(b'FOOBAR'), B'OBAR')
