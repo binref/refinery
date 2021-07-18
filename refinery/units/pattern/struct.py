@@ -62,7 +62,7 @@ class struct(Unit):
         if byteorder in '<!=@>':
             mainspec = mainspec[1:]
         else:
-            byteorder = '@'
+            byteorder = '='
 
         for index in itertools.count():
 
@@ -113,9 +113,7 @@ class struct(Unit):
                         last = ByteStringWrapper(value)
                     elif isinstance(value, ByteStringWrapper):
                         last = value
-                    if not name:
-                        args.append(value)
-                        continue
+                    args.append(value)
                     if name.isdecimal():
                         index = int(name)
                         limit = len(args) - 1
