@@ -45,16 +45,19 @@ class vsnip(Unit):
     ):
         if sum(1 for t in (until, utf16, ascii) if t) > 1:
             raise ValueError('Only one of utf16, ascii, and until can be specified.')
-        if ascii:
-            until = B'\0'
-        if utf16:
-            addresses = tuple(slice(a.start, a.stop, 2) for a in addresses)
-            until = B'\0\0'
-        return super().__init__(addresses=[MemoryArea(a) for a in addresses], until=until, base=base)
+        return super().__init__(addresses=addresses, utf16=utf16, ascii=ascii, until=until, base=base)
 
     def process(self, data):
-        for area in self.args.addresses:
-            area: MemoryArea
+        until = self.args.until
+        addrs = self.args.addresses
+        if self.args.ascii:
+            until = B'\0'
+        if self.args.utf16:
+            until = B'\0\0'
+            addrs = (slice(a.start, a.stop, 2) for a in addrs)
+
+        for addr in addrs:
+            area = MemoryArea(addr)
             offset, lbound = exeroute(
                 data,
                 self._get_buffer_range_elf,
@@ -65,13 +68,13 @@ class vsnip(Unit):
 
             lbound = lbound or len(data)
 
-            if not self.args.until:
+            if not until:
                 end = lbound
             else:
                 end = offset - 1
                 align = area.align
                 while True:
-                    end = data.find(self.args.until, end + 1)
+                    end = data.find(until, end + 1)
                     if end not in range(offset, lbound):
                         raise EndOfStringNotFound
                     if (end - offset) % align == 0:
