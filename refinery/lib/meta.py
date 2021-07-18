@@ -266,9 +266,32 @@ class LazyMetaOracle(dict):
         return self
 
     def format_str(self, spec: str, codec: str, *args, **symb) -> str:
+        """
+        Formats the input expression like a normal Python format string expression. Certain refinery
+        metadata objects have special formatters for the `r`-transformation, as defined by wrapping
+        of type `refinery.lib.meta.CustomStringRepresentation`. The following representations are
+        defined:
+
+        - `entropy` and `ic` are formatted as a percentage.
+        - `sha1`, `sha256`, and `md5` are formatted as hex strings.
+        - `size` is formatted as a human-readable size with unit.
+        """
         return self.format(spec, codec, list(args), symb, False)
 
     def format_bin(self, spec: str, codec: str, *args, **symb) -> ByteString:
+        """
+        Formats the input expression using a Python F-string like expression. These strings contain
+        fields in the format `{expression!T:pipeline}`, where `T` is a transformation character and
+        the `pipeline` part is any refinery pipeline as it would be specified on the command line.
+        The following transformations can be applied to the `expression` before it is (optionally)
+        processed with the given `pipeline`:
+
+        - `h`: decoded as a hexadecimal string
+        - `a`: endcode as latin1
+        - `s`: encoded as utf8
+        - `u`: encoded as utf16
+        - `e`: reads the input as an escaped string
+        """
         return self.format(spec, codec, list(args), symb, True)
 
     def format(
@@ -281,8 +304,15 @@ class LazyMetaOracle(dict):
         fixup     : bool = True,
         variables : Optional[set] = None,
     ) -> Union[str, ByteString]:
-        # prevents circular import
+        """
+        Formats a string using Python-like string fomatting syntax. The formatter for `binary`
+        mode is different; each formatting is documented in one of the following two proxy methods:
+
+        - `refinery.lib.meta.LazyMetaOracle.format_str`
+        - `refinery.lib.meta.LazyMetaOracle.format_bin`
+        """
         from .argformats import ParserError, PythonExpression
+        # prevents circular import
 
         def identity(x):
             return x
@@ -322,6 +352,7 @@ class LazyMetaOracle(dict):
                     if autoindex < len(args) - 1:
                         autoindex += 1
                 if binary and conversion:
+                    conversion = conversion.lower()
                     if conversion == 'h':
                         value = bytes.fromhex(field)
                     elif conversion == 's':

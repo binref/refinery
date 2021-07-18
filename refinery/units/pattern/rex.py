@@ -8,6 +8,14 @@ from . import arg, RegexUnit, PatternExtractor
 class rex(RegexUnit, PatternExtractor):
     """
     A binary grep which can apply a transformation to each match. Each match is an individual output.
+    Besides the syntax `{k}` to insert the `k`-th match group, the unit supports processing the
+    contents of match groups with arbitrary refinery units. To do so, use the following F-string-like
+    syntax:
+
+        {match-group:pipeline}
+
+    where `:pipeline` is an optional pipeline of refinery commands as it would be specified on
+    the command line. The value of the corresponding match is post-processed with this command.
     """
     def __init__(
         self, regex,
@@ -16,7 +24,7 @@ class rex(RegexUnit, PatternExtractor):
         *transformation: arg(type=utf8, help=(
             'An optional sequence of transformations to be applied to each match. '
             'Each transformation produces one output in the order in which they   '
-            'are given. The default transformation is $0, i.e. the entire match.  '
+            'are given. The default transformation is {0}, i.e. the entire match.  '
         )),
         unicode: arg.switch('-u', help='Also find unicode strings.') = False,
         unique: arg.switch('-q', help='Yield every (transformed) match only once.') = False,

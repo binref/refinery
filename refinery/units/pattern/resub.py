@@ -7,10 +7,14 @@ from . import arg, RegexUnit
 
 class resub(RegexUnit):
     """
-    A unit for performing substitutions based on a binary regular expression
-    pattern. Besides the usual syntax `$k` to insert the `k`-th match group,
-    the unit supports processing the contents of match groups with arbitrary
-    refinery units (see `refinery.units.pattern.TransformSubstitutionFactory`).
+    A unit for performing substitutions based on a binary regular expression pattern. Besides the
+    syntax `{k}` to insert the `k`-th match group, the unit supports processing the contents of
+    match groups with arbitrary refinery units. To do so, use the following F-string-like syntax:
+
+        {match-group:pipeline}
+
+    where `:pipeline` is an optional pipeline of refinery commands as it would be specified on
+    the command line. The value of the corresponding match is post-processed with this command.
     """
     def __init__(self, regex,
         subst: arg('subst', type=utf8, help=(
