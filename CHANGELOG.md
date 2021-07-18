@@ -1,5 +1,14 @@
 # Binary Refinery Changelog
 
+## Version 0.3.33
+- Adds the `xfcc` unit, which replaces the `intersection` unit.
+- The `cm` unit can now be used to remove meta variables.
+- JSON dumps no longer use hex encoding for big integers as JSON has no size limit on integer expressions.
+- The `struct` unit was significantly redesigned and the `lprefix` unit removed because it can now be trivially implemented with `struct`.
+- The `ifexpr` unit has been renamed to `iff` and the `iffp` unit was added.
+- The field names in `dnfields` have been altered to more closely resemble file names.
+- Adds a list of default passwords to archive units.
+
 ## Version 0.3.32
 - Renames the `fread` unit to `ef`.
 - Metadata / Format string expression parsing is now more flexible.
