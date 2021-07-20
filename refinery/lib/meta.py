@@ -194,7 +194,7 @@ class SizeInt(int, CustomStringRepresentation):
         return self._s(True)
 
     def __str__(self):
-        return super().__str__()
+        return int.__str__(self)
 
 
 class Percentage(float, CustomStringRepresentation):
