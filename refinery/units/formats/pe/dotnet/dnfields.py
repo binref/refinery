@@ -3,8 +3,17 @@
 import re
 import struct
 
+from typing import NamedTuple, Optional
+
 from ... import PathExtractorUnit, UnpackResult
 from .....lib.dotnet.header import DotNetHeader
+
+
+class FieldInfo(NamedTuple):
+    type: str
+    count: int
+    size: int
+    name: Optional[str]
 
 
 class dnfields(PathExtractorUnit):
@@ -23,24 +32,34 @@ class dnfields(PathExtractorUnit):
         '^[us]?int.?64$' : 8,
     }
 
-    def _guess_field_info(self, tables, data, t):
+    def _guess_field_info(self, tables, data, t) -> FieldInfo:
         pattern = (
             BR'(\x20....|\x1F.)'                # ldc.i4  count
             BR'\x8D(...)([\x01\x02])'           # newarr  col|row
             BR'\x25'                            # dup
-            BR'\xD0\x%02x\x%02x\x%02x\x04' % (  # ldtoken t
+            BR'\xD0\x%02x\x%02x\x%02x\x04'      # ldtoken t
+            BR'(?:.{0,12}'                      # ...
+            BR'\x80(...)\x04)?' % (             # stsfld variable
                 (t >> 0x00) & 0xFF,
                 (t >> 0x08) & 0xFF,
                 (t >> 0x10) & 0xFF
             )
         )
         for match in re.finditer(pattern, data, flags=re.DOTALL):
-            count, j, r = match.groups()
-            count, j, r = struct.unpack('=LLB', B'%s%s\0%s' % (count[1:].ljust(4, B'\0'), j, r))
+            count, j, r, name = match.groups()
+            count, j, r = struct.unpack('<LLB', B'%s%s\0%s' % (count[1:].ljust(4, B'\0'), j, r))
+            if name:
+                try:
+                    name = struct.unpack('<L', B'%s\0' % name)
+                    name = name[0]
+                    name = tables[4][name - 1].Name
+                except Exception as E:
+                    self.log_info(F'attempt to parse field name failed: {E!s}')
+                    name = None
             element = tables[r][j - 1]
             for pattern, size in self._SIZEMAP.items():
                 if re.match(pattern, element.TypeName, flags=re.IGNORECASE):
-                    return element.TypeName, count, size
+                    return FieldInfo(element.TypeName, count, size, name)
 
     def unpack(self, data):
         header = DotNetHeader(data, parse_resources=False)
@@ -78,11 +97,12 @@ class dnfields(PathExtractorUnit):
             if guess is None:
                 self.log_debug(lambda: F'field {k:0{iwidth}d} name {field.Signature}: unable to guess type information')
                 continue
-            typename, count, size = guess
-            totalsize = count * size
+            totalsize = guess.count * guess.size
+            if guess.name is not None:
+                fname = guess.name
             if not fname.isprintable():
                 fname = F'F{rv.RVA:0{rwidth}X}'
-            name = F'{fname}.{typename}[{count}]'
-            self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {typename}, count: {count}, name: {fname}')
+            name = F'{fname}.{guess.type}[{guess.count}]'
+            self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {guess.type}, count: {guess.count}, name: {fname}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
             yield UnpackResult(name, lambda t=offset, s=totalsize: data[t:t + s])
