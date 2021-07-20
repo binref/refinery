@@ -580,14 +580,26 @@ class JvClassFile(Struct):
         self.this = reader.u16()
         self.parent = reader.u16()
 
-        self.interfaces = [self.pool[reader.u16()]
-            for _ in range(reader.u16())]
-        self.fields = [JvClassMember(reader, pool=self.pool)
-            for _ in range(reader.u16())]
-        self.methods = [JvClassMember(reader, pool=self.pool)
-            for _ in range(reader.u16())]
-        self.attributes = [JvAttribute(reader, pool=self.pool)
-            for _ in range(reader.u16())]
+        try:
+            self.interfaces = [self.pool[reader.u16()]
+                for _ in range(reader.u16())]
+        except IndexError:
+            raise ValueError('Failed parsing Interfaces.')
+        try:
+            self.fields = [JvClassMember(reader, pool=self.pool)
+                for _ in range(reader.u16())]
+        except IndexError:
+            raise ValueError('Failed parsing Fields.')
+        try:
+            self.methods = [JvClassMember(reader, pool=self.pool)
+                for _ in range(reader.u16())]
+        except IndexError:
+            raise ValueError('Failed parsing Methods.')
+        try:
+            self.attributes = [JvAttribute(reader, pool=self.pool)
+                for _ in range(reader.u16())]
+        except IndexError:
+            raise ValueError('Failed parsing Attributes.')
 
     @staticmethod
     def decode_utf8m(string: ByteString) -> str:
