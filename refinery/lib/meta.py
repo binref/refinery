@@ -207,7 +207,7 @@ class Percentage(float, CustomStringRepresentation):
         return F'{self:.4f}'
 
     def __repr__(self):
-        return F'{self*100:.2f}%'
+        return F'{self*100:05.2f}%'
 
 
 class HexByteString(bytes, CustomStringRepresentation):

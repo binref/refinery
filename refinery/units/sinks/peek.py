@@ -65,7 +65,7 @@ class peek(HexViewer):
             if value is None:
                 continue
             if isinstance(value, CustomStringRepresentation):
-                value = str(value).strip()
+                value = repr(value).strip()
             elif isbuffer(value):
                 try:
                     decoded: str = value.decode(self.codec)
