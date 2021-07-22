@@ -717,17 +717,21 @@ class DelayedArgument(LazyEvaluation):
         return itertools.cycle(it)
 
     @handler.register('accu', final=True)
-    def accu(self, update: str, seed: Optional[str] = None) -> Iterable[int]:
+    def accu(self, update: str, seed: Optional[str] = None, precision: Optional[str] = None) -> Iterable[int]:
         """
-        The final handler `accu[seed=0]:update` expects `seed` and `expression` to be Python expressions
-        and generates an infinite integer sequence. The first element of this sequence is `seed`, which
-        is zero by default. Each subsequent element is the result of evaluating the `update` expression.
-        The `update` expression can use the special variable `A` to access the previous element of the
-        sequence. This handler can be used to implement simple finite state machines such as linear
-        congruency generators, for example.
+        The final handler `accu[seed=0,precision=0]:update` expects `seed` and `expression` to be Python
+        expressions and generates an infinite integer sequence. The first element of this sequence is `seed`,
+        which is zero by default. Each subsequent element is the result of evaluating the `update`
+        expression. The `update` expression can use the special variable `A` to access the previous element
+        of the sequence. This handler can be used to implement simple finite state machines such as linear
+        congruency generators, for example. If the `precision` argument is present, all results are reduced
+        to an integer with the given length in bytes.
         """
         update = PythonExpression(update, all_variables_allowed=True)
         seed = seed and PythonExpression(seed, all_variables_allowed=True)
+        if precision:
+            precision = int(precision, 0)
+        mask = precision and (1 << (8 * precision)) - 1
 
         def finalize(data: Optional[Chunk] = None):
             @lru_cache(maxsize=512, typed=False)
@@ -738,6 +742,8 @@ class DelayedArgument(LazyEvaluation):
             while True:
                 yield A
                 A = accumulate(A)
+                if mask:
+                    A &= mask
 
         try:
             return finalize()
