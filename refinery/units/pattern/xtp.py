@@ -116,9 +116,11 @@ class xtp(PatternExtractor):
     def _check_match(self, data, pos, name, value):
         term = self._BRACKETING.get(data[pos - 1], None)
         if term:
-            pos = value.rfind(term)
-            if pos > 0 and len(value) - pos <= 3:
+            pos = value.find(term)
+            if pos > 0:
                 value = value[:pos]
+        if not self.args.filter:
+            return value
         if name == 'ipv4':
             ocets = [int(x) for x in value.split(B'.')]
             if ocets.count(0) >= 3:
@@ -214,5 +216,5 @@ class xtp(PatternExtractor):
 
         self.log_debug(self.args.pattern)
 
-        transforms = [] if not self.args.filter else [check]
+        transforms = [check]
         yield from self.matches_filtered(memoryview(data), self.args.pattern, *transforms)
