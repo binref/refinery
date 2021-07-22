@@ -1,10 +1,10 @@
 __pycache__
 __init__.pkl
-venv*
-temp*
-html
-build
-dist
+/venv*
+/temp*
+/html
+/build
+/dist
 *.egg-info
 *.eggs
 *.pyc
