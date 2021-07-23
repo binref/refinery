@@ -3,7 +3,7 @@
 from . import arg, ConditionalUnit
 
 
-class ifstr(ConditionalUnit):
+class iffs(ConditionalUnit):
     """
     Filter incoming chunks depending on whether they contain a given binary substring.
     """

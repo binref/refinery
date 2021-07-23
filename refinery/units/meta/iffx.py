@@ -4,7 +4,7 @@ from ..pattern import arg, RegexUnit
 from . import ConditionalUnit
 
 
-class ifrex(RegexUnit, ConditionalUnit):
+class iffx(RegexUnit, ConditionalUnit):
     """
     Filter incoming chunks by discarding those that do not match the given
     regular expression.
