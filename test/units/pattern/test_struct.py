@@ -20,3 +20,7 @@ class TestStructUnit(TestUnitBase):
         out = next(data | unit)
         self.assertEqual(out.meta['type'], 0x34)
         self.assertEqual(out, body)
+
+    def test_no_last_field(self):
+        unit = self.load('6sB8s')
+        self.assertEqual(bytes(B'Binary Refinery' | unit), B'Refinery')

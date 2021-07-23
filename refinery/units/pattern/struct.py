@@ -133,8 +133,18 @@ class struct(Unit):
                 reader.seek(checkpoint)
 
                 for template in self.args.outputs:
+                    full = reader.read(size)
+                    if last:
+                        last = last.binary
+                    else:
+                        for k in range(len(args) - 1, -1, -1):
+                            if isbuffer(args[k]):
+                                last = args[k]
+                                break
+                        else:
+                            last = B''
                     output = meta.format_bin(template, self.codec,
-                        *args, **{'=': reader.read(size), '/': last.binary})
+                        *args, **{'=': full, '/': last})
                     for _, key, _, _ in formatter.parse(template):
                         meta.pop(key, None)
                     yield self.labelled(output, **meta)
