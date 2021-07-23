@@ -3,7 +3,12 @@
 """
 A package for units that operate primarily on frames of several of inputs.
 """
-import abc
+from __future__ import annotations
+
+from typing import Iterable, TYPE_CHECKING
+from abc import abstractmethod
+if TYPE_CHECKING:
+    from ...lib.frame import Chunk
 
 from .. import arg, Unit
 from ...lib.argformats import sliceobj
@@ -41,12 +46,12 @@ class ConditionalUnit(Unit, abstract=True):
     ):
         super().__init__(negate=negate, **kwargs)
 
-    @abc.abstractmethod
+    @abstractmethod
     def match(self, chunk) -> bool:
         ...
 
-    def filter(self, chunks):
+    def filter(self, chunks: Iterable[Chunk]):
         for chunk in chunks:
-            if self.match(chunk) is self.args.negate:
-                continue
+            if chunk.visible and self.match(chunk) is self.args.negate:
+                chunk.visible = False
             yield chunk
