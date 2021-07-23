@@ -122,7 +122,7 @@ class struct(Unit):
                         else:
                             args[index] = value
                         continue
-                    else:
+                    elif name:
                         meta[name] = value
 
                 if until and not until(meta):
