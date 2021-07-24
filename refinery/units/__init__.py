@@ -138,9 +138,14 @@ class RefineryPartialResult(ValueError):
     """
     This exception indicates that a partial result is available.
     """
-    def __init__(self, msg, partial):
-        super().__init__(msg)
+    def __init__(self, message: str, partial: ByteString, rest: Optional[ByteString] = None):
+        super().__init__(message)
+        self.message = message
         self.partial = partial
+        self.rest = rest
+
+    def __str__(self):
+        return self.message
 
 
 class RefineryCriticalException(RuntimeError):
@@ -1029,8 +1034,9 @@ class Unit(UnitBase, abstract=True):
                     yield result
             except BaseException as B:
                 result = self._exception_handler(B)
+                message = str(B).strip() or 'unknown'
                 if result is not None:
-                    yield self.labelled(result, error=str(B))
+                    yield self.labelled(result, error=message)
 
         self._framed = Framed(
             normalized_action,
