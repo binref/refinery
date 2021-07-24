@@ -154,7 +154,7 @@ _pattern_defanged_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=_pattern_defa
 _pattern_serrated_hostname = _pattern_serrated_socket + '?'
 _pattern_defanged_hostname = _pattern_defanged_socket + '?'
 
-_pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?![a-zA-Z0-9])'
+_pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?=[iI]\d{1,2}|[LlHh]|[^a-zA-Z0-9]|$)'
 _pattern_float = R'[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?'
 _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 _pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
