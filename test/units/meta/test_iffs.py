@@ -8,5 +8,5 @@ from .. import TestUnitBase
 class TestIfStr(TestUnitBase):
 
     def test_simple_01(self):
-        pl = L('emit raffle waffle rattle battle cattle settle') [ self.load('att') ]
+        pl = L('emit raffle waffle rattle battle cattle settle') [ self.load('att') | L('cull') ]
         self.assertEqual(pl(), B'rattlebattlecattle')
