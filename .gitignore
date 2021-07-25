@@ -4,7 +4,11 @@ __init__.pkl
 /temp*
 /html
 /build
+/share
+/lib
 /dist
+/pyvenv.cfg
+/lib64
 *.egg-info
 *.eggs
 *.pyc
