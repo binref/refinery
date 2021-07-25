@@ -52,6 +52,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install .
         pip install build
     - name: Build package
       run: python -m build

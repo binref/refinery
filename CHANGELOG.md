@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.3.34
+- Fixes critical bug in deployment.
+- Adds the `msgpack` unit.
+- Adds the `cull` unit and changes the behaviour of conditional units to make filtered chunks invisible instead of removing them. Conditional units have been renamed to `iff`, `iffs`, `iffx`, and `iifp`.
+
 ## Version 0.3.33
 - Adds the `xfcc` unit, which replaces the `intersection` unit.
 - The `cm` unit can now be used to remove meta variables.
