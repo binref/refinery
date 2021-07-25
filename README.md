@@ -28,27 +28,21 @@ The refinery requires at least **Python 3.7**. Since binary refinery introduces 
 
 Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket. If you specify the special prefix `!` (a single exclamation mark), then the refinery will be installed in library mode and no commands will be created at all.
 
-### Automated Installation
+### Installation
 
-You can either install refinery manually (see below) or use the automated installer script, which creates a virtual environment and installs the refinery package to that virtual environment. To do so, simply run [setup-venv.py](setup-venv.py) using the interpreter on your system which you would like to use for refinery. The script will create a virtual environment cloned from that interpreter version and install the binary refinery package into that virtual environment. On Windows, it also adds the `Scripts` directory of that virtual environment to your `PATH`, so all commands become available on the command line. The syntax for the script is as follows:
-```
-./setup-venv.py [--wheel] [--prefix pr] [folder]
-```
-The optional argument `folder` specifies the folder where the virtual Python environment is created, the default is `venv`. The optional value given by `--prefix` is the prefix (see above). Finally, the `--wheel` option will install the refinery package as a wheel, which may have some performance benefits. If this option is omitted, refinery is installed as an editable package, which means that any source code modifications in the repository will immediately take effect.
-
-Some known issues arise when [setup-venv.py](setup-venv.py) is instructed to create the virtual environment in a location which already contains a virtual environment that was created by other means. As a workaround for these issues, don't do that, i.e. simply delete the virtual environment and use [setup-venv.py](setup-venv.py) to re-create it.
-
-### Manual Installation
-
-To install or update refinery manually, simply set the environment variable `REFINERY_PREFIX` to the prefix you want and use pip. For example:
+It is recommended to install binary refinery into [a virtual environment][venv]. The package has a **lot** of dependencies, and installing it into your global Python is somewhat prone to lead to dependency conflicts. To install or update refinery manually, simply set the environment variable `REFINERY_PREFIX` to the prefix you want and use pip. For example:
 ```
 REFINERY_PREFIX=r. pip3 install -U binary-refinery
 ```
-to install refinery into the current Python environment with prefix `r.`. As mentioned above, the special prefix `!` will have the effect that no shell commands are created and the refinery will be installed only as a library.
-
-### Updating
-
-To update refinery, it is sufficient to pull the repository and run [setup-venv.py](setup-venv.py) again with the same arguments after pulling the repository. If you installed refinery manually, you should first run `pip uninstall binary-refinery` and then install the package again. The uninstall is a safeguard to make sure that potentially deprecated command shims are removed before installing the new version. If you are using a virtual environment, you can always just remove the entire directory and install again, of course.
+to install refinery into the current Python environment with prefix `r.`. As mentioned above, the special prefix `!` will have the effect that no shell commands are created and the refinery will be installed only as a library. If you want to install the current refinery `HEAD`, you can install the master of this repository instead. The following will install the very latest refinery commit:
+```
+pip3 install -U git+git://github.com/binref/refinery.git
+```
+To update refinery, the most reliable option is to run
+```
+pip uninstall -y binary-refinery
+```
+and then install it again. This will be a lot faster than installing it, because resolving dependencies is what takes a lot of time during the install of binary refinery.
 
 ### Generating Documentation
 
@@ -182,6 +176,7 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [tests]: https://github.com/binref/refinery/actions
 [codecov]: https://codecov.io/github/binref/refinery/?branch=master
 [pypi]: https://pypi.org/project/binary-refinery/
+[venv]: https://docs.python.org/3/library/venv.html
 
 [dump]: https://binref.github.io/#refinery.dump
 [emit]: https://binref.github.io/#refinery.emit

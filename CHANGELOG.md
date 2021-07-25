@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.0
+This release removes the `setup-venv` helper scripts and instead uses a slightly less ugly hack to resolve dependencies before running the refinery setup by declaring every dependency a build dependency in `pyproject.toml`. Any kind of installation should work seamlessly through `pip`.
+
 ## Version 0.3.38 - bugfix release
 Updates build system.
 

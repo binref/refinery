@@ -34,19 +34,6 @@ def get_all_entry_points() -> Iterable[type]:
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
     """
-    class DummyModule:
-        def __getattr__(self, name): return self
-        def __call__(self, *args, **kwargs): return self
-        def __iter__(self): return self
-        def __next__(self): raise StopIteration
-        def __mro_entries__(self, _): return ()
-        def __gt__(self, _): return False
-        def __lt__(self, _): return True
-        def __eq__(self, other): return self is other
-        def __getitem__(self, key): return self
-        def __hash__(self): return id(self)
-
-    DummyModule = DummyModule()
     path = [get_package_name(), 'units']
     root = __import__('.'.join(path))
 
@@ -56,14 +43,8 @@ def get_all_entry_points() -> Iterable[type]:
     def iterate(parent, *path):
         for _, name, ispkg in pkgutil.iter_modules(parent.__path__):
             module_name = '.'.join([*path, name])
-            for _ in range(200):
-                try:
-                    importlib.import_module(module_name)
-                except ModuleNotFoundError as missing:
-                    sys.modules[missing.name] = DummyModule
-                else:
-                    break
             try:
+                importlib.import_module(module_name)
                 module = getattr(parent, name)
             except Exception:
                 continue

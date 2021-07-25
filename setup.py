@@ -5,6 +5,7 @@ import os
 import re
 import os.path
 import sys
+import toml
 
 PREFIX = os.getenv('REFINERY_PREFIX') or ''
 GITHUB = 'https://github.com/binref/refinery/'
@@ -27,11 +28,12 @@ def main():
         print('ERROR: Python version at least 3.7 is required.', file=sys.stderr)
         sys.exit(0xFADE)
 
-    def magic(x):
-        return '{}-win64'.format(x) if os.name == 'nt' and x == 'python-magic' else x
+    requirements = toml.load('pyproject.toml')['build-system']['requires']
 
-    requirements = [magic(r.strip()) for r in open('requirements.txt', 'r')]
-    requirements = [r for r in requirements if r]
+    magic = 'python-magic'
+    if os.name == 'nt':
+        magic = F'{magic}-win64'
+    requirements.append(magic)
 
     with open('README.md', 'r', encoding='UTF8') as README:
         def complete_link(match):
