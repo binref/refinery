@@ -27,6 +27,9 @@ as their content is relevant for command line use of the `refinery`.
 Furthermore, the module documentation of `refinery.units` contains a brief
 example of how to write simple units.
 """
+__version__ = '0.3.36'
+__pip_pkg__ = 'binary-refinery'
+
 import os
 import pickle
 

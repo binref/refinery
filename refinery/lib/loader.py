@@ -3,10 +3,13 @@
 """
 Functions to help dynamically load refinery units.
 """
-import pkgutil
-import pkg_resources
-import shlex
 import functools
+import importlib
+import os
+import pkg_resources
+import pkgutil
+import shlex
+import sys
 
 from typing import Iterable, Any
 
@@ -31,6 +34,19 @@ def get_all_entry_points() -> Iterable[type]:
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
     """
+    class DummyModule:
+        def __getattr__(self, name): return self
+        def __call__(self, *args, **kwargs): return self
+        def __iter__(self): return self
+        def __next__(self): raise StopIteration
+        def __mro_entries__(self, _): return ()
+        def __gt__(self, _): return False
+        def __lt__(self, _): return True
+        def __eq__(self, other): return self is other
+        def __getitem__(self, key): return self
+        def __hash__(self): return id(self)
+
+    DummyModule = DummyModule()
     path = [get_package_name(), 'units']
     root = __import__('.'.join(path))
 
@@ -39,9 +55,15 @@ def get_all_entry_points() -> Iterable[type]:
 
     def iterate(parent, *path):
         for _, name, ispkg in pkgutil.iter_modules(parent.__path__):
+            module_name = '.'.join([*path, name])
+            for _ in range(200):
+                try:
+                    importlib.import_module(module_name)
+                except ModuleNotFoundError as missing:
+                    sys.modules[missing.name] = DummyModule
+                else:
+                    break
             try:
-                module_name = '.'.join([*path, name])
-                __import__(module_name)
                 module = getattr(parent, name)
             except Exception:
                 continue
@@ -66,21 +88,19 @@ def get_entry_point(name: str) -> type:
         return ep.__self__
     except Exception:
         pass
-    try:
-        import sys
-        import os
-        assert int(os.environ['REFINERY_LOAD_LOCAL']) == 1
-        from ..units import Entry
-        sys.path.append('.')
-        module = __import__(name)
-        for attr in dir(module):
-            item = getattr(module, attr)
-            if getattr(item, '__module__', None) != name:
-                continue
-            if isinstance(item, type) and issubclass(item, Entry):
-                return item
-    except Exception:
-        pass
+    if os.environ.get('REFINERY_LOAD_LOCAL', False):
+        try:
+            from ..units import Entry
+            sys.path.append('.')
+            module = importlib.import_module(name)
+            for attr in dir(module):
+                item = getattr(module, attr)
+                if getattr(item, '__module__', None) != name:
+                    continue
+                if isinstance(item, type) and issubclass(item, Entry):
+                    return item
+        except Exception:
+            pass
     for entry in get_all_entry_points():
         if getattr(entry, 'name', None) == name:
             return entry

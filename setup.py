@@ -7,6 +7,7 @@ import os.path
 import sys
 
 import refinery.lib.loader as loader
+import refinery
 
 
 PREFIX = os.getenv('REFINERY_PREFIX') or ''
@@ -59,8 +60,8 @@ def main():
         ]
 
     setuptools.setup(
-        name='binary-refinery',
-        version='0.3.35',
+        name=refinery.__pip_pkg__,
+        version=refinery.__version__,
         author='Jesko Hüttenhain',
         description='A toolkit to transform and refine (mostly) binary data.',
         long_description=readme,

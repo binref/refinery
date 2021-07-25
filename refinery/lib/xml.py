@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import uuid
+import defusedxml.ElementTree as et
 
 from typing import Any, Dict, Iterable, List, Optional
 from xml.parsers import expat
-from defusedxml.ElementTree import parse as ParseXML, XMLParser, ParseError
 from xml.etree.ElementTree import Element, ElementTree
 
 from .structures import MemoryFile
@@ -14,12 +14,12 @@ from .structures import MemoryFile
 
 def ForgivingParse(data, entities=None) -> ElementTree:
     try:
-        return ParseXML(MemoryFile(data), parser=ForgivingXMLParser(entities))
-    except ParseError as PE:
+        return et.parse(MemoryFile(data), parser=ForgivingXMLParser(entities))
+    except et.ParseError as PE:
         raise ValueError from PE
 
 
-class ForgivingXMLParser(XMLParser):
+class ForgivingXMLParser(et.XMLParser):
 
     def __init__(self, emap=None):
         class ForgivingEntityResolver(dict):
