@@ -6,10 +6,6 @@ import re
 import os.path
 import sys
 
-import refinery.lib.loader as loader
-import refinery
-
-
 PREFIX = os.getenv('REFINERY_PREFIX') or ''
 GITHUB = 'https://github.com/binref/refinery/'
 GITRAW = 'https://raw.githubusercontent.com/binref/refinery/'
@@ -24,6 +20,9 @@ def normalize_name(name, separator='-'):
 
 
 def main():
+    import refinery.lib.loader as loader
+    import refinery
+
     if sys.version_info < (3, 7):
         print('ERROR: Python version at least 3.7 is required.', file=sys.stderr)
         sys.exit(0xFADE)
@@ -88,4 +87,5 @@ def main():
 
 
 if __name__ == '__main__':
+    sys.path.insert(0, os.path.dirname(__file__))
     main()

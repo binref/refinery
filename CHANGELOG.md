@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+## Version 0.3.38 - bugfix release
+Updates build system.
+
+## Version 0.3.37 - bugfix release
+
+## Version 0.3.36 - bugfix release
+
+## Version 0.3.35 - bugfix release
 ## Version 0.3.34
 - Fixes critical bug in deployment.
 - Adds the `msgpack` unit.
