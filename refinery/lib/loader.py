@@ -63,11 +63,11 @@ def get_entry_point(name: str) -> type:
     for package in [refinery.__pip_pkg__, 'refinery']:
         try:
             return pkg_resources.load_entry_point(package, 'console_scripts', name).__self__
-        except pkg_resources.DistributionNotFound as error:
+        except pkg_resources.DistributionNotFound:
             continue
         except ImportError:
             raise EntryNotFound(F'not a unit: {name}')
-        except Exception:
+        except Exception as error:
             logging.error(F'could not load {package} entry point {name}: {type(error).__name__}: {error!s}')
     if os.environ.get('REFINERY_LOAD_LOCAL', False):
         try:
