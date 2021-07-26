@@ -44,6 +44,10 @@ pip uninstall -y binary-refinery
 ```
 and then install it again. This will be a lot faster than installing it, because resolving dependencies is what takes a lot of time during the install of binary refinery.
 
+### Bleeding Edge
+
+Alternatively, you can clone this repository and use the scripts [update.sh](update.sh) (on Linux) or [update.ps1](update.ps1) (on Windows) to install the refinery package into a local virtual environment. The installation and update process for this method is to simply run the script; it pulls the repository, activates the virtual environment, uninstalls the current `binary-refinery` package, and then installs it again.
+
 ### Generating Documentation
 
 The documentation [is available online][docs], but you can also generate it locally. To do so, execute the [run-pdoc3.py](run-pdoc3.py) script. This will **fail** unless you run it from an environment where binary refinery has been installed as a Python package. To run it, you have to specify the path of a virtual environment as the first command line argument to [run-pdoc3.py](run-pdoc3.py), which will cause the script to run itself again using the interpreter of that environment. If you are certain that you want to run [run-pdoc3.py](run-pdoc3.py), there is a command line switch to force the script to run with the current default Python interpreter. The script installs the [pdoc3 package][pdoc3] and uses it to generate a HTML documentation for the `refinery` package. The documentation can then be found in the subdirectory `html` directly next to this readme file.
