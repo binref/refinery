@@ -10,6 +10,9 @@ import pkg_resources
 import pkgutil
 import shlex
 import sys
+import logging
+
+import refinery
 
 from typing import Iterable, Any
 
@@ -18,23 +21,12 @@ class EntryNotFound(NameError):
     pass
 
 
-def get_package_name() -> str:
-    """
-    Retrieves the toplevel package name.
-    """
-    root = __name__
-    first_dot = root.find('.')
-    if first_dot > 0:
-        root = root[:first_dot]
-    return root
-
-
 def get_all_entry_points() -> Iterable[type]:
     """
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
     """
-    path = [get_package_name(), 'units']
+    path = ['refinery', 'units']
     root = __import__('.'.join(path))
 
     for name in path[1:]:
@@ -46,7 +38,11 @@ def get_all_entry_points() -> Iterable[type]:
             try:
                 importlib.import_module(module_name)
                 module = getattr(parent, name)
-            except Exception:
+            except ModuleNotFoundError as error:
+                logging.error(F'could not load {module_name} because {error.name} is missing.')
+                continue
+            except Exception as error:
+                logging.error(F'could not load {module_name} due to unknown error: {error!s}')
                 continue
             if ispkg:
                 yield from iterate(module, *path, name)
@@ -64,11 +60,15 @@ def get_entry_point(name: str) -> type:
     """
     Retrieve a refinery entry point by name.
     """
-    try:
-        ep = pkg_resources.load_entry_point(get_package_name(), 'console_scripts', name)
-        return ep.__self__
-    except Exception:
-        pass
+    for package in [refinery.__pip_pkg__, 'refinery']:
+        try:
+            return pkg_resources.load_entry_point(package, 'console_scripts', name).__self__
+        except pkg_resources.DistributionNotFound as error:
+            continue
+        except ImportError:
+            raise EntryNotFound(F'not a unit: {name}')
+        except Exception:
+            logging.error(F'could not load {package} entry point {name}: {type(error).__name__}: {error!s}')
     if os.environ.get('REFINERY_LOAD_LOCAL', False):
         try:
             from ..units import Entry
@@ -95,7 +95,7 @@ def resolve(name: str) -> type:
     Raises `refinery.lib.loader.EntryNotFound` if the entry is not found.
     """
     try:
-        unit = getattr(__import__('refinery', None, None, [name]), name, None)
+        unit = refinery.load(name)
     except ImportError:
         unit = None
     return unit or get_entry_point(name)

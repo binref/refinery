@@ -53,6 +53,7 @@ class _cache:
     def __init__(self, filename='__init__.pkl'):
         self.path = os.path.join(os.path.dirname(__file__), filename)
         self.reloading = False
+        self.loaded = False
         self.units = {}
         self.cache = {}
         self.load()
@@ -63,6 +64,8 @@ class _cache:
                 self.units = pickle.load(stream)
         except (FileNotFoundError, EOFError):
             self.reload()
+        else:
+            self.loaded = True
 
     def save(self):
         try:
@@ -70,6 +73,8 @@ class _cache:
                 pickle.dump(self.units, stream)
         except Exception:
             pass
+        else:
+            self.loaded = True
 
     def reload(self):
         if not self.reloading:
@@ -158,3 +163,9 @@ def __getattr__(name):
 
 def __dir__():
     return __all__
+
+
+def load(name):
+    if _cache.loaded:
+        return _cache.cache.get(name)
+    return _cache[name]
