@@ -29,7 +29,7 @@ class resub(RegexUnit):
 
     def process(self, data):
         def repl(match):
-            return meta.format_bin(spec, self.codec, *match.groups(), **match.groupdict())
+            return meta.format_bin(spec, self.codec, match.group(0), *match.groups(), **match.groupdict())
         self.log_info('pattern:', self.regex)
         self.log_info('replace:', self.args.subst)
         meta = metavars(data)

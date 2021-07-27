@@ -46,7 +46,7 @@ class rex(RegexUnit, PatternExtractor):
             for spec in specs:
                 def transformation(match, s=spec.decode(self.codec)):
                     symb: dict = match.groupdict()
-                    args: list = list(match.groups())
+                    args: list = [match.group(0), *match.groups()]
                     used = set()
                     item = meta.format(s, self.codec, args, symb, True, True, used)
                     for variable in used:

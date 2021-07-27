@@ -13,7 +13,7 @@ class TestRex(TestUnitBase):
     def test_nested_substitution_expressions(self):
         unit = self.load(
             R'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
-            R'{0:hex | aes H:{1:hex|xor {2}|hex -R} | trim -r 00}'
+            R'{1:hex | aes H:{2:hex|xor {3}|hex -R} | trim -r 00}'
         )
         msg = B'Too much technology, in too little time.'
         aeskey = self.generate_random_buffer(16)
@@ -31,7 +31,7 @@ class TestRex(TestUnitBase):
             B'domain/www.yahoo.com\n'
             B'domain/ns1.dns.com'
         )
-        unit = self.load('-M', R'^domain\/(.*)$', '{}')
+        unit = self.load('-M', R'^domain\/(.*)$', '{1}')
         self.assertEqual(unit(data), data.replace(B'domain/', B''))
 
     def test_generic_parameters_01(self):
@@ -64,5 +64,5 @@ class TestRex(TestUnitBase):
 
     def test_multiple_outputs(self):
         data = b'AXBXC'
-        unit = self.load('(.)X(.)X(.)', '1{0}', '2{1}', '3{2}', '[]')
+        unit = self.load('(.)X(.)X(.)', '1{1}', '2{2}', '3{3}', '[]')
         self.assertEqual(unit(data), B''.join((B'1A', B'2B', B'3C')))
