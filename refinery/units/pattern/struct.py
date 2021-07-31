@@ -20,36 +20,49 @@ def identity(x):
 class struct(Unit):
     """
     Read structured data from the beginning of a chunk and store the extracted fields in chunk meta variables.
-    The structure format is specified in Python struct format, and all remaining arguments to this unit are the
-    names of the variables that receive the values from this struct.
+    The structure format is specified in extended Python struct format, and all remaining arguments to this unit
+    are the names of the variables that receive the values from this struct. The extended struct format supports
+    all field types supported by Python, as well as the following:
+
+    - `a` for null-terminated ASCII strings,
+    - `u` for null-terminated UTF16 strings,
+    - `$` only as the last character, to read all remaining data.
+
+    For example, the string `LLxxHaa$` will read two unsigned 32bit integers, then skip two bytes, then read one
+    unsigned 16bit integer, then two null-terminated ASCII strings and finally, all data that remains. The unit
+    defaults to using native byte order with no alignment.
+
+    The `spec` parameter may additionally contain named fields `{name:format}`. Here, `format` can either be an
+    integer expression specifying a number of bytes to read, or any single format string character. Parsing
+    such a field will make the parsed data available as a meta variable under the given name. For example, the
+    expression `LLxxH{foo:a}{bar:a}$` would parse the same data as the previous example, but the two ASCII
+    strings would also be output as meta variables under the names `foo` and `bar`, respectively.
+
+    The `format` string of a named field is itself parsed as a foramt string expression, where all the previously
+    parsed fields are already available. For example, `L{:{0}}` reads a single 32-bit integer length prefix and
+    then reads as many bytes as that prefix specifies.
+
+    The output arguments are refinery-specific binary format strings that control what the unit outputs:
+
+    - `{0}` places the entire processed data at this position in the output.
+    - `{1}` places the first extracted field at this position in the output.
+    - `{-1}` places the last extracted field at this position in the output.
+    - `{F}` places the field named `F` at this position in the output.
+    - `{$}` represents the last named field or dollar symbol that was parsed.
+
+    The format specifications of binary format strings are refinery pipelines. For example, `{F:b64|zl}` will be
+    the base64-decoded and inflate-decompressed contents of the data that was read as field `F`.
     """
     def __init__(
         self,
-        spec: arg(type=str, help=(
-            'Specify the structure format in Python struct syntax. For example, the string LLxxH will read '
-            'two unsigned 32bit integers, then skip two bytes, and then read one unsigned 16bit integer from '
-            'the input data. Three variable names have to be specified to hold these parsed values. The unit '
-            'defaults to using native byte order with no alignment. The unit supports the additional format '
-            'characters u and a for reading null-terminated wide and ascii strings. '
-            'Additionally, this string can contain format string expressions such as "{foo:8}", to read 8 '
-            'bytes and store the result in a meta variable called "foo", or "{bar:H}" to extract an unsigned '
-            '16-bit integer into a meta variable called "bar". When a format expression is parsed, all '
-            'preceeding fields of the structure are available already. Fields that are extracted without '
-            'assigning a name are available as positional expressions. For example, the spec "xLxx{:{0}}" '
-            'will skip a byte, read a 32bit integer N, skip two more bytes, and then read N bytes. To read all '
-            'remaining bytes from the data, specify a field without format, i.e. "{}".'
-        )),
-        *outputs: arg(metavar='output', type=str, help=(
-            'Optional format string expressions containing any of the extracted struct fields. The following '
-            'special format items are available: {/} denotes the last field that was extracted using a format '
-            'string expression, and {=} denotes all bytes that were read. The default output is {/}.'
-        )),
+        spec: arg(type=str, help='Structure format as explained above.'),
+        *outputs: arg(metavar='output', type=str, help='Output format as explained above.'),
         until: arg('-u', metavar='E', type=str, help=(
             'An expression evaluated on each chunk. Continue parsing only if the result is nonzero.')) = None,
         count: arg.number('-c', help=(
             'A limit on the number of chunks to read. The default is {default}.')) = INF,
     ):
-        outputs = outputs or ['{/}']
+        outputs = outputs or ['{$}']
         super().__init__(spec=spec, outputs=outputs, until=until, count=count)
 
     def process(self, data: bytearray):
@@ -63,6 +76,12 @@ class struct(Unit):
             mainspec = mainspec[1:]
         else:
             byteorder = '='
+
+        mainspec, dollar, _empty = mainspec.partition('$')
+        if _empty:
+            raise ValueError('The format string {mainspec}${end} is invalid, a dollar symbol must be the last character.')
+        if dollar:
+            mainspec += '{}'
 
         for index in itertools.count():
 
@@ -143,8 +162,7 @@ class struct(Unit):
                                 break
                         else:
                             last = B''
-                    output = meta.format_bin(template, self.codec,
-                        *args, **{'=': full, '/': last})
+                    output = meta.format_bin(template, self.codec, full, *args, **{'$': last})
                     for _, key, _, _ in formatter.parse(template):
                         meta.pop(key, None)
                     yield self.labelled(output, **meta)
