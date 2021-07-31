@@ -408,7 +408,7 @@ class StructReader(MemoryFile[T]):
         else:
             byteorder = self.byteorder_format
         data = []
-        for part in re.split('([au])', spec):
+        for part in re.split('(a|u)', spec):
             if part == 'a':
                 data.append(self.read_c_string())
                 continue
