@@ -59,6 +59,7 @@ def _virtual_fs_open(name, mode='r'):
 
 
 builtins.open = _virtual_fs_open
+sys.stderr = sys.stdout
 
 
 @register_line_magic
