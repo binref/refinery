@@ -150,7 +150,7 @@ class ByteStringWrapper(CustomStringRepresentation):
 
     def __repr__(self):
         if self._buffer:
-            return self._binary.hex().upper()
+            return self._binary.hex().lower()
         return self._string
 
     def __bytes__(self):
