@@ -29,7 +29,7 @@ class FakeTTY:
         sys.stdout.write(b)
 
 
-os.environ['REFINERY_TERMSIZE'] = '140'
+os.environ['REFINERY_TERMSIZE'] = '120'
 
 store = SampleStore()
 _open = builtins.open
