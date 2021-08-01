@@ -13,7 +13,10 @@ from refinery.lib.meta import SizeInt
 from refinery.lib.loader import load_pipeline
 from test import SampleStore
 
-from IPython.core.magic import register_line_magic
+try:
+    from IPython.core.magic import register_line_magic
+except ImportError:
+    def register_line_magic(x): return x
 
 
 class FakeTTY:
