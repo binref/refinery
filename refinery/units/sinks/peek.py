@@ -51,7 +51,7 @@ class peek(HexViewer):
     def process(self, data):
         for line in self._peeklines(data):
             print(line, file=sys.stderr)
-        if not sys.stdout.isatty():
+        if not self.isatty:
             self.log_info('forwarding input to next unit')
             yield data
 
