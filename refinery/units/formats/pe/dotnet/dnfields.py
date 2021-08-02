@@ -80,17 +80,17 @@ class dnfields(PathExtractorUnit):
                 # https://www.codeproject.com/Articles/42649/NET-File-Format-Signatures-Under-the-Hood-Part-1
                 # https://www.codeproject.com/Articles/42655/NET-file-format-Signatures-under-the-hood-Part-2
                 guess = {
-                    0x03: ('Char',   1, 1),  # noqa
-                    0x04: ('SByte',  1, 1),  # noqa
-                    0x05: ('Byte',   1, 1),  # noqa
-                    0x06: ('Int16',  1, 2),  # noqa
-                    0x07: ('UInt16', 1, 2),  # noqa
-                    0x08: ('Int32',  1, 4),  # noqa
-                    0x09: ('UInt32', 1, 4),  # noqa
-                    0x0A: ('Int64',  1, 8),  # noqa
-                    0x0B: ('UInt64', 1, 8),  # noqa
-                    0x0C: ('Single', 1, 4),  # noqa
-                    0x0D: ('Double', 1, 8),  # noqa
+                    0x03: FieldInfo('Char',   1, 1, None),  # noqa
+                    0x04: FieldInfo('SByte',  1, 1, None),  # noqa
+                    0x05: FieldInfo('Byte',   1, 1, None),  # noqa
+                    0x06: FieldInfo('Int16',  1, 2, None),  # noqa
+                    0x07: FieldInfo('UInt16', 1, 2, None),  # noqa
+                    0x08: FieldInfo('Int32',  1, 4, None),  # noqa
+                    0x09: FieldInfo('UInt32', 1, 4, None),  # noqa
+                    0x0A: FieldInfo('Int64',  1, 8, None),  # noqa
+                    0x0B: FieldInfo('UInt64', 1, 8, None),  # noqa
+                    0x0C: FieldInfo('Single', 1, 4, None),  # noqa
+                    0x0D: FieldInfo('Double', 1, 8, None),  # noqa
                 }.get(field.Signature[1], None)
             else:
                 guess = self._guess_field_info(tables, data, index)
@@ -102,7 +102,9 @@ class dnfields(PathExtractorUnit):
                 fname = guess.name
             if not fname.isprintable():
                 fname = F'F{rv.RVA:0{rwidth}X}'
-            name = F'{fname}.{guess.type}[{guess.count}]'
+            name = F'{fname}.{guess.type}'
+            if guess.count > 1:
+                name += F'[{guess.count}]'
             self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {guess.type}, count: {guess.count}, name: {fname}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
             yield UnpackResult(name, lambda t=offset, s=totalsize: data[t:t + s])
