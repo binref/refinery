@@ -99,11 +99,17 @@ class peek(HexViewer):
             decoded = codecs.decode(data, codec, errors='strict')
             count = sum(x in string.printable for x in decoded)
             ratio = count / len(data)
+        except UnicodeDecodeError as DE:
+            self.log_info('decoding failed:', DE.reason)
+            return None
         except ValueError as V:
             self.log_info('decoding failed:', V)
             return None
-        if ratio < 0.8 or any(x in decoded for x in '\b\v'):
+        if ratio < 0.8:
             self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
+            return None
+        if any(x in decoded for x in '\b\v'):
+            self.log_info(R'data contains spooky whitespace, not decoding.')
             return None
         for paragraph in decoded.splitlines(False):
             if not remaining:
@@ -158,6 +164,8 @@ class peek(HexViewer):
                     if lines:
                         codec = codec
                         break
+                else:
+                    codec = None
             if lines is None:
                 lines = list(self.hexdump(data, metrics))
             else:
