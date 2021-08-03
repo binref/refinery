@@ -14,6 +14,7 @@ from zlib import adler32
 from typing import ByteString, Iterable, Callable, List, Union
 
 from .. import arg, Unit
+from ...lib.meta import metavars, ByteStringWrapper
 
 
 def pathspec(expression):
@@ -107,16 +108,17 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def process(self, data: ByteString) -> ByteString:
         metavar = self.args.path.decode(self.codec)
+        meta = metavars(data)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
         results: List[UnpackResult] = list(self.unpack(data))
 
         try:
-            root = data[metavar]
+            root = ByteStringWrapper(meta[metavar], self.codec)
         except KeyError:
             root = ''
         else:
-            root = '/'.join(root.split('\\')).rstrip('/')
+            root = '/'.join(root.string.split('\\')).rstrip('/')
 
         for result in results:
             path = '/'.join(result.path.split('\\'))

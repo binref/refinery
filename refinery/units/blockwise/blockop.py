@@ -46,9 +46,12 @@ class blockop(ArithmeticUnit):
         parse the expressions that can be passed to `refinery.blockop`. Essentially, these
         are Python expressions which can contain variables `B`, `A`, `S`, and `V`.
         """
-        def wrapper(J, B, S, N, *V):
-            return wrapper.parsed(I=J, B=B, A=V[0], N=N, S=S, V=V) if V else wrapper.parsed(I=J, B=B, S=S)
-        wrapper.parsed = PythonExpression(definition, *'IBASNV')
+        def wrapper(index, block, state, argvector, total, meta):
+            args = {'I': index, 'B': block, 'S': state, 'N': total}
+            if argvector:
+                args.update(A=argvector[0], V=argvector)
+            return wrapper.parsed(meta, **args)
+        wrapper.parsed = PythonExpression(definition, *'IBASNV', all_variables_allowed=True)
         return wrapper
 
     def __init__(
@@ -103,21 +106,25 @@ class blockop(ArithmeticUnit):
 
     def process(self, data):
         seed = self.args.seed
+        meta = metavars(data)
         if isinstance(seed, str):
             seed = PythonExpression(seed, 'N', constants=metavars(data))
         self._index.init(self.fmask)
-        self._total = len(data)
         self._state = seed
+        self._evaluation_arguments = [0, 0, 0, (), len(data), meta]
         if callable(self._state):
-            self._state = self._state(N=self._total)
+            self._state = self._state(meta, N=len(data))
         return super().process(data)
 
     def operate(self, block, index, *args):
+        arguments = self._evaluation_arguments
+        arguments[:4] = index, block, self._state, args
         if self.args.prologue:
-            self._state = self.args.prologue(index, block, self._state, self._total, *args)
-        block = self.args.operation(index, block, self._state, self._total, *args) & self.fmask
+            arguments[2] = self._state = self.args.prologue(*arguments)
+        block = self.args.operation(*arguments) & self.fmask
         if self.args.epilogue:
-            self._state = self.args.epilogue(index, block, self._state, self._total, *args)
+            arguments[1] = block
+            self._state = self.args.epilogue(*arguments)
         return block
 
     def inplace(self, block, *args) -> None:

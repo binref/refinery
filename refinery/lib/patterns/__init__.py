@@ -244,7 +244,7 @@ class formats(PatternEnum):
     "Windows command line escaped string literal"
     ps1str = pattern(_pattern_ps1str)
     "PowerShell escaped string literal"
-    printable = alphabet(R'[ -~]')
+    printable = alphabet(R'[\s!-~]')
     "Any sequence of printable characters"
     url_encoded_coarse = pattern(_pattern_urlenc_coarse)
     "Any sequence of url-encoded characters, coarse variant"

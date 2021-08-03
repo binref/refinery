@@ -80,6 +80,9 @@ class BlockTransformationBase(Unit, abstract=True):
         return chunkraw(data)
 
     def unchunk(self, data, raw=False):
+        if self.args.precision > self.args.blocksize:
+            mask = (1 << (8 * self.args.blocksize)) - 1
+            data = (chunk & mask for chunk in data)
         if not raw:
             return chunks.pack(data, self.args.blocksize, self.args.bigendian)
 

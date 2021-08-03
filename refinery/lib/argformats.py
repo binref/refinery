@@ -147,9 +147,7 @@ class PythonExpression:
         names.difference_update(globals())
         if not all_variables_allowed and not names <= variables:
             raise ParserVariableMissing(
-                'the following variable names are unknown: {}'.format(
-                    ', '.join(names - variables))
-            )
+                'the following variable names are unknown: {}'.format(', '.join(names - variables)))
 
         self.variables = names
         self.constants = constants
@@ -736,19 +734,20 @@ class DelayedArgument(LazyEvaluation):
         def finalize(data: Optional[Chunk] = None):
             @lru_cache(maxsize=512, typed=False)
             def accumulate(A):
-                return update(args, A=A)
-            args = metavars(data)
-            A = seed and seed(args) or 0
+                return update(meta, A=A)
+            meta = metavars(data)
+            A = seed and seed(meta) or 0
             while True:
                 yield A
                 A = accumulate(A)
                 if mask:
                     A &= mask
-
         try:
-            return finalize()
+            update(A=seed())
         except ParserVariableMissing:
             return finalize
+        else:
+            return finalize()
 
     @handler.register('be')
     def be(self, arg: Union[int, ByteString]) -> int:
