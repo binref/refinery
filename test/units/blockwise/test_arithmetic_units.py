@@ -115,11 +115,6 @@ class TestBlockopInput(TestUnitBase):
     def test_not_an_expression(self):
         self.assertRaises(Exception, self.ldu, 'blockop', 'def foo(x):\n    return 29')
 
-    def test_invalid_symbols(self):
-        self.assertRaises(Exception, self.ldu, 'blockop', '(B ^ 0xFF - Arg)')
-        self.assertRaises(Exception, self.ldu, 'blockop', '(B ^ 0xFF - a)')
-        self.assertRaises(Exception, self.ldu, 'blockop', 'B ^ 0x34 - A + W[2]')
-
     def test_eval_bug_01(self):
         data = bytes(range(251, 256))
         wish = bytes(((B + 5) % 255 for B in data))
