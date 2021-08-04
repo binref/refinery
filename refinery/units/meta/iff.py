@@ -15,9 +15,9 @@ class iff(ConditionalUnit):
         *expression: arg(metavar='token', type=str, help=(
             'All "token" arguments to this unit are joined with spaces to produce the expression to be '
             'evaluated. This is done so that unnecessary shell quoting is avoided.')),
-        negate=False
+        negate=False, temporary=False
     ):
-        super().__init__(negate=negate, expression=' '.join(expression))
+        super().__init__(negate=negate, temporary=temporary, expression=' '.join(expression))
 
     def match(self, chunk):
         return bool(PythonExpression.evaluate(self.args.expression, metavars(chunk)))

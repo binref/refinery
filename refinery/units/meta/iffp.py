@@ -15,8 +15,8 @@ class iffp(ConditionalUnit):
     patterns are the following: {", ".join(_PATTERNS)}.
     """
 
-    def __init__(self, *patterns: arg.choice(metavar='pattern', choices=_PATTERNS), negate=False):
-        super().__init__(negate=negate, patterns=patterns)
+    def __init__(self, *patterns: arg.choice(metavar='pattern', choices=_PATTERNS), negate=False, temporary=False):
+        super().__init__(negate=negate, temporary=temporary, patterns=patterns)
 
     def match(self, chunk):
         for name in self.args.patterns:

@@ -42,16 +42,22 @@ class ConditionalUnit(Unit, abstract=True):
     def __init__(
         self,
         negate: arg.switch('-n', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
+        temporary: arg.switch('-t', help='do not remove chunks from the frame entirely; move them out of scope instead') = False,
         **kwargs
     ):
-        super().__init__(negate=negate, **kwargs)
+        super().__init__(negate=negate, temporary=temporary, **kwargs)
 
     @abstractmethod
     def match(self, chunk) -> bool:
         ...
 
     def filter(self, chunks: Iterable[Chunk]):
+        temporary = self.args.temporary
         for chunk in chunks:
-            if chunk.visible and self.match(chunk) is self.args.negate:
+            if not chunk.visible:
+                continue
+            if self.match(chunk) is self.args.negate:
+                if not temporary:
+                    continue
                 chunk.visible = False
             yield chunk
