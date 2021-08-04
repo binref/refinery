@@ -1055,6 +1055,10 @@ class Unit(UnitBase, abstract=True):
         return inputs
 
     def reset(self):
+        try:
+            self._source.reset()
+        except AttributeError:
+            pass
         self._framed = None
         self._chunks = None
 
