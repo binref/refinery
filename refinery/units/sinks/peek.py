@@ -9,6 +9,7 @@ from . import arg, HexViewer
 from ...lib.meta import metavars, CustomStringRepresentation, SizeInt
 from ...lib.types import INF
 from ...lib.tools import isbuffer, lookahead
+from ...lib.patterns import formats
 
 
 class peek(HexViewer):
@@ -69,10 +70,9 @@ class peek(HexViewer):
             elif isbuffer(value):
                 try:
                     decoded: str = value.decode(self.codec)
-                    assert decoded.isprintable()
                 except UnicodeDecodeError:
                     decoded = None
-                except AssertionError:
+                if not formats.printable.match(decoded):
                     decoded = None
                 value = decoded or F'h:{value.hex()}'
             elif isinstance(value, int):
@@ -95,9 +95,10 @@ class peek(HexViewer):
                 result.append(decoded[k:k + width])
             return result
         try:
+            printable = string.printable + string.whitespace
             self.log_info(F'trying to decode as {codec}.')
             decoded = codecs.decode(data, codec, errors='strict')
-            count = sum(x in string.printable for x in decoded)
+            count = sum(x in printable for x in decoded)
             ratio = count / len(data)
         except UnicodeDecodeError as DE:
             self.log_info('decoding failed:', DE.reason)
@@ -107,9 +108,6 @@ class peek(HexViewer):
             return None
         if ratio < 0.8:
             self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
-            return None
-        if any(x in decoded for x in '\b\v'):
-            self.log_info(R'data contains spooky whitespace, not decoding.')
             return None
         for paragraph in decoded.splitlines(False):
             if not remaining:
@@ -138,6 +136,7 @@ class peek(HexViewer):
         lines = None
         index = None
         final = True
+        empty = True
 
         if data.temp:
             final, index = data.temp
@@ -189,9 +188,12 @@ class peek(HexViewer):
                 meta['ic']
             if index is not None:
                 meta['index'] = index
-            yield from self._peekmeta(metrics.hexdump_width, separator(), **meta)
+            for line in self._peekmeta(metrics.hexdump_width, separator(), **meta):
+                empty = False
+                yield line
 
         if lines:
+            empty = False
             if not self.args.brief:
                 yield separator(F'CODEC={codec}' if codec else None)
                 yield from lines
@@ -202,7 +204,7 @@ class peek(HexViewer):
                     brief = F'#{index:03d}: {brief}'
                 yield brief
 
-        if final:
+        if final and not empty:
             yield separator()
 
     def filter(self, chunks):
