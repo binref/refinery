@@ -149,5 +149,8 @@ def load_pipeline(commandline: str, pipe='|'):
             if not parsed:
                 continue
         command.append(parsed)
-    pipeline |= load(*command)
+    if command:
+        pipeline |= load(*command)
+    elif not pipeline:
+        return load('nop')
     return pipeline
