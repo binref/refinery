@@ -339,9 +339,10 @@ class LazyMetaOracle(dict):
 
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
-                if binary:
-                    prefix = prefix.encode(codec).decode('unicode-escape').encode('latin1')
-                stream.write(prefix)
+                if prefix:
+                    if binary:
+                        prefix = prefix.encode(codec).decode('unicode-escape').encode('latin1')
+                    stream.write(prefix)
                 if field is None:
                     continue
                 value = None
@@ -367,11 +368,11 @@ class LazyMetaOracle(dict):
                     value = symbols[field]
                     if variables:
                         variables.add(field)
-                with contextlib.suppress(IndexError, ValueError):
-                    if value is None:
+                if value is None:
+                    with contextlib.suppress(IndexError, ValueError):
                         value = args[int(field, 0)]
-                with contextlib.suppress(KeyError):
-                    if value is None:
+                if value is None:
+                    with contextlib.suppress(KeyError):
                         value = self[field]
                         if variables:
                             variables.add(field)
@@ -398,7 +399,8 @@ class LazyMetaOracle(dict):
                     modifier = modifier.strip()
                     if modifier:
                         modifier = self.format(modifier, codec, args, symbols, True, False, variables)
-                        output | load_pipeline(modifier.decode(codec)) | stream.write
+                        pipeline = load_pipeline(modifier.decode(codec))
+                        output | pipeline | stream.write
                         continue
                 else:
                     converter = {
