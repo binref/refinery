@@ -98,3 +98,19 @@ class TestRegexSubstitution(TestUnitBase):
         resub = self.load('E(.)', 'AH{1}', count=2)
         data = B'BINERY REFINERY'
         self.assertEqual(resub(data), B'BINAHRY RAHFINERY')
+
+    def test_multiple_substitutions(self):
+        from refinery import xor, b64, zl, esc
+        data = B'--'.join([
+            (B'encoded(%s)' % bytes(item | xor(0x12) | -b64 | -zl | -esc(quoted=True)))
+            for item in [
+                B'binary',
+                B'refinery',
+                B'refines',
+                B'binary',
+                B'finery.'
+            ]
+        ])
+        unit = self.load(R'encoded\(((??string))\)', '{1:esc -q | zl | b64 | xor 0x12}')
+        result = str(data | unit)
+        self.assertEqual(result, 'binary--refinery--refines--binary--finery.')
