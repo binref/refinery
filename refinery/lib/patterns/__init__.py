@@ -3,8 +3,11 @@
 """
 Library of regular expression patterns.
 """
-import re
 import enum
+import functools
+import re
+
+from typing import Optional
 
 from .tlds import tlds
 
@@ -15,19 +18,41 @@ class pattern:
     allowing combination of several patterns into one via overloaded
     operators.
     """
+    str_pattern: str
+    bin_pattern: Optional[bytes]
+    bin_compiled: re.Pattern
+    str_compiled: re.Pattern
 
-    def __init__(self, pattern):
-        self.pattern = pattern
-        self.compiled = re.compile(B'(%s)' % self)
+    def __init__(self, pattern: str):
+        self.str_pattern = pattern
+        self.bin_pattern = None
+        self.bin_compiled = re.compile(B'(%s)' % self)
+        self.str_compiled = re.compile(self.str_pattern)
 
     def __bytes__(self):
-        return str(self).encode('ascii')
+        bin_pattern = self.bin_pattern
+        if bin_pattern is None:
+            self.bin_pattern = bin_pattern = self.str_pattern.encode('ascii')
+        return bin_pattern
 
     def __str__(self):
-        return self.pattern
+        return self.str_pattern
 
     def __getattr__(self, verb):
-        return getattr(self.compiled, verb)
+        bin_attr = getattr(self.bin_compiled, verb)
+        if not callable(bin_attr):
+            return bin_attr
+        str_attr = getattr(self.str_compiled, verb)
+
+        def wrapper(*args, **kwargs):
+            for argument in args:
+                if isinstance(argument, str):
+                    return str_attr(*args, **kwargs)
+            else:
+                return bin_attr(*args, **kwargs)
+
+        functools.update_wrapper(wrapper, bin_attr)
+        return wrapper
 
 
 class alphabet(pattern):
@@ -207,7 +232,7 @@ def make_hexline_pattern(blocksize: int) -> str:
         h=tokenize(
             RF'(?:0[xX])?[0-9a-fA-F]{{{2 * blocksize}}}h?',
             sep=R'[- \t\/:;,\\]{1,3}'
-        ).pattern,
+        ).str_pattern,
         s=R'[-\w:;,#\.\$\?!\/\\=\(\)\[\]\{\}]'
     )
 
