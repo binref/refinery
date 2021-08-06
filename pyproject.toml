@@ -1,7 +1,6 @@
 [build-system]
 requires = [
     "Pillow",
-    "acefile",
     "asn1crypto",
     "capstone",
     "chardet",
