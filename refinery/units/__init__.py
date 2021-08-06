@@ -1263,37 +1263,37 @@ class Unit(UnitBase, abstract=True):
     def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
         return data
 
-    def log_warn(self, *messages) -> bool:
+    def log_warn(self, *messages, clip=False) -> bool:
         """
         Call `refinery.units.Unit.output` for each provided message if and only if the
         current log level is at least `refinery.units.LogLevel.WARN`.
         """
         rv = self.log_level >= LogLevel.WARN
         if rv and messages:
-            self.output(*messages)
+            self.output(*messages, clip=clip)
         return rv
 
-    def log_info(self, *messages) -> bool:
+    def log_info(self, *messages, clip=False) -> bool:
         """
         Call `refinery.units.Unit.output` for each provided message if and only if the
         current log level is at least `refinery.units.LogLevel.INFO`.
         """
         rv = self.log_level >= LogLevel.INFO
         if rv and messages:
-            self.output(*messages)
+            self.output(*messages, clip=clip)
         return rv
 
-    def log_debug(self, *messages) -> bool:
+    def log_debug(self, *messages, clip=False) -> bool:
         """
         Call `refinery.units.Unit.output` for each provided message if and only if the
         current log level is at least `refinery.units.LogLevel.DEBUG`.
         """
         rv = self.log_level >= LogLevel.DEBUG
         if rv and messages:
-            self.output(*messages)
+            self.output(*messages, clip=clip)
         return rv
 
-    def output(self, *messages) -> None:
+    def output(self, *messages, clip=False) -> None:
         """
         Logs the provided messages to stderr, prefixed with the current unit's name.
         The routine accepts both string and byte type arguments. Bytestrings are
@@ -1302,7 +1302,7 @@ class Unit(UnitBase, abstract=True):
         command line arguments.
         """
         if not self.args.quiet:
-            return self._output(*messages)
+            return self._output(*messages, clip=clip)
 
     @property
     def isatty(self) -> bool:
@@ -1312,7 +1312,7 @@ class Unit(UnitBase, abstract=True):
             return False
 
     @classmethod
-    def _output(cls, *messages) -> None:
+    def _output(cls, *messages, clip=False) -> None:
         def transform(message):
             if callable(message):
                 message = message()
@@ -1328,6 +1328,13 @@ class Unit(UnitBase, abstract=True):
                 import pprint
                 return pprint.pformat(message)
         message = ' '.join(transform(msg) for msg in messages)
+        if clip:
+            from textwrap import shorten
+            from ..lib.tools import get_terminal_size
+            message = shorten(
+                message,
+                get_terminal_size() - len(cls.name) - 2,
+            )
         print(F'{cls.name}: {message}', file=sys.stderr)
 
     @classmethod

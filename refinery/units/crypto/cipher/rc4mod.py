@@ -7,8 +7,7 @@ from . import arg, StreamCipherUnit
 
 class rc4mod(StreamCipherUnit):
     """
-    Implements a modifiably version of the RC4 stream cipher where the size of
-    the RC4 table can be altered.
+    Implements a modified version of the RC4 stream cipher where the size of the RC4 SBox can be altered.
     """
 
     def __init__(
@@ -26,6 +25,7 @@ class rc4mod(StreamCipherUnit):
             b = (b + keybyte + t) % size
             table[a] = table[b]
             table[b] = t
+        self.log_debug(lambda: F'SBOX = {table.hex(" ").upper()}', clip=True)
         b, a = 0, 0
         while True:
             a = (a + 1) % size
