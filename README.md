@@ -126,7 +126,7 @@ Extract an AgentTesla configuration:
 ```
 emit fb47a566911905d37bdb464a08ca66b9078f18f10411ce019e9d5ab747571b40 \
   | dnfields [| aes x::32 --iv x::16 -Q ]] \
-  | rex -M "((??email))\n(.*)\n(.*)\n:Zone" addr={0} pass={1} host={2}
+  | rex -M "((??email))\n(.*)\n(.*)\n:Zone" addr={1} pass={2} host={3}
 ```
 Extract the PowerShell payload from a malicious XLS macro dropper:
 ```

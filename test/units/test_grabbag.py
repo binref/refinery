@@ -68,3 +68,13 @@ class TestGrabBagExamples(TestBase):
         self.assertIn('bcdedit /set {current} safeboot network', strings)
         self.assertTrue(any('"bot_company":"%.8x%.8x%.8x%.8x%"' in x for x in strings))
         self.assertTrue(any('BlackMatter Ransomware encrypted all your files!' in x for x in strings))
+
+    def test_agent_tesla_sample(self):
+        data = self.download_sample('fb47a566911905d37bdb464a08ca66b9078f18f10411ce019e9d5ab747571b40')
+        pipeline = load_pipeline(R'dnfields [| aes x::32 --iv x::16 -Q | sep ]| rex -M "((??email))\n(.*)\n(.*)\n:Zone" addr={1} pass={2} host={3}')
+        result = str(data | pipeline)
+        self.assertListEqual(result.splitlines(False), [
+            'addr=ioanna@pgm''-gruop''.eu',
+            'pass=Password2019',
+            'host=smtp.pgm''-gruop''.eu',
+        ])
