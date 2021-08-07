@@ -1,5 +1,6 @@
 # Binary Refinery Changelog
 
+## Version 0.4.2 - bugfix release
 ## Version 0.4.1
 - Significantly improves unit loading time which had regressed due to the changes in 0.4.0.
 
