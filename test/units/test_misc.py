@@ -107,8 +107,10 @@ class TestMetaProperties(TestUnitBase):
             'F722',  # syntax error in forward annotation
             'F821',  # undefined name
         ], max_line_length=140)
-        report = rules.check_files(glob(
-            os.path.join(root, 'refinery', '**', '*.py'), recursive=True))
+        report = rules.check_files(path for path in glob(
+            os.path.join(root, 'refinery', '**', '*.py'), recursive=True)
+            if 'thirdparty' not in path
+        )
         self.assertEqual(report.total_errors, 0,
             msg='Flake8 formatting errors were found.')
 

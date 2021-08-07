@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from . import ArchiveUnit
-from ....lib import acefile
+from ....lib.thirdparty import acefile
 from ....lib.structures import MemoryFile
 
 
