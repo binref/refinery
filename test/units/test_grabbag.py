@@ -78,3 +78,8 @@ class TestGrabBagExamples(TestBase):
             'pass=Password2019',
             'host=smtp.pgm''-gruop''.eu',
         ])
+
+    def test_remcos_sample(self):
+        data = self.download_sample('c0019718c4d4538452affb97c70d16b7af3e4816d059010c277c4e579075c944')
+        pipeline = load_pipeline('perc SETTINGS [| put keylen cut::1 | rc4 cut::keylen | xtp socket ]')
+        self.assertEqual('remm.duckdns''.''org:7007', str(data | pipeline))

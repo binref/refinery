@@ -78,7 +78,7 @@ import builtins
 import itertools
 import inspect
 
-from argparse import ArgumentTypeError
+from argparse import ArgumentError, ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, reduce, lru_cache
 from typing import AnyStr, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
@@ -222,6 +222,13 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
         if not range:
             return slice(k, k + 1) if k + 1 else slice(k, None, None)
         return slice(0, k)
+    for k, item in enumerate(sliced):
+        if item is None or isinstance(item, int):
+            continue
+        if isbuffer(item) and len(item) in (1, 2, 4, 8, 16):
+            sliced[k] = int.from_bytes(item, 'little')
+            continue
+        raise TypeError(F'The value {item!r} of type {type(item).__name__} cannot be used as a slice index.')
     return slice(*sliced)
 
 
