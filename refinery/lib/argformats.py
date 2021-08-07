@@ -78,7 +78,7 @@ import builtins
 import itertools
 import inspect
 
-from argparse import ArgumentError, ArgumentTypeError
+from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, reduce, lru_cache
 from typing import AnyStr, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
