@@ -62,7 +62,7 @@ class defang(Unit):
             return self._quote(p + sep + q)
 
         urlsplit = defanged.url.split(data)
-        step = defanged.url.value.compiled.groups + 1
+        step = defanged.url.value.groups + 1
         urlsplit[1::step] = [replace_url(t) for t in itertools.islice(iter(urlsplit), 1, None, step)]
 
         if not self.args.url_only:

@@ -21,6 +21,6 @@ class iffp(ConditionalUnit):
     def match(self, chunk):
         for name in self.args.patterns:
             p: pattern = _PATTERNS[name]
-            if p.compiled.fullmatch(chunk):
+            if p.fullmatch(chunk):
                 return True
         return False
