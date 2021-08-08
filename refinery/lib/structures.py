@@ -31,19 +31,19 @@ class EOF(ValueError):
 
 
 class StreamDetour:
-    def __init__(self, stream, offset=None, whence=io.SEEK_SET):
-        self._stream = stream
-        self._offset = offset
-        self._whence = whence
+    def __init__(self, stream: io.IOBase, offset=None, whence=io.SEEK_SET):
+        self.stream = stream
+        self.offset = offset
+        self.whence = whence
 
     def __enter__(self):
-        self._cursor = self._stream.tell()
-        if self._offset is not None:
-            self._stream.seek(self._offset, self._whence)
+        self.cursor = self.stream.tell()
+        if self.offset is not None:
+            self.stream.seek(self.offset, self.whence)
         return self
 
     def __exit__(self, *args):
-        self._stream.seek(self._cursor, io.SEEK_SET)
+        self.stream.seek(self.cursor, io.SEEK_SET)
 
 
 class MemoryFile(Generic[T], io.IOBase):
@@ -56,6 +56,7 @@ class MemoryFile(Generic[T], io.IOBase):
 
     _data: T
     _cursor: int
+    _closed: bool
 
     class SEEK(int, enum.Enum):
         CUR = io.SEEK_CUR
@@ -67,14 +68,15 @@ class MemoryFile(Generic[T], io.IOBase):
             data = bytearray()
         self._data = data
         self._cursor = 0
+        self._closed = False
         self.read_as_bytes = read_as_bytes
 
     def close(self) -> None:
-        self._data = None
+        self._closed = True
 
     @property
     def closed(self) -> bool:
-        return self._data is None
+        return self._closed
 
     def __enter__(self) -> MemoryFile:
         return self
@@ -104,17 +106,17 @@ class MemoryFile(Generic[T], io.IOBase):
         raise OSError
 
     def readable(self) -> bool:
-        return not self.closed
+        return not self._closed
 
     def seekable(self) -> bool:
-        return not self.closed
+        return not self._closed
 
     @property
     def eof(self) -> bool:
-        return self.closed or self._cursor >= len(self._data)
+        return self._closed or self._cursor >= len(self._data)
 
     def writable(self) -> bool:
-        if self.closed:
+        if self._closed:
             return False
         if isinstance(self._data, memoryview):
             return not self._data.readonly
