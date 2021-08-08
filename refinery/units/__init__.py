@@ -109,9 +109,10 @@ from __future__ import annotations
 
 import abc
 import copy
-import sys
-import os
 import inspect
+import logging
+import os
+import sys
 
 from abc import ABCMeta
 from enum import IntEnum, Enum
@@ -723,10 +724,10 @@ class Executable(ABCMeta):
 
         if not abstract and sys.modules[cls.__module__].__name__ == '__main__':
             if Executable.Entry:
-                cls._output(
+                cls.logger.warning(cls._output(
                     F'not executing this unit because the following unit was '
                     F'already executed: {Executable.Entry}'
-                )
+                ))
             else:
                 Executable.Entry = cls.name
                 cls.run()
@@ -782,33 +783,55 @@ class Executable(ABCMeta):
     def name(cls) -> str:
         return cls.__name__.replace('_', '-')
 
+    @property
+    def logger(cls) -> logging.Logger:
+        try:
+            return cls._logger
+        except AttributeError:
+            pass
+        cls._logger = logger = logging.getLogger(cls.name)
+        if not logger.hasHandlers():
+            stream = logging.StreamHandler()
+            stream.setFormatter(logging.Formatter(
+                '[{asctime!s:.5s}][{levelname:.1s}] {name}: {message}',
+                style='{',
+                datefmt='%I:%M:%S'
+            ))
+            logger.addHandler(stream)
+        logger.propagate = False
+        return logger
+
 
 class LogLevel(IntEnum):
     """
     An enumeration representing the current log level:
     """
-    DETACHED = -1
+    DETACHED = logging.CRITICAL + 100
     """
     This unit is not attached to a terminal but has been instantiated in
     code. This means that the only way to communicate problems is to throw
     an exception.
     """
-    NONE = 0
-    """
-    Do not log anything.
-    """
-    WARN = 1
-    """
-    Default log level: Log warnings.
-    """
-    INFO = 2
-    """
-    Increased logging.
-    """
-    DEBUG = 3
-    """
-    Maximum logging.
-    """
+    NONE = logging.CRITICAL + 50
+
+    @classmethod
+    def FromVerbosity(cls, verbosity: int):
+        if verbosity < 0:
+            return cls.DETACHED
+        return {
+            0: cls.WARNING,
+            1: cls.INFO,
+            2: cls.DEBUG
+        }.get(verbosity, cls.DEBUG)
+
+    NOTSET   = logging.NOTSET    # noqa
+    CRITICAL = logging.CRITICAL  # noqa
+    FATAL    = logging.FATAL     # noqa
+    ERROR    = logging.ERROR     # noqa
+    WARNING  = logging.WARNING   # noqa
+    WARN     = logging.WARN      # noqa
+    INFO     = logging.INFO      # noqa
+    DEBUG    = logging.DEBUG     # noqa
 
 
 class DelayedArgumentProxy:
@@ -962,6 +985,10 @@ class Unit(UnitBase, abstract=True):
         return self.__class__.codec
 
     @property
+    def logger(self) -> logging.Logger:
+        return self.__class__.logger
+
+    @property
     def name(self) -> str:
         return self.__class__.name
 
@@ -970,14 +997,13 @@ class Unit(UnitBase, abstract=True):
         """
         Returns the current log level as an element of `refinery.units.LogLevel`.
         """
-        try:
-            return LogLevel.NONE if self.args.quiet else LogLevel(min(len(LogLevel) - 2, self.args.verbose))
-        except AttributeError:
-            return LogLevel.DETACHED
+        if self.args.quiet:
+            return LogLevel.NONE
+        return LogLevel(self.logger.getEffectiveLevel())
 
     @log_level.setter
     def log_level(self, value: LogLevel) -> None:
-        self.args.verbose = int(value)
+        self.logger.setLevel(value)
 
     def log_detach(self) -> None:
         self.log_level = LogLevel.DETACHED
@@ -987,7 +1013,7 @@ class Unit(UnitBase, abstract=True):
         return self
 
     def _exception_handler(self, exception: BaseException):
-        if self.log_level <= LogLevel.DETACHED:
+        if self.log_level >= LogLevel.DETACHED:
             if isinstance(exception, RefineryPartialResult) and self.args.lenient:
                 return None
             raise exception
@@ -1265,44 +1291,30 @@ class Unit(UnitBase, abstract=True):
 
     def log_warn(self, *messages, clip=False) -> bool:
         """
-        Call `refinery.units.Unit.output` for each provided message if and only if the
-        current log level is at least `refinery.units.LogLevel.WARN`.
+        Log the message if and only if the current log level is at least `refinery.units.LogLevel.WARN`.
         """
-        rv = self.log_level >= LogLevel.WARN
+        rv = self.logger.isEnabledFor(LogLevel.WARNING)
         if rv and messages:
-            self.output(*messages, clip=clip)
+            self.logger.warning(self._output(*messages, clip=clip))
         return rv
 
     def log_info(self, *messages, clip=False) -> bool:
         """
-        Call `refinery.units.Unit.output` for each provided message if and only if the
-        current log level is at least `refinery.units.LogLevel.INFO`.
+        Log the message if and only if the current log level is at least `refinery.units.LogLevel.INFO`.
         """
-        rv = self.log_level >= LogLevel.INFO
+        rv = self.logger.isEnabledFor(LogLevel.INFO)
         if rv and messages:
-            self.output(*messages, clip=clip)
+            self.logger.info(self._output(*messages, clip=clip))
         return rv
 
     def log_debug(self, *messages, clip=False) -> bool:
         """
-        Call `refinery.units.Unit.output` for each provided message if and only if the
-        current log level is at least `refinery.units.LogLevel.DEBUG`.
+        Log the pmessage if and only if the current log level is at least `refinery.units.LogLevel.DEBUG`.
         """
-        rv = self.log_level >= LogLevel.DEBUG
+        rv = self.logger.isEnabledFor(LogLevel.DEBUG)
         if rv and messages:
-            self.output(*messages, clip=clip)
+            self.logger.debug(self._output(*messages, clip=clip))
         return rv
-
-    def output(self, *messages, clip=False) -> None:
-        """
-        Logs the provided messages to stderr, prefixed with the current unit's name.
-        The routine accepts both string and byte type arguments. Bytestrings are
-        decoded with the default codec, using the 'backslashreplace' error handler.
-        Does not produce any output if the quiet switch has been enabled via the
-        command line arguments.
-        """
-        if not self.args.quiet:
-            return self._output(*messages, clip=clip)
 
     @property
     def isatty(self) -> bool:
@@ -1312,7 +1324,7 @@ class Unit(UnitBase, abstract=True):
             return False
 
     @classmethod
-    def _output(cls, *messages, clip=False) -> None:
+    def _output(cls, *messages, clip=False) -> str:
         def transform(message):
             if callable(message):
                 message = message()
@@ -1333,9 +1345,9 @@ class Unit(UnitBase, abstract=True):
             from ..lib.tools import get_terminal_size
             message = shorten(
                 message,
-                get_terminal_size() - len(cls.name) - 2,
+                get_terminal_size() - len(cls.name) - 14,
             )
-        print(F'{cls.name}: {message}', file=sys.stderr)
+        return message
 
     @classmethod
     def _interface(cls, argp: ArgumentParserWithKeywordHooks) -> ArgumentParserWithKeywordHooks:
@@ -1350,7 +1362,7 @@ class Unit(UnitBase, abstract=True):
         base.add_argument('-L', '--lenient', action='store_true', help='Allow partial results as output.')
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
-        base.add_argument('-v', '--verbose', action='count', default=LogLevel.WARN,
+        base.add_argument('-v', '--verbose', action='count', default=0,
             help='Specify up to two times to increase log level.')
         argp.add_argument('--debug-timing', dest='dtiming', action='store_true', help=SUPPRESS)
 
@@ -1427,13 +1439,18 @@ class Unit(UnitBase, abstract=True):
             unit.args._store(_argo=argp.order)
             unit.args.quiet = args.quiet
             unit.args.lenient = args.lenient
-
             unit.args.squeeze = args.squeeze
             unit.args.dtiming = args.dtiming
             unit.args.nesting = args.nesting
             unit.args.reverse = args.reverse
             unit.args.devnull = args.devnull
             unit.args.verbose = args.verbose
+
+            if args.quiet:
+                unit.log_level = LogLevel.NONE
+            else:
+                unit.log_level = LogLevel.FromVerbosity(args.verbose)
+
             return unit
 
     def __copy__(self):
@@ -1463,7 +1480,7 @@ class Unit(UnitBase, abstract=True):
             reverse=False,
             squeeze=False,
             devnull=False,
-            verbose=LogLevel.DETACHED,
+            verbose=-1,
             quiet=False,
         ))
         # Since Python 3.6, functions always preserve the order of the keyword
@@ -1500,43 +1517,48 @@ class Unit(UnitBase, abstract=True):
                 return
             except Exception as msg:
                 import traceback
-                cls._output('initialization failed:', msg)
+                cls.logger.critical(cls._output('initialization failed:', msg))
                 for line in traceback.format_exc().splitlines(keepends=False):
-                    cls._output(line)
+                    cls.logger.critical(cls._output(line))
                 return
 
             try:
                 loglevel = os.environ['REFINERY_VERBOSITY']
             except KeyError:
-                pass
+                loglevel = None
             else:
-                try:
-                    loglevel = LogLevel[loglevel]
-                except KeyError:
-                    loglevels = ', '.join(ll.name for ll in LogLevel)
-                    unit.log_warn(F'unknown verbosity {loglevel!r}, pick from {loglevels}')
+                if loglevel.isdigit():
+                    loglevel = LogLevel.FromVerbosity(int(loglevel))
                 else:
-                    unit.log_level = loglevel
+                    try:
+                        loglevel = LogLevel[loglevel]
+                    except KeyError:
+                        levels = ', '.join(ll.name for ll in LogLevel)
+                        unit.log_warn(F'unknown verbosity {loglevel!r}, pick from {levels}')
+                        loglevel = None
+            if loglevel:
+                unit.log_level = loglevel
 
             if unit.args.dtiming:
                 from time import process_time
+                unit.log_level = min(unit.log_level, LogLevel.INFO)
                 start_clock = process_time()
-                unit.output('starting clock: {:.4f}'.format(start_clock))
+                unit.logger.info('starting clock: {:.4f}'.format(start_clock))
 
             try:
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
                     source | unit | output
             except ArgumentTypeError as E:
-                unit.output('delayed argument initialization failed:', str(E))
+                unit.logger.info('delayed argument initialization failed:', str(E))
             except KeyboardInterrupt:
-                unit.output('aborting due to keyboard interrupt')
+                unit.logger.info('aborting due to keyboard interrupt')
             except OSError:
                 pass
 
             if unit.args.dtiming:
                 stop_clock = process_time()
-                unit.output('stopping clock: {:.4f}'.format(stop_clock))
-                unit.output('time delta was: {:.4f}'.format(stop_clock - start_clock))
+                unit.logger.info('stopping clock: {:.4f}'.format(stop_clock))
+                unit.logger.info('time delta was: {:.4f}'.format(stop_clock - start_clock))
 
 
 __pdoc__ = {
