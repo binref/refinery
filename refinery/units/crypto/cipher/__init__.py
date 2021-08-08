@@ -5,7 +5,7 @@ Implements several popular block and stream ciphers.
 """
 import abc
 
-from typing import Iterable, Any, ByteString
+from typing import Iterable, Any, ByteString, Tuple
 from Crypto.Util.Padding import pad, unpad
 from Crypto.Util import Counter
 
@@ -170,38 +170,40 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
+    blocksize: int
+    key_sizes: Tuple[int, ...]
+
     def __init__(self, key, iv=B'', padding=None, mode=None):
         mode = self._bcmspec_(mode or iv and 'CBC' or 'ECB')
-        if iv:
-            if mode.name == 'ECB':
-                raise ValueError('No initialization vector can be specified for ECB mode.')
-            bounds = {
-                'CCM': (7, 14),
-                'OCB': (1, 16),
-                'CTR': (1, 17),
-            }.get(mode.name, None)
-            if bounds and len(iv) not in range(*bounds):
-                raise ValueError(F'Invalid nonce length, must be in {bounds} for {mode.name}.')
+        if iv and mode.name == 'ECB':
+            raise ValueError('No initialization vector can be specified for ECB mode.')
         super().__init__(key=key, iv=iv, padding=padding, mode=mode)
 
     def _get_cipher_instance(self, **optionals) -> Any:
         mode = self.args.mode.name
         if mode != 'ECB':
-            if mode == 'CTR' and len(self.iv) == 16:
+            iv = self.iv
+            if mode == 'CTR' and len(iv) == 16:
                 counter = Counter.new(self.blocksize * 8,
-                    initial_value=int.from_bytes(self.iv, 'big'))
+                    initial_value=int.from_bytes(iv, 'big'))
                 optionals['counter'] = counter
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
-                optionals['nonce'] = self.iv
+                bounds = {
+                    'CCM': (7, 14),
+                    'OCB': (1, 16),
+                    'CTR': (1, 17),
+                }.get(mode, None)
+                if bounds and len(iv) not in range(*bounds):
+                    raise ValueError(F'Invalid nonce length, must be in {bounds} for {mode}.')
+                optionals['nonce'] = iv
             elif mode in ('CBC', 'CFB', 'OFB', 'OPENPGP'):
-                iv = self.iv
                 if len(iv) > self.blocksize:
                     self.log_warn(F'The IV has length {len(self.args.iv)} and will be truncated to the blocksize {self.blocksize}.')
                     iv = iv[:self.blocksize]
                 elif len(iv) < self.blocksize:
                     raise ValueError(F'The IV has length {len(self.args.iv)} but the block size is {self.blocksize}.')
                 optionals['iv'] = iv
-            self.log_info('initial vector:', self.iv.hex())
+            self.log_info('initial vector:', iv.hex())
         if self.args.mode:
             optionals['mode'] = self.args.mode.value
         try:
