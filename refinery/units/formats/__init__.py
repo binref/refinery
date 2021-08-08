@@ -159,4 +159,9 @@ class PathExtractorUnit(Unit, abstract=True):
                     self.log_info(path)
                 if not self.args.drop:
                     result.meta[metavar] = path
-                yield self.labelled(result.get_data(), **result.meta)
+                try:
+                    data = result.get_data()
+                except Exception as error:
+                    self.log_warn(F'failure during extraction of {path}: {error!s}')
+                    continue
+                yield self.labelled(data, **result.meta)
