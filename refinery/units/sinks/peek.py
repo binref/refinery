@@ -72,7 +72,7 @@ class peek(HexViewer):
                     decoded: str = value.decode(self.codec)
                 except UnicodeDecodeError:
                     decoded = None
-                if not formats.printable.match(decoded):
+                if decoded and not formats.printable.match(decoded):
                     decoded = None
                 value = decoded or F'h:{value.hex()}'
             elif isinstance(value, int):
