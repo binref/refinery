@@ -19,14 +19,12 @@ class TestPyInstallerExtractor(TestUnitBase):
         result = str(data | unit)
         self.assertIn(R'# Embedded file name: unittest\case.py', result)
         self.assertIn(R'difflib.ndiff(pprint.pformat(seq1).splitlines(), pprint.pformat(seq2).splitlines())', result)
-        self.assertEqual(len(result), 40_026)
 
     def test_plaintext_entry_point_extraction(self):
         data = self.download_sample('904df5d6b900fcdac44c002f03ab1fbc698b8d421a22639819b3b208aaa6ea2c')
         unit = self.load(user_code=True)
         result = str(data | unit)
         self.assertIn('AESCipher("RVX0WKdzfwd4ynICDqJL9YjUjly1ehv7")', result)
-        self.assertEqual(len(result), 18_271)
 
     def test_unprotected_library_extraction(self):
         data = self.download_sample('904df5d6b900fcdac44c002f03ab1fbc698b8d421a22639819b3b208aaa6ea2c')
