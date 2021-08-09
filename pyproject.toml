@@ -27,7 +27,9 @@ requires = [
     "scapy",
     "setuptools",
     "toml",
+    "uncompyle6",
     "wheel",
+    "xdis",
     "xlrd2",
 ]
 build-backend = "setuptools.build_meta"
