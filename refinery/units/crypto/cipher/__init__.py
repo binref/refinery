@@ -182,7 +182,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
     def _get_cipher_instance(self, **optionals) -> Any:
         mode = self.args.mode.name
         if mode != 'ECB':
-            iv = self.iv
+            iv = bytes(self.iv)
             if mode == 'CTR' and len(iv) == 16:
                 counter = Counter.new(self.blocksize * 8,
                     initial_value=int.from_bytes(iv, 'big'))
