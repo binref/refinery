@@ -50,7 +50,7 @@ class PathPattern:
             self.pattern = pp
             return
         elif not regex:
-            if not strict and not pp.startswith('*') and not pp.endswith('*'):
+            if not strict and not set('*?/') & set(pp):
                 pp = F'*{pp}*'
             self.stops = [stop for stop in re.split(R'(.*?[/*?])', pp) if stop]
             pp = fnmatch.translate(pp)
@@ -155,13 +155,14 @@ class PathExtractorUnit(Unit, abstract=True):
                 if self.args.list:
                     yield self.labelled(path.encode(self.codec), **result.meta)
                     continue
-                else:
-                    self.log_info(path)
                 if not self.args.drop:
                     result.meta[metavar] = path
                 try:
                     data = result.get_data()
                 except Exception as error:
-                    self.log_warn(F'failure during extraction of {path}: {error!s}')
-                    continue
-                yield self.labelled(data, **result.meta)
+                    if self.log_debug():
+                        raise
+                    self.log_warn(F'extraction failure for {path}: {error!s}')
+                else:
+                    self.log_debug(F'extraction success for {path}')
+                    yield self.labelled(data, **result.meta)
