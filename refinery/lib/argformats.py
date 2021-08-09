@@ -319,7 +319,7 @@ class DelayedArgumentDispatch:
         except EntryNotFound:
             return None
         else:
-            unit = unit and unit.assemble(*args).detach()
+            unit = unit and unit.assemble(*args).log_detach()
             self.units[uhash] = unit
             return unit
 
