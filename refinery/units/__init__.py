@@ -993,11 +993,25 @@ class Unit(UnitBase, abstract=True):
         return self.__class__.name
 
     @property
+    def is_quiet(self) -> bool:
+        try:
+            return self.args.quiet
+        except AttributeError:
+            return False
+
+    @property
+    def is_lenient(self) -> bool:
+        try:
+            return self.args.lenient
+        except AttributeError:
+            return False
+
+    @property
     def log_level(self) -> LogLevel:
         """
         Returns the current log level as an element of `refinery.units.LogLevel`.
         """
-        if self.args.quiet:
+        if self.is_quiet:
             return LogLevel.NONE
         return LogLevel(self.logger.getEffectiveLevel())
 
@@ -1006,15 +1020,21 @@ class Unit(UnitBase, abstract=True):
         self.logger.setLevel(value)
 
     def log_detach(self) -> None:
+        """
+        When a unit is created using the `refinery.units.Unit.assemble` method, it is attached to a
+        logger by default (in less abstract terms, the `refinery.units.Unit.log_level` property is
+        set to a positive value). This method detaches the unit from its logger, which also means that
+        any exceptions that occur during runtime will be raised to the caller.
+        """
         self.log_level = LogLevel.DETACHED
-        self.args.quiet = False
+        return self
 
     def __iter__(self):
         return self
 
     def _exception_handler(self, exception: BaseException):
         if self.log_level >= LogLevel.DETACHED:
-            if isinstance(exception, RefineryPartialResult) and self.args.lenient:
+            if isinstance(exception, RefineryPartialResult) and self.is_lenient:
                 return None
             raise exception
         elif isinstance(exception, RefineryCriticalException):
@@ -1027,7 +1047,7 @@ class Unit(UnitBase, abstract=True):
             raise exception
         elif isinstance(exception, RefineryPartialResult):
             self.log_warn(F'error, partial result returned: {exception}')
-            if not self.args.lenient:
+            if not self.is_lenient:
                 return None
             return exception.partial
         else:
@@ -1480,22 +1500,12 @@ class Unit(UnitBase, abstract=True):
             reverse=False,
             squeeze=False,
             devnull=False,
-            verbose=-1,
             quiet=False,
         ))
         # Since Python 3.6, functions always preserve the order of the keyword
         # arguments passed to them (see PEP 468).
         self.args = DelayedArgumentProxy(Namespace(**keywords), list(keywords))
-
-    def detach(self):
-        """
-        When a unit is created using the `refinery.units.Unit.assemble` method, it is attached to a
-        logger by default (in less abstract terms, the `refinery.units.Unit.log_level` property is
-        set to a positive value). This method detaches the unit from its logger, which also means that
-        any exceptions that occur during runtime will be raised to the caller.
-        """
-        self.log_level = LogLevel.DETACHED
-        return self
+        self.log_detach()
 
     @classmethod
     def run(cls, argv=None, stream=None) -> None:
