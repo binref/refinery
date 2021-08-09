@@ -123,7 +123,7 @@ def load_detached(command: str) -> Any:
     Returns a unit as it would be loaded from a given command line string,
     except that the unit has been detached from the default log level.
     """
-    return load_commandline(command).detach()
+    return load_commandline(command).log_detach()
 
 
 @functools.lru_cache(maxsize=None)
