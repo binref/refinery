@@ -46,9 +46,7 @@ class xtp(PatternExtractor):
         if not patterns:
             raise RefineryCriticalException('The given mask does not match any known indicator pattern.')
         pattern = '|'.join(patterns)
-        self.log_debug(F'using pattern: {pattern}')
-
-        self.args.pattern = re.compile(pattern.encode(self.codec))
+        self.args.pattern = re.compile(pattern.encode(self.codec), flags=re.DOTALL)
         self.args.filter = filter
 
     _ALPHABETIC = ascii_letters.encode('ASCII')
@@ -214,7 +212,7 @@ class xtp(PatternExtractor):
                 return result
             whitelist.add(value)
 
-        self.log_debug(self.args.pattern)
+        self.log_debug(self.args.pattern.pattern)
 
         transforms = [check]
         yield from self.matches_filtered(memoryview(data), self.args.pattern, *transforms)
