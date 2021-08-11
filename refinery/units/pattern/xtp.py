@@ -209,7 +209,7 @@ class xtp(PatternExtractor):
                 return None
             result = self._check_match(data, match.start(), name, value)
             if result is not None:
-                return result
+                return self.labelled(result, pattern=name)
             whitelist.add(value)
 
         self.log_debug(self.args.pattern.pattern)
