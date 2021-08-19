@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import jsbeautifier
+from jsbeautifier import beautify
+from jsbeautifier.unpackers import javascriptobfuscator as _jso
 
 from .. import arg, Unit
 from ...lib.decorators import unicoded
+
+# TODO: This is a workaround for the following bug:
+# https://github.com/beautify-web/js-beautify/issues/1350
+_jso.detect = lambda *_: False
 
 
 class ppjscript(Unit):
@@ -17,7 +22,4 @@ class ppjscript(Unit):
 
     @unicoded
     def process(self, data: str) -> str:
-        return jsbeautifier.beautify(data, dict(
-            eval_code=False,
-            indent_size=self.args.indent
-        ))
+        return beautify(data, dict(eval_code=False, indent_size=self.args.indent))
