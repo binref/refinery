@@ -165,7 +165,16 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
         return self._get_cipher_instance().encrypt(data)
 
     def decrypt(self, data: bytes) -> bytes:
-        return self._get_cipher_instance().decrypt(data)
+        cipher = self._get_cipher_instance()
+        try:
+            return cipher.decrypt(data)
+        except ValueError:
+            overlap = len(data) % self.blocksize
+            if not overlap:
+                raise
+            data[-overlap:] = []
+            self.log_warn(F'removing {overlap} bytes from the input to make it a multiple of the {self.blocksize}-byte block size')
+            return cipher.decrypt(data)
 
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
