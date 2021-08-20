@@ -1309,31 +1309,34 @@ class Unit(UnitBase, abstract=True):
     def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
         return data
 
-    def log_warn(self, *messages, clip=False) -> bool:
+    @classmethod
+    def log_warn(cls, *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.units.LogLevel.WARN`.
         """
-        rv = self.logger.isEnabledFor(LogLevel.WARNING)
+        rv = cls.logger.isEnabledFor(LogLevel.WARNING)
         if rv and messages:
-            self.logger.warning(self._output(*messages, clip=clip))
+            cls.logger.warning(cls._output(*messages, clip=clip))
         return rv
 
-    def log_info(self, *messages, clip=False) -> bool:
+    @classmethod
+    def log_info(cls, *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.units.LogLevel.INFO`.
         """
-        rv = self.logger.isEnabledFor(LogLevel.INFO)
+        rv = cls.logger.isEnabledFor(LogLevel.INFO)
         if rv and messages:
-            self.logger.info(self._output(*messages, clip=clip))
+            cls.logger.info(cls._output(*messages, clip=clip))
         return rv
 
-    def log_debug(self, *messages, clip=False) -> bool:
+    @classmethod
+    def log_debug(cls, *messages, clip=False) -> bool:
         """
         Log the pmessage if and only if the current log level is at least `refinery.units.LogLevel.DEBUG`.
         """
-        rv = self.logger.isEnabledFor(LogLevel.DEBUG)
+        rv = cls.logger.isEnabledFor(LogLevel.DEBUG)
         if rv and messages:
-            self.logger.debug(self._output(*messages, clip=clip))
+            cls.logger.debug(cls._output(*messages, clip=clip))
         return rv
 
     @property
