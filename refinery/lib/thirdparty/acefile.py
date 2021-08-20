@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vim: set list et ts=8 sts=4 sw=4 ft=python:
+# -*- coding: utf-8 -*-
 
 # acefile - read/test/extract ACE 1.0 and 2.0 archives in pure python
 # Copyright (C) 2017-2019, Daniel Roethlisberger <daniel@roe.ch>
