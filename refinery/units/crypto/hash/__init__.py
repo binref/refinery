@@ -3,15 +3,22 @@
 """
 Implements various hashing algorithms.
 """
-from ... import arg, Unit
+from refinery.units import arg, Unit, abc
+from typing import ByteString, Protocol, Union
+
+
+class HashType(Protocol):
+    def digest(self) -> ByteString: ...
 
 
 class HashUnit(Unit, abstract=True):
 
-    _algorithm = NotImplemented
+    @abc.abstractmethod
+    def _algorithm(self, data: bytes) -> Union[ByteString, HashType]:
+        raise NotImplementedError
 
-    def __init__(self, text: arg('-t', help='Output a hexadecimal representation of the hash.') = False):
-        super().__init__(text=text)
+    def __init__(self, text: arg('-t', help='Output a hexadecimal representation of the hash.') = False, **kwargs):
+        super().__init__(text=text, **kwargs)
 
     def process(self, data: bytes) -> bytes:
         digest = self._algorithm(data)

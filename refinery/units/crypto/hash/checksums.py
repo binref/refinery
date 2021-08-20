@@ -13,8 +13,7 @@ class crc32(HashUnit):
     """
     Returns the CRC32 Hash of the input data.
     """
-    @classmethod
-    def _algorithm(cls, data: bytes) -> bytes:
+    def _algorithm(self, data: bytes) -> bytes:
         return struct.pack('>I', zlib.crc32(data))
 
 
@@ -22,6 +21,5 @@ class adler32(HashUnit):
     """
     Returns the Adler32 Hash of the input data.
     """
-    @classmethod
-    def _algorithm(cls, data: bytes) -> bytes:
+    def _algorithm(self, data: bytes) -> bytes:
         return struct.pack('>I', zlib.adler32(data))
