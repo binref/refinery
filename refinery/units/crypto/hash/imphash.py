@@ -12,10 +12,10 @@ class imphash(HashUnit):
     Implements the import hash for PE files.
     """
 
-    def process(self, data):
+    def _algorithm(self, data):
         pe = PE(data=data, fast_load=True)
         pe.parse_data_directories(directories=[IMAGE_DIRECTORY_ENTRY_IMPORT])
         th = pe.get_imphash()
         if not th:
             raise ValueError('no import directory.')
-        return th.encode(self.codec) if self.args.text else bytes.fromhex(th)
+        return bytes.fromhex(th)

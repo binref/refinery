@@ -141,5 +141,5 @@ class xxh(HashUnit):
     """
     Implements the xxHash hashing algorithm.
     """
-    @classmethod
-    def _algorithm(cls, data): return xxhash(data)
+    def _algorithm(self, data):
+        return xxhash(data)
