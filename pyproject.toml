@@ -24,7 +24,6 @@ requires = [
     "pyelftools",
     "pyperclip",
     "python-registry",
-    "scapy",
     "setuptools",
     "toml",
     "uncompyle6",
