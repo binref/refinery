@@ -15,9 +15,9 @@ class sorted(Unit):
     def __init__(
         self,
         key: arg('key', type=str, help='A meta variable expression to sort by instead of sorting the content.') = None,
-        descending: arg.switch('-d', help='Sort in descending order, the default is ascending.') = False
+        ascending: arg.switch('-a', help='Sort in ascending order, the default is descending.') = False
     ):
-        super().__init__(key=key, descending=descending)
+        super().__init__(key=key, ascending=ascending)
 
     def filter(self, chunks):
         sortbuffer = []
@@ -38,7 +38,7 @@ class sorted(Unit):
             else:
                 sortbuffer.append(chunk)
 
-        sortbuffer.sort(key=key, reverse=self.args.descending)
+        sortbuffer.sort(key=key, reverse=not self.args.ascending)
 
         if not invisibles:
             yield from sortbuffer
