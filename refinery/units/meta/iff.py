@@ -8,7 +8,7 @@ from . import arg, ConditionalUnit
 class iff(ConditionalUnit):
     """
     Filter incoming chunks depending on whether a given Python expression evaluates
-    to true.
+    to true. If no expression is given, the unit filters out empty chunks.
     """
     def __init__(
         self,
@@ -20,4 +20,7 @@ class iff(ConditionalUnit):
         super().__init__(negate=negate, temporary=temporary, expression=' '.join(expression))
 
     def match(self, chunk):
-        return bool(PythonExpression.evaluate(self.args.expression, metavars(chunk)))
+        expression = self.args.expression
+        if not expression:
+            return bool(chunk)
+        return bool(PythonExpression.evaluate(expression, metavars(chunk)))
