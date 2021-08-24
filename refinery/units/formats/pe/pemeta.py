@@ -220,27 +220,29 @@ class pemeta(Unit):
                     ext = [e for e in crt['extensions'] if e['extn_id'] == 'extended_key_usage' and e['extn_value'] != ['time_stamping']]
                     key = [e for e in crt['extensions'] if e['extn_id'] == 'key_usage']
                     if ext:
-                        certificates_with_extended_use.append(crt)
+                        certificates_with_extended_use.append(certificate)
                     if any('key_cert_sign' in e['extn_value'] for e in key):
                         continue
                     if any('code_signing' in e['extn_value'] for e in ext):
-                        main_certificate = crt
+                        main_certificate = certificate
                         break
             if main_certificate is None and len(certificates_with_extended_use) == 1:
                 main_certificate = certificates_with_extended_use[0]
         if main_certificate:
-            serial = main_certificate['serial_number']
+            crt = main_certificate['tbs_certificate']
+            serial = crt['serial_number']
             if not isinstance(serial, int):
                 serial = int(serial, 0)
             serial = F'{serial:x}'
             if len(serial) % 2:
                 serial = '0' + serial
-            subject = main_certificate['subject']
+            subject = crt['subject']
             location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
             info.update(Subject=subject['common_name'])
             if any(location):
                 info.update(SubjectLocation=', '.join(filter(None, location)))
-            info.update(Issuer=main_certificate['issuer']['common_name'], Serial=serial)
+            info.update(
+                Issuer=crt['issuer']['common_name'], Fingerprint=main_certificate['fingerprint'], Serial=serial)
             return info
         return info
 

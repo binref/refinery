@@ -39,18 +39,23 @@ class ParsedASN1ToJSON(BytesAsArrayEncoder):
             return list(obj)
         if isinstance(obj, datetime):
             return str(obj)
-        with suppress(AttributeError, ValueError):
-            return obj.native
+        dictionary_result = {}
+        if isinstance(obj, asn1crypto.x509.Certificate):
+            dictionary_result.update(fingerprint=obj.sha1.hex())
         with suppress(Exception):
             keys = list(obj)
             if all(isinstance(k, str) for k in keys):
-                return {key: obj[key] for key in keys}
+                dictionary_result.update((key, obj[key]) for key in keys)
+        if dictionary_result:
+            return dictionary_result
         with suppress(Exception):
             return list(obj)
-        if isinstance(obj, asn1crypto.core.Any):
-            return obj.dump()
         if isinstance(obj, asn1crypto.cms.CertificateChoices):
             return asn1crypto.x509.Certificate.load(obj.dump())
+        with suppress(AttributeError, ValueError):
+            return obj.native
+        if isinstance(obj, asn1crypto.core.Any):
+            return obj.dump()
         if isinstance(obj, asn1crypto.core.Asn1Value):
             return obj.dump()
         raise ValueError(F'Unable to determine JSON encoding of {obj.__class__.__name__} object.')
