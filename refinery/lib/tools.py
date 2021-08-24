@@ -199,8 +199,11 @@ def index_of_coincidence(data: bytearray) -> float:
     """
     Computes the index of coincidence of `data` over the alphabet of all bytes.
     """
-    if not data: return 0.0
+    if not data:
+        return 0.0
     N = len(data)
+    if N < 2:
+        return 0.0
     try:
         import numpy
     except ImportError:
