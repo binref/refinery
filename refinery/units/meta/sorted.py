@@ -21,8 +21,9 @@ class sorted(Unit):
 
     def filter(self, chunks):
         sortbuffer = []
-        invisibles = {}
+        invisibles = []
         key = self.args.key
+        rev = not self.args.ascending
 
         if key is not None:
             def _key(chunk):
@@ -30,32 +31,21 @@ class sorted(Unit):
             expression = PythonExpression(key, all_variables_allowed=True)
             key = _key
 
-        for k, chunk in enumerate(chunks):
-            if not chunk.visible:
-                r = k - len(invisibles)
-                invisibles.setdefault(r, [])
-                invisibles[r].append(chunk)
-            else:
-                sortbuffer.append(chunk)
-
-        sortbuffer.sort(key=key, reverse=not self.args.ascending)
-
-        if not invisibles:
+        def sorted():
+            if not sortbuffer:
+                return
+            sortbuffer.sort(key=key, reverse=rev)
             yield from sortbuffer
-            return
+            sortbuffer.clear()
 
-        for r, chunk in enumerate(sortbuffer):
-            if r in invisibles:
-                yield from invisibles[r]
-                del invisibles[r]
-            yield chunk
+        for chunk in chunks:
+            if chunk.visible:
+                yield from invisibles
+                invisibles.clear()
+                sortbuffer.append(chunk)
+            else:
+                yield from sorted()
+                invisibles.append(chunk)
 
-        if invisibles:
-            yield from invisibles[r]
-            del invisibles[r]
-
-        if invisibles:
-            raise RefineryCriticalException(
-                'for unknown reasons, invisible chunks were lost during '
-                'the sorting process.'
-            )
+        yield from invisibles
+        yield from sorted()
