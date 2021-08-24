@@ -16,7 +16,7 @@ class TestGrabBagExamples(TestBase):
         # flake8: noqa
         pipeline = L('xlxtr 9.5:11.5 15.15 12.5:14.5') [
             L('scope -n 3') | L('chop -t 5') [
-                L('sorted') | L('snip 2:') | L('sep')
+                L('sorted -a') | L('snip 2:') | L('sep')
             ]| L('pack 10') | L('blockop --dec -sN B-S')
         ]| L('carveb64z') | L('deob-ps1') | L('carveb64z') | L('deob-ps1') | L('xtp -f domain')
 
