@@ -8,6 +8,8 @@ from zipfile import ZipInfo, ZipFile
 from . import ArchiveUnit
 from ....lib.structures import MemoryFile
 
+ZIP_FILENAME_UTF8_FLAG = 0x800
+
 
 class xtzip(ArchiveUnit):
     """
@@ -55,4 +57,13 @@ class xtzip(ArchiveUnit):
                 date = datetime(*info.date_time)
             except Exception:
                 date = None
-            yield self._pack(info.filename, date, xt)
+
+            # courtesy of https://stackoverflow.com/a/37773438/9130824
+            filename = info.filename
+            if info.flag_bits & ZIP_FILENAME_UTF8_FLAG == 0:
+                import chardet
+                filename_bytes = filename.encode('437')
+                guessed_encoding = chardet.detect(filename_bytes)['encoding'] or 'cp1252'
+                filename = filename_bytes.decode(guessed_encoding, 'replace')
+
+            yield self._pack(filename, date, xt)
