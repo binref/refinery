@@ -88,7 +88,7 @@ class dump(Unit):
         try:
             os.makedirs(base, exist_ok=True)
         except FileExistsError:
-            self.log_debug('existed:', path)
+            self.log_info('existed:', path)
             part, components = '', self._components(path)
             while components:
                 component, *components = components
@@ -147,7 +147,9 @@ class dump(Unit):
         else:
             forward_input_data = self.args.tee or not self.isatty
             if not forward_input_data:
-                self.log_debug(F'discarding unprocessed chunk of size {len(data)}.')
+                meta = metavars(data)
+                size = meta['size']
+                self.log_warn(F'discarding unprocessed chunk of size {size!s}.')
 
         if forward_input_data:
             yield data
@@ -163,10 +165,11 @@ class dump(Unit):
             yield from it
             return
 
+        chunkmode = not self.args.stream
         for index, chunk in enumerate(chunks, 0):
-            if self.exhausted or not chunk.visible:
+            if not chunk.visible:
                 continue
-            if not self.args.stream or not self.stream:
+            if not self.exhausted and (chunkmode or not self.stream):
                 try:
                     path = next(self.paths)
                 except StopIteration:
