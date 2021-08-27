@@ -1,3 +1,5 @@
+import importlib
+
 from .. import refinery, TestBase, NameUnknownException
 
 __all__ = ['refinery', 'TestUnitBase', 'NameUnknownException']
@@ -14,6 +16,14 @@ class TestUnitBase(TestBase):
 
     def load(self, *args, **kwargs) -> refinery.Unit:
         name = self._relative_module_path(self.__class__.__module__)
+        try:
+            module = importlib.import_module(F'refinery.{name}')
+        except ImportError:
+            pass
+        else:
+            for object in vars(module).values():
+                if isinstance(object, type) and issubclass(object, refinery.units.Entry) and object.__module__ == name:
+                    return object
         try:
             basename = name.rsplit('.', 1)[-1]
             entry = getattr(refinery, basename)
