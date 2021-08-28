@@ -43,19 +43,29 @@ class xtmail(PathExtractorUnit):
         msgcount = 0
 
         with NoLogging:
-            with Message(bytes(data)) as msg:
-                yield from self._get_headparts(msg.header.items())
-                yield from make_message('body', msg)
-                for attachment in msg.attachments:
-                    if attachment.type == 'msg':
-                        msgcount += 1
-                        yield from make_message(F'attachments/msg_{msgcount:d}', attachment.data)
-                        continue
-                    if not isbuffer(attachment.data):
-                        self.log_warn(F'unknown attachment of type {attachment.type}, please report this!')
-                        continue
-                    path = attachment.longFilename or attachment.shortFilename
-                    yield UnpackResult(F'attachments/{path}', attachment.data)
+            msg = Message(bytes(data))
+
+        yield from self._get_headparts(msg.header.items())
+        yield from make_message('body', msg)
+
+        def attachments(msg):
+            for attachment in getattr(msg, 'attachments', ()):
+                yield attachment
+                if attachment.type == 'data':
+                    continue
+                yield from attachments(attachment.data)
+
+        for attachment in attachments(msg):
+            self.log_debug(attachment)
+            if attachment.type == 'msg':
+                msgcount += 1
+                yield from make_message(F'attachments/msg_{msgcount:d}', attachment.data)
+                continue
+            if not isbuffer(attachment.data):
+                self.log_warn(F'unknown attachment of type {attachment.type}, please report this!')
+                continue
+            path = attachment.longFilename or attachment.shortFilename
+            yield UnpackResult(F'attachments/{path}', attachment.data)
 
     def _get_parts_regular(self, data):
         msg = BytesParser().parsebytes(data)
