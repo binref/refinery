@@ -308,7 +308,7 @@ class formats(PatternEnum):
         46 4F 4F 0A 42 41 52 0A  FOO.BAR.
         F0 0B AA BA F0 0B        ......
     """
-    hexarray = tokenize(R'[0-9A-F]{2}', sep=R'\s*[;,]\s*', bound='')
+    hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'\s*[;,]\s*', bound='')
     "Arrays of hexadecimal strings, separated by commas or semicolons"
 
     @classmethod
