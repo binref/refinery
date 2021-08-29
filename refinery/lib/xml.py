@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import weakref
 import defusedxml.ElementTree as et
 
 from typing import Any, Dict, Iterable, List, Optional
@@ -55,24 +56,46 @@ class ForgivingXMLParser(et.XMLParser):
         self.__entity.update(value)
 
 
-class XMLNode:
-    __slots__ = 'tag', 'source', 'children', 'attributes', 'content', 'parent'
+class XMLNodeBase:
+    __slots__ = 'tag', 'children', 'empty', 'attributes', 'content', '_parent', '__weakref__'
 
     attributes: Dict[str, Any]
-    children: List[XMLNode]
+    children: List[XMLNodeBase]
     content: Optional[str]
-    parent: Optional[XMLNode]
-    source: Optional[Element]
-    subtree: Iterable[XMLNode]
-    tag: str
+    parent: Optional[weakref.ProxyType[XMLNodeBase]]
+    subtree: Iterable[XMLNodeBase]
+    empty: bool
+    tag: Optional[str]
 
-    def __init__(self, tag: str):
-        self.attributes = {}
-        self.children = []
-        self.content = None
-        self.parent = None
-        self.source = None
+    def __init__(
+        self,
+        tag: str,
+        parent: Optional[XMLNodeBase] = None,
+        content: Optional[str] = None,
+        empty: bool = False,
+        attributes: Optional[Dict[str, Any]] = None,
+    ):
+        if attributes is None:
+            attributes = {}
         self.tag = tag
+        self.content = content
+        self.empty = empty
+        self.children = []
+        self.attributes = attributes
+        self.parent = parent
+
+    @property
+    def parent(self) -> XMLNodeBase:
+        parent = self._parent
+        if parent is not None:
+            parent = parent()
+        return parent
+
+    @parent.setter
+    def parent(self, parent):
+        if parent is not None:
+            parent = weakref.ref(parent)
+        self._parent = parent
 
     def __iter__(self):
         return iter(self.children)
@@ -84,19 +107,28 @@ class XMLNode:
         return self.attributes.get(key, default)
 
     @property
-    def subtree(self) -> Iterable[XMLNode]:
+    def subtree(self) -> Iterable[XMLNodeBase]:
         yield self
         for child in self.children:
             yield from child.subtree
-
-    def write(self, stream):
-        return ElementTree(self.source).write(stream)
 
     def __enter__(self):
         return self.subtree
 
     def __exit__(self, *a):
         return False
+
+
+class XMLNode(XMLNodeBase):
+    __slots__ = 'source',
+
+    source: Optional[Element]
+
+    def __init__(self, tag: str):
+        super().__init__(tag)
+
+    def write(self, stream):
+        return ElementTree(self.source).write(stream)
 
 
 def parse(data) -> XMLNode:
