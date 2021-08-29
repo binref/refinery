@@ -103,16 +103,21 @@ class xthtml(PathExtractorUnit):
     """
     def unpack(self, data):
         def tree(root: HTMLNode, *path):
+
             def outer(root: HTMLNode = root):
                 return root.recover(inner=False).encode(self.codec)
+
             def inner(root: HTMLNode = root):
                 return root.recover().encode(self.codec)
+
             tagpath = '/'.join(path)
+
             if root.root:
                 yield UnpackResult(tagpath, inner)
             else:
                 yield UnpackResult(F'{tagpath}.outer', outer)
                 yield UnpackResult(F'{tagpath}.inner', inner)
+
             tag_count = collections.defaultdict(int)
             tag_index = collections.defaultdict(int)
             for node in root.children:
@@ -126,10 +131,12 @@ class xthtml(PathExtractorUnit):
                     tag_index[node.tag] = index = tag_index[node.tag] + 1
                     name = F'{name}({index})'
                 yield from tree(node, *path, name)
+
         parser = HTMLTreeParser()
         parser.feed(data.decode(self.codec))
         root = parser.tos
         while root.parent:
             self.log_info(F'tag was not closed: {root.tag}')
             root = root.parent
+
         yield from tree(root, root.tag)
