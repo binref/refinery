@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit, RefineryCriticalException
+from .. import arg, Unit
 
 from ...lib.argformats import PythonExpression
 from ...lib.meta import metavars
