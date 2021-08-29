@@ -6,9 +6,9 @@ from .. import Unit
 from ...lib.decorators import unicoded
 
 
-class html(Unit):
+class htmlesc(Unit):
     """
-    Encodes and decodes common ASCII escape sequences.
+    Encodes and decodes HTML entities.
     """
 
     @unicoded
