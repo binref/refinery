@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import html as html_
+import html as html_entities
 
 from .. import Unit
 from ...lib.decorators import unicoded
@@ -13,8 +13,8 @@ class htmlesc(Unit):
 
     @unicoded
     def process(self, data: str) -> str:
-        return html_.unescape(data)
+        return html_entities.unescape(data)
 
     @unicoded
     def reverse(self, data: str) -> str:
-        return html_.escape(data)
+        return html_entities.escape(data)
