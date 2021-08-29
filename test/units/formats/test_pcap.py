@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery.lib.loader import load_pipeline
 
-from ... import TestUnitBase
+from .. import TestUnitBase
 
 
 class TestPCAP(TestUnitBase):
