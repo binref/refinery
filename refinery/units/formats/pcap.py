@@ -6,6 +6,7 @@ from refinery.units import arg, Unit
 from refinery.lib.structures import MemoryFile
 
 import builtins
+import logging
 import os
 import pcapkit
 import stat
@@ -119,6 +120,7 @@ class pcap(Unit):
         super().__init__(merge=merge)
 
     def process(self, data):
+        logging.getLogger('pcapkit').disabled = True
         merge = self.args.merge
         with VirtualFile(data) as vf:
             extraction = pcapkit.extract(
