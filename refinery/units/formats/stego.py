@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import PIL.Image
-
 from enum import IntEnum
 
 from .. import Unit, arg
@@ -35,11 +33,8 @@ class stego(Unit):
         )
 
     def process(self, data):
-        def coordinates(width, height):
-            for x in range(width):
-                for y in range(height):
-                    yield x, y
-        image = PIL.Image.open(MemoryFile(data))
+        from PIL import Image
+        image = Image.open(MemoryFile(data))
         width, height = image.size
         for y in range(height):
             yield bytearray(
