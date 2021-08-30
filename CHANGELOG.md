@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+## Version 0.4.4
+- Adds the `xtvba` unit to extract Office document macros.
+- Adds the `pcap` unit to extract TCP streams from packet capture files.
+- Adds the `xthtml` unit to extract components of HTML documents.
+- The `htm` unit has been renamed to `htmlesc`.
+- The default sort order of `sorted` has been changed to descending.
+- The `pemeta` and `pkcs7` units now also extract certificate thumbprints.
+
 ## Version 0.4.3
 - Fixes an issue with applying `ppjscript` to obfuscated JavaScript files.
 - Adds Murmur Hash units
