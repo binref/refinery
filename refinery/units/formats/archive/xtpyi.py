@@ -477,7 +477,10 @@ class xtpyi(ArchiveUnit):
             raise LookupError('unable to find PyInstaller signature')
         if len(positions) > 2:
             # first position is expected to be the sentinel value in the unpacker stub
-            xtpyi.logger.warning('more than one potential PyInstaller epilogue detected; using last one')
+            width = max(len(F'{p:X}') for p in positions)
+            for position in positions:
+                self.log_info(F'magic signature found at offset 0x{position:0{width}X}')
+            self.log_warn(F'found {len(positions)-1} potential PyInstaller epilogue markers; using last one.')
         archive = PyInstallerArchiveEpilogue(view, positions[-1], self.args.unmarshal)
         for name, file in archive.files.items():
             if self.args.user_code:
