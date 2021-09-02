@@ -63,12 +63,13 @@ class MemoryFile(Generic[T], io.IOBase):
         END = io.SEEK_END
         SET = io.SEEK_SET
 
-    def __init__(self, data: Optional[T] = None, read_as_bytes=False) -> None:
+    def __init__(self, data: Optional[T] = None, read_as_bytes=False, fileno: Optional[int] = None) -> None:
         if data is None:
             data = bytearray()
         self._data = data
         self._cursor = 0
         self._closed = False
+        self._fileno = fileno
         self.read_as_bytes = read_as_bytes
 
     def close(self) -> None:
@@ -103,7 +104,9 @@ class MemoryFile(Generic[T], io.IOBase):
         return line
 
     def fileno(self) -> int:
-        raise OSError
+        if self._fileno is None:
+            raise OSError
+        return self._fileno
 
     def readable(self) -> bool:
         return not self._closed
