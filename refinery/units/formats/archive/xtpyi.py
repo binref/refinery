@@ -37,6 +37,12 @@ from ....units.pattern.carve import carve
 from Crypto.Cipher import AES
 
 
+class Unmarshal(enum.IntEnum):
+    No = 0
+    Yes = 1
+    YesAndDecompile = 2
+
+
 def version2tuple(version: str):
     return tuple(int(k, 10) for k in re.fullmatch(R'^(\d+\.\d+(?:\.\d+)?)(.*)$', version).group(1).split('.'))
 
@@ -187,7 +193,7 @@ class PYZ(Struct):
         self.reader = reader
         self.entries: List[PiMeta] = []
 
-    def unpack(self, key: Optional[bytes] = None) -> bool:
+    def unpack(self, decompile: bool, key: Optional[bytes] = None) -> bool:
         with StreamDetour(self.reader, self.base + self.toc_offset):
             toc_data = self.reader.read()
         try:
@@ -248,7 +254,7 @@ class PYZ(Struct):
                 failures += 1
                 continue
 
-            if pzt in (PzType.MODULE, PzType.PKG):
+            if decompile and pzt in (PzType.MODULE, PzType.PKG):
                 def decompiled(data=data, name=name, magic=self.magic):
                     data = decompressed(data)
                     if data[:4] != magic[:4]:
@@ -329,7 +335,7 @@ class PyInstallerArchiveEpilogue(Struct):
             return None
         return libname
 
-    def __init__(self, reader: StructReader, offset: int, unmarshal: bool):
+    def __init__(self, reader: StructReader, offset: int, unmarshal: Unmarshal = Unmarshal.No):
         reader.bigendian = True
         reader.seekset(offset)
         self.reader = reader
@@ -421,7 +427,7 @@ class PyInstallerArchiveEpilogue(Struct):
                     xtpyi.logger.info(F'found key: {key.decode(xtpyi.codec)}')
                     keys.add(key)
 
-        if not unmarshal:
+        if unmarshal is Unmarshal.No:
             return
 
         if not keys:
@@ -430,7 +436,7 @@ class PyInstallerArchiveEpilogue(Struct):
             key = next(iter(keys))
 
         for name, pyz in pyz_entries.items():
-            pyz.unpack(key)
+            pyz.unpack(unmarshal is Unmarshal.YesAndDecompile, key)
             for unpacked in pyz.entries:
                 unpacked.name = path = F'{name}/{unpacked.name}'
                 if path in self.files:
@@ -463,11 +469,11 @@ class xtpyi(ArchiveUnit):
         user_code: arg.switch('-u', group='FILTER', help=(
             'Extract only source code files from the root of the archive. These usually implement '
             'the actual domain logic.')) = False,
-        unmarshal: arg.switch('-y', group='FILTER', help=(
+        unmarshal: arg('-y', action='count', group='FILTER', help=(
             '(DANGEROUS) Unmarshal embedded PYZ archives. Warning: Maliciously crafted packages can '
             'potentially exploit this to execute code. It is advised to only use this option inside '
-            'an isolated environment.'
-        )) = False
+            'an isolated environment. Specify twice to decompile unmarshalled Python bytecode.'
+        )) = 0
     ):
         super().__init__(
             *paths,
@@ -478,6 +484,8 @@ class xtpyi(ArchiveUnit):
     def unpack(self, data):
         view = memoryview(data)
         positions = [m.start() for m in re.finditer(re.escape(PyInstallerArchiveEpilogue.MagicSignature), view)]
+        mode = Unmarshal(min(2, int(self.args.unmarshal)))
+        self.log_debug(F'unmarshal mode: {mode.name}')
         if not positions:
             raise LookupError('unable to find PyInstaller signature')
         if len(positions) > 2:
@@ -486,7 +494,7 @@ class xtpyi(ArchiveUnit):
             for position in positions:
                 self.log_info(F'magic signature found at offset 0x{position:0{width}X}')
             self.log_warn(F'found {len(positions)-1} potential PyInstaller epilogue markers; using last one.')
-        archive = PyInstallerArchiveEpilogue(view, positions[-1], self.args.unmarshal)
+        archive = PyInstallerArchiveEpilogue(view, positions[-1], mode)
         for name, file in archive.files.items():
             if self.args.user_code:
                 if file.type != PiType.USERCODE:
