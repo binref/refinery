@@ -3,67 +3,15 @@
 from typing import NamedTuple, TYPE_CHECKING, Union
 
 from refinery.units import arg, Unit
+from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 from refinery.lib.structures import MemoryFile
 
-import builtins
 import logging
-import os
 import pcapkit
-import stat
-import uuid
 
 if TYPE_CHECKING:
     from ipaddress import IPv4Address, IPv6Address
     TIPAddr = Union[IPv4Address, IPv6Address]
-
-
-class VirtualFile:
-    def __init__(self, data):
-        self._data = data
-        self._path = str(uuid.uuid4())
-        self._size = len(data)
-
-    def __fspath__(self):
-        return self._uuid
-
-    def __enter__(self):
-        def hook_open(file, *args, **kwargs):
-            base = os.path.basename(file)
-            if base != self._path:
-                return self._open(file, *args, **kwargs)
-            fd = MemoryFile(self._data, read_as_bytes=True)
-            fd.name = self._path
-            return fd
-
-        def hook_stat(file):
-            base = os.path.basename(file)
-            if base != self._path:
-                return self._stat(file)
-            M = stat.S_IMODE(0xFFFF) | stat.S_IFREG
-            S = self._size
-            return os.stat_result((
-                M,  # ST_MODE
-                0,  # ST_INO
-                0,  # ST_DEV
-                1,  # ST_NLINK
-                0,  # ST_UID
-                0,  # ST_GID
-                S,  # ST_SIZE
-                0,  # ST_ATIME
-                0,  # ST_MTIME
-                0,  # ST_CTIME
-            ))
-
-        self._open = builtins.open
-        self._stat = os.stat
-        builtins.open = hook_open
-        os.stat = hook_stat
-        return self._path
-
-    def __exit__(self, *args):
-        builtins.open = self._open
-        os.stat = self._stat
-        return False
 
 
 class Conversation(NamedTuple):
@@ -122,9 +70,10 @@ class pcap(Unit):
     def process(self, data):
         logging.getLogger('pcapkit').disabled = True
         merge = self.args.merge
-        with VirtualFile(data) as vf:
+        with VirtualFileSystem() as fs:
+            vf = VirtualFile(fs, data, 'pcap')
             extraction = pcapkit.extract(
-                fin=vf, engine='scapy', store=False, nofile=True, extension=False, tcp=True, strict=True)
+                fin=vf.path, engine='scapy', store=False, nofile=True, extension=False, tcp=True, strict=True)
             count, convo = 0, None
             src_buffer = MemoryFile()
             dst_buffer = MemoryFile()
