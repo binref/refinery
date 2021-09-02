@@ -154,9 +154,6 @@ class StandardCipherExecutable(CipherExecutable):
 
 class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
-    def __init__(self, key, **keywords):
-        super().__init__(key, **keywords)
-
     def _get_cipher_instance(self, **optionals) -> Any:
         self.log_info(lambda: F'encryption key: {self.args.key.hex()}')
         return self._stdcipher_.new(key=self.args.key, **optionals)
