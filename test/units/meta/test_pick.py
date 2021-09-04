@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from refinery import Unit
+from refinery.units.meta.pick import pick
+from itertools import count
+
 from . import TestMetaBase
 
 
@@ -107,3 +111,16 @@ class TestPick(TestMetaBase):
                 B'ENTRY #0',
             ]
         )
+
+    def test_abort_early(self):
+
+        class inf(Unit):
+            def process(self, _):
+                for k in count():
+                    yield B'$'
+                    if k > 5:
+                        raise OverflowError
+
+        unit = pick(slice(None, 2))
+        data = str(B'' | inf[unit])
+        self.assertEqual(data, '$$')

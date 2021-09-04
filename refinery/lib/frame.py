@@ -411,6 +411,10 @@ class FrameUnpacker:
         self.trunk = self._next.path
         return True
 
+    def abort(self):
+        self.unpacker = None
+        self.finished = True
+
     @property
     def eol(self) -> bool:
         return self.trunk != self.peek
@@ -479,8 +483,7 @@ class Framed:
             yield from self.filter(rw) if top.scopable else rw
 
         if not self.unpack.eol:  # filter did not consume the iterable
-            for _ in self.unpack:
-                pass
+            self.unpack.abort()
 
         if self.unpack.finished and self.finish:
             yield from self.finish()
