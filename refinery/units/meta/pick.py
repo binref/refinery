@@ -23,12 +23,12 @@ class pick(Unit):
         discards = 0
         consumed = False
 
-        def discardable(s):
+        def discardable(s: slice):
             return s.stop and s.stop >= 0 and (s.step or 1) > 0 \
                 and all(t.start >= s.stop for t in slices)
 
         while slices:
-            s = slices.popleft()
+            s: slice = slices.popleft()
 
             if not consumed:
                 if not discardable(s):
