@@ -90,7 +90,7 @@ class peek(HexViewer):
         if codec is None:
             from ..encoding.esc import esc
             decoded = data[:abs(width * linecount)]
-            decoded = str(decoded | -esc)
+            decoded = str(decoded | -esc(bare=True))
             for k in range(0, abs(linecount), width):
                 result.append(decoded[k:k + width])
             return result

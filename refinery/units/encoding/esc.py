@@ -41,6 +41,7 @@ class esc(Unit):
         unicode : arg.switch('-u', help='Use unicode escape sequences and UTF-8 encoding.') = False,
         greedy  : arg.switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.') = False,
         quoted  : arg.switch('-q', help='Remove enclosing quotes while decoding and add them for encoding.') = False,
+        bare    : arg.switch('-b', help='Do not escape quote characters.') = False,
         expand  : arg.switch('-p', help='Decode sequences of the form \\uHHLL as two bytes when the upper byte is nonzero.') = False,
     ) -> Unit: pass  # noqa
 
@@ -80,7 +81,10 @@ class esc(Unit):
                 def escape(match):
                     c = match[0][0]
                     return self._ESCAPE.get(c, RB'\x%02x' % c)
-                string = re.sub(RB'[\x00-\x1F\x22\x27\x5C\x7F-\xFF]', escape, data)
+                pattern = RB'[\x00-\x1F\x22\x27\x5C\x7F-\xFF]'
+                if self.args.bare:
+                    pattern = RB'[\x00-\x1F\x5C\x7F-\xFF]'
+                string = re.sub(pattern, escape, data)
             else:
                 string = bytearray(4 * len(data))
                 for k in range(len(data)):
