@@ -225,7 +225,7 @@ COMMON_PROPERTIES: Dict[str, Callable[[ByteString], Union[str, int, float]]] = {
     'size'    : lambda chunk: SizeInt(len(chunk)),
     'entropy' : lambda chunk: Percentage(entropy(chunk)),
     'ic'      : lambda chunk: Percentage(index_of_coincidence(chunk)),
-    'crc32'   : lambda chunk: HexByteString((zlib.crc32(chunk)&0xFFFFFFFF).to_bytes(4, 'big')),
+    'crc32'   : lambda chunk: HexByteString((zlib.crc32(chunk) & 0xFFFFFFFF).to_bytes(4, 'big')),
     'sha1'    : lambda chunk: HexByteString(hashlib.sha1(chunk).digest()),
     'sha256'  : lambda chunk: HexByteString(hashlib.sha256(chunk).digest()),
     'md5'     : lambda chunk: HexByteString(hashlib.md5(chunk).digest()),
@@ -400,23 +400,24 @@ class LazyMetaOracle(dict):
                         pipeline = load_pipeline(modifier.decode(codec))
                         output | pipeline | stream.write
                         continue
-                else:                        
+                else:
                     converter = {
                         'a': ascii,
                         's': str,
                         'r': repr,
+                        'H': lambda b: b.hex().upper(),
                         'h': lambda b: b.hex(),
-                        's': lambda b: b.decode('utf8'),
                         'u': lambda b: b.decode('utf-16le'),
                         'e': lambda b: b.decode('utf8', errors='backslashreplace')
                     }.get(conversion)
                     if converter:
                         output = converter(value)
-                    elif not modifier:
-                        if isinstance(value, CustomStringRepresentation):
-                            output = repr(value)
-                        elif isbuffer(value):
-                            output = value.decode('utf8', errors='replace')
+                    elif modifier:
+                        output = value
+                    elif isinstance(value, CustomStringRepresentation):
+                        output = str(value)
+                    elif isbuffer(value):
+                        output = value.decode('utf8', errors='replace')
                     else:
                         output = value
                     output = output.__format__(modifier)
