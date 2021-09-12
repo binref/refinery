@@ -23,6 +23,7 @@ class cfmt(Unit):
     def __init__(
         self,
         *formats: arg(help='Format strings.', type=str, metavar='format'),
+        put: arg('-p', type=str, metavar='NAME', help='Store the formatted string in a meta variable.') = None,
         separator: arg('-s', group='SEP', metavar='S',
             help='Separator to insert between format strings. The default is a space character.') = ' ',
         multiplex: arg.switch('-m', group='SEP',
@@ -35,9 +36,13 @@ class cfmt(Unit):
         formats = [fixfmt(f) for f in formats]
         if not multiplex:
             formats = [fixfmt(separator).join(formats)]
-        super().__init__(formats=formats)
+        super().__init__(formats=formats, put=put)
 
     def process(self, data):
         meta = metavars(data, ghost=True)
+        name = self.args.put
         for spec in self.args.formats:
-            yield meta.format_str(spec, self.codec, data).encode(self.codec)
+            result = meta.format_str(spec, self.codec, data).encode(self.codec)
+            if name is not None:
+                result = self.labelled(data, **{name: result})
+            yield result
