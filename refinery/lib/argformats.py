@@ -507,12 +507,14 @@ class DelayedArgument(LazyEvaluation):
         import base64
         return base64.b16decode(string, casefold=True)
 
-    @handler.register('f', 'F', 'file', final=True)
+    @handler.register('f', 'F', 'file')
     def file(self, path: str) -> bytes:
         """
         The final modifier `f:path` or `file:path` returns the contents of the file located
         at the given path.
         """
+        if isbuffer(path):
+            path = path.decode('utf8')
         return open(path, 'rb').read()
 
     @handler.register('range', final=True)

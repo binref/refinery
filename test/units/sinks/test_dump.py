@@ -136,7 +136,7 @@ class TestDump(TestUnitBase):
         filenames = [
             'file-{index:02d}-{{foobar}}-{crc32}-{md5}.bin'.format(
                 index=index,
-                crc32='{:08X}'.format(zlib.crc32(data) & 0xFFFFFFFF),
+                crc32='{:08x}'.format(zlib.crc32(data) & 0xFFFFFFFF),
                 md5=hashlib.md5(data).hexdigest()
             ) for index, data in enumerate(samples)
         ]
@@ -146,7 +146,7 @@ class TestDump(TestUnitBase):
             self.ldu('emit', *samples)[dump]()
             for filename, data in zip(filenames, samples):
                 result_path = os.path.join(root, filename)
-                self.assertTrue(os.path.exists(result_path))
+                self.assertTrue(os.path.exists(result_path), F'missing: {result_path}')
                 with open(result_path, 'rb') as result:
                     self.assertEqual(result.read(), data)
 

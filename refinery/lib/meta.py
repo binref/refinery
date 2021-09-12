@@ -225,7 +225,7 @@ COMMON_PROPERTIES: Dict[str, Callable[[ByteString], Union[str, int, float]]] = {
     'size'    : lambda chunk: SizeInt(len(chunk)),
     'entropy' : lambda chunk: Percentage(entropy(chunk)),
     'ic'      : lambda chunk: Percentage(index_of_coincidence(chunk)),
-    'crc32'   : lambda chunk: F'{zlib.crc32(chunk)&0xFFFFFFFF:08X}',
+    'crc32'   : lambda chunk: HexByteString((zlib.crc32(chunk)&0xFFFFFFFF).to_bytes(4, 'big')),
     'sha1'    : lambda chunk: HexByteString(hashlib.sha1(chunk).digest()),
     'sha256'  : lambda chunk: HexByteString(hashlib.sha256(chunk).digest()),
     'md5'     : lambda chunk: HexByteString(hashlib.md5(chunk).digest()),
@@ -250,6 +250,7 @@ class LazyMetaOracle(dict):
         'sha1'    : HexByteString,
         'sha256'  : HexByteString,
         'md5'     : HexByteString,
+        'crc32'   : HexByteString,
     }
 
     def __init__(self, chunk: ByteString, ghost: bool = False, alias: Optional[Dict[str, str]] = None, *init):
@@ -313,9 +314,6 @@ class LazyMetaOracle(dict):
         """
         from .argformats import ParserError, PythonExpression
         # prevents circular import
-
-        def identity(x):
-            return x
 
         if fixup:
             for (store, it) in (
@@ -402,19 +400,37 @@ class LazyMetaOracle(dict):
                         pipeline = load_pipeline(modifier.decode(codec))
                         output | pipeline | stream.write
                         continue
-                else:
+                else:                        
                     converter = {
                         'a': ascii,
                         's': str,
                         'r': repr,
-                    }.get(conversion, identity)
-                    output = converter(value)
+                        'h': lambda b: b.hex(),
+                        's': lambda b: b.decode('utf8'),
+                        'u': lambda b: b.decode('utf-16le'),
+                        'e': lambda b: b.decode('utf8', errors='backslashreplace')
+                    }.get(conversion)
+                    if converter:
+                        output = converter(value)
+                    elif not modifier:
+                        if isinstance(value, CustomStringRepresentation):
+                            output = repr(value)
+                        elif isbuffer(value):
+                            output = value.decode('utf8', errors='replace')
+                    else:
+                        output = value
                     output = output.__format__(modifier)
                 stream.write(output)
             return stream.getvalue()
 
     def __contains__(self, key):
         return super().__contains__(key) or key in COMMON_PROPERTIES
+
+    def __getitem__(self, key):
+        item = super().__getitem__(key)
+        if isinstance(item, str):
+            return item.encode('utf8')
+        return item
 
     def __missing__(self, key):
         deduction = COMMON_PROPERTIES.get(key)
