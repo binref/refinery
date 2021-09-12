@@ -335,10 +335,10 @@ class Chunk(bytearray):
         return Chunk(self, self._path, self._view, self._meta, self._fill)
 
     def __deepcopy__(self, memo):
-        copy = Chunk(self, self._path, self._view, self._fill)
-        memo[id(self)] = copy
-        copy._meta = copy.deepcopy(self._meta, memo)
-        return copy
+        dc = Chunk(self, self._path, self._view, self._fill)
+        memo[id(self)] = dc
+        dc._meta = copy.deepcopy(self._meta, memo)
+        return dc
 
 
 class FrameUnpacker:
