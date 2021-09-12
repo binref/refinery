@@ -13,7 +13,7 @@ class IndexCounter:
 
     def init(self, mask):
         self.mask = mask
-        self.index = 0
+        self.index = -1
 
     def __iter__(self):
         return self
