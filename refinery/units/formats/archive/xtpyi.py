@@ -21,12 +21,12 @@ try:
     from importlib.util import MAGIC_NUMBER
 except ImportError:
     pass
-
-A, B, C, *_ = sys.version_info
-V = F'{A}.{B}.{C}'
-if V not in xdis.magics.canonic_python_version:
-    xdis.magics.add_canonic_versions(V, F'{A}.{B}')
-del A, B, C, V
+else:
+    A, B, C, *_ = sys.version_info
+    V = F'{A}.{B}.{C}'
+    if V not in xdis.magics.canonic_python_version:
+        xdis.magics.add_canonic_versions(V, F'{A}.{B}')
+    del A, B, C, V
 
 from uncompyle6.main import decompile, iscode
 
