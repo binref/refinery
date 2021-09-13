@@ -20,7 +20,7 @@ class couple(Unit):
     _JOIN_TIME = 0.1
 
     def __init__(
-        self, *commandline : arg(nargs='...', metavar='(all remaining)', help=(
+        self, *commandline : arg(nargs='...', type=str, metavar='(all remaining)', help=(
             'All remaining command line tokens form an arbitrary command line to be executed. Use format string syntax '
             'to insert meta variables and incoming data chunks.')),
         buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
@@ -39,10 +39,7 @@ class couple(Unit):
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
         meta = metavars(data, ghost=True)
-        commandline = [
-            meta.format_str(cmd.decode(self.codec), self.codec, data)
-            for cmd in self.args.commandline
-        ]
+        commandline = [meta.format_str(cmd, self.codec, data) for cmd in self.args.commandline]
 
         if self.args.cmdline:
             commandline.append(data.decode(self.codec))
