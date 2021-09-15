@@ -5,7 +5,7 @@ A package for units that operate primarily on frames of several of inputs.
 """
 from __future__ import annotations
 
-from typing import Iterable, TYPE_CHECKING
+from typing import Iterable, TYPE_CHECKING, Optional
 from abc import abstractmethod
 if TYPE_CHECKING:
     from ...lib.frame import Chunk
@@ -14,10 +14,12 @@ from .. import arg, Unit
 from ...lib.argformats import sliceobj
 
 
-def check_variable_name(name: str) -> str:
+def check_variable_name(name: Optional[str]) -> Optional[str]:
     """
     All single-letter, uppercase variable names are reserved.
     """
+    if name is None:
+        return None
     if len(name) == 1 and name.upper() == name:
         raise ValueError('Single uppercase letter variable names are reserved.')
     if not name.isidentifier():

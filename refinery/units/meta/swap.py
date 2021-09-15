@@ -1,28 +1,54 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
-from ...lib.tools import isbuffer
-from ...lib.meta import metavars
-from . import check_variable_name
+from typing import Iterable
+
+from refinery.units import arg, Unit
+from refinery.units.meta import check_variable_name
+
+from refinery.lib.frame import Chunk
+from refinery.lib.tools import isbuffer
 
 
 class swap(Unit):
     """
-    Swap the contents of an existing variable with the contents of the chunk. The variable
-    has to contain a binary string.
+    Swap the contents of an existing variable with the contents of the chunk or with another meta variable.
+    When swapping with a chunk, the variable has to contain a binary string. When swapping with a variable
+    that does not exist, the original variable is cleared, essentially renaming the variable.
     """
-    def __init__(self, name: arg(type=str, metavar='name', help='The meta variable name.')):
-        super().__init__(name=check_variable_name(name))
+    def __init__(
+        self,
+        src: arg(type=str, help='The meta variable name.'),
+        dst: arg(type=str, help='Optional name of the second meta variable.') = None
+    ):
+        super().__init__(
+            src=check_variable_name(src),
+            dst=check_variable_name(dst)
+        )
 
-    def process(self, data):
-        name = self.args.name
-        meta = metavars(data)
-        try:
-            meta = meta[name]
-        except KeyError:
-            meta = bytearray()
-        if isinstance(meta, str):
-            meta = meta.encode(self.codec)
-        elif not isbuffer(meta):
-            raise ValueError(F'Unable to swap data with variable {name} because it has type {type(meta).__name__}.')
-        return self.labelled(meta, **{name: data})
+    def filter(self, chunks: Iterable[Chunk]):
+        src = self.args.src
+        dst = self.args.dst
+        for chunk in chunks:
+            if dst is None:
+                try:
+                    value = chunk.meta[src]
+                except KeyError:
+                    value = bytearray()
+                if isinstance(value, str):
+                    value = value.encode(self.codec)
+                elif not isbuffer(value):
+                    raise ValueError(F'Unable to swap data with variable {src} because it has type {type(value).__name__}.')
+                chunk.meta[src] = bytes(chunk)
+                chunk[:] = value
+            else:
+                try:
+                    value = chunk.meta.pop(src)
+                except KeyError:
+                    raise KeyError(F'The variable {src} does not exist.')
+                try:
+                    swap = chunk.meta.pop(dst)
+                except KeyError:
+                    chunk.meta[dst] = value
+                else:
+                    chunk.meta[src], chunk.meta[dst] = swap, value
+            yield chunk
