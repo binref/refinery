@@ -852,7 +852,6 @@ class DelayedArgumentProxy:
             _argo=list(self._argo),
             _args=dict(self._args),
             _done=self._done,
-            _guid=self._guid,
         )
         return clone
 
@@ -875,19 +874,16 @@ class DelayedArgumentProxy:
             _argo=list(argo),
             _args=args,
             _done=done,
-            _guid=None,
         )
 
     def __matmul__(self, data: bytearray):
         """
         Lock the current arguments for the given input `data`.
         """
-        if self._done: return data
+        if self._done:
+            return data
         if not isinstance(data, bytearray):
             data = bytearray(data)
-        identifier = id(data)
-        if identifier == self._guid:
-            return data
         for name in self._argo:
             value = getattr(self._argv, name, None)
             if value is self.PendingUpdate:
@@ -895,7 +891,6 @@ class DelayedArgumentProxy:
             if value and pending(value):
                 self._args[name] = self.PendingUpdate
                 self._args[name] = manifest(value, data)
-        self._store(_guid=identifier)
         return data
 
     def _store(self, **kwargs):
@@ -1302,7 +1297,8 @@ class Unit(UnitBase, abstract=True):
         metadata will be visible inside pipeline frames, see `refinery.lib.frame`.
         """
         if isinstance(data, Chunk):
-            data.meta.update(meta)
+            if meta:
+                data.meta.update(meta)
             return data
         return Chunk(data, meta=meta)
 
