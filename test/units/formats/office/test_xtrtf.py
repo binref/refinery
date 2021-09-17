@@ -11,7 +11,7 @@ class TestRTFExtractor(TestUnitBase):
         unit = self.load()
         bins = list(unit.process(data))
         self.assertLessEqual(
-            {'aaaaaaaaaa.txt', 'SutLzbCFI.txt', 'fbZjJrTooKyVebB.sct'},
+            {b'aaaaaaaaaa.txt', b'SutLzbCFI.txt', b'fbZjJrTooKyVebB.sct'},
             {bin.meta['path'] for bin in bins}
         )
         for bin in bins:
