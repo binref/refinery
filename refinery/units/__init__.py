@@ -118,7 +118,24 @@ from abc import ABCMeta
 from enum import IntEnum, Enum
 from functools import wraps
 from collections import OrderedDict
-from typing import Iterable, BinaryIO, Type, TypeVar, Union, List, Optional, Callable, Tuple, Any, ByteString, no_type_check, get_type_hints
+
+from typing import (
+    Dict,
+    Iterable,
+    BinaryIO,
+    Type,
+    TypeVar,
+    Union,
+    List,
+    Optional,
+    Callable,
+    Tuple,
+    Any,
+    ByteString,
+    no_type_check,
+    get_type_hints
+)
+
 from argparse import (
     ArgumentTypeError, Namespace,
     ONE_OR_MORE,
@@ -844,6 +861,12 @@ class DelayedArgumentProxy:
     class PendingUpdate:
         pass
 
+    _argv: Namespace
+    _argo: List[str]
+    _args: Dict[str, Any]
+    _done: bool
+    _guid: int
+
     def __copy__(self):
         cls = self.__class__
         clone = cls.__new__(cls)
@@ -862,7 +885,7 @@ class DelayedArgumentProxy:
     def __getitem__(self, key):
         return self._args[key]
 
-    def __init__(self, argv, argo):
+    def __init__(self, argv: Namespace, argo: Iterable[str]):
         args = {}
         done = True
         for name, value in vars(argv).items():
@@ -878,16 +901,15 @@ class DelayedArgumentProxy:
             _guid=None,
         )
 
-    def __matmul__(self, data: bytearray):
+    def __call__(self, data: bytearray):
         """
-        Lock the current arguments for the given input `data`.
+        Update the current arguments for the input `data`, regardless of whether or not this chunk
+        has already been used. In most cases, the matrix-multiplication syntax should be used instead
+        of this direct call: If a multibin argument modifies the meta dictionary by being applied, a
+        second interpretation of this argument with the same chunk might cause an error. For example,
+        if an argument specifies to pop a meta variable from the meta dictionary, this variable will
+        not be available for a second interpretation call.
         """
-        if self._done: return data
-        if not isinstance(data, bytearray):
-            data = bytearray(data)
-        identifier = id(data)
-        if identifier == self._guid:
-            return data
         for name in self._argo:
             value = getattr(self._argv, name, None)
             if value is self.PendingUpdate:
@@ -895,8 +917,20 @@ class DelayedArgumentProxy:
             if value and pending(value):
                 self._args[name] = self.PendingUpdate
                 self._args[name] = manifest(value, data)
-        self._store(_guid=identifier)
+        self._store(_guid=id(data))
         return data
+
+    def __matmul__(self, data: bytearray):
+        """
+        Interpret the current arguments for the given input `data`.
+        """
+        if self._done:
+            return data
+        if not isinstance(data, bytearray):
+            data = bytearray(data)
+        if id(data) == self._guid:
+            return data
+        return self(data)
 
     def _store(self, **kwargs):
         self.__dict__.update(kwargs)
