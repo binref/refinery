@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+import inspect
 
 from refinery.units.sinks import HexViewer
 from refinery.lib.patterns import make_hexline_pattern
+
+
+def regex(cls):
+    return re.compile(inspect.getdoc(cls))
 
 
 class hexdmp(HexViewer):
@@ -13,14 +18,24 @@ class hexdmp(HexViewer):
     The default mode of the unit expects the input data to contain a readable hexdump and
     converts it back to binary.
     """
-    _ENCODED_BYTES = re.compile(
-        '(?:\\s|^)'                # encoded byte patches must be prefixed by white space
-        '[A-Fa-f0-9]{2}(\\s+)'     # encoded byte followed by whitespace
-        '(?:'                      # either a single byte or:
-        '[A-Fa-f0-9]{2}'           # at least one more encoded byte
-        '(?:\\1[A-Fa-f0-9]{2})*'   # followed by more encoded bytes using the same spacing
-        ')?'                       # unless it was just a single byte!
-    )
+    @regex
+    class _ENCODED_BYTES:
+        R"""
+        (?ix)(?:\s|^)                       # encoded byte patches must be prefixed by white space
+        (?:
+            (?:                             # separated chunks of hex data
+                [a-f0-9]{2}                 # hexadecimal chunk; single byte (two hexadecimal letters)
+                (\s+)                       # encoded byte followed by whitespace
+                (?:                         # at least one more encoded byte
+                    [a-f0-9]{2}             # followed by more encoded bytes using the same spacing
+                    (?:\1[a-f0-9]{2})*      # unless it was just a single byte
+                )?
+            )
+            | (?:[a-f0-9]{4}(\s+)(?:[a-f0-9]{4}(?:\2[a-f0-9]{4})*)?)   # 2-byte chunks
+            | (?:[a-f0-9]{8}(\s+)(?:[a-f0-9]{8}(?:\3[a-f0-9]{8})*)?)   # 4-byte chunks
+            | (?:(?:[a-f0-9]{2})+)\b       # continuous line of hexadecimal characters
+        )
+        """
 
     def __init__(self, hexaddr=True, width=0, expand=False):
         super().__init__(hexaddr=hexaddr, width=width, expand=expand)

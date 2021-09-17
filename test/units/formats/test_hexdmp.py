@@ -89,6 +89,19 @@ class TestHexDmp(TestUnitBase):
             packed = pack(dumped)
             self.assertEqual(packed, data)
 
+    def test_wide_hexdumps(self):
+        data = (
+            '0x018DE80 dc2a 0100 8b45 2048 8d4d 1048 c1e0 2048  Ü*...E H.M.HÁà H\n'
+            '0x018DE90 3345 2048 3345 1048 33c1 48b9 ffff ffff  3E H3E.H3ÁH¹ÿÿÿÿ\n'
+            '0x018DEA0 ffff 0000 4823 c148 b933 a2df 2d99 2b00  ÿÿ..H#ÁH¹3¢ß-.+.\n'
+        ).encode('utf8')
+        unit = self.load()
+        self.assertEqual(unit(data), bytes.fromhex(
+            'DC 2A 01 00 8B 45 20 48 8D 4D 10 48 C1 E0 20 48'
+            '33 45 20 48 33 45 10 48 33 C1 48 B9 FF FF FF FF'
+            'FF FF 00 00 48 23 C1 48 B9 33 A2 DF 2D 99 2B 00'
+        ))
+
     def test_hex_byte_in_text_preview(self):
         data = (
             '000000000018DE80  DC 2A 01 00 8B 45 20 48 8D 4D 10 48 C1 E0 20 48  Ü*...E H.M.HÁà H  \n'
