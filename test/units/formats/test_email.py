@@ -28,12 +28,12 @@ class TestEmailUnpacker(TestUnitBase):
         data = self.download_sample('f4d5353552501b7aa0f9bb400e0d0349487dc45cbe5ce82fe5e7de526d37f301')
         out = data | self.load() | {'path': ...}
         self.assertSetEqual(set(out), {
-            'headers.txt',
-            'headers.json',
-            'body.txt',
-            'attachments/request.zip',
+            b'headers.txt',
+            b'headers.json',
+            b'body.txt',
+            b'attachments/request.zip',
         })
-        self.assertIn(b'figures,12.18.2020.doc', out['attachments/request.zip'])
+        self.assertIn(b'figures,12.18.2020.doc', out[b'attachments/request.zip'])
 
     def test_embedded_attachment_extraction(self):
         data = self.download_sample('8f567c5fe40e15394ccf158356e445ea6b9afcbab8a225ad1c6c697f95ce36b9')
