@@ -14,10 +14,12 @@ class hexdmp(HexViewer):
     converts it back to binary.
     """
     _ENCODED_BYTES = re.compile(
-        '(?:\\s|^)'               # encoded byte patches must be prefixed by white space
-        '[A-Fa-f0-9]{2}(\\s+)'    # encoded byte followed by whitespace
-        '[A-Fa-f0-9]{2}'          # at least one more encoded byte
-        '(?:\\1[A-Fa-f0-9]{2})*'  # more encoded bytes using the same spacing
+        '(?:\\s|^)'                # encoded byte patches must be prefixed by white space
+        '[A-Fa-f0-9]{2}(\\s+)'     # encoded byte followed by whitespace
+        '(?:'                      # either a single byte or:
+        '[A-Fa-f0-9]{2}'           # at least one more encoded byte
+        '(?:\\1[A-Fa-f0-9]{2})*'   # followed by more encoded bytes using the same spacing
+        ')?'                       # unless it was just a single byte!
     )
 
     def __init__(self, hexaddr=True, width=0, expand=False):

@@ -77,7 +77,17 @@ class TestHexDmp(TestUnitBase):
         for size in (20, 200, 400):
             data = self.generate_random_buffer(size)
             dumped = dump(data)
-            self.assertEqual(pack(dumped), data)
+            packed = pack(dumped)
+            self.assertEqual(packed, data, dumped.decode('utf8'))
+
+    def test_pack_hexdump_overhang(self):
+        dump = self.load(reverse=True, width=20)
+        pack = self.load()
+        for k in range(1, 5):
+            data = self.generate_random_buffer(40 + k)
+            dumped = dump(data)
+            packed = pack(dumped)
+            self.assertEqual(packed, data)
 
     def test_hex_byte_in_text_preview(self):
         data = (
