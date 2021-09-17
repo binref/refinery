@@ -114,6 +114,8 @@ Note that `refinery.sep` makes all chunks in the frame visible by default, becau
 intended to sit at the end of a frame. Otherwise, `NaNaNaNaNaNaNaNa` and `Batman` in the
 above example would not be separated by a dash.
 """
+from __future__ import annotations
+
 import copy
 import json
 import base64
@@ -280,15 +282,14 @@ class Chunk(bytearray):
         if value != self.visible:
             self._view = self._view[:~0] + (value,)
 
-    def inherit(self, parent):
+    def inherit(self, parent: Chunk):
         """
         This method can be used to take over properties of a parent `refinery.lib.frame.Chunk`.
         """
-        self._path = parent._path
-        self._view = parent._view
-        for key, value in parent._meta.items():
-            if key not in self._meta:
-                self._meta[key] = value
+        self._path = parent.path
+        self._view = parent.view
+        for kv in parent.meta.items():
+            self._meta.setdefault(*kv)
         return self
 
     @classmethod
