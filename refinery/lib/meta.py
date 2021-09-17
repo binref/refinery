@@ -290,6 +290,18 @@ class LazyMetaOracle(dict):
                 self[key] = ctype(value)
         return self
 
+    def serializable(self) -> dict:
+        result = dict(self)
+        for key, value in result.items():
+            try:
+                value: ByteStringWrapper
+                value = value.binary
+            except AttributeError:
+                continue
+            else:
+                result[key] = value
+        return result
+
     def items(self):
         for key, value in super().items():
             if not is_valid_variable_name(key):
