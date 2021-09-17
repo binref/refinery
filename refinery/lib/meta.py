@@ -168,6 +168,31 @@ class ByteStringWrapper(CustomStringRepresentation):
         return self.string.__format__(spec)
 
 
+def is_valid_variable_name(name: str) -> bool:
+    """
+    All single-letter, uppercase variable names are reserved.
+    """
+    if len(name) == 1 and name.upper() == name:
+        return False
+    if not name.isidentifier():
+        return False
+    return True
+
+
+def check_variable_name(name: Optional[str]) -> Optional[str]:
+    """
+    All single-letter, uppercase variable names are reserved.
+    """
+    if name is None:
+        return None
+    elif is_valid_variable_name(name):
+        return name
+    raise ValueError(
+        F'The variable name {name!r} is invalid: Variable names must be identifiers. Additionally, single uppercase '
+        R'letters are reserved for internal use.'
+    )
+
+
 class SizeInt(int, CustomStringRepresentation):
     """
     The string representation of this int class is a a human-readable expression of size, using
@@ -253,10 +278,9 @@ class LazyMetaOracle(dict):
         'crc32'   : HexByteString,
     }
 
-    def __init__(self, chunk: ByteString, ghost: bool = False, alias: Optional[Dict[str, str]] = None, *init):
-        super().__init__(*init)
-        self.alias = alias or {}
-        self.ghost = ghost
+    def __init__(self, chunk: ByteString, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ghost = False
         self.chunk = chunk
 
     def fix(self):
@@ -265,6 +289,12 @@ class LazyMetaOracle(dict):
             if ctype and not isinstance(value, ctype):
                 self[key] = ctype(value)
         return self
+
+    def items(self):
+        for key, value in super().items():
+            if not is_valid_variable_name(key):
+                continue
+            yield key, value
 
     def format_str(self, spec: str, codec: str, *args, **symb) -> str:
         """
@@ -439,19 +469,19 @@ class LazyMetaOracle(dict):
             raise KeyError(F'cannot deduce the {key} property from just the data, you have to use the cm unit.')
         if deduction:
             return self.setdefault(key, deduction(self.chunk))
-        if key in self.alias:
-            return self[self.alias[key]]
         raise KeyError(F'The meta variable {key} is unknown.')
 
 
-def metavars(chunk, *pre_populate, ghost: bool = False, alias: Optional[Dict[str, str]] = None) -> LazyMetaOracle:
+def metavars(chunk, ghost: bool = False) -> LazyMetaOracle:
     """
     This method is the main function used by refinery units to get the meta variable dictionary
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`
     so that access to common variables is always possible.
     """
-    alias = alias or None
-    oracle = LazyMetaOracle(chunk, ghost, alias, getattr(chunk, 'meta', {}))
-    for key in pre_populate:
-        oracle[key]
-    return oracle.fix()
+    meta: Union[dict, LazyMetaOracle] = getattr(chunk, 'meta', {})
+    if not isinstance(meta, LazyMetaOracle):
+        if not isinstance(meta, dict):
+            raise TypeError('Invalid meta type.')
+        meta = LazyMetaOracle(chunk, meta)
+    meta.ghost = ghost
+    return meta

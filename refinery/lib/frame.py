@@ -123,6 +123,7 @@ from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteStri
 from refinery.lib.structures import MemoryFile
 from refinery.lib.powershell import is_powershell_process
 from refinery.lib.tools import isbuffer
+from refinery.lib.meta import LazyMetaOracle
 
 try:
     import msgpack
@@ -166,6 +167,7 @@ class Chunk(bytearray):
     receives an iterable of `refinery.lib.frame.Chunk`s.
     """
     temp: Any = None
+    meta: LazyMetaOracle
 
     def __init__(
         self,
@@ -175,6 +177,8 @@ class Chunk(bytearray):
         meta: Optional[Dict[str, Any]] = None,
         fill: Optional[bool] = None
     ):
+        bytearray.__init__(self, data)
+
         view = view or (False,) * len(path)
         if len(view) != len(path):
             raise ValueError('skipping must have the same length as path')
@@ -187,10 +191,15 @@ class Chunk(bytearray):
 
         self._view: Tuple[bool] = view
         self._path: Tuple[int] = path
-        self._meta: Dict[str, Any] = meta or dict()
         self._fill: bool = fill
 
-        bytearray.__init__(self, data)
+        self._meta = m = LazyMetaOracle(self)
+        if meta is not None:
+            m.update(meta)
+
+    @property
+    def guid(self) -> int:
+        return hash((id(self), *(id(v) for v in self.meta.values())))
 
     @property
     def fill(self) -> bool:
@@ -242,6 +251,8 @@ class Chunk(bytearray):
         """
         Every chunk can contain a dictionary of arbitrary metadata.
         """
+        if self._meta.chunk is not self:
+            raise RuntimeError('meta dictionary carries invalid parent reference')
         return self._meta
 
     @property
@@ -337,7 +348,9 @@ class Chunk(bytearray):
     def __deepcopy__(self, memo):
         dc = Chunk(self, self._path, self._view, self._fill)
         memo[id(self)] = dc
-        dc._meta = copy.deepcopy(self._meta, memo)
+        memo[id(self._meta)] = dc.meta
+        for key, value in self._meta.items():
+            dc.meta[key] = copy.deepcopy(value, memo)
         return dc
 
 

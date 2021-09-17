@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import itertools
+from typing import Iterable
+from itertools import chain
 
-from .. import arg, Unit
-from . import check_variable_name
+from refinery.units import arg, Unit, Chunk
+from refinery.lib.meta import check_variable_name
 
 
 class _popcount:
@@ -32,7 +33,7 @@ class _popcount:
         self.current = self.count
         return self
 
-    def into(self, meta, item):
+    def into(self, meta: dict, item: Chunk):
         if self.current < 1:
             return False
         if self.field:
@@ -66,13 +67,13 @@ class pop(Unit):
     def process(self, data):
         return data
 
-    def filter(self, chunks):
+    def filter(self, chunks: Iterable[Chunk]):
         invisible = []
         variables = {}
-        remaining = iter(self.args.names)
+        remaining: Iterable[_popcount] = iter(self.args.names)
 
         it = iter(chunks)
-        pop: _popcount = next(remaining).reset()
+        pop = next(remaining).reset()
 
         for chunk in it:
             if not chunk.visible:
@@ -92,7 +93,7 @@ class pop(Unit):
         else:
             raise ValueError('Not all variables could be assigned.')
 
-        for chunk in itertools.chain(invisible, it):
+        for chunk in chain(invisible, it):
             chunk.meta.update(variables)
             chunk.visible = True
             yield chunk

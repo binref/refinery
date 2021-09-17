@@ -3,8 +3,8 @@
 from typing import Iterable
 
 from refinery.units import arg, Unit
-from refinery.units.meta import check_variable_name
 
+from refinery.lib.meta import check_variable_name
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer
 

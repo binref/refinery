@@ -3,10 +3,10 @@
 import itertools
 import functools
 
-from .. import arg, Unit
-from ...lib.argformats import numseq
-from ...lib.tools import isbuffer
-from . import check_variable_name
+from refinery.units import arg, Unit
+from refinery.lib.argformats import numseq
+from refinery.lib.tools import isbuffer
+from refinery.lib.meta import check_variable_name
 
 
 class put(Unit):
