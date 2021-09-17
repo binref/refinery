@@ -46,12 +46,14 @@ class blockop(ArithmeticUnit):
         parse the expressions that can be passed to `refinery.blockop`. Essentially, these
         are Python expressions which can contain variables `B`, `A`, `S`, and `V`.
         """
+        parsed = PythonExpression(definition, *'IBASNV', all_variables_allowed=True)
+
         def wrapper(index, block, state, argvector, total, meta):
             args = {'I': index, 'B': block, 'S': state, 'N': total}
             if argvector:
                 args.update(A=argvector[0], V=argvector)
-            return wrapper.parsed(meta, **args)
-        wrapper.parsed = PythonExpression(definition, *'IBASNV', all_variables_allowed=True)
+            return parsed(meta, **args)
+
         return wrapper
 
     def __init__(
