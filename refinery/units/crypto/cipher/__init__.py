@@ -54,8 +54,13 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
 class StreamCipherUnit(CipherUnit, abstract=True):
 
-    def __init__(self, key, **keywords):
-        super().__init__(key=key, **keywords)
+    def __init__(
+        self, key,
+        stateful: arg.switch('-s', help='Do not reset the key stream while processing the chunks of one frame.') = False,
+        **keywords
+    ):
+        super().__init__(key=key, stateful=stateful, **keywords)
+        self._keystream = None
 
     @abc.abstractmethod
     def keystream(self) -> Iterable[int]:
@@ -63,12 +68,18 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
     def encrypt(self, data: bytearray) -> bytearray:
         import numpy as np
-        key = np.fromiter(
-            self.keystream(), dtype=np.uint8, count=len(data))
+        it = self._keystream or self.keystream()
+        key = np.fromiter(it, dtype=np.uint8, count=len(data))
         out = np.frombuffer(
             memoryview(data), dtype=np.uint8, count=len(data))
         out ^= key
         return out
+
+    def filter(self, chunks: Iterable):
+        if self.args.stateful:
+            self._keystream = self.keystream()
+        yield from chunks
+        self._keystream = None
 
     decrypt = encrypt
 

@@ -11,10 +11,10 @@ class rc4mod(StreamCipherUnit):
     """
 
     def __init__(
-        self, key, *,
+        self, key, stateful=False, *,
         size: arg.number('-t', help='Table size, {default} by default.', bound=(1, None)) = 0x100
     ):
-        super().__init__(key=key, size=size)
+        super().__init__(key=key, stateful=stateful, size=size)
 
     def keystream(self):
         size = self.args.size
