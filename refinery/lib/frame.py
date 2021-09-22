@@ -412,8 +412,12 @@ class FrameUnpacker:
         return True
 
     def abort(self):
-        self.unpacker = None
-        self.finished = True
+        if self.gauge > 1:
+            while not self.finished and self.trunk == self._next.path:
+                self._advance()
+        else:
+            self.unpacker = None
+            self.finished = True
 
     @property
     def eol(self) -> bool:
