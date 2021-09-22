@@ -72,3 +72,9 @@ class TestEscaping(TestUnitBase):
         ])
         unit = self.load(unicode=True)
         self.assertEqual(zalgo_unicode, unit(zalgo_encoded))
+
+    def test_octal_escape_sequences(self):
+        data = R'\154\225\151\067\135\111\073\307\033\173\004\154\273\222\301\242'
+        wish = B'\154\225\151\067\135\111\073\307\033\173\004\154\273\222\301\242'
+        unit = self.load()
+        self.assertEqual(bytes(data | unit), wish)

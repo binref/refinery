@@ -58,19 +58,24 @@ class esc(Unit):
         def unescape(match):
             c = match[1]
             if len(c) > 1:
-                if c[0] in B'u':  # unicode
+                if c[0] == 0x75:
+                    # unicode
                     upper = int(c[1:3], 16)
                     lower = int(c[3:5], 16)
                     if self.args.expand:
                         return bytes((upper, lower))
                     return bytes((lower,))
-                if c[0] in B'x':  # hexadecimal
+                elif c[0] == 0x78:
+                    # hexadecimal
                     return bytes((int(c[1:3], 16),))
+                else:
+                    # octal escape sequence
+                    return bytes((int(c, 8) & 0xFF,))
             elif c in B'ux':
                 return c if self.args.greedy else match[0]
             return self._UNESCAPE.get(c, c)
         data = re.sub(
-            RB'\\(u[a-fA-F0-9]{4}|x[a-fA-F0-9]{2}|.)', unescape, data)
+            RB'\\(u[a-fA-F0-9]{4}|x[a-fA-F0-9]{2}|[0-7]{3}|.)', unescape, data)
         return data
 
     def reverse(self, data):
