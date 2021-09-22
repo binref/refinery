@@ -1200,10 +1200,12 @@ class Unit(UnitBase, abstract=True):
             reversed = reversed | pipeline.pop()
         return reversed
 
-    def __ror__(self, stream: Union[BinaryIO, ByteString]):
+    def __ror__(self, stream: Union[str, BinaryIO, ByteString]):
         if stream is None:
             return self
         if not isstream(stream):
+            if isinstance(stream, str):
+                stream = stream.encode(self.codec)
             stream = MemoryFile(stream) if stream else open(os.devnull, 'rb')
         self.reset()
         self.nozzle.source = stream
