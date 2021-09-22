@@ -5,7 +5,7 @@ import textwrap
 import codecs
 import string
 
-from . import arg, HexViewer
+from . import HexDumpMetrics, arg, HexViewer
 from ...lib.meta import metavars, CustomStringRepresentation, SizeInt
 from ...lib.types import INF
 from ...lib.tools import isbuffer, lookahead
@@ -84,8 +84,8 @@ class peek(HexViewer):
                 metavar = metavar[:linewidth - 3] + '...'
             yield metavar
 
-    def _trydecode(self, data, codec, width):
-        remaining = linecount = self.args.lines
+    def _trydecode(self, data, codec: str, width: int, linecount: int):
+        remaining = linecount
         result = []
         if codec is None:
             from ..encoding.esc import esc
@@ -156,10 +156,10 @@ class peek(HexViewer):
 
         if self.args.lines and data:
             if self.args.esc:
-                lines = self._trydecode(data, None, txtsize)
+                lines = self._trydecode(data, None, txtsize, metrics.line_count)
             if self.args.decode:
                 for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
-                    lines = self._trydecode(data, codec, txtsize)
+                    lines = self._trydecode(data, codec, txtsize, metrics.line_count)
                     if lines:
                         codec = codec
                         break
