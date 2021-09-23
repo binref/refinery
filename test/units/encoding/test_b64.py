@@ -14,3 +14,6 @@ class TestBase64(TestUnitBase):
             '2021-09-10T20:00:00T+08:00:00FLARE-ON8',
             str(B'MjAyMS0wOS0xMFQyMDowMDowMFQrMDg6MDA6MDBGTEFSRS1PTjg=' | unit)
         )
+
+    def test_forward_empty(self):
+        self.assertEqual(bytes(B'' | self.load()), B'')

@@ -21,7 +21,9 @@ class b64(Unit):
         return base64.b64encode(data, altchars=self.altchars)
 
     def process(self, data: bytearray):
-        if len(data) <= 1:
+        if not data:
+            return data
+        if len(data) == 1:
             raise ValueError('single byte can not be base64-decoded.')
         data.extend(B'===')
         return base64.b64decode(data, altchars=self.altchars)
