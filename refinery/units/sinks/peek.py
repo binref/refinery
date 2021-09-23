@@ -5,7 +5,7 @@ import textwrap
 import codecs
 import string
 
-from . import HexDumpMetrics, arg, HexViewer
+from . import arg, HexViewer
 from ...lib.meta import metavars, CustomStringRepresentation, SizeInt
 from ...lib.types import INF
 from ...lib.tools import isbuffer, lookahead
