@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from io import BytesIO
 from http.client import HTTPResponse
 
-from ... import Unit
+from refinery import Unit
+from refinery.lib.structures import MemoryFile
 
 
-class SockWrapper(BytesIO):
+class SockWrapper(MemoryFile):
     def makefile(self, _): return self
 
 
