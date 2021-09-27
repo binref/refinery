@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from os.path import isfile, getsize, getatime, getmtime, getctime
-from glob import iglob
+import re
+
+from pathlib import Path
 from datetime import datetime
+from typing import Iterable
 
 from ...lib.meta import metavars
 from ...lib.structures import MemoryFile
@@ -64,39 +66,48 @@ class ef(Unit):
                 out.seek(0)
                 out.truncate()
 
+    def glob(self, pattern: str) -> Iterable[Path]:
+        if pattern.endswith('**'):
+            pattern += '/*'
+        root = Path(next(iter(re.split(R'[\?\*\[\]]', pattern, maxsplit=1)))).parent
+        glob = str(Path(pattern).relative_to(root))
+        for match in root.glob(glob):
+            yield match.absolute()
+
     def process(self, data):
         meta = metavars(data, ghost=True)
         for mask in self.args.filenames:
             mask = meta.format_str(mask, self.codec, data)
             self.log_debug('scanning for mask:', mask)
-            for filename in iglob(mask, recursive=True):
-                if not isfile(filename):
+            for path in self.glob(mask):
+                if not path.is_file():
                     continue
                 if self.args.list:
                     try:
+                        stat = path.stat()
                         yield self.labelled(
-                            filename.encode(self.codec),
-                            size=getsize(filename),
-                            atime=datetime.fromtimestamp(getatime(filename)).isoformat(' ', 'seconds'),
-                            ctime=datetime.fromtimestamp(getctime(filename)).isoformat(' ', 'seconds'),
-                            mtime=datetime.fromtimestamp(getmtime(filename)).isoformat(' ', 'seconds'),
+                            str(path).encode(self.codec),
+                            size=stat.st_size,
+                            atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
+                            ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
+                            mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds'),
                         )
                     except OSError:
-                        self.log_warn(F'os error while scanning: {filename}')
+                        self.log_warn(F'os error while scanning: {path!s}')
                     continue
                 try:
-                    with open(filename, 'rb') as stream:
+                    with path.open('rb') as stream:
                         if self.args.linewise:
                             yield from self._read_lines(stream)
                         elif self.args.size:
                             yield from self._read_chunks(stream)
                         else:
                             data = stream.read()
-                            self.log_info(lambda: F'reading: {filename} ({len(data)} bytes)')
-                            yield self.labelled(data, path='/'.join(filename.split('\\')))
+                            self.log_info(lambda: F'reading: {path!s} ({len(data)} bytes)')
+                            yield self.labelled(data, path=path.as_posix())
                 except PermissionError:
-                    self.log_warn('permission denied:', filename)
+                    self.log_warn('permission denied:', path)
                 except FileNotFoundError:
-                    self.log_warn('file is missing:', filename)
+                    self.log_warn('file is missing:', path)
                 except Exception:
-                    self.log_warn('unknown error while reading:', filename)
+                    self.log_warn('unknown error while reading:', path)
