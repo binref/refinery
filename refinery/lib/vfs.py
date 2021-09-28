@@ -39,7 +39,9 @@ class VirtualFile:
             view = view[offset:offset + length]
         return bv(view)
 
-    def open(self) -> MemoryFile:
+    def open(self, mode: str) -> MemoryFile:
+        if self.data is None and 'w' in mode:
+            self.data = bytearray()
         fd = MemoryFile(self.data, read_as_bytes=True, fileno=self.node)
         fd.name = self.path
         return fd
@@ -94,7 +96,7 @@ class VirtualFileSystem:
             except KeyError:
                 return self._open(file, *args, **kwargs)
             else:
-                return vf.open()
+                return vf.open(args[0])
 
         def hook_stat(file):
             try:
