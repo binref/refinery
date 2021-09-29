@@ -282,6 +282,11 @@ class LazyMetaOracle(dict):
         super().__init__(*args, **kwargs)
         self.ghost = False
         self.chunk = chunk
+        self.fix()
+
+    def update(self, *args, **kwargs):
+        super().update(*args, **kwargs)
+        self.fix()
 
     def fix(self):
         for key, value in self.items():
