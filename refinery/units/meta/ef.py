@@ -24,7 +24,10 @@ class ef(Unit):
             'patterns, the file mask can include format string expressions '
             'which will be substituted from the current meta variables.'
         )),
-        list: arg.switch('-l', help='Only lists files with metadata.'),
+        list: arg.switch('-l', help='Only lists files with metadata.') = False,
+        meta: arg.switch('-m', help=(
+            'Adds the atime, mtime, ctime, and size metadata variables.'
+        )) = False,
         size: arg.number('-s', help=(
             'If specified, files will be read in chunks of size N and each '
             'chunk is emitted as one element in the output list.'
@@ -35,7 +38,13 @@ class ef(Unit):
             'number of lines in each chunk.'
         )) = False
     ):
-        super().__init__(size=size, list=list, linewise=linewise, filenames=filenames)
+        super().__init__(
+            size=size,
+            list=list,
+            meta=meta,
+            linewise=linewise,
+            filenames=filenames
+        )
 
     def _read_chunks(self, fd):
         while True:
@@ -79,19 +88,21 @@ class ef(Unit):
         for mask in self.args.filenames:
             mask = meta.format_str(mask, self.codec, data)
             self.log_debug('scanning for mask:', mask)
+            kwargs = dict()
             for path in self.glob(mask):
                 if not path.is_file():
                     continue
+                if self.args.meta:
+                    stat = path.stat()
+                    kwargs.update(
+                        size=stat.st_size,
+                        atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
+                        ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
+                        mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds')
+                    )
                 if self.args.list:
                     try:
-                        stat = path.stat()
-                        yield self.labelled(
-                            str(path).encode(self.codec),
-                            size=stat.st_size,
-                            atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
-                            ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
-                            mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds'),
-                        )
+                        yield self.labelled(str(path).encode(self.codec), **kwargs)
                     except OSError:
                         self.log_warn(F'os error while scanning: {path!s}')
                     continue
@@ -104,7 +115,7 @@ class ef(Unit):
                         else:
                             data = stream.read()
                             self.log_info(lambda: F'reading: {path!s} ({len(data)} bytes)')
-                            yield self.labelled(data, path=path.as_posix())
+                            yield self.labelled(data, path=path.as_posix(), **kwargs)
                 except PermissionError:
                     self.log_warn('permission denied:', path)
                 except FileNotFoundError:
