@@ -291,7 +291,7 @@ class LazyMetaOracle(dict):
     def fix(self):
         for key, value in self.items():
             ctype = self.CUSTOM_TYPE_MAP.get(key)
-            if ctype and not isinstance(value, ctype):
+            if ctype and not isinstance(value, ctype) and issubclass(ctype, type(value)):
                 self[key] = ctype(value)
         return self
 
