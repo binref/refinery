@@ -72,7 +72,7 @@ class ef(Unit):
         root = Path(next(iter(re.split(R'[\?\*\[\]]', pattern, maxsplit=1)))).parent
         glob = str(Path(pattern).relative_to(root))
         for match in root.glob(glob):
-            yield match.absolute()
+            yield match
 
     def process(self, data):
         meta = metavars(data, ghost=True)
