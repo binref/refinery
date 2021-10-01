@@ -1,5 +1,14 @@
 # Binary Refinery Changelog
 
+## Version 0.4.5
+- Adds the `cswap` unit.
+- The index counter of `blockop` now starts at zero.
+- An option was added to the `swap` unit to swap the contents of two meta variables. This can also be used to rename a meta variable.
+- An option was added to `xtpyi` to unpack, but not decompile the contents of a PYZ.
+- Adds the `--bare` option to `esc` and uses it in `peek`.
+- Adds the `--meta` option to `ef`. The `ef` unit now also descends into dot-directories and lists dot-files.
+- The `__init__.pkl` file containing the unit lookup cache was moved into the distribution.
+
 ## Version 0.4.4
 - Adds the `xtvba` unit to extract Office document macros.
 - Adds the `pcap` unit to extract TCP streams from packet capture files.
