@@ -7,10 +7,8 @@ from .. import arg, Unit
 
 class url(Unit):
     """
-    Decodes and encodes URL-Encoding, which preserves only alphanumeric
-    characters and the symbols `_`, `.`, `-`, `~`, `\\`, and `/`.
-    Every other character is escaped by hex-encoding it and prefixing it
-    with a percent symbol.
+    Decodes and encodes URL-Encoding, which preserves only alphanumeric characters and the symbols `_`, `.`, `-`, `~`, `\\`, and `/`.
+    Every other character is escaped by hex-encoding it and prefixing it with a percent symbol.
     """
 
     def __init__(
