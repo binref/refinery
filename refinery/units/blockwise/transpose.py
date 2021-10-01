@@ -10,9 +10,9 @@ class transpose(BlockTransformationBase):
     """
     def __init__(
         self, padding: arg(help='Optional byte sequence to use as padding for tail end.') = B'',
-        bigendian=False, blocksize=1
+        blocksize=1
     ):
-        super().__init__(bigendian=bigendian, blocksize=blocksize, padding=padding)
+        super().__init__(bigendian=False, blocksize=blocksize, padding=padding)
 
     def process(self, data):
         rest = self.rest(data)
