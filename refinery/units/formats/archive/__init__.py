@@ -18,7 +18,6 @@ class ArchiveUnit(PathExtractorUnit, abstract=True):
 
     _COMMON_PASSWORDS = [
         'infected',
-        'infected',
         'Infected',
         'infected!',
         'INFECTED',
