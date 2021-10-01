@@ -293,7 +293,8 @@ class pemeta(Unit):
                 dll = dll[:-4]
             imports = info.setdefault(dll, [])
             for imp in idd.imports:
-                imports.append(imp.name.decode('ascii'))
+                name = imp.name and imp.name.decode('ascii') or F'@{imp.ordinal}'
+                imports.append(name)
         return info
 
     def parse_header(cls, pe: PE, data=None) -> dict:
