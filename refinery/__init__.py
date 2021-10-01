@@ -30,14 +30,17 @@ example of how to write simple units.
 __version__ = '0.4.4'
 __pip_pkg__ = 'binary-refinery'
 
-import os
 import pickle
+import pkg_resources
 
 from .units import arg, Unit
 
 
 def _singleton(cls):
     return cls()
+
+
+UNIT_CACHE_PATH = pkg_resources.resource_filename(__name__, '__init__.pkl')
 
 
 @_singleton
@@ -50,8 +53,7 @@ class _cache:
     several seconds. Subsequent imports of refinery should be faster, and the
     loading of units from the module is nearly as fast as specifying the full path.
     """
-    def __init__(self, filename='__init__.pkl'):
-        self.path = os.path.join(os.path.dirname(__file__), filename)
+    def __init__(self):
         self.reloading = False
         self.loaded = False
         self.units = {}
@@ -60,7 +62,7 @@ class _cache:
 
     def load(self):
         try:
-            with open(self.path, 'rb') as stream:
+            with open(UNIT_CACHE_PATH, 'rb') as stream:
                 self.units = pickle.load(stream)
         except (FileNotFoundError, EOFError):
             self.reload()
@@ -69,7 +71,7 @@ class _cache:
 
     def save(self):
         try:
-            with open(self.path, 'wb') as stream:
+            with open(UNIT_CACHE_PATH, 'wb') as stream:
                 pickle.dump(self.units, stream)
         except Exception:
             pass
@@ -154,7 +156,21 @@ class __pdoc__(dict):
         return super().items()
 
 
-__all__ = [x for x, _ in sorted(_cache.units.items(), key=lambda x: x[1])] + [Unit.__name__, arg.__name__, '__pdoc__']
+def drain(stream):
+    """
+    A function wrapper around the `bytearray` data type. Can be used as the final sink in
+    a refinery pipeline in Python code, i.e.:
+
+        from refinery import *
+        # ...
+        output = data | carve('b64', single=True) | b64 | zl | drain
+        assert isinstance(output, bytearray)
+    """
+    return bytearray(stream)
+
+
+__all__ = [x for x, _ in sorted(_cache.units.items(), key=lambda x: x[1])] + [
+    Unit.__name__, arg.__name__, '__pdoc__', 'drain', 'UNIT_CACHE_PATH']
 
 
 def __getattr__(name):
