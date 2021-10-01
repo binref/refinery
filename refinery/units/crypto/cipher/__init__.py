@@ -6,8 +6,6 @@ Implements several popular block and stream ciphers.
 import abc
 
 from typing import Iterable, Any, ByteString, Tuple
-from Crypto.Util.Padding import pad, unpad
-from Crypto.Util import Counter
 
 from ... import arg, Unit, Executable, RefineryCriticalException, RefineryPartialResult
 from ....lib.argformats import OptionFactory, extract_options
@@ -20,7 +18,7 @@ class CipherExecutable(Executable):
     key sizes that are acceptable for the represented cipher.
     """
 
-    def __new__(mcs, name, bases, nmspc, abstract=False, blocksize=1, key_sizes=None):
+    def __new__(mcs, name, bases: tuple, nmspc: dict, abstract=False, blocksize=1, key_sizes=None):
         nmspc.setdefault('blocksize', blocksize)
         nmspc.setdefault('key_sizes', key_sizes)
         return super(CipherExecutable, mcs).__new__(mcs, name, bases, nmspc, abstract=abstract)
@@ -109,6 +107,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         return self.args.iv
 
     def reverse(self, data: ByteString) -> ByteString:
+        from Crypto.Util.Padding import pad
         padding = self.args.padding[0]
         self.log_info('padding method:', padding)
         if padding != 'RAW':
@@ -116,6 +115,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         return super().reverse(data)
 
     def process(self, data: ByteString) -> ByteString:
+        from Crypto.Util.Padding import unpad
         result = super().process(data)
         for p in self.args.padding:
             if p == 'RAW':
@@ -201,6 +201,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         if mode != 'ECB':
             iv = bytes(self.iv)
             if mode == 'CTR' and len(iv) == 16:
+                from Crypto.Util import Counter
                 counter = Counter.new(self.blocksize * 8,
                     initial_value=int.from_bytes(iv, 'big'))
                 optionals['counter'] = counter
