@@ -38,9 +38,10 @@ class KeyDerivation(Unit, abstract=True):
         iter: arg.number(metavar='iter', help='Number of iterations; default is {default}.') = None,
         **kw
     ):
-        hash = arg.as_option(hash, HASH)
-        hash = importlib.import_module(F'Crypto.Hash.{hash!s}')
+        if hash is not None:
+            name = arg.as_option(hash, HASH)
+            hash = importlib.import_module(F'Crypto.Hash.{name}')
         return super().__init__(salt=salt, size=size, iter=iter, hash=hash, **kw)
 
     @property
-    def hash(self): return self.args.hash.value
+    def hash(self): return self.args.hash
