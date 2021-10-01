@@ -11,22 +11,15 @@ PREFIX = os.getenv('REFINERY_PREFIX') or ''
 GITHUB = 'https://github.com/binref/refinery/'
 GITRAW = 'https://raw.githubusercontent.com/binref/refinery/'
 
-cache_path = os.path.join(os.path.dirname(__file__), 'refinery', '__init__.pkl')
-if os.path.exists(cache_path):
-    os.remove(cache_path)
-
 
 def normalize_name(name, separator='-'):
     return separator.join([segment for segment in name.split('_')])
 
 
 def main():
-    import refinery.lib.loader as loader
     import refinery
 
-    if sys.version_info < (3, 7):
-        print('ERROR: Python version at least 3.7 is required.', file=sys.stderr)
-        sys.exit(0xFADE)
+    refinery._cache.reload()
 
     requirements = toml.load('pyproject.toml')['build-system']['requires']
 
@@ -51,11 +44,11 @@ def main():
         console_scripts = [
             '{}{}={}:{}.run'.format(
                 PREFIX,
-                normalize_name(item.__qualname__),
-                item.__module__,
-                item.__qualname__
+                normalize_name(name),
+                path,
+                name,
             )
-            for item in loader.get_all_entry_points()
+            for name, path in refinery._cache.units.items()
         ] + [
             'binref=refinery.explore:explorer'
         ]
@@ -82,6 +75,8 @@ def main():
             exclude=('test*',)
         ),
         install_requires=requirements,
+        include_package_data=True,
+        package_data={'refinery': ['__init__.pkl']},
         entry_points={
             'console_scripts': console_scripts
         }
