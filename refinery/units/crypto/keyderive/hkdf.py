@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from Crypto.Protocol.KDF import HKDF as HKDF_
-
 from . import KeyDerivation
 
 
@@ -12,4 +10,5 @@ class HKDF(KeyDerivation):
         super().__init__(size=size, salt=salt, hash=hash)
 
     def process(self, data):
-        return HKDF_(data, self.args.size, self.args.salt, self.hash)
+        from Crypto.Protocol.KDF import HKDF
+        return HKDF(data, self.args.size, self.args.salt, self.hash)

@@ -4,9 +4,6 @@ from ... import RefineryPartialResult
 from ....lib.crypto import des_set_odd_parity
 from . import arg, KeyDerivation
 
-from Crypto.Cipher import DES
-from Crypto.Util.strxor import strxor
-
 __all__ = ['DESDerive']
 
 
@@ -20,6 +17,9 @@ class DESDerive(KeyDerivation):
         super().__init__(size=size, salt=None)
 
     def process(self, password):
+        from Crypto.Cipher import DES
+        from Crypto.Util.strxor import strxor
+
         key = bytearray(8)
 
         for i, j in enumerate(password):

@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from Crypto.Protocol.KDF import PBKDF2 as PBKDF2_
-
 from . import KeyDerivation
 
 
@@ -12,7 +10,8 @@ class PBKDF2(KeyDerivation):
         self.superinit(super(), **vars())
 
     def process(self, data):
-        return PBKDF2_(
+        from Crypto.Protocol.KDF import PBKDF2
+        return PBKDF2(
             data.decode(self.codec),
             self.args.salt,
             dkLen=self.args.size,

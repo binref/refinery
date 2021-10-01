@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from Crypto.Hash import HMAC
-
 from . import KeyDerivation
 
 
@@ -14,4 +12,5 @@ class hmac(KeyDerivation):
         super().__init__(salt=salt, size=size, hash=hash)
 
     def process(self, data):
+        from Crypto.Hash import HMAC
         return HMAC.new(data, self.args.salt, digestmod=self.hash).digest()

@@ -11,9 +11,11 @@ class kblob(Unit):
 
     def process(self, data):
         blob = CRYPTOKEY(data)
-        self.log_info(F'BLOB Type: {blob.header.type!s}')
-        self.log_info(F'Algorithm: {blob.header.algorithm!s}')
         try:
-            return bytes(blob.key)
+            return self.labelled(
+                bytes(blob.key),
+                type=blob.header.type.name,
+                algorithm=blob.header.algorithm.name
+            )
         except AttributeError as A:
             raise ValueError(F'unable to derive key from {blob.header.type!s}') from A
