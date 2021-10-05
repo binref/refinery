@@ -166,6 +166,12 @@ class RefineryPartialResult(ValueError):
         return self.message
 
 
+class RefineryImportMissing(ImportError):
+    def __init__(self, package: str):
+        super().__init__(package)
+        self.package = package
+
+
 class RefineryCriticalException(RuntimeError):
     """
     If this exception is thrown, processing of the entire input stream
@@ -1086,6 +1092,8 @@ class Unit(UnitBase, abstract=True):
             if not self.is_lenient:
                 return None
             return exception.partial
+        elif isinstance(exception, RefineryImportMissing):
+            self.log_warn(F'missing dependency; unit requires this python package: {exception.package}')
         else:
             self.log_warn(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
 
