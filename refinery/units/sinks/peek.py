@@ -185,7 +185,6 @@ class peek(HexViewer):
                     del meta['magic']
                 entropy_percent = meta['entropy'] * 100.0
                 meta['entropy'] = F'{entropy_percent:.2f}%'
-                meta['ic']
             if index is not None:
                 meta['index'] = index
             for line in self._peekmeta(metrics.hexdump_width, separator(), **meta):
