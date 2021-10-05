@@ -1010,6 +1010,8 @@ class Unit(UnitBase, abstract=True):
     implement the _framing_ syntax for producing multiple outputs and ingesting
     multiple inputs in a common format. For more details, see `refinery.lib.frame`.
     """
+    Arg = arg
+
     @property
     def is_reversible(self) -> bool:
         return self.__class__.is_reversible
