@@ -6,11 +6,12 @@ Miscellaneous helper functions.
 import inspect
 import itertools
 import functools
+import datetime
 import logging
 import os
 import sys
 
-from typing import ByteString, Iterable, TypeVar
+from typing import ByteString, Iterable, Optional, TypeVar
 from math import log
 
 
@@ -292,3 +293,16 @@ def one(iterable: Iterable[_T]) -> _T:
         return top
     else:
         raise LookupError
+
+
+def isodate(iso: str) -> Optional[datetime.datetime]:
+    if len(iso) not in range(16, 25):
+        return None
+    iso = iso[:19].replace(' ', 'T', 1)
+    try:
+        try:
+            return datetime.datetime.fromisoformat(iso)
+        except AttributeError:
+            return datetime.datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
