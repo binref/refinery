@@ -64,9 +64,12 @@ class carve(PatternExtractor):
         elif self.args.format is formats.hexarray:
             from ..blockwise.pack import pack
             decoder = pack(0x10)
-        elif self.args.format is formats.vbe:
-            from ..encoding.vbe import vbe
-            decoder = vbe()
+        elif self.args.format is formats.wshenc:
+            from ..encoding.wshenc import wshenc
+            decoder = wshenc()
+        elif self.args.format is formats.uuencode:
+            from ..encoding.uuenc import uuenc
+            decoder = uuenc()
         elif self.args.format in (
             formats.url_encoded_hex,
             formats.url_encoded_narrow,

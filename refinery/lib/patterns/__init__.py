@@ -226,6 +226,8 @@ _pattern_any_path = R'(?:{nix})|(?:{win})'.format(
     win=_pattern_win_path
 )
 
+_pattern_uuencode = R'begin\s+\d{3}\s+[\x20!-~]+?\r?\n(?:M[\x20-\x60]{60}\r?\n)*(?:.*?\r?\n)?`\r?\nend'
+
 
 def make_hexline_pattern(blocksize: int) -> str:
     return R'(?:{s}+\s+)?\s*({h})(?:[ \t]+(.+?))?'.format(
@@ -283,8 +285,8 @@ class formats(PatternEnum):
     "Sequences of word characters"
     letters = alphabet(R'[a-zA-Z]')
     "Sequences of alphabetic characters"
-    vbe = pattern(_pattern_vbe)
-    "Encoded Visual Basic Scripts"
+    wshenc = pattern(_pattern_vbe)
+    "Encoded Windows Scripting Host Scripts (JS/VBS)"
     alphanumeric = alphabet(R'[a-zA-Z0-9]')
     "Sequences of alpha-numeric characters"
     b32 = pattern('[A-Z2-7]+|[a-z2-7+]')
@@ -310,6 +312,8 @@ class formats(PatternEnum):
     """
     hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'\s*[;,]\s*', bound='')
     "Arrays of hexadecimal strings, separated by commas or semicolons"
+    uuencode = pattern(_pattern_uuencode)
+    "UUEncoded data"
 
     @classmethod
     def from_dashname(cls, key):
