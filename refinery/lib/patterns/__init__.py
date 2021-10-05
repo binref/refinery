@@ -189,7 +189,7 @@ _pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'
 _pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
 _pattern_urlenc_hex = R'''(?:%[0-9a-fA-F]{2})+'''
 
-_pattern_vbe = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
+_pattern_wshenc = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
 _part_url_credentials = (
     R'(?:(?P<url_username>[^"\'\s\x00-\x20\x7E-\xFF]{1,256})?'
@@ -285,7 +285,7 @@ class formats(PatternEnum):
     "Sequences of word characters"
     letters = alphabet(R'[a-zA-Z]')
     "Sequences of alphabetic characters"
-    wshenc = pattern(_pattern_vbe)
+    wshenc = pattern(_pattern_wshenc)
     "Encoded Windows Scripting Host Scripts (JS/VBS)"
     alphanumeric = alphabet(R'[a-zA-Z0-9]')
     "Sequences of alpha-numeric characters"

@@ -157,7 +157,7 @@ class wshenc(Unit):
 
     def process(self, data):
         if self.args.marker:
-            match = formats.vbe.search(data)
+            match = formats.wshenc.search(data)
             if not match:
                 raise ValueError('Encoded script marker was not found.')
             data = match[0][12:-12]
