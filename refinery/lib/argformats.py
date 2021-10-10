@@ -78,16 +78,17 @@ import builtins
 import itertools
 import inspect
 
+from pathlib import Path
 from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, reduce, lru_cache
 from typing import AnyStr, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 from typing import get_type_hints
 
-from ..lib.frame import Chunk
-from ..lib.tools import isbuffer, infinitize
-from ..lib.loader import resolve, EntryNotFound
-from ..lib.meta import metavars
+from refinery.lib.frame import Chunk
+from refinery.lib.tools import isbuffer, infinitize, one
+from refinery.lib.loader import resolve, EntryNotFound
+from refinery.lib.meta import metavars
 
 FinalType = TypeVar('FinalType')
 
@@ -508,14 +509,30 @@ class DelayedArgument(LazyEvaluation):
         return base64.b16decode(string, casefold=True)
 
     @handler.register('f', 'F', 'file')
-    def file(self, path: str) -> bytes:
+    def file(self, path: str, region: str = None) -> bytes:
         """
         The final modifier `f:path` or `file:path` returns the contents of the file located
-        at the given path.
+        at the given path. The path may contain wildcard characters, but this pattern has to
+        match a single file. It is also possible to use the handler as `file[offset]` or as
+        `file[offset:count]` to read `count` many bytes from the file at the given offset.
         """
+        def read(data: Optional[Chunk] = None):
+            if not region:
+                bounds = slice(0, None)
+            else:
+                bounds = sliceobj(region, metavars(data), range=True)
+            if bounds.step:
+                raise ValueError('step size is not supported for file slices')
+            with path.open('rb') as stream:
+                stream.seek(bounds.start or 0)
+                return stream.read(bounds.stop)
         if isbuffer(path):
             path = path.decode('utf8')
-        return open(path, 'rb').read()
+        path: Path = one(Path.cwd().glob(path))
+        try:
+            return read()
+        except ParserVariableMissing:
+            return read
 
     @handler.register('range', final=True)
     def range(self, region: str) -> bytes:
