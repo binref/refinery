@@ -2,12 +2,11 @@
 # -*- coding: utf - 8 -* -
 from typing import NamedTuple, TYPE_CHECKING, Union
 
-from refinery.units import arg, Unit
+from refinery.units import RefineryImportMissing, arg, Unit
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 from refinery.lib.structures import MemoryFile
 
 import logging
-import pcapkit
 
 if TYPE_CHECKING:
     from ipaddress import IPv4Address, IPv6Address
@@ -68,8 +67,14 @@ class pcap(Unit):
         super().__init__(merge=merge)
 
     def process(self, data):
+        try:
+            import pcapkit
+        except ImportError:
+            raise RefineryImportMissing('pypcapkit[scapy]')
+
         logging.getLogger('pcapkit').disabled = True
         merge = self.args.merge
+
         with VirtualFileSystem() as fs:
             vf = VirtualFile(fs, data, 'pcap')
             extraction = pcapkit.extract(

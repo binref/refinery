@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from enum import IntEnum
 
-from .. import Unit, arg
+from .. import RefineryImportMissing, Unit, arg
 from ...lib.structures import MemoryFile
 
 
@@ -33,7 +33,10 @@ class stego(Unit):
         )
 
     def process(self, data):
-        from PIL import Image
+        try:
+            from PIL import Image
+        except ImportError:
+            raise RefineryImportMissing('Pillow')
         image = Image.open(MemoryFile(data))
         width, height = image.size
         for y in range(height):

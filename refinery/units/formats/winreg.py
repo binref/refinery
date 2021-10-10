@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-try:
-    from Registry.Registry import Registry
-except ModuleNotFoundError:
-    Registry = None
-
-from . import PathExtractorUnit, UnpackResult
-from ...lib.structures import MemoryFile
+from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units import RefineryImportMissing
+from refinery.lib.structures import MemoryFile
 
 
 class winreg(PathExtractorUnit):
@@ -25,6 +21,10 @@ class winreg(PathExtractorUnit):
             yield from self._walk(subkey, *path, subkey.name())
 
     def unpack(self, data):
+        try:
+            from Registry.Registry import Registry
+        except ModuleNotFoundError:
+            raise RefineryImportMissing('python-registry')
         with MemoryFile(data) as stream:
             root = Registry(stream).root()
             yield from self._walk(root, root.name())
