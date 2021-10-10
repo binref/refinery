@@ -75,6 +75,14 @@ def main():
             exclude=('test*',)
         ),
         install_requires=requirements,
+        extras_require={
+            '': [
+                'Pillow',
+                'pypcapkit[scapy]',
+                'python-evtx',
+                'python-registry',
+            ],
+        },
         include_package_data=True,
         package_data={'refinery': ['__init__.pkl']},
         entry_points={

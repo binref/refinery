@@ -1,6 +1,5 @@
 [build-system]
 requires = [
-    "Pillow",
     "asn1crypto",
     "capstone",
     "chardet",
@@ -22,9 +21,7 @@ requires = [
     "pycdlib",
     "pycryptodome",
     "pyelftools",
-    "pypcapkit[scapy]",
     "pyperclip",
-    "python-registry",
     "setuptools",
     "toml",
     "uncompyle6",
