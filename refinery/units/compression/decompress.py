@@ -94,6 +94,7 @@ class decompress(Unit):
                     current_ratio = self.ratio
 
         for engine in self.engines:
+            self.log_debug(F'attempting engine: {engine.name}')
             for t in range(self.args.tolerance):
                 result(engine, t).schedule()
             if self.args.prepend:
@@ -101,7 +102,7 @@ class decompress(Unit):
                     result(engine, 0, bytes((p,))).schedule()
 
         if best is None:
-            self.log_info('nothing worked, returning original data.')
+            self.log_warn('no compression engine worked, returning original data.')
             return data
 
         return best.result
