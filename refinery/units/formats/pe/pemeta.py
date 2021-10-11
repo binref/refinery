@@ -329,7 +329,7 @@ class pemeta(Unit):
                     info = guess_version(idv)
                 if not info:
                     continue
-                rich.append(str(info))
+                rich.append(F'[{idv:08x}] {info}')
             header_information['RICH'] = rich
 
         characteristics = [
