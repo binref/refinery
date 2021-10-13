@@ -14,7 +14,7 @@ def regex(cls: Type) -> re.Pattern:
     return re.compile(inspect.getdoc(cls))
 
 
-class hexdmp(HexViewer):
+class hexload(HexViewer):
     """
     Convert hex dumps back to the original data and vice versa. All options of this unit apply
     to its reverse operation where binary data is converted to a readable hexdump format.
