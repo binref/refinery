@@ -102,7 +102,20 @@ class TestHexDmp(TestUnitBase):
             'FF FF 00 00 48 23 C1 48 B9 33 A2 DF 2D 99 2B 00'
         ))
 
-    def test_hex_byte_in_text_preview(self):
+    def test_hex_byte_in_text_preview_01(self):
+        data = (
+            '00: 4B 2F 3A 54 DE C4 D2 C1 08 95 D1 3C C5 55 B3 D6 B6 F2 9D 5A  K/:T.......<.U.....Z\n'
+            '14: 61 37 6D 76 84 A8 0F 32 47 80 AA 13 C5 FF A7 5E 0C 31 16 0E  a7mv...2G......^.1..\n'
+            '28: 0D 3A B3 E2                                                  .:..'
+        ).encode('utf8')
+        unit = self.load()
+        self.assertEqual(unit(data), bytes.fromhex(
+            '4B 2F 3A 54 DE C4 D2 C1 08 95 D1 3C C5 55 B3 D6 B6 F2 9D 5A'
+            '61 37 6D 76 84 A8 0F 32 47 80 AA 13 C5 FF A7 5E 0C 31 16 0E'
+            '0D 3A B3 E2'
+        ))
+
+    def test_hex_byte_in_text_preview_02(self):
         data = (
             '000000000018DE80  DC 2A 01 00 8B 45 20 48 8D 4D 10 48 C1 E0 20 48  Ü*...E H.M.HÁà H  \n'
             '000000000018DE90  33 45 20 48 33 45 10 48 33 C1 48 B9 FF FF FF FF  3E H3E.H3ÁH¹ÿÿÿÿ  \n'
@@ -147,4 +160,15 @@ class TestHexDmp(TestUnitBase):
             'CC 8B 53 24 01 EA 0F B7 14 4A 8B 7B 1C 01 EF 03'
             '2C 97 68 2E 65 78 65 68 63 61 6C 63 54 87 04 24'
             '50 FF D5 CC'
+        ))
+
+    def test_mr_pancakes(self):
+        data = (
+            '00000020: 6F A9 BC 24 09 48 C9 04  D4 00 00 00 8C 14 11 54  o..$.H.........T\n'
+            '00000030: 74 16 0A 57 B8 8B EC 48  83 EC 4A 48 8B D1 48 CB  t..W...H..JH..H.'
+        )
+        unit = self.load()
+        self.assertEqual(data | unit | bytes, bytes.fromhex(
+            '6F A9 BC 24 09 48 C9 04  D4 00 00 00 8C 14 11 54'
+            '74 16 0A 57 B8 8B EC 48  83 EC 4A 48 8B D1 48 CB'
         ))
