@@ -42,7 +42,7 @@ class cfmt(Unit):
         meta = metavars(data, ghost=True)
         name = self.args.put
         for spec in self.args.formats:
-            result = meta.format_str(spec, self.codec, data).encode(self.codec)
+            result = meta.format_str(spec, self.codec, [data]).encode(self.codec)
             if name is not None:
                 result = self.labelled(data, **{name: result})
             yield result

@@ -39,7 +39,7 @@ class couple(Unit):
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
         meta = metavars(data, ghost=True)
-        commandline = [meta.format_str(cmd, self.codec, data) for cmd in self.args.commandline]
+        commandline = [meta.format_str(cmd, self.codec, [data]) for cmd in self.args.commandline]
 
         if self.args.cmdline:
             commandline.append(data.decode(self.codec))

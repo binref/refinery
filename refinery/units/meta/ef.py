@@ -86,7 +86,7 @@ class ef(Unit):
     def process(self, data):
         meta = metavars(data, ghost=True)
         for mask in self.args.filenames:
-            mask = meta.format_str(mask, self.codec, data)
+            mask = meta.format_str(mask, self.codec, [data])
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
             for path in self.glob(mask):

@@ -32,10 +32,10 @@ class UnpackResult:
             self.data = self.data()
         return self.data
 
-    def __init__(self, path: str, data: Union[ByteString, Callable[[], ByteString]], **meta):
-        self.path = path
-        self.data = data
-        self.meta = meta
+    def __init__(self, _br__path: str, _br__data: Union[ByteString, Callable[[], ByteString]], **_br__meta):
+        self.path = _br__path
+        self.data = _br__data
+        self.meta = _br__meta
 
 
 class EndOfStringNotFound(ValueError):

@@ -103,7 +103,7 @@ class struct(Unit):
                     if name is None:
                         continue
                     if spec:
-                        spec = meta.format_str(spec, self.codec, *args)
+                        spec = meta.format_str(spec, self.codec, args)
                     try:
                         spec = PythonExpression.evaluate(spec, meta)
                     except ParserError:
@@ -162,7 +162,7 @@ class struct(Unit):
                                 break
                         else:
                             last = B''
-                    output = meta.format_bin(template, self.codec, full, *args, **{'$': last})
+                    output = meta.format_bin(template, self.codec, [full, *args], {'$': last})
                     for _, key, _, _ in formatter.parse(template):
                         meta.pop(key, None)
                     yield self.labelled(output, **meta)

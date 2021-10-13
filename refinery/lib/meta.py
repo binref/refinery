@@ -86,7 +86,7 @@ import zlib
 import codecs
 
 from io import StringIO
-from typing import Callable, Dict, Optional, ByteString, Union
+from typing import Callable, Dict, Iterable, Optional, ByteString, Union
 
 from .structures import MemoryFile
 from .tools import isbuffer, entropy, index_of_coincidence
@@ -313,7 +313,13 @@ class LazyMetaOracle(dict):
                 continue
             yield key, value
 
-    def format_str(self, spec: str, codec: str, *args, **symb) -> str:
+    def format_str(
+        self,
+        spec: str,
+        codec: str,
+        args: Optional[Iterable] = None,
+        symb: Optional[dict] = None
+    ) -> str:
         """
         Formats the input expression like a normal Python format string expression. Certain refinery
         metadata objects have special formatters for the `r`-transformation, as defined by wrapping
@@ -324,9 +330,20 @@ class LazyMetaOracle(dict):
         - `sha1`, `sha256`, and `md5` are formatted as hex strings.
         - `size` is formatted as a human-readable size with unit.
         """
-        return self.format(spec, codec, list(args), symb, False)
+        symb = symb or {}
+        if args is None:
+            args = ()
+        elif not isinstance(args, (list, tuple)):
+            args = list(args)
+        return self.format(spec, codec, args, symb, False)
 
-    def format_bin(self, spec: str, codec: str, *args, **symb) -> ByteString:
+    def format_bin(
+        self,
+        spec: str,
+        codec: str,
+        args: Optional[Iterable] = None,
+        symb: Optional[dict] = None
+    ) -> ByteString:
         """
         Formats the input expression using a Python F-string like expression. These strings contain
         fields in the format `{expression!T:pipeline}`, where `T` is a transformation character and
@@ -340,14 +357,19 @@ class LazyMetaOracle(dict):
         - `u`: encoded as utf16
         - `e`: reads the input as an escaped string
         """
-        return self.format(spec, codec, list(args), symb, True)
+        symb = symb or {}
+        if args is None:
+            args = ()
+        elif not isinstance(args, (list, tuple)):
+            args = list(args)
+        return self.format(spec, codec, args, symb, True)
 
     def format(
         self,
         spec      : str,
         codec     : str,
-        args      : list,
-        symbols   : dict,
+        args      : Union[list, tuple],
+        symb      : dict,
         binary    : bool,
         fixup     : bool = True,
         variables : Optional[set] = None,
@@ -366,7 +388,7 @@ class LazyMetaOracle(dict):
             for (store, it) in (
                 (args, enumerate(args)),
                 (self, self.items()),
-                (symbols, symbols.items()),
+                (symb, symb.items()),
             ):
                 for key, value in it:
                     with contextlib.suppress(TypeError):
@@ -409,8 +431,8 @@ class LazyMetaOracle(dict):
                         value = field.encode('latin1')
                     elif conversion == 'e':
                         value = field.encode(codec).decode('unicode-escape').encode('latin1')
-                elif field in symbols:
-                    value = symbols[field]
+                elif field in symb:
+                    value = symb[field]
                     if variables:
                         variables.add(field)
                 if value is None:
@@ -443,7 +465,7 @@ class LazyMetaOracle(dict):
                         output = value.binary
                     modifier = modifier.strip()
                     if modifier:
-                        modifier = self.format(modifier, codec, args, symbols, True, False, variables)
+                        modifier = self.format(modifier, codec, args, symb, True, False, variables)
                         pipeline = load_pipeline(modifier.decode(codec))
                         output | pipeline | stream.write
                         continue

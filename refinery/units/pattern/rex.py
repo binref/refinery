@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ...lib.argformats import utf8
-from ...lib.meta import metavars
-from . import arg, RegexUnit, PatternExtractor
+from typing import List, Match
+
+from refinery.lib.argformats import utf8
+from refinery.lib.meta import metavars
+from refinery.units.pattern import arg, RegexUnit, PatternExtractor
 
 
 class rex(RegexUnit, PatternExtractor):
@@ -31,30 +33,41 @@ class rex(RegexUnit, PatternExtractor):
         multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
         longest=False, take=None
     ):
-        utf16 = unicode          # noqa
-        ascii = True             # noqa
-        duplicates = not unique  # noqa
-        del unicode
-        del unique
-        self.superinit(super(), **vars())
+        super().__init__(
+            regex=regex,
+            transformation=transformation,
+            unicode=unicode,
+            unique=unique,
+            multiline=multiline,
+            ignorecase=ignorecase,
+            min=min,
+            max=max,
+            len=len,
+            stripspace=stripspace,
+            longest=longest,
+            take=take,
+            utf16=unicode,
+            ascii=True,
+            duplicates=not unique
+        )
 
     def process(self, data):
         meta = metavars(data)
         self.log_debug('regular expression:', self.regex)
-
-        def make_transformations(specs):
-            for spec in specs:
-                def transformation(match, s=spec.decode(self.codec)):
-                    symb: dict = match.groupdict()
-                    args: list = [match.group(0), *match.groups()]
-                    used = set()
-                    item = meta.format(s, self.codec, args, symb, True, True, used)
-                    for variable in used:
-                        symb.pop(variable, None)
-                    for name, value in meta.items():
-                        symb.setdefault(name, value)
-                    return self.labelled(item, **symb)
-                yield transformation
-
-        yield from self.matches_filtered(
-            memoryview(data), self.regex, *make_transformations(self.args.transformation))
+        transformations = []
+        specs: List[bytes] = list(self.args.transformation)
+        if not specs:
+            specs.append(B'{0}')
+        for spec in specs:
+            def transformation(match: Match, s=spec.decode(self.codec)):
+                symb: dict = match.groupdict()
+                args: list = [match.group(0), *match.groups()]
+                used = set()
+                item = meta.format(s, self.codec, args, symb, True, True, used)
+                for variable in used:
+                    symb.pop(variable, None)
+                for name, value in meta.items():
+                    symb.setdefault(name, value)
+                return self.labelled(item, **symb)
+            transformations.append(transformation)
+        yield from self.matches_filtered(memoryview(data), self.regex, *transformations)

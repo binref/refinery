@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ...lib.argformats import utf8
-from ...lib.meta import metavars
-from . import arg, RegexUnit
+from typing import Match
+
+from refinery.lib.argformats import utf8
+from refinery.lib.meta import metavars
+from refinery.units.pattern import arg, RegexUnit
 
 
 class resub(RegexUnit):
@@ -18,7 +20,7 @@ class resub(RegexUnit):
     """
     def __init__(self, regex,
         subst: arg('subst', type=utf8, help=(
-            'Substitution value: use $1 for group 1, $0 for entire match. '
+            'Substitution value: use {1} for group 1, {0} for entire match. '
             'Matches are removed (replaced by an empty string) by default.'
         )) = B'',
         multiline=False,
@@ -28,8 +30,8 @@ class resub(RegexUnit):
         super().__init__(regex=regex, subst=subst, multiline=multiline, ignorecase=ignorecase, count=count)
 
     def process(self, data):
-        def repl(match):
-            return meta.format_bin(spec, self.codec, match.group(0), *match.groups(), **match.groupdict())
+        def repl(match: Match):
+            return meta.format_bin(spec, self.codec, [match[0], *match.groups()], match.groupdict())
         self.log_info('pattern:', self.regex)
         self.log_info('replace:', self.args.subst)
         meta = metavars(data)
