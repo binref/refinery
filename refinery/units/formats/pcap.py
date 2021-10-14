@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf - 8 -* -
-from typing import NamedTuple, TYPE_CHECKING, Union
+from typing import NamedTuple, Union, TYPE_CHECKING
 
 from refinery.units import arg, Unit
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
@@ -80,27 +80,29 @@ class pcap(Unit):
             vf = VirtualFile(fs, data, 'pcap')
             extraction = pcapkit.extract(
                 fin=vf.path, engine='scapy', store=False, nofile=True, extension=False, tcp=True, strict=True)
-            count, convo = 0, None
-            src_buffer = MemoryFile()
-            dst_buffer = MemoryFile()
-            for stream in extraction.reassembly.tcp:
-                this_convo = Conversation.FromID(stream.id)
-                if this_convo != convo:
-                    if count and merge:
-                        if src_buffer.tell():
-                            yield self.labelled(src_buffer.getvalue(), **convo.src_to_dst())
-                            src_buffer.truncate(0)
-                        if dst_buffer.tell():
-                            yield self.labelled(dst_buffer.getvalue(), **convo.dst_to_src())
-                            dst_buffer.truncate(0)
-                    count = count + 1
-                    convo = this_convo
-                for packet in stream.packets:
-                    if not merge:
-                        yield self.labelled(packet.data, **this_convo.src_to_dst(), stream=count)
-                    elif this_convo.src == convo.src:
-                        src_buffer.write(packet.data)
-                    elif this_convo.dst == convo.src:
-                        dst_buffer.write(packet.data)
-                    else:
-                        raise RuntimeError(F'direction of packet {convo!s} in conversation {count} is unknown')
+            tcp: list = list(extraction.reassembly.tcp)
+
+        count, convo = 0, None
+        src_buffer = MemoryFile()
+        dst_buffer = MemoryFile()
+        for stream in tcp:
+            this_convo = Conversation.FromID(stream.id)
+            if this_convo != convo:
+                if count and merge:
+                    if src_buffer.tell():
+                        yield self.labelled(src_buffer.getvalue(), **convo.src_to_dst())
+                        src_buffer.truncate(0)
+                    if dst_buffer.tell():
+                        yield self.labelled(dst_buffer.getvalue(), **convo.dst_to_src())
+                        dst_buffer.truncate(0)
+                count = count + 1
+                convo = this_convo
+            for packet in stream.packets:
+                if not merge:
+                    yield self.labelled(packet.data, **this_convo.src_to_dst(), stream=count)
+                elif this_convo.src == convo.src:
+                    src_buffer.write(packet.data)
+                elif this_convo.dst == convo.src:
+                    dst_buffer.write(packet.data)
+                else:
+                    raise RuntimeError(F'direction of packet {convo!s} in conversation {count} is unknown')

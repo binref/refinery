@@ -78,6 +78,8 @@ class VirtualFile:
 
 
 class VirtualFileSystem:
+    _VFS_LOCK = threading.Lock()
+
     def __init__(self):
         self._lock: threading.RLock = threading.RLock()
         self._by_name: Dict[str, VirtualFile] = {}
@@ -89,6 +91,8 @@ class VirtualFileSystem:
             self._by_node[file.node] = file
 
     def __enter__(self):
+        self._VFS_LOCK.acquire()
+
         def hook_open(file, *args, **kwargs):
             try:
                 with self._lock:
@@ -128,4 +132,5 @@ class VirtualFileSystem:
         builtins.open = self._open
         os.stat = self._stat
         mmap.mmap = self._mmap
+        self._VFS_LOCK.release()
         return False

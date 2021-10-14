@@ -7,7 +7,8 @@ from refinery.lib.structures import MemoryFile
 
 
 class SockWrapper(MemoryFile):
-    def makefile(self, _): return self
+    def sendall(self, ___): pass
+    def makefile(self, *_): return self
 
 
 class httpresponse(Unit):
