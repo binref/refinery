@@ -3,7 +3,7 @@
 from .. import TestUnitBase
 
 
-class TestHexDmp(TestUnitBase):
+class TestHexLoad(TestUnitBase):
 
     def test_hexdump_01(self):
         dump = (

@@ -152,7 +152,7 @@ class peek(HexViewer):
 
         metrics = self._get_metrics(len(data), self.args.lines, padding)
         sepsize = metrics.hexdump_width
-        txtsize = metrics.argument or sepsize
+        txtsize = self.args.width or sepsize
 
         if self.args.lines and data:
             if self.args.esc:

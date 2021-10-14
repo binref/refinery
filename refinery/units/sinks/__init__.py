@@ -1,20 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+import dataclasses
 
-from typing import NamedTuple, Optional
+from typing import Optional
 
 from .. import arg, Unit
-from ...lib.types import INF
 from ...lib.tools import get_terminal_size, lookahead
 
 
-class HexDumpMetrics(NamedTuple):
-    argument: int
-    hexdump_width: int
-    address_width: int
-    line_count: int
-    hex_columns: int
+@dataclasses.dataclass
+class HexDumpMetrics:
+    hex_columns: int = 0
+    address_width: int = 0
+    line_count: int = 0
+    padding: int = 0
+    dense: bool = False
+    max_width: int = 0
+
+    @property
+    def hex_column_width(self):
+        return 3 - int(self.dense)
+
+    def get_max_width(self):
+        width = self.max_width
+        if not width:
+            width = get_terminal_size()
+            width = width and width - 1 or 75
+            self.max_width = width
+        return width
+
+    def fit_to_width(self, width: int = 0):
+        padding = self.padding
+        if self.address_width:
+            padding += self.address_width + 2
+        width_max = width or self.get_max_width()
+        width_total = width_max - padding - 1
+        width_each = self.hex_column_width + 1
+        self.hex_columns = width_total // width_each
+
+    @property
+    def hexdump_width(self):
+        width = (self.hex_columns * (self.hex_column_width + 1)) + 1
+        if self.address_width:
+            width += self.address_width + 2
+        return width
 
 
 _EMPTY = ''
@@ -33,48 +63,24 @@ class HexViewer(Unit, abstract=True):
     ):
         super().__init__(hexaddr=hexaddr, width=width, dense=dense, expand=expand, **kwargs)
 
-    @property
-    def _hex_width(self):
-        return 2 if self.args.dense else 3
-
-    def _get_metrics(self, data_size: int, line_count: int, padding: int = 0) -> HexDumpMetrics:
-
-        def c2w(c: int, p: int = 0):
-            return (c * hw) + 1 + p
-
-        def w2c(w: int, p: int = 0):
-            return (w - p - 1) // hw
-
-        hw = self._hex_width + 1
-        argument = self.args.width
-
-        if argument:
-            columns = argument
-        else:
-            width = get_terminal_size()
-            width = width and width - 1 or 75
-            columns = w2c(width)
-        if not self.args.hexaddr:
-            addr_width = 0
-            width = c2w(columns)
-        else:
-            addr_limit = abs(line_count * columns) or data_size
-            addr_width = len(F'{addr_limit:X}')
-            if self.args.width:
-                width = c2w(columns, addr_width + 2)
-            else:
-                columns = w2c(width, addr_width + 2)
-                width = c2w(columns, addr_width + 2)
-        if padding:
-            width = width - padding
-            columns = w2c(width)
-        return HexDumpMetrics(argument, width, addr_width, line_count, columns)
+    def _get_metrics(self, data_size: int, line_count: Optional[int] = None, padding: int = 0) -> HexDumpMetrics:
+        metrics = HexDumpMetrics(
+            self.args.width,
+            line_count=line_count,
+            padding=padding,
+            dense=self.args.dense,
+            address_width=len(F'{data_size:X}')
+        )
+        if not metrics.hex_columns:
+            metrics.fit_to_width()
+        return metrics
 
     def hexdump(self, data, metrics: Optional[HexDumpMetrics] = None):
         separator = _EMPTY if self.args.dense else _SPACE
-        hex_width = self._hex_width
-        metrics = metrics or self._get_metrics(len(data), INF)
-        _, _, addr_width, line_count, columns = metrics
+        metrics = metrics or self._get_metrics(len(data))
+        hex_width = metrics.hex_column_width
+        addr_width = metrics.address_width
+        columns = metrics.hex_columns
 
         if columns <= 0:
             raise RuntimeError('Requested width is too small.')
@@ -82,7 +88,7 @@ class HexViewer(Unit, abstract=True):
         def pieces(data):
             view = memoryview(data)
             for lno, offset in enumerate(range(0, len(data), columns)):
-                if lno > line_count:
+                if metrics.line_count and lno > metrics.line_count:
                     break
                 yield lno, view[offset:offset + columns]
 
