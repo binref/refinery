@@ -65,7 +65,11 @@ which will install _all_ dependencies on top of the required ones.
 
 ## Bleeding Edge
 
-Alternatively, you can clone this repository and use the scripts [update.sh](update.sh) (on Linux) or [update.ps1](update.ps1) (on Windows) to install the refinery package into a local virtual environment. The installation and update process for this method is to simply run the script; it pulls the repository, activates the virtual environment, uninstalls the current `binary-refinery[all]` package, and then installs it again.
+Alternatively, you can clone this repository and use the scripts [update.sh](update.sh) (on Linux) or [update.ps1](update.ps1) (on Windows) to install the refinery package into a local virtual environment. The installation and update process for this method is to simply run the script:
+- it pulls the repository,
+- activates the virtual environment,
+- uninstalls `binary-refinery`,
+- and then installs `binary-refinery[all]`.
 
 ## Generating Documentation
 
