@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import hashlib
 from refinery.lib.loader import load_pipeline
 
 from .. import TestUnitBase
@@ -9,14 +10,13 @@ class TestPCAP(TestUnitBase):
 
     def test_pe_extraction_from_pcap(self):
         data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
-        pipeline = load_pipeline('pcap-http [| carve-pe -R | vsect .data | add 20 | xtp | defang ]')
-        c2urls = list(data | pipeline)
-        self.assertListEqual(c2urls, [
-            B'http[:]//setup1.tqzn[.]com/barbindsoft/barsetup.exe',
-            B'http[:]//setup2.tqzn[.]com/barbindsoft/barsetup.exe',
-            B'http[:]//setup3.tqzn[.]com/barbindsoft/barsetup.exe',
-            B'http[:]//setup4.tqzn[.]com/barbindsoft/barsetup.exe',
-        ])
+        pipeline = load_pipeline('pcap-http [| pick 3 ]')
+        chunk = next(data | pipeline)
+        self.assertEqual(chunk['url'], B'http://www.tao168188'B'.com:1046/mh.exe')
+        self.assertEqual(
+            hashlib.sha256(chunk).hexdigest(),
+            '9972394d4d8d51abf15bfaf6c1ddfe9c8bf85ae0b9b0a561adfd9b4844c520b9'
+        )
 
     def test_get_request_summary(self):
         data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
