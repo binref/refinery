@@ -82,7 +82,7 @@ def main():
         ),
         install_requires=requirements,
         extras_require={
-            'full': dependencies
+            'yeet': dependencies
         },
         include_package_data=True,
         package_data={'refinery': ['__init__.pkl']},

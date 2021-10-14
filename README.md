@@ -59,13 +59,13 @@ $ emit image.png | stego
 ```
 You can then install these missing dependencies manually. If you do not want to be bothered by missing dependencies and don't mind a long refinery installation, you can install the package as follows:
 ```
-pip install -U binary-refinery[full]
+pip install -U binary-refinery[yeet]
 ```
 which will install _all_ dependencies on top of the required ones.
 
 ## Bleeding Edge
 
-Alternatively, you can clone this repository and use the scripts [update.sh](update.sh) (on Linux) or [update.ps1](update.ps1) (on Windows) to install the refinery package into a local virtual environment. The installation and update process for this method is to simply run the script; it pulls the repository, activates the virtual environment, uninstalls the current `binary-refinery[full]` package, and then installs it again.
+Alternatively, you can clone this repository and use the scripts [update.sh](update.sh) (on Linux) or [update.ps1](update.ps1) (on Windows) to install the refinery package into a local virtual environment. The installation and update process for this method is to simply run the script; it pulls the repository, activates the virtual environment, uninstalls the current `binary-refinery[yeet]` package, and then installs it again.
 
 ## Generating Documentation
 
