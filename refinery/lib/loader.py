@@ -3,6 +3,8 @@
 """
 Functions to help dynamically load refinery units.
 """
+from __future__ import annotations
+
 import functools
 import importlib
 import os
@@ -14,14 +16,18 @@ import logging
 
 import refinery
 
-from typing import Iterable, Any
+from typing import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from refinery.units import Executable, Unit
 
 
 class EntryNotFound(NameError):
     pass
 
 
-def get_all_entry_points() -> Iterable[type]:
+def get_all_entry_points() -> Iterable[Executable]:
     """
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
@@ -56,7 +62,7 @@ def get_all_entry_points() -> Iterable[type]:
     yield from iterate(root, *path)
 
 
-def get_entry_point(name: str) -> type:
+def get_entry_point(name: str) -> Executable:
     """
     Retrieve a refinery entry point by name.
     """
@@ -88,7 +94,7 @@ def get_entry_point(name: str) -> type:
     raise EntryNotFound('no entry point with name "%s" was found.' % name)
 
 
-def resolve(name: str) -> type:
+def resolve(name: str) -> Executable:
     """
     Attempts to import the unit with the given name from the refinery package
     and falls back to using `refinery.lib.loader.get_entry_point` if this fails.
@@ -101,7 +107,7 @@ def resolve(name: str) -> type:
     return unit or get_entry_point(name)
 
 
-def load(name: str, *args, **kwargs) -> Any:
+def load(name: str, *args, **kwargs) -> Unit:
     """
     Loads the unit specified by `name`, initialized with the given arguments
     and keyword arguments.
@@ -110,7 +116,7 @@ def load(name: str, *args, **kwargs) -> Any:
     return entry.assemble(*args, **kwargs)
 
 
-def load_commandline(command: str) -> Any:
+def load_commandline(command: str) -> Unit:
     """
     Returns a unit as it would be loaded from a given command line string.
     """
@@ -118,7 +124,7 @@ def load_commandline(command: str) -> Any:
     return load(module, *arguments)
 
 
-def load_detached(command: str) -> Any:
+def load_detached(command: str) -> Unit:
     """
     Returns a unit as it would be loaded from a given command line string,
     except that the unit has been detached from the default log level.
@@ -127,7 +133,7 @@ def load_detached(command: str) -> Any:
 
 
 @functools.lru_cache(maxsize=None)
-def load_pipeline(commandline: str, pipe='|'):
+def load_pipeline(commandline: str, pipe='|') -> Unit:
     """
     Parses a complete pipeline as given on the command line.
     """
