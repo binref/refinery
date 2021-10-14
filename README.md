@@ -50,9 +50,22 @@ pip uninstall -y binary-refinery
 ```
 and then install it again. This will be a lot faster than installing it, because resolving dependencies is what takes a lot of time during the install of binary refinery.
 
+## Heavyweight Dependencies
+
+There are some units that have rather heavy-weight dependencies. For example, [stego][] is the only unit that requires an image-parsing library and and [pcap][] is the only unit that requires a pcap parsing library. These libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users. The corresponding units will tell you what to do when their dependency is missing:
+```
+$ emit image.png | stego
+(11:53:26) failure in stego: dependencies missing; install Pillow
+```
+You can then install these missing dependencies manually. If you do not want to be bothered by missing dependencies and don't mind a long refinery installation, you can install the package as follows:
+```
+pip install -U binary-refinery[full]
+```
+which will install _all_ dependencies on top of the required ones.
+
 ## Bleeding Edge
 
-Alternatively, you can clone this repository and use the scripts [update.sh](update.sh) (on Linux) or [update.ps1](update.ps1) (on Windows) to install the refinery package into a local virtual environment. The installation and update process for this method is to simply run the script; it pulls the repository, activates the virtual environment, uninstalls the current `binary-refinery` package, and then installs it again.
+Alternatively, you can clone this repository and use the scripts [update.sh](update.sh) (on Linux) or [update.ps1](update.ps1) (on Windows) to install the refinery package into a local virtual environment. The installation and update process for this method is to simply run the script; it pulls the repository, activates the virtual environment, uninstalls the current `binary-refinery[full]` package, and then installs it again.
 
 ## Generating Documentation
 
@@ -181,6 +194,8 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 
 [dump]: https://binref.github.io/#refinery.dump
 [emit]: https://binref.github.io/#refinery.emit
+[stego]: https://binref.github.io/#refinery.stego
+[pcap]: https://binref.github.io/#refinery.pcap
 [hex]: https://binref.github.io/#refinery.hex
 [zl]: https://binref.github.io/#refinery.zl
 [b64]: https://binref.github.io/#refinery.b64

@@ -15,4 +15,4 @@ source "$env/bin/activate"
 
 git pull --rebase --autostash
 pip uninstall -y binary-refinery
-pip install -e .
+pip install -e .[full]

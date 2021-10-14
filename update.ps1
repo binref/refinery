@@ -12,4 +12,4 @@ if (-not (Test-Path $env)) {
 
 git pull --rebase --autostash
 pip uninstall -y binary-refinery
-pip install -e .
+pip install -e .[full]
