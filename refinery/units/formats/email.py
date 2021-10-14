@@ -34,11 +34,14 @@ class xtmail(PathExtractorUnit):
         def ensure_bytes(data):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
-        def make_message(name, msg):
-            if msg.body:
-                yield UnpackResult(F'{name}.txt', ensure_bytes(msg.body))
-            if msg.htmlBody:
-                yield UnpackResult(F'{name}.htm', ensure_bytes(msg.htmlBody))
+        def make_message(name, msg: Message):
+            with NoLogging:
+                htm = msg.htmlBody
+                txt = msg.body
+            if txt:
+                yield UnpackResult(F'{name}.txt', ensure_bytes(txt))
+            if htm:
+                yield UnpackResult(F'{name}.htm', ensure_bytes(htm))
 
         msgcount = 0
 
