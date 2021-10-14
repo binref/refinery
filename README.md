@@ -28,11 +28,11 @@ The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [3-Clau
 
 ## Warnings & Advice
 
-The refinery requires at least **Python 3.7**. Since binary refinery introduces a large number of new commands, there is a good chance that some of these will clash on some systems. Therefore, you have the option to choose a _prefix_ for the installation, which will be put in front of every command shim that is installed. For example, if you choose `r.` as your prefix, then the [emit](refinery/emit.py) command would be `r.emit` in your terminal. An added benefit is that you can type `r.` and hammer <kbd>Tab</kbd> twice to get a list of all available refinery commands. 
+The refinery requires at least **Python 3.7**. It is recommended to install it into its own [virtual environment][venv]: The package has a **lot** of dependencies, and installing it into your global Python is somewhat prone to dependency conflicts. Also, since the toolkit introduces a large number of new commands, there is a good chance that some of these will clash on some systems, and keeping them in their own separate virtual environment is one way to prevent that.
 
-Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket. If you specify the special prefix `!` (a single exclamation mark), then the refinery will be installed in library mode and no commands will be created at all.
+If you want to have all refinery commands available in your shell at all times, you also have the option to choose a _prefix_ for the installation, which will be put in front of every command shim that is installed. For example, if you choose `r.` as your prefix, then the [emit][] unit will be installed as the command `r.emit`. An added benefit is that you can type `r.` and hammer <kbd>Tab</kbd> twice to get a list of all available refinery commands. Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket. 
 
-It is furthermore recommended to install binary refinery into [a virtual environment][venv]. The package has a **lot** of dependencies, and installing it into your global Python is somewhat prone to lead to dependency conflicts.
+If you specify the special prefix `!` (a single exclamation mark), then the refinery will be installed in library mode and no command shims will be created at all.
 
 ## Installation
 
