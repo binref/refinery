@@ -168,9 +168,11 @@ class RefineryPartialResult(ValueError):
 
 
 class RefineryImportMissing(ImportError):
-    def __init__(self, package: str):
-        super().__init__(package)
-        self.package = package
+    def __init__(self, *dependencies: str):
+        super().__init__()
+        import shlex
+        self.install = ' '.join(shlex.quote(dist) for dist in dependencies)
+        self.dependencies = dependencies
 
 
 class RefineryCriticalException(RuntimeError):
@@ -807,6 +809,12 @@ class Executable(ABCMeta):
     def name(cls) -> str:
         return cls.__name__.replace('_', '-')
 
+
+    logging.addLevelName(logging.ERROR,   'failure') # noqa
+    logging.addLevelName(logging.WARNING, 'warning') # noqa
+    logging.addLevelName(logging.INFO,    'comment') # noqa
+    logging.addLevelName(logging.DEBUG,   'verbose') # noqa
+
     @property
     def logger(cls) -> logging.Logger:
         try:
@@ -817,7 +825,7 @@ class Executable(ABCMeta):
         if not logger.hasHandlers():
             stream = logging.StreamHandler()
             stream.setFormatter(logging.Formatter(
-                '[{asctime!s:.5s}][{levelname:.1s}] {name}: {message}',
+                '({asctime}) {levelname} in {name}: {message}',
                 style='{',
                 datefmt='%I:%M:%S'
             ))
@@ -1036,9 +1044,7 @@ class Unit(UnitBase, abstract=True):
                 try:
                     return super().__get__(unit, tp)
                 except ImportError as E:
-                    import shlex
-                    cmd = ' '.join(shlex.quote(dist) for dist in self.dependencies)
-                    raise RefineryImportMissing(F'dependencies missing; install {cmd}') from E
+                    raise RefineryImportMissing(*self.dependencies) from E
 
         return Requirement
 
@@ -1117,9 +1123,9 @@ class Unit(UnitBase, abstract=True):
                 return None
             return exception.partial
         elif isinstance(exception, RefineryImportMissing):
-            self.log_warn(F'missing dependency; unit requires this python package: {exception.package}')
+            self.log_fail(F'dependencies missing; install {exception.install}')
         else:
-            self.log_warn(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
+            self.log_fail(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
 
         if self.log_debug():
             import traceback
@@ -1378,6 +1384,16 @@ class Unit(UnitBase, abstract=True):
 
     def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
         return data
+
+    @classmethod
+    def log_fail(cls, *messages, clip=False) -> bool:
+        """
+        Log the message if and only if the current log level is at least `refinery.units.LogLevel.ERROR`.
+        """
+        rv = cls.logger.isEnabledFor(LogLevel.ERROR)
+        if rv and messages:
+            cls.logger.error(cls._output(*messages, clip=clip))
+        return rv
 
     @classmethod
     def log_warn(cls, *messages, clip=False) -> bool:
