@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.units import RefineryImportMissing
 from refinery.lib.structures import MemoryFile
 
 
@@ -9,6 +8,11 @@ class winreg(PathExtractorUnit):
     """
     Extract values from a Windows registry hive.
     """
+    @PathExtractorUnit.Requires('python-registry')
+    def _registry(self):
+        from Registry.Registry import Registry
+        return Registry
+
     def _walk(self, key, *path):
         here = '/'.join(path)
         if not self._check_reachable(here):
@@ -21,10 +25,6 @@ class winreg(PathExtractorUnit):
             yield from self._walk(subkey, *path, subkey.name())
 
     def unpack(self, data):
-        try:
-            from Registry.Registry import Registry
-        except ModuleNotFoundError:
-            raise RefineryImportMissing('python-registry')
         with MemoryFile(data) as stream:
-            root = Registry(stream).root()
+            root = self._registry(stream).root()
             yield from self._walk(root, root.name())

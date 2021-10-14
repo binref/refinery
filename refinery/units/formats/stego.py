@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from enum import IntEnum
 
-from .. import RefineryImportMissing, Unit, arg
+from .. import Unit, arg
 from ...lib.structures import MemoryFile
 
 
@@ -32,12 +32,13 @@ class stego(Unit):
             parts=tuple(arg.as_option(p, PIXEL_PART) for p in parts)
         )
 
+    @Unit.Requires('Pillow')
+    def _image(self):
+        from PIL import Image
+        return Image
+
     def process(self, data):
-        try:
-            from PIL import Image
-        except ImportError:
-            raise RefineryImportMissing('Pillow')
-        image = Image.open(MemoryFile(data))
+        image = self._image.open(MemoryFile(data))
         width, height = image.size
         for y in range(height):
             yield bytearray(

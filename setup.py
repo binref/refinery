@@ -53,6 +53,12 @@ def main():
             'binref=refinery.explore:explorer'
         ]
 
+    dependencies = list({
+        dependency
+        for executable in refinery._cache.cache.values()
+        for dependency in executable.dependencies
+    })
+
     setuptools.setup(
         name=refinery.__pip_pkg__,
         version=refinery.__version__,
@@ -76,12 +82,7 @@ def main():
         ),
         install_requires=requirements,
         extras_require={
-            '': [
-                'Pillow',
-                'pypcapkit[scapy]',
-                'python-evtx',
-                'python-registry',
-            ],
+            'full': dependencies
         },
         include_package_data=True,
         package_data={'refinery': ['__init__.pkl']},

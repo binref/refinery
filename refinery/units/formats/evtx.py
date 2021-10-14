@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf - 8 -* -
-from refinery.units import RefineryImportMissing, Unit
+from refinery.units import Unit
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 
 
@@ -13,13 +13,14 @@ class evtx(Unit):
     def __init__(self, raw: Unit.Arg.switch('-r', help='Extract raw event data rather than XML.') = False):
         super().__init__(raw=raw)
 
+    @Unit.Requires('python-evtx')
+    def _evtx(self):
+        from Evtx.Evtx import Evtx
+        return Evtx
+
     def process(self, data):
-        try:
-            from Evtx.Evtx import Evtx
-        except ImportError:
-            raise RefineryImportMissing('python-evtx')
         with VirtualFileSystem() as vfs:
             raw = self.args.raw
-            with Evtx(VirtualFile(vfs, data)) as log:
+            with self._evtx(VirtualFile(vfs, data)) as log:
                 for record in log.records():
                     yield record.data() if raw else record.xml().encode(self.codec)

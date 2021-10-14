@@ -123,6 +123,7 @@ from typing import (
     Dict,
     Iterable,
     BinaryIO,
+    Set,
     Type,
     TypeVar,
     Union,
@@ -1017,6 +1018,29 @@ class Unit(UnitBase, abstract=True):
     multiple inputs in a common format. For more details, see `refinery.lib.frame`.
     """
     Arg = arg
+
+    dependencies: Set[str] = set()
+
+    @staticmethod
+    def Requires(*distributions: str):
+        class Requirement(property):
+            dependencies = distributions
+
+            def __init__(self, importer: Callable):
+                super().__init__(importer)
+
+            def __set_name__(self, unit: Type[Unit], name: str):
+                unit.dependencies.update(self.dependencies)
+
+            def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
+                try:
+                    return super().__get__(unit, tp)
+                except ImportError as E:
+                    import shlex
+                    cmd = ' '.join(shlex.quote(dist) for dist in self.dependencies)
+                    raise RefineryImportMissing(F'dependencies missing; install {cmd}') from E
+
+        return Requirement
 
     @property
     def is_reversible(self) -> bool:

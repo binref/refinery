@@ -2,7 +2,7 @@
 # -*- coding: utf - 8 -* -
 from typing import NamedTuple, TYPE_CHECKING, Union
 
-from refinery.units import RefineryImportMissing, arg, Unit
+from refinery.units import arg, Unit
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 from refinery.lib.structures import MemoryFile
 
@@ -66,12 +66,13 @@ class pcap(Unit):
     def __init__(self, merge: arg.switch('-m', help='Merge both parts of each TCP conversation into one chunk.') = False):
         super().__init__(merge=merge)
 
-    def process(self, data):
-        try:
-            import pcapkit
-        except ImportError:
-            raise RefineryImportMissing('pypcapkit[scapy]')
+    @Unit.Requires('pypcapkit[scapy]')
+    def _pcapkit(self):
+        import pcapkit
+        return pcapkit
 
+    def process(self, data):
+        pcapkit = self._pcapkit
         logging.getLogger('pcapkit').disabled = True
         merge = self.args.merge
 

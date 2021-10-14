@@ -30,10 +30,12 @@ example of how to write simple units.
 __version__ = '0.4.5'
 __pip_pkg__ = 'binary-refinery'
 
+from typing import Dict, Type
+
 import pickle
 import pkg_resources
 
-from .units import arg, Unit
+from refinery.units import arg, Unit
 
 
 def _singleton(cls):
@@ -53,6 +55,9 @@ class _cache:
     several seconds. Subsequent imports of refinery should be faster, and the
     loading of units from the module is nearly as fast as specifying the full path.
     """
+    units: Dict[str, str]
+    cache: Dict[str, Type[Unit]]
+
     def __init__(self):
         self.reloading = False
         self.loaded = False
@@ -82,7 +87,12 @@ class _cache:
         if not self.reloading:
             from .lib.loader import get_all_entry_points
             self.reloading = True
-            self.units = {e.__qualname__: e.__module__ for e in get_all_entry_points()}
+            self.units.clear()
+            self.cache.clear()
+            for executable in get_all_entry_points():
+                name = executable.__qualname__
+                self.units[name] = executable.__module__
+                self.cache[name] = executable
             self.reloading = False
             self.save()
 
