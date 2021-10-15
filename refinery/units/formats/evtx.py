@@ -14,7 +14,7 @@ class evtx(Unit):
         super().__init__(raw=raw)
 
     @Unit.Requires('python-evtx')
-    def _evtx(self):
+    def _evtx():
         from Evtx.Evtx import Evtx
         return Evtx
 

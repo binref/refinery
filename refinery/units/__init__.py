@@ -317,10 +317,10 @@ class arg(Argument):
 
     @staticmethod
     def switch(
-        *args: str, off=False,
-        help : Union[omit, str] = omit,
-        dest : Union[omit, str] = omit,
-        group: Optional[str] = None,
+        *args   : str, off=False,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        group   : Optional[str] = None,
     ) -> Argument:
         """
         A convenience method to add argparse arguments that change a boolean value from True to False or
@@ -330,11 +330,11 @@ class arg(Argument):
 
     @staticmethod
     def binary(
-        *args: str,
-        help : Union[omit, str] = omit,
-        dest : Union[omit, str] = omit,
+        *args   : str,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
         metavar : Optional[str] = None,
-        group: Optional[str] = None,
+        group   : Optional[str] = None,
     ) -> Argument:
         """
         Used to add argparse arguments that contain binary data.
@@ -343,12 +343,12 @@ class arg(Argument):
 
     @staticmethod
     def number(
-        *args: str,
-        bound: Union[omit, Tuple[int, int]] = omit,
-        help : Union[omit, str] = omit,
-        dest : Union[omit, str] = omit,
+        *args   : str,
+        bound   : Union[omit, Tuple[int, int]] = omit,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
         metavar : Optional[str] = None,
-        group: Optional[str] = None,
+        group   : Optional[str] = None,
     ) -> Argument:
         """
         Used to add argparse arguments that contain a number.
@@ -361,11 +361,12 @@ class arg(Argument):
 
     @staticmethod
     def option(
-        *args: str, choices: Enum,
-        help : Union[omit, str] = omit,
-        dest : Union[omit, str] = omit,
-        metavar: Optional[str] = None,
-        group: Optional[str] = None,
+        *args   : str,
+        choices : Enum,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        metavar : Optional[str] = None,
+        group   : Optional[str] = None,
     ) -> Argument:
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
@@ -376,7 +377,8 @@ class arg(Argument):
 
     @staticmethod
     def choice(
-        *args: str, choices : List[str],
+        *args   : str,
+        choices : List[str],
         help    : Union[omit, str] = omit,
         metavar : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
@@ -1042,7 +1044,7 @@ class Unit(UnitBase, abstract=True):
 
             def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
                 try:
-                    return super().__get__(unit, tp)
+                    return super().fget()
                 except ImportError as E:
                     raise RefineryImportMissing(*self.dependencies) from E
 

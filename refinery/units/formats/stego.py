@@ -33,7 +33,7 @@ class stego(Unit):
         )
 
     @Unit.Requires('Pillow')
-    def _image(self):
+    def _image():
         from PIL import Image
         return Image
 

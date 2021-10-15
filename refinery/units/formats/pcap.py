@@ -67,7 +67,7 @@ class pcap(Unit):
         super().__init__(merge=merge)
 
     @Unit.Requires('pypcapkit[scapy]')
-    def _pcapkit(self):
+    def _pcapkit():
         import pcapkit
         return pcapkit
 
