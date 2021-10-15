@@ -3,10 +3,10 @@
 import re
 import dataclasses
 
-from typing import Optional
+from typing import ByteString, Iterable, Optional
 
-from .. import arg, Unit
-from ...lib.tools import get_terminal_size, lookahead
+from refinery.units import arg, Unit
+from refinery.lib.tools import get_terminal_size, lookahead
 
 
 @dataclasses.dataclass
@@ -16,6 +16,7 @@ class HexDumpMetrics:
     line_count: int = 0
     padding: int = 0
     dense: bool = False
+    expand: bool = False
     max_width: int = 0
 
     @property
@@ -47,8 +48,48 @@ class HexDumpMetrics:
         return width
 
 
-_EMPTY = ''
-_SPACE = ' '
+def hexdump(data: ByteString, metrics: HexDumpMetrics) -> Iterable[str]:
+    separator = (1 - metrics.dense) * '\x20'
+    hex_width = metrics.hex_column_width
+    addr_width = metrics.address_width
+    columns = metrics.hex_columns
+
+    if columns <= 0:
+        raise RuntimeError('Requested width is too small.')
+
+    def pieces(data):
+        view = memoryview(data)
+        for lno, offset in enumerate(range(0, len(data), columns)):
+            if metrics.line_count and lno > metrics.line_count:
+                break
+            yield lno, view[offset:offset + columns]
+
+    previous = None
+    repetitions = 0
+
+    for last, (lno, chunk) in lookahead(pieces(data)):
+        if not metrics.expand:
+            if chunk == previous and not last:
+                repetitions += 1
+                continue
+            elif repetitions > 0:
+                line = F' repeats {repetitions} times '
+                line = F'{line:=^{hex_width*columns-1}}  {"":=<{columns}}'
+                if addr_width:
+                    line = F'{".":.>{addr_width}}: {line}'
+                yield line
+                repetitions = 0
+
+        dump = separator.join(F'{b:02X}' for b in chunk)
+        read = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
+        line = F'{dump:<{hex_width*columns}} {read:<{columns}}'
+
+        if addr_width:
+            line = F'{lno*columns:0{addr_width}X}: {line}'
+        yield line
+
+        if not metrics.expand:
+            previous = chunk
 
 
 class HexViewer(Unit, abstract=True):
@@ -69,52 +110,13 @@ class HexViewer(Unit, abstract=True):
             line_count=line_count,
             padding=padding,
             dense=self.args.dense,
+            expand=self.args.expand,
             address_width=len(F'{data_size:X}')
         )
         if not metrics.hex_columns:
             metrics.fit_to_width()
         return metrics
 
-    def hexdump(self, data, metrics: Optional[HexDumpMetrics] = None):
-        separator = _EMPTY if self.args.dense else _SPACE
+    def hexdump(self, data: ByteString, metrics: Optional[HexDumpMetrics] = None):
         metrics = metrics or self._get_metrics(len(data))
-        hex_width = metrics.hex_column_width
-        addr_width = metrics.address_width
-        columns = metrics.hex_columns
-
-        if columns <= 0:
-            raise RuntimeError('Requested width is too small.')
-
-        def pieces(data):
-            view = memoryview(data)
-            for lno, offset in enumerate(range(0, len(data), columns)):
-                if metrics.line_count and lno > metrics.line_count:
-                    break
-                yield lno, view[offset:offset + columns]
-
-        previous = None
-        repetitions = 0
-
-        for last, (lno, chunk) in lookahead(pieces(data)):
-            if not self.args.expand:
-                if chunk == previous and not last:
-                    repetitions += 1
-                    continue
-                elif repetitions > 0:
-                    line = F' repeats {repetitions} times '
-                    line = F'{line:=^{hex_width*columns-1}}  {"":=<{columns}}'
-                    if addr_width:
-                        line = F'{".":.>{addr_width}}: {line}'
-                    yield line
-                    repetitions = 0
-
-            dump = separator.join(F'{b:02X}' for b in chunk)
-            read = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
-            line = F'{dump:<{hex_width*columns}} {read:<{columns}}'
-
-            if addr_width:
-                line = F'{lno*columns:0{addr_width}X}: {line}'
-            yield line
-
-            if not self.args.expand:
-                previous = chunk
+        yield from hexdump(data, metrics)
