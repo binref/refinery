@@ -1,135 +1,120 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import re
-from capstone import Cs, CS_ARCH_X86, CS_ARCH_ARM, CS_MODE_16, CS_MODE_32, CS_MODE_64, CS_MODE_ARM
-from string import ascii_letters, digits
-from enum import Enum
+from __future__ import annotations
 
-from .. import arg, Unit
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, TYPE_CHECKING
 
-__all__ = ['asm']
+from refinery.units.sinks import arg, hexdump, HexDumpMetrics, Unit
+from refinery.lib.tools import NoLogging
+
+if TYPE_CHECKING:
+    from angr.analyses.cfg.cfg_fast import CFGFast
+    from angr.knowledge_plugins.functions.function import Function
+    from angr.block import Block, CapstoneInsn, DisassemblerInsn
+    from capstone import CsInsn
 
 
-class box:
-    def __init__(self, **kw):
-        for k, v in kw.items():
-            setattr(self, k, v)
-
-
-class ARCH(Enum):
-    x16 = CS_ARCH_X86, CS_MODE_16
-    x32 = CS_ARCH_X86, CS_MODE_32
-    x64 = CS_ARCH_X86, CS_MODE_64
-    arm = CS_ARCH_ARM, CS_MODE_ARM
-
-    def __str__(self):
-        return self.name
+@dataclass
+class _BasicBlock:
+    block: Block
+    users: List[Function] = field(default_factory=list)
 
 
 class asm(Unit):
     """
-    Disassembles the input data using the capstone disassembly library.
+    Disassembles the input data using angr & the capstone disassembly library.
     """
-
     def __init__(
         self,
-        mode  : arg.option(choices=ARCH, help='select one of the following architectures: {choices}; the default is {default}.') = ARCH.x32,
-        addr  : arg.switch('-a', help='hide addresses of instruction') = True,
-        bytes : arg.switch('-b', help='hide instruction bytes next to disassembly') = True,
-        str   : arg.switch('-s', help='disassemble over detected strings') = True,
-        zeros : arg.switch('-z', help='disassemble zero byte patches') = True,
-        width : arg.number('-w', bound=(3, None), help='number of data bytes to put in one row, {default} by default') = 15
+        mode: arg.choice(
+            help='Machine code architecture, default is {default}. Select from the following list: {choices}.',
+            choices=['x32', 'x64', 'armcortexm', 'armHF', 'armEL', 'aarch64', 'avr8', 'ppc32', 'ppc64', 'mips32', 'mips64', 's390x'],
+            metavar='[x32|x64|..]',
+        ) = 'x32',
     ):
-        mode = arg.as_option(mode, ARCH)
-        self.superinit(super(), **vars())
+        mode = {'x32': 'x86', 'x64': 'amd64'}.get(mode, mode)
+        archmap = {arch[3].name.lower(): arch[3] for arch in self._angr_archinfo.arch_id_map}
+        super().__init__(mode=archmap[mode.lower()])
 
-    def _printable(self, b):
-        return 0x20 <= b <= 0x7E and b not in B' \t\v\r\n'
+    @Unit.Requires('angr')
+    def _angr_project():
+        import angr.project
+        return angr.project
 
-    def _strings(self, data):
-        if not self.args.str:
-            return
-        for match in re.finditer(BR'([ -~]{5,})\x00?|((?:[ -~]\x00){5,})(?:\x00\x00)?', data):
-            string = match[0]
-            try:
-                string = string.decode('UTF16-LE') if not string.end \
-                    else string.decode('UTF8')
-            except Exception:
-                continue
-            alpha = len([x for x in string if x in digits or x in ascii_letters])
-            if 2 * alpha > len(string):
-                yield box(start=match.start(), end=match.end(), data=string)
-                self.log_info(F'detected string at {match.start():08X}:', string)
-
-    def _format(self, addr=0, data=B'', code='', arg='', comment=''):
-        data_str = ''.join('%c' % X if self._printable(X) else '.' for X in data)
-        data_hex = ' '.join('%02X' % X for X in data)
-        if comment: comment = '    ; ' + comment
-        return {
-            'addr': addr,
-            'str': data_str,
-            'hex': data_hex,
-            'code': code,
-            'arg': arg,
-            'comment': comment
-        }
-
-    def _bytepatch(self, data, addr, end):
-        return self._format(addr, data[addr:end], 'db', ','.join('%02X' % b for b in data[addr:end]))
-
-    def _nullsize(self, data, offset, max):
-        length = 0
-        try:
-            while not data[offset + length] and length < max:
-                length += 1
-        except IndexError:
-            pass
-        return length
-
-    def _disassemble(self, data):
-        capstone = Cs(*self.args.mode.value)
-        strz = self._strings(data)
-        string = next(strz, None)
-        cursor, done = 0, 0
-        while done < len(data):
-            cursor = max(cursor, done)
-            patchsize = self._nullsize(data, cursor, self.args.width)
-            if patchsize > 2:
-                yield self._format(done, data[done:done + patchsize], 'db', ','.join('0' * patchsize))
-                done += patchsize
-                continue
-            if cursor >= len(data):
-                yield self._bytepatch(data, done, len(data))
-                done = cursor
-            if string and cursor >= string.end:
-                yield self._bytepatch(data, done, string.start)
-                yield self._format(string.start, data[string.start:string.end], 'db', string.data)
-                done = string.end
-                continue
-            try:
-                ins = next(capstone.disasm(
-                    data[cursor:cursor + 15], cursor, count=1))
-                end = ins.address + ins.size
-                if self.args.str and string:
-                    if end > string.start and string.end > cursor:
-                        cursor = string.end
-                        continue
-            except StopIteration:
-                cursor += 1
-                continue
-            else:
-                yield self._format(ins.address, ins.bytes, ins.mnemonic, ins.op_str)
-                done = end
+    @Unit.Requires('angr')
+    def _angr_archinfo():
+        import archinfo
+        return archinfo
 
     def process(self, data):
-        disassembly = list(self._disassemble(data))
-        for key in ['hex', 'str', 'code', 'arg']:
-            m = max(len(r[key]) for r in disassembly)
-            for r in disassembly:
-                r[key] = r[key].ljust(m)
-        line_format = '{code} {arg}{comment}'
-        if self.args.bytes:
-            line_format = '{hex}  {str}  ' + line_format
-        if self.args.addr:
-            line_format = '0x{addr:08X}:  ' + line_format
-        return '\n'.join(line_format.format(**r) for r in disassembly).encode(self.codec)
+        show_progress = self.log_info()
+
+        with NoLogging:
+            pr = self._angr_project.load_shellcode(data, self.args.mode.name)
+            cfg: CFGFast = pr.analyses.CFGFast(show_progressbar=show_progress)
+            cfg.normalize()
+
+        functions: List[Function] = list(cfg.functions.values())
+        blocks: Dict[int, _BasicBlock] = {}
+
+        def all_insns() -> Iterable[DisassemblerInsn]:
+            for function in functions:
+                for block in function.blocks:
+                    yield from block.disassembly.insns
+
+        def opcodes(insn: CapstoneInsn) -> str:
+            csi: CsInsn = insn.insn
+            return '\x20'.join(F'{b:02X}' for b in csi.bytes)
+
+        addr_width = max(len(hex(insn.address)) for insn in all_insns())
+        memo_width = max(len(insn.mnemonic) for insn in all_insns())
+        code_width = max(len(opcodes(insn)) for insn in all_insns())
+        args_width = max(len(insn.op_str) for insn in all_insns())
+        full_width = addr_width + memo_width + code_width + args_width + 5
+
+        metrics = HexDumpMetrics()
+        metrics.padding = 2 + addr_width
+        metrics.fit_to_width(full_width)
+        metrics.hex_columns += 1
+        full_width = metrics.hexdump_width + metrics.padding
+
+        for function in functions:
+            for block in function.blocks:
+                try:
+                    bb = blocks[block.addr]
+                except KeyError:
+                    blocks[block.addr] = bb = _BasicBlock(block)
+                if bb.block != block:
+                    self.log_warn(F'conflicting blocks at 0x{block.addr:0{addr_width}X}')
+                bb.users.append(function)
+
+        addresses = list(blocks.keys())
+        addresses.sort()
+        tail = 0
+        tearline = full_width * B'-'
+        opcspace = code_width * R' '
+
+        for address in addresses:
+            def pprint(msg: str, addr: int = address) -> bytes:
+                return F'{addr:0{addr_width}X}: {msg}'.encode(self.codec)
+            if address > tail:
+                db = data[tail:address]
+                yield tearline
+                for line in hexdump(db, metrics):
+                    yield pprint(line, tail)
+                    tail += metrics.hex_columns
+            bb = blocks[address]
+            for function in bb.users:
+                if function.addr == address:
+                    yield tearline
+                    yield pprint(F'{opcspace}proc {function.name}:')
+                    break
+            for insn in bb.block.disassembly.insns:
+                insn: CapstoneInsn
+                yield (
+                    F'{insn.address:0{addr_width}X}: '
+                    F'{opcodes(insn):<{code_width}}  '
+                    F'{insn.mnemonic:<{memo_width}} {insn.op_str}'
+                ).encode(self.codec)
+            tail = address + bb.block.size
