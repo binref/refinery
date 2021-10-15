@@ -812,10 +812,11 @@ class Executable(ABCMeta):
         return cls.__name__.replace('_', '-')
 
 
-    logging.addLevelName(logging.ERROR,   'failure') # noqa
-    logging.addLevelName(logging.WARNING, 'warning') # noqa
-    logging.addLevelName(logging.INFO,    'comment') # noqa
-    logging.addLevelName(logging.DEBUG,   'verbose') # noqa
+    logging.addLevelName(logging.CRITICAL, 'failure') # noqa
+    logging.addLevelName(logging.ERROR,    'failure') # noqa
+    logging.addLevelName(logging.WARNING,  'warning') # noqa
+    logging.addLevelName(logging.INFO,     'comment') # noqa
+    logging.addLevelName(logging.DEBUG,    'verbose') # noqa
 
     @property
     def logger(cls) -> logging.Logger:
