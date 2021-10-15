@@ -142,7 +142,6 @@ from argparse import (
     ONE_OR_MORE,
     OPTIONAL,
     REMAINDER,
-    SUPPRESS,
     ZERO_OR_MORE
 )
 
@@ -1065,8 +1064,9 @@ class Unit(UnitBase, abstract=True):
         return self.__class__.codec
 
     @property
-    def logger(self) -> logging.Logger:
-        return self.__class__.logger
+    def logger(self):
+        logger: logging.Logger = self.__class__.logger
+        return logger
 
     @property
     def name(self) -> str:
@@ -1481,7 +1481,6 @@ class Unit(UnitBase, abstract=True):
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
         base.add_argument('-v', '--verbose', action='count', default=0,
             help='Specify up to two times to increase log level.')
-        argp.add_argument('--debug-timing', dest='dtiming', action='store_true', help=SUPPRESS)
 
         if cls.is_reversible:
             base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
@@ -1557,7 +1556,6 @@ class Unit(UnitBase, abstract=True):
             unit.args.quiet = args.quiet
             unit.args.lenient = args.lenient
             unit.args.squeeze = args.squeeze
-            unit.args.dtiming = args.dtiming
             unit.args.nesting = args.nesting
             unit.args.reverse = args.reverse
             unit.args.devnull = args.devnull
@@ -1592,7 +1590,6 @@ class Unit(UnitBase, abstract=True):
         self._chunks = None
 
         keywords.update(dict(
-            dtiming=False,
             nesting=0,
             reverse=False,
             squeeze=False,
@@ -1604,14 +1601,24 @@ class Unit(UnitBase, abstract=True):
         self.args = DelayedArgumentProxy(Namespace(**keywords), list(keywords))
         self.log_detach()
 
+    _SECRET_DEBUG_TIMING_FLAG = '--debug-timing'
+
     @classmethod
-    def run(cls, argv=None, stream=None) -> None:
+    def run(cls: Union[Type[Unit], Executable], argv=None, stream=None) -> None:
         """
         Implements command line execution. As `refinery.units.Unit` is an `refinery.units.Executable`,
         this method will be executed when a class inheriting from `refinery.units.Unit` is defined in
         the current `__main__` module.
         """
         argv = argv if argv is not None else sys.argv[1:]
+        start_clock = None
+
+        if cls._SECRET_DEBUG_TIMING_FLAG in argv:
+            from time import process_time
+            argv.remove(cls._SECRET_DEBUG_TIMING_FLAG)
+            start_clock = process_time()
+            cls.logger.setLevel(logging.INFO)
+            cls.logger.info('starting clock: {:.4f}'.format(start_clock))
 
         if stream is None:
             stream = open(os.devnull, 'rb') if sys.stdin.isatty() else sys.stdin.buffer
@@ -1646,11 +1653,9 @@ class Unit(UnitBase, abstract=True):
             if loglevel:
                 unit.log_level = loglevel
 
-            if unit.args.dtiming:
-                from time import process_time
+            if start_clock:
                 unit.log_level = min(unit.log_level, LogLevel.INFO)
-                start_clock = process_time()
-                unit.logger.info('starting clock: {:.4f}'.format(start_clock))
+                unit.logger.info('unit launching: {:.4f}'.format(start_clock))
 
             try:
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
@@ -1662,7 +1667,7 @@ class Unit(UnitBase, abstract=True):
             except OSError:
                 pass
 
-            if unit.args.dtiming:
+            if start_clock:
                 stop_clock = process_time()
                 unit.logger.info('stopping clock: {:.4f}'.format(stop_clock))
                 unit.logger.info('time delta was: {:.4f}'.format(stop_clock - start_clock))
