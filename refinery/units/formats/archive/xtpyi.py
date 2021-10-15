@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 from typing import ByteString, Callable, Dict, List, Optional, Set, Union
 
 import marshal
@@ -14,25 +15,11 @@ import contextlib
 import dataclasses
 import sys
 
-try:
-    import xdis.load
-    import xdis.magics
-    import xdis.marsh
-    from importlib.util import MAGIC_NUMBER
-except ImportError:
-    pass
-else:
-    A, B, C, *_ = sys.version_info
-    V = F'{A}.{B}.{C}'
-    if V not in xdis.magics.canonic_python_version:
-        xdis.magics.add_canonic_versions(V, F'{A}.{B}')
-    del A, B, C, V
+from importlib.util import MAGIC_NUMBER
 
-from uncompyle6.main import decompile, iscode
-
-from . import arg, ArchiveUnit
-from ....lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
-from ....units.pattern.carve import carve
+from refinery.units.formats.archive import arg, ArchiveUnit
+from refinery.units.pattern.carve import carve
+from refinery.lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
 
 from Crypto.Cipher import AES
 
@@ -47,23 +34,6 @@ def version2tuple(version: str):
     return tuple(int(k, 10) for k in re.fullmatch(R'^(\d+\.\d+(?:\.\d+)?)(.*)$', version).group(1).split('.'))
 
 
-def contains_code(buffer) -> bool:
-    # xdis unmarshal prints directly to stderr; silence it:
-    sys_stderr = sys.stderr
-    sys.stderr = open(os.devnull, 'w')
-    try:
-        module_data = xdis.load.load_module_from_file_object(MemoryFile(buffer))
-    except Exception:
-        return False
-    else:
-        code = module_data[3]
-        if not isinstance(code, list):
-            code = [code]
-        return code and all(iscode(c) for c in code)
-    finally:
-        sys.stderr = sys_stderr
-
-
 def decompress_peek(buffer, size=512) -> Optional[bytes]:
     try:
         return zlib.decompressobj().decompress(buffer[:size])
@@ -71,13 +41,13 @@ def decompress_peek(buffer, size=512) -> Optional[bytes]:
         return None
 
 
-def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
+def decompile_buffer(buffer: ByteString, file_name: str, xt: xtpyi) -> ByteString:
     code_objects = {}
     sys_stderr = sys.stderr
     sys.stderr = open(os.devnull, 'w')
     try:
         version, timestamp, magic_int, codez, is_pypy, _, _ = \
-            xdis.load.load_module_from_file_object(MemoryFile(buffer), file_name, code_objects)
+            xt._xdis.load.load_module_from_file_object(MemoryFile(buffer), file_name, code_objects)
     finally:
         sys.stderr = sys_stderr
     if not isinstance(codez, list):
@@ -87,7 +57,7 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
     with io.TextIOWrapper(decompiled, xtpyi.codec, newline='') as output:
         for code in codez:
             try:
-                decompile(
+                xt._uncompyle6.main.decompile(
                     version,
                     code,
                     output,
@@ -151,15 +121,15 @@ class PiMeta:
         return self.data
 
 
-def make_decompiled_item(name: str, data: ByteString, *magics) -> PiMeta:
+def make_decompiled_item(name: str, xt: xtpyi, data: ByteString, *magics) -> PiMeta:
 
     def extract(data=data, magics=magics):
         error = None
         if any(data[:4] == m[:4] for m in magics):
-            return decompile_buffer(data, name)
+            return decompile_buffer(data, name, xt)
         for magic in magics:
             try:
-                return decompile_buffer(magic + data, name)
+                return decompile_buffer(magic + data, name, xt)
             except Exception as exception:
                 error = exception
         return '\n'.join(F'# {line}'
@@ -172,7 +142,7 @@ class PYZ(Struct):
 
     MagicSignature = B'PYZ\0'
 
-    def __init__(self, reader: StructReader, version: str):
+    def __init__(self, reader: StructReader, version: str, xt: xtpyi):
         reader.bigendian = True
         self.base = reader.tell()
         signature = reader.read(4)
@@ -180,13 +150,14 @@ class PYZ(Struct):
             raise ValueError('invalid magic')
         magic = bytes(reader.read(4))
         with contextlib.suppress(KeyError):
-            version = xdis.magics.versions[magic]
+            version = xt._xdis.magics.versions[magic]
         vtuple = version2tuple(version)
         padding_size = 4
         if vtuple >= (3, 3):
             padding_size += 4
         if vtuple >= (3, 7):
             padding_size += 4
+        self.xt = xt
         self.version = version
         self.magic = magic + padding_size * b'\0'
         self.toc_offset = reader.i32()
@@ -200,17 +171,17 @@ class PYZ(Struct):
             toc = marshal.loads(toc_data)
         except Exception as error:
             if MAGIC_NUMBER != self.magic[:4]:
-                _ord = xdis.marsh.Ord
-                xdis.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
+                _ord = self.xt._xdis.marsh.Ord
+                self.xt._xdis.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
                 try:
-                    toc = xdis.marsh.load(
+                    toc = self.xt._xdis.marsh.load(
                         MemoryFile(self.data), self.version)
                 except Exception:
                     pass
                 else:
                     error = None
                 finally:
-                    xdis.marsh.Ord = _ord
+                    self.xt._xdis.marsh.Ord = _ord
             if error is not None:
                 raise error
 
@@ -259,7 +230,7 @@ class PYZ(Struct):
                     data = decompressed(data)
                     if data[:4] != magic[:4]:
                         data = magic + data
-                    return decompile_buffer(data, name)
+                    return decompile_buffer(data, name, self.xt)
                 self.entries.append(PiMeta(PiType.DECOMPILED, F'{name}.py', decompiled))
                 name = F'{name}.pyc'
                 type = PiType.SOURCE
@@ -335,7 +306,7 @@ class PyInstallerArchiveEpilogue(Struct):
             return None
         return libname
 
-    def __init__(self, reader: StructReader, offset: int, unmarshal: Unmarshal = Unmarshal.No):
+    def __init__(self, reader: StructReader, xt: xtpyi, offset: int, unmarshal: Unmarshal = Unmarshal.No):
         reader.bigendian = True
         reader.seekset(offset)
         self.reader = reader
@@ -349,6 +320,7 @@ class PyInstallerArchiveEpilogue(Struct):
         toc_length = reader.i32()
         self.py_version = '.'.join(str(reader.u32()))
         self.py_libname = self._read_libname(reader)
+        self.xt = xt
         self.offset = reader.tell() - self.size
 
         self.toc: Dict[str, PiTOCEntry] = {}
@@ -386,7 +358,7 @@ class PyInstallerArchiveEpilogue(Struct):
                 data = self.extract(entry.name).unpack()
             else:
                 data = reader
-            pyz_entries[name] = PYZ(data, self.py_version)
+            pyz_entries[name] = PYZ(data, self.py_version, self.xt)
 
         magics = {pyz.magic for pyz in pyz_entries.values()}
 
@@ -416,7 +388,7 @@ class PyInstallerArchiveEpilogue(Struct):
 
             if len(magics) == 1 and data[:4] != magics[0]:
                 extracted.data = magics[0] + data
-            decompiled = make_decompiled_item(name, data, *magics)
+            decompiled = make_decompiled_item(name, self.xt, data, *magics)
             if entry.type is PiType.SOURCE:
                 decompiled.type = PiType.USERCODE
             self.files[F'{name}.py'] = decompiled
@@ -481,6 +453,25 @@ class xtpyi(ArchiveUnit):
             unmarshal=unmarshal, user_code=user_code
         )
 
+    @ArchiveUnit.Requires('xdis')
+    def _xdis():
+        import xdis.load
+        import xdis.magics
+        import xdis.marsh
+        import xdis
+        A, B, C, *_ = sys.version_info
+        V = F'{A}.{B}.{C}'
+        if V not in xdis.magics.canonic_python_version:
+            xdis.magics.add_canonic_versions(V, F'{A}.{B}')
+        del A, B, C, V
+        return xdis
+
+    @ArchiveUnit.Requires('uncompyle6')
+    def _uncompyle6():
+        import uncompyle6
+        import uncompyle6.main
+        return uncompyle6
+
     def unpack(self, data):
         view = memoryview(data)
         positions = [m.start() for m in re.finditer(re.escape(PyInstallerArchiveEpilogue.MagicSignature), view)]
@@ -494,7 +485,7 @@ class xtpyi(ArchiveUnit):
             for position in positions:
                 self.log_info(F'magic signature found at offset 0x{position:0{width}X}')
             self.log_warn(F'found {len(positions)-1} potential PyInstaller epilogue markers; using last one.')
-        archive = PyInstallerArchiveEpilogue(view, positions[-1], mode)
+        archive = PyInstallerArchiveEpilogue(view, self, positions[-1], mode)
         for name, file in archive.files.items():
             if self.args.user_code:
                 if file.type != PiType.USERCODE:
