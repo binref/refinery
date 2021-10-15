@@ -27,7 +27,7 @@ class HexDumpMetrics:
         width = self.max_width
         if not width:
             width = get_terminal_size()
-            width = width and width - 1 or 75
+            width = width and width or 75
             self.max_width = width
         return width
 
@@ -39,6 +39,9 @@ class HexDumpMetrics:
         width_total = width_max - padding - 1
         width_each = self.hex_column_width + 1
         self.hex_columns = width_total // width_each
+        if self.address_width:
+            gap = width_max - self.hexdump_width
+            self.address_width += gap
 
     @property
     def hexdump_width(self):
