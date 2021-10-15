@@ -1,13 +1,11 @@
 [build-system]
 requires = [
     "asn1crypto",
-    "capstone",
     "chardet",
     "colorama",
     "defusedxml",
     "extract_msg",
     "javaobj-py3>=0.4.0.1",
-    "jsbeautifier",
     "macholib",
     "msgpack",
     "msoffcrypto-tool",
@@ -24,9 +22,7 @@ requires = [
     "pyperclip",
     "setuptools",
     "toml",
-    "uncompyle6",
     "wheel",
-    "xdis",
     "xlrd2",
 ]
 build-backend = "setuptools.build_meta"
