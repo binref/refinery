@@ -33,9 +33,7 @@ class asm(Unit):
             metavar='[x32|x64|..]',
         ) = 'x32',
     ):
-        mode = {'x32': 'x86', 'x64': 'amd64'}.get(mode, mode)
-        archmap = {arch[3].name.lower(): arch[3] for arch in self._angr_archinfo.arch_id_map}
-        super().__init__(mode=archmap[mode.lower()])
+        super().__init__(mode=mode)
 
     @Unit.Requires('angr')
     def _angr_project():
@@ -48,10 +46,14 @@ class asm(Unit):
         return archinfo
 
     def process(self, data):
-        show_progress = self.log_info()
+        show_progress = self.log_info('disassembling input data')
+        mode = self.args.mode.lower()
+        mode = {'x32': 'x86', 'x64': 'amd64'}.get(mode, mode)
+        archmap = {arch[3].name.lower(): arch[3] for arch in self._angr_archinfo.arch_id_map}
+        mode = archmap[mode]
 
         with NoLogging:
-            pr = self._angr_project.load_shellcode(data, self.args.mode.name)
+            pr = self._angr_project.load_shellcode(data, mode.name)
             cfg: CFGFast = pr.analyses.CFGFast(show_progressbar=show_progress)
             cfg.normalize()
 
@@ -92,22 +94,27 @@ class asm(Unit):
         addresses = list(blocks.keys())
         addresses.sort()
         tail = 0
+        first_tearline = not show_progress
         tearline = full_width * B'-'
-        opcspace = code_width * R' '
+        opcspace = code_width * R' ' + '  '
 
         for address in addresses:
             def pprint(msg: str, addr: int = address) -> bytes:
                 return F'{addr:0{addr_width}X}: {msg}'.encode(self.codec)
             if address > tail:
                 db = data[tail:address]
-                yield tearline
+                if not first_tearline:
+                    yield tearline
+                first_tearline = False
                 for line in hexdump(db, metrics):
                     yield pprint(line, tail)
                     tail += metrics.hex_columns
             bb = blocks[address]
             for function in bb.users:
                 if function.addr == address:
-                    yield tearline
+                    if not first_tearline:
+                        yield tearline
+                    first_tearline = False
                     yield pprint(F'{opcspace}proc {function.name}:')
                     break
             for insn in bb.block.disassembly.insns:
