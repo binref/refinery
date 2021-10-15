@@ -1038,15 +1038,20 @@ class Unit(UnitBase, abstract=True):
 
             def __init__(self, importer: Callable):
                 super().__init__(importer)
+                self.module = None
 
             def __set_name__(self, unit: Type[Unit], name: str):
                 unit.dependencies.update(self.dependencies)
 
             def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
+                if self.module is not None:
+                    return self.module
                 try:
-                    return super().fget()
+                    self.module = module = super().fget()
                 except ImportError as E:
                     raise RefineryImportMissing(*self.dependencies) from E
+                else:
+                    return module
 
         return Requirement
 
