@@ -4,8 +4,13 @@
 Contains all units that can work on blocks a fixed length. Note that block cipher
 algorithms can be found in `refinery.units.crypto.cipher`.
 """
+from typing import Callable, Generator, List
+
 import abc
 import itertools
+import inspect
+import io
+import operator
 
 from refinery.units import arg, Unit
 from refinery.lib.argformats import numseq
@@ -13,10 +18,11 @@ from refinery.lib import chunks
 from refinery.lib.tools import infinitize, cached_property
 
 
-class NoNumpy(Exception):
+class NoNumpy(ImportError):
     pass
 
 
+@operator.methodcaller('__call__')
 class NoMask:
     def __rand__(self, other):
         return other
@@ -59,7 +65,7 @@ class BlockTransformationBase(Unit, abstract=True):
         try:
             return (1 << self.fbits) - 1
         except AttributeError:
-            return NoMask()
+            return NoMask
 
     def rest(self, data):
         if self.bytestream:
@@ -144,6 +150,11 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         import numpy
         return numpy
 
+    @Unit.Requires('uncompyle6', optional=False)
+    def _uncompyle6():
+        import uncompyle6
+        return uncompyle6
+
     def process_ecb_fast(self, data):
         """
         Attempts to perform the operation more quickly by using numpy arrays.
@@ -185,14 +196,90 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             self.log_debug('Attempting to process input using numpy method.')
             result = self.process_ecb_fast(data)
         except ImportError:
-            self.log_info(R'This unit could perform faster if numpy was installed.')
+            pass
         except Exception as error:
             self.log_warn(F'Falling back to default method after numpy failed with error: {error}')
         else:
             self.log_debug('successfully used numpy to process data in ecb mode')
             return result
-        self._arg = [self._normalize_argument(a) for a in self.args.argument]
-        return super().process(data)
+
+        arguments = [self._normalize_argument(a) for a in self.args.argument]
+
+        def read_source_code(src: Callable[..., int]):
+            code = inspect.getsource(src).strip()
+            head, _, body = code.partition(':')
+            if 'lambda' in head:
+                if '\n' in body:
+                    raise LookupError('lambda with line breaks')
+                return F'return {body}'
+            if 'def' not in head:
+                raise LookupError('malformed function head')
+            head, _, body = code.partition('):')
+            return inspect.cleandoc(body)
+
+        def inline_operation(src: Callable[..., int]) -> Callable[..., Generator[int, None, None]]:
+            """
+            This function takes a callable which implements the arithmetic operation atomic, and
+            produces a new function which performs the same operation on an iterable. The input
+            atomic function has been inlined into the new method by re-parsing its source code and
+            dynamically compiling a new function. This inlinging increases the performance for
+            large inputs enough to justify this rather sketchy technique.
+            """
+            try:
+                source_code = read_source_code(src)
+            except LookupError as L:
+                self.log_warn(F'unexpected failure while attempting to inline: {L!s}')
+                with io.StringIO() as out:
+                    self._uncompyle6.code_deparse(src.__code__, out)
+                    source_code = out.getvalue()
+            code_lines: List[str] = []
+            source_parameters = iter(inspect.signature(src).parameters.values())
+            first = next(source_parameters).name
+            argument_names = []
+            for k, param in enumerate(source_parameters):
+                name = F'_biv_arg{k}'
+                if param.kind is param.VAR_POSITIONAL:
+                    line = F'{param.name} = tuple(next(_biv_a) for _biv_a in {name})\n'
+                    name = F'*{name}'
+                else:
+                    line = F'{param.name} = next({name})\n'
+                argument_names.append(name)
+                code_lines.append(line)
+            argument_list = ','.join(argument_names)
+            code_lines.extend(source_code.splitlines(True))
+            returns = [k for k, line in enumerate(code_lines) if line.startswith('return')]
+            if not returns:
+                raise LookupError('could not find return statement')
+            returns.reverse()
+            for k in returns:
+                return_value = code_lines[k][6:].strip()
+                mask = self.fmask
+                line = F'yield ({return_value})'
+                if mask is not NoMask:
+                    line = F'{line} & 0x{mask:x}'
+                code_lines[k] = line
+                if code_lines[k].endswith('\n'):
+                    code_lines.insert(k + 1, 'continue\n')
+            code = '\t\t'.join(code_lines)
+            definition = (
+                F'def operation(self,_biv_it,{argument_list}):\n'
+                F'\tfor {first} in _biv_it:\n'
+                F'\t\t{code}'
+            )
+            self.log_debug(F'using inlined function definition:\n{definition.rstrip()}')
+            compiled = compile(definition, '<inlined>', 'single', optimize=2)
+            scope = {}
+            exec(compiled, scope)
+            return scope['operation']
+
+        try:
+            operation = inline_operation(self.operate)
+            return self.unchunk(operation(self, self.chunk(data), *arguments)) + self.rest(data)
+        except Exception as E:
+            self.log_warn(F'unable to inline this operation: {E!s}')
+            self.log_warn(R'falling back all the way to failsafe method')
+            self._arg = arguments
+            return super().process(data)
 
     def process_block(self, block):
         return self.operate(block, *(next(a) for a in self._arg)) & self.fmask
