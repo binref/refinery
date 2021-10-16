@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import olefile
-
-from .. import PathExtractorUnit, UnpackResult
-from ....lib.structures import MemoryFile
+from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.lib.structures import MemoryFile
 
 
 class xtdoc(PathExtractorUnit):
@@ -11,10 +9,15 @@ class xtdoc(PathExtractorUnit):
     Extract files from an OLE document such as a Microsoft Word DOCX file.
     """
 
+    @PathExtractorUnit.Requires('olefile', optional=False)
+    def _olefile():
+        import olefile
+        return olefile
+
     def unpack(self, data):
         with MemoryFile(data) as stream:
             try:
-                oledoc = olefile.OleFileIO(stream)
+                oledoc = self._olefile.OleFileIO(stream)
             except OSError as error:
                 self.log_info(F'error, {error}, treating input as zip file')
                 from ..archive.xtzip import xtzip
