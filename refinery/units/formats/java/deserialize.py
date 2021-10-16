@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-try:
-    import javaobj.v2 as java
-except ImportError:
-    java = None
-
-from .. import Unit
-from ....lib.json import BytesAsArrayEncoder
+from refinery.units import Unit
+from refinery.lib.json import BytesAsArrayEncoder
 
 
 class JavaEncoder(BytesAsArrayEncoder):
@@ -29,9 +24,9 @@ class JavaEncoder(BytesAsArrayEncoder):
         try:
             return super().default(obj)
         except TypeError:
-            if isinstance(obj, java.beans.JavaString):
+            if isinstance(obj, dsjava._javaobj.beans.JavaString):
                 return str(obj)
-            if isinstance(obj, java.beans.JavaInstance):
+            if isinstance(obj, dsjava._javaobj.beans.JavaInstance):
                 cd = obj.classdesc
                 fd = obj.field_data[cd]
                 return dict(
@@ -42,11 +37,11 @@ class JavaEncoder(BytesAsArrayEncoder):
                     name=cd.name,
                     fields={t.name: v for t, v in fd.items()}
                 )
-            if isinstance(obj, java.beans.JavaField):
+            if isinstance(obj, dsjava._javaobj.beans.JavaField):
                 return obj.class_name
-            if isinstance(obj, java.beans.JavaEnum):
+            if isinstance(obj, dsjava._javaobj.beans.JavaEnum):
                 return obj.value
-            if isinstance(obj, java.beans.JavaArray):
+            if isinstance(obj, dsjava._javaobj.beans.JavaArray):
                 if obj.classdesc.name == '[B':
                     return bytearray(t & 0xFF for t in obj)
             raise
@@ -56,6 +51,11 @@ class dsjava(Unit):
     """
     Deserialize Java serialized data and re-serialize as JSON.
     """
+    @Unit.Requires('javaobj-py3>=0.4.0.1', optional=False)
+    def _javaobj():
+        import javaobj.v2
+        return javaobj.v2
+
     def process(self, data):
         with JavaEncoder as encoder:
-            return encoder.dumps(java.loads(data)).encode(self.codec)
+            return encoder.dumps(self._javaobj.loads(data)).encode(self.codec)
