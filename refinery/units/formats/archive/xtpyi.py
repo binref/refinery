@@ -453,7 +453,7 @@ class xtpyi(ArchiveUnit):
             unmarshal=unmarshal, user_code=user_code
         )
 
-    @ArchiveUnit.Requires('xdis')
+    @ArchiveUnit.Requires('xdis', optional=False)
     def _xdis():
         import xdis.load
         import xdis.magics
@@ -466,7 +466,7 @@ class xtpyi(ArchiveUnit):
         del A, B, C, V
         return xdis
 
-    @ArchiveUnit.Requires('uncompyle6')
+    @ArchiveUnit.Requires('uncompyle6', optional=False)
     def _uncompyle6():
         import uncompyle6
         import uncompyle6.main

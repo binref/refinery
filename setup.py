@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import Dict, List, Set
+
 import setuptools
 import os
 import re
@@ -21,7 +23,7 @@ def main():
 
     refinery._cache.reload()
 
-    requirements = toml.load('pyproject.toml')['build-system']['requires']
+    requirements: List[str] = toml.load('pyproject.toml')['build-system']['requires']
 
     magic = 'python-magic'
     if os.name == 'nt':
@@ -53,11 +55,18 @@ def main():
             'binref=refinery.explore:explorer'
         ]
 
-    dependencies = list({
-        dependency
-        for executable in refinery._cache.cache.values()
-        for dependency in executable.dependencies
-    })
+    all_optional: Set[str] = set()
+    all_required: Set[str] = set()
+    extras: Dict[str, List[str]] = {'all': all_optional}
+
+    for executable in refinery._cache.cache.values():
+        if executable.optional_dependencies:
+            all_optional.update(executable.optional_dependencies)
+        if executable.required_dependencies:
+            all_required.update(executable.required_dependencies)
+            extras[executable.name] = list(executable.required_dependencies)
+
+    requirements.extend(all_required)
 
     setuptools.setup(
         name=refinery.__pip_pkg__,
@@ -81,9 +90,7 @@ def main():
             exclude=('test*',)
         ),
         install_requires=requirements,
-        extras_require={
-            'all': dependencies
-        },
+        extras_require=extras,
         include_package_data=True,
         package_data={'refinery': ['__init__.pkl']},
         entry_points={

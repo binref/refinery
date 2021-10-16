@@ -1029,22 +1029,26 @@ class Unit(UnitBase, abstract=True):
     """
     Arg = arg
 
-    dependencies: Optional[Set[str]] = None
+    optional_dependencies: Optional[Set[str]] = None
+    required_dependencies: Optional[Set[str]] = None
 
     @staticmethod
-    def Requires(*distributions: str):
+    def Requires(distribution: str, optional: bool = True):
         class Requirement(property):
-            dependencies = distributions
+            dependency = distribution
+            prefix = 'optional' if optional else 'required'
 
             def __init__(self, importer: Callable):
                 super().__init__(importer)
                 self.module = None
 
             def __set_name__(self, unit: Type[Unit], name: str):
-                dep = unit.dependencies
+                bucket = F'{self.prefix}_dependencies'
+                dep = getattr(unit, bucket)
                 if dep is None:
-                    unit.dependencies = dep = set()
-                dep.update(self.dependencies)
+                    dep = set()
+                    setattr(unit, bucket, dep)
+                dep.add(self.dependency)
 
             def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
                 if self.module is not None:
@@ -1052,7 +1056,7 @@ class Unit(UnitBase, abstract=True):
                 try:
                     self.module = module = super().fget()
                 except ImportError as E:
-                    raise RefineryImportMissing(*self.dependencies) from E
+                    raise RefineryImportMissing(*unit.optional_dependencies) from E
                 else:
                     return module
 

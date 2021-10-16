@@ -58,7 +58,7 @@ class asm(Unit):
         import archinfo
         return archinfo
 
-    @Unit.Requires('capstone')
+    @Unit.Requires('capstone', optional=False)
     def _capstone():
         import capstone
         return capstone

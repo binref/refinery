@@ -32,7 +32,7 @@ class stego(Unit):
             parts=tuple(arg.as_option(p, PIXEL_PART) for p in parts)
         )
 
-    @Unit.Requires('Pillow')
+    @Unit.Requires('Pillow', optional=False)
     def _image():
         from PIL import Image
         return Image
