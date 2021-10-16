@@ -203,7 +203,7 @@ class xlxtr(Unit):
                 self.log_info(F'iterating {sheet.ncols} columns and {sheet.nrows} rows')
                 for row, col in ref.cells(sheet.nrows, sheet.ncols):
                     yield from self._get_value(k, name, sheet.cell_value, row, col)
-    
+
     def _process_new(self, data):
         workbook = self._openpyxl.load_workbook(MemoryFile(data), read_only=True)
         for ref in self.args.references:
