@@ -52,10 +52,10 @@ and then install it again. This will be a lot faster than installing it, because
 
 ## Heavyweight Dependencies
 
-There are some units that have rather heavy-weight dependencies. For example, [stego][] is the only unit that requires an image-parsing library and and [pcap][] is the only unit that requires a pcap parsing library. These libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users. The corresponding units will tell you what to do when their dependency is missing:
+There are some units that have rather heavy-weight dependencies. For [pcap][] is the only unit that requires a packet capture file parsing library. These libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users. The corresponding units will tell you what to do when their dependency is missing:
 ```
-$ emit image.png | stego
-(11:53:26) failure in stego: dependencies missing; install Pillow
+$ emit data.pcap | pcap [| peek ]
+(13:37:00) failure in pcap: dependencies missing; install 'pypcapkit[scapy]'
 ```
 You can then install these missing dependencies manually. If you do not want to be bothered by missing dependencies and don't mind a long refinery installation, you can install the package as follows:
 ```
