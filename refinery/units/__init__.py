@@ -1312,7 +1312,7 @@ class Unit(UnitBase, abstract=True):
         for last, chunk in lookahead(self):
             if (
                 not last
-                and (self._framehandler.unframed or self._framehandler.framebreak)
+                and self._framehandler.framebreak
                 and not chunk.endswith(B'\n')
             ):
                 chunk.extend(B'\n')
