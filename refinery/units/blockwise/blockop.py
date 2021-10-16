@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from ...lib.meta import metavars
-from ...lib.argformats import PythonExpression
-from . import arg, ArithmeticUnit, NoNumpy
+from refinery.units.blockwise import arg, ArithmeticUnit, NoNumpy
+from refinery.lib.meta import metavars
+from refinery.lib.argformats import PythonExpression
 
 
 class IndexCounter:
