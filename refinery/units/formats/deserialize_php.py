@@ -1,37 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json
-try:
-    import phpserialize as php
-except ModuleNotFoundError:
-    php = None
-
-from .. import Unit
+from refinery.units import Unit
 
 
 class dsphp(Unit):
     """
     Deserialize PHP serialized data and re-serialize as JSON.
     """
-
-    class _encoder(json.JSONEncoder):
-        def default(self, obj):
-            try:
-                return super().default(obj)
-            except TypeError:
-                pass
-            if isinstance(obj, bytes) or isinstance(obj, bytearray):
-                return obj.decode('utf8')
-            if isinstance(obj, php.phpobject):
-                return obj._asdict()
+    @Unit.Requires('phpserialize', optional=False)
+    def _php():
+        import phpserialize
+        return phpserialize
 
     def process(self, data):
+        phpobject = self._php.phpobject
+
+        class encoder(json.JSONEncoder):
+            def default(self, obj):
+                try:
+                    return super().default(obj)
+                except TypeError:
+                    pass
+                if isinstance(obj, bytes) or isinstance(obj, bytearray):
+                    return obj.decode('utf8')
+                if isinstance(obj, phpobject):
+                    return obj._asdict()
+
         return json.dumps(
-            php.loads(
+            self._php.loads(
                 data,
-                object_hook=php.phpobject,
+                object_hook=phpobject,
                 decode_strings=True
             ),
             indent=4,
-            cls=self._encoder
+            cls=encoder
         ).encode(self.codec)
