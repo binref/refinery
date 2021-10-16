@@ -1,22 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import pycdlib
-import pycdlib.dr
-import pycdlib.dates
 import datetime
 
-from ....lib.structures import MemoryFile
-from . import arg, ArchiveUnit
-
-
-def _fix_VolumeDescriptorDate_parse(self, datestr):
-    datestr = datestr[:-3] + b'00\0'
-    return _original_VolumeDescriptorDate_parse(self, datestr)
-
-
-_original_VolumeDescriptorDate_parse = pycdlib.dates.VolumeDescriptorDate.parse
-pycdlib.dates.VolumeDescriptorDate.parse = _fix_VolumeDescriptorDate_parse
-
+from refinery.lib.structures import MemoryFile
+from refinery.units.formats.archive import arg, ArchiveUnit
 
 _ISO_FILE_SYSTEMS = ['udf', 'joliet', 'rr', 'iso', 'auto']
 
@@ -34,9 +21,22 @@ class xtiso(ArchiveUnit):
             raise ValueError(F'invalid file system {fs}: must be udf, joliet, rr, iso, or auto.')
         super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, date=date, fs=fs)
 
+    @ArchiveUnit.Requires('pycdlib', optional=False)
+    def _pycdlib():
+        import pycdlib
+        import pycdlib.dates
+
+        def fixed_parse(self, datestr):
+            datestr = datestr[:-3] + b'00\0'
+            return original_parse(self, datestr)
+
+        original_parse = pycdlib.dates.VolumeDescriptorDate.parse
+        pycdlib.dates.VolumeDescriptorDate.parse = fixed_parse
+        return pycdlib
+
     def unpack(self, data):
         with MemoryFile(data) as stream:
-            iso = pycdlib.PyCdlib()
+            iso = self._pycdlib.PyCdlib()
             iso.open_fp(stream)
             fs = self.args.fs
             if fs != 'auto':
