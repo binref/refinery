@@ -3,7 +3,7 @@
 import codecs
 import enum
 
-from .. import arg, Unit
+from refinery.units import arg, Unit
 
 
 class Handler(enum.Enum):
@@ -40,12 +40,16 @@ class recode(Unit):
             encerr=arg.as_option(encerr or errors or 'STRICT', Handler).value
         )
 
+    @Unit.Requires('chardet', optional=False)
+    def _chardet():
+        import chardet
+        return chardet
+
     def _detect(self, data):
         mv = memoryview(data)
         if not any(mv[1::2]): return 'utf-16le'
         if not any(mv[0::2]): return 'utf-16be'
-        import chardet
-        detection = chardet.detect(data)
+        detection = self._chardet.detect(data)
         codec = detection['encoding']
         self.log_info(lambda: F'Using input encoding: {codec}, detected with {int(detection["confidence"]*100)}% confidence.')
         return codec

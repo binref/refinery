@@ -5,8 +5,8 @@ from typing import Optional
 from datetime import datetime
 from zipfile import ZipInfo, ZipFile
 
-from . import ArchiveUnit
-from ....lib.structures import MemoryFile
+from refinery.units.formats.archive import ArchiveUnit
+from refinery.lib.structures import MemoryFile
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
 
@@ -15,6 +15,11 @@ class xtzip(ArchiveUnit):
     """
     Extract files from a Zip archive.
     """
+    @ArchiveUnit.Requires('chardet', optional=True)
+    def _chardet():
+        import chardet
+        return chardet
+
     def unpack(self, data):
         password = self.args.pwd.decode(self.codec)
         archive = ZipFile(MemoryFile(data))
@@ -61,9 +66,12 @@ class xtzip(ArchiveUnit):
             # courtesy of https://stackoverflow.com/a/37773438/9130824
             filename = info.filename
             if info.flag_bits & ZIP_FILENAME_UTF8_FLAG == 0:
-                import chardet
                 filename_bytes = filename.encode('437')
-                guessed_encoding = chardet.detect(filename_bytes)['encoding'] or 'cp1252'
+                try:
+                    guessed_encoding = self._chardet.detect(filename_bytes)['encoding']
+                except ImportError:
+                    guessed_encoding = None
+                guessed_encoding = guessed_encoding or 'cp1252'
                 filename = filename_bytes.decode(guessed_encoding, 'replace')
 
             yield self._pack(filename, date, xt)
