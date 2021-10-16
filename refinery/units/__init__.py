@@ -1029,7 +1029,7 @@ class Unit(UnitBase, abstract=True):
     """
     Arg = arg
 
-    dependencies: Set[str] = set()
+    dependencies: Optional[Set[str]] = None
 
     @staticmethod
     def Requires(*distributions: str):
@@ -1041,7 +1041,10 @@ class Unit(UnitBase, abstract=True):
                 self.module = None
 
             def __set_name__(self, unit: Type[Unit], name: str):
-                unit.dependencies.update(self.dependencies)
+                dep = unit.dependencies
+                if dep is None:
+                    unit.dependencies = dep = set()
+                dep.update(self.dependencies)
 
             def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
                 if self.module is not None:
