@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ... import arg, Unit
-from ....lib.structures import MemoryFile
-import msoffcrypto
+from refinery.units import arg, Unit
+from refinery.lib.structures import MemoryFile
 
 
 class officecrypt(Unit):
@@ -15,10 +14,15 @@ class officecrypt(Unit):
     )) = b'VelvetSweatshop'):
         super().__init__(password=password)
 
+    @Unit.Requires('msoffcrypto-tool', optional=False)
+    def _msoffcrypto():
+        import msoffcrypto
+        return msoffcrypto
+
     def process(self, data):
         password: bytes = self.args.password
         with MemoryFile(data) as stream:
-            doc = msoffcrypto.OfficeFile(stream)
+            doc = self._msoffcrypto.OfficeFile(stream)
             if not doc.is_encrypted():
                 self.log_warn('the document is not encrypted; returning input')
                 return data
