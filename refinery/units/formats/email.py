@@ -3,14 +3,13 @@
 import json
 
 from email.parser import BytesParser
-from extract_msg.message import Message
 from functools import partial
 from collections import defaultdict
 
-from . import PathExtractorUnit, UnpackResult
-from ...lib.mime import file_extension
-from ...lib.tools import NoLogging, isbuffer
-from ..pattern.mimewords import mimewords
+from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.pattern.mimewords import mimewords
+from refinery.lib.mime import file_extension
+from refinery.lib.tools import NoLogging, isbuffer
 
 
 class xtmail(PathExtractorUnit):
@@ -30,11 +29,16 @@ class xtmail(PathExtractorUnit):
         yield UnpackResult('headers.json',
             lambda jsn=jh: json.dumps(jsn, indent=4).encode(self.codec))
 
+    @PathExtractorUnit.Requires('extract_msg', optional=False)
+    def _extract_msg():
+        from extract_msg.message import Message
+        return Message
+
     def _get_parts_outlook(self, data):
         def ensure_bytes(data):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
-        def make_message(name, msg: Message):
+        def make_message(name, msg):
             with NoLogging:
                 htm = msg.htmlBody
                 txt = msg.body
@@ -46,7 +50,7 @@ class xtmail(PathExtractorUnit):
         msgcount = 0
 
         with NoLogging:
-            msg = Message(bytes(data))
+            msg = self._extract_msg(bytes(data))
 
         yield from self._get_headparts(msg.header.items())
         yield from make_message('body', msg)
