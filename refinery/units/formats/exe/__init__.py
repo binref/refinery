@@ -22,7 +22,7 @@ def exeroute(data, handler_elf, handler_macho, handler_pe, *args, **kwargs):
             return handler_pe(parsed, *args, **kwargs)
 
     if data[:4] == B'\x7FELF':
-        from ....lib.structures import MemoryFile
+        from refinery.lib.structures import MemoryFile
         from elftools.elf.elffile import ELFFile
 
         try:
@@ -33,7 +33,7 @@ def exeroute(data, handler_elf, handler_macho, handler_pe, *args, **kwargs):
             return handler_elf(parsed, *args, **kwargs)
 
     if set(data[:4]) <= {0xFE, 0xED, 0xFA, 0xCE, 0xCF}:
-        from ....lib.structures import MemoryFile
+        from refinery.lib.structures import MemoryFile
         import macholib
         import macholib.mach_o
         import macholib.MachO
