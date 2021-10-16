@@ -45,15 +45,11 @@ def pack(data: Iterable[int], blocksize: int, bigendian: bool = False) -> bytear
     if blocksize in (2, 4, 8):
         try:
             import numpy
-        except ModuleNotFoundError:
-            numpy = None
-        order = '<>'[bigendian]
-        if numpy:
+        except ImportError:
+            pass
+        else:
+            order = '<>'[bigendian]
             dtype = numpy.dtype(F'{order}u{blocksize}')
             return numpy.fromiter(data, dtype).tobytes()
-        else:
-            import struct
-            scode = {2: 'H', 4: 'L', 8: 'Q'}[blocksize]
-            return struct.pack(F'{order}{len(data)}{scode}', *data)
-    byteorder = ('little', 'big')[bigendian]
-    return B''.join(number.to_bytes(blocksize, byteorder) for number in data)
+    order = ('little', 'big')[bigendian]
+    return B''.join(number.to_bytes(blocksize, order) for number in data)
