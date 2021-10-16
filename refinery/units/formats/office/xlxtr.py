@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 from fnmatch import fnmatch
 
-import openpyxl
 import re
 import io
 import defusedxml
@@ -146,6 +145,11 @@ class xlxtr(Unit):
         import xlrd2
         return xlrd2
 
+    @Unit.Requires('openpyxl', optional=False)
+    def _openpyxl():
+        import openpyxl
+        return openpyxl
+
     def _rcmatch(self, sheet_index, sheet_name, row, col):
         assert row > 0
         assert col > 0
@@ -199,9 +203,9 @@ class xlxtr(Unit):
                 self.log_info(F'iterating {sheet.ncols} columns and {sheet.nrows} rows')
                 for row, col in ref.cells(sheet.nrows, sheet.ncols):
                     yield from self._get_value(k, name, sheet.cell_value, row, col)
-
+    
     def _process_new(self, data):
-        workbook = openpyxl.load_workbook(MemoryFile(data), read_only=True)
+        workbook = self._openpyxl.load_workbook(MemoryFile(data), read_only=True)
         for ref in self.args.references:
             ref: SheetReference
             for k, name in enumerate(workbook.sheetnames):
