@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import asn1crypto
-import asn1crypto.cms
-import asn1crypto.core
-import asn1crypto.x509
-
-from ...lib.json import BytesAsArrayEncoder
-
 from contextlib import suppress
 from datetime import datetime
 
-from .. import Unit
+from refinery.units import Unit
+from refinery.lib.json import BytesAsArrayEncoder
 
 
 class ParsedASN1ToJSON(BytesAsArrayEncoder):
@@ -40,7 +34,7 @@ class ParsedASN1ToJSON(BytesAsArrayEncoder):
         if isinstance(obj, datetime):
             return str(obj)
         dictionary_result = {}
-        if isinstance(obj, asn1crypto.x509.Certificate):
+        if isinstance(obj, pkcs7._asn1crypto.x509.Certificate):
             dictionary_result.update(fingerprint=obj.sha1.hex())
         with suppress(Exception):
             keys = list(obj)
@@ -50,13 +44,13 @@ class ParsedASN1ToJSON(BytesAsArrayEncoder):
             return dictionary_result
         with suppress(Exception):
             return list(obj)
-        if isinstance(obj, asn1crypto.cms.CertificateChoices):
-            return asn1crypto.x509.Certificate.load(obj.dump())
+        if isinstance(obj, pkcs7._asn1crypto.cms.CertificateChoices):
+            return pkcs7._asn1crypto.x509.Certificate.load(obj.dump())
         with suppress(AttributeError, ValueError):
             return obj.native
-        if isinstance(obj, asn1crypto.core.Any):
+        if isinstance(obj, pkcs7._asn1crypto.core.Any):
             return obj.dump()
-        if isinstance(obj, asn1crypto.core.Asn1Value):
+        if isinstance(obj, pkcs7._asn1crypto.core.Asn1Value):
             return obj.dump()
         raise ValueError(F'Unable to determine JSON encoding of {obj.__class__.__name__} object.')
 
@@ -65,7 +59,15 @@ class pkcs7(Unit):
     """
     Converts PKCS7 encoded data to a JSON representation.
     """
+    @Unit.Requires('asn1crypto', optional=False)
+    def _asn1crypto():
+        import asn1crypto
+        import asn1crypto.cms
+        import asn1crypto.core
+        import asn1crypto.x509
+        return asn1crypto
+
     def process(self, data: bytes):
-        signature = asn1crypto.cms.ContentInfo.load(data)
+        signature = self._asn1crypto.cms.ContentInfo.load(data)
         with ParsedASN1ToJSON as encoder:
             return encoder.dumps(signature).encode(self.codec)
