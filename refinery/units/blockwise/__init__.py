@@ -99,8 +99,9 @@ class BlockTransformationBase(Unit, abstract=True):
 class BlockTransformation(BlockTransformationBase, abstract=True):
 
     def process(self, data):
+        pb = self.process_block
         return self.unchunk(
-            self.process_block(b) for b in self.chunk(data)
+            pb(b) for b in self.chunk(data)
         ) + self.rest(data)
 
     @abc.abstractmethod
@@ -181,11 +182,12 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
 
     def process(self, data):
         try:
+            self.log_debug('Attempting to process input using numpy method.')
             result = self.process_ecb_fast(data)
         except ImportError:
-            self.log_info(R'this unit could perform faster if numpy was installed.')
+            self.log_info(R'This unit could perform faster if numpy was installed.')
         except Exception as error:
-            self.log_warn(F'falling back to default method after numpy failed with error: {error}')
+            self.log_warn(F'Falling back to default method after numpy failed with error: {error}')
         else:
             self.log_debug('successfully used numpy to process data in ecb mode')
             return result
