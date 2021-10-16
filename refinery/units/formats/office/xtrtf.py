@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from oletools.rtfobj import RtfObjParser, RtfObject
-from oletools.oleobj import OleObject
+from typing import TYPE_CHECKING
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
-from .. import PathExtractorUnit, UnpackResult
+if TYPE_CHECKING:
+    from oletools.rtfobj import RtfObject
 
 
 class xtrtf(PathExtractorUnit):
     """
     Extract embedded objects in RTF documents.
     """
+    @PathExtractorUnit.Requires('oletools')
+    def _oletools():
+        import oletools
+        import oletools.rtfobj
+        import oletools.oleobj
+        return oletools
 
     def unpack(self, data):
-        parser = RtfObjParser(data)
+        parser = self._oletools.rtfobj.RtfObjParser(data)
         parser.parse()
         width = len(str(len(parser.objects)))
         for k, item in enumerate(parser.objects):
@@ -21,9 +28,9 @@ class xtrtf(PathExtractorUnit):
             data = item.rawdata
             meta = {}
             if item.is_ole:
-                if item.format_id == OleObject.TYPE_EMBEDDED:
+                if item.format_id == self._oletools.oleobj.OleObject.TYPE_EMBEDDED:
                     meta['ole_type'] = 'EMBEDDED'
-                elif item.format_id == OleObject.TYPE_LINKED:
+                elif item.format_id == self._oletools.oleobj.OleObject.TYPE_LINKED:
                     meta['ole_type'] = 'LINKED'
                 if item.is_package:
                     meta['src_path'] = item.src_path

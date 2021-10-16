@@ -8,10 +8,13 @@ class xtvba(PathExtractorUnit):
     """
     Extract VBA macro code from Office documents.
     """
+    @PathExtractorUnit.Requires('oletools')
+    def _olevba():
+        from oletools import olevba
+        return olevba
 
     def unpack(self, data):
-        from oletools import olevba
-        parser = olevba.VBA_Parser(
+        parser = self._olevba.VBA_Parser(
             metavars(data).get('path', None), data=bytes(data), relaxed=True)
         for _, path, _, code in parser.extract_all_macros():
             yield UnpackResult(path, code.encode(self.codec))
