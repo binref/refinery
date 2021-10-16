@@ -7,10 +7,10 @@ algorithms can be found in `refinery.units.crypto.cipher`.
 import abc
 import itertools
 
-from .. import arg, Unit
-from ...lib.argformats import numseq
-from ...lib import chunks
-from ...lib.tools import infinitize, cached_property
+from refinery.units import arg, Unit
+from refinery.lib.argformats import numseq
+from refinery.lib import chunks
+from refinery.lib.tools import infinitize, cached_property
 
 
 class NoNumpy(Exception):
@@ -138,15 +138,16 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             tmp = tmp.astype(block.dtype)
         block[:] = tmp
 
+    @Unit.Requires('numpy')
+    def _numpy():
+        import numpy
+        return numpy
+
     def process_ecb_fast(self, data):
         """
         Attempts to perform the operation more quickly by using numpy arrays.
         """
-        try:
-            import numpy
-        except ModuleNotFoundError:
-            raise NoNumpy
-
+        numpy = self._numpy
         order = '<>'[self.args.bigendian]
         try:
             dtype = numpy.dtype(F'{order}u{self.args.precision}')
@@ -181,8 +182,8 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     def process(self, data):
         try:
             result = self.process_ecb_fast(data)
-        except NoNumpy:
-            pass
+        except ImportError:
+            self.log_info(R'this unit could perform faster if numpy was installed.')
         except Exception as error:
             self.log_warn(F'falling back to default method after numpy failed with error: {error}')
         else:

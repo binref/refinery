@@ -7,8 +7,17 @@ import abc
 
 from typing import Iterable, Any, ByteString, Tuple
 
-from ... import arg, Unit, Executable, RefineryCriticalException, RefineryPartialResult
-from ....lib.argformats import OptionFactory, extract_options
+from refinery.lib.argformats import (
+    extract_options,
+    OptionFactory,
+)
+from refinery.units import (
+    arg,
+    Executable,
+    RefineryCriticalException,
+    RefineryPartialResult,
+    Unit,
+)
 
 
 class CipherExecutable(Executable):
@@ -64,13 +73,23 @@ class StreamCipherUnit(CipherUnit, abstract=True):
     def keystream(self) -> Iterable[int]:
         raise NotImplementedError
 
+    @Unit.Requires('numpy')
+    def _numpy():
+        import numpy
+        return numpy
+
     def encrypt(self, data: bytearray) -> bytearray:
-        import numpy as np
         it = self._keystream or self.keystream()
-        key = np.fromiter(it, dtype=np.uint8, count=len(data))
-        out = np.frombuffer(
-            memoryview(data), dtype=np.uint8, count=len(data))
-        out ^= key
+        try:
+            np = self._numpy
+        except ImportError:
+            self.log_info('this unit could perform faster if numpy was installed.')
+            out = bytearray(a ^ b for a, b in zip(it, data))
+        else:
+            key = np.fromiter(it, dtype=np.uint8, count=len(data))
+            out = np.frombuffer(
+                memoryview(data), dtype=np.uint8, count=len(data))
+            out ^= key
         return out
 
     def filter(self, chunks: Iterable):
