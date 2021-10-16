@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from fnmatch import fnmatch
+
 import openpyxl
-import xlrd2 as xlrd
 import re
 import io
 import defusedxml
 import functools
 
-from ... import arg, Unit
-from ....lib.structures import MemoryFile
+from refinery.units import arg, Unit
+from refinery.lib.structures import MemoryFile
 
 
 defusedxml.defuse_stdlib()
@@ -141,6 +141,11 @@ class xlxtr(Unit):
             references = [SheetReference('*')]
         super().__init__(references=references)
 
+    @Unit.Requires('xlrd2', optional=False)
+    def _xlrd():
+        import xlrd2
+        return xlrd2
+
     def _rcmatch(self, sheet_index, sheet_name, row, col):
         assert row > 0
         assert col > 0
@@ -179,7 +184,7 @@ class xlxtr(Unit):
 
     def _process_old(self, data):
         with io.StringIO() as logfile:
-            wb = xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=self.args.verbose - 1, on_demand=True)
+            wb = self._xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=self.args.verbose - 1, on_demand=True)
             logfile.seek(0)
             for entry in logfile:
                 entry = entry.strip()
