@@ -13,6 +13,9 @@ class dsphp(Unit):
         import phpserialize
         return phpserialize
 
+    def reverse(self, data):
+        return self._php.dumps(json.loads(data))
+
     def process(self, data):
         phpobject = self._php.phpobject
 
