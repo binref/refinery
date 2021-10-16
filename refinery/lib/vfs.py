@@ -97,7 +97,7 @@ class VirtualFileSystem:
             try:
                 with self._lock:
                     vf = self._by_name[os.path.basename(file)]
-            except KeyError:
+            except BaseException:
                 return self._open(file, *args, **kwargs)
             else:
                 return vf.open(args[0])
@@ -106,7 +106,7 @@ class VirtualFileSystem:
             try:
                 with self._lock:
                     vf = self._by_name[os.path.basename(file)]
-            except KeyError:
+            except BaseException:
                 return self._stat(file)
             else:
                 return vf.stat()
@@ -115,7 +115,7 @@ class VirtualFileSystem:
             try:
                 with self._lock:
                     vf = self._by_node[fileno]
-            except KeyError:
+            except BaseException:
                 return self._mmap(fileno, length, *args, **kwargs)
             else:
                 return vf.mmap(length, kwargs.get('offset', 0))
