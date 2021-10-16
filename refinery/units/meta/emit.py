@@ -16,10 +16,14 @@ class emit(Unit):
     ))):
         super().__init__(data=data)
 
+    @Unit.Requires('pyperclip', optional=False)
+    def _pyperclip():
+        import pyperclip
+        return pyperclip
+
     def process(self, data):
         if not self.args.data:
-            import pyperclip
-            data = pyperclip.paste()
+            data = self._pyperclip.paste()
             yield data and data.encode(self.codec, 'replace') or B''
         else:
             yield from self.args.data

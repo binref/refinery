@@ -122,12 +122,16 @@ class dump(Unit):
         self.stream.close()
         self.stream = None
 
+    @Unit.Requires('pyperclip', optional=False)
+    def _pyperclip():
+        import pyperclip
+        return pyperclip
+
     def process(self, data):
         if not self.exhausted:
             if self._paste:
                 import codecs
-                import pyperclip
-                pyperclip.copy(codecs.decode(
+                self._pyperclip.copy(codecs.decode(
                     data, 'utf-8', errors='backslashreplace'))
             elif not self.stream:
                 # This should happen only when the unit is called from Python code
