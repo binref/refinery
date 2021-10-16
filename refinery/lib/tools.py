@@ -263,6 +263,8 @@ def infinitize(it):
         itertools.repeat,
         itertools.count
     )):
+        if not hasattr(it, '__iter__') and not hasattr(it, '__next__'):
+            it = (it, )
         return itertools.cycle(it)
     return it
 
