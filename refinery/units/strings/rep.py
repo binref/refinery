@@ -16,4 +16,20 @@ class rep(Unit):
     def process(self, data: bytes):
         if self.args.count < 2:
             raise ValueError('The count must be at least two.')
-        yield from repeat(data, self.args.count)
+        squeeze = self.args.squeeze
+        if not squeeze:
+            framestate = self._framed
+            if not framestate:
+                squeeze = True
+            elif framestate.framebreak:
+                self.log_debug('all repeated items will be joined with line breaks')
+                yield B'\n'.join(repeat(data, self.args.count))
+                return
+            elif framestate.unframed:
+                squeeze = True
+        if not squeeze:
+            self.log_debug('emitting each repeated item as an individual chunk')
+            yield from repeat(data, self.args.count)
+        else:
+            self.log_debug('compressing all repeated items into a single chunk')
+            yield data * self.args.count
