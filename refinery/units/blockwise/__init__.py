@@ -235,8 +235,14 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             code_lines: List[str] = []
             source_parameters = iter(inspect.signature(src).parameters.values())
             first = next(source_parameters).name
+            pre_loop_lines = []
             argument_names = []
             for k, param in enumerate(source_parameters):
+                argument = self.args.argument[k]
+                if isinstance(argument, int):
+                    pre_loop_lines.append(F'{param.name} = 0x{argument:x}\n')
+                    argument_names.append(F'_{k}')
+                    continue
                 name = F'_biv_arg{k}'
                 if param.kind is param.VAR_POSITIONAL:
                     line = F'{param.name} = tuple(next(_biv_a) for _biv_a in {name})\n'
@@ -261,8 +267,10 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                 if code_lines[k].endswith('\n'):
                     code_lines.insert(k + 1, 'continue\n')
             code = '\t\t'.join(code_lines)
+            initializations = '\t'.join(pre_loop_lines).rstrip()
             definition = (
                 F'def operation(self,_biv_it,{argument_list}):\n'
+                F'\t{initializations}\n'
                 F'\tfor {first} in _biv_it:\n'
                 F'\t\t{code}'
             )
