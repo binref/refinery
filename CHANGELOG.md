@@ -1,5 +1,16 @@
 # Binary Refinery Changelog
 
+## Version 0.4.6
+- The `officectypt` unit now supports the Excel default password `VelvetSweatshop`.
+- The `ci` property has been removed from the output of `peek --meta`.
+- The following units were added: `xj0`, `evtx`
+- The `hexdmp` unit was renamed once more to `hexload`, and its pattern matching was improved.
+- The `asm` unit was completely redesigned using an Angr-based fallback to produce better disassembly.
+- The `pcap-http` unit now extracts the URL from whence the data was downloaded.
+- The `rep` unit received some performance improvements.
+- The refinery dependencies were cleaned up considerably.
+- Blockwise operations no longer require numpy to be reasonably fast by implementing a dynamic inlining step.
+
 ## Version 0.4.5
 - Adds the `cswap` unit.
 - The index counter of `blockop` now starts at zero.
