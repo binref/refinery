@@ -222,7 +222,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             This function takes a callable which implements the arithmetic operation atomic, and
             produces a new function which performs the same operation on an iterable. The input
             atomic function has been inlined into the new method by re-parsing its source code and
-            dynamically compiling a new function. This inlinging increases the performance for
+            dynamically compiling a new function. This inlining increases the performance for
             large inputs enough to justify this rather sketchy technique.
             """
             try:
