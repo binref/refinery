@@ -44,3 +44,11 @@ class TestASM(TestUnitBase):
             B'int'
         ]])
         self.assertIsNotNone(re.search(pattern, result, flags=re.DOTALL))
+
+    def test_addresses(self):
+        data = bytes.fromhex('4831C948F7E1043B48BB0A2F62696E2F2F736852530A545F5257545E0F05')
+        lines = str(data | self.load('x64')).splitlines(False)
+        addresses = [
+            line.split(':')[0][-2:] for line in lines
+        ]
+        self.assertListEqual(addresses, ['00', '03', '06', '08', '12', '17', '18', '19', '1A', '1B', '1C'])

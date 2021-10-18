@@ -233,5 +233,5 @@ class asm(Unit):
                 msg = F'  {insn.mnemonic:<{memo_width}} {insn.op_str:<{args_width}}'
                 if not no_hexdump:
                     msg = F'{msg}  ; {hd}'
-                yield pprint(msg)
+                yield pprint(msg, insn.address)
             tail = address + bb.size
