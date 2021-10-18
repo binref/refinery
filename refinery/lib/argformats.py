@@ -133,7 +133,7 @@ class PythonExpression:
         constants = constants or {}
         variables = set(variables) | set(constants)
         try:
-            expression = ast.parse(definition, mode='eval')   
+            expression = ast.parse(definition, mode='eval')
         except Exception:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}')
 
@@ -142,21 +142,13 @@ class PythonExpression:
                 def visit_Constant(self, node: ast.Constant):
                     if not isinstance(node.value, str):
                         return node
-                    return ast.Constant(
-                        value=node.value.encode('utf8'),
-                        lineno=node.lineno,
-                        col_offset=node.col_offset
-                    )
+                    return ast.Constant(value=node.value.encode('utf8'))
         else:
             class StringToBytes(ast.NodeTransformer):
                 def visit_Str(self, node: ast.Str):
-                    return ast.Bytes(
-                        s=node.s.encode('utf8'),
-                        lineno=node.lineno,
-                        col_offset=node.col_offset
-                    )
+                    return ast.Bytes(s=node.s.encode('utf8'))
 
-        expression = StringToBytes().visit(expression)
+        expression = ast.fix_missing_locations(StringToBytes().visit(expression))
         nodes = ast.walk(expression)
 
         try:
@@ -164,7 +156,7 @@ class PythonExpression:
                 raise ParserError(F'Unknown error parsing the expression: {definition!s}')
         except StopIteration:
             raise ParserError('The input string is not a Python expression.')
-        
+
         names = {node.id for node in nodes if isinstance(node, ast.Name)}
         names.difference_update(dir(builtins))
         names.difference_update(globals())
