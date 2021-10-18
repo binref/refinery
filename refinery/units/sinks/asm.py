@@ -226,10 +226,7 @@ class asm(Unit):
                     yield pprint(F'{function.name}:')
                     break
             for insn in bb.block:
-                try:
-                    hd = one(hexdump(insn.bytes, metrics_opc))
-                except LookupError:
-                    hd = 'wat: {}'.format(insn.bytes.hex())
+                hd = one(hexdump(insn.bytes, metrics_opc))
                 msg = F'  {insn.mnemonic:<{memo_width}} {insn.op_str:<{args_width}}'
                 if not no_hexdump:
                     msg = F'{msg}  ; {hd}'
