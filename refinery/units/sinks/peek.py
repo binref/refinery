@@ -88,10 +88,10 @@ class peek(HexViewer):
         remaining = linecount
         result = []
         if codec is None:
-            from ..encoding.esc import esc
+            from refinery.units.encoding.esc import esc
             decoded = data[:abs(width * linecount)]
             decoded = str(decoded | -esc(bare=True))
-            for k in range(0, abs(linecount), width):
+            for k in range(0, abs(linecount) * width, width):
                 result.append(decoded[k:k + width])
             return result
         try:
@@ -151,8 +151,13 @@ class peek(HexViewer):
                 padding += 6
 
         metrics = self._get_metrics(len(data), self.args.lines, padding)
-        sepsize = metrics.hexdump_width
-        txtsize = self.args.width or sepsize
+
+        if self.args.brief:
+            metrics.address_width = 0
+            metrics.fit_to_width(allow_increase=True)
+
+        sepsize = metrics.max_width
+        txtsize = self.args.width or (sepsize - metrics.padding)
 
         if self.args.lines and data:
             if self.args.esc:
