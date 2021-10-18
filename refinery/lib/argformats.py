@@ -77,6 +77,7 @@ import ast
 import builtins
 import itertools
 import inspect
+import sys
 
 from pathlib import Path
 from argparse import ArgumentTypeError
@@ -132,17 +133,38 @@ class PythonExpression:
         constants = constants or {}
         variables = set(variables) | set(constants)
         try:
-            expression = ast.parse(definition)
-            nodes = ast.walk(expression)
+            expression = ast.parse(definition, mode='eval')   
         except Exception:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}')
+
+        if sys.version_info >= (3, 8):
+            class StringToBytes(ast.NodeTransformer):
+                def visit_Constant(self, node: ast.Constant):
+                    if not isinstance(node.value, str):
+                        return node
+                    return ast.Constant(
+                        value=node.value.encode('utf8'),
+                        lineno=node.lineno,
+                        col_offset=node.col_offset
+                    )
+        else:
+            class StringToBytes(ast.NodeTransformer):
+                def visit_Str(self, node: ast.Str):
+                    return ast.Bytes(
+                        s=node.s.encode('utf8'),
+                        lineno=node.lineno,
+                        col_offset=node.col_offset
+                    )
+
+        expression = StringToBytes().visit(expression)
+        nodes = ast.walk(expression)
+
         try:
-            if type(next(nodes)) != ast.Module:
+            if type(next(nodes)) != ast.Expression:
                 raise ParserError(F'Unknown error parsing the expression: {definition!s}')
-            if type(next(nodes)) != ast.Expr:
-                raise ParserError(F'Not a valid Python expression: {definition!s}')
         except StopIteration:
             raise ParserError('The input string is not a Python expression.')
+        
         names = {node.id for node in nodes if isinstance(node, ast.Name)}
         names.difference_update(dir(builtins))
         names.difference_update(globals())
@@ -152,6 +174,7 @@ class PythonExpression:
 
         self.variables = names
         self.constants = constants
+        self.expression = compile(expression, '<string>', 'eval')
 
     def __str__(self):
         return self.definition
@@ -167,7 +190,7 @@ class PythonExpression:
             except KeyError:
                 raise ParserVariableMissing(v)
         variables.update(self.constants)
-        return eval(self.definition, None, variables)
+        return eval(self.expression, None, variables)
 
     @classmethod
     def evaluate(cls, definition, values):
