@@ -24,3 +24,22 @@ class TestStructUnit(TestUnitBase):
     def test_no_last_field(self):
         unit = self.load('6sB8s')
         self.assertEqual(bytes(B'Binary Refinery' | unit), B'Refinery')
+
+    def test_zero_length(self):
+        unit = self.load('{s:H}{d:s}')
+        data = (
+            B'\x00\x00'
+            B'\x02\x00' b'ok'
+            B'\x03\x00' b'foo'
+            B'\x03\x00' b'bar'
+        )
+        self.assertListEqual([B'', b'ok', b'foo', b'bar'], list(data | unit))
+
+    def test_read_all(self):
+        unit = self.load('{s:B}{d:s}{x}')
+        data = (
+            B'\x02' b'ok'
+            B'\x03' b'foo'
+            B'\x03' b'bar'
+        )
+        self.assertListEqual([b'\x03foo\x03bar'], list(data | unit))

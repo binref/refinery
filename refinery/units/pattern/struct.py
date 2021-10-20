@@ -108,7 +108,7 @@ class struct(Unit):
                         spec = PythonExpression.evaluate(spec, meta)
                     except ParserError:
                         pass
-                    if not spec:
+                    if spec == '':
                         value = reader.read()
                     elif isinstance(spec, int):
                         value = reader.read_bytes(spec)
