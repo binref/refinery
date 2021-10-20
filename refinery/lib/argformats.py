@@ -106,8 +106,8 @@ class RepeatedInteger(int):
     This class serves as a dual-purpose result for `refinery.lib.argformats.numseq`
     types. It is an integer, but can be infinitely iterated.
     """
-    def __iter__(self):
-        while True: yield self
+    def __iter__(self): return self
+    def __next__(self): return self
 
 
 class LazyEvaluation:
@@ -146,6 +146,9 @@ class PythonExpression:
             else:
                 def visit_Str(self, node: ast.Str):
                     return ast.Bytes(s=node.s.encode('utf8'))
+
+            def visit_MatMult(self, node: ast.MatMult) -> Any:
+                return ast.BitXor()
 
         expression = ast.fix_missing_locations(StringToBytes().visit(expression))
         nodes = ast.walk(expression)
