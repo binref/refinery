@@ -233,21 +233,28 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                     self._uncompyle6.code_deparse(src.__code__, out)
                     source_code = out.getvalue()
             code_lines: List[str] = []
-            source_parameters = iter(inspect.signature(src).parameters.values())
+            source_parameters = inspect.signature(src).parameters
+            source_parameters = iter(source_parameters.values())
             first = next(source_parameters).name
             pre_loop_lines = []
             argument_names = []
             for k, param in enumerate(source_parameters):
-                argument = self.args.argument[k]
+                try:
+                    argument = self.args.argument[k]
+                except IndexError:
+                    if param.kind is not param.VAR_POSITIONAL:
+                        raise
+                    argument_names.append(F'*{param.name}')
+                    continue
                 if isinstance(argument, int):
                     pre_loop_lines.append(F'{param.name} = 0x{argument:x}\n')
                     argument_names.append(F'_{k}')
                     continue
-                name = F'_biv_arg{k}'
                 if param.kind is param.VAR_POSITIONAL:
                     line = F'{param.name} = tuple(next(_biv_a) for _biv_a in {name})\n'
-                    name = F'*{name}'
+                    name = F'*_biv_arg{k}'
                 else:
+                    name = F'_biv_arg{k}'
                     line = F'{param.name} = next({name})\n'
                 argument_names.append(name)
                 code_lines.append(line)
@@ -268,9 +275,11 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                     code_lines.insert(k + 1, 'continue\n')
             code = '\t\t'.join(code_lines)
             initializations = '\t'.join(pre_loop_lines).rstrip()
+            if initializations:
+                initializations = F'\t{initializations}\n'
             definition = (
                 F'def operation(self,_biv_it,{argument_list}):\n'
-                F'\t{initializations}\n'
+                F'{initializations}'
                 F'\tfor {first} in _biv_it:\n'
                 F'\t\t{code}'
             )
