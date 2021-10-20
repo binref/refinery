@@ -8,7 +8,8 @@ class bitrev(UnaryOperation):
     Reverse the bits of every block.
     """
     @staticmethod
-    def operate(arg): pass
+    def operate(arg):
+        raise RuntimeError('operate was called before the unit was initialized')
 
     def __init__(self, bigendian=False, blocksize=1):
         """
@@ -19,7 +20,8 @@ class bitrev(UnaryOperation):
         super().__init__(bigendian=bigendian, blocksize=blocksize)
 
         if self.bytestream:
-            self.operate = lambda v: ((v * 0x202020202) & 0x10884422010) % 1023
+            def operate(v):
+                return ((v * 0x202020202) & 0x10884422010) % 1023
         elif self.args.blocksize in (2, 4, 8):
             def operate(v):
                 s = self.fbits
@@ -37,4 +39,4 @@ class bitrev(UnaryOperation):
                 for s in range(self.fbits):
                     w |= ((v >> s) & 1) << (self.fbits - s - 1)
                 return w
-            self.operate = operate
+        self.operate = operate
