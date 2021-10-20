@@ -16,7 +16,7 @@ class carve_pe(PathExtractorUnit):
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, path=b'name',
         recursive: arg.switch('-r', help='Extract PE files that are contained in already extracted PEs.') = False,
-        keep_root: arg.switch('-R', help='If the input chunk is itself a PE, include it as an output chunk.') = False,
+        keep_root: arg.switch('-k', help='If the input chunk is itself a PE, include it as an output chunk.') = False,
         memdump  : arg.switch('-m', help='Use the virtual memory layout of a PE file to calculate its size.') = False,
         fileinfo : arg.switch('-f', help='Use the PE meta information to deduce a file name meta variable.') = False
     ):
