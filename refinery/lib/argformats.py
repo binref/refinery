@@ -137,14 +137,13 @@ class PythonExpression:
         except Exception:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}')
 
-        if sys.version_info >= (3, 8):
-            class StringToBytes(ast.NodeTransformer):
+        class StringToBytes(ast.NodeTransformer):
+            if sys.version_info >= (3, 8):
                 def visit_Constant(self, node: ast.Constant):
                     if not isinstance(node.value, str):
                         return node
                     return ast.Constant(value=node.value.encode('utf8'))
-        else:
-            class StringToBytes(ast.NodeTransformer):
+            else:
                 def visit_Str(self, node: ast.Str):
                     return ast.Bytes(s=node.s.encode('utf8'))
 
