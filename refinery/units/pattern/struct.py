@@ -104,10 +104,11 @@ class struct(Unit):
                         continue
                     if spec:
                         spec = meta.format_str(spec, self.codec, args)
-                    try:
-                        spec = PythonExpression.evaluate(spec, meta)
-                    except ParserError:
-                        pass
+                    if spec != '':
+                        try:
+                            spec = PythonExpression.evaluate(spec, meta)
+                        except ParserError:
+                            pass
                     if spec == '':
                         value = reader.read()
                     elif isinstance(spec, int):
