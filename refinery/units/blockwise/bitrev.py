@@ -32,7 +32,6 @@ class bitrev(UnaryOperation):
                     m = m ^ (m << s)
                     w = ((w << s) & ~m) | ((w >> s) & m)
                 return w
-            self.operate = operate
         else:
             def operate(v):
                 w = v & 0
