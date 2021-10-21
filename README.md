@@ -168,7 +168,7 @@ Warzone RAT:
 ```
 emit 4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5 \
   | vsect .bss | struct L{key:{0}}$ [\
-  | rc4 xvar:key | struct L{host:{}}{port:H} {host:u16}:{port} ]
+  | rc4 xvar:key | struct L{host:{}}{port:H}$ {host:u16}:{port} ]
 ```
 
 ### AES Encryption

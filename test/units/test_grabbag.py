@@ -56,7 +56,7 @@ class TestGrabBagExamples(TestBase):
     def test_warzone_sample(self):
         data = self.download_sample('4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5')
         pipeline = L('vsect .bss') | L('struct L{key:{0}}$') [
-            L('rc4 xvar:key') | L('struct L{host:{}}{port:H} {host:u16}:{port}') ]
+            L('rc4 xvar:key') | L('struct L{host:{}}{port:H}$ {host:u16}:{port}') ]
         self.assertEqual(str(data | pipeline), '165.22.5''.''66:1111')
 
     def test_blackmatter_sample(self):
