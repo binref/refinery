@@ -106,6 +106,7 @@ class TestMetaProperties(TestUnitBase):
             'W503',  # Line break occurred before a binary operator
             'F722',  # syntax error in forward annotation
             'F821',  # undefined name
+            'E261',  # at least two spaces before inline comment
         ], max_line_length=140)
         report = rules.check_files(path for path in glob(
             os.path.join(root, 'refinery', '**', '*.py'), recursive=True)
