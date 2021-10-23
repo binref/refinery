@@ -3,8 +3,8 @@
 import tarfile
 import datetime
 
-from ....lib.structures import MemoryFile
-from . import ArchiveUnit
+from refinery.lib.structures import MemoryFile
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class xttar(ArchiveUnit):

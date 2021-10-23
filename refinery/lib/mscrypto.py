@@ -8,7 +8,7 @@ import enum
 from Crypto.PublicKey import RSA
 from Crypto.Math.Numbers import Integer
 
-from .structures import Struct, StructReader
+from refinery.lib.structures import Struct, StructReader
 
 
 class _ENUM(enum.IntEnum):

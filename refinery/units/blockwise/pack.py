@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 import re
 
-from . import arg, BlockTransformationBase
-from ...lib.argformats import number
-from ...lib.patterns import formats
-from ..encoding.base import base as base_unit
+from refinery.units.blockwise import arg, BlockTransformationBase
+from refinery.units.encoding.base import base as BaseUnit
+from refinery.lib.argformats import number
+from refinery.lib.patterns import formats
 
 
 class pack(BlockTransformationBase):
@@ -54,7 +54,7 @@ class pack(BlockTransformationBase):
                 0x10: b'0x'
             }.get(base, B'')
 
-        converter = base_unit(base, not self.args.bigendian)
+        converter = BaseUnit(base, not self.args.bigendian)
 
         for n in self.chunk(data, raw=True):
             yield prefix + converter.reverse(n)

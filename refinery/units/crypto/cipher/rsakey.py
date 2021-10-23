@@ -6,9 +6,9 @@ import itertools
 import json
 import textwrap
 
-from ... import arg, Unit
-from ....lib.json import flattened
-from .rsa import normalize_rsa_key
+from refinery.units import arg, Unit
+from refinery.lib.json import flattened
+from refinery.units.crypto.cipher.rsa import normalize_rsa_key
 
 from Crypto.Util.asn1 import DerSequence
 from Crypto.Util import number

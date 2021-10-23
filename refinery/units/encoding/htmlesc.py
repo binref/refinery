@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import html as html_entities
 
-from .. import Unit
-from ...lib.decorators import unicoded
+from refinery.units import Unit
+from refinery.lib.decorators import unicoded
 
 
 class htmlesc(Unit):

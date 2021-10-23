@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator
-from ....lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.lib.patterns import formats
 
 
 class deob_vba_constants(Deobfuscator):

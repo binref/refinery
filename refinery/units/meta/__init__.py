@@ -8,10 +8,10 @@ from __future__ import annotations
 from typing import Iterable, TYPE_CHECKING
 from abc import abstractmethod
 if TYPE_CHECKING:
-    from ...lib.frame import Chunk
+    from refinery.lib.frame import Chunk
 
-from .. import arg, Unit
-from ...lib.argformats import sliceobj
+from refinery.units import arg, Unit
+from refinery.lib.argformats import sliceobj
 
 
 class FrameSlicer(Unit, abstract=True):

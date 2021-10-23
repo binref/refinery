@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import UnaryOperation
+from refinery.units.blockwise import UnaryOperation
 
 
 class bitrev(UnaryOperation):

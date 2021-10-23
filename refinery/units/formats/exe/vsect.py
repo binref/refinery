@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import exeroute
-from .. import UnpackResult, PathExtractorUnit
+from refinery.units.formats.exe import exeroute
+from refinery.units.formats import UnpackResult, PathExtractorUnit
 
 
 class vsect(PathExtractorUnit):

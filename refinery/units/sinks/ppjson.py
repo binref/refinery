@@ -3,8 +3,8 @@
 import json
 import re
 
-from .. import arg, Unit
-from ...lib.json import flattened
+from refinery.units import arg, Unit
+from refinery.lib.json import flattened
 
 
 class ppjson(Unit):
@@ -36,7 +36,7 @@ class ppjson(Unit):
             def smartfix(match):
                 k = match.start()
                 return match.group(0 if any(k in s for s in strings) else 1)
-            from ...lib.patterns import formats
+            from refinery.lib.patterns import formats
             strings = {range(*m.span()) for m in formats.string.finditer(data)}
             data = self._TRAILING_COMMA.sub(smartfix, data)
         kwargs = {'indent': self.args.indent} if self.args.indent else {'separators': (',', ':')}

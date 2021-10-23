@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from struct import unpack
 
-from ... import Unit
+from refinery.units import Unit
 
 
 class carve_zip(Unit):

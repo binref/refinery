@@ -7,8 +7,8 @@ dnSpy source code.
 """
 import re
 
-from .deserialize import BinaryFormatterParser
-from .types import (
+from refinery.lib.dotnet.deserialize import BinaryFormatterParser
+from refinery.lib.dotnet.types import (
     Blob,
     Box,
     Byte,

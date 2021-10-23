@@ -6,7 +6,7 @@ import defusedxml.minidom
 from typing import Optional
 from contextlib import suppress
 
-from .. import Unit
+from refinery.units import Unit
 
 
 class XMLTag:

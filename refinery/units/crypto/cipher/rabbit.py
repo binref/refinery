@@ -6,7 +6,7 @@ Pure Python implementation of the RABBIT stream cipher.
 import struct
 from typing import Iterable, Optional, ByteString, List
 
-from . import arg, StreamCipherUnit
+from refinery.units.crypto.cipher import arg, StreamCipherUnit
 
 
 class RabbitCipher:

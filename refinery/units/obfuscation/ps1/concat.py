@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import IterativeDeobfuscator
-from . import string_unquote, string_quote, Ps1StringLiterals
+from refinery.units.obfuscation import IterativeDeobfuscator
+from refinery.units.obfuscation.ps1 import string_unquote, string_quote, Ps1StringLiterals
 
 
 class deob_ps1_concat(IterativeDeobfuscator):

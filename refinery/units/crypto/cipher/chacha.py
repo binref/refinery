@@ -3,9 +3,9 @@
 from Crypto.Cipher import ChaCha20
 from typing import List, Iterable
 
-from .salsa import LatinCipher
-from . import LatinCipherUnit, LatinCipherStandardUnit
-from ....lib.crypto import rotl32
+from refinery.units.crypto.cipher.salsa import LatinCipher
+from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
+from refinery.lib.crypto import rotl32
 
 
 class ChaChaCipher(LatinCipher):

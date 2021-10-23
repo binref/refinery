@@ -4,7 +4,7 @@
 A simple tool to output binary data. Multiple arguments are output in framed
 format, see `refinery.lib.frame`.
 """
-from .. import arg, Unit
+from refinery.units import arg, Unit
 
 
 class emit(Unit):

@@ -5,8 +5,8 @@ import struct
 
 from typing import NamedTuple, Optional
 
-from ... import PathExtractorUnit, UnpackResult
-from .....lib.dotnet.header import DotNetHeader
+from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.lib.dotnet.header import DotNetHeader
 
 
 class FieldInfo(NamedTuple):

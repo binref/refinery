@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, numseq, chunks, BlockTransformationBase
+from refinery.units.blockwise import arg, numseq, chunks, BlockTransformationBase
 
 
 class terminate(BlockTransformationBase):

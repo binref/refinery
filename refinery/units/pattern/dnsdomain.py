@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import PatternExtractorBase
+from refinery.units.pattern import PatternExtractorBase
 
 
 def _lps(maxlen):

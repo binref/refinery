@@ -668,7 +668,7 @@ class DelayedArgument(LazyEvaluation):
         little endian, a negative `size` has to be specified. The absolute value of `size` will be
         used.
         """
-        from . import chunks
+        from refinery.lib import chunks
         size = int(size, 0) if size else 0
         bigE = size < 0
         size = abs(size)
@@ -689,7 +689,7 @@ class DelayedArgument(LazyEvaluation):
         except that the case `size=0` is handled in the following way: The handler inspects all
         integers in the input and determines the minimum block size required to pack all of them.
         """
-        from . import chunks
+        from refinery.lib import chunks
         size = int(size, 0) if size else 0
         bigE = size < 0
         size = abs(size)
@@ -928,7 +928,7 @@ class DelayedRegexpArgument(DelayedArgument):
         """
         if '(??' in expression:
             import re
-            from .patterns import formats, indicators
+            from refinery.lib.patterns import formats, indicators
 
             def replace(match):
                 name = match[1]

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import CAST
 
-from . import StandardBlockCipherUnit
+from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 
 class cast(StandardBlockCipherUnit, cipher=CAST):

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import base64
 
-from .. import arg, Unit
+from refinery.units import arg, Unit
 
 
 class b64(Unit):

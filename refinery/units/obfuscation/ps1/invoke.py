@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator
-from . import Ps1StringLiterals
+from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation.ps1 import Ps1StringLiterals
 
 
 class deob_ps1_invoke(Deobfuscator):

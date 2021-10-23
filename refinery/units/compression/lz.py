@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 import lzma as lzma_
 
-from .. import arg, Unit, RefineryPartialResult
-from ...lib.argformats import OptionFactory, extract_options
-from ...lib.structures import MemoryFile
+from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.lib.argformats import OptionFactory, extract_options
+from refinery.lib.structures import MemoryFile
 
 __all__ = ['lzma']
 

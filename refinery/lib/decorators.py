@@ -8,7 +8,8 @@ import re
 
 from functools import wraps, WRAPPER_ASSIGNMENTS
 from typing import Callable, Iterable
-from ..units import Unit
+
+from refinery.units import Unit
 
 
 def wraps_without_annotations(method: Callable) -> Callable:

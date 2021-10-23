@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, JSONEncoderUnit
-from .....lib.dotnet.header import DotNetHeader
+from refinery.units.formats.pe.dotnet import arg, JSONEncoderUnit
+from refinery.lib.dotnet.header import DotNetHeader
 
 
 class dnhdr(JSONEncoderUnit):

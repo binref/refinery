@@ -5,7 +5,7 @@ File type related functions.
 """
 import functools
 
-from .magic import magic, magicparse
+from refinery.lib.magic import magic, magicparse
 
 
 class NoMagicAvailable(ModuleNotFoundError):

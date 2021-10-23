@@ -4,7 +4,7 @@ import enum
 import string
 import json
 
-from ... import arg, Unit
+from refinery.units import arg, Unit
 
 
 class JSONScope(enum.Enum):

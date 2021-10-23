@@ -16,9 +16,9 @@ from pefile import (
     PE,
 )
 
-from ....lib.dotnet.header import DotNetHeader
-from ... import arg, Unit
-from ...sinks.ppjson import ppjson
+from refinery.lib.dotnet.header import DotNetHeader
+from refinery.units import arg, Unit
+from refinery.units.sinks.ppjson import ppjson
 
 
 class VIT(str, Enum):
@@ -402,7 +402,7 @@ class pemeta(Unit):
             res_timestamp = pe.DIRECTORY_ENTRY_RESOURCE.struct.TimeDateStamp
             if res_timestamp:
                 with suppress(ValueError):
-                    from ...misc.datefix import datefix
+                    from refinery.units.misc.datefix import datefix
                     dos = datefix.dostime(res_timestamp)
                     info.update(Delphi=dos)
                     info.update(RsrcTS=dt(res_timestamp))

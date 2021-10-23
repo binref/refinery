@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import KeyDerivation
+from refinery.units.crypto.keyderive import KeyDerivation
 
 
 class PasswordDeriveBytes(KeyDerivation):

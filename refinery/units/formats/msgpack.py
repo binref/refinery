@@ -3,8 +3,8 @@
 import json
 import msgpack as mp
 
-from ...units import RefineryPartialResult, Unit
-from ...lib.structures import MemoryFile
+from refinery.units import RefineryPartialResult, Unit
+from refinery.lib.structures import MemoryFile
 
 
 class msgpack(Unit):

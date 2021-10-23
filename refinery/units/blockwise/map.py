@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, BlockTransformation
+from refinery.units.blockwise import arg, BlockTransformation
 
 
 class map(BlockTransformation):

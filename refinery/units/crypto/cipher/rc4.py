@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import ARC4
 
-from . import StandardCipherUnit
+from refinery.units.crypto.cipher import StandardCipherUnit
 
 ARC4.key_size = range(1, 257)
 

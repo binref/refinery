@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import IterativeDeobfuscator
+from refinery.units.obfuscation import IterativeDeobfuscator
 
 from .brackets import deob_ps1_brackets
 from .concat import deob_ps1_concat

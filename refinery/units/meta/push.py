@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit, arg
+from refinery.units import arg, Unit
 
 
 class push(Unit):

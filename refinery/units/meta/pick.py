@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
-from ...lib.argformats import sliceobj
+from refinery.units import arg, Unit
+from refinery.lib.argformats import sliceobj
 
 from itertools import islice, repeat, chain
 from collections import deque

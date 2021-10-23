@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator
-from ....lib.deobfuscation import cautious_eval_or_default, cautious_eval
-from ....lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.lib.deobfuscation import cautious_eval_or_default, cautious_eval
+from refinery.lib.patterns import formats
 
 
 class deob_vba_arithmetic(Deobfuscator):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, ConditionalUnit
+from refinery.units.meta import arg, ConditionalUnit
 
 
 class iffs(ConditionalUnit):

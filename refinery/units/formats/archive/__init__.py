@@ -3,7 +3,7 @@
 from typing import ByteString, Callable, Optional, Union
 from datetime import datetime
 
-from .. import arg, PathExtractorUnit, UnpackResult
+from refinery.units.formats import arg, PathExtractorUnit, UnpackResult
 
 
 class ArchiveUnit(PathExtractorUnit, abstract=True):

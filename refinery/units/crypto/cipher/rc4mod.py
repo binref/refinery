@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from itertools import cycle
 
-from . import arg, StreamCipherUnit
+from refinery.units.crypto.cipher import arg, StreamCipherUnit
 
 
 class rc4mod(StreamCipherUnit):

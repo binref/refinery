@@ -6,7 +6,7 @@ Pure Python implementation of HC-128
 from itertools import cycle
 from typing import Iterable
 
-from . import StreamCipherUnit
+from refinery.units.crypto.cipher import StreamCipherUnit
 
 __all__ = 'hc128',
 

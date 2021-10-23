@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import arg, Unit
+from refinery.units import arg, Unit
 
 
 class url(Unit):

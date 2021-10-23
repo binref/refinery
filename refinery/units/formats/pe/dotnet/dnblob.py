@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .... import Unit
-from .....lib.dotnet.header import DotNetHeader
+from refinery.units import Unit
+from refinery.lib.dotnet.header import DotNetHeader
 
 
 class dnblob(Unit):

@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 from enum import IntEnum
 
-from .. import Unit, arg
-from ...lib.structures import MemoryFile
+from refinery.units import Unit, arg
+from refinery.lib.structures import MemoryFile
 
 
 class PIXEL_PART(IntEnum):

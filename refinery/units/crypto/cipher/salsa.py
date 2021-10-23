@@ -6,8 +6,8 @@ from Crypto.Cipher import Salsa20
 from abc import ABC, abstractmethod
 from typing import List, ByteString, Optional, Iterable
 
-from . import LatinCipherUnit, LatinCipherStandardUnit
-from ....lib.crypto import rotl32
+from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
+from refinery.lib.crypto import rotl32
 
 
 class LatinCipher(ABC):

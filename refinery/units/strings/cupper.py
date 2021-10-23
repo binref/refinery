@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
+from refinery.units import Unit
 
 
 class cupper(Unit):

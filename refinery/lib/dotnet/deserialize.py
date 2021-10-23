@@ -12,7 +12,7 @@ References:
 
 from collections import defaultdict
 
-from .types import (
+from refinery.lib.dotnet.types import (
     BinaryArrayTypeEnumeration,
     Boolean,
     Box,

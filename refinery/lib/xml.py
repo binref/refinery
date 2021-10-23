@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from xml.parsers import expat
 from xml.etree.ElementTree import Element, ElementTree
 
-from .structures import MemoryFile
+from refinery.lib.structures import MemoryFile
 
 
 def ForgivingParse(data, entities=None) -> ElementTree:

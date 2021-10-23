@@ -9,9 +9,9 @@ from typing import Iterable, Optional, Callable, Union, ByteString, Dict
 from itertools import islice
 from hashlib import blake2b
 
-from ...lib.types import INF, AST
-from ...lib.argformats import regexp
-from .. import arg, Unit
+from refinery.lib.types import INF, AST
+from refinery.lib.argformats import regexp
+from refinery.units import arg, Unit
 
 
 class PatternExtractorBase(Unit, abstract=True):

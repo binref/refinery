@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator
+from refinery.units.obfuscation import Deobfuscator
 
 
 class deob_vba_comments(Deobfuscator):

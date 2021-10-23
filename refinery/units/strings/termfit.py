@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
-from ...lib.tools import terminalfit
-from ...lib.decorators import unicoded
+from refinery.units import arg, Unit
+from refinery.lib.tools import terminalfit
+from refinery.lib.decorators import unicoded
 
 
 class termfit(Unit):

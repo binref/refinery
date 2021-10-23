@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 from codecs import encode, decode
 
-from .. import arg, Unit
-from ...lib.meta import metavars
+from refinery.units import arg, Unit
+from refinery.lib.meta import metavars
 
 
 class cfmt(Unit):

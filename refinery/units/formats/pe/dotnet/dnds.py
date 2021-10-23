@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, JSONEncoderUnit
-from .....lib.dotnet.deserialize import BinaryFormatterParser
+from refinery.units.formats.pe.dotnet import arg, JSONEncoderUnit
+from refinery.lib.dotnet.deserialize import BinaryFormatterParser
 
 
 class dnds(JSONEncoderUnit):

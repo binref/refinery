@@ -7,9 +7,9 @@ from ipaddress import ip_address
 from urllib.parse import urlparse
 from string import ascii_letters
 
-from . import arg, PatternExtractor
-from .. import RefineryCriticalException
-from ...lib.patterns import indicators
+from refinery.units.pattern import arg, PatternExtractor
+from refinery.units import RefineryCriticalException
+from refinery.lib.patterns import indicators
 
 
 class xtp(PatternExtractor):

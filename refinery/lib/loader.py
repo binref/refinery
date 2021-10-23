@@ -77,7 +77,7 @@ def get_entry_point(name: str) -> Executable:
             logging.error(F'could not load {package} entry point {name}: {type(error).__name__}: {error!s}')
     if os.environ.get('REFINERY_LOAD_LOCAL', False):
         try:
-            from ..units import Entry
+            from refinery.units import Entry
             sys.path.append('.')
             module = importlib.import_module(name)
             for attr in dir(module):

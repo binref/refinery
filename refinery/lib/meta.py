@@ -88,10 +88,10 @@ import codecs
 from io import StringIO
 from typing import Callable, Dict, Iterable, Optional, ByteString, Union
 
-from .structures import MemoryFile
-from .tools import isbuffer, entropy, index_of_coincidence
-from .mime import get_cached_file_magic_info
-from .loader import load_pipeline
+from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
+from refinery.lib.mime import get_cached_file_magic_info
+from refinery.lib.loader import load_pipeline
 
 
 class CustomStringRepresentation(abc.ABC):
@@ -381,7 +381,7 @@ class LazyMetaOracle(dict):
         - `refinery.lib.meta.LazyMetaOracle.format_str`
         - `refinery.lib.meta.LazyMetaOracle.format_bin`
         """
-        from .argformats import ParserError, PythonExpression
+        from refinery.lib.argformats import ParserError, PythonExpression
         # prevents circular import
 
         if fixup:

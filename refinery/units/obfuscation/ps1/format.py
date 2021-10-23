@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 import re
 
-from ....lib.patterns import formats
-from ....lib.tools import lookahead
-from . import string_apply, string_unquote
-from .. import Deobfuscator
+from refinery.lib.patterns import formats
+from refinery.lib.tools import lookahead
+from refinery.units.obfuscation.ps1 import string_apply, string_unquote
+from refinery.units.obfuscation import Deobfuscator
 
 
 class deob_ps1_format(Deobfuscator):

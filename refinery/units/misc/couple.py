@@ -4,8 +4,8 @@ import sys
 
 from subprocess import PIPE, Popen
 
-from .. import arg, Unit, RefineryPartialResult
-from ...lib.meta import metavars
+from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.lib.meta import metavars
 
 
 class couple(Unit):

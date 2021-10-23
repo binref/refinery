@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ... import RefineryPartialResult
-from ....lib.crypto import des_set_odd_parity
-from . import arg, KeyDerivation
+from refinery.units import RefineryPartialResult
+from refinery.lib.crypto import des_set_odd_parity
+from refinery.units.crypto.keyderive import arg, KeyDerivation
 
 __all__ = ['DESDerive']
 

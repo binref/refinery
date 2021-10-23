@@ -3,8 +3,8 @@
 import struct
 import zlib
 
-from .. import Unit, RefineryPartialResult
-from ...lib.structures import EOF, StructReader, MemoryFile
+from refinery.units import Unit, RefineryPartialResult
+from refinery.lib.structures import EOF, StructReader, MemoryFile
 
 
 class blz(Unit):
@@ -124,7 +124,7 @@ class blz(Unit):
         return dst
 
     def _compress(self):
-        from ...lib.suffixtree import SuffixTree
+        from refinery.lib.suffixtree import SuffixTree
 
         try:
             self.log_info('computing suffix tree')

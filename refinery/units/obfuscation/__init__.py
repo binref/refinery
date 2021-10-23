@@ -7,8 +7,8 @@ import io
 from typing import ByteString
 from zlib import crc32
 
-from .. import arg, Unit, RefineryPartialResult
-from ...lib.decorators import unicoded
+from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.lib.decorators import unicoded
 
 
 __all__ = [

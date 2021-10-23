@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from itertools import repeat
 
-from .. import arg, Unit
+from refinery.units import arg, Unit
 
 
 class rep(Unit):

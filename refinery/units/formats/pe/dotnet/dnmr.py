@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ... import arg, PathExtractorUnit, UnpackResult
-from .... import RefineryPartialResult
-from .....lib.tools import isbuffer
-from .....lib.dotnet.resources import NetStructuredResources, NoManagedResource
+from refinery.units.formats import arg, PathExtractorUnit, UnpackResult
+from refinery.units import RefineryPartialResult
+from refinery.lib.tools import isbuffer
+from refinery.lib.dotnet.resources import NetStructuredResources, NoManagedResource
 
 
 class dnmr(PathExtractorUnit):

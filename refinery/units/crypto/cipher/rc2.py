@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import ARC2
 
-from . import StandardBlockCipherUnit
+from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 
 class rc2(StandardBlockCipherUnit, cipher=ARC2):

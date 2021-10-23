@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+from typing import TYPE_CHECKING
 
-from .... import arg, Unit
-from ....lib.argformats import sliceobj
+from refinery.units import arg, Unit
+from refinery.units.formats.exe import exeroute
+from refinery.lib.argformats import sliceobj
 
-from . import exeroute
+if TYPE_CHECKING:
+    from macholib.MachO import MachO
+    from pefile import PE as PEFile
+    from elftools.elf.elffile import ELFFile
 
 
 class EndOfStringNotFound(ValueError):
@@ -93,11 +99,17 @@ class vsnip(Unit):
         self.log_info(F'rebased to address: 0x{rebased:X}')
         return rebased
 
-    def _get_buffer_range_elf(self, elf, address):
-        addr = self._rebase(
-            address,
-            min(s.header.p_vaddr for s in elf.iter_segments() if s.header.p_type == 'PT_LOAD')
-        )
+    def _get_buffer_range_elf(self, elf: ELFFile, address: int):
+        PT_LOAD = {}
+        if not elf.num_segments():
+            raise LookupError('The elftools parser did not find any segments in this file.')
+        for segment in elf.iter_segments():
+            if segment.header.p_type == 'PT_LOAD':
+                PT_LOAD[segment.header.p_vaddr] = segment
+                self.log_info(F'Found PT_LOAD segment with base address 0x{segment.header.p_vaddr:x}')
+        if not PT_LOAD:
+            raise LookupError(F'Could not find any PT_LOAD segment containing 0x{address:x}.')
+        addr = self._rebase(address, min(PT_LOAD))
         for segment in elf.iter_segments():
             begin = segment.header.p_vaddr
             size = segment.header.p_memsz
@@ -107,7 +119,7 @@ class vsnip(Unit):
                 return offset + delta, offset + segment.header.p_filesz
         raise CompartmentNotFound(addr)
 
-    def _get_buffer_range_macho(self, macho, address):
+    def _get_buffer_range_macho(self, macho: MachO, address: int):
         for header in macho.headers:
             segments = [segment for header, segment, sections in header.commands
                 if header.get_cmd_name().startswith('LC_SEGMENT') and segment.filesize > 0]
@@ -118,7 +130,7 @@ class vsnip(Unit):
                     return offset + segment.fileoff, segment.fileoff + segment.filesize
         raise CompartmentNotFound(address)
 
-    def _get_buffer_range_pe(self, pe, address):
+    def _get_buffer_range_pe(self, pe: PEFile, address: int):
         base = pe.OPTIONAL_HEADER.ImageBase
         addr = self._rebase(address, base) - base
         offset = pe.get_offset_from_rva(addr)

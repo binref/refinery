@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from ....lib.patterns import formats
-from .. import Deobfuscator
+from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
 
 
 class deob_js_arrays(Deobfuscator):

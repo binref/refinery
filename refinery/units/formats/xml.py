@@ -2,11 +2,10 @@
 # -*- coding: utf-8 -*-
 from collections import defaultdict
 
-from ...lib.structures import MemoryFile
-from ...lib import xml
-from ..sinks.ppxml import ppxml
-
-from . import PathExtractorUnit, UnpackResult
+from refinery.lib.structures import MemoryFile
+from refinery.lib import xml
+from refinery.units.sinks.ppxml import ppxml
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class xtxml(PathExtractorUnit):

@@ -5,7 +5,7 @@ Implements various cryptographic hashing algorithms.
 """
 import hashlib
 
-from . import HashUnit
+from refinery.units.crypto.hash import HashUnit
 
 
 class md4(HashUnit):

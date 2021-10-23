@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import BlockTransformationBase
+from refinery.units.blockwise import BlockTransformationBase
 
 
 class rev(BlockTransformationBase):

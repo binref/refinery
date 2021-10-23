@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
-from ...lib.tools import splitchunks
+from refinery.units import arg, Unit
+from refinery.lib.tools import splitchunks
 
 
 class chop(Unit):

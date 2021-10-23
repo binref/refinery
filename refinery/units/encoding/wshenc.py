@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import arg, Unit
-from ...lib.patterns import formats
+from refinery.units import arg, Unit
+from refinery.lib.patterns import formats
 
 
 class wshenc(Unit):

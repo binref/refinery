@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import OverlayUnit
+from refinery.units.formats.pe import OverlayUnit
 
 
 class pestrip(OverlayUnit):

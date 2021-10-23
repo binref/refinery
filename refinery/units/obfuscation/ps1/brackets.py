@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 import re
 
-from ....lib.patterns import formats
-from .. import Deobfuscator
-from . import Ps1StringLiterals
+from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation.ps1 import Ps1StringLiterals
 
 
 class deob_ps1_brackets(Deobfuscator):

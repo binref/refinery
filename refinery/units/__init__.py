@@ -145,11 +145,11 @@ from argparse import (
     ZERO_OR_MORE
 )
 
-from ..lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
-from ..lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
-from ..lib.tools import documentation, isstream, lookahead, autoinvoke, skipfirst, isbuffer
-from ..lib.frame import Framed, Chunk
-from ..lib.structures import MemoryFile
+from refinery.lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
+from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
+from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, skipfirst, isbuffer
+from refinery.lib.frame import Framed, Chunk
+from refinery.lib.structures import MemoryFile
 
 
 class RefineryPartialResult(ValueError):
@@ -1466,7 +1466,7 @@ class Unit(UnitBase, abstract=True):
         message = ' '.join(transform(msg) for msg in messages)
         if clip:
             from textwrap import shorten
-            from ..lib.tools import get_terminal_size
+            from refinery.lib.tools import get_terminal_size
             message = shorten(
                 message,
                 get_terminal_size() - len(cls.name) - 14,

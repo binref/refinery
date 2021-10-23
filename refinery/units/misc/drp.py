@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 import sys
 
-from .. import arg, Unit
-from ...lib.suffixtree import SuffixTree
-from ...lib.types import INF
+from refinery.units import arg, Unit
+from refinery.lib.suffixtree import SuffixTree
+from refinery.lib.types import INF
 
 
 class stackdepth:

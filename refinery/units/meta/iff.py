@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ...lib.meta import metavars
-from ...lib.argformats import PythonExpression
-from . import arg, ConditionalUnit
+from refinery.lib.meta import metavars
+from refinery.lib.argformats import PythonExpression
+from refinery.units.meta import arg, ConditionalUnit
 
 
 class iff(ConditionalUnit):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import BinaryOperation
+from refinery.units.blockwise import BinaryOperation
 
 
 class add(BinaryOperation):

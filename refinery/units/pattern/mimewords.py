@@ -5,8 +5,8 @@ import codecs
 
 from email.header import decode_header
 
-from .. import Unit
-from ...lib.decorators import unicoded
+from refinery.units import Unit
+from refinery.lib.decorators import unicoded
 
 
 class mimewords(Unit):

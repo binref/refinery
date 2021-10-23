@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator, outside
-from ....lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator, outside
+from refinery.lib.patterns import formats
 
 
 class deob_ps1_cases(Deobfuscator):

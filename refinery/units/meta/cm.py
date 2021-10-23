@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
-from ...lib.meta import metavars, COMMON_PROPERTIES
-from ...lib.frame import Chunk
+from refinery.units import arg, Unit
+from refinery.lib.meta import metavars, COMMON_PROPERTIES
+from refinery.lib.frame import Chunk
 
 
 _COMMON_PROPERTIES_LIST = ', '.join(COMMON_PROPERTIES)

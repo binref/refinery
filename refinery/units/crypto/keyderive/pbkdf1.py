@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, KeyDerivation
+from refinery.units.crypto.keyderive import arg, KeyDerivation
 
 
 class PBKDF1(KeyDerivation):

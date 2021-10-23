@@ -6,8 +6,8 @@ Java disassembler. The main logic is implemented int `refinery.lib.java.JvOpCode
 import re
 import io
 
-from .. import PathExtractorUnit, UnpackResult
-from ....lib.java import JvClassFile, JvCode, opc
+from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.lib.java import JvClassFile, JvCode, opc
 
 
 class jvdasm(PathExtractorUnit):

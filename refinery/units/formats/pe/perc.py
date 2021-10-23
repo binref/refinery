@@ -4,7 +4,7 @@ import enum
 import pefile
 import re
 
-from .. import UnpackResult, PathExtractorUnit
+from refinery.units.formats import UnpackResult, PathExtractorUnit
 
 
 class RSRC(enum.IntEnum):

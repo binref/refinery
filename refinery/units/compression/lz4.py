@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 import io
 
-from ...lib.structures import StructReader, StreamDetour, EOF
-from ...units.crypto.hash.xxhash import xxhash
-from ...units import Unit, RefineryPartialResult
+from refinery.lib.structures import StructReader, StreamDetour, EOF
+from refinery.units.crypto.hash.xxhash import xxhash
+from refinery.units import Unit, RefineryPartialResult
 
 
 class LZ4Reader(StructReader):

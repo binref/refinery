@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ..pattern import arg, RegexUnit
-from . import ConditionalUnit
+from refinery.units.pattern import arg, RegexUnit
+from refinery.units.meta import ConditionalUnit
 
 
 class iffx(RegexUnit, ConditionalUnit):

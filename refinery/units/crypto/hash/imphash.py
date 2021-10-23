@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from pefile import PE, DIRECTORY_ENTRY
 
-from . import HashUnit
+from refinery.units.crypto.hash import HashUnit
 
 IMAGE_DIRECTORY_ENTRY_IMPORT = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT']
 

@@ -10,7 +10,7 @@ from argparse import (
 
 from typing import IO, Optional
 
-from ..lib.tools import terminalfit, get_terminal_size
+from refinery.lib.tools import terminalfit, get_terminal_size
 
 
 class ArgparseError(ValueError):

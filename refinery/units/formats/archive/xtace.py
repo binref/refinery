@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import ArchiveUnit
-from ....lib.thirdparty import acefile
-from ....lib.structures import MemoryFile
+from refinery.units.formats.archive import ArchiveUnit
+from refinery.lib.thirdparty import acefile
+from refinery.lib.structures import MemoryFile
 
 
 class xtace(ArchiveUnit):

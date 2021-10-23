@@ -5,10 +5,10 @@ import re
 
 from Crypto.Util.strxor import strxor
 
-from ... import Unit
-from .....lib import chunks
-from .....lib.dotnet.header import DotNetHeader, StreamReader, StringPrimitive, UInt32, ParserEOF
-from ....compression.lz import lzma
+from refinery.units import Unit
+from refinery.units.compression.lz import lzma
+from refinery.lib import chunks
+from refinery.lib.dotnet.header import DotNetHeader, StreamReader, StringPrimitive, UInt32, ParserEOF
 
 
 class dncfx(Unit):

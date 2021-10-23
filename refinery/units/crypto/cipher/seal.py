@@ -9,8 +9,8 @@ https://link.springer.com/article/10.1007/s001459900048
 import struct
 from typing import Iterable
 
-from . import StreamCipherUnit
-from ....lib.crypto import rotr32
+from refinery.units.crypto.cipher import StreamCipherUnit
+from refinery.lib.crypto import rotr32
 
 
 __all__ = ['seal']

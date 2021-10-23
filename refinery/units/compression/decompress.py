@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit, RefineryPartialResult
-from ...lib.types import INF
+from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.lib.types import INF
 
 from .ap import aplib
 from .bz2 import bz2

@@ -32,7 +32,7 @@ subject to the same MIT license as the original RNCryptor source code:
 
 RNCryptor is Copyright (C) 2013-2016 Rob Napier, Yan Kalchevskiy, Brant Young.
 """
-from ... import Unit
+from refinery.units import Unit
 
 import hashlib
 import hmac

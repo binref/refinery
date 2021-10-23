@@ -5,8 +5,8 @@ import re
 from functools import wraps
 from typing import Callable
 
-from ....lib.patterns import formats
-from ...encoding.ps1str import ps1str
+from refinery.lib.patterns import formats
+from refinery.units.encoding.ps1str import ps1str
 
 
 def dq_unescape(string):

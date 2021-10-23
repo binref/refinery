@@ -7,14 +7,14 @@ from enum import Enum
 from hashlib import md5, sha1, sha256, sha512
 from zlib import crc32
 
-from .... import arg, Unit
-from ....encoding.hex import hex
-from ....encoding.esc import esc
-from ....encoding.url import url
-from ....encoding.b64 import b64
+from refinery.units import arg, Unit
+from refinery.units.encoding.hex import hex
+from refinery.units.encoding.esc import esc
+from refinery.units.encoding.url import url
+from refinery.units.encoding.b64 import b64
 
-from .....lib.json import BytesAsArrayEncoder
-from .....lib.dotnet.types import Blob
+from refinery.lib.json import BytesAsArrayEncoder
+from refinery.lib.dotnet.types import Blob
 
 
 class UNIT(Enum):

@@ -3,7 +3,7 @@
 from struct import unpack
 from pefile import PE, DIRECTORY_ENTRY
 
-from ... import Unit, RefineryPartialResult
+from refinery.units import Unit, RefineryPartialResult
 
 
 class pesig(Unit):

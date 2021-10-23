@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from Crypto.Cipher import DES
 
-from . import StandardBlockCipherUnit
+from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 
 class des(StandardBlockCipherUnit, cipher=DES):

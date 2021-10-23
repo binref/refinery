@@ -36,8 +36,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import struct
 
-from . import HashUnit
-from ....lib.crypto import rotl32
+from refinery.units.crypto.hash import HashUnit
+from refinery.lib.crypto import rotl32
 
 
 class xxhash:

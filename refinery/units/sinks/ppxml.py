@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import io
 
-from .. import arg, Unit
-from ...lib.xml import ForgivingParse
+from refinery.units import arg, Unit
+from refinery.lib.xml import ForgivingParse
 
 
 class ppxml(Unit):

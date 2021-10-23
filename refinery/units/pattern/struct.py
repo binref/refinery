@@ -4,13 +4,13 @@ import datetime
 import string
 import itertools
 
-from .. import Unit, arg
+from refinery.units import arg, Unit
 
-from ...lib.meta import ByteStringWrapper, SizeInt, metavars
-from ...lib.structures import EOF, StructReader
-from ...lib.argformats import ParserError, PythonExpression
-from ...lib.types import INF
-from ...lib.tools import isbuffer
+from refinery.lib.meta import ByteStringWrapper, SizeInt, metavars
+from refinery.lib.structures import EOF, StructReader
+from refinery.lib.argformats import ParserError, PythonExpression
+from refinery.lib.types import INF
+from refinery.lib.tools import isbuffer
 
 
 def identity(x):

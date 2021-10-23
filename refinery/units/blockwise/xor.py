@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import BinaryOperation, NoNumpy
+from refinery.units.blockwise import BinaryOperation, NoNumpy
 
 
 class xor(BinaryOperation):

@@ -5,7 +5,8 @@ A package containing Portable Executable (PE) file related units.
 """
 from pefile import PE, DIRECTORY_ENTRY
 from typing import Union, ByteString
-from .. import arg, Unit
+
+from refinery.units import arg, Unit
 
 IMAGE_DIRECTORY_ENTRY_SECURITY = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
 

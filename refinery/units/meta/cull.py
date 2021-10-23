@@ -3,9 +3,9 @@
 from __future__ import annotations
 from typing import Iterable, TYPE_CHECKING
 if TYPE_CHECKING:
-    from ...lib.frame import Chunk
+    from refinery.lib.frame import Chunk
 
-from .. import Unit
+from refinery.units import Unit
 
 
 class cull(Unit):

@@ -6,7 +6,7 @@ Implements hash algorithms of short length, commonly used as checksums.
 import zlib
 import struct
 
-from . import HashUnit
+from refinery.units.crypto.hash import HashUnit
 
 
 class crc32(HashUnit):

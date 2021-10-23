@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats.archive.xtzip import xtzip
 from refinery.lib.structures import MemoryFile
 
 
@@ -20,7 +21,6 @@ class xtdoc(PathExtractorUnit):
                 oledoc = self._olefile.OleFileIO(stream)
             except OSError as error:
                 self.log_info(F'error, {error}, treating input as zip file')
-                from ..archive.xtzip import xtzip
                 yield from xtzip().unpack(data)
                 return
             for item in oledoc.listdir():

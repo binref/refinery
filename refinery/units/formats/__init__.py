@@ -13,8 +13,8 @@ import uuid
 from zlib import adler32
 from typing import ByteString, Iterable, Callable, List, Union
 
-from .. import arg, Unit
-from ...lib.meta import metavars, ByteStringWrapper
+from refinery.units import arg, Unit
+from refinery.lib.meta import metavars, ByteStringWrapper
 
 
 def pathspec(expression):
@@ -123,7 +123,7 @@ class PathExtractorUnit(Unit, abstract=True):
         for result in results:
             path = '/'.join(result.path.split('\\'))
             if not path:
-                from ...lib.mime import FileMagicInfo
+                from refinery.lib.mime import FileMagicInfo
                 self.log_warn('received an attachment without file name!')
                 ext = FileMagicInfo(result.get_data()).extension
                 path = F'[unknown].{ext}'

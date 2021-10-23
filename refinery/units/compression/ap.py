@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from io import BytesIO, SEEK_END
 
-from .. import Unit
+from refinery.units import Unit
 
 __all__ = ['aplib']
 

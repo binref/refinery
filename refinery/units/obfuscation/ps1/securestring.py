@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 import re
 
-from .. import Deobfuscator
-from ...crypto.cipher.secstr import secstr
-from ...blockwise.pack import pack
-from ....lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.units.crypto.cipher.secstr import secstr
+from refinery.units.blockwise.pack import pack
+from refinery.lib.patterns import formats
 
 
 class deob_ps1_secstr(Deobfuscator):

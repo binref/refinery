@@ -3,8 +3,8 @@
 import collections
 import re
 
-from .. import Deobfuscator
-from ....lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.lib.patterns import formats
 
 
 class deob_vba_dummy_variables(Deobfuscator):

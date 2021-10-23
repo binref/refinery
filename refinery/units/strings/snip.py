@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 from copy import copy
 
-from .. import arg, Unit
-from ...lib.tools import lookahead
+from refinery.units import arg, Unit
+from refinery.lib.tools import lookahead
 
 
 class snip(Unit):

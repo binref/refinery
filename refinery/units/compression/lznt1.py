@@ -4,7 +4,7 @@ import io
 import struct
 import copy
 
-from .. import arg, Unit, RefineryPartialResult
+from refinery.units import arg, Unit, RefineryPartialResult
 
 
 class lznt1(Unit):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import Unit
-from ....lib.java import JvClassFile
+from refinery.units import Unit
+from refinery.lib.java import JvClassFile
 
 
 class jvstr(Unit):

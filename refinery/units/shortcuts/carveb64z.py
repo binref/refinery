@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ..pattern.carve import arg, carve
-from ..compression.decompress import decompress
+from refinery.units.pattern.carve import arg, carve
+from refinery.units.compression.decompress import decompress
 
 
 class carveb64z(carve):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg
-from . import FrameSlicer
+from refinery.units import arg
+from refinery.units.meta import FrameSlicer
 
 
 class scope(FrameSlicer):

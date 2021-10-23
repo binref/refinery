@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ... import arg, Unit
+from refinery.units import arg, Unit
 
 _UCASE = range(ord('A'), ord('Z') + 1)
 _LCASE = range(ord('a'), ord('z') + 1)

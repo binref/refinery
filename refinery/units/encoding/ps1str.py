@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from ...lib.decorators import unicoded
-from .. import Unit
+from refinery.lib.decorators import unicoded
+from refinery.units import Unit
 
 
 class ps1str(Unit):

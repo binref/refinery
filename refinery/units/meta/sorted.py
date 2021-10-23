@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
+from refinery.units import arg, Unit
 
-from ...lib.argformats import PythonExpression
-from ...lib.meta import metavars
+from refinery.lib.argformats import PythonExpression
+from refinery.lib.meta import metavars
 
 
 class sorted(Unit):

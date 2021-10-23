@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ...lib.patterns import formats, indicators, pattern
+from refinery.lib.patterns import formats, indicators, pattern
 
-from . import arg, ConditionalUnit
+from refinery.units.meta import arg, ConditionalUnit
 
 _PATTERNS = {}
 _PATTERNS.update({p.name: p.value for p in formats})

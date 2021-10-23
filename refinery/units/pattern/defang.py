@@ -3,8 +3,8 @@
 import re
 import itertools
 
-from .. import arg, Unit
-from ...lib.patterns import defanged, indicators
+from refinery.units import arg, Unit
+from refinery.lib.patterns import defanged, indicators
 
 
 class defang(Unit):

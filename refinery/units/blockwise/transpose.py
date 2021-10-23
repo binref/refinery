@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from . import arg, BlockTransformationBase
+from refinery.units.blockwise import arg, BlockTransformationBase
 
 
 class transpose(BlockTransformationBase):

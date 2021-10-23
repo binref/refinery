@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import io
 
-from refinery.units import Unit
 from refinery.lib.frame import FrameUnpacker
 from refinery.lib.loader import load_detached as L
 

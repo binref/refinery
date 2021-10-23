@@ -4,8 +4,8 @@
 Reference:
 https://docs.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptderivekey
 """
-from ... import RefineryPartialResult
-from . import KeyDerivation, HASH
+from refinery.units import RefineryPartialResult
+from refinery.units.crypto.keyderive import KeyDerivation, HASH
 
 
 class CryptDeriveKey(KeyDerivation):

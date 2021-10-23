@@ -7,8 +7,8 @@ from operator import (
     __xor__,
 )
 
-from ... import arg, Unit
-from ....lib.decorators import unicoded
+from refinery.units import arg, Unit
+from refinery.lib.decorators import unicoded
 
 
 _opeator_inverse = {

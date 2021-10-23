@@ -3,9 +3,8 @@
 from contextlib import suppress
 from datetime import datetime
 
-from ....lib.structures import EOF, Struct, StructReader
-
-from . import ArchiveUnit
+from refinery.lib.structures import EOF, Struct, StructReader
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class CPIOEntry(Struct):

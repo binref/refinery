@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from ....lib.mscrypto import CRYPTOKEY
-from ... import Unit
+from refinery.lib.mscrypto import CRYPTOKEY
+from refinery.units import Unit
 
 
 class kblob(Unit):

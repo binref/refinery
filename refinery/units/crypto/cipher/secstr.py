@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import base64
+
 from Crypto.Cipher import AES
 from Crypto.Random import urandom
 from Crypto.Util.Padding import pad, unpad
 
-from ... import arg, Unit
+from refinery.units import arg, Unit
 
 
 class secstr(Unit):

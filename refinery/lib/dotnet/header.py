@@ -8,7 +8,7 @@ References:
 import pefile
 from typing import List
 
-from .types import (
+from refinery.lib.dotnet.types import (
     RawBytes,
     Box,
     Byte,

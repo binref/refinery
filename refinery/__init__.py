@@ -85,7 +85,7 @@ class _cache:
 
     def reload(self):
         if not self.reloading:
-            from .lib.loader import get_all_entry_points
+            from refinery.lib.loader import get_all_entry_points
             self.reloading = True
             self.units.clear()
             self.cache.clear()

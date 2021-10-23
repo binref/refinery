@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from ... import Unit
+from refinery.units import Unit
 
 
 class deob_vba_chr_literals(Unit):

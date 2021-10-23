@@ -3,9 +3,9 @@
 import re
 import string
 
-from ....lib.patterns import formats
-from .. import Deobfuscator
-from . import string_quote, Ps1StringLiterals
+from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation.ps1 import string_quote, Ps1StringLiterals
 
 
 class deob_ps1_typecast(Deobfuscator):

@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 import bz2 as bz2_
 
-from .. import arg, Unit
-from ...lib.argformats import number
+from refinery.units import arg, Unit
+from refinery.lib.argformats import number
 
 
 class bz2(Unit):

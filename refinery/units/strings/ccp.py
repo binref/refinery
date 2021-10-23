@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from .. import arg, Unit
+from refinery.units import arg, Unit
 
 
 class ccp(Unit):

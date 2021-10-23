@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import struct
 
-from . import BlockCipherUnitBase
+from refinery.units.crypto.cipher import BlockCipherUnitBase
 
 
 class xtea(BlockCipherUnitBase):

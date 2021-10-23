@@ -6,8 +6,8 @@ import os.path
 from itertools import cycle
 from string import Formatter
 
-from .. import arg, Unit, RefineryCriticalException
-from ...lib.meta import metavars
+from refinery.units import arg, Unit, RefineryCriticalException
+from refinery.lib.meta import metavars
 
 
 class dump(Unit):

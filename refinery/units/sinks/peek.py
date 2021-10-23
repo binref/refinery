@@ -5,11 +5,11 @@ import textwrap
 import codecs
 import string
 
-from . import arg, HexViewer
-from ...lib.meta import metavars, CustomStringRepresentation, SizeInt
-from ...lib.types import INF
-from ...lib.tools import isbuffer, lookahead
-from ...lib.patterns import formats
+from refinery.units.sinks import arg, HexViewer
+from refinery.lib.meta import metavars, CustomStringRepresentation, SizeInt
+from refinery.lib.types import INF
+from refinery.lib.tools import isbuffer, lookahead
+from refinery.lib.patterns import formats
 
 
 class peek(HexViewer):

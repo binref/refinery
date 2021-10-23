@@ -7,7 +7,13 @@ https://docs.oracle.com/javase/specs/jvms/se14/html/jvms-4.html
 from typing import Union, Any, Dict, List, ByteString, Type, Optional, TypeVar, Generic
 from enum import IntEnum
 
-from .structures import StructReader, Struct, StreamDetour, PerInstanceAttribute, AttrType
+from refinery.lib.structures import (
+    AttrType,
+    PerInstanceAttribute,
+    StreamDetour,
+    Struct,
+    StructReader,
+)
 
 __all__ = (
     'opc',
