@@ -3,7 +3,7 @@ requires = [
     "colorama",
     "defusedxml",
     "macholib",
-    "msgpack",
+    "msgpack>=1.0.0",
     "pefile",
     "pycryptodome",
     "pyelftools",
