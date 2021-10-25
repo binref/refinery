@@ -10,7 +10,7 @@ class push(Unit):
     in front of it is used as an intermediate result. By default, this intermediate data is
     a copy of the input data. For example:
 
-        emit key=value | push [[| rex =(.*)$ $1 | pop v ]| repl var:v censored ]
+        emit key=value | push [[| rex =(.*)$ {1} | pop v ]| repl var:v censored ]
 
     will output `key=censored`. The application of `refinery.rex` turns the (duplicated)
     data into just the value, which is then stored in the variable `v`. The application

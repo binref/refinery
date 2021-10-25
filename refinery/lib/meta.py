@@ -68,7 +68,7 @@ example, the following command extracts the files from a password-protected atta
 message by first extracting the password from the email message body:
 
     $ emit phish.eml | push [[
-    >   | xtmail body.txt | rex -I password:\s*(\w+) $1 | pop password ]
+    >   | xtmail body.txt | rex -I password:\s*(\w+) {1} | pop password ]
     >   | xtmail evil.zip | xtzip -p var:password | dump {path} ]
 
 The `refinery.push` unit emits two copies of the input data, and the second copy has been moved out
