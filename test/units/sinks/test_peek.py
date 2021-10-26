@@ -18,7 +18,7 @@ def errbuf():
 class TestPeek(TestUnitBase):
 
     def test_hex_peek(self):
-        peek = self.load(width=8, lines=14, meta=True)
+        peek = self.load(width=8, lines=15, meta=True)
         with errbuf() as stderr:
             peek(bytes.fromhex(
                 '4D 5A 90 00 03 00 00 00 04 00 00 00 FF FF 00 00'  # MZ..............
