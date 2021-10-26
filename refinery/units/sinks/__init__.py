@@ -73,7 +73,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics) -> Iterable[str]:
     def pieces(data):
         view = memoryview(data)
         for lno, offset in enumerate(range(0, len(data), columns)):
-            if metrics.line_count and lno > metrics.line_count:
+            if metrics.line_count and lno >= metrics.line_count:
                 break
             yield lno, view[offset:offset + columns]
 
