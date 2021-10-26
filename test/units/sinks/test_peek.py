@@ -36,6 +36,7 @@ class TestPeek(TestUnitBase):
             self.assertIn(info, output)
 
         self.assertIn((
+            '-------------------------------------\n'
             '00: 4D 5A 90 00 03 00 00 00  MZ......\n'
             '08: 04 00 00 00 FF FF 00 00  ........\n'
             '10: B8 00 00 00 00 00 00 00  ........\n'

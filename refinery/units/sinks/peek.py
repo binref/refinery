@@ -156,7 +156,7 @@ class peek(HexViewer):
             metrics.address_width = 0
             metrics.fit_to_width(allow_increase=True)
 
-        sepsize = metrics.max_width
+        sepsize = metrics.hexdump_width
         txtsize = self.args.width or (sepsize - metrics.padding)
 
         if self.args.lines and data:
