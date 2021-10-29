@@ -212,6 +212,12 @@ class peek(HexViewer):
             yield separator()
 
     def filter(self, chunks):
+        discarded = 0
         for final, (index, item) in lookahead(enumerate(chunks)):
             item.temp = final, index
-            yield item
+            if not item.visible and self.isatty:
+                discarded += 1
+            else:
+                yield item
+        if discarded:
+            self.log_warn(F'discarded {discarded} invisible chunks to prevent them from leaking into the terminal.')
