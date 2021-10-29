@@ -163,6 +163,12 @@ if ISPS1:
     MAGIC = B'[[%s]]' % base64.b85encode(MAGIC)
 
 
+def generate_frame_header(gauge: int):
+    if gauge > 0xFE:
+        raise ValueError('Maximum frame depth exceeded.')
+    return B'%s%c' % (MAGIC, gauge)
+
+
 class Chunk(bytearray):
     """
     Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
@@ -173,13 +179,16 @@ class Chunk(bytearray):
 
     def __init__(
         self,
-        data: ByteString,
+        data: Optional[ByteString] = None,
         path: Tuple[int] = (),
         view: Optional[Tuple[bool]] = None,
         meta: Optional[Dict[str, Any]] = None,
         fill: Optional[bool] = None
     ):
-        bytearray.__init__(self, data)
+        if data is None:
+            bytearray.__init__(self)
+        else:
+            bytearray.__init__(self, data)
 
         view = view or (False,) * len(path)
         if len(view) != len(path):
@@ -277,8 +286,8 @@ class Chunk(bytearray):
 
     @visible.setter
     def visible(self, value: bool):
-        if not self._view:
-            raise AttributeError('cannot set visibility of chunk outside frame')
+        if not value and not self._view:
+            raise AttributeError('cannot make chunk invisible outside frame')
         if value != self.visible:
             self._view = self._view[:~0] + (value,)
 
@@ -363,41 +372,60 @@ class FrameUnpacker:
     method can be called to load the next frame, at which point the object will become an
     iterator over `[BOO, BAZ]`.
     """
+    _next: Optional[Chunk]
+    gauge: int
+    trunk: Tuple[int, ...]
+    stream: Optional[BinaryIO]
+    finished: bool
+    framed: bool
+    unpacker: Optional[msgpack.Unpacker]
+
     def __init__(self, stream: Optional[BinaryIO]):
         self.finished = False
         self.trunk = ()
-        self._next = Chunk(bytearray(), ())
-        buffer = stream and stream.read(len(MAGIC)) or B''
+        self.stream = None
+        self.gauge = 0
+        self._next = None
+        buffer = stream and stream.read(len(MAGIC)) or None
         if buffer == MAGIC:
+            self.gauge, = stream.read(1)
             self.framed = True
             self.stream = stream
             if not ISPS1:
                 self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=False)
             self._advance()
-            self.gauge = len(self._next.path)
         else:
+            self.unpacker = None
             self.framed = False
             self.gauge = 0
+            self._next = Chunk()
             while buffer:
                 self._next.extend(buffer)
                 buffer = stream.read()
 
-    def _advance(self) -> None:
+    def _advance(self) -> bool:
         while not self.finished:
+            if ISPS1:
+                ps1stream = self.stream
+            else:
+                ps1stream = self.unpacker
             try:
-                stream = self.stream if ISPS1 else self.unpacker
-                self._next = Chunk.unpack(stream)
-                break
+                self._next = chunk = Chunk.unpack(ps1stream)
+                if len(chunk.path) != self.gauge:
+                    raise RuntimeError(F'Frame with gauge {self.gauge} contained chunk of depth {len(chunk.path)}.')
+                return True
             except StopIteration:
                 pass
             try:
-                recv = self.stream.read1() or self.stream.read()
+                recv = self.stream.read1()
             except TypeError:
-                recv = self.stream.read()
-            if recv:
-                self.unpacker.feed(recv)
-                continue
-            self.finished = True
+                recv = None
+            recv = recv or self.stream.read()
+            if not recv:
+                break
+            self.unpacker.feed(recv)
+        self.finished = True
+        return False
 
     def nextframe(self) -> bool:
         """
@@ -540,12 +568,14 @@ class Framed:
         yield buffer.getbuffer()
 
     def __iter__(self):
+        gauge = max(self.unpack.gauge + self.nesting, 0)
         if self.unpack.finished:
-            if self.unpack.gauge + self.nesting > 0:
-                yield MAGIC
+            if gauge:
+                yield generate_frame_header(gauge)
             return
         if self.nesting > 0:
-            yield MAGIC
+            assert gauge
+            yield generate_frame_header(gauge)
             rest = (0,) * (self.nesting - 1)
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
@@ -558,7 +588,8 @@ class Framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
         elif self.nesting == 0:
-            yield MAGIC
+            assert gauge
+            yield generate_frame_header(gauge)
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
                     if not chunk.visible:
@@ -567,10 +598,9 @@ class Framed:
                     for result in self._generate_chunks(chunk):
                         yield result.pack()
         else:
-            gauge = max(self.unpack.gauge + self.nesting, 0)
             trunk = None
             if gauge:
-                yield MAGIC
+                yield generate_frame_header(gauge)
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
                     results = self._generate_chunks(chunk) if chunk.visible else (chunk,)
