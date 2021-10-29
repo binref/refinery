@@ -3,7 +3,7 @@
 import io
 
 from refinery.lib.frame import FrameUnpacker
-from refinery.lib.loader import load_detached as L
+from refinery.lib.loader import load_detached as L, load_pipeline
 
 from .. import TestBase
 
@@ -117,3 +117,7 @@ class TestFraming(TestBase):
         ergo = next(b'test-data' | swap) # noqa
         self.assertEqual(ergo, b'')
         self.assertEqual(ergo['test'], B'test-data')
+
+    def test_bug_conditional_units_generate_empty_chunks(self):
+        pipeline = load_pipeline('emit A | rex .. [| iff -t 1 | cfmt boom ]]')
+        self.assertEqual(pipeline(), B'')
