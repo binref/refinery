@@ -372,7 +372,7 @@ class FrameUnpacker:
     method can be called to load the next frame, at which point the object will become an
     iterator over `[BOO, BAZ]`.
     """
-    _next: Optional[Chunk]
+    next_chunk: Optional[Chunk]
     gauge: int
     trunk: Tuple[int, ...]
     stream: Optional[BinaryIO]
@@ -385,7 +385,7 @@ class FrameUnpacker:
         self.trunk = ()
         self.stream = None
         self.gauge = 0
-        self._next = None
+        self.next_chunk = None
         buffer = stream and stream.read(len(MAGIC)) or None
         if buffer == MAGIC:
             self.gauge, = stream.read(1)
@@ -398,9 +398,9 @@ class FrameUnpacker:
             self.unpacker = None
             self.framed = False
             self.gauge = 0
-            self._next = Chunk()
+            self.next_chunk = Chunk()
             while buffer:
-                self._next.extend(buffer)
+                self.next_chunk.extend(buffer)
                 buffer = stream.read()
 
     def _advance(self) -> bool:
@@ -410,7 +410,7 @@ class FrameUnpacker:
             else:
                 ps1stream = self.unpacker
             try:
-                self._next = chunk = Chunk.unpack(ps1stream)
+                self.next_chunk = chunk = Chunk.unpack(ps1stream)
                 if len(chunk.path) != self.gauge:
                     raise RuntimeError(F'Frame with gauge {self.gauge} contained chunk of depth {len(chunk.path)}.')
                 return True
@@ -436,12 +436,12 @@ class FrameUnpacker:
         """
         if self.finished:
             return False
-        self.trunk = self._next.path
+        self.trunk = self.next_chunk.path
         return True
 
     def abort(self):
         if self.gauge > 1:
-            while not self.finished and self.trunk == self._next.path:
+            while not self.finished and self.trunk == self.next_chunk.path:
                 self._advance()
         else:
             self.unpacker = None
@@ -456,17 +456,17 @@ class FrameUnpacker:
         """
         Contains the identifier of the next frame.
         """
-        return self._next.path
+        return self.next_chunk.path
 
     def __iter__(self) -> Iterable[Chunk]:
         if self.finished:
             return
         if not self.framed:
-            yield self._next
+            yield self.next_chunk
             self.finished = True
             return
-        while not self.finished and self.trunk == self._next.path:
-            yield self._next
+        while not self.finished and self.trunk == self.next_chunk.path:
+            yield self.next_chunk
             self._advance()
 
 
