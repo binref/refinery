@@ -80,9 +80,9 @@ class PathExtractorUnit(Unit, abstract=True):
             'Wildcard pattern for the name of the item to be extracted. Each item is returned'
             ' as a separate output of this unit. Paths may contain wildcards. The default is '
             'a single wildcard, which means that every item will be extracted.')),
-        list : arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
-        join_path : arg.switch('-j', group='PATH', help='Join path names from container with previous path names.') = False,
-        drop_path : arg.switch('-d', group='PATH', help='Do not modify the path variable for output chunks.') = False,
+        list: arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
+        join_path: arg.switch('-j', group='PATH', help='Join path names from container with previous path names.') = False,
+        drop_path: arg.switch('-d', group='PATH', help='Do not modify the path variable for output chunks.') = False,
         regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
         path: arg('-P', metavar='NAME',
             help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
