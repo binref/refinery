@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+from typing import Generator, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from refinery.lib.frame import Chunk
+
 from refinery.units import arg
 from refinery.units.meta import FrameSlicer
 
@@ -27,7 +33,7 @@ class scope(FrameSlicer):
         consumed = None
         size = None
 
-        def buffered():
+        def buffered() -> Generator[Chunk, None, None]:
             yield from it
             while consumed:
                 yield consumed.popleft()
