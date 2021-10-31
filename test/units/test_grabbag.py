@@ -83,3 +83,8 @@ class TestGrabBagExamples(TestBase):
         data = self.download_sample('c0019718c4d4538452affb97c70d16b7af3e4816d059010c277c4e579075c944')
         pipeline = load_pipeline('perc SETTINGS [| put keylen cut::1 | rc4 cut::keylen | xtp socket ]')
         self.assertEqual('remm.duckdns''.''org:7007', str(data | pipeline))
+
+    def test_shellcode_loader(self):
+        data = self.download_sample('58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3')
+        pipeline = load_pipeline('rex yara:50607080.* [| struct LL{s:L}$ | xor -B2 accu[s]:$msvc | xtp url ]')
+        self.assertEqual(str(data | pipeline), 'http://64.235.39''.82')
