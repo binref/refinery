@@ -806,7 +806,7 @@ class DelayedArgument(LazyEvaluation):
         update = PythonExpression(update, all_variables_allowed=True)
         seed = seed and PythonExpression(seed, all_variables_allowed=True)
         feed = feed and PythonExpression(feed, all_variables_allowed=True)
-        skip = skip and int(skip, 0) or 1
+        skip = 1 if skip is None else int(skip, 0)
         precision = precision and int(precision, 0) or 64
         mask = precision and (1 << precision) - 1
 

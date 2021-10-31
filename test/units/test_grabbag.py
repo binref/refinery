@@ -62,7 +62,7 @@ class TestGrabBagExamples(TestBase):
     def test_blackmatter_sample(self):
         data = self.download_sample('c6e2ef30a86baa670590bd21acf5b91822117e0cbe6060060bc5fe0182dace99')
         pipeline = load_pipeline('push [| vsect .rsrc | struct {KS:L}$ | pop | vsect .data | struct L{:{0}}'
-            '| blockop -P8 -B4 "((A*KS)>>32)^B" "take[1:]:accu[KS,4]:A*0x8088405+1" | repl h:00 | carve -n8 printable ]]')
+            '| xor -B4 "accu[KS,1,32]:(A*0x8088405+1)#((KS*A)>>32)" | repl h:00 | carve -n8 printable ]]')
         strings = str(data | pipeline).splitlines(False)
         self.assertIn('Safari/537.36', strings)
         self.assertIn('bcdedit /set {current} safeboot network', strings)

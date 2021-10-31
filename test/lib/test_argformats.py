@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.lib import argformats
+from refinery.lib import loader
 
 from .. import TestBase
 
@@ -19,12 +20,21 @@ class TestArgumentFormats(TestBase):
 
     def test_accumulator(self):
         dm = argformats.DelayedArgument('take[:20]:accu[0x45]:(3*A+3)&0xFF')()
-        self.assertEqual(dm, bytes.fromhex('45D2796E4DEAC146D582899EDD9AD176653299CE'))
+        self.assertEqual(dm, bytes.fromhex('D2796E4DEAC146D582899EDD9AD176653299CE6D'))
 
     def test_reduce_sum_of_odd_numbers(self):
         for k in range(1, 56):
-            result = int(argformats.DelayedArgument(F'base[-R]:be:reduce[S+B]:take[:{k}]:accu[1]:A+2')(), 0)
+            result = int(argformats.DelayedArgument(F'base[-R]:be:reduce[S+B]:take[:{k}]:accu[1,0]:A+2')(), 0)
             self.assertEqual(result, k ** 2, F'Failed for {k}.')
+
+    def test_msvc(self):
+        pl = loader.load_pipeline('emit rep[32]:H:00 [| put s 0xF23CA2 | xor -B2 accu[s]:$msvc ]')
+        self.assertEqual(pl(),
+            bytes.fromhex('500BC53065647A48899EE4D7F07166A7643AB3EC9F4343A64DF5C45B4CC4D9B2'))
+
+    def test_skip(self):
+        data = argformats.DelayedArgument('take[:10]:accu[0,5]:A+1')()
+        self.assertEqual(data, bytes(range(5, 15)))
 
     def test_skip_first_character_of_cyclic_key(self):
         key = argformats.DelayedArgument('take[1:16]:cycle:KITTY')()
