@@ -758,21 +758,57 @@ class DelayedArgument(LazyEvaluation):
         return itertools.cycle(it)
 
     @handler.register('accu', final=True)
-    def accu(self, update: str, seed: Optional[str] = None, precision: Optional[str] = None) -> Iterable[int]:
+    def accu(
+        self,
+        spec: str,
+        seed: Optional[str] = None,
+        skip: Optional[str] = None,
+        precision: Optional[str] = None
+    ) -> Iterable[int]:
         """
-        The final handler `accu[seed=0,precision=0]:update` expects `seed` and `expression` to be Python
-        expressions and generates an infinite integer sequence. The first element of this sequence is `seed`,
-        which is zero by default. Each subsequent element is the result of evaluating the `update`
-        expression. The `update` expression can use the special variable `A` to access the previous element
-        of the sequence. This handler can be used to implement simple finite state machines such as linear
-        congruency generators, for example. If the `precision` argument is present, all results are reduced
-        to an integer with the given length in bytes.
+        The final handler
+
+            accu[seed=0,skip=1,precision=64]:update[#feed]
+
+        expects `seed`, `skip`, `update`, and `feed` to be Python expressions. It generates an infinite integer
+        sequence maintaining an internal state `A`: The initial value for `A` is `seed`. Each subsequent state is
+        the result of evaluating the `update` expression, which can use the variable `A` to access the current
+        state. The next integer value to be generated is the result of evaluating the expression `feed`, which
+        may again use the variable `A` to access the internal state. If the `feed` expression is omitted, the
+        complete state `A` is emitted in each step. The value of `skip` specifies the number of elements from the
+        beginning of the sequence that should be skipped. The value of `precision` specifies the number of bits
+        that are used by the internal state variable `A`. You can specify `precision` to be zero if you want the
+        result to be an unbounded big integer.
+
+        Instead of a Python expression, the  variable `update` can also be one of the following values, which
+        are pre-defined update routines based on popular generators:
+
+        - `$libc`: `A * 0x041C64E6D + 0x003039 # (A >> 0x00) & 0x3FFFFFFF`
+        - `$ansi`: `A * 0x041C64E6D + 0x003039 # (A >> 0x10) & 0x00003FFF`
+        - `$msvc`: `A * 0x0000343FD + 0x269EC3 # (A >> 0x10) & 0x00003FFF`
+        - `$msvb`: `A * 0x043FD43FD + 0xC39EC3`
+        - `$java`: `A * 0x5DEECE66D + 0x00000B # (A >> 0x10) & 0x7FFFFFFF`
+        - `$mmix`: `A * 6364136223846793005 + 1442695040888963407`
         """
+        if spec.startswith('$'):
+            try:
+                spec = {
+                    '$libc': 'A * 0x041C64E6D + 0x003039',
+                    '$ansi': 'A * 0x041C64E6D + 0x003039 # (A >> 0x10)',
+                    '$msvc': 'A * 0x0000343FD + 0x269EC3 # (A >> 0x10)',
+                    '$msvb': 'A * 0x043FD43FD + 0xC39EC3',
+                    '$java': 'A * 0x5DEECE66D + 0x00000B',
+                    '$mmix': 'A * 6364136223846793005 + 1442695040888963407'
+                }[spec]
+            except KeyError:
+                raise ArgumentTypeError(F'The generator type {spec} is unknown.')
+        update, _, feed = spec.partition('#')
         update = PythonExpression(update, all_variables_allowed=True)
         seed = seed and PythonExpression(seed, all_variables_allowed=True)
-        if precision:
-            precision = int(precision, 0)
-        mask = precision and (1 << (8 * precision)) - 1
+        feed = feed and PythonExpression(feed, all_variables_allowed=True)
+        skip = skip and int(skip, 0) or 1
+        precision = precision and int(precision, 0) or 64
+        mask = precision and (1 << precision) - 1
 
         def finalize(data: Optional[Chunk] = None):
             @lru_cache(maxsize=512, typed=False)
@@ -780,11 +816,17 @@ class DelayedArgument(LazyEvaluation):
                 return update(meta, A=A)
             meta = metavars(data)
             A = seed and seed(meta) or 0
+            F = feed and feed(meta, A=A) or A
+            S = skip
             while True:
-                yield A
+                if not S:
+                    yield F
+                else:
+                    S = S - 1
                 A = accumulate(A)
                 if mask:
                     A &= mask
+                F = feed and feed(meta, A=A) or A
         try:
             update(A=seed())
         except ParserVariableMissing:
