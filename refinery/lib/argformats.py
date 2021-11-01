@@ -783,11 +783,11 @@ class DelayedArgument(LazyEvaluation):
         Instead of a Python expression, the  variable `update` can also be one of the following values, which
         are pre-defined update routines based on popular generators:
 
-        - `$libc`: `A * 0x041C64E6D + 0x003039 # (A >> 0x00) & 0x3FFFFFFF`
-        - `$ansi`: `A * 0x041C64E6D + 0x003039 # (A >> 0x10) & 0x00003FFF`
-        - `$msvc`: `A * 0x0000343FD + 0x269EC3 # (A >> 0x10) & 0x00003FFF`
+        - `$libc`: `A * 0x041C64E6D + 0x003039`
+        - `$ansi`: `A * 0x041C64E6D + 0x003039 # (A >> 0x10)`
+        - `$msvc`: `A * 0x0000343FD + 0x269EC3 # (A >> 0x10)`
         - `$msvb`: `A * 0x043FD43FD + 0xC39EC3`
-        - `$java`: `A * 0x5DEECE66D + 0x00000B # (A >> 0x10) & 0x7FFFFFFF`
+        - `$java`: `A * 0x5DEECE66D + 0x00000B`
         - `$mmix`: `A * 6364136223846793005 + 1442695040888963407`
         """
         if spec.startswith('$'):
