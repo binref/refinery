@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.4.7
+- Adds the `xtpdf` unit for extracting embedded objects from PDF documents.
+- The `accu:` handler now supports pre-configured finite state machines for well-known `rand()` implementations.
+
 ## Version 0.4.6
 - The `officectypt` unit now supports the Excel default password `VelvetSweatshop`.
 - The `ci` property has been removed from the output of `peek --meta`.
