@@ -27,10 +27,3 @@ class emit(Unit):
             yield data and data.encode(self.codec, 'replace') or B''
         else:
             yield from self.args.data
-
-    @classmethod
-    def run(cls, argv=None, stream=None):
-        super(emit, cls).run(
-            argv=argv,
-            stream=stream or open(__import__('os').devnull, 'rb')
-        )
