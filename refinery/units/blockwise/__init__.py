@@ -204,7 +204,6 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             spread = iterspread(self.operate, self.chunk(data), *arguments, mask=mask)
             return self.unchunk(spread(self)) + self.rest(data)
         except Exception as E:
-            raise
             self.log_warn(F'unable to inline this operation: {E!s}')
             self.log_warn(R'falling back all the way to failsafe method')
             self._arg = arguments
