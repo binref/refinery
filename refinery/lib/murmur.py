@@ -3,6 +3,9 @@
 # pymmh3 was originally written by Fredrik Kihlander and enhanced by Swapnil Gusani.
 # source: https://github.com/wc-duck/pymmh3
 # This file is a modification of their source code.
+"""
+Murmur hash implementation, orignally written by Fredrik Kihlander and enhanced by Swapnil Gusani.
+"""
 from struct import unpack
 
 
