@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Implements programmatic inlining, specifically for the units in `refinery.units.blockwise`.
+"""
 from __future__ import annotations
 from typing import Any, Callable, Generator, Optional, Type, TypeVar, Union
 
@@ -43,6 +46,11 @@ class inline(Callable[..., _R]):
         return self._function(*args, **kwargs)
 
 
+class PassAsConstant:
+    def __init__(self, value):
+        self.value = value
+
+
 def getsource(f):
     return inspect.cleandoc(F'\n{inspect.getsource(f)}')
 
@@ -56,14 +64,41 @@ class NoFunctionDefinitionFound(ValueError):
 
 
 def iterspread(
-    function: Callable[..., _R],
+    method: Callable[..., _R],
     iterator,
     *inline_args,
     mask: Optional[int] = None
 ) -> Callable[..., Generator[_R, None, None]]:
+    """
+    This function receives an arbitrary callable `method`, a primary iterator called `iterator`, and
+    an arbitrary number of additional arguments, collected in the `inline_args` variable. The function
+    will essentially turn this:
 
-    code = ast.parse(getsource(function))
-    closure_vars = inspect.getclosurevars(function)
+        def method(self, a, b):
+            return a + b
+
+    into this:
+
+        def iterspread_method(self):
+            for _var_a in _arg_a:
+                _var_b = next(_arg_b)
+                yield _var_a + _var_b
+
+    where `_arg_a` and `_arg_b` are closure variables that are bound to the primary iterator, and the
+    single element of `inline_args`, respectively. If one ofthe elements in `inline_args` is a constant,
+    then this constant will instead be set initially in front of the loop:
+
+        def iterspread_method(self):
+            _var_b = 5
+            for _var_a in _arg_a:
+                yield _var_a + _var_b
+
+    Spreading the application of `method` like this provides a high performance increase over making a
+    function call to `method` in each step of the iteration.
+    """
+
+    code = ast.parse(getsource(method))
+    closure_vars = inspect.getclosurevars(method)
     context = closure_vars.nonlocals
     reserved_names = set(context)
     reserved_names.update(closure_vars.globals)
@@ -117,7 +152,7 @@ def iterspread(
             function_args = [arg.arg for arg in node.args.args]
             inlined_start = 1
 
-            if inspect.ismethod(function):
+            if inspect.ismethod(method):
                 inlined_start += 1
 
             iterator_name = function_args[inlined_start - 1]
@@ -134,17 +169,20 @@ def iterspread(
 
             for name, value in zip(function_args, inline_args):
                 targets = [Name(id=as_var(name), ctx=Store())]
+                if isinstance(value, PassAsConstant):
+                    context[as_var(name)] = value.value
+                    continue
                 if isinstance(value, (int, str, bytes)):
                     context[as_var(name)] = value
-                else:
-                    context[as_arg(name)] = value
-                    function_body.append(Assign(
-                        targets=targets,
-                        value=Call(
-                            func=Name(id='next', ctx=Load()),
-                            args=[Name(id=as_arg(name), ctx=Load())],
-                            keywords=[]
-                        )))
+                    continue
+                context[as_arg(name)] = value
+                function_body.append(Assign(
+                    targets=targets,
+                    value=Call(
+                        func=Name(id='next', ctx=Load()),
+                        args=[Name(id=as_arg(name), ctx=Load())],
+                        keywords=[]
+                    )))
 
             if node.args.vararg:
                 name = node.args.vararg.arg
