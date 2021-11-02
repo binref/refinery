@@ -196,6 +196,10 @@ class PythonExpression:
 
 
 class SliceAgain(LazyEvaluation):
+    """
+    Raised by `refinery.lib.argformats.sliceobj` to indicate that meta variables
+    are required to compue this slice.
+    """
     def __init__(self, expr):
         self.expr = expr
 
@@ -609,7 +613,7 @@ class DelayedArgument(LazyEvaluation):
             return obj
         raise ArgumentTypeError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion is known.')
 
-    @handler.register('var', final=True)
+    @handler.register('var', '?', final=True)
     def var(self, name: str) -> bytes:
         """
         The final handler `var:name` contains the value of the meta variable `name`.
@@ -624,7 +628,7 @@ class DelayedArgument(LazyEvaluation):
             return self._interpret_variable(name, result)
         return extract
 
-    @handler.register('xvar', final=True)
+    @handler.register('xvar', '!', final=True)
     def xvar(self, name: str) -> bytes:
         """
         The final handler `xvar:name` contains the value of the meta variable `name`.
