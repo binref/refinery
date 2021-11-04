@@ -83,7 +83,7 @@ class hexload(HexViewer):
             self.log_debug(F'decoding: {encoded_line.strip()}')
             decoded_line = bytes.fromhex(encoded_line)
             decoded_bytes.extend(decoded_line)
-            txt = line[match.end():]
+            txt = line[end:]
             txt_stripped = txt.strip()
             if not txt_stripped:
                 continue
