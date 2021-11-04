@@ -13,10 +13,6 @@ BufferType = Union[bytearray, bytes, memoryview]
 CIPHER_MODES: Dict[str, CipherMode] = {}
 
 
-def irange(a, b):
-    return range(a, b + 1)
-
-
 def _register_cipher_mode(cls):
     CIPHER_MODES[F'MODE_{cls.__name__}'] = cls
     return cls
