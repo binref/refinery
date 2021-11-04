@@ -540,7 +540,7 @@ class arg(Argument):
         return init
 
 
-class ArgumentSpecification(OrderedDict):
+class ArgumentSpecification(OrderedDict, Dict[str, Argument]):
     """
     A container object that stores `refinery.units.arg` specifications.
     """
@@ -620,6 +620,8 @@ class Executable(ABCMeta):
     for the other ones.
     """
 
+    _argument_specification: Dict[str, arg]
+
     def _infer_argspec(cls, parameters, args: Optional[ArgumentSpecification] = None):
 
         args = ArgumentSpecification() if args is None else args
@@ -697,17 +699,18 @@ class Executable(ABCMeta):
 
     def __init__(cls, name, bases, nmspc, abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
-        cls._argspec_ = ArgumentSpecification()
+        cls._argument_specification = ArgumentSpecification()
 
         cls_init = cls.__init__
         sig_init = inspect.signature(cls_init)
         parameters = sig_init.parameters
 
         for base in bases:
-            for key, value in base._argspec_.items():
+            base: Executable
+            for key, value in base._argument_specification.items():
                 if not value.guess and key in parameters:
-                    cls._argspec_[key] = value.__copy__()
-            cls._infer_argspec(parameters, cls._argspec_)
+                    cls._argument_specification[key] = value.__copy__()
+            cls._infer_argspec(parameters, cls._argument_specification)
 
         if not abstract and any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
             @wraps(cls.__init__)
@@ -1494,7 +1497,7 @@ class Unit(UnitBase, abstract=True):
 
         groups = {None: argp}
 
-        for argument in reversed(cls._argspec_.values()):
+        for argument in reversed(cls._argument_specification.values()):
             gp = argument.group
             if gp not in groups:
                 groups[gp] = argp.add_mutually_exclusive_group()

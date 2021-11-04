@@ -5,9 +5,21 @@ Implements several popular block and stream ciphers.
 """
 import abc
 
-from typing import Iterable, Any, ByteString, Tuple
-
+from typing import (
+    Any,
+    ByteString,
+    ClassVar,
+    Iterable,
+    Optional,
+    Tuple,
+    Type,
+)
+from refinery.lib.crypto import (
+    CipherObjectFactory,
+    CipherInterface,
+)
 from refinery.lib.argformats import (
+    Option,
     extract_options,
     OptionFactory,
 )
@@ -150,8 +162,11 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
 
 class StandardCipherExecutable(CipherExecutable):
 
-    def __new__(mcs, name, bases, nmspc, cipher=NotImplemented):
-        if cipher is NotImplemented:
+    _available_block_cipher_modes: ClassVar[Type[Option]]
+    _cipher_object_factory: ClassVar[CipherObjectFactory]
+
+    def __new__(mcs, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
+        if cipher is None:
             keywords = dict(abstract=True)
         else:
             keywords = dict(
@@ -161,32 +176,38 @@ class StandardCipherExecutable(CipherExecutable):
             )
         return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
 
-    def __init__(cls, name, bases, nmspc, cipher=NotImplemented):
+    def __init__(cls, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
+        cls: Executable
+        abstract = cipher is None
         super(StandardCipherExecutable, cls).__init__(
-            name, bases, nmspc, abstract=cipher is NotImplemented)
-        cls._stdcipher_ = cipher
-        if cipher is not NotImplemented and cipher.block_size > 1 and 'mode' in cls._argspec_:
-            modes = extract_options(cipher)
-            if not modes:
-                raise RefineryCriticalException(
-                    F'The cipher {cipher.name} is a block cipher module, '
-                    F'but no cipher block mode constants were found.'
-                )
-            cls._bcmspec_ = OptionFactory(modes, ignorecase=True)
-            cls._argspec_['mode'].merge_all(arg(
-                '-M', '--mode', type=str.upper, metavar='MODE', nargs=arg.delete, choices=list(modes),
-                help=(
-                    'Choose cipher mode to be used. Possible values are: {}. By default, the CBC mode'
-                    '  is used when an IV is is provided, and ECB otherwise.'.format(', '.join(modes))
-                )
-            ))
+            name, bases, nmspc, abstract=abstract)
+        cls._cipher_object_factory = cipher
+        if abstract or cipher.block_size <= 1 or 'mode' not in cls._argument_specification:
+            return
+        modes = extract_options(cipher)
+        if not modes:
+            raise RefineryCriticalException(
+                F'The cipher {cipher.name} is a block cipher module, '
+                F'but no cipher block mode constants were found.'
+            )
+        cls._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
+        cls._argument_specification['mode'].merge_all(arg(
+            '-M', '--mode', type=str.upper, metavar='MODE', nargs=arg.delete, choices=list(modes),
+            help=(
+                'Choose cipher mode to be used. Possible values are: {}. By default, the CBC mode'
+                '  is used when an IV is is provided, and ECB otherwise.'.format(', '.join(modes))
+            )
+        ))
 
 
 class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
-    def _get_cipher_instance(self, **optionals) -> Any:
+    _available_block_cipher_modes: ClassVar[Type[Option]]
+    _cipher_object_factory: ClassVar[CipherObjectFactory]
+
+    def _get_cipher_instance(self, **optionals) -> CipherInterface:
         self.log_info(lambda: F'encryption key: {self.args.key.hex()}')
-        return self._stdcipher_.new(key=self.args.key, **optionals)
+        return self._cipher_object_factory.new(key=self.args.key, **optionals)
 
     def encrypt(self, data: bytes) -> bytes:
         return self._get_cipher_instance().encrypt(data)
@@ -210,12 +231,12 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
     key_sizes: Tuple[int, ...]
 
     def __init__(self, key, iv=B'', padding=None, mode=None):
-        mode = self._bcmspec_(mode or iv and 'CBC' or 'ECB')
+        mode = self._available_block_cipher_modes(mode or iv and 'CBC' or 'ECB')
         if iv and mode.name == 'ECB':
             raise ValueError('No initialization vector can be specified for ECB mode.')
         super().__init__(key=key, iv=iv, padding=padding, mode=mode)
 
-    def _get_cipher_instance(self, **optionals) -> Any:
+    def _get_cipher_instance(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name
         if mode != 'ECB':
             iv = bytes(self.iv)
@@ -233,7 +254,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
                 if bounds and len(iv) not in range(*bounds):
                     raise ValueError(F'Invalid nonce length, must be in {bounds} for {mode}.')
                 optionals['nonce'] = iv
-            elif mode in ('CBC', 'CFB', 'OFB', 'OPENPGP'):
+            elif mode in ('PCBC', 'CBC', 'CFB', 'OFB', 'OPENPGP'):
                 if len(iv) > self.blocksize:
                     self.log_warn(F'The IV has length {len(self.args.iv)} and will be truncated to the blocksize {self.blocksize}.')
                     iv = iv[:self.blocksize]
@@ -251,7 +272,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             del optionals['iv']
             if self.iv:
                 self.log_info('ignoring iv for mode', self.args.mode)
-            return self._stdcipher_.new(key=self.args.key, **optionals)
+            return self._cipher_object_factory.new(key=self.args.key, **optionals)
 
 
 class LatinCipherUnit(StreamCipherUnit, abstract=True):
