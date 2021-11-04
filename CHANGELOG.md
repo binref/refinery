@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.8
+- Adds the `serpent` unit.
+
 ## Version 0.4.7
 - Adds the `xtpdf` unit for extracting embedded objects from PDF documents.
 - The `accu:` handler now supports pre-configured finite state machines for well-known `rand()` implementations.
