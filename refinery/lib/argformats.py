@@ -79,6 +79,7 @@ import itertools
 import inspect
 import sys
 
+from abc import ABC, abstractmethod
 from pathlib import Path
 from argparse import ArgumentTypeError
 from contextlib import suppress
@@ -1138,14 +1139,38 @@ def regexp(expression: str) -> Union[int, bytes, DelayedRegexpArgument]:
     return arg
 
 
+class Option(ABC):
+    name: str
+    mode: Any
+
+    @abstractmethod
+    def __init__(self, name: str):
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        return str(other) == self.name
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return self.name
+
+    @property
+    def value(self):
+        return self.mode
+
+
 def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
     """
     The factory produces an argument parser type that accepts the keys of `options`
     as possible values and causes the parsed argument to contain the corresponding
     value from the `options` dictionary.
     """
-
-    class Option():
+    class _Option(Option):
         def __init__(self, name: str):
             if ignorecase and name not in options:
                 needle = name.upper()
@@ -1158,23 +1183,7 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
             self.mode = options[name]
             self.name = name
 
-        def __eq__(self, other):
-            return str(other) == self.name
-
-        def __hash__(self):
-            return hash(self.name)
-
-        def __str__(self):
-            return self.name
-
-        def __repr__(self):
-            return self.name
-
-        @property
-        def value(self):
-            return self.mode
-
-    return Option
+    return _Option
 
 
 def extract_options(symbols, prefix='MODE_', *exceptions):
