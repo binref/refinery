@@ -27,26 +27,17 @@
 # Anyone thinking of using this code should reconsider. It's slow.
 # Try python-mcrypt instead. In case a faster library is not installed
 # on the target system, this code can be used as a portable fallback.
-import struct
+from typing import List, Tuple
 
-from enum import Enum
-from typing import Tuple, Optional, ByteString
-
-
-def rotr32(x, n):
-    return (x >> n) | ((x << (32 - n)) & 0xFFFFFFFF)
+from refinery.lib.crypto import rotr32, rotl32
 
 
-def rotl32(x, n):
-    return ((x << n) & 0xFFFFFFFF) | (x >> (32 - n))
-
-
-def _serpent_set_key(l_key, key, key_len):
+def serpent_set_key(l_key: List[int], key: List[int], key_len):
     key_len *= 8
     if key_len > 256:
         return False
     i = 0
-    lk = (key_len + 31) / 32
+    lk = (key_len + 31) // 32
     while i < lk:
         l_key[i] = key[i]
         i += 1
@@ -54,7 +45,7 @@ def _serpent_set_key(l_key, key, key_len):
         while i < 8:
             l_key[i] = 0
             i += 1
-        i = key_len / 32
+        i = key_len // 32
         lk = 1 << (key_len % 32)
         l_key[i] = (l_key[i] & (lk - 1)) | lk
     for i in range(132):
@@ -864,7 +855,7 @@ def _serpent_set_key(l_key, key, key_len):
     key[4 * 32 + 0xB] = h
 
 
-def _serpent_encrypt(key, in_blk: Tuple[int, int, int, int]):
+def serpent_encrypt(key: List[int], in_blk: Tuple[int, int, int, int]):
     a = in_blk[0]
     b = in_blk[1]
     c = in_blk[2]
@@ -1834,7 +1825,7 @@ def _serpent_encrypt(key, in_blk: Tuple[int, int, int, int]):
     return a, b, c, d
 
 
-def _serpent_decrypt(key, in_blk: Tuple[int, int, int, int]):
+def serpent_decrypt(key: List[int], in_blk: Tuple[int, int, int, int]):
     a, b, c, d = in_blk
     e = 0
     f = 0
@@ -2819,40 +2810,3 @@ def _serpent_decrypt(key, in_blk: Tuple[int, int, int, int]):
     c ^= key[4 * 0 + 0xA]
     d ^= key[4 * 0 + 0xB]
     return a, b, c, d
-
-
-class SerpentMode(Enum):
-    Encrypt = _serpent_encrypt
-    Decrypt = _serpent_decrypt
-
-
-class Serpent:
-    block_size = 0x10
-    key_size = 0x20
-
-    def __init__(self, key: Optional[ByteString] = None):
-        if key:
-            self.set_key(key)
-
-    def set_key(self, key):
-        key_len = len(key)
-        key_blocks, r = divmod(key_len, 4)
-        if r != 0:
-            raise ValueError('key length not a multiple of 4')
-        if key_len > self.key_size:
-            raise ValueError('key length is more than 32')
-        self.key_context = [0] * 140
-        key_word32 = [0] * 32
-        key_word32[:key_blocks] = struct.unpack(F'<{key_blocks}L', key)
-        _serpent_set_key(self.key_context, key_word32, key_len)
-
-    def __call__(self, mode: SerpentMode, data: bytearray):
-        if len(data) % 16:
-            raise ValueError('block size must be a multiple of 16')
-        view = memoryview(data)
-        blk = self.block_size
-        for k in range(0, len(data), blk):
-            index = slice(k, k + blk)
-            block = struct.unpack('<4L', view[index])
-            block = mode(self.key_context, block)
-            data[index] = struct.pack("<4L", *block)
