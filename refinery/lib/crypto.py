@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+from typing import Callable, Container, Generator, Optional, Type, Union, Dict
+
+from abc import ABC, abstractmethod
+from enum import Enum
+
+from Crypto.Util.strxor import strxor
+
+BufferType = Union[bytearray, bytes, memoryview]
+
+CIPHER_MODES: Dict[str, CipherMode] = {}
+
+
+def irange(a, b):
+    return range(a, b + 1)
+
+
+def _register_cipher_mode(cls):
+    CIPHER_MODES[F'MODE_{cls.__name__}'] = cls
+    return cls
+
 
 _DES_PARITYTABLE = bytearray((
     0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x07, 0x07,
@@ -71,3 +92,238 @@ def rotr16(x: int, c: int):
 
 def rotr08(x: int, c: int):
     return (x << (0x08 - c) & 0xFFFFFFFF) | (x >> c)
+
+
+class Direction(str, Enum):
+    Encrypt = 'encrypt'
+    Decrypt = 'decrypt'
+
+
+class CipherMode(ABC):
+
+    encrypt_block: Callable[[memoryview], memoryview]
+    decrypt_block: Callable[[memoryview], memoryview]
+
+    @abstractmethod
+    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+        raise NotImplementedError
+
+    def apply(
+        self,
+        direction: Direction,
+        dst: memoryview,
+        src: memoryview,
+        encrypt_block: Callable[[memoryview], memoryview],
+        decrypt_block: Callable[[memoryview], memoryview],
+        blocksize: int,
+    ) -> memoryview:
+        self.encrypt_block = encrypt_block
+        self.decrypt_block = decrypt_block
+        engine: Generator[memoryview, memoryview, None] = {
+            Direction.Encrypt: self.encrypt,
+            Direction.Decrypt: self.decrypt,
+        }[direction]()
+        next(engine)
+        for k in range(0, len(src), blocksize):
+            dst[k:k + blocksize] = engine.send(src[k:k + blocksize])
+        return dst
+
+
+@_register_cipher_mode
+class ECB(CipherMode):
+
+    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+        C = None
+        D = self.decrypt_block
+        while True:
+            C = yield D(C)
+
+    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        M = None
+        E = self.encrypt_block
+        while True:
+            M = yield E(M)
+
+
+class DataUnaligned(ValueError):
+    def __init__(self) -> None:
+        super().__init__('Data not aligned to block size.')
+
+
+class StatefulCipherMode(CipherMode):
+
+    iv: BufferType
+
+    def __init__(self, iv: BufferType):
+        self.iv = iv
+
+
+@_register_cipher_mode
+class CBC(StatefulCipherMode):
+
+    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        C = self.iv
+        E = self.encrypt_block
+        while True:
+            M = yield C
+            C = E(strxor(M, C))
+
+    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+        S = self.iv
+        M = None
+        D = self.decrypt_block
+        while True:
+            C = yield M
+            M = strxor(D(C), S)
+            S = bytes(C)
+
+
+@_register_cipher_mode
+class PCBC(StatefulCipherMode):
+
+    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        S = self.iv
+        C = None
+        E = self.encrypt_block
+        while True:
+            M = yield C
+            C = E(strxor(M, S))
+            S = strxor(C, M)
+
+    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+        S = self.iv
+        M = None
+        D = self.decrypt_block
+        while True:
+            C = yield M
+            M = strxor(S, D(C))
+            S = strxor(M, C)
+
+
+@_register_cipher_mode
+class CFB(StatefulCipherMode):
+
+    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        C = self.iv
+        E = self.encrypt_block
+        while True:
+            M = yield C
+            C = strxor(M, E(C))
+
+    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+        S = self.iv
+        M = None
+        E = self.encrypt_block
+        while True:
+            C = yield M
+            M = strxor(C, E(S))
+            S = bytes(C)
+
+
+@_register_cipher_mode
+class OFB(StatefulCipherMode):
+
+    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        S = self.iv
+        C = None
+        E = self.encrypt_block
+        while True:
+            M = yield C
+            S = E(S)
+            C = strxor(M, S)
+
+    decrypt = encrypt
+
+
+class CipherInterface(ABC):
+    @abstractmethod
+    def encrypt(self, M: BufferType) -> BufferType: ...
+    @abstractmethod
+    def decrypt(self, C: BufferType) -> BufferType: ...
+
+
+class CipherObjectFactory(ABC):
+    key_size: int
+    block_size: int
+    name: str
+
+    @abstractmethod
+    def new(self, key, iv=None, counter=None, nonce=None, mode=None) -> CipherInterface:
+        ...
+
+
+class BlockCipherFactory(CipherObjectFactory):
+    cipher: Type[BlockCipher]
+
+    def __init__(self, cipher: Type[BlockCipher]):
+        self.cipher = cipher
+        self._modes = []
+        for name, mode in CIPHER_MODES.items():
+            setattr(self, name, len(self._modes))
+            self._modes.append(mode)
+
+    def new(self, key, mode=None, nonce=None, **mode_args) -> CipherInterface:
+        if mode is not None:
+            mode = self._modes[mode]
+        mode = mode(**mode_args)
+        return self.cipher(key, mode)
+
+    @property
+    def block_size(self):
+        return self.cipher.block_size
+
+    @property
+    def key_size(self):
+        return self.cipher.valid_key_sizes
+
+    @property
+    def name(self):
+        return self.cipher.__name__
+
+
+class BlockCipher(CipherInterface, ABC):
+    block_size: int
+    key: BufferType
+    mode: CipherMode
+    valid_key_sizes: Container[int]
+
+    def __init__(self, key: BufferType, mode: Optional[CipherMode]):
+        if len(key) not in self.valid_key_sizes:
+            raise ValueError(F'The key size {len(key)} is not supported by {self.__class__.__name__.lower()}.')
+        self.key = key
+        self.mode = mode or ECB()
+
+    @abstractmethod
+    def block_encrypt(self, data: BufferType) -> BufferType:
+        raise NotImplementedError
+
+    @abstractmethod
+    def block_decrypt(self, data: BufferType) -> BufferType:
+        raise NotImplementedError
+
+    def _apply_blockwise(self, direction: Direction, data: BufferType) -> BufferType:
+        block_size = self.block_size
+        mode = self.mode
+        if len(data) % block_size != 0:
+            raise DataUnaligned
+        dst = src = memoryview(data)
+        if dst.readonly:
+            dst = bytearray(src)
+        return mode.apply(
+            direction,
+            dst,
+            src,
+            self.block_encrypt,
+            self.block_decrypt,
+            block_size
+        )
+
+    def encrypt(self, data: BufferType) -> BufferType:
+        return self._apply_blockwise(Direction.Encrypt, data)
+
+    def decrypt(self, data: BufferType) -> BufferType:
+        return self._apply_blockwise(Direction.Decrypt, data)
