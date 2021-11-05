@@ -60,3 +60,14 @@ class TestPEMeta(TestUnitBase):
         self.assertIn('Signature', result)
         self.assertIn('Serial', result['Signature'])
         self.assertEqual(result['Signature']['Serial'], '0ce8111784c41955f33511aeb28c9ab8')
+
+    def test_serial_overflow_and_authenticode_info(self):
+        data = self.download_sample('480ca9086fd1999975c1c060a36c57a746f87e51681417d8c8b89648796f78ca')
+        unit = self.load()
+        result = data | unit | json.loads
+
+        self.assertIn('Signature', result)
+        self.assertIn('Serial', result['Signature'])
+        self.assertEqual(result['Signature']['ProgramName'], 'KMSpico')
+        self.assertEqual(result['Signature']['MoreInfo'], 'http://forums.mydigitallife.''info/threads/49108')
+        self.assertEqual(result['Signature']['Serial'], 'ab81dc9f367529be42665b07570ffa05')

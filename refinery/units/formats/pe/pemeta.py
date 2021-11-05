@@ -230,17 +230,32 @@ class pemeta(Unit):
                 main_certificate = certificates_with_extended_use[0]
         if main_certificate:
             crt = main_certificate['tbs_certificate']
-            serial = crt['serial_number']
+            serial: int = crt['serial_number']
             if not isinstance(serial, int):
                 serial = int(serial, 0)
-            serial = F'{serial:x}'
-            if len(serial) % 2:
-                serial = '0' + serial
+            serial_size = serial.bit_length()
+            if serial < 0:
+                serial = (1 << (serial_size + 1)) - ~serial - 1
+            serial_size, r = divmod(serial_size, 8)
+            serial_size += bool(r)
+            serial = serial.to_bytes(serial_size, 'big')
+            assert serial in data
+            serial = serial.hex()
             subject = crt['subject']
             location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
             info.update(Subject=subject['common_name'])
             if any(location):
                 info.update(SubjectLocation=', '.join(filter(None, location)))
+            for signer_info in signature['content'].get('signer_infos', ()):
+                try:
+                    if signer_info['sid']['serial_number'] != crt['serial_number']:
+                        continue
+                    for attr in signer_info['signed_attrs']:
+                        if attr['type'] == 'authenticode_info':
+                            info.update(ProgramName=attr['value']['programName'])
+                            info.update(MoreInfo=attr['value']['moreInfo'])
+                except KeyError:
+                    continue
             info.update(
                 Issuer=crt['issuer']['common_name'], Fingerprint=main_certificate['fingerprint'], Serial=serial)
             return info
