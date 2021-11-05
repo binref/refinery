@@ -68,13 +68,27 @@ class peek(HexViewer):
             if isinstance(value, CustomStringRepresentation):
                 value = repr(value).strip()
             elif isbuffer(value):
-                try:
-                    decoded: str = value.decode(self.codec)
-                except UnicodeDecodeError:
-                    decoded = None
-                if decoded and not formats.printable.match(decoded):
-                    decoded = None
-                value = decoded or F'h:{value.hex()}'
+                value: bytes
+                for prefix, codec in (
+                    ('s', 'utf8'),
+                    ('a', 'latin1'),
+                    ('u', 'utf-16le'),
+                ):
+                    try:
+                        decoded: str = value.decode(codec)
+                    except UnicodeDecodeError:
+                        decoded = None
+                    if decoded is not None:
+                        if not formats.printable.fullmatch(decoded):
+                            decoded = None
+                    if decoded is not None:
+                        if prefix == 's' and ':' not in decoded:
+                            value = decoded
+                        else:
+                            value = F'{prefix}:{decoded}'
+                        break
+                else:
+                    value = F'h:{value.hex()}'
             elif isinstance(value, int):
                 value = F'0x{value:X}'
             elif isinstance(value, float):
