@@ -768,6 +768,9 @@ class Executable(ABCMeta):
     def __or__(cls, other):
         return cls().__or__(other)
 
+    def __pos__(cls):
+        return cls()
+
     def __neg__(cls):
         unit = cls()
         unit.args.reverse = True
@@ -1243,10 +1246,13 @@ class Unit(UnitBase, abstract=True):
         omega.nozzle.source = alpha
         return omega
 
+    def __pos__(self):
+        return self
+
     def __neg__(self):
         pipeline = []
         cursor = self
-        while isinstance(cursor, UnitBase):
+        while isinstance(cursor, Unit):
             reversed = copy.copy(cursor)
             reversed.args.reverse = True
             reversed._source = None

@@ -240,16 +240,16 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         mode = self.args.mode.name
         if mode != 'ECB':
             iv = bytes(self.iv)
-            if mode == 'CTR' and len(iv) == 16:
+            if mode == 'CTR' and len(iv) == self.blocksize:
                 from Crypto.Util import Counter
                 counter = Counter.new(self.blocksize * 8,
                     initial_value=int.from_bytes(iv, 'big'))
                 optionals['counter'] = counter
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
                 bounds = {
-                    'CCM': (7, 14),
-                    'OCB': (1, 16),
-                    'CTR': (1, 17),
+                    'CCM': (7, self.blocksize - 2),
+                    'OCB': (1, self.blocksize),
+                    'CTR': (1, self.blocksize),
                 }.get(mode, None)
                 if bounds and len(iv) not in range(*bounds):
                     raise ValueError(F'Invalid nonce length, must be in {bounds} for {mode}.')

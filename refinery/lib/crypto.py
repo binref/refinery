@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Callable, Container, Generator, Optional, Type, Union, Dict
 
+from typing import Callable, Container, Generator, Optional, Type, Union, Dict
 from abc import ABC, abstractmethod
 from enum import Enum
 
 from Crypto.Util.strxor import strxor
 
 BufferType = Union[bytearray, bytes, memoryview]
-
 CIPHER_MODES: Dict[str, CipherMode] = {}
 
 
 def _register_cipher_mode(cls):
-    CIPHER_MODES[F'MODE_{cls.__name__}'] = cls
+    CIPHER_MODES[cls.__name__] = cls
     return cls
 
 
@@ -59,7 +58,7 @@ def des_set_odd_parity(key: bytearray):
 
 
 def rotl64(x: int, c: int):
-    return ((x << c) | (x >> (0x40 - c))) & 0xFFFFFFFF
+    return ((x << c) | (x >> (0x40 - c))) & 0xFFFFFFFFFFFFFFFF
 
 
 def rotl32(x: int, c: int):
@@ -67,15 +66,15 @@ def rotl32(x: int, c: int):
 
 
 def rotl16(x: int, c: int):
-    return ((x << c) | (x >> (0x10 - c))) & 0xFFFFFFFF
+    return ((x << c) | (x >> (0x10 - c))) & 0xFFFF
 
 
 def rotl08(x: int, c: int):
-    return ((x << c) | (x >> (0x08 - c))) & 0xFFFFFFFF
+    return ((x << c) | (x >> (0x08 - c))) & 0xFF
 
 
 def rotr64(x: int, c: int):
-    return (x << (0x40 - c) & 0xFFFFFFFF) | (x >> c)
+    return (x << (0x40 - c) & 0xFFFFFFFFFFFFFFFF) | (x >> c)
 
 
 def rotr32(x: int, c: int):
@@ -83,11 +82,11 @@ def rotr32(x: int, c: int):
 
 
 def rotr16(x: int, c: int):
-    return (x << (0x10 - c) & 0xFFFFFFFF) | (x >> c)
+    return (x << (0x10 - c) & 0xFFFF) | (x >> c)
 
 
 def rotr08(x: int, c: int):
-    return (x << (0x08 - c) & 0xFFFFFFFF) | (x >> c)
+    return (x << (0x08 - c) & 0xFF) | (x >> c)
 
 
 class Direction(str, Enum):
@@ -133,16 +132,18 @@ class CipherMode(ABC):
 class ECB(CipherMode):
 
     def decrypt(self) -> Generator[memoryview, memoryview, None]:
-        C = None
+        M = None
         D = self.decrypt_block
         while True:
-            C = yield D(C)
+            C = yield M
+            M = D(C)
 
     def encrypt(self) -> Generator[memoryview, memoryview, None]:
-        M = None
+        C = None
         E = self.encrypt_block
         while True:
-            M = yield E(M)
+            M = yield C
+            C = E(M)
 
 
 class DataUnaligned(ValueError):
@@ -201,23 +202,66 @@ class PCBC(StatefulCipherMode):
 
 
 @_register_cipher_mode
-class CFB(StatefulCipherMode):
+class CFB(CipherMode):
+    """
+    Cipher Feedback Mode: https://csrc.nist.gov/publications/detail/sp/800-38a/final
+    """
+
+    iv: BufferType
+    segment_size: int
+
+    def __init__(self, iv: BufferType, segment_size: Optional[int] = None):
+        if segment_size is None:
+            segment_size = 8
+        if segment_size % 8 != 0:
+            raise NotImplementedError('segment sizes may only be multiples of 8')
+        segment_size = segment_size // 8
+        if len(iv) % segment_size != 0:
+            raise NotImplementedError(
+                F'the block size {len(iv)*8} is not an even multiple of the segment '
+                F'size {segment_size*8}; this is currently not supported.')
+        self.segment_size = segment_size
+        self.iv = iv
 
     def encrypt(self) -> Generator[memoryview, memoryview, None]:
-        C = self.iv
+        s = self.segment_size
+        S = bytearray(self.iv)
         E = self.encrypt_block
-        while True:
-            M = yield C
-            C = strxor(M, E(C))
+        C = bytearray(len(self.iv))
+        if s == 1:
+            while True:
+                M = yield C
+                for k, m in enumerate(M):
+                    C[k] = c = m ^ E(S)[0]
+                    S[:-1], S[-1] = memoryview(S)[1:], c
+        else:
+            segments = [slice(i, i + s) for i in range(0, len(S), s)]
+            while True:
+                M = yield C
+                for k in segments:
+                    m = M[k]
+                    C[k] = c = strxor(m, E(S)[:s])
+                    S[:-s], S[-s:] = memoryview(S)[s:], c
 
     def decrypt(self) -> Generator[memoryview, memoryview, None]:
-        S = self.iv
-        M = None
+        s = self.segment_size
+        S = bytearray(self.iv)
         E = self.encrypt_block
-        while True:
-            C = yield M
-            M = strxor(C, E(S))
-            S = bytes(C)
+        M = bytearray(len(self.iv))
+        if s == 1:
+            while True:
+                C = yield M
+                for k, c in enumerate(C):
+                    M[k] = c ^ E(S)[0]
+                    S[:-1], S[-1] = memoryview(S)[1:], c
+        else:
+            segments = [slice(i, i + s) for i in range(0, len(S), s)]
+            while True:
+                C = yield M
+                for k in segments:
+                    c = C[k]
+                    M[k] = strxor(c, E(S)[:s])
+                    S[:-s], S[-s:] = memoryview(S)[s:], c
 
 
 @_register_cipher_mode
@@ -235,6 +279,75 @@ class OFB(StatefulCipherMode):
     decrypt = encrypt
 
 
+@_register_cipher_mode
+class CTR(CipherMode):
+
+    counter_len: int
+    prefix: BufferType
+    suffix: BufferType
+    initial_value: int
+    little_endian: bool
+    block_size: int
+
+    @property
+    def byte_order(self):
+        return 'little' if self.little_endian else 'big'
+
+    def __init__(
+        self,
+        block_size: Optional[int] = None,
+        counter: Optional[Dict] = None,
+        nonce: Optional[BufferType] = None,
+        initial_value: Optional[int] = 0,
+        little_endian: bool = False
+    ):
+        if counter is not None:
+            self.initial_value = counter.get('initial_value', initial_value)
+            self.little_endian = counter.get('little_endian', little_endian)
+            self.prefix = counter['prefix']
+            self.suffix = counter['suffix']
+            self.counter_len = counter['counter_len']
+            self.block_size = self.counter_len + len(self.prefix) + len(self.suffix)
+            if block_size not in {None, self.block_size}:
+                raise ValueError('Information in counter object does not align with block size.')
+            return
+        if block_size is None:
+            raise ValueError('Unable to construct CTR mode object without block_size or counter argument.')
+
+        self.initial_value = initial_value
+        self.little_endian = little_endian
+        self.suffix = B''
+        self.block_size = block_size
+
+        if nonce is not None:
+            if len(nonce) > block_size:
+                raise ValueError('Nonce length exceeds block length.')
+            self.counter_len = block_size - len(nonce)
+            self.prefix = nonce
+        else:
+            self.counter_len = block_size // 2
+            self.prefix = B'\0' * (block_size - self.counter_len)
+
+    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        S = bytearray(self.block_size)
+        J = slice(len(self.prefix), self.block_size - len(self.suffix))
+        K = self.initial_value
+        if self.prefix:
+            S[:+len(self.prefix)] = self.prefix
+        if self.suffix:
+            S[-len(self.suffix):] = self.suffix
+        C = None
+        E = self.encrypt_block
+        mask = (1 << (self.counter_len * 8)) - 1
+        while True:
+            M = yield C
+            S[J] = K.to_bytes(self.counter_len, self.byte_order)
+            K = K + 1 & mask
+            C = strxor(E(S), M)
+
+    decrypt = encrypt
+
+
 class CipherInterface(ABC):
     @abstractmethod
     def encrypt(self, M: BufferType) -> BufferType: ...
@@ -248,7 +361,16 @@ class CipherObjectFactory(ABC):
     name: str
 
     @abstractmethod
-    def new(self, key, iv=None, counter=None, nonce=None, mode=None) -> CipherInterface:
+    def new(
+        self,
+        key: BufferType,
+        iv: Optional[BufferType] = None,
+        counter: Optional[int] = None,
+        initial_value: Optional[int] = 0,
+        nonce: Optional[BufferType] = None,
+        mode: Optional[str] = None,
+        segment_size: Optional[int] = None
+    ) -> CipherInterface:
         ...
 
 
@@ -259,12 +381,14 @@ class BlockCipherFactory(CipherObjectFactory):
         self.cipher = cipher
         self._modes = []
         for name, mode in CIPHER_MODES.items():
-            setattr(self, name, len(self._modes))
+            setattr(self, F'MODE_{name}', len(self._modes))
             self._modes.append(mode)
 
-    def new(self, key, mode=None, nonce=None, **mode_args) -> CipherInterface:
+    def new(self, key, mode=None, **mode_args) -> CipherInterface:
         if mode is not None:
             mode = self._modes[mode]
+        if mode is CTR:
+            mode_args.update(block_size=self.cipher.block_size)
         mode = mode(**mode_args)
         return self.cipher(key, mode)
 
