@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.9 -- bugfix release
+
 ## Version 0.4.8
 - Adds the `serpent` unit.
 
