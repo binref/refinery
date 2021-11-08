@@ -3,7 +3,7 @@
 from refinery.units.crypto.keyderive import KeyDerivation
 
 
-class PBKDF2(KeyDerivation):
+class pbkdf2(KeyDerivation):
     """PBKDF2 Key derivation"""
 
     def __init__(self, size, salt, iter=1000, hash='SHA1'):

@@ -42,7 +42,7 @@ class TestGrabBagExamples(TestBase):
         rsrc = L('perc RCDATA')(data)
 
         pipeline = L('xtp guid') [
-            L('PBKDF2 48 rep[8]:H:00') | self.ldu('cca', rsrc) | L('aes x::32 --iv=x::16 -Q')
+            L('pbkdf2 48 rep[8]:H:00') | self.ldu('cca', rsrc) | L('aes x::32 --iv=x::16 -Q')
         ] | L('dnds')
 
         result = json.loads(pipeline(data))

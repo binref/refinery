@@ -161,7 +161,7 @@ Extract the configuration of unpacked HawkEye samples:
 ```
 emit ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c \
   | put cfg perc[RCDATA]:c:: [\
-  | xtp guid | PBKDF2 48 rep[8]:h:00 | cca xvar:cfg | aes -Q x::32 --iv x::16 ] \
+  | xtp guid | pbkdf2 48 rep[8]:h:00 | cca xvar:cfg | aes -Q x::32 --iv x::16 ] \
   | dnds
 ```
 Warzone RAT:
@@ -180,13 +180,13 @@ emit 58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3 \
 
 Assume that `data` is a file which was encrypted with 256 bit AES in CBC mode. The key was derived from the secret passphrase `swordfish` using the PBKDF2 key derivation routine using the salt `s4lty`. The IV is prefixed to the buffer as the first 16 bytes. It can be decrypted with the following pipeline:
 ```
-emit data | aes --mode cbc --iv cut::16 PBKDF2[32,s4lty]:swordfish
+emit data | aes --mode cbc --iv cut::16 pbkdf2[32,s4lty]:swordfish
 ```
-Here, both `cut:0:16` and `PBKDF2[32,s4lty]:swordfish` are multibin arguments that use a special handler. In this case, `cut:0:16` extracts the slice `0:16` (i.e. the first 16 bytes) from the input data - after application of this multibin handler, the input data has the first 16 bytes removed and the argument `iv` is set to these exact 16 bytes. The final argument specifies the 32 byte encryption key: The handler `PBKDF2[32,s4lty]` on the other hand instructs refinery to create an instance of the PBKDF2 unit as if it had been given the command line parameters `32` and `s4lty` in this order and process the byte string `swordfish` with this unit. As a simple test, the following pipeline will encrypt and decrypt a sample piece of text:
+Here, both `cut:0:16` and `pbkdf2[32,s4lty]:swordfish` are multibin arguments that use a special handler. In this case, `cut:0:16` extracts the slice `0:16` (i.e. the first 16 bytes) from the input data - after application of this multibin handler, the input data has the first 16 bytes removed and the argument `iv` is set to these exact 16 bytes. The final argument specifies the 32 byte encryption key: The handler `pbkdf2[32,s4lty]` on the other hand instructs refinery to create an instance of the pbkdf2 unit as if it had been given the command line parameters `32` and `s4lty` in this order and process the byte string `swordfish` with this unit. As a simple test, the following pipeline will encrypt and decrypt a sample piece of text:
 ```
 emit "Once upon a time, at the foot of a great mountain ..." ^
-    | aes PBKDF2[32,s4lty]:swordfish --iv md5:X -R | ccp md5:X ^
-    | aes PBKDF2[32,s4lty]:swordfish --iv cut:0:16 
+    | aes pbkdf2[32,s4lty]:swordfish --iv md5:X -R | ccp md5:X ^
+    | aes pbkdf2[32,s4lty]:swordfish --iv cut:0:16 
 ```
 
 

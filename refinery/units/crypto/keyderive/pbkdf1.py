@@ -3,7 +3,7 @@
 from refinery.units.crypto.keyderive import arg, KeyDerivation
 
 
-class PBKDF1(KeyDerivation):
+class pbkdf1(KeyDerivation):
     """PBKDF1 Key derivation"""
 
     @arg('salt', help='Salt for the derivation; default are 8 null bytes.')
