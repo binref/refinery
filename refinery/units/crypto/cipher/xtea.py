@@ -1,60 +1,62 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import struct
+from __future__ import annotations
 
-from refinery.units.crypto.cipher import BlockCipherUnitBase
+from typing import ByteString, Callable, List, Tuple
+
+from refinery.units.crypto.cipher import StandardBlockCipherUnit
+from refinery.lib.crypto import BlockCipher, BlockCipherFactory
 
 
-class xtea(BlockCipherUnitBase):
+class XTEA(BlockCipher):
     """
     XTEA encryption and decryption.
     """
-    blocksize = 16
-    key_sizes = 16
-
-    def __init__(self, key, padding=None):
-        super().__init__(key=key, padding=padding)
+    block_size = 8
+    valid_key_sizes = {16}
+    derived_key: List[int]
 
     @property
     def key(self):
-        return struct.unpack('4I', self.args.key)
+        return self.derived_key
 
-    def encrypt(self, data):
-        it = iter(self._load32(data))
-        return self._stor64(self._encrypt_block(y, z, *self.key) for y, z in zip(it, it))
+    @key.setter
+    def key(self, key):
+        self.derived_key = [int.from_bytes(key[k:k + 4], 'little') for k in range(0, 16, 4)]
 
-    def decrypt(self, data):
-        it = iter(self._load32(data))
-        return self._stor64(self._decrypt_block(y, z, *self.key) for y, z in zip(it, it))
+    def block_operation(
+        blk: Callable[[int, int, int, int, int, int], Tuple[int, int]]
+    ) -> Callable[[XTEA, ByteString], ByteString]:
+        def wrapped(self: XTEA, data: ByteString) -> ByteString:
+            k0, k1, k2, k3 = self.derived_key
+            v0 = int.from_bytes(data[:4], 'little')
+            v1 = int.from_bytes(data[4:], 'little')
+            v0, v1 = blk(k0, k1, k2, k3, v0, v1)
+            return v0.to_bytes(4, 'little') + v1.to_bytes(4, 'little')
+        return wrapped
 
-    @staticmethod
-    def _encrypt_block(y, z, k1, k2, k3, k4):
-        sum_t = 0
+    @block_operation
+    def block_encrypt(k0, k1, k2, k3, v0, v1):
+        carry = 0
         delta = 0x9E3779B9
         for _ in range(32, 0, -1):
-            sum_t = (sum_t + delta) & 0xFFFFFFFF
-            y = y + ((z << 4) + k1 ^ z + sum_t ^ (z >> 5) + k2) & 0xFFFFFFFF
-            z = z + ((y << 4) + k3 ^ y + sum_t ^ (y >> 5) + k4) & 0xFFFFFFFF
-        return y + (z << 0x20)
+            carry = (carry + delta) & 0xFFFFFFFF
+            v0 = v0 + (((v1 << 4) + k0) ^ (v1 + carry) ^ (v1 >> 5) + k1) & 0xFFFFFFFF
+            v1 = v1 + (((v0 << 4) + k2) ^ (v0 + carry) ^ (v0 >> 5) + k3) & 0xFFFFFFFF
+        return v0, v1
 
-    @staticmethod
-    def _decrypt_block(y, z, k1, k2, k3, k4):
-        sum_t = 0xC6EF3720
+    @block_operation
+    def block_decrypt(k0, k1, k2, k3, v0, v1):
+        carry = 0xC6EF3720
         delta = 0x9E3779B9
         for _ in range(32, 0, -1):
-            z = z - ((y << 4) + k3 ^ y + sum_t ^ (y >> 5) + k4) & 0xFFFFFFFF
-            y = y - ((z << 4) + k1 ^ z + sum_t ^ (z >> 5) + k2) & 0xFFFFFFFF
-            sum_t = (sum_t - delta) & 0xFFFFFFFF
-        return y + (z << 0x20)
+            v1 = v1 - (((v0 << 4) + k2) ^ (v0 + carry) ^ (v0 >> 5) + k3) & 0xFFFFFFFF
+            v0 = v0 - (((v1 << 4) + k0) ^ (v1 + carry) ^ (v1 >> 5) + k1) & 0xFFFFFFFF
+            carry = (carry - delta) & 0xFFFFFFFF
+        return v0, v1
 
-    @staticmethod
-    def _load32(vector):
-        Q, R = divmod(len(vector), 4)
-        if R > 0:
-            raise ValueError('Data not padded to a 16 byte boundary.')
-        yield from struct.unpack(F'{Q}I', vector)
+    del block_operation
 
-    @staticmethod
-    def _stor64(vector):
-        vector = tuple(vector)
-        return struct.pack(F'{len(vector)}Q', *vector)
+
+class xtea(StandardBlockCipherUnit, cipher=BlockCipherFactory(XTEA)):
+    pass
