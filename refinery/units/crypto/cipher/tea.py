@@ -8,9 +8,9 @@ from refinery.units.crypto.cipher import StandardBlockCipherUnit
 from refinery.lib.crypto import BlockCipher, BlockCipherFactory
 
 
-class XTEA(BlockCipher):
+class TEA(BlockCipher):
     """
-    XTEA encryption and decryption.
+    The TEA cipher.
     """
     block_size = 8
     valid_key_sizes = {16}
@@ -26,8 +26,8 @@ class XTEA(BlockCipher):
 
     def block_operation(
         blk: Callable[[int, int, int, int, int, int], Tuple[int, int]]
-    ) -> Callable[[XTEA, ByteString], ByteString]:
-        def wrapped(self: XTEA, data: ByteString) -> ByteString:
+    ) -> Callable[[TEA, ByteString], ByteString]:
+        def wrapped(self: TEA, data: ByteString) -> ByteString:
             k0, k1, k2, k3 = self.derived_key
             v0 = int.from_bytes(data[:4], 'little')
             v1 = int.from_bytes(data[4:], 'little')
@@ -58,5 +58,8 @@ class XTEA(BlockCipher):
     del block_operation
 
 
-class xtea(StandardBlockCipherUnit, cipher=BlockCipherFactory(XTEA)):
+class tea(StandardBlockCipherUnit, cipher=BlockCipherFactory(TEA)):
+    """
+    TEA encryption and decryption.
+    """
     pass
