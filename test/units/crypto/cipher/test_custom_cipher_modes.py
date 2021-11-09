@@ -141,11 +141,11 @@ class jc2(StandardBlockCipherUnit, cipher=BlockCipherFactory(RC2)):
 class TestModesUsingRC2(TestUnitBase):
 
     def test_compatibility_decrypt(self):
-        key = b'REFINERY/TESTING'
+        key = b'refinery/testing'
         for mode in CIPHER_MODES:
             try:
-                E = -rc2(key, mode=mode, iv=B'REFINERY', padding='RAW')
-                D = +jc2(key, mode=mode, iv=B'REFINERY', padding='RAW')
+                E = -rc2(key, mode=mode, iv=B'refinery', raw=True)
+                D = +jc2(key, mode=mode, iv=B'refinery', raw=True)
             except ValueError:
                 continue
             M = self.generate_random_buffer(RC2.block_size * 20)
@@ -153,11 +153,11 @@ class TestModesUsingRC2(TestUnitBase):
                 F'check failed for mode {mode}.')
 
     def test_compatibility_encrypt(self):
-        key = b'TESTING/REFINERY'
+        key = b'testing/refinery'
         for mode in CIPHER_MODES:
             try:
-                E = -jc2(key, mode=mode, iv=B'REFINERY', padding='RAW')
-                D = +rc2(key, mode=mode, iv=B'REFINERY', padding='RAW')
+                E = -jc2(key, mode=mode, iv=B'refinery', raw=True)
+                D = +rc2(key, mode=mode, iv=B'refinery', raw=True)
             except ValueError:
                 continue
             M = self.generate_random_buffer(RC2.block_size * 20)
@@ -165,9 +165,9 @@ class TestModesUsingRC2(TestUnitBase):
                 F'check failed for mode {mode}.')
 
     def test_ctr_mode(self):
-        key = b'TESTING/REFINERY'
-        E = -jc2(key, mode='CTR', iv=B'n0nc3', padding='RAW')
-        D = +rc2(key, mode='CTR', iv=B'n0nc3', padding='RAW')
+        key = b'testing/refinery'
+        E = -jc2(key, mode='ctr', iv=B'n0nc3', raw=True)
+        D = +rc2(key, mode='ctr', iv=B'n0nc3', raw=True)
         M = self.generate_random_buffer(RC2.block_size * 20)
         self.assertEqual(M, M | E | D | drain)
 
@@ -175,5 +175,5 @@ class TestModesUsingRC2(TestUnitBase):
         data = B'BeispielklartextBeispielklartext'
         key = B'Schokoladentorte'
         wish = bytes.fromhex('0969F22A 6E5BF195 E788759E 876521AF 0969F22A 6E5BF195 E788759E 876521AF')
-        self.assertEqual(bytes(data | -rc2(key, padding='RAW')), wish)
-        self.assertEqual(bytes(wish | +jc2(key, padding='RAW')), data)
+        self.assertEqual(bytes(data | -rc2(key, raw=True)), wish)
+        self.assertEqual(bytes(wish | +jc2(key, raw=True)), data)

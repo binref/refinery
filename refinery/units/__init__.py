@@ -381,13 +381,14 @@ class arg(Argument):
         help    : Union[omit, str] = omit,
         metavar : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
+        type    : Type = str,
         nargs   : Union[omit, int, str] = omit,
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments with a fixed set of options, based on a list of strings.
         """
-        return arg(*args, group=group, type=str, metavar=metavar, nargs=nargs,
+        return arg(*args, group=group, type=type, metavar=metavar, nargs=nargs,
             dest=dest, help=help, choices=choices)
 
     @property

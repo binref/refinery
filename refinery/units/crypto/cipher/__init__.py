@@ -115,19 +115,18 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
-        self, key, iv: arg('-I', '--iv', help=(
-            'Specifies the initialization vector. If none is specified, then a block '
-            'of zero bytes is used.')) = B'',
-        padding: arg.choice('-P', choices=['PKCS7', 'ISO7816', 'X923', 'RAW'],
-            nargs=1, metavar='ALG', help=(
-            'Choose a padding algorithm ({choices}). The RAW algorithm does nothing. '
-            'By default, all other algorithms are attempted. In most cases, the data '
-            'was not correctly decrypted if none of these work.')
+        self, key, iv: arg('-i', '--iv', help=(
+            'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')) = B'',
+        padding: arg.choice('-p', type=str.lower, choices=['pkcs7', 'iso7816', 'x923', 'raw'],
+            nargs=1, metavar='P', help=(
+            'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, all other algorithms '
+            'are attempted. In most cases, the data was not correctly decrypted if none of these work.')
         ) = None,
+        raw: arg.switch('-r', '--raw', help='Set the padding to raw; ignored when a padding is specified.') = False,
         **keywords
     ):
         if not padding:
-            padding = ['PKCS7', 'ISO7816', 'X923']
+            padding = ['raw'] if raw else ['pkcs7', 'iso7816', 'x923']
         elif not isinstance(padding, list):
             padding = [padding]
         iv = iv or bytes(self.blocksize)
@@ -141,20 +140,23 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         from Crypto.Util.Padding import pad
         padding = self.args.padding[0]
         self.log_info('padding method:', padding)
-        if padding != 'RAW':
-            data = pad(data, self.blocksize, padding.lower())
+        if padding != 'raw':
+            data = pad(data, self.blocksize, padding)
         return super().reverse(data)
 
     def process(self, data: ByteString) -> ByteString:
         from Crypto.Util.Padding import unpad
         result = super().process(data)
         for p in self.args.padding:
-            if p == 'RAW':
+            if p == 'raw':
                 return result
             try:
-                return unpad(result, self.blocksize, p.lower())
+                unpadded = unpad(result, self.blocksize, p.lower())
             except Exception:
                 pass
+            else:
+                self.log_info(F'unpadding worked using {p}')
+                return unpadded
         raise RefineryPartialResult(
             'None of these paddings worked: {}'.format(', '.join(self.args.padding)),
             partial=result)
@@ -192,7 +194,7 @@ class StandardCipherExecutable(CipherExecutable):
             )
         cls._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
         cls._argument_specification['mode'].merge_all(arg(
-            '-M', '--mode', type=str.upper, metavar='MODE', nargs=arg.delete, choices=list(modes),
+            '-m', '--mode', type=str.upper, metavar='M', nargs=arg.delete, choices=list(modes),
             help=(
                 'Choose cipher mode to be used. Possible values are: {}. By default, the CBC mode'
                 '  is used when an IV is is provided, and ECB otherwise.'.format(', '.join(modes))
@@ -230,11 +232,11 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
     blocksize: int
     key_sizes: Tuple[int, ...]
 
-    def __init__(self, key, iv=B'', padding=None, mode=None):
+    def __init__(self, key, iv=B'', padding=None, mode=None, raw=False):
         mode = self._available_block_cipher_modes(mode or iv and 'CBC' or 'ECB')
         if iv and mode.name == 'ECB':
             raise ValueError('No initialization vector can be specified for ECB mode.')
-        super().__init__(key=key, iv=iv, padding=padding, mode=mode)
+        super().__init__(key=key, iv=iv, padding=padding, mode=mode, raw=raw)
 
     def _get_cipher_instance(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name

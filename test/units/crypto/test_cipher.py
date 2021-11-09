@@ -16,7 +16,7 @@ class TestCipherUnits(TestUnitBase):
                     K = self.generate_random_buffer(size)
                     V = self.generate_random_buffer(unit.blocksize)
                     D = unit(key=K, iv=V, mode='CBC')
-                    for P in ['PKCS7', 'ISO7816', 'X923']:
+                    for P in ['pkcs7', 'iso7816', 'x923']:
                         E = unit(key=K, iv=V, padding=P, mode='CBC')
                     self.assertEqual(D.process(E.reverse(data)), data)
 
