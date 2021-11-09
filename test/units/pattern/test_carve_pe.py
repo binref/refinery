@@ -48,3 +48,8 @@ class TestCarvePE(TestUnitBase):
             '40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00'  # @.......................
         )
         self.assertEqual(unit(data), B'')
+
+    def test_pe_in_pe(self):
+        src = self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')
+        data = src[:0x400] + src
+        self.assertEqual(bytes(data | self.load()), src)

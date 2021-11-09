@@ -45,11 +45,12 @@ class carve_pe(PathExtractorUnit):
                 return
             ntoffset, = unpack('H', ntoffset)
             if mv[offset + ntoffset:offset + ntoffset + 2] != B'PE':
+                self.log_debug(F'invalid NT header signature for candidate at 0x{offset:08X}')
                 continue
             try:
                 pe = PE(data=data[offset:], fast_load=True)
             except PEFormatError as err:
-                self.log_debug('parsing of PE header at 0x{p:08X} failed:', err)
+                self.log_debug(F'parsing of PE header at 0x{offset:08X} failed:', err)
                 continue
 
             pesize = get_pe_size(pe, memdump=self.args.memdump)
@@ -69,6 +70,7 @@ class carve_pe(PathExtractorUnit):
                 self.log_info(F'extracted PE file of size 0x{pesize:08X} from 0x{offset:08X}')
             else:
                 self.log_info(F'ignored root file of size 0x{pesize:08X} from 0x{offset:08X}')
+                continue
 
             if not offset or self.args.recursive:
                 cursor += pe.OPTIONAL_HEADER.SizeOfHeaders
