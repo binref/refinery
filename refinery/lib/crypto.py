@@ -125,6 +125,7 @@ class CipherMode(ABC):
         next(engine)
         for k in range(0, len(src), blocksize):
             dst[k:k + blocksize] = engine.send(src[k:k + blocksize])
+        engine.close()
         return dst
 
 
