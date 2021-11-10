@@ -48,7 +48,7 @@ def pack(data: Iterable[int], blocksize: int, bigendian: bool = False) -> bytear
         if isinstance(data, bytearray):
             return data
         return bytearray(data)
-    if blocksize in (2, 4, 8):
+    if blocksize in _TYPE_CODES:
         if not isinstance(data, array.array):
             tmp = array.array(_TYPE_CODES[blocksize])
             tmp.extend(data)
