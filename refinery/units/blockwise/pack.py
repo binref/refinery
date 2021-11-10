@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+from typing import Iterable
 
 from refinery.units.blockwise import arg, BlockTransformationBase
 from refinery.units.encoding.base import base as BaseUnit
@@ -60,22 +61,25 @@ class pack(BlockTransformationBase):
             yield prefix + converter.reverse(n)
 
     def process(self, data):
-        def intb(integers):
-            for n in integers:
-                if self.args.base == 0 and n.startswith(B'0') and n[1:].isdigit():
-                    n = B'0o' + n
-                N = int(n, self.args.base)
+        base: int = self.args.base
+        strict: bool = self.args.strict
+
+        def intb(literals: Iterable[bytes]):
+            for literal in literals:
+                if base == 0 and literal[0] == 0x30 and literal[1:].isdigit():
+                    literal = B'0o%s' % literal
+                N = int(literal, base)
                 M = N & self.fmask
-                self.log_debug(lambda: F'0x{M:0{self.fbits // 4}X}')
-                if self.args.strict and M != N:
+                if strict and M != N:
                     continue
                 yield M
 
-        if self.args.base == 0:
+        if base == 0:
             pattern = formats.integer
-        elif self.args.base <= 10:
-            pattern = re.compile(B'[-+]?[0-%d]{1,64}' % (self.args.base - 1))
+        elif base <= 10:
+            pattern = re.compile(B'[-+]?[0-%d]{1,64}' % (base - 1))
         else:
-            pattern = re.compile(B'[-+]?[0-9a-%c]{1,20}' % (0x57 + self.args.base), re.IGNORECASE)
+            pattern = re.compile(B'[-+]?[0-9a-%c]{1,20}' % (0x57 + base), re.IGNORECASE)
 
-        return self.unchunk(intb(pattern.findall(data)))
+        it = (m[0] for m in pattern.finditer(data))
+        return self.unchunk(intb(it))
