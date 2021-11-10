@@ -56,7 +56,7 @@ class base(Unit):
 
         return bytes(reversed(tuple(reverse_result(number))))
 
-    def process(self, data):
+    def process(self, data: bytearray):
         data = data.strip()
         base = self.args.base
         defaults = self._DEFAULT_APHABET[:base]
@@ -66,6 +66,14 @@ class base(Unit):
                 self.log_info('translating input data to a default alphabet for faster conversion')
                 data = data.translate(bytes.maketrans(alphabet, defaults))
             result = int(data, self.args.base)
+        elif len(alphabet) == 64:
+            import base64
+            _b64_alphabet = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+            return base64.b64decode(data.translate(bytes.maketrans(alphabet, _b64_alphabet)))
+        elif len(alphabet) == 85:
+            import base64
+            _b85_alphabet = b'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~'
+            return base64.b85decode(data.translate(bytes.maketrans(alphabet, _b85_alphabet)))
         else:
             self.log_warn('very long alphabet, unable to use built-ins; reverting to (slow) fallback.')
             result = 0
