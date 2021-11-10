@@ -129,3 +129,27 @@ class TestPatternExtractor(TestUnitBase):
         data = pem.encode('utf-16le')
         unit = self.load('pem')
         self.assertEqual(pem, str(data | unit))
+
+    def test_sha256(self):
+        hashes = [
+            B'1ad2067318ad2e25cc6675fad382aba64dc36695ee6117f811fd0aac8eb9d6bd',
+            B'1AD2067318AD2E25CC6675FAD382ABA64DC36695EE6117F811FD0AAC8EB9D6BD',
+        ]
+        data = b'Lower: %s\nUpper: %s' % tuple(hashes)
+        self.assertListEqual(list(data | self.load('sha256')), hashes)
+
+    def test_md5(self):
+        hashes = [
+            B'1ad2675fa382ab6d3665ee6111b9d6bd',
+            B'1AD2675FA382AB6D3665EE6111B9D6BD',
+        ]
+        data = b'Lower: %s\nUpper: %s' % tuple(hashes)
+        self.assertListEqual(list(data | self.load('md5')), hashes)
+
+    def test_sha1(self):
+        hashes = [
+            B'1ad2675fad382aba64dc36695ee6117f81b9d6bd',
+            B'1AD2675FAD382ABA64DC36695EE6117F81B9D6BD',
+        ]
+        data = b'Lower: %s\nUpper: %s' % tuple(hashes)
+        self.assertListEqual(list(data | self.load('sha1')), hashes)

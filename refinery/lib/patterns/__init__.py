@@ -334,11 +334,11 @@ class indicators(PatternEnum):
     "String representations of IPv4 addresses"
     ipv6 = pattern(_pattern_ipv6)
     "String representations of IPv6 addresses"
-    md5 = alphabet('[0-9a-f]', at_least=32, at_most=32)
+    md5 = alphabet('[0-9A-Fa-f]', at_least=32, at_most=32)
     "Hexadecimal strings of length 32"
-    sha = alphabet('[0-9a-f]', at_least=40, at_most=40)
+    sha1 = alphabet('[0-9A-Fa-f]', at_least=40, at_most=40)
     "Hexadecimal strings of length 40"
-    sha256 = alphabet('[0-9a-f]', at_least=64, at_most=64)
+    sha256 = alphabet('[0-9A-Fa-f]', at_least=64, at_most=64)
     "Hexadecimal strings of length 64"
     hostname = pattern(_pattern_serrated_hostname)
     "Any domain name or IPv4 address, optionally followd by a colon and a port number."
