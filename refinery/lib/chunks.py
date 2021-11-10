@@ -4,30 +4,32 @@
 Routines to help interpret large binary buffers as arrays of numbers, stored
 as consecutive sequences of bytes, all with the same length and byte order.
 """
+import array
+import sys
+
 from typing import Iterable
 
 
-def unpack(data: bytes, blocksize: int, bigendian: bool = False):
+_BIG_ENDIAN = sys.byteorder == 'big'
+_TYPE_CODES = {2: 'H', 4: 'L', 8: 'Q'}
+
+
+def unpack(data: bytes, blocksize: int, bigendian: bool = False) -> Iterable[int]:
     """
     Returns an iterable of integers which have been unpacked from the given `data`
     buffer as chunks of `blocksize` many bytes.
     """
     if blocksize == 1:
         return data
-    if blocksize in (2, 4, 8):
-        try:
-            import numpy
-        except ModuleNotFoundError:
-            numpy = None
-        order = '<>'[bigendian]
-        count = len(data) // blocksize
-        if numpy:
-            dtype = numpy.dtype(F'{order}u{blocksize}')
-            return (int(x) for x in numpy.frombuffer(data, dtype, count))
-        else:
-            import struct
-            scode = {2: 'H', 4: 'L', 8: 'Q'}[blocksize]
-            return struct.unpack(F'{order}{count}{scode}', data[:count * blocksize])
+    if blocksize in _TYPE_CODES:
+        overlap = len(data) % blocksize
+        if overlap != 0:
+            data = memoryview(data)[:-overlap]
+        unpacked = array.array(_TYPE_CODES[blocksize])
+        unpacked.frombytes(data)
+        if _BIG_ENDIAN != bigendian:
+            unpacked.byteswap()
+        return unpacked
     else:
         blocks = zip(*([iter(data)] * blocksize))
         byteorder = ('little', 'big')[bigendian]
@@ -41,15 +43,18 @@ def pack(data: Iterable[int], blocksize: int, bigendian: bool = False) -> bytear
     bytes. The numbers are assumed to fit this encoding.
     """
     if blocksize == 1:
+        if isinstance(data, bytearray):
+            return data
         return bytearray(data)
     if blocksize in (2, 4, 8):
-        try:
-            import numpy
-        except ImportError:
-            pass
-        else:
-            order = '<>'[bigendian]
-            dtype = numpy.dtype(F'{order}u{blocksize}')
-            return numpy.fromiter(data, dtype).tobytes()
-    order = ('little', 'big')[bigendian]
-    return B''.join(number.to_bytes(blocksize, order) for number in data)
+        if not isinstance(data, array.array):
+            tmp = array.array(_TYPE_CODES[blocksize])
+            tmp.extend(data)
+            data = tmp
+        if _BIG_ENDIAN != bigendian:
+            data.byteswap()
+        return data.tobytes()
+    else:
+        order = 'big' if bigendian else 'little'
+        return B''.join(
+            number.to_bytes(blocksize, order) for number in data)
