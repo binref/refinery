@@ -10,3 +10,8 @@ class TestVBAExtractor(TestUnitBase):
         unit = self.load()
         code = list(data | unit)
         self.assertIn(B'http://109.94.209'B'.91/12340.txt', code[0])
+
+    def test_do_not_extract_plaintext(self):
+        data = b"some plaintext data"
+        unit = self.load()
+        self.assertEqual(bytes(data | unit), b'')
