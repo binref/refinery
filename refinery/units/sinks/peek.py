@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import Optional
+
 import sys
 import textwrap
 import codecs
@@ -98,14 +100,15 @@ class peek(HexViewer):
                 metavar = metavar[:linewidth - 3] + '...'
             yield metavar
 
-    def _trydecode(self, data, codec: str, width: int, linecount: int):
+    def _trydecode(self, data, codec: Optional[str], width: int, linecount: int):
         remaining = linecount
         result = []
         if codec is None:
             from refinery.units.encoding.esc import esc
             decoded = data[:abs(width * linecount)]
             decoded = str(decoded | -esc(bare=True))
-            for k in range(0, abs(linecount) * width, width):
+            limit = min(abs(linecount) * width, len(decoded))
+            for k in range(0, limit, width):
                 result.append(decoded[k:k + width])
             return result
         try:
@@ -171,7 +174,7 @@ class peek(HexViewer):
             metrics.fit_to_width(allow_increase=True)
 
         sepsize = metrics.hexdump_width
-        txtsize = self.args.width or (sepsize - metrics.padding)
+        txtsize = self.args.width or sepsize
 
         if self.args.lines and data:
             if self.args.esc:
