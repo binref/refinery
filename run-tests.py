@@ -16,12 +16,6 @@ argp.add_argument('pattern', type=lambda s: str(s).strip('*'), nargs='?', defaul
     help='run all tests whose file name contains the given pattern.')
 args = argp.parse_args()
 
-
-try:
-    os.unlink(os.path.join(here, 'refinery', '__init__.pkl'))
-except FileNotFoundError:
-    pass
-
 os.chdir('test')
 os.environ['REFINERY_VERBOSITY'] = 'DETACHED'
 
