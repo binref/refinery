@@ -20,7 +20,12 @@ The main philosophy of the refinery is that every script should be a unit in the
 
 ## Documentation
 
-The main documentation is [generated automatically from the source code][docs]; it serves primarily as a reference but also contains the specification for the three fundamental concepts of the toolkit: [framing][frame], [multibin arguments][argformats], and [meta variables][meta]. In recognition of the fact that reference documentation can be somewhat dry, there is an ongoing effort to produce a series of [tutorials](tutorials).
+The main documentation is [generated automatically from the source code][docs]; it serves primarily as a reference but also contains the specification for the three fundamental concepts of the toolkit: [framing][frame], [multibin arguments][argformats], and [meta variables][meta]. 
+
+In recognition of the fact that reference documentation can be somewhat dry, there is an ongoing effort to produce a series of [tutorials](tutorials) and there are a few additional resources:
+
+- [OALabs](https://www.youtube.com/c/OALabs) was kind enough to let me [demo the toolkit in a feature video](https://www.youtube.com/watch?v=4gTaGfFyMK4).
+- [Johannes Bader](https://bin.re/) wrote an amazing [blog post about how to analyze TA551 malspam with binary refinery](https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/). It should really be turned into a tutorial at some point.
 
 ## License
 
