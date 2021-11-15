@@ -31,7 +31,7 @@ PARAGRAPHS = [
 ]
 
 
-class TestOfficeCrypt(TestUnitBase):
+class TestDocumentTextExtractor(TestUnitBase):
 
     def test_simple_samples(self):
         unit = self.load()
