@@ -777,7 +777,7 @@ class Executable(ABCMeta):
         unit.args.reverse = True
         return unit
 
-    def __ror__(cls, other):
+    def __ror__(cls, other) -> Unit:
         return cls().__ror__(other)
 
     @property
@@ -1153,7 +1153,7 @@ class Unit(UnitBase, abstract=True):
             import traceback
             traceback.print_exc(file=sys.stderr)
 
-    def __next__(self):
+    def __next__(self) -> Chunk:
         if not self._chunks:
             self._chunks = iter(self._framehandler)
         while True:
