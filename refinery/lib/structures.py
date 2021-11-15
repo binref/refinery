@@ -343,7 +343,10 @@ class StructReader(MemoryFile[T]):
         if rest:
             bytecount += 1
             rest = 8 - rest
-        result = int.from_bytes(self.read(bytecount), self.byteorder_name)
+        if bytecount == 1:
+            result = self.read1(1)[0]
+        else:
+            result = int.from_bytes(self.read(bytecount), self.byteorder_name)
         if not nbits and not rest:
             return result
         if self.bigendian:
