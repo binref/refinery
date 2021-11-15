@@ -45,8 +45,8 @@ class doctxt(Unit):
                 self.log_info(F'failed extractring as {filetype}: {error!s}')
             else:
                 return result.encode(self.codec)
-        self.log_warn('all extractors failed, returning original data.')
-        return data
+        raise ValueError('All extractors failed, the input data is not recognized as any known document format.')
+
 
     def _extract_docx(self, data: Chunk) -> str:
         NAMESPACE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
