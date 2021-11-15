@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import struct
-from typing import List
+from typing import List, OrderedDict
 from xml.etree import ElementTree
 
 from refinery.lib.frame import Chunk
@@ -20,30 +20,34 @@ class doctxt(Unit):
         import olefile
         return olefile
 
-    def process(self, data):
-        """try to extract as OLE format (97-2003)"""
-        errors = {}
-        with MemoryFile(data) as stream:
+    def process(self, data: bytearray):
+        extractors = OrderedDict(
+            doc=self._extract_ole,
+            docx=self._extract_docx,
+            odt=self._extract_odt,
+        )
+
+        if data.startswith(B'PK'):
+            self.log_debug('document contains zip file signature, likely a odt or docx file')
+            extractors.move_to_end('doc')
+            if 'opendocument' in str(data | xtzip('mimetype')):
+                self.log_debug('odt signature detected')
+                extractors.move_to_end('odt', last=False)
+
+        for filetype, extractor in extractors.items():
+            self.log_debug(F'trying to extract as {filetype}')
             try:
-                return self._extract_ole(stream)
-            except OSError as e:
-                errors["doc"] = f"can't extract as OLE: {e}"
+                result = extractor(data)
+            except Exception as error:
+                self.log_info(F'failed extractring as {filetype}: {error!s}')
+            else:
+                return result
 
-        """ try to extract as ODT format """
-        try:
-            return self._extract_odt(data)
-        except Exception as e:
-            errors["odt"] = f"can't extract as ODT: {e}"
+        self.log_warn('all extractors failed, returning original data.')
+        return data
 
-        """ try to extract as DOCX format (2007, 2013, 2016, 2019) """
-        try:
-            return self._extract_docx(data)
-        except Exception as e:
-            errors["docx"] = f"can't extract as DOCX: {e}"
-
-        self.log_warn(f"failed to extract text: {errors.values()}")
-
-    def _extract_ole(self, stream: MemoryFile) -> bytes:
+    def _extract_ole(self, data: bytearray) -> bytes:
+        stream = MemoryFile(data)
         with self._olefile.OleFileIO(stream) as ole:
             s: self._olefile.OleFileIO = ole.openstream("WordDocument")
             doc: bytes = s.read()
