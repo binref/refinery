@@ -47,7 +47,6 @@ class doctxt(Unit):
                 return result.encode(self.codec)
         raise ValueError('All extractors failed, the input data is not recognized as any known document format.')
 
-
     def _extract_docx(self, data: Chunk) -> str:
         NAMESPACE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
         PARAGRAPH = F'{NAMESPACE}p'
