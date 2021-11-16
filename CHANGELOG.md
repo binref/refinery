@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.11
+- The `doctxt` unit was added; courtesy of [@baderj](https://github.com/baderj)
+
 ## Version 0.4.10 -- bugfix release
 
 ## Version 0.4.9 -- bugfix release
