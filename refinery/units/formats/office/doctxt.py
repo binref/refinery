@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Callable, Dict, OrderedDict, TYPE_CHECKING
-from defusedxml.ElementTree import XML
+from collections import OrderedDict
 from io import StringIO
+from typing import Callable, Dict, TYPE_CHECKING
+
+from defusedxml.ElementTree import XML
 
 if TYPE_CHECKING:
     from xml.etree.ElementTree import Element
