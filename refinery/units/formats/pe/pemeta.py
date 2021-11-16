@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import itertools
 import json
+import re
 
 from contextlib import suppress
 from datetime import datetime, timezone
@@ -285,6 +287,12 @@ class pemeta(Unit):
                                 Charset=Charset,
                                 Language=Language
                             )
+                        for key in StringTableEntryParsed:
+                            if key.endswith('Version'):
+                                value = StringTableEntryParsed[key]
+                                separator = ', '
+                                if re.match(F'\\d+({re.escape(separator)}\\d+){{3}}', value):
+                                    StringTableEntryParsed[key] = '.'.join(value.split(separator))
                         return StringTableEntryParsed
 
     @classmethod
@@ -300,9 +308,17 @@ class pemeta(Unit):
 
     @classmethod
     def parse_imports(cls, pe: PE, data=None) -> list:
-        pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT']])
         info = {}
-        for idd in pe.DIRECTORY_ENTRY_IMPORT:
+        dirs = []
+        for name in [
+            'DIRECTORY_ENTRY_IMPORT',
+            'DIRECTORY_ENTRY_DELAY_IMPORT',
+            'DIRECTORY_ENTRY_BOUND_IMPORT',
+        ]:
+            pe.parse_data_directories(directories=[DIRECTORY_ENTRY[F'IMAGE_{name}']])
+            with suppress(AttributeError):
+                dirs.append(getattr(pe, name))
+        for idd in itertools.chain(*dirs):
             dll = idd.dll.decode('ascii')
             if dll.lower().endswith('.dll'):
                 dll = dll[:-4]
