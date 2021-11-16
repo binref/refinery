@@ -31,6 +31,7 @@ class drp(Unit):
     def __init__(
         self,
         consecutive: arg.switch('-c', help='Assume that the repeating pattern is consecutive when observable.') = False,
+        align: arg.switch('-d', help='Assume that the pattern occurs at offsets that are multiples of its length.') = False,
         min: arg.number('-n', help='Minimum size of the pattern to search for. Default is {default}.') = 1,
         max: arg.number('-N', help='Maximum size of the pattern to search for. Default is {default}.') = INF,
         len: arg.number('-l', help='Set the exact size of the pattern. This is equivalent to --min=N --max=N.') = None,
@@ -47,6 +48,7 @@ class drp(Unit):
             max=max,
             all=all,
             consecutive=consecutive,
+            align=align,
             weight=weight,
             buffer=buffer,
             chug=chug,
@@ -107,7 +109,7 @@ class drp(Unit):
             pattern = pattern[:-offset]
         return pattern
 
-    def process(self, data):
+    def process(self, data: bytearray):
         memview = memoryview(data)
         weight = 1 + (self.args.weight / 10)
 
@@ -167,4 +169,14 @@ class drp(Unit):
             for k, pattern in enumerate(best_patterns):
                 self.log_warn(F'{k:02d}.: {pattern.hex()}')
 
-        yield best_patterns[0]
+        result = best_patterns[0]
+
+        if self.args.align:
+            def rotated(pattern):
+                for k in range(len(pattern)):
+                    yield pattern[k:] + pattern[:k]
+            rotations = {k % len(result): r for k, r in (
+                (data.find(r), r) for r in rotated(result)) if k >= 0}
+            result = rotations[min(rotations)]
+
+        yield result

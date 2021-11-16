@@ -52,7 +52,7 @@ class TestAutoXOR(TestUnitBase):
             '67 71 0D F1 07 03 9C FC C2 CF F0 FF AC 38 2D FB 67 71 0D F9 07 03 9C FC C2 CF F0 6D D0 31 AD FA'  # gq...........8-.gq.........m.1..
             '67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB 67 71 0D 02 F8 FC 63 11 3D 30 0F 7F BF 38 2D FB'  # gq.........w.8-.gq....c.=0...8-.
         )
-        unit1 = self.load()
+        unit1 = self.load(align=True)
         self.assertEqual(unit1(data), bytes.fromhex(
-            'F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB 67 71 0D'
+            '67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB'
         ))
