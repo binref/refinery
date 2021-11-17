@@ -28,23 +28,26 @@ class peek(HexViewer):
         all    : arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
         brief  : arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
         decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
-        esc    : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
+        escape : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
         meta   : arg('-m', group='META', help='Accumulate metadata that requires a full scan.') = False,
         bare   : arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
-        hexaddr=True, dense=False, expand=False, width=0
+        narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if bare and meta:
             raise ValueError('The bare and meta options are exclusive.')
-        if decode and esc:
+        if decode and escape:
             raise ValueError('The decode and esc options are exclusive.')
+        if brief:
+            narrow = True
         lines = 1 if brief else INF if all else lines
         super(peek, self).__init__(
             brief=brief,
+            blocks=blocks,
             decode=decode,
             dense=dense,
-            esc=esc,
+            escape=escape,
             expand=expand,
-            hexaddr=hexaddr and not brief,
+            narrow=narrow,
             lines=lines,
             meta=meta,
             bare=bare,
@@ -177,7 +180,7 @@ class peek(HexViewer):
         txtsize = self.args.width or sepsize
 
         if self.args.lines and data:
-            if self.args.esc:
+            if self.args.escape:
                 lines = self._trydecode(data, None, txtsize, metrics.line_count)
             if self.args.decode:
                 for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):

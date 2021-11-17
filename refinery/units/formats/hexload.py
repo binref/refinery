@@ -40,8 +40,8 @@ class hexload(HexViewer):
         )(?=\s|$)                               # terminated by a whitespace or line end
         """
 
-    def __init__(self, hexaddr=True, width=0, expand=False):
-        super().__init__(hexaddr=hexaddr, width=width, expand=expand)
+    def __init__(self, blocks=1, dense=False, expand=False, narrow=True, width=0):
+        super().__init__(blocks=blocks, dense=dense, expand=expand, narrow=narrow, width=width)
         self._hexline_pattern = re.compile(F'{make_hexline_pattern(1)}(?:[\r\n]|$)', flags=re.MULTILINE)
 
     def process(self, data: bytearray):
