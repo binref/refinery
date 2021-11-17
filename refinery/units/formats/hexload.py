@@ -34,8 +34,12 @@ class hexload(HexViewer):
                     (?:\s{1,2}[a-f0-9]{2})*     # unless it was just a single byte
                 )?
             )
-            | (?:[a-f0-9]{4}\s{1,2}(?:[a-f0-9]{4}(?:\s{1,2}[a-f0-9]{4})*)?)   # 2-byte chunks
-            | (?:[a-f0-9]{8}\s{1,2}(?:[a-f0-9]{8}(?:\s{1,2}[a-f0-9]{8})*)?)   # 4-byte chunks
+            | (?:[a-f0-9]{4}\s{1,2}             # 2-byte chunks
+              (?:[a-f0-9]{4}
+              (?:\s{1,2}[a-f0-9]{4})*)?)
+            | (?:[a-f0-9]{8}\s{1,2}             # 4-byte chunks
+              (?:[a-f0-9]{8}
+              (?:\s{1,2}[a-f0-9]{8})*)?)
             | (?:(?:[a-f0-9]{2})+)              # continuous line of hexadecimal characters
         )(?=\s|$)                               # terminated by a whitespace or line end
         """
