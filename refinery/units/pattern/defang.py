@@ -17,9 +17,17 @@ class defang(Unit):
         B'wscript.shell',
     ]
 
+    _PROTOCOL_ESCAPES = {
+        B'http': B'hxxp',
+        B'https': B'hxxps',
+        B'ftp': B'fxp',
+        B'ftps': B'fxps',
+    }
+
     def __init__(
         self,
         url_only: arg.switch('-u', help='Only defang URLs, do not look for domains or IPs.') = False,
+        url_protocol: arg.switch('-p', help='Escape the protocol in URLs.') = False,
         dot_only: arg.switch('-d', help='Do not escape the protocol colon in URLs.') = False,
         quote_md: arg.switch('-q', help='Wrap all indicators in backticks for markdown code.') = False
     ):
@@ -34,6 +42,7 @@ class defang(Unit):
         data = defanged.hostname.sub(refang, data)
         data = data.replace(B'[:]//', B'://')
         data = re.sub(B'h.{3}?(s?)://', B'http\\1://', data)
+        data = re.sub(B'fxp(s?)://', B'ftp\\1://', data)
         return data
 
     def process(self, data):
@@ -59,6 +68,9 @@ class defang(Unit):
             q = q.split(B'/', 1)
             q[0] = replace_hostname(q[0], False)
             q = B'/'.join(q)
+            if self.args.url_protocol and p:
+                p = self._PROTOCOL_ESCAPES.get(p.lower(), p)
+
             return self._quote(p + sep + q)
 
         urlsplit = defanged.url.split(data)

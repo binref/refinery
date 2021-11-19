@@ -12,6 +12,20 @@ class TestDefangUnit(TestUnitBase):
             B'visit https[:]//binref.github[.]io/ for some retro docs'
         )
 
+    def test_url_defang_protocol_01(self):
+        df = self.load(url_protocol=True)
+        self.assertEqual(
+            df(B'visit https://binref.github.io/ for some retro docs'),
+            B'visit hxxps[:]//binref.github[.]io/ for some retro docs'
+        )
+
+    def test_url_defang_protocol_02(self):
+        df = self.load(url_protocol=True, dot_only=True)
+        self.assertEqual(
+            df(B'visit ftp://user:password@10.0.10.20/malware for some malware'),
+            B'visit fxp://user:password@10.0.10[.]20/malware for some malware'
+        )
+
     def test_ipv4_defang(self):
         df = self.load()
         self.assertEqual(
@@ -30,6 +44,14 @@ class TestDefangUnit(TestUnitBase):
         unit = self.load(reverse=True)
         self.assertEqual(unit(data),
             B'Description: As seen on https://caminoflamingo.co.uk, flamingos are on the rise.')
+
+    def test_fxp_escape(self):
+        data = B'Download malware from fxps://user:password@10.10.0[.]30/malware'
+        unit = self.load(reverse=True)
+        self.assertEqual(unit(data), 
+            B'Download malware from ftps://user:password@10.10.0.30/malware'
+        )
+
 
     def test_dots_in_various_places(self):
         data = B'Maybe 12[.]67.123.12 or 12[.]67[.]123.12 or 12.67[.]123.12 or 32.67[.]123[.]12'
