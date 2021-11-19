@@ -153,6 +153,7 @@ class drp(Unit):
             self.log_debug('removing patterns below performance threshold')
             threshold = self.args.threshold
             patterns = {p for p in patterns if pattern_performance[p] * 100 >= threshold}
+            pattern_count = {p: data.count(p) for p in patterns}
 
             if not self.args.consecutive:
                 break
