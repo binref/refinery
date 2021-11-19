@@ -384,7 +384,7 @@ class pemeta(Unit):
             header_information['Bits'] = 4 * address_width
         else:
             address_width = 16
-        header_information['ImageBase'] = F'0x{pe.OPTIONAL_HEADER.ImageBase:0{address_width}}'
+        header_information['ImageBase'] = F'0x{pe.OPTIONAL_HEADER.ImageBase:0{address_width}X}'
         return header_information
 
     def parse_time_stamps(self, pe: PE, raw_time_stamps: bool) -> dict:
