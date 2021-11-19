@@ -77,6 +77,11 @@ class struct(Unit):
         else:
             byteorder = '='
 
+        def fixorder(spec):
+            if spec[0] not in '<!=@>':
+                spec = byteorder + spec
+            return spec
+
         mainspec, dollar, _empty = mainspec.partition('$')
         if _empty:
             raise ValueError('The format string {mainspec}${end} is invalid, a dollar symbol must be the last character.')
@@ -99,7 +104,7 @@ class struct(Unit):
             try:
                 for prefix, name, spec, conversion in formatter.parse(mainspec):
                     if prefix:
-                        args.extend(reader.read_struct(byteorder + prefix))
+                        args.extend(reader.read_struct(fixorder(prefix)))
                     if name is None:
                         continue
                     if spec:
@@ -114,7 +119,7 @@ class struct(Unit):
                     elif isinstance(spec, int):
                         value = reader.read_bytes(spec)
                     else:
-                        value = reader.read_struct(byteorder + spec)
+                        value = reader.read_struct(fixorder(spec))
                         if not value:
                             self.log_warn(F'field {name} was empty, ignoring.')
                             continue
