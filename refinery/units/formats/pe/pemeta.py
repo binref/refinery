@@ -167,8 +167,7 @@ class pemeta(Unit):
             cls._ensure_string(val)
         ) for key, val in bin.items() if val)
 
-    @classmethod
-    def parse_signature(cls, data: bytearray) -> dict:
+    def parse_signature(self, data: bytearray) -> dict:
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         time stamp and code signing certificates that are attached to the input PE file.
@@ -263,8 +262,7 @@ class pemeta(Unit):
             return info
         return info
 
-    @classmethod
-    def parse_version(cls, pe: PE, data=None) -> dict:
+    def parse_version(self, pe: PE, data=None) -> dict:
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         the version resource of an input PE file, if available.
@@ -274,14 +272,14 @@ class pemeta(Unit):
             for FileInfoEntry in FileInfo:
                 with suppress(AttributeError):
                     for StringTableEntry in FileInfoEntry.StringTable:
-                        StringTableEntryParsed = cls._parse_pedict(StringTableEntry.entries)
+                        StringTableEntryParsed = self._parse_pedict(StringTableEntry.entries)
                         with suppress(AttributeError):
                             LangID = StringTableEntry.entries.get('LangID', None) or StringTableEntry.LangID
                             LangID = int(LangID, 0x10) if not isinstance(LangID, int) else LangID
                             LangHi = LangID >> 0x10
                             LangLo = LangID & 0xFFFF
-                            Language = cls._LCID.get(LangHi, 'Language Neutral')
-                            Charset = cls._CHARSET.get(LangLo, 'Unknown Charset')
+                            Language = self._LCID.get(LangHi, 'Language Neutral')
+                            Charset = self._CHARSET.get(LangLo, 'Unknown Charset')
                             StringTableEntryParsed.update(
                                 LangID=F'{LangID:08X}',
                                 Charset=Charset,
@@ -295,8 +293,7 @@ class pemeta(Unit):
                                     StringTableEntryParsed[key] = '.'.join(value.split(separator))
                         return StringTableEntryParsed
 
-    @classmethod
-    def parse_exports(cls, pe: PE, data=None) -> list:
+    def parse_exports(self, pe: PE, data=None) -> list:
         pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
         info = []
         for k, exp in enumerate(pe.DIRECTORY_ENTRY_EXPORT.symbols):
@@ -306,8 +303,7 @@ class pemeta(Unit):
                 info.append(exp.name.decode('ascii'))
         return info
 
-    @classmethod
-    def parse_imports(cls, pe: PE, data=None) -> list:
+    def parse_imports(self, pe: PE, data=None) -> list:
         info = {}
         dirs = []
         for name in [
@@ -328,7 +324,7 @@ class pemeta(Unit):
                 imports.append(name)
         return info
 
-    def parse_header(cls, pe: PE, data=None) -> dict:
+    def parse_header(self, pe: PE, data=None) -> dict:
         def format_macro_name(name: str, prefix, convert=True):
             name = name.split('_')[prefix:]
             if convert:
@@ -338,7 +334,7 @@ class pemeta(Unit):
 
         major = pe.OPTIONAL_HEADER.MajorOperatingSystemVersion
         minor = pe.OPTIONAL_HEADER.MinorOperatingSystemVersion
-        version = cls._WINVER.get(major, {0: 'Unknown'})
+        version = self._WINVER.get(major, {0: 'Unknown'})
 
         try:
             MinimumOS = version[minor]
@@ -355,7 +351,7 @@ class pemeta(Unit):
         if rich_header:
             it = rich_header.get('values', [])
             for idv in it[0::2]:
-                info = cls._RICH_HEADER.get(idv, None)
+                info = self._RICH_HEADER.get(idv, None)
                 if info is None:
                     info = guess_version(idv)
                 if not info:
@@ -377,9 +373,12 @@ class pemeta(Unit):
         address_width = None
         if 'IMAGE_FILE_16BIT_MACHINE' in characteristics:
             address_width = 4
-        elif pe.FILE_HEADER.Machine == MACHINE_TYPE['IMAGE_FILE_MACHINE_I386']:
+        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in ['IMAGE_FILE_MACHINE_I386']:
             address_width = 8
-        elif pe.FILE_HEADER.Machine == MACHINE_TYPE['IMAGE_FILE_MACHINE_AMD64']:
+        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in [
+            'IMAGE_FILE_MACHINE_AMD64',
+            'IMAGE_FILE_MACHINE_IA64',
+        ]:
             address_width = 16
         if address_width:
             header_information['Bits'] = 4 * address_width
@@ -388,8 +387,7 @@ class pemeta(Unit):
         header_information['ImageBase'] = F'0x{pe.OPTIONAL_HEADER.ImageBase:0{address_width}}'
         return header_information
 
-    @classmethod
-    def parse_time_stamps(cls, pe: PE, raw_time_stamps: bool) -> dict:
+    def parse_time_stamps(self, pe: PE, raw_time_stamps: bool) -> dict:
         """
         Extracts time stamps from the PE header (link time), as well as from the imports,
         exports, debug, and resource directory. The resource time stamp is also parsed as
@@ -445,8 +443,7 @@ class pemeta(Unit):
 
         return {key: norm(value) for key, value in info.items()}
 
-    @classmethod
-    def parse_dotnet(cls, pe: PE, data):
+    def parse_dotnet(self, pe: PE, data):
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         the .NET metadata of an input PE file.
@@ -485,8 +482,7 @@ class pemeta(Unit):
 
         return info
 
-    @classmethod
-    def parse_debug(cls, pe: PE, data=None):
+    def parse_debug(self, pe: PE, data=None):
         result = {}
         pe.parse_data_directories(directories=[
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DEBUG']])
@@ -498,7 +494,7 @@ class pemeta(Unit):
                 if 0 in pdb:
                     pdb = pdb[:pdb.index(0)]
                 result.update(
-                    PdbPath=pdb.decode(cls.codec),
+                    PdbPath=pdb.decode(self.codec),
                     PdbAge=dbg.entry.Age
                 )
         return result
