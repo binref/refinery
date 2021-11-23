@@ -101,6 +101,8 @@ MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 class ParserError(ArgumentTypeError): pass
 class ParserVariableMissing(ParserError): pass
 
+_DEFAULT_BITS = 64
+
 
 class RepeatedInteger(int):
     """
@@ -710,29 +712,43 @@ class DelayedArgument(LazyEvaluation):
         return chunks.pack(integers, size, bigE)
 
     @handler.register('inc')
-    def inc(self, it: Iterable[int], wrap=None) -> Iterable[int]:
+    def inc(self, it: Iterable[int], precision=_DEFAULT_BITS) -> Iterable[int]:
+        F"""
+        The modifier `inc:it` or `inc[N={_DEFAULT_BITS}]:it` expects a sequence `it` of integers
+        (a binary string is interpreted as the sequence of its byte values), iterates it cyclically
+        and perpetually adds an increasing counter to the result. If the number `N` is nonzero,
+        then the counter is limited to `N` bits.
         """
-        The modifier `inc:it` or `inc[N]:it` expects a sequence `it` of integers (a binary string
-        is interpreted as the sequence of its byte values), iterates it cyclically and perpetually
-        adds an increasing counter to the result. If the number `N` is specified, then the counter
-        is reduced modulo `N`.
-        """
-        def delay(_):
-            k = itertools.cycle(range(number(wrap))) if wrap else itertools.count()
-            for item in infinitize(it):
-                yield item + next(k)
+        precision = precision and int(precision, 0) or _DEFAULT_BITS
+        it = infinitize(it)
+        if precision:
+            def delay(_):
+                mask = (1 << precision) - 1
+                for a, b in zip(it, itertools.cycle(range(mask + 1))):
+                    yield a + b & mask
+        else:
+            def delay(_):
+                for a, b in zip(it, itertools.count()):
+                    yield a + b
         return delay
 
     @handler.register('dec')
-    def dec(self, it: Iterable[int], wrap=None) -> Iterable[int]:
+    def dec(self, it: Iterable[int], precision=_DEFAULT_BITS) -> Iterable[int]:
         """
-        Identical to `refinery.lib.argformats.DelayedNumSeqArgument.inc`, but the counter is
-        subtracted from `it`.
+        Identical to `refinery.lib.argformats.DelayedNumSeqArgument.inc`, but decreasing the counter
+        rather than increasing it.
         """
-        def delay(_):
-            k = itertools.cycle(range(number(wrap))) if wrap else itertools.count()
-            for item in infinitize(it):
-                yield item - next(k)
+        precision = precision and int(precision, 0) or _DEFAULT_BITS
+        it = infinitize(it)
+        if precision:
+            def delay(_):
+                mask = (1 << precision) - 1
+                for a, b in zip(it, itertools.cycle(range(mask + 1))):
+                    yield a - b & mask
+        else:
+            def delay(_):
+                for a, b in zip(it, itertools.count()):
+                    yield a - b
         return delay
 
     @handler.register('take')
@@ -770,10 +786,10 @@ class DelayedArgument(LazyEvaluation):
         skip: Optional[str] = None,
         precision: Optional[str] = None
     ) -> Iterable[int]:
-        """
+        F"""
         The final handler
 
-            accu[seed=0,skip=1,precision=64]:update[#feed]
+            accu[seed=0,skip=1,precision={_DEFAULT_BITS}]:update[#feed]
 
         expects `seed`, `skip`, `update`, and `feed` to be Python expressions. It generates an infinite integer
         sequence maintaining an internal state `A`: The initial value for `A` is `seed`. Each subsequent state is
@@ -812,7 +828,7 @@ class DelayedArgument(LazyEvaluation):
         seed = seed and PythonExpression(seed, all_variables_allowed=True)
         feed = feed and PythonExpression(feed, all_variables_allowed=True)
         skip = 1 if skip is None else int(skip, 0)
-        precision = precision and int(precision, 0) or 64
+        precision = precision and int(precision, 0) or _DEFAULT_BITS
         mask = precision and (1 << precision) - 1
 
         def finalize(data: Optional[Chunk] = None):

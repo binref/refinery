@@ -61,3 +61,7 @@ class TestArgumentFormats(TestBase):
     def test_slices_can_be_variables(self):
         pipeline = self.ldu('put', 'rg', '2:') [ self.ldu('snip', 'var:rg') ] # noqa
         self.assertEqual(pipeline(b'FOOBAR'), B'OBAR')
+
+    def test_inc(self):
+        result = argformats.DelayedArgument('take[:5]:inc[8]:e:0x30')(B'')
+        self.assertEqual(result, b'01234')
