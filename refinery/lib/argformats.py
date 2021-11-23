@@ -712,7 +712,7 @@ class DelayedArgument(LazyEvaluation):
         return chunks.pack(integers, size, bigE)
 
     @handler.register('inc')
-    def inc(self, it: Iterable[int], precision=_DEFAULT_BITS) -> Iterable[int]:
+    def inc(self, it: Iterable[int], precision=None) -> Iterable[int]:
         F"""
         The modifier `inc:it` or `inc[N={_DEFAULT_BITS}]:it` expects a sequence `it` of integers
         (a binary string is interpreted as the sequence of its byte values), iterates it cyclically
@@ -733,7 +733,7 @@ class DelayedArgument(LazyEvaluation):
         return delay
 
     @handler.register('dec')
-    def dec(self, it: Iterable[int], precision=_DEFAULT_BITS) -> Iterable[int]:
+    def dec(self, it: Iterable[int], precision=None) -> Iterable[int]:
         """
         Identical to `refinery.lib.argformats.DelayedNumSeqArgument.inc`, but decreasing the counter
         rather than increasing it.
