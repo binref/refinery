@@ -97,11 +97,11 @@ FinalType = TypeVar('FinalType')
 DelayedType = Callable[[ByteString], FinalType]
 MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 
+_DEFAULT_BITS = 64
+
 
 class ParserError(ArgumentTypeError): pass
 class ParserVariableMissing(ParserError): pass
-
-_DEFAULT_BITS = 64
 
 
 class RepeatedInteger(int):
