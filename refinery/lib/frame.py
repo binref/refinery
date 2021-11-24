@@ -121,7 +121,7 @@ import json
 import base64
 import os
 
-from typing import Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
+from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
 from refinery.lib.structures import MemoryFile
 from refinery.lib.powershell import is_powershell_process
 from refinery.lib.tools import isbuffer
@@ -258,7 +258,7 @@ class Chunk(bytearray):
         return self._path
 
     @property
-    def meta(self) -> Dict[str, Any]:
+    def meta(self) -> LazyMetaOracle:
         """
         Every chunk can contain a dictionary of arbitrary metadata.
         """
@@ -359,7 +359,7 @@ class Chunk(bytearray):
         return dc
 
 
-class FrameUnpacker:
+class FrameUnpacker(Iterable[Chunk]):
     """
     Provides a unified interface to read both framed and raw input data from a stream. After
     loading a framed input stream, the object provides an iterator over the first **frame** in
@@ -458,7 +458,7 @@ class FrameUnpacker:
         """
         return self.next_chunk.path
 
-    def __iter__(self) -> Iterable[Chunk]:
+    def __iter__(self) -> Generator[Chunk, None, None]:
         if self.finished:
             return
         if not self.framed:
@@ -511,8 +511,12 @@ class Framed:
         except StopIteration:
             pass
         else:
-            rw = rewind()
-            yield from self.filter(rw) if top.scopable else rw
+            rewound = rewind()
+            output = self.filter(rewound) if top.scopable else rewound
+            for k, chunk in enumerate(output):
+                if chunk.meta.index is None:
+                    chunk.meta.index = k
+                yield chunk
 
         if not self.unpack.eol:  # filter did not consume the iterable
             self.unpack.abort()

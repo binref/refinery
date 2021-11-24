@@ -78,6 +78,8 @@ populate the meta variable dictionaries of all subsequent chunks with a variable
 which contains the data from that first chunk. Note that `refinery.pop` can also be used in other
 ways to merge down the metadata from chunks inside sub-pipelines.
 """
+from __future__ import annotations
+
 import abc
 import contextlib
 import hashlib
@@ -243,26 +245,29 @@ class HexByteString(bytes, CustomStringRepresentation):
         return self.hex()
 
 
-COMMON_PROPERTIES: Dict[str, Callable[[ByteString], Union[str, int, float]]] = {
-    'mime'    : lambda chunk: get_cached_file_magic_info(chunk).mime,
-    'ext'     : lambda chunk: get_cached_file_magic_info(chunk).extension,
-    'magic'   : lambda chunk: get_cached_file_magic_info(chunk).description,
-    'size'    : lambda chunk: SizeInt(len(chunk)),
-    'entropy' : lambda chunk: Percentage(entropy(chunk)),
-    'ic'      : lambda chunk: Percentage(index_of_coincidence(chunk)),
-    'crc32'   : lambda chunk: HexByteString((zlib.crc32(chunk) & 0xFFFFFFFF).to_bytes(4, 'big')),
-    'sha1'    : lambda chunk: HexByteString(hashlib.sha1(chunk).digest()),
-    'sha256'  : lambda chunk: HexByteString(hashlib.sha256(chunk).digest()),
-    'md5'     : lambda chunk: HexByteString(hashlib.md5(chunk).digest()),
-    'index'   : NotImplemented,
-}
-"""
-A dictionary mapping the names of common properties to anonymous functions that compute their
-corresponding value on a chunk of binary input data.
-"""
+class _NoDerivationAvailable(Exception):
+    pass
 
 
-class LazyMetaOracle(dict):
+class _LazyMetaMeta(type):
+    def __new__(cls, name: str, bases, namespace: dict):
+        derivations: dict = namespace['DERIVATION_MAP']
+        for obj in namespace.values():
+            try:
+                derivations[obj.name] = obj
+            except AttributeError:
+                pass
+        return type.__new__(cls, name, bases, namespace)
+
+
+def _derivation(name):
+    def decorator(method):
+        method.name = name
+        return method
+    return decorator
+
+
+class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     """
     A dictionary that can be queried lazily for all potential options of the common meta variable
     unit. For example, a SHA-256 hash is computed only as soon as the oracle is accessed at the
@@ -278,10 +283,21 @@ class LazyMetaOracle(dict):
         'crc32'   : HexByteString,
     }
 
+    DERIVATION_MAP: Dict[str, Callable[[LazyMetaOracle], Union[str, int, float]]] = {}
+    """
+    A dictionary mapping the names of common properties to anonymous functions that compute their
+    corresponding value on a chunk of binary input data.
+    """
+
+    ghost: bool
+    index: Optional[int]
+    chunk: ByteString
+
     def __init__(self, chunk: ByteString, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ghost = False
         self.chunk = chunk
+        self.index = None
         self.fix()
 
     def update(self, *args, **kwargs):
@@ -494,7 +510,7 @@ class LazyMetaOracle(dict):
             return stream.getvalue()
 
     def __contains__(self, key):
-        return super().__contains__(key) or key in COMMON_PROPERTIES
+        return super().__contains__(key) or key in self.DERIVATION_MAP
 
     def __getitem__(self, key):
         item = super().__getitem__(key)
@@ -503,12 +519,60 @@ class LazyMetaOracle(dict):
         return item
 
     def __missing__(self, key):
-        deduction = COMMON_PROPERTIES.get(key)
-        if deduction is NotImplemented:
-            raise KeyError(F'cannot deduce the {key} property from just the data, you have to use the cm unit.')
-        if deduction:
-            return self.setdefault(key, deduction(self.chunk))
-        raise KeyError(F'The meta variable {key} is unknown.')
+        deduction = self.DERIVATION_MAP.get(key)
+        if deduction is None:
+            raise KeyError(F'The meta variable {key} is unknown.')
+        try:
+            return self.setdefault(key, deduction(self))
+        except _NoDerivationAvailable:
+            raise KeyError(F'unable to derive the {key} property here, you have to use the cm unit.')
+
+    @_derivation('mime')
+    def _derive_mime(self):
+        return get_cached_file_magic_info(self.chunk).mime
+
+    @_derivation('ext')
+    def _derive_ext(self):
+        return get_cached_file_magic_info(self.chunk).extension
+
+    @_derivation('magic')
+    def _derive_magic(self):
+        return get_cached_file_magic_info(self.chunk).description
+
+    @_derivation('size')
+    def _derive_size(self):
+        return SizeInt(len(self.chunk))
+
+    @_derivation('entropy')
+    def _derive_entropy(self):
+        return Percentage(entropy(self.chunk))
+
+    @_derivation('ic')
+    def _derive_ic(self):
+        return Percentage(index_of_coincidence(self.chunk))
+
+    @_derivation('crc32')
+    def _derive_crc32(self):
+        return HexByteString((zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big'))
+
+    @_derivation('sha1')
+    def _derive_sha1(self):
+        return HexByteString(hashlib.sha1(self.chunk).digest())
+
+    @_derivation('sha256')
+    def _derive_sha256(self):
+        return HexByteString(hashlib.sha256(self.chunk).digest())
+
+    @_derivation('md5')
+    def _derive_md5(self):
+        return HexByteString(hashlib.md5(self.chunk).digest())
+
+    @_derivation('index')
+    def _derive_index(self):
+        index = self.index
+        if index is not None:
+            return index
+        raise _NoDerivationAvailable
 
 
 def metavars(chunk, ghost: bool = False) -> LazyMetaOracle:
