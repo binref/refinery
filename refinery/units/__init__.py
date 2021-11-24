@@ -836,7 +836,7 @@ class Executable(ABCMeta):
             stream.setFormatter(logging.Formatter(
                 '({asctime}) {levelname} in {name}: {message}',
                 style='{',
-                datefmt='%I:%M:%S'
+                datefmt='%H:%M:%S'
             ))
             logger.addHandler(stream)
         logger.propagate = False
