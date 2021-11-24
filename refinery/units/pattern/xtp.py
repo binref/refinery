@@ -54,6 +54,7 @@ class xtp(PatternExtractor):
         'acm.org'                 : 1,
         'adobe.com'               : 1,
         'aka.ms'                  : 1,
+        'android.com'             : 1,
         'apache.org'              : 1,
         'apple.com'               : 1,
         'archive.org'             : 2,
