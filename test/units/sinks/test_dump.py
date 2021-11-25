@@ -260,8 +260,7 @@ class TestDump(TestUnitBase):
         with tempfile.TemporaryDirectory() as root:
             with temporary_chwd(root) as root:
                 dump = self.load('A{index}')
-                tv = self.ldu('cm')
-                pipeline = self.ldu('emit', 'data0', 'data1')[tv | dump]
+                pipeline = self.ldu('emit', 'data0', 'data1')[dump]
                 pipeline()
                 self.assertTrue(os.path.exists(os.path.join(root, 'A0')))
                 self.assertTrue(os.path.exists(os.path.join(root, 'A1')))
@@ -277,9 +276,8 @@ class TestDump(TestUnitBase):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'F{[1,2][index]}')
             dump = self.load(path)
-            meta = self.ldu('cm')
             emit = self.ldu('emit', *samples)
-            emit [ meta | dump ] () # noqa
+            emit [ dump ] () # noqa
             for filename, data in zip(filenames, samples):
                 result_path = os.path.join(root, filename)
                 self.assertTrue(os.path.exists(result_path))

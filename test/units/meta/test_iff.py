@@ -8,11 +8,11 @@ from .. import TestUnitBase
 class TestIfExpr(TestUnitBase):
 
     def test_pick_only_odd_items(self):
-        pl = L('emit Marry had a little lamb.') [ L('cm') | self.load('index % 2 == 0') | L('cull') | L('sep " "') ]
+        pl = L('emit Marry had a little lamb.') [ self.load('index % 2 == 0') | L('cull') | L('sep " "') ]
         self.assertEqual(pl(), B'Marry a lamb.')
 
     def test_filter_by_size(self):
-        pl = L('emit Tim Ada Jake Elisabeth James Meredith') [ L('cm') | self.load('size > 3') | L('cull') | L('sep') ]
+        pl = L('emit Tim Ada Jake Elisabeth James Meredith') [ self.load('size > 3') | L('cull') | L('sep') ]
         self.assertEqual(pl(), B'\n'.join([
             B'Jake',
             B'Elisabeth',
