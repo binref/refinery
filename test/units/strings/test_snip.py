@@ -30,7 +30,7 @@ class TestSnip(TestUnitBase):
         )
 
     def test_snip_can_use_variables(self):
-        pipeline = L(R'rex "#(?P<index>\d+)" ABCDEFGHIJKLMNOPQRSTUVWXYZ')[
-            L('put index eval:var:index') | L('snip index:index+1')
+        pipeline = L(R'rex "#(?P<k>\d+)" ABCDEFGHIJKLMNOPQRSTUVWXYZ')[
+            L('put k eval:var:k') | L('snip k:k+1')
         ]
         self.assertEqual(pipeline(B'#17#4#5_#8-#13#4#17.#24!'), B'REFINERY')

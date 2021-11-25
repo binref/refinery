@@ -514,8 +514,7 @@ class Framed:
             rewound = rewind()
             output = self.filter(rewound) if top.scopable else rewound
             for k, chunk in enumerate(output):
-                if chunk.meta.index is None:
-                    chunk.meta.index = k
+                chunk.meta.update_index(k)
                 yield chunk
 
         if not self.unpack.eol:  # filter did not consume the iterable

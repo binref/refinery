@@ -138,7 +138,7 @@ class TestPeek(TestUnitBase):
             -----------------------------------------------------------------
             """
         )
-        peek = self.load(narrow=True, width=16)
+        peek = self.load(bare=True, narrow=True, width=16)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_BIN)
             out = stderr.getvalue().strip()
@@ -161,7 +161,7 @@ class TestPeek(TestUnitBase):
             ---------------------------------------------------------
             """
         )
-        peek = self.load(narrow=True, width=8, blocks=2)
+        peek = self.load(bare=True, narrow=True, width=8, blocks=2)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_BIN)
             out = stderr.getvalue().strip()
@@ -184,7 +184,7 @@ class TestPeek(TestUnitBase):
             ----------------------------------------------------------
             """
         )
-        peek = self.load(narrow=False, width=4, blocks=4)
+        peek = self.load(bare=True, narrow=False, width=4, blocks=4)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_BIN)
             out = stderr.getvalue().strip()
@@ -207,7 +207,7 @@ class TestPeek(TestUnitBase):
             --------------------------------------------------------------------------------
             """
         )
-        peek = self.load(decode=True, width=80)
+        peek = self.load(bare=True, decode=True, width=80)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_TXT)
             out = stderr.getvalue().strip()
@@ -230,7 +230,7 @@ class TestPeek(TestUnitBase):
             ------------------------------------------------------------------------
             """
         )
-        peek = self.load(escape=True, width=72)
+        peek = self.load(bare=True, escape=True, width=72)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_TXT)
             out = stderr.getvalue().strip()

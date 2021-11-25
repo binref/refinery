@@ -290,14 +290,12 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     """
 
     ghost: bool
-    index: Optional[int]
     chunk: ByteString
 
     def __init__(self, chunk: ByteString, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ghost = False
         self.chunk = chunk
-        self.index = None
         self.fix()
 
     def update(self, *args, **kwargs):
@@ -310,6 +308,9 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             if ctype and not isinstance(value, ctype) and issubclass(ctype, type(value)):
                 self[key] = ctype(value)
         return self
+
+    def update_index(self, index: int):
+        self['index'] = index
 
     def serializable(self) -> dict:
         result = dict(self)
@@ -566,13 +567,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     @_derivation('md5')
     def _derive_md5(self):
         return HexByteString(hashlib.md5(self.chunk).digest())
-
-    @_derivation('index')
-    def _derive_index(self):
-        index = self.index
-        if index is not None:
-            return index
-        raise _NoDerivationAvailable
 
 
 def metavars(chunk, ghost: bool = False) -> LazyMetaOracle:
