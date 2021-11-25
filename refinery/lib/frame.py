@@ -120,6 +120,7 @@ import copy
 import json
 import base64
 import os
+import itertools
 
 from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
 from refinery.lib.structures import MemoryFile
@@ -500,22 +501,18 @@ class Framed:
 
     def _apply_filter(self) -> Iterable[Chunk]:
 
-        it = iter(self.unpack)
-
-        def rewind():
-            yield top
-            yield from it
-
-        try:
-            top = next(it)
-        except StopIteration:
-            pass
-        else:
-            rewound = rewind()
-            output = self.filter(rewound) if top.scopable else rewound
-            for k, chunk in enumerate(output):
-                chunk.meta.update_index(k)
-                yield chunk
+        chunks = iter(self.unpack)
+        header = list(itertools.islice(chunks, 0, 2))
+        if header:
+            chunks = itertools.chain(header, chunks)
+            if header[0].scopable:
+                chunks = self.filter(chunks)
+            if len(header) > 1:
+                for k, chunk in enumerate(chunks):
+                    chunk.meta.update_index(k)
+                    yield chunk
+            else:
+                yield from chunks
 
         if not self.unpack.eol:  # filter did not consume the iterable
             self.unpack.abort()
