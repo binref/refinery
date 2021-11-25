@@ -545,7 +545,6 @@ class Framed:
     def _generate_chunks(self, parent: Chunk):
         if not self.squeeze:
             for item in self.action(parent):
-                # TODO: Is this copy necessary?
                 yield copy.copy(item).inherit(parent)
             return
         it = self.action(parent)
