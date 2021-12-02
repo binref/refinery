@@ -295,9 +295,9 @@ class formats(PatternEnum):
     "Base64 encoded strings"
     b64url = alphabet(R'[0-9a-zA-Z\_\-]', postfix=R'[0-9a-zA-Z\_\-]{0,3}={0,3}')
     "Base64 encoded strings using URL-safe alphabet"
-    hex = alphabet(R'[0-9a-fA-F]')
+    hex = alphabet(R'[0-9a-fA-F]{2}')
     "Hexadecimal strings"
-    uppercase_hex = alphabet(R'[0-9A-F]')
+    uppercase_hex = alphabet(R'[0-9A-F]{2}')
     "Uppercase hexadecimal strings"
     utf8 = pattern(_pattern_utf8)
     "A sequence of bytes that can be decoded as UTF8."
