@@ -75,7 +75,7 @@ class esc(Unit):
                 return c if self.args.greedy else match[0]
             return self._UNESCAPE.get(c, c)
         data = re.sub(
-            RB'\\(u[a-fA-F0-9]{4}|x[a-fA-F0-9]{2}|[0-7]{3}|.)', unescape, data)
+            RB'\\(u[a-fA-F0-9]{4}|x[a-fA-F0-9]{1,2}|[0-7]{3}|.)', unescape, data)
         return data
 
     def reverse(self, data):

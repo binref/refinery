@@ -78,3 +78,9 @@ class TestEscaping(TestUnitBase):
         wish = B'\154\225\151\067\135\111\073\307\033\173\004\154\273\222\301\242'
         unit = self.load()
         self.assertEqual(bytes(data | unit), wish)
+
+    def test_java_single_digit_hex_escapes(self):
+        data = R'\x1\x2\x03\x04'
+        wish = bytes((1, 2, 3, 4))
+        unit = self.load()
+        self.assertEqual(bytes(data | unit), wish)
