@@ -117,7 +117,7 @@ class vsnip(Unit):
             if delta in range(size + 1):
                 offset = segment.header.p_offset
                 return offset + delta, offset + segment.header.p_filesz
-        raise CompartmentNotFound(addr)
+        raise CompartmentNotFound(address)
 
     def _get_buffer_range_macho(self, macho: MachO, address: int):
         for header in macho.headers:
@@ -137,4 +137,4 @@ class vsnip(Unit):
         for section in pe.sections:
             if offset in range(section.PointerToRawData, section.PointerToRawData + section.SizeOfRawData):
                 return offset, section.PointerToRawData + section.SizeOfRawData
-        raise CompartmentNotFound(addr, 'section')
+        raise CompartmentNotFound(address, 'section')
