@@ -84,7 +84,18 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
     embedded = bytes(buffer | carve('printable', single=True))
     if len(buffer) - len(embedded) < 0x20:
         return embedded
-    return result
+    disassembly = MemoryFile()
+    with io.TextIOWrapper(disassembly, xtpyi.codec, newline='\n') as output:
+        output.write('# Decompilation Failed: Generating Disassembly:\n\n')
+        for code in codez:
+            instructions = list(xtpyi._xdis.std.Bytecode(code))
+            width_offset = max(len(str(i.offset)) for i in instructions)
+            for i in instructions:
+                opname = i.opname.replace('_', '.').lower()
+                offset = F'{i.offset:0{width_offset}d}'
+                output.write(F'# {offset:>5} {opname:<25} {i.argrepr}\n')
+        output.write('\n')
+    return disassembly.getbuffer()
 
 
 class PiType(bytes, enum.Enum):
@@ -456,6 +467,7 @@ class xtpyi(ArchiveUnit):
         import xdis.load
         import xdis.magics
         import xdis.marsh
+        import xdis.std
         import xdis
         A, B, C, *_ = sys.version_info
         V = F'{A}.{B}.{C}'
