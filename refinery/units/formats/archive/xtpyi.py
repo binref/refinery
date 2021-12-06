@@ -467,13 +467,13 @@ class xtpyi(ArchiveUnit):
         import xdis.load
         import xdis.magics
         import xdis.marsh
-        import xdis.std
         import xdis
         A, B, C, *_ = sys.version_info
         V = F'{A}.{B}.{C}'
         if V not in xdis.magics.canonic_python_version:
             xdis.magics.add_canonic_versions(V, F'{A}.{B}')
         del A, B, C, V
+        import xdis.std
         return xdis
 
     @ArchiveUnit.Requires('uncompyle6', optional=False)
