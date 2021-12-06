@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+## Version 0.4.13
+- Base64 regular expression patterns were improved to account for correct character counts.
+- The `dexstr` unit was added.
+- The `index` meta variable is now automatically populated within frames.
+- The `n40` string decryption unit was added.
+- The `xtpyi` unit now extracts Python disassembly when decompilation fails.
+- The `lzma` unit now correctly decompresses output produced by PyLZMA.
+
 ## Version 0.4.12 -- bugfix release
 
 ## Version 0.4.11
