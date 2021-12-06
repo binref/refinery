@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import lzma as lzma_
+from typing import ByteString, List
+from enum import IntFlag
+from itertools import repeat
+
+import lzma as std_lzma
 
 from refinery.units import arg, Unit, RefineryPartialResult
 from refinery.lib.argformats import OptionFactory, extract_options
@@ -9,11 +13,17 @@ from refinery.lib.structures import MemoryFile
 __all__ = ['lzma']
 
 
+class F(IntFlag):
+    DEFAULT = 0
+    INJECT = 1
+    STEPWISE = 2
+
+
 class lzma(Unit):
     """
     LZMA compression and decompression.
     """
-    _LZMA_FILTER = extract_options(lzma_, 'FILTER_', 'DELTA')
+    _LZMA_FILTER = extract_options(std_lzma, 'FILTER_', 'DELTA')
     _LZMA_PARSER = OptionFactory(_LZMA_FILTER)
 
     def __init__(
@@ -31,76 +41,84 @@ class lzma(Unit):
         if level not in range(10):
             raise ValueError('Compression level must be a number between 0 and 9.')
         super().__init__(filter=filter, raw=raw, alone=alone, xz=xz, delta=delta,
-            level=level | lzma_.PRESET_EXTREME)
+            level=level | std_lzma.PRESET_EXTREME)
 
     def _get_lz_mode_and_filters(self, reverse=False):
-        mode = lzma_.FORMAT_AUTO
+        mode = std_lzma.FORMAT_AUTO
         filters = []
         if self.args.filter is not None:
             filters.append({'id': self.args.filter.value})
         if self.args.delta is not None:
             self.log_debug('adding delta filter')
             filters.append({
-                'id': lzma_.FILTER_DELTA,
+                'id': std_lzma.FILTER_DELTA,
                 'dist': self.args.delta
             })
         if self.args.alone:
             self.log_debug('setting alone format')
-            mode = lzma_.FORMAT_ALONE
+            mode = std_lzma.FORMAT_ALONE
             filters.append({
-                'id': lzma_.FILTER_LZMA1,
+                'id': std_lzma.FILTER_LZMA1,
                 'preset': self.args.level
             })
         elif self.args.raw:
             self.log_debug('setting raw format')
-            mode = lzma_.FORMAT_RAW
+            mode = std_lzma.FORMAT_RAW
             filters.append({
-                'id': lzma_.FILTER_LZMA2,
+                'id': std_lzma.FILTER_LZMA2,
                 'preset': self.args.level
             })
         elif self.args.xz or reverse:
             if reverse and not self.log_debug('setting xz container format'):
                 self.log_info('choosing default .xz container format for compression.')
-            mode = lzma_.FORMAT_XZ
+            mode = std_lzma.FORMAT_XZ
             filters.append({
-                'id': lzma_.FILTER_LZMA2,
+                'id': std_lzma.FILTER_LZMA2,
                 'preset': self.args.level
             })
         return mode, filters
 
     def reverse(self, data):
         mode, filters = self._get_lz_mode_and_filters(True)
-        lz = lzma_.LZMACompressor(mode, filters=filters)
+        lz = std_lzma.LZMACompressor(mode, filters=filters)
         output = lz.compress(data)
         output += lz.flush()
         return output
 
-    def process(self, data):
+    def _process_stream(self, data: ByteString, strategy: F, keywords):
+        if strategy & F.STEPWISE:
+            sizes = repeat(1)
+        else:
+            sizes = [len(data)]
+        lz = std_lzma.LZMADecompressor(**keywords)
+        with MemoryFile() as output:
+            with MemoryFile(data) as stream:
+                if strategy & F.INJECT:
+                    output.write(lz.decompress(stream.read(5)))
+                    output.write(lz.decompress(B'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'))
+                for size in sizes:
+                    if stream.eof or stream.closed:
+                        break
+                    try:
+                        position = stream.tell()
+                        output.write(lz.decompress(stream.read(size)))
+                    except (EOFError, std_lzma.LZMAError) as error:
+                        msg = error.args[0] if len(error.args) == 1 else error.__class__.__name__
+                        raise RefineryPartialResult(F'compression failed at offset {position}: {msg!s}',
+                            output.getvalue())
+            return output.getvalue()
+
+    def process(self, data: bytearray):
+        errors: List[RefineryPartialResult] = []
+        view = memoryview(data)
         keywords = {}
-        mode, filters = self._get_lz_mode_and_filters(False)
+        keywords['format'], filters = self._get_lz_mode_and_filters(False)
         if self.args.raw:
             keywords['filters'] = filters
-        lz = lzma_.LZMADecompressor(mode, **keywords)
-        with MemoryFile() as output:
-            pos, size = 0, 4096
-            with MemoryFile(data) as stream:
-                while not stream.eof and not stream.closed:
-                    pos = stream.tell()
-                    try:
-                        chunk = lz.decompress(stream.read(size))
-                    except (EOFError, lzma_.LZMAError) as error:
-                        if size > 1:
-                            lz = lzma_.LZMADecompressor(mode, **keywords)
-                            stream.seek(0)
-                            output.seek(0)
-                            if pos > 0:
-                                output.write(lz.decompress(stream.read(pos)))
-                            msg = error.args[0] if len(error.args) == 1 else error.__class__.__name__
-                            self.log_debug(F'decompression error, reverting to one byte at a time: {msg}')
-                            size = 1
-                        else:
-                            remaining = len(stream.getbuffer()) - pos
-                            raise RefineryPartialResult(F'compression failed with {remaining} bytes remaining', output.getvalue())
-                    else:
-                        output.write(chunk)
-            return output.getvalue()
+        for strategy in (F.DEFAULT, F.INJECT, F.STEPWISE, F.INJECT | F.STEPWISE):
+            try:
+                return self._process_stream(view, strategy, keywords)
+            except RefineryPartialResult as p:
+                self.log_info(F'decompression failed with strategy {strategy}: {p.message}')
+                errors.append(p)
+        raise max(errors, key=lambda e: len(e.partial))

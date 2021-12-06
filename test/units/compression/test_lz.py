@@ -19,3 +19,12 @@ class TestLZMA(TestUnitBase):
         with self.assertRaises(RefineryPartialResult) as cm:
             unit(data)
         self.assertIn(B'This program cannot be run in DOS mode.', cm.exception.partial)
+
+    def test_pylzma(self):
+        data = bytes.fromhex(
+            '5d00008000'
+            '00211a49c62443e9e2c2c3e7e5d241eb65b0037ccc7a201a9748aadcd9df87b6d14d3991cf7cc3b069ae5560001783f4f32fffff24eac000'
+        )
+        goal = b"Binary Refinery Refines Evil Binaries And Benign Finery Alike"
+        unit = self.load(alone=True)
+        self.assertEqual(bytes(data | unit), goal)
