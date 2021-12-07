@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.crypto.keyderive import arg, KeyDerivation
+from refinery.units.crypto.keyderive import arg, KeyDerivation, multidecode
 
 
 class pbkdf1(KeyDerivation):
@@ -12,10 +12,6 @@ class pbkdf1(KeyDerivation):
 
     def process(self, data):
         from Crypto.Protocol.KDF import PBKDF1
-        return PBKDF1(
-            data.decode(self.codec),
-            self.args.salt,
-            dkLen=self.args.size,
-            count=self.args.iter,
-            hashAlgo=self.hash
-        )
+        return multidecode(data, lambda pwd: (
+            PBKDF1(pwd, self.args.salt, dkLen=self.args.size, count=self.args.iter, hashAlgo=self.hash)
+        ))

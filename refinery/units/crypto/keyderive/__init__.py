@@ -9,8 +9,10 @@ import importlib
 
 from refinery.units import arg, Unit
 from refinery.lib.argformats import number
+from refinery.lib.types import ByteStr
 
 from enum import Enum
+from typing import Callable
 
 
 __all__ = ['arg', 'HASH', 'KeyDerivation']
@@ -25,6 +27,16 @@ class HASH(str, Enum):
     SHA512 = 'SHA512'
     SHA224 = 'SHA224'
     SHA384 = 'SHA384'
+
+
+def multidecode(data: ByteStr, function: Callable[[str], ByteStr]) -> ByteStr:
+    for codec in ['utf8', 'latin1', 'cp1252']:
+        try:
+            return function(data.decode(codec))
+        except UnicodeError:
+            continue
+    else:
+        return function(''.join(chr(t) for t in data))
 
 
 class KeyDerivation(Unit, abstract=True):
