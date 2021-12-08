@@ -57,8 +57,10 @@ class carve_pe(PathExtractorUnit):
             pedata = mv[offset:offset + pesize]
             info = {}
             if self.args.fileinfo:
-                try: info = pemeta.parse_version(pe) or {}
-                except Exception: pass
+                try:
+                    info = pemeta().parse_version(pe) or {}
+                except Exception as error:
+                    self.log_warn(F'Unable to obtain file information: {error!s}')
             try:
                 path = info['OriginalFilename']
             except KeyError:
