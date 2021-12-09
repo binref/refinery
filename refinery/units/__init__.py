@@ -312,7 +312,8 @@ class arg(Argument):
         try:
             return cls(value)
         except Exception as E:
-            raise ValueError(F'Could not transform {value} into a {cls.__name__}.') from E
+            choices = ', '.join(cls)
+            raise ValueError(F'Could not transform {value} into {cls.__name__}; the choices are: {choices}') from E
 
     @staticmethod
     def switch(

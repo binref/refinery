@@ -26,10 +26,7 @@ class rsakey(Unit):
     """
     Parse RSA keys in various formats; PEM, DER, Microsoft BLOB, and W3C-XKMS (XML) format are supported.
     """
-    def __init__(self, output: arg.option(
-        choices=RSAFormat,
-        help='Select an output format ({choices}), default is {default}.') = RSAFormat.PEM
-    ):
+    def __init__(self, output: arg(help='Select an output format ({choices}), default is {default}.') = RSAFormat.PEM):
         super().__init__(output=arg.as_option(output, RSAFormat))
 
     def _xkms_wrap(self, number: int):
