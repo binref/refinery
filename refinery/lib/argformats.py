@@ -532,14 +532,24 @@ class DelayedArgument(LazyEvaluation):
         import base64
         return base64.b16decode(string, casefold=True)
 
-    @handler.register('f', 'F', 'file')
+    @handler.register('f', 'F', final=True)
+    def f(self, path: str, region: str = None) -> bytes:
+        """
+        Final variant of the `refinery.lib.argformats.DelayedArgument.file` handler.
+        """
+        return self._file(path, region)
+
+    @handler.register('file')
     def file(self, path: str, region: str = None) -> bytes:
         """
-        The final modifier `f:path` or `file:path` returns the contents of the file located
-        at the given path. The path may contain wildcard characters, but this pattern has to
-        match a single file. It is also possible to use the handler as `file[offset]` or as
-        `file[offset:count]` to read `count` many bytes from the file at the given offset.
+        Returns the contents of the file located at the given path. The path may contain
+        wildcard characters, but this pattern has to match a single file. It is also possible
+        to use the handler as `file[offset]` or as `file[offset:count]` to read `count`
+        many bytes from the file at the given offset.
         """
+        return self._file(path, region)
+
+    def _file(self, path: str, region: str) -> bytes:
         def read(data: Optional[Chunk] = None):
             if not region:
                 bounds = slice(0, None)
