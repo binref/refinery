@@ -358,6 +358,8 @@ class DelayedArgumentDispatch:
             hint = get_type_hints(handler).get(name, None)
             if hint == Iterable[type(data)]:
                 data = (data,)
+            if hint == str and isbuffer(data):
+                data = data.decode('utf8')
             return handler(instance, data, *args)
         except KeyError:
             unit = self._get_unit(modifier, *args)
@@ -560,8 +562,6 @@ class DelayedArgument(LazyEvaluation):
             with path.open('rb') as stream:
                 stream.seek(bounds.start or 0)
                 return stream.read(bounds.stop)
-        if isbuffer(path):
-            path = path.decode('utf8')
         path: Path = one(Path.cwd().glob(path))
         try:
             return read()
@@ -657,18 +657,13 @@ class DelayedArgument(LazyEvaluation):
         return extract
 
     @handler.register('e', 'E', 'eval')
-    def eval(self, expression: Union[str, ByteString]) -> Any:
+    def eval(self, expression: str) -> Any:
         """
         Final modifier `e:expression` or `eval:expression`; uses a `refinery.lib.argformats.PythonExpression`
         parser to process expressions. The expression can contain any meta variable that is attached to the
         chunk. The `refinery.cm` unit can be used to attach information such as chunk size and the chunk
         index within the current frame (see `refinery.lib.frame`).
         """
-        if not isinstance(expression, str):
-            try:
-                expression = expression.decode('ascii')
-            except AttributeError:
-                return expression
         return LazyPythonExpression(expression)
 
     @handler.register('btoi')
@@ -918,6 +913,8 @@ class DelayedBinaryArgument(DelayedArgument):
     def __call__(self, data: Optional[ByteString] = None) -> bytes:
         value = super().__call__(data=data)
         if not isbuffer(value):
+            if isinstance(value, str):
+                return value.encode('utf8')
             raise ArgumentTypeError(
                 F'The expression {self.expression} returned a value of type {type(value).__name__}, '
                 R'which could not be converted to a byte string.'
