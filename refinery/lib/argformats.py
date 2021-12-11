@@ -501,7 +501,7 @@ class DelayedArgument(LazyEvaluation):
             return utf8(expression)
 
     @DelayedArgumentDispatch
-    def handler(self, expression: str) -> bytes:
+    def handler(self, expression) -> bytes:
         return self.default_handler(expression)
 
     @handler.register('s', 'S', final=True)
@@ -657,13 +657,17 @@ class DelayedArgument(LazyEvaluation):
         return extract
 
     @handler.register('e', 'E', 'eval')
-    def eval(self, expression: str) -> Any:
+    def eval(self, expression) -> Any:
         """
         Final modifier `e:expression` or `eval:expression`; uses a `refinery.lib.argformats.PythonExpression`
         parser to process expressions. The expression can contain any meta variable that is attached to the
         chunk. The `refinery.cm` unit can be used to attach information such as chunk size and the chunk
         index within the current frame (see `refinery.lib.frame`).
         """
+        if isbuffer(expression):
+            expression = expression.decode('utf8')
+        if not isinstance(expression, str):
+            return expression
         return LazyPythonExpression(expression)
 
     @handler.register('btoi')
