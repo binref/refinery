@@ -1127,7 +1127,7 @@ class Unit(UnitBase, abstract=True):
     def __iter__(self):
         return self
 
-    def _exception_handler(self, exception: BaseException):
+    def _exception_handler(self, exception: BaseException, data: ByteString):
         if self.log_level >= LogLevel.DETACHED:
             if isinstance(exception, RefineryPartialResult) and self.is_lenient:
                 return None
@@ -1148,7 +1148,12 @@ class Unit(UnitBase, abstract=True):
         elif isinstance(exception, RefineryImportMissing):
             self.log_fail(F'dependencies missing; install {exception.install}')
         else:
-            self.log_fail(F'unexpected exception of type {exception.__class__.__name__}; {exception!s}')
+            message = F'exception of type {exception.__class__.__name__}; {exception!s}'
+            if self.log_level <= LogLevel.INFO:
+                from refinery.units.sinks.peek import peek
+                peeked = str(data | peek(lines=2, decode=True, stdout=True))
+                message = F'{message}\n{peeked}'
+            self.log_fail(message)
 
         if self.log_debug():
             import traceback
@@ -1176,7 +1181,7 @@ class Unit(UnitBase, abstract=True):
                 elif result is not None:
                     yield result
             except BaseException as B:
-                result = self._exception_handler(B)
+                result = self._exception_handler(B, data)
                 message = str(B).strip() or 'unknown'
                 if result is not None:
                     yield self.labelled(result, error=message)
