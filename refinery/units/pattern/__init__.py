@@ -84,7 +84,7 @@ class PatternExtractorBase(Unit, abstract=True):
             for k in sorted(islice(indices, abs(self.args.take))):
                 yield result[k]
         elif self.args.longest:
-            yield from sorted(result, key=len, reverse=True)
+            yield from sorted(result, key=lambda m: m.end() - m.start(), reverse=True)
         elif self.args.take:
             yield from islice(result, abs(self.args.take))
 

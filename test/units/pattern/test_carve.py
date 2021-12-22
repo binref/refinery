@@ -163,3 +163,8 @@ class TestCarve(TestUnitBase):
             B'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_2) '
             B'AppleWebKit/601.3.9 (KHTML, like Gecko) Version/9.0.2 Safari/601.3.9\r\n'
         ), result)
+
+    def test_sort_by_length(self):
+        unit = self.load('hex', min=4, longest=True)
+        data = B'xAFxxxxABBAxxxx'
+        self.assertEqual(str(data | unit), 'ABBA')
