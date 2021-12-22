@@ -22,8 +22,9 @@ class TestEscaping(TestUnitBase):
 
     def test_quoted_string_04(self):
         unit = esc(quoted=True)
-        with self.assertRaises(ValueError):
-            unit(RB'"r\x65\x66\x69\x6ee\x72\x79')
+        data = RB'"r\x65\x66\x69\x6ee\x72\x79'
+        goal = B'"r\x65\x66\x69\x6ee\x72\x79'
+        self.assertEqual(bytes(data | unit), goal)
 
     def test_inversion_simple(self):
         unit = self.load()

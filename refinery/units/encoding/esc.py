@@ -48,9 +48,10 @@ class esc(Unit):
     def process(self, data):
         if self.args.quoted:
             quote = data[0]
-            if data[~0] != quote:
-                raise ValueError('string is not correctly quoted')
-            data = data[1:~0]
+            if data[-1] != quote:
+                self.log_info('string is not correctly quoted')
+            else:
+                data = data[1:-1]
 
         if self.args.unicode:
             return data.decode('UNICODE_ESCAPE').encode(self.codec)
