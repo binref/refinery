@@ -38,7 +38,7 @@ class zl(Unit):
         else:
             mode_candidates = [-self.args.window, self.args.window | 0x20, 0]
         for mode in mode_candidates:
-            self.log_info(F'using mode {mode:+2d} for decompression')
+            self.log_debug(F'using mode {mode:+2d} for decompression')
             try:
                 z = zlib.decompressobj(mode)
                 return z.decompress(data)
@@ -54,7 +54,7 @@ class zl(Unit):
             mode = -mode
         if self.args.gzip_header:
             mode = -mode | 0x10
-        self.log_info(F'using mode {mode:+2d} for compression')
+        self.log_debug(F'using mode {mode:+2d} for compression')
         zl = zlib.compressobj(self.args.level, zlib.DEFLATED, mode)
         zz = zl.compress(data)
         return zz + zl.flush(zlib.Z_FINISH)
