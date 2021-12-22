@@ -33,3 +33,22 @@ class TestWindowsRegistryExtractor(TestUnitBase):
         self.assertEqual(items[B'HKEY_CURRENT_USER/Test/Multi.2'], B'Value!')
         self.assertEqual(items[B'HKEY_CURRENT_USER/Test/Exp'], B'%AppData%')
         self.assertEqual(items[B'HKEY_CURRENT_USER/Test/@'], B'Wookie')
+
+    def test_commandline_in_registry_file(self):
+        unit = self.load()
+        data = cleandoc(
+            R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_USERS\COOPER-12\Software\Classes\ms-settings]
+
+            [HKEY_USERS\COOPER-12\Software\Classes\ms-settings\Shell]
+
+            [HKEY_USERS\COOPER-12\Software\Classes\ms-settings\Shell\Open]
+
+            [HKEY_USERS\COOPER-12\Software\Classes\ms-settings\Shell\Open\command]
+            @="pcalua -a C:\\d3str0y.exe"
+            """
+        ).encode(unit.codec)
+        items = {chunk['path']: chunk for chunk in data | unit}
+        self.assertEqual(items[B'HKEY_USERS/COOPER-12/Software/Classes/ms-settings/Shell/Open/command/@'], B'pcalua -a C:\\d3str0y.exe')

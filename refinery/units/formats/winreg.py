@@ -88,12 +88,9 @@ class winreg(PathExtractorUnit):
         REG_FULL_RESOURCE_DESCRIPTOR = Missing('REG_FULL_RESOURCE_DESCRIPTOR')
         REG_RESOURCE_REQUIREMENTS_LIST = Missing('REG_RESOURCE_REQUIREMENTS_LIST')
 
-        prefix, colon, encoded = data.partition(':')
+        prefix, _, encoded = data.partition(':')
 
-        if colon != ':':
-            decoder = REG_SZ
-            encoded = data
-        else:
+        try:
             decoder = {
                 'hex(0)' : REG_NONE,
                 'hex(1)' : REG_SZ,
@@ -109,7 +106,10 @@ class winreg(PathExtractorUnit):
                 'hex(9)' : REG_FULL_RESOURCE_DESCRIPTOR,
                 'hex(a)' : REG_RESOURCE_REQUIREMENTS_LIST,
                 'hex(b)' : REG_QWORD,
-            }.get(prefix, REG_SZ)
+            }[prefix]
+        except KeyError:
+            decoder = REG_SZ
+            encoded = data
 
         if isinstance(decoder, Missing):
             self.log_warn(F'Found registry type {decoder!s}; no decoder implemented.')
@@ -123,15 +123,12 @@ class winreg(PathExtractorUnit):
     def _unpack_file(self, data: bytearray):
         for codec in ('utf16', 'utf-16le', 'utf8'):
             try:
-                reg = data.decode(codec)
+                reg = data.decode(codec).splitlines(keepends=True)
             except UnicodeError:
-                pass
-            else:
-                reg = reg.splitlines(keepends=True)
+                continue
+            if reg[0].startswith('Windows Registry Editor'):
                 break
         else:
-            raise ParseException
-        if not reg[0].startswith('Windows Registry Editor'):
             raise ParseException
         config = WinRegFileParser()
         config.read_string(''.join(reg[1:]))
