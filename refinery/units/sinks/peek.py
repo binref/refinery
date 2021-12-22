@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Optional
+from typing import Generator, Optional
 
 import sys
 import textwrap
@@ -31,6 +31,7 @@ class peek(HexViewer):
         escape : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
         meta   : arg('-m', group='META', help='Accumulate metadata that requires a full scan.') = False,
         bare   : arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
+        stdout : arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if bare and meta:
@@ -52,16 +53,22 @@ class peek(HexViewer):
             meta=meta,
             bare=bare,
             width=width,
+            stdout=stdout,
         )
 
     def process(self, data):
-        for line in self._peeklines(data):
-            print(line, file=sys.stderr)
-        if not self.isatty:
-            self.log_info('forwarding input to next unit')
-            yield data
+        lines = self._peeklines(data)
+        if self.args.stdout:
+            for line in lines:
+                yield line.encode(self.codec)
+        else:
+            for line in lines:
+                print(line, file=sys.stderr)
+            if not self.isatty:
+                self.log_info('forwarding input to next unit')
+                yield data
 
-    def _peekmeta(self, linewidth, sep, **meta):
+    def _peekmeta(self, linewidth, sep, **meta) -> Generator[str, None, None]:
         if not meta:
             return
         width = max(len(name) for name in meta)
@@ -103,7 +110,7 @@ class peek(HexViewer):
                 metavar = metavar[:linewidth - 3] + '...'
             yield metavar
 
-    def _trydecode(self, data, codec: Optional[str], width: int, linecount: int):
+    def _trydecode(self, data, codec: Optional[str], width: int, linecount: int) -> str:
         remaining = linecount
         result = []
         if codec is None:
@@ -150,7 +157,7 @@ class peek(HexViewer):
             result.extend(wrapped)
         return result[:abs(linecount)]
 
-    def _peeklines(self, data):
+    def _peeklines(self, data) -> Generator[str, None, None]:
 
         codec = None
         lines = None
