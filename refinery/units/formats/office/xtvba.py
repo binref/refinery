@@ -16,7 +16,10 @@ class xtvba(PathExtractorUnit):
 
     def unpack(self, data):
         sentinel = uuid4()
-        parser = self._olevba.VBA_Parser(sentinel, data=bytes(data), relaxed=True)
+        try:
+            parser = self._olevba.VBA_Parser(sentinel, data=bytes(data), relaxed=True)
+        except self._olevba.FileOpenError:
+            raise ValueError('Input data not recognized by VBA parser')
         for p1, stream_path, p2, code in parser.extract_all_macros():
             if not stream_path:
                 if p1 == sentinel:
