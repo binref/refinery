@@ -77,7 +77,7 @@ class blz(Unit):
         def readbit():
             nonlocal bitcount, bitstore
             if not bitcount:
-                bitstore = int.from_bytes(self._src.read(2), 'little')
+                bitstore = int.from_bytes(self._src.read_exactly(2), 'little')
                 bitcount = 0xF
             else:
                 bitcount = bitcount - 1
@@ -90,14 +90,14 @@ class blz(Unit):
                 result += readbit()
             return result
 
-        self._dst.write(self._src.read(1))
+        self._dst.write(self._src.read_exactly(1))
 
         try:
             while not size or decompressed < size:
                 if readbit():
                     length = readint() + 2
                     sector = readint() - 2
-                    offset = self._src.read(1)[0] + 1
+                    offset = self._src.read_byte() + 1
                     delta = offset + 0x100 * sector
                     available = self._dst.tell()
                     if delta not in range(available + 1):
@@ -111,7 +111,7 @@ class blz(Unit):
                     self._dst.write(replay)
                     decompressed += length
                 else:
-                    self._dst.write(self._src.read(1))
+                    self._dst.write(self._src.read_exactly(1))
                     decompressed += 1
         except EOF as E:
             raise RefineryPartialResult(str(E), partial=self._dst.getbuffer())
@@ -138,7 +138,7 @@ class blz(Unit):
 
         # Write empty header and first byte of source
         self._dst.write(bytearray(24))
-        self._dst.write(self._src.read(1))
+        self._dst.write(self._src.read_exactly(1))
 
         def writeint(n: int) -> None:
             """

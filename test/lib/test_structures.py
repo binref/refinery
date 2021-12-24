@@ -128,7 +128,7 @@ class TestStructures(TestBase):
         data = struct.pack('<bhiLqfd', *items)
         sr = StructReader(data)
         self.assertEqual(sr.read_nibble(), 0b101)
-        self.assertRaises(sr.Unaligned, lambda: sr.read(2))
+        self.assertRaises(sr.Unaligned, lambda: sr.read_exactly(2))
         sr.seek(0)
         self.assertEqual(sr.read_byte(), 0b1100101)
         self.assertEqual(sr.i16(), -0x1337)

@@ -13,7 +13,7 @@ class LZ4Reader(StructReader):
             return size
         nb = 0xFF
         while nb == 0xFF:
-            nb = self.read(1)[0]
+            nb, = self.read_exactly(1)
             size += nb
         return size
 
@@ -125,12 +125,12 @@ class lz4(Unit):
             assert reader.byte_aligned
             assert size <= block_maximum, 'block size exceeds maximum size'
             if uncompressed:
-                output.write(reader.read(size))
+                output.write(reader.read_exactly(size))
             else:
                 self._read_block(reader, output, size)
             if blocks_checksummed:
                 with StreamDetour(reader, -size, io.SEEK_CUR):
-                    xxh = xxhash(reader.read(size)).intdigest()
+                    xxh = xxhash(reader.read_exactly(size)).intdigest()
                 chk = reader.u32()
                 if chk != xxh:
                     self.log_warn(F'block {blockindex} had checksum {chk:08X} which did not match computed value {xxh:08X}')

@@ -287,7 +287,7 @@ class StructReader(MemoryFile[T]):
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read1(self, size: Optional[int] = None) -> T:
+    def read_exactly(self, size: Optional[int] = None) -> T:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
@@ -298,7 +298,7 @@ class StructReader(MemoryFile[T]):
         """
         if not self.byte_aligned:
             raise StructReader.Unaligned('buffer is not byte-aligned')
-        data = super().read1(size)
+        data = self.read1(size)
         if size and len(data) < size:
             raise EOF(data)
         return data
@@ -344,9 +344,9 @@ class StructReader(MemoryFile[T]):
             bytecount += 1
             rest = 8 - rest
         if bytecount == 1:
-            result = self.read1(1)[0]
+            result = self.read_exactly(1)[0]
         else:
-            result = int.from_bytes(self.read(bytecount), self.byteorder_name)
+            result = int.from_bytes(self.read_exactly(bytecount), self.byteorder_name)
         if not nbits and not rest:
             return result
         if self.bigendian:
@@ -369,7 +369,7 @@ class StructReader(MemoryFile[T]):
         The method reads `size` many bytes from the underlying stream starting at the current bit.
         """
         if self.byte_aligned:
-            data = self.read(size)
+            data = self.read_exactly(size)
             if not isinstance(data, bytes):
                 data = bytes(data)
             return data
@@ -466,7 +466,7 @@ class StructReader(MemoryFile[T]):
             self.seek(pos)
             raise EOF
         else:
-            data = self.read(end - pos)
+            data = self.read_exactly(end - pos)
             self.seekrel(len(terminator))
             return data
 
