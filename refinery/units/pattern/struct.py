@@ -124,8 +124,9 @@ class struct(Unit):
                             self.log_warn(F'field {name} was empty, ignoring.')
                             continue
                         if len(value) > 1:
-                            self.log_warn(F'parsing field {name} produced {len(value)} items, discarding all but the first one')
-                        value = value[0]
+                            self.log_info(F'parsing field {name} produced {len(value)} items reading a tuple')
+                        else:
+                            value = value[0]
                     if conversion == 'u':
                         value = value.decode('utf-16le')
                     if conversion == 's':
