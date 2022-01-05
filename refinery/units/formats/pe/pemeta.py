@@ -211,7 +211,7 @@ class pemeta(Unit):
             return info
 
         if len(certificates) == 1:
-            main_certificate = certificates[0]['tbs_certificate']
+            main_certificate = certificates[0]
         else:
             certificates_with_extended_use = []
             main_certificate = None

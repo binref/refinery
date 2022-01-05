@@ -71,3 +71,13 @@ class TestPEMeta(TestUnitBase):
         self.assertEqual(result['Signature']['ProgramName'], 'KMSpico')
         self.assertEqual(result['Signature']['MoreInfo'], 'http://forums.mydigitallife.''info/threads/49108')
         self.assertEqual(result['Signature']['Serial'], 'ab81dc9f367529be42665b07570ffa05')
+
+    def test_broken_signature_01(self):
+        data = self.download_sample('2178989d216d0d62d354076e7fb172b6450695613bc971495e14a21a2d6a7603')
+        unit = self.load()
+        result = data | unit | json.loads
+
+        self.assertIn('Signature', result)
+        self.assertIn('Serial', result['Signature'])
+        self.assertEqual(result['Signature']['ProgramName'], 'MozDef Corp')
+        self.assertEqual(result['Signature']['Subject'], 'outlook.com')
