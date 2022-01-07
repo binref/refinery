@@ -63,8 +63,12 @@ class perc(PathExtractorUnit):
                 yield UnpackResult(path, extracted)
 
     def unpack(self, data):
-        pe = pefile.PE(data=data)
+        pe = pefile.PE(data=data, fast_load=True)
+        pe.parse_data_directories(
+            directories=pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE'])
         try:
-            yield from self._search(pe, pe.DIRECTORY_ENTRY_RESOURCE)
+            rsrc = pe.DIRECTORY_ENTRY_RESOURCE
         except AttributeError:
             pass
+        else:
+            yield from self._search(pe, rsrc)
