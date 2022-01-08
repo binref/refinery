@@ -28,7 +28,7 @@ Furthermore, the module documentation of `refinery.units` contains a brief
 example of how to write simple units.
 """
 __version__ = '0.4.14'
-__pip_pkg__ = 'binary-refinery'
+__distribution__ = 'binary-refinery'
 
 from typing import Dict, Type
 

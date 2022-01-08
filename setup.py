@@ -100,7 +100,7 @@ def get_config():
     config = get_setup_common()
 
     config.update(
-        name=refinery.__pip_pkg__,
+        name=refinery.__distribution__,
         packages=setuptools.find_packages(include=('refinery*',)),
         install_requires=requirements,
         extras_require=extras,
