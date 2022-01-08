@@ -7,16 +7,13 @@ from __future__ import annotations
 
 import functools
 import importlib
-import os
-import pkg_resources
 import pkgutil
 import shlex
-import sys
 import logging
 
 import refinery
 
-from typing import Iterable
+from typing import Dict, Iterable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -62,36 +59,23 @@ def get_all_entry_points() -> Iterable[Executable]:
     yield from iterate(root, *path)
 
 
+@functools.lru_cache(maxsize=1, typed=True)
+def get_entry_point_map() -> Dict[str, Executable]:
+    """
+    Returns a dictionary of all available unit names, mapping to the class that implements it.
+    The dictionary is cached.
+    """
+    return {exe.name: exe for exe in get_all_entry_points()}
+
+
 def get_entry_point(name: str) -> Executable:
     """
     Retrieve a refinery entry point by name.
     """
-    for package in [refinery.__pip_pkg__, 'refinery']:
-        try:
-            return pkg_resources.load_entry_point(package, 'console_scripts', name).__self__
-        except pkg_resources.DistributionNotFound:
-            continue
-        except ImportError:
-            raise EntryNotFound(F'not a unit: {name}')
-        except Exception as error:
-            logging.error(F'could not load {package} entry point {name}: {type(error).__name__}: {error!s}')
-    if os.environ.get('REFINERY_LOAD_LOCAL', False):
-        try:
-            from refinery.units import Entry
-            sys.path.append('.')
-            module = importlib.import_module(name)
-            for attr in dir(module):
-                item = getattr(module, attr)
-                if getattr(item, '__module__', None) != name:
-                    continue
-                if isinstance(item, type) and issubclass(item, Entry):
-                    return item
-        except Exception:
-            pass
-    for entry in get_all_entry_points():
-        if getattr(entry, 'name', None) == name:
-            return entry
-    raise EntryNotFound('no entry point with name "%s" was found.' % name)
+    unit = getattr(refinery, name, None) or get_entry_point_map().get(name)
+    if unit is None:
+        raise EntryNotFound(F'no entry point named "{name}" was found.')
+    return unit
 
 
 def resolve(name: str) -> Executable:
