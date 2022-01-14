@@ -29,6 +29,7 @@ class peek(HexViewer):
         brief  : arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
         decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         escape : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
+        index  : arg('-i', help='Display the index of each chunk within the current frame.') = False,
         meta   : arg('-m', group='META', help='Accumulate metadata that requires a full scan.') = False,
         bare   : arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
         stdout : arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
@@ -46,6 +47,7 @@ class peek(HexViewer):
             blocks=blocks,
             decode=decode,
             dense=dense,
+            index=index,
             escape=escape,
             expand=expand,
             narrow=narrow,
@@ -159,16 +161,17 @@ class peek(HexViewer):
 
     def _peeklines(self, data) -> Generator[str, None, None]:
 
+        meta = metavars(data)
+
         codec = None
         lines = None
-        index = None
-        final = True
+        final = data.temp or False
         empty = True
 
-        if data.temp:
-            final, index = data.temp
-        if final and not index:
-            index = None
+        if not self.args.index:
+            del meta['index']
+        else:
+            index = meta.get('index', None)
 
         if not self.args.brief:
             padding = 0
@@ -210,7 +213,6 @@ class peek(HexViewer):
         if self.args.brief:
             final = False
         elif not self.args.bare:
-            meta = metavars(data)
             magic = meta._derive_magic()
             size = meta._derive_size()
             if self.args.meta:
@@ -223,8 +225,6 @@ class peek(HexViewer):
                 if len(data) <= 5_000_000:
                     peek = F'{peek}; {meta._derive_entropy()!r} entropy'
                 meta['peek'] = F'{peek}; {magic!s}'
-            if index is not None:
-                meta['index'] = index
             for line in self._peekmeta(metrics.hexdump_width, separator(), **meta):
                 empty = False
                 yield line
@@ -246,8 +246,8 @@ class peek(HexViewer):
 
     def filter(self, chunks):
         discarded = 0
-        for final, (index, item) in lookahead(enumerate(chunks)):
-            item.temp = final, index
+        for final, item in lookahead(chunks):
+            item.temp = final
             if not item.visible and self.isatty:
                 discarded += 1
             else:
