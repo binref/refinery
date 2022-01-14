@@ -56,7 +56,14 @@ class LineWrapRawTextHelpFormatter(RawDescriptionHelpFormatter):
             return ', '.join(parts)
 
 
-class ArgumentParserWithKeywordHooks(ArgumentParser):
+class RefineryArgumentParser(ArgumentParser):
+
+    def __init__(self, prog=None, description=None, add_help=True):
+        super().__init__(prog=prog, description=description, add_help=add_help,
+            formatter_class=LineWrapRawTextHelpFormatter)
+
+
+class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
     """
     The refinery argument parser remembers the order of arguments in the property `order`.
     Furthermore, the parser can be initialized with a given set of keywords which will be
@@ -75,8 +82,7 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
             return self.__wrapped__(parser, ns, values, opt)
 
     def __init__(self, keywords, prog=None, description=None, add_help=True):
-        super().__init__(prog=prog, description=description, add_help=add_help,
-            formatter_class=LineWrapRawTextHelpFormatter)
+        super().__init__(prog, description, add_help)
         self._keywords = keywords
         self.order = []
 

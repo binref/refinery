@@ -8,6 +8,7 @@ import argparse
 
 from refinery.lib.tools import documentation, terminalfit, get_terminal_size
 from refinery.units import ArgparseError
+from refinery.lib.argparser import RefineryArgumentParser
 
 import refinery
 
@@ -75,7 +76,7 @@ def explorer(keyword_color='91', unit_color='93'):
     headline = highlight_word(headline, 'unit', unit_color)
     print(headline)
 
-    argp = argparse.ArgumentParser()
+    argp = RefineryArgumentParser()
     argp.add_argument(
         'keywords',
         metavar='keyword',
@@ -85,13 +86,13 @@ def explorer(keyword_color='91', unit_color='93'):
              'a unit, it will be listed.'
     )
     argp.add_argument(
-        '-T',
+        '-T', '--columns',
         dest='terminal_width',
-        metavar='COLS',
+        metavar='N',
         type=int,
         default=80,
-        help='Set the terminal width, the default is 80 characters. Setting '
-             'the width to zero (-T0) will use the full terminal width.'
+        help='Set the terminal width to N characters, the default is 80 characters. '
+             'Setting the width to zero (-T0) will use the full terminal width.'
     )
     argp.add_argument(
         '-I', '--conjunctive',
