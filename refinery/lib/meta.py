@@ -528,6 +528,12 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         except _NoDerivationAvailable:
             raise KeyError(F'unable to derive the {key} property here, you have to use the cm unit.')
 
+    def discard(self, key):
+        try:
+            dict.__delitem__(self, key)
+        except KeyError:
+            pass
+
     @_derivation('mime')
     def _derive_mime(self):
         return get_cached_file_magic_info(self.chunk).mime

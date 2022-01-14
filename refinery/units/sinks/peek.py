@@ -169,7 +169,7 @@ class peek(HexViewer):
         empty = True
 
         if not self.args.index:
-            del meta['index']
+            meta.discard('index')
         else:
             index = meta.get('index', None)
 
