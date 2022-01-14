@@ -31,8 +31,8 @@ class xtmail(PathExtractorUnit):
 
     @PathExtractorUnit.Requires('extract_msg', optional=False)
     def _extract_msg():
-        from extract_msg.message import Message
-        return Message
+        import extract_msg.message
+        return extract_msg.message
 
     def _get_parts_outlook(self, data):
         def ensure_bytes(data):
@@ -50,7 +50,7 @@ class xtmail(PathExtractorUnit):
         msgcount = 0
 
         with NoLogging:
-            msg = self._extract_msg(bytes(data))
+            msg = self._extract_msg.Message(bytes(data))
 
         yield from self._get_headparts(msg.header.items())
         yield from make_message('body', msg)
