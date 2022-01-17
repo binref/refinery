@@ -103,7 +103,7 @@ class pkcs7(Unit):
                 if list_result is not None:
                     return list_result
                 if isinstance(obj, self.unit._asn1crypto.cms.CertificateChoices):
-                    return self.unit._asn1crypto.x509.Certificate.load(obj.dump())
+                    return obj.chosen
                 if isinstance(obj, asn1.Sequence):
                     children = obj.children
                     if children:
