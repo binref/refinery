@@ -182,28 +182,30 @@ class rsa(Unit):
                 self.log_debug('PyCrypto primitives failed, no longer attempting OAEP.')
                 self._oaep = False
 
-        result = self._decrypt_raw(data)
+        data = self._decrypt_raw(data)
+        return self._unpad_per_argument(data)
 
+    def _unpad_per_argument(self, data):
         if self._pads == PAD.NONE:
-            return result
+            return data
         elif self._pads == PAD.PKCS10:
-            return self._unpad_pkcs10(result)
+            return self._unpad_pkcs10(data)
         elif self._pads == PAD.PKCS15:
-            return self._unpad_pkcs15(result)
+            return self._unpad_pkcs15(data)
         elif self._pads == PAD.AUTO:
             with suppress(ValueError):
-                data = self._unpad_pkcs10(result)
+                data = self._unpad_pkcs10(data)
                 self.log_info('Detected PKCS1.0 padding.')
                 self._pads = PAD.PKCS10
                 return data
             with suppress(ValueError):
-                data = self._unpad_pkcs15(result)
+                data = self._unpad_pkcs15(data)
                 self.log_info('Detected PKCS1.5 padding.')
                 self._pads = PAD.PKCS15
                 return data
             self.log_warn('No padding worked, returning raw decrypted blocks.')
             self._pads = PAD.NONE
-            return result
+            return data
         else:
             raise ValueError(F'Invalid padding value: {self._pads!r}')
 
@@ -233,13 +235,13 @@ class rsa(Unit):
         return self._key_data
 
     def process(self, data):
-        if not self.key.has_private():
-            try:
-                return self._unpad_pkcs10(self._encrypt_raw(data))
-            except Exception as E:
-                raise ValueError('A public key was given for decryption and rsautl mode resulted in an error.') from E
         self._oaep = True
         self._pads = self.args.padding
+        if not self.key.has_private():
+            try:
+                return self._unpad_per_argument(self._encrypt_raw(data))
+            except Exception as E:
+                raise ValueError(F'A public key was given for decryption and rsautl mode resulted in an error: {E}') from E
         return B''.join(self._decrypt_block(block) for block in splitchunks(data, self.blocksize))
 
     def reverse(self, data):
