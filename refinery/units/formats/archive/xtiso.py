@@ -77,7 +77,7 @@ class xtiso(ArchiveUnit):
                             tzinfo=datetime.timezone(datetime.timedelta(minutes=15 * info.date.gmtoffset))
                         )
 
-                    def extract(info=info):
+                    def extract(info=info, path=path):
                         if info:
                             buffer = MemoryFile(bytearray(info.data_length))
                         else:
