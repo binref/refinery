@@ -33,17 +33,17 @@ class TestHTMLExtractor(TestUnitBase):
         self.assertEqual(
             str(data | self.load('-l', '*.inner')),
             '\n'.join((
-                './html.inner',
-                './html/head.inner',
-                './html/head/title.inner',
-                './html/head/script.inner',
-                './html/head/woober.inner',
-                './html/body.inner',
-                './html/body/p(1).inner',
-                './html/body/p(2).inner',
-                './html/body/p(3).inner',
-                './html/body/div.inner',
-                './html/body/div/div.inner',
+                'html.inner',
+                'html/head.inner',
+                'html/head/title.inner',
+                'html/head/script.inner',
+                'html/head/woober.inner',
+                'html/body.inner',
+                'html/body/p(1).inner',
+                'html/body/p(2).inner',
+                'html/body/p(3).inner',
+                'html/body/div.inner',
+                'html/body/div/div.inner',
             ))
         )
         self.assertEqual(

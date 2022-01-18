@@ -29,20 +29,20 @@ class TestJSONExtractor(TestUnitBase):
         unit = self.ldu('xtjson', list=True)
         listing = {bytes(t) for t in document | unit}
         self.assertEqual(listing, {
-            B'foo/bar/#0',
-            B'foo/bar/#1',
-            B'foo/bar/#2',
-            B'foo/bar/#3',
-            B'foo/bar/',
-            B'foo/baz',
-            B'foo/b0',
-            B'foo/b1',
-            B'foo/',
-            B'bar/bar/ef',
-            B'bar/bar/eg',
-            B'bar/bar/ep',
-            B'bar/bar/',
-            B'bar/',
+            B'foo.bar.#0',
+            B'foo.bar.#1',
+            B'foo.bar.#2',
+            B'foo.bar.#3',
+            B'foo.bar',
+            B'foo.baz',
+            B'foo.b0',
+            B'foo.b1',
+            B'foo',
+            B'bar.bar.ef',
+            B'bar.bar.eg',
+            B'bar.bar.ep',
+            B'bar.bar',
+            B'bar',
         })
 
         unit = self.ldu('xtjson', 'foo/b0')

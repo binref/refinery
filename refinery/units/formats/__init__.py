@@ -10,6 +10,7 @@ import os
 import re
 import uuid
 
+from pathlib import Path
 from zlib import adler32
 from typing import ByteString, Iterable, Callable, List, Union
 
@@ -74,6 +75,7 @@ class PathPattern:
 class PathExtractorUnit(Unit, abstract=True):
 
     _STRICT_PATH_MATCHING = False
+    _CUSTOM_PATH_SEPARATE = None
 
     def __init__(self, *paths: arg(
         metavar='path', nargs='*', default=(), type=pathspec, help=(
@@ -108,17 +110,17 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def process(self, data: ByteString) -> ByteString:
         metavar = self.args.path.decode(self.codec)
-        meta = metavars(data)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
         results: List[UnpackResult] = list(self.unpack(data))
+        root = Path('.')
+        meta = metavars(data)
 
-        try:
-            root = ByteStringWrapper(meta[metavar], self.codec)
-        except KeyError:
-            root = ''
-        else:
-            root = '/'.join(root.string.split('\\')).rstrip('/')
+        if self.args.join:
+            try:
+                root = ByteStringWrapper(meta[metavar], self.codec)
+            except KeyError:
+                pass
 
         for result in results:
             path = '/'.join(result.path.split('\\'))
@@ -147,11 +149,17 @@ class PathExtractorUnit(Unit, abstract=True):
 
         for p in self.args.patterns:
             for result in results:
-                path = result.path
-                if not p.check(path):
+                path = Path(result.path)
+                try:
+                    path = path.relative_to('/')
+                except ValueError:
+                    pass
+                if not p.check(path.as_posix()):
                     continue
-                if self.args.join and root:
-                    path = F'{root}/{path}'
+                path = root / path
+                path = path.as_posix()
+                if self._CUSTOM_PATH_SEPARATE:
+                    path = path.replace('/', self._CUSTOM_PATH_SEPARATE)
                 if self.args.list:
                     yield self.labelled(path.encode(self.codec), **result.meta)
                     continue

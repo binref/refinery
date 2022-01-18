@@ -11,6 +11,7 @@ class xtjson(PathExtractorUnit):
     Extract values from a JSON document.
     """
     _STRICT_PATH_MATCHING = True
+    _CUSTOM_PATH_SEPARATE = '.'
 
     def unpack(self, data):
 

@@ -10,13 +10,13 @@ class TestPDF(TestUnitBase):
 
         unit = self.load(list=True)
         self.assertEqual(list(data | unit), [
-            B'/Metadata',
-            B'/OpenAction/JS',
-            B'/Pages/Kids/0/Annots/0/NM',
-            B'/Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fq#4dB#67#7a#6f#4dV#75t#7a#4ew#6b.#73#77#66',
+            B'Metadata',
+            B'OpenAction/JS',
+            B'Pages/Kids/0/Annots/0/NM',
+            B'Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fq#4dB#67#7a#6f#4dV#75t#7a#4ew#6b.#73#77#66',
         ])
 
-        unit = self.load('/Pages/*')
+        unit = self.load('Pages/*')
         name, swf = data | unit
         self.assertEqual(name, B'fqMBgzoMVutzNwk.swf')
         self.assertEqual(swf[:3], B'CWS')
