@@ -4,7 +4,6 @@
 A commandline script to search for binary refinery units based on keywords.
 """
 import re
-import argparse
 
 from refinery.lib.tools import documentation, terminalfit, get_terminal_size
 from refinery.units import ArgparseError
