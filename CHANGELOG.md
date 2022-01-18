@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.15 
+- Adds the `lzo` unit
+
 ## Version 0.4.14
 - The `winreg` unit is now able to extract data from Windows registry editor exports (i.e. `.reg` files).
 - The key derivation units `pbkdf2` and `pbkdf1` use a more forgiving decoder to better cover the `Rfc2898DeriveBytes` class, which offers a call signature that receives an arbitrary byte string as password.
