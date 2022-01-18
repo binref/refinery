@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from refinery.units.blockwise import arg, ArithmeticUnit, NoNumpy
+from refinery.units.blockwise import arg, ArithmeticUnit, FastBlockError
 from refinery.lib.meta import metavars
 from refinery.lib.argformats import PythonExpression
 
@@ -40,24 +40,20 @@ class blockop(ArithmeticUnit):
     """
 
     @staticmethod
-    def _parse_op(definition):
+    def _parse_op(definition, default=None):
         """
         An argparse type which uses the `refinery.lib.argformats.PythonExpression` parser to
         parse the expressions that can be passed to `refinery.blockop`. Essentially, these
         are Python expressions which can contain variables `B`, `A`, `S`, and `V`.
         """
-        parsed = PythonExpression(definition, *'IBASNV', all_variables_allowed=True)
-
-        def wrapper(index, block, state, argvector, total, meta):
-            args = {'I': index, 'B': block, 'S': state, 'N': total}
-            if argvector:
-                args.update(A=argvector[0], V=argvector)
-            return parsed(meta, **args)
-
-        return wrapper
+        if not definition:
+            if default is None:
+                raise ValueError('No definition given')
+            definition = default
+        return PythonExpression(definition, *'IBASNV', all_variables_allowed=True)
 
     def __init__(
-        self, operation: arg(type=str, help='A Python expression defining the operation.'), *argument,
+        self, operator: arg(type=str, help='A Python expression defining the operation.'), *argument,
         seed: arg('-s', type=str, help=(
             'Optional seed value for the state variable S. The default is zero. This can be an expression '
             'involving the variable N.')) = 0,
@@ -91,43 +87,50 @@ class blockop(ArithmeticUnit):
             bigendian=bigendian,
             blocksize=blocksize,
             precision=precision,
-            operation=self._parse_op(operation),
             seed=seed,
-            prologue=prologue and self._parse_op(prologue),
-            epilogue=epilogue and self._parse_op(epilogue),
+            operator=self._parse_op(operator),
+            prologue=self._parse_op(prologue, 'S'),
+            epilogue=self._parse_op(epilogue, 'S'),
         )
 
     @property
     def _is_ecb(self):
         return not self.args.epilogue and not self.args.prologue
 
-    def process_ecb_fast(self, data):
-        if not self._is_ecb:
-            raise NoNumpy
-        return super().process_ecb_fast(data)
+    def _fastblock(self, _):
+        raise FastBlockError
 
     def process(self, data):
+        context = dict(metavars(data))
         seed = self.args.seed
-        meta = metavars(data)
         if isinstance(seed, str):
             seed = PythonExpression(seed, 'N', constants=metavars(data))
+        if callable(seed):
+            seed = seed(context, N=len(data))
         self._index.init(self.fmask)
-        self._state = seed
-        self._evaluation_arguments = [0, 0, 0, (), len(data), meta]
-        if callable(self._state):
-            self._state = self._state(meta, N=len(data))
-        return super().process(data)
+        prologue = self.args.prologue.expression
+        epilogue = self.args.epilogue.expression
+        operator = self.args.operator.expression
+        context.update(N=len(data), S=seed)
 
-    def operate(self, block, index, *args):
-        arguments = self._evaluation_arguments
-        arguments[:4] = index, block, self._state, args
-        if self.args.prologue:
-            arguments[2] = self._state = self.args.prologue(*arguments)
-        block = self.args.operation(*arguments) & self.fmask
-        if self.args.epilogue:
-            arguments[1] = block
-            self._state = self.args.epilogue(*arguments)
-        return block
+        def operate(block, index, *args):
+            context.update(I=index, B=block, V=args)
+            if args:
+                context['A'] = args[0]
+            context['S'] = eval(prologue, None, context)
+            context['B'] = eval(operator, None, context)
+            context['S'] = eval(epilogue, None, context)
+            return context['B']
+
+        placeholder = self.operate
+        self.operate = operate
+        result = super().process(data)
+        self.operate = placeholder
+        return result
+
+    @staticmethod
+    def operate(block, index, *args):
+        raise RuntimeError('This operate method cannot be called.')
 
     def inplace(self, block, *args) -> None:
         super().inplace(block, *args)

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.blockwise import BinaryOperation, NoNumpy
+from refinery.units.blockwise import BinaryOperation, FastBlockError
 
 
 class xor(BinaryOperation):
     """
     Form the exclusive or of the input data with the given argument.
     """
-    def process_ecb_fast(self, data):
+    def _fastblock(self, data):
         try:
-            return super().process_ecb_fast(data)
-        except NoNumpy as E:
+            return super()._fastblock(data)
+        except FastBlockError as E:
             try:
                 from Crypto.Util.strxor import strxor
             except ModuleNotFoundError:

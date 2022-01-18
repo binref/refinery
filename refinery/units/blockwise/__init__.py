@@ -15,7 +15,7 @@ from refinery.lib.tools import infinitize, cached_property
 from refinery.lib.inline import iterspread
 
 
-class NoNumpy(ImportError):
+class FastBlockError(ImportError):
     pass
 
 
@@ -147,11 +147,14 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         import numpy
         return numpy
 
-    def process_ecb_fast(self, data):
+    def _fastblock(self, data):
         """
         Attempts to perform the operation more quickly by using numpy arrays.
         """
-        numpy = self._numpy
+        try:
+            numpy = self._numpy
+        except ModuleNotFoundError as IE:
+            raise FastBlockError from IE
         order = '<>'[self.args.bigendian]
         try:
             dtype = numpy.dtype(F'{order}u{self.args.precision}')

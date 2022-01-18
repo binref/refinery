@@ -9,6 +9,12 @@ class TestBlockop(TestUnitBase):
         unit = self.load("B+I")
         self.assertEqual(bytes(bytes(5) | unit), bytes(range(5)))
 
+    def test_real_world_01(self):
+        data = bytes.fromhex('7C737376545F0808244368244668652724684643275F2424054B')
+        goal = b'https'b'://45.41.204'b'.150:443\0'
+        unit = self.load('(41*(B-75))%127')
+        self.assertEqual(data | unit | bytes, goal)
+
 
 class TestBlockopAgainstOtherUnits(TestUnitBase):
 
