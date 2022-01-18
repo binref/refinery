@@ -6,7 +6,7 @@ from .. import TestBase
 
 class TestSuffixTree(TestBase):
 
-    def test_1(self):
+    def test_string_is_reconstructed_from_suffixes(self):
         data = B'The binary refinery refines binaries and includes fine rhymery.'
         tree = SuffixTree(data)
         self.assertEqual(

@@ -76,7 +76,7 @@ class TestFraming(TestBase):
         )
         pl = L('chop 0x01DC') [                           # noqa
             L('chop 5 -t') [                              # noqa
-                L('sorted -a') | L('snip 2:') | L('sep')     # noqa
+               L('sorted -a') | L('snip 2:') | L('sep')   # noqa
             ]| L('pack 10') | L('blockop --dec -sN B-S')  # noqa
         ]
         self.assertEqual(decoded, pl(encoded))
