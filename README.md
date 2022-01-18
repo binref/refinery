@@ -204,7 +204,7 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [docs]: https://binref.github.io/
 [argformats]: https://binref.github.io/lib/argformats.html
 [frame]: https://binref.github.io/lib/frame.html
-[meta]: https://binref.github.io/lib/meta.htm
+[meta]: https://binref.github.io/lib/meta.html
 [license]: https://opensource.org/licenses/BSD-3-Clause
 [tests]: https://github.com/binref/refinery/actions
 [codecov]: https://codecov.io/github/binref/refinery/?branch=master
