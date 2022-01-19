@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.16 -- bugfix release
+
 ## Version 0.4.15 
 - Adds the `lzo` unit
 
