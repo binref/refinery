@@ -189,7 +189,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     def process(self, data):
         try:
             self.log_debug('Attempting to process input using numpy method.')
-            result = self.process_ecb_fast(data)
+            result = self._fastblock(data)
         except ImportError:
             pass
         except Exception as error:
