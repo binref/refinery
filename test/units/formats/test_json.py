@@ -45,7 +45,7 @@ class TestJSONExtractor(TestUnitBase):
             B'bar',
         })
 
-        unit = self.ldu('xtjson', 'foo/b0')
+        unit = self.ldu('xtjson', 'foo.b0')
         self.assertEqual(bytes(document | unit), b'Binary')
 
 
