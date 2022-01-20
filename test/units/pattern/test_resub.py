@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from refinery import drain
 from .. import TestUnitBase
 
 
@@ -114,3 +115,14 @@ class TestRegexSubstitution(TestUnitBase):
         unit = self.load(R'encoded\(((??string))\)', '{1:esc -q | zl | b64 | xor 0x12}')
         result = str(data | unit)
         self.assertEqual(result, 'binary--refinery--refines--binary--finery.')
+
+    def test_patch_nop_opcodes(self):
+        data = bytes.fromhex(
+            'DD057822480083EC08DD1C24E812345678DDD883C408'
+            'DD057822480083EC08DD1C24E812345678DDD883C408'
+            'DD057822480083EC08DD1C24E812345678DDD883C408'
+            'E800000000'
+        )
+        unit = self.load('yara:DD057822480083EC08DD1C24E8[4]DDD883C408', 'rep[22]:h:90')
+        goal = B'\x90' * 66 + B'\xE8\0\0\0\0'
+        self.assertEqual(data | unit | drain, goal)

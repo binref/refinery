@@ -18,10 +18,12 @@ class resub(RegexUnit):
     where `:pipeline` is an optional pipeline of refinery commands as it would be specified on
     the command line. The value of the corresponding match is post-processed with this command.
     """
-    def __init__(self, regex,
-        subst: arg('subst', type=utf8, help=(
-            'Substitution value: use {1} for group 1, {0} for entire match. '
-            'Matches are removed (replaced by an empty string) by default.'
+    def __init__(
+        self,
+        regex,
+        subst: arg('subst', help=(
+            'Substitution value: use {1} for group 1, {0} for entire match. Matches are removed '
+            '(replaced by an empty string) by default.'
         )) = B'',
         multiline=False,
         ignorecase=False,
@@ -35,9 +37,9 @@ class resub(RegexUnit):
         self.log_info('pattern:', self.regex)
         self.log_info('replace:', self.args.subst)
         meta = metavars(data)
-        spec = self.args.subst.decode(self.codec)
-        sub = self.regex.sub
+        spec = self.args.subst.decode('ascii', 'backslashreplace')
+        substitute = self.regex.sub
         if self.args.count:
             from functools import partial
-            sub = partial(sub, count=self.args.count)
-        return sub(repl, data)
+            substitute = partial(substitute, count=self.args.count)
+        return substitute(repl, data)
