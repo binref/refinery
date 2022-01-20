@@ -3,13 +3,14 @@
 """
 Miscellaneous helper functions.
 """
+import datetime
+import functools
 import inspect
 import itertools
-import functools
-import datetime
 import logging
 import os
 import sys
+import warnings
 
 from typing import ByteString, Iterable, Optional, TypeVar
 from math import log
@@ -276,11 +277,15 @@ def cached_property(p):
 @_singleton
 class NoLogging:
     def __enter__(self):
+        self._warning_filters = list(warnings.filters)
         logging.disable(logging.CRITICAL)
+        warnings.filterwarnings('ignore')
         return self
 
     def __exit__(self, *_):
         logging.disable(logging.NOTSET)
+        warnings.resetwarnings()
+        warnings.filters[:] = self._warning_filters
 
 
 def one(iterable: Iterable[_T]) -> _T:
