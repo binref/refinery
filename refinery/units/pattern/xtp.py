@@ -145,6 +145,8 @@ class xtp(PatternExtractor):
                 if self.args.filter >= 3 or not ip.is_private:
                     return None
         elif name in {'url', 'socket', 'hostname', 'domain', 'subdomain'}:
+            if name != 'url' and len(value) > 0x100:
+                return None
             ioc = value.decode(self.codec)
             if '://' not in ioc: ioc = F'tcp://{ioc}'
             parts = urlparse(ioc)
