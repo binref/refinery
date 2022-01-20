@@ -244,6 +244,10 @@ class FileMagicInfo:
     description: str
     mime: str
 
+    _GZIP_PEEK_MAXIMUM = 1024
+    _GZIP_PEEK_MINIMUM = 64
+    _GZIP_DC_CHUNK_LEN = 16
+
     def __init__(self, data, default='bin'):
         if not magic:
             raise NoMagicAvailable
@@ -260,14 +264,31 @@ class FileMagicInfo:
             extension = 'docx'
         if extension == 'exe':
             extension = 'dll' if '(DLL)' in self.description else 'exe'
-        else:
-            compression = dict(gz='gzip').get(extension, extension)
-            if compression in ('gzip', 'bz2'):
-                from importlib import import_module
-                decompressor = import_module(compression)
-                decompressed = decompressor.decompress(data)
-                inner = FileMagicInfo(decompressed, default).extension
-                extension = F'{inner}.{extension}'
+        elif extension in ('gz', 'gzip', 'bz2'):
+            if extension == 'bz2':
+                import bz2
+                dc = bz2.BZ2Decompressor()
+            else:
+                import zlib
+                dc = zlib.decompressobj(0x10)
+            mv = memoryview(data)
+            cursor = 0
+            buffer = bytearray()
+            while len(buffer) < self._GZIP_PEEK_MAXIMUM:
+                end = cursor + self._GZIP_DC_CHUNK_LEN
+                try:
+                    buffer.extend(dc.decompress(mv[cursor:end]))
+                except Exception:
+                    break
+                else:
+                    cursor = end
+            if len(buffer) > self._GZIP_PEEK_MINIMUM:
+                try:
+                    inner = FileMagicInfo(buffer, default).extension
+                except Exception:
+                    pass
+                else:
+                    extension = F'{inner}.{extension}'
         self.extension = extension
 
 

@@ -235,3 +235,11 @@ class TestPeek(TestUnitBase):
             peek(self.TESTBUFFER_TXT)
             out = stderr.getvalue().strip()
         self.assertEqual(out, desired)
+
+    def test_gzip_from_libmagic(self):
+        data = self.download_sample('2bda560f264fb4eea5e180f32913197ec441ed8d6852a5cbdb6763de7bbf4ecf')
+        peek = self.load(width=70)
+        with errbuf() as stderr:
+            peek(data)
+            out = stderr.getvalue().strip()
+        self.assertIn('1F 8B 08 00 00 00 00 00 04 00', out)
