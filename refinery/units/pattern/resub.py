@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 from typing import Match
 
-from refinery.lib.argformats import utf8
 from refinery.lib.meta import metavars
 from refinery.units.pattern import arg, RegexUnit
 
