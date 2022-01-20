@@ -154,12 +154,12 @@ class PathExtractorUnit(Unit, abstract=True):
                     path = path.relative_to('/')
                 except ValueError:
                     pass
-                if not p.check(path.as_posix()):
-                    continue
                 path = root / path
                 path = path.as_posix()
                 if self._CUSTOM_PATH_SEPARATE:
                     path = path.replace('/', self._CUSTOM_PATH_SEPARATE)
+                if not p.check(path):
+                    continue
                 if self.args.list:
                     yield self.labelled(path.encode(self.codec), **result.meta)
                     continue
