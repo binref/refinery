@@ -17,7 +17,7 @@ class vsect(PathExtractorUnit):
             self._unpack_pe
         ):
             end = start + size
-            yield UnpackResult(name, mv[start:end])
+            yield UnpackResult(name, mv[start:end], offset=start)
 
     @staticmethod
     def _ascii(string: bytes) -> str:
