@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.lib.argformats import multibin
+from refinery.lib.argformats import multibin, DelayedArgument
 from refinery.lib.loader import load_detached as L
 
 from .. import TestBase
 
 
 class TestFraming(TestBase):
+
+    def test_reversed_multibin(self):
+        m = DelayedArgument('636D566D6157356C636E6B3D:H:b64', reverse=True)()
+        self.assertEqual(m, B'refinery')
 
     def test_multibin_simple(self):
         m = multibin('xor[0x50]:x:-16:')
