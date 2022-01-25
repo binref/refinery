@@ -454,7 +454,7 @@ class DelayedArgument(LazyEvaluation):
                 continue
             if character == dec:
                 if not brackets:
-                    raise ArgumentTypeError(F'Unable to parse "{expression}" due to unbalanced brackets.')
+                    break
                 brackets -= 1
                 continue
             if not brackets and character == self._CMD_SPLIT_TOKEN:

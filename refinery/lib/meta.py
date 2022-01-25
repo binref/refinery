@@ -363,7 +363,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         The following transformations can be applied to the `expression` before it is (optionally)
         processed with the given `pipeline`:
 
-        - `v`: interpret as an identifier of a variable (this is the default)
         - `h`: decoded as a hexadecimal string
         - `a`: endcode as latin1
         - `s`: encoded as utf8
@@ -420,7 +419,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
-                conversion = conversion and conversion.lower() or 'v'
                 if prefix:
                     if binary:
                         prefix = prefix.encode(codec).decode('unicode-escape').encode('latin1')
@@ -434,7 +432,8 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     value = args[autoindex]
                     if autoindex < len(args) - 1:
                         autoindex += 1
-                if binary and conversion != 'v':
+                if binary and conversion:
+                    conversion = conversion.lower()
                     if conversion == 'h':
                         value = bytes.fromhex(field)
                     elif conversion == 's':
