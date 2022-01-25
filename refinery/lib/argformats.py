@@ -415,13 +415,14 @@ class DelayedArgument(LazyEvaluation):
     _ARG_BEGIN_TOKEN = '['
     _ARG_CLOSE_TOKEN = ']'
     _ARG_SPLIT_TOKEN = ','
+    _CMD_SPLIT_TOKEN = ':'
 
-    def __init__(self, expression: str):
+    def __init__(self, expression: str, reverse: bool = False):
         self.expression = expression
         self.modifiers = []
         self.finalized = False
         while not self.finalized:
-            name, arguments, newexpr = self._split_modifier(expression)
+            name, arguments, newexpr = self._split_modifier(expression, reverse)
             if not name or not self.handler.can_handle(name, *arguments):
                 break
             self.modifiers.append((name, arguments))
@@ -431,19 +432,53 @@ class DelayedArgument(LazyEvaluation):
         self.seed = expression
         self.modifiers.reverse()
 
-    def _split_modifier(self, expression: str) -> Tuple[Optional[str], Tuple[str], str]:
+    def _split_expression(self, expression: str, reverse: bool = False) -> Tuple[str, Optional[str]]:
+        argument_list_visited = False
         brackets = 0
-        name = None
-        argoffset = 0
-        arguments = ()
-        for k, character in enumerate(expression):
-            if character == self._ARG_BEGIN_TOKEN:
+        inc = self._ARG_BEGIN_TOKEN
+        dec = self._ARG_CLOSE_TOKEN
+        itx = enumerate(expression)
+        if reverse:
+            inc, dec = dec, inc
+            itx = reversed(list(itx))
+        for k, character in itx:
+            if character == inc:
                 if not brackets:
-                    if argoffset:
+                    if argument_list_visited:
                         # This is the second time we encounter what appears to be an
                         # argument list, before the modifier has ended. This is not
                         # possible, and we decide to assume that no modifier was used.
                         break
+                    argument_list_visited = True
+                brackets += 1
+                continue
+            if character == dec:
+                if not brackets:
+                    raise ArgumentTypeError(F'Unable to parse "{expression}" due to unbalanced brackets.')
+                brackets -= 1
+                continue
+            if not brackets and character == self._CMD_SPLIT_TOKEN:
+                head = expression[:k]
+                tail = expression[k + 1:]
+                return (head, tail) if reverse else (tail, head)
+        return expression, None
+
+    def _split_modifier(self, expression: str, reverse: bool = False) -> Tuple[Optional[str], Tuple[str], str]:
+        brackets = 0
+        name = None
+        argoffset = 0
+        arguments = ()
+
+        rest, expression = self._split_expression(expression, reverse)
+        if expression is None:
+            return name, arguments, rest
+        name = expression
+
+        for k, character in enumerate(expression):
+            if character == self._ARG_BEGIN_TOKEN:
+                if not brackets:
+                    if argoffset:
+                        raise ArgumentTypeError(F'Unexpected error parsing "{expression}": Double argument list.')
                     name = expression[:k]
                     argoffset = k + 1
                 brackets += 1
@@ -453,9 +488,7 @@ class DelayedArgument(LazyEvaluation):
                     arguments += expression[argoffset:k],
                 elif not brackets:
                     if argoffset:
-                        raise ArgumentTypeError(
-                            F'Unable to parse {expression}, too many closing brackets.'
-                        )
+                        raise ArgumentTypeError(F'Unable to parse "{expression}": Too many closing brackets.')
                     else:
                         break
                 brackets -= 1
@@ -464,11 +497,9 @@ class DelayedArgument(LazyEvaluation):
                 if brackets == 1:
                     arguments += expression[argoffset:k],
                     argoffset = k + 1
-            if character == ':' and not brackets:
-                if name is None:
-                    name = expression[:k]
-                return name, arguments, expression[k + 1:]
-        return None, (), expression
+            if character == self._CMD_SPLIT_TOKEN and not brackets:
+                raise ArgumentTypeError(F'Unexpected error parsing "{expression}".')
+        return name, arguments, rest
 
     def __call__(self, data: Optional[ByteString] = None) -> bytes:
         arg = self.seed
