@@ -347,11 +347,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         - `sha1`, `sha256`, and `md5` are formatted as hex strings.
         - `size` is formatted as a human-readable size with unit.
         """
-        symb = symb or {}
-        if args is None:
-            args = ()
-        elif not isinstance(args, (list, tuple)):
-            args = list(args)
         return self.format(spec, codec, args, symb, False)
 
     def format_bin(
@@ -368,17 +363,13 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         The following transformations can be applied to the `expression` before it is (optionally)
         processed with the given `pipeline`:
 
+        - `v`: interpret as an identifier of a variable (this is the default)
         - `h`: decoded as a hexadecimal string
         - `a`: endcode as latin1
         - `s`: encoded as utf8
         - `u`: encoded as utf16
         - `e`: reads the input as an escaped string
         """
-        symb = symb or {}
-        if args is None:
-            args = ()
-        elif not isinstance(args, (list, tuple)):
-            args = list(args)
         return self.format(spec, codec, args, symb, True)
 
     def format(
@@ -400,6 +391,12 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         """
         from refinery.lib.argformats import ParserError, PythonExpression
         # prevents circular import
+
+        symb = symb or {}
+        if args is None:
+            args = ()
+        elif not isinstance(args, (list, tuple)):
+            args = list(args)
 
         if fixup:
             for (store, it) in (
@@ -423,6 +420,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
+                conversion = conversion and conversion.lower() or 'v'
                 if prefix:
                     if binary:
                         prefix = prefix.encode(codec).decode('unicode-escape').encode('latin1')
@@ -436,8 +434,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     value = args[autoindex]
                     if autoindex < len(args) - 1:
                         autoindex += 1
-                if binary and conversion:
-                    conversion = conversion.lower()
+                if binary and conversion != 'v':
                     if conversion == 'h':
                         value = bytes.fromhex(field)
                     elif conversion == 's':
