@@ -32,5 +32,5 @@ class reduce(Unit):
             data.meta.update(chunk.meta)
             data[name] = chunk
             unit.args(data)
-            data = unit.act(data)
+            data[:] = unit.act(data)
         yield data
