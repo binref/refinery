@@ -10,6 +10,8 @@ if (-not (Test-Path $env)) {
 
 & "./$env/Scripts/Activate.ps1"
 
+python -m pip install --upgrade pip
+
 git pull --rebase --autostash
 pip uninstall -y binary-refinery
 pip install -e .[all]

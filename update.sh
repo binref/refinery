@@ -13,6 +13,8 @@ fi
 
 source "$env/bin/activate"
 
+python -m pip install --upgrade pip
+
 git pull --rebase --autostash
 pip uninstall -y binary-refinery
 pip install -e .[all]
