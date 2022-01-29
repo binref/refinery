@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.lib.argformats import multibin, DelayedArgument
+from refinery.lib.argformats import multibin
 from refinery.lib.loader import load_detached as L
 
 from .. import TestBase
@@ -8,8 +8,18 @@ from .. import TestBase
 
 class TestFraming(TestBase):
 
+    def test_seeded_multibin(self):
+        for spec, r in (
+            ('b64:h', False),
+            ('b64:h:', False),
+            ('h:b64', True),
+            (':h:b64', True)
+        ):
+            m = multibin(spec, reverse=r, seed=b'636D566D6157356C636E6B3D')
+            self.assertEqual(m, B'refinery')
+
     def test_reversed_multibin(self):
-        m = DelayedArgument('636D566D6157356C636E6B3D:H:b64', reverse=True)()
+        m = multibin('636D566D6157356C636E6B3D:H:b64', reverse=True)
         self.assertEqual(m, B'refinery')
 
     def test_multibin_simple(self):

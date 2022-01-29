@@ -409,18 +409,27 @@ def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
 
 class DelayedArgument(LazyEvaluation):
     """
-    This base class for delayed argument parsers implements parsing
-    expressions into supported modifiers.
+    This base class for delayed argument parsers implements parsing expressions into supported modifiers.
+    When `reverse` is set to `True`, the multibin expression is expected to have suffixes for handlers
+    rather than prefixes. If the `seed` value is specified, the expression is expected to only contain
+    a chain of handlers, and the given seed will be used as the initial value to be passed to them.
     """
     _ARG_BEGIN_TOKEN = '['
     _ARG_CLOSE_TOKEN = ']'
     _ARG_SPLIT_TOKEN = ','
     _CMD_SPLIT_TOKEN = ':'
 
-    def __init__(self, expression: str, reverse: bool = False):
+    def __init__(self, expression: str, reverse: bool = False, seed = None):
         self.expression = expression
         self.modifiers = []
         self.finalized = False
+        if seed is not None:
+            if reverse:
+                if not expression.startswith(':'):
+                    expression = F':{expression}'
+            else:
+                if not expression.endswith(':'):
+                    expression = F'{expression}:'
         while not self.finalized:
             name, arguments, newexpr = self._split_modifier(expression, reverse)
             if not name or not self.handler.can_handle(name, *arguments):
@@ -429,7 +438,12 @@ class DelayedArgument(LazyEvaluation):
             expression = newexpr
             if self.handler.terminates(name):
                 self.finalized = True
-        self.seed = expression
+        if seed is not None:
+            if expression:
+                raise ValueError('Expression was not fully parsed.')
+            self.seed = seed
+        else:
+            self.seed = expression
         self.modifiers.reverse()
 
     def _split_expression(self, expression: str, reverse: bool = False) -> Tuple[str, Optional[str]]:
@@ -526,10 +540,11 @@ class DelayedArgument(LazyEvaluation):
         return arg
 
     def default_handler(self, expression: str) -> bytes:
-        try:
+        if isinstance(expression, str) and Path(expression).is_file():
             return open(expression, 'rb').read()
-        except Exception:
-            return utf8(expression)
+        if not isbuffer(expression):
+            expression = utf8(expression)
+        return expression
 
     @DelayedArgumentDispatch
     def handler(self, expression) -> bytes:
@@ -1175,13 +1190,13 @@ def numseq(expression: Union[int, str], typecheck=True) -> Union[Iterable[int], 
     return arg
 
 
-def multibin(expression: Union[str, bytes, bytearray]) -> Union[bytes, DelayedArgument]:
+def multibin(expression: Union[str, bytes, bytearray], reverse: bool = False, seed=None) -> Union[bytes, DelayedArgument]:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedBinaryArgument`.
     """
     if not isinstance(expression, str):
         return bytes(expression)
-    arg = DelayedBinaryArgument(expression)
+    arg = DelayedBinaryArgument(expression, reverse, seed)
     with suppress(TooLazy):
         return arg()
     return arg
