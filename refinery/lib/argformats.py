@@ -257,7 +257,7 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
     return slice(*sliced)
 
 
-def utf8(x):
+def utf8(x: str):
     """
     Returns the UTF8 encoding of the given string.
     """
