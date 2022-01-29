@@ -572,6 +572,14 @@ class DelayedArgument(LazyEvaluation):
         """
         return string.encode('LATIN-1')
 
+    @handler.register('h!', 'H!')
+    def hexencode(self, string: bytes) -> bytes:
+        """
+        The modifier `h!` (or `H!`) encodes the input as hexadecimal.
+        """
+        import base64
+        return base64.b16encode(string)
+
     @handler.register('h', 'H', final=True)
     def h(self, string: str) -> bytes:
         """
