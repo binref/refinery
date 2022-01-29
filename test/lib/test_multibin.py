@@ -6,7 +6,7 @@ from refinery.lib.loader import load_detached as L
 from .. import TestBase
 
 
-class TestFraming(TestBase):
+class TestMultiBin(TestBase):
 
     def test_seeded_multibin(self):
         for spec, r in (
