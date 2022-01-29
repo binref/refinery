@@ -27,7 +27,7 @@ class TestEmailUnpacker(TestUnitBase):
     def test_cdfv2_01(self):
         data = self.download_sample('f4d5353552501b7aa0f9bb400e0d0349487dc45cbe5ce82fe5e7de526d37f301')
         out = data | self.load() | {'path': ...}
-        self.assertSetEqual(set(out), {
+        self.assertTrue(set(out) >= {
             b'headers.txt',
             b'headers.json',
             b'body.txt',

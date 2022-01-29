@@ -40,8 +40,14 @@ class xtmail(PathExtractorUnit):
 
         def make_message(name, msg):
             with NoLogging:
-                htm = msg.htmlBody
-                txt = msg.body
+                try:
+                    htm = msg.htmlBody
+                except Exception:
+                    htm = None
+                try:
+                    txt = msg.body
+                except Exception:
+                    txt = None
             if txt:
                 yield UnpackResult(F'{name}.txt', ensure_bytes(txt))
             if htm:
