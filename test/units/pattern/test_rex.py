@@ -13,7 +13,7 @@ class TestRex(TestUnitBase):
     def test_nested_substitution_expressions(self):
         unit = self.load(
             R'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
-            R'{1:hex | aes H:{2:hex|xor {3}|hex -R} | trim -r 00}'
+            R'{1:hex:aes[H:{2:h:xor[{3}]:h!}]:trim[-r,00]}'
         )
         msg = B'Too much technology, in too little time.'
         aeskey = self.generate_random_buffer(16)

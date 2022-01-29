@@ -93,7 +93,6 @@ from typing import Callable, Dict, Iterable, Optional, ByteString, Union
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
 from refinery.lib.mime import get_cached_file_magic_info
-from refinery.lib.loader import load_pipeline
 
 
 class CustomStringRepresentation(abc.ABC):
@@ -147,6 +146,12 @@ class ByteStringWrapper(CustomStringRepresentation):
             self._string = value = codecs.decode(self._binary, self.codec, self.error)
         return value
 
+    def __len__(self):
+        return len(self.binary)
+
+    def __iter__(self):
+        yield from self.binary
+
     def __getattr__(self, key):
         return getattr(self.binary, key)
 
@@ -158,7 +163,10 @@ class ByteStringWrapper(CustomStringRepresentation):
     def __bytes__(self):
         value = self.binary
         if isinstance(value, memoryview):
-            value = value.obj
+            if len(value) == len(value.obj):
+                return value.obj
+            else:
+                value = bytes(value)
         if isinstance(value, bytearray):
             value = bytes(value)
         return value
@@ -359,11 +367,13 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         """
         Formats the input expression using a Python F-string like expression. These strings contain
         fields in the format `{expression!T:pipeline}`, where `T` is a transformation character and
-        the `pipeline` part is any refinery pipeline as it would be specified on the command line.
-        The following transformations can be applied to the `expression` before it is (optionally)
-        processed with the given `pipeline`:
+        the `pipeline` part is a sequence of `refinery.lib.argformats.multibin` handlers which are
+        parsed in reverse. For example, the expression `{v:b64:hex}` will first decode the contents
+        of `v` using `refinery.b64`, and then decode the result using `refinery.hex`.
 
-        - `h`: decoded as a hexadecimal string
+        The transformation character is only required when `expression` is a literal; it specifies
+        how to convert the literal to a binary string. The following transformations can be applied:
+
         - `a`: endcode as latin1
         - `s`: encoded as utf8
         - `u`: encoded as utf16
@@ -388,7 +398,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         - `refinery.lib.meta.LazyMetaOracle.format_str`
         - `refinery.lib.meta.LazyMetaOracle.format_bin`
         """
-        from refinery.lib.argformats import ParserError, PythonExpression
+        from refinery.lib.argformats import multibin, ParserError, PythonExpression
         # prevents circular import
 
         symb = symb or {}
@@ -419,13 +429,13 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
+                output = value = None
                 if prefix:
                     if binary:
                         prefix = prefix.encode(codec).decode('unicode-escape').encode('latin1')
                     stream.write(prefix)
                 if field is None:
                     continue
-                value = None
                 if not field:
                     if not args:
                         raise LookupError('no positional arguments given to formatter')
@@ -470,19 +480,18 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                         putstr('}')
                         continue
                 if binary:
-                    if isbuffer(value):
-                        output = value
-                    else:
-                        if not isinstance(value, ByteStringWrapper):
-                            value = ByteStringWrapper(str(value), codec)
-                        output = value.binary
                     modifier = modifier.strip()
                     if modifier:
-                        modifier = self.format(modifier, codec, args, symb, True, False, variables)
-                        pipeline = load_pipeline(modifier.decode(codec))
-                        output | pipeline | stream.write
-                        continue
-                else:
+                        if isinstance(value, ByteStringWrapper):
+                            value = value.binary
+                        expression = self.format(modifier, codec, args, symb, True, False, variables)
+                        output = multibin(expression.decode(codec), reverse=True, seed=value)
+                    elif isbuffer(value):
+                        output = value
+                    elif not isinstance(value, int):
+                        with contextlib.suppress(TypeError):
+                            output = bytes(value)
+                if output is None:
                     converter = {
                         'a': ascii,
                         's': str,
@@ -503,6 +512,8 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     else:
                         output = value
                     output = output.__format__(modifier)
+                    if binary:
+                        output = output.encode(codec)
                 stream.write(output)
             return stream.getvalue()
 

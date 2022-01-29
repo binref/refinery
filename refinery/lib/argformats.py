@@ -540,11 +540,14 @@ class DelayedArgument(LazyEvaluation):
         return arg
 
     def default_handler(self, expression: str) -> bytes:
-        if isinstance(expression, str) and Path(expression).is_file():
+        try:
             return open(expression, 'rb').read()
-        if not isbuffer(expression):
-            expression = utf8(expression)
-        return expression
+        except Exception:
+            pass
+        try:
+            return utf8(expression)
+        except Exception:
+            return expression
 
     @DelayedArgumentDispatch
     def handler(self, expression) -> bytes:

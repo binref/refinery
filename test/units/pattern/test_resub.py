@@ -75,8 +75,8 @@ class TestRegexSubstitution(TestUnitBase):
         EndFunc
         '''.encode('ASCII')
 
-        layer1 = self.load(R'sjwakhwbtxwwb\("(.*?)"\)', R'"{1:resub (.)(.) {{2}}{{1}}}"')
-        layer2 = self.load(R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)', R'"{1:snip ::{2}}"')
+        layer1 = self.load(R'sjwakhwbtxwwb\("(.*?)"\)', R'"{1:resub[(.)(.),{{2}}{{1}}]}"')
+        layer2 = self.load(R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)', R'"{1:snip[::{2}]}"')
         layer3 = self.load(R'\$e\(\$b\("([^"]+)"\)\)', R'{1:base}')
 
         autoit_refined = autoit_obfuscated
@@ -112,7 +112,7 @@ class TestRegexSubstitution(TestUnitBase):
                 B'finery.'
             ]
         ])
-        unit = self.load(R'encoded\(((??string))\)', '{1:esc -q | zl | b64 | xor 0x12}')
+        unit = self.load(R'encoded\(((??string))\)', '{1:esc[-q]:zl:b64:xor[0x12]}')
         result = str(data | unit)
         self.assertEqual(result, 'binary--refinery--refines--binary--finery.')
 
