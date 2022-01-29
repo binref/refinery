@@ -40,7 +40,7 @@ class TestDefangUnit(TestUnitBase):
             B'Email us at ALEXANDER.IRWIN@PROTONMAIL[.]COM (or) MISAEL.SHORT@TUTANOTA[.]COM to get the ransom amount.')
 
     def test_hxxp_escape(self):
-        data = B'Description: As seen on hxxps://caminoflamingo[.]co[.]uk, flamingos are on the rise.'
+        data = B'Description: As seen on hxxps[://]caminoflamingo[.]co[.]uk, flamingos are on the rise.'
         unit = self.load(reverse=True)
         self.assertEqual(unit(data),
             B'Description: As seen on https://caminoflamingo.co.uk, flamingos are on the rise.')
@@ -48,10 +48,8 @@ class TestDefangUnit(TestUnitBase):
     def test_fxp_escape(self):
         data = B'Download malware from fxps://user:password@10.10.0[.]30/malware'
         unit = self.load(reverse=True)
-        self.assertEqual(unit(data), 
-            B'Download malware from ftps://user:password@10.10.0.30/malware'
-        )
-
+        self.assertEqual(unit(data),
+            B'Download malware from ftps://user:password@10.10.0.30/malware')
 
     def test_dots_in_various_places(self):
         data = B'Maybe 12[.]67.123.12 or 12[.]67[.]123.12 or 12.67[.]123.12 or 32.67[.]123[.]12'

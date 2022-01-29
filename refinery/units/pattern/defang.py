@@ -41,6 +41,7 @@ class defang(Unit):
             return hostname[0].replace(B'[.]', B'.')
         data = defanged.hostname.sub(refang, data)
         data = data.replace(B'[:]//', B'://')
+        data = data.replace(B'[://]', B'://')
         data = re.sub(B'h.{3}?(s?)://', B'http\\1://', data)
         data = re.sub(B'fxp(s?)://', B'ftp\\1://', data)
         return data
