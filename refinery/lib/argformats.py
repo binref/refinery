@@ -419,7 +419,7 @@ class DelayedArgument(LazyEvaluation):
     _ARG_SPLIT_TOKEN = ','
     _CMD_SPLIT_TOKEN = ':'
 
-    def __init__(self, expression: str, reverse: bool = False, seed = None):
+    def __init__(self, expression: str, reverse: bool = False, seed=None):
         self.expression = expression
         self.modifiers = []
         self.finalized = False
