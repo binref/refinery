@@ -31,9 +31,10 @@ __version__ = '0.4.18'
 __distribution__ = 'binary-refinery'
 
 from typing import Dict, Type
+from importlib import resources
 
 import pickle
-import pkg_resources
+import refinery
 
 from refinery.units import arg, Unit
 
@@ -42,7 +43,8 @@ def _singleton(cls):
     return cls()
 
 
-UNIT_CACHE_PATH = pkg_resources.resource_filename(__name__, '__init__.pkl')
+with resources.path(refinery, '__init__.pkl') as INIT_PKL:
+    UNIT_CACHE_PATH = INIT_PKL
 
 
 @_singleton
@@ -67,7 +69,7 @@ class _cache:
 
     def load(self):
         try:
-            with open(UNIT_CACHE_PATH, 'rb') as stream:
+            with UNIT_CACHE_PATH.open('rb') as stream:
                 self.units = pickle.load(stream)
         except (FileNotFoundError, EOFError):
             self.reload()
@@ -76,7 +78,7 @@ class _cache:
 
     def save(self):
         try:
-            with open(UNIT_CACHE_PATH, 'wb') as stream:
+            with UNIT_CACHE_PATH.open('wb') as stream:
                 pickle.dump(self.units, stream)
         except Exception:
             pass
