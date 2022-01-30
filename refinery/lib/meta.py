@@ -432,7 +432,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                 output = value = None
                 if prefix:
                     if binary:
-                        prefix = prefix.encode(codec).decode('unicode-escape').encode('latin1')
+                        prefix = prefix.encode(codec)
                     stream.write(prefix)
                 if field is None:
                     continue
@@ -468,7 +468,8 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                             variables.add(field)
                 if value is None:
                     try:
-                        value = PythonExpression.evaluate(field, self)
+                        expression = PythonExpression(field, *self, *symb)
+                        value = expression(self, **symb)
                     except ParserError:
                         if not self.ghost:
                             raise KeyError(field)

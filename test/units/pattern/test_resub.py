@@ -123,6 +123,6 @@ class TestRegexSubstitution(TestUnitBase):
             'DD057822480083EC08DD1C24E812345678DDD883C408'
             'E800000000'
         )
-        unit = self.load('yara:DD057822480083EC08DD1C24E8[4]DDD883C408', 'rep[22]:h:90')
+        unit = self.load('yara:(?P<op>DD057822480083EC08DD1C24E8[4]DDD883C408)', '{90!H:rep[{len(op)}]}')
         goal = B'\x90' * 66 + B'\xE8\0\0\0\0'
         self.assertEqual(data | unit | drain, goal)
