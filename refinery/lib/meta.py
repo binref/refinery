@@ -374,10 +374,12 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         The transformation character is only required when `expression` is a literal; it specifies
         how to convert the literal to a binary string. The following transformations can be applied:
 
-        - `a`: endcode as latin1
-        - `s`: encoded as utf8
-        - `u`: encoded as utf16
-        - `e`: reads the input as an escaped string
+        - `a`: literal is to be encoded using latin1
+        - `u`: literal is to be encoded using utf16
+        - `s`: literal is to be encoded using the default codec
+        - `q`: literal is a URL-encoded binary string
+        - `h`: literal is a hex-encoded binary string
+        - `e`: literal is an escaped ASCII string
         """
         return self.format(spec, codec, args, symb, True)
 
@@ -446,6 +448,9 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     conversion = conversion.lower()
                     if conversion == 'h':
                         value = bytes.fromhex(field)
+                    elif conversion == 'q':
+                        from urllib.parse import unquote_to_bytes
+                        value = unquote_to_bytes(field)
                     elif conversion == 's':
                         value = field.encode(codec)
                     elif conversion == 'u':
