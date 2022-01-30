@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.18
+- Changes the format for the binary formatter used in `struct`, `rex`, `resub`, and `cfmt`. It now uses a reverse multibin handler instead of parsing the modifier like a command-line pipeline.
+
 ## Version 0.4.17 -- bugfix release
 
 ## Version 0.4.16 -- bugfix release
