@@ -31,9 +31,9 @@ __version__ = '0.4.18'
 __distribution__ = 'binary-refinery'
 
 from typing import Dict, Type
+from importlib import resources
 
 import pickle
-import pkg_resources
 
 from refinery.units import arg, Unit
 
@@ -42,7 +42,7 @@ def _singleton(cls):
     return cls()
 
 
-UNIT_CACHE_PATH = pkg_resources.resource_filename(__name__, '__init__.pkl')
+UNIT_CACHE_PATH = resources.files(__name__).joinpath('__init__.pkl')
 
 
 @_singleton
