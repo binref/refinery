@@ -1,7 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.4.19
+Improves performance by replacing an import of `pkg_resources` with equivalent functionality from `importlib`. On a test machine, this removes between 250 and 500 milliseconds from the execution time of any single unit.
+
 ## Version 0.4.18
-- Changes the format for the binary formatter used in `struct`, `rex`, `resub`, and `cfmt`. It now uses a reverse multibin handler instead of parsing the modifier like a command-line pipeline.
+Changes the format for the binary formatter used in `struct`, `rex`, `resub`, and `cfmt`. It now uses a reverse multibin handler instead of parsing the modifier like a command-line pipeline.
 
 ## Version 0.4.17 -- bugfix release
 
