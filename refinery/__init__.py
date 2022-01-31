@@ -42,7 +42,11 @@ def _singleton(cls):
     return cls()
 
 
-UNIT_CACHE_PATH = resources.files(__name__).joinpath('__init__.pkl')
+with resources.path(__name__, '__init__.py') as this:
+    # This is an annoying hack to allow this to work when __init__.pkl does not
+    # yet exist during setup. Starting with Python 3.9, we could use the slightly
+    # less awkward: resources.files(__name__).joinpath('__init__.pkl')
+    UNIT_CACHE_PATH = this.parent / '__init__.pkl'
 
 
 @_singleton
