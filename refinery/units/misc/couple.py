@@ -13,8 +13,10 @@ class couple(Unit):
     Turns any command into a refinery unit. Data is processed by feeding it to the standard input of a process spawned from
     the given command line, and then reading the standard output of that process as the result of the operation. The main
     purpose of this unit is to allow using the syntax from `refinery.lib.frame` with other command line tools. By default,
-    `refinery.couple` streams the output from the executed command as individual outputs, but the `buffer` option can be set
-    to buffer all output of a single execution.
+    the `refinery.couple` unit streams the output from the executed command as individual outputs, but the `buffer` option
+    can be set to buffer all output of a single execution. The format string expression `{}` or `{0}` can be used as one of
+    the arguments passed to the external command to represent the incoming data. In this case, the data will not be sent
+    to the standard input device of the new process.
     """
 
     _JOIN_TIME = 0.1
@@ -25,13 +27,12 @@ class couple(Unit):
             'to insert meta variables and incoming data chunks.')),
         buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
         noerror: arg('-e', help='do not merge stdin and stderr; stderr will only be output if -v is also specified.') = False,
-        cmdline: arg('-c', help='pass incoming data as a commandline argument to the process, not via stdin.') = False,
         timeout: arg('-t', metavar='T',
             help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
     ):
         if not commandline:
             raise ValueError('you need to provide a command line.')
-        super().__init__(commandline=commandline, cmdline=cmdline, noerror=noerror, buffer=buffer, timeout=timeout)
+        super().__init__(commandline=commandline, noerror=noerror, buffer=buffer, timeout=timeout)
 
     def process(self, data):
         def shlexjoin():
@@ -39,10 +40,13 @@ class couple(Unit):
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
         meta = metavars(data, ghost=True)
-        commandline = [meta.format_str(cmd, self.codec, [data]) for cmd in self.args.commandline]
+        used = set()
+        commandline = [
+            meta.format(cmd, self.codec, [data], None, False, used=used)
+            for cmd in self.args.commandline
+        ]
 
-        if self.args.cmdline:
-            commandline.append(data.decode(self.codec))
+        if 0 in used:
             data = None
 
         self.log_debug(shlexjoin)
