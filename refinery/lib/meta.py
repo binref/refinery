@@ -385,13 +385,13 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
     def format(
         self,
-        spec      : str,
-        codec     : str,
-        args      : Union[list, tuple],
-        symb      : dict,
-        binary    : bool,
-        fixup     : bool = True,
-        variables : Optional[set] = None,
+        spec    : str,
+        codec   : str,
+        args    : Union[list, tuple],
+        symb    : dict,
+        binary  : bool,
+        fixup   : bool = True,
+        used    : Optional[set] = None,
     ) -> Union[str, ByteString]:
         """
         Formats a string using Python-like string fomatting syntax. The formatter for `binary`
@@ -404,6 +404,12 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         # prevents circular import
 
         symb = symb or {}
+
+        if used is None:
+            class dummy:
+                def add(self, _): pass
+            used = dummy()
+
         if args is None:
             args = ()
         elif not isinstance(args, (list, tuple)):
@@ -442,6 +448,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     if not args:
                         raise LookupError('no positional arguments given to formatter')
                     value = args[autoindex]
+                    used.add(autoindex)
                     if autoindex < len(args) - 1:
                         autoindex += 1
                 if binary and conversion:
@@ -461,16 +468,16 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                         value = field.encode(codec).decode('unicode-escape').encode('latin1')
                 elif field in symb:
                     value = symb[field]
-                    if variables:
-                        variables.add(field)
+                    used.add(field)
                 if value is None:
-                    with contextlib.suppress(IndexError, ValueError):
-                        value = args[int(field, 0)]
+                    with contextlib.suppress(ValueError, IndexError):
+                        index = int(field, 0)
+                        value = args[index]
+                        used.add(index)
                 if value is None:
                     with contextlib.suppress(KeyError):
                         value = self[field]
-                        if variables:
-                            variables.add(field)
+                        used.add(field)
                 if value is None:
                     try:
                         expression = PythonExpression(field, *self, *symb)
@@ -490,7 +497,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     if modifier:
                         if isinstance(value, ByteStringWrapper):
                             value = value.binary
-                        expression = self.format(modifier, codec, args, symb, True, False, variables)
+                        expression = self.format(modifier, codec, args, symb, True, False, used)
                         output = multibin(expression.decode(codec), reverse=True, seed=value)
                     elif isbuffer(value):
                         output = value
