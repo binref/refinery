@@ -25,7 +25,8 @@ class IndexCounter:
 
 class alu(ArithmeticUnit):
     """
-    This unit allows you to specify a custom Python expression where the following variables are allowed.
+    The arithmetic-logical unit. It allows you to specify a custom Python expression where the following
+    variables are allowed:
 
     - the variable `A`: same as `V[0]`
     - the variable `B`: current block
