@@ -155,7 +155,7 @@ Extract the PowerShell payload from a malicious XLS macro dropper:
 emit 81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b [ \
   | xlxtr 9.5:11.5 15.15 12.5:14.5 [ \
   | scope -n 3 | chop -t 5 [| sorted -a | snip 2: | sep ] \
-  | pack 10 | blockop --dec -sN B-S ]] \
+  | pack 10 | alu --dec -sN B-S ]] \
   | dump payload.ps1
 ```
 And get the domains for the next stage:

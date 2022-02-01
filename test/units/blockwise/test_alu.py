@@ -3,7 +3,7 @@
 from .. import TestUnitBase
 
 
-class TestBlockop(TestUnitBase):
+class TestALU(TestUnitBase):
 
     def test_index_starts_at_zero(self):
         unit = self.load("B+I")
@@ -16,7 +16,7 @@ class TestBlockop(TestUnitBase):
         self.assertEqual(data | unit | bytes, goal)
 
 
-class TestBlockopAgainstOtherUnits(TestUnitBase):
+class TestALUAgainstOtherUnits(TestUnitBase):
 
     def setUp(self):
         super().setUp()

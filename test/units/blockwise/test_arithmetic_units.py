@@ -106,17 +106,17 @@ class TestROTR(TestUnitBase):
         self.assertEqual(unit(B'AABAACAAD'), B'ABAACAADA')
 
 
-class TestBlockopInput(TestUnitBase):
+class TestALUInput(TestUnitBase):
 
     def test_invalid_expression(self):
-        self.assertRaises(Exception, self.ldu, 'blockop', '"§$%$$$§$§$$$UU')
-        self.assertRaises(Exception, self.ldu, 'blockop', '(B + 9')
+        self.assertRaises(Exception, self.ldu, 'alu', '"§$%$$$§$§$$$UU')
+        self.assertRaises(Exception, self.ldu, 'alu', '(B + 9')
 
     def test_not_an_expression(self):
-        self.assertRaises(Exception, self.ldu, 'blockop', 'def foo(x):\n    return 29')
+        self.assertRaises(Exception, self.ldu, 'alu', 'def foo(x):\n    return 29')
 
     def test_eval_bug_01(self):
         data = bytes(range(251, 256))
         wish = bytes(((B + 5) % 255 for B in data))
-        result = next(data | self.ldu('blockop', '-P0', '(B+5)%255'))
+        result = next(data | self.ldu('alu', '-P0', '(B+5)%255'))
         self.assertEqual(result, wish)

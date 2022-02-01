@@ -23,7 +23,7 @@ class IndexCounter:
         return index
 
 
-class blockop(ArithmeticUnit):
+class alu(ArithmeticUnit):
     """
     This unit allows you to specify a custom Python expression where the following variables are allowed.
 
@@ -42,9 +42,9 @@ class blockop(ArithmeticUnit):
     @staticmethod
     def _parse_op(definition, default=None):
         """
-        An argparse type which uses the `refinery.lib.argformats.PythonExpression` parser to
-        parse the expressions that can be passed to `refinery.blockop`. Essentially, these
-        are Python expressions which can contain variables `B`, `A`, `S`, and `V`.
+        An argparse type which uses the `refinery.lib.argformats.PythonExpression` parser to parse the
+        expressions that can be passed to `refinery.alu`. Essentially, these are Python expressions which can
+        contain variables `B`, `A`, `S`, and `V`.
         """
         if not definition:
             if default is None:
