@@ -100,9 +100,13 @@ class _cache:
             self.reloading = False
             self.save()
 
-    def _resolve(self, name, retry=False):
-        if retry:
+    def _resolve(self, name, retry=0):
+        if retry > 2:
+            raise AttributeError
+        elif retry >= 2:
             self.reload()
+        elif retry >= 1:
+            self.load()
         try:
             module_path = self.units[name]
             module = __import__(module_path, None, None, [name])
@@ -110,9 +114,7 @@ class _cache:
             self.cache[name] = entry
             return entry
         except (KeyError, ModuleNotFoundError):
-            if not retry:
-                return self._resolve(name, retry=True)
-            raise AttributeError
+            return self._resolve(name, retry + 1)
 
     def __getitem__(self, name):
         return self._resolve(name)
