@@ -47,20 +47,33 @@ class pcap_http(Unit):
     def process(self, data):
         http_parser = httpresponse()
         requests: List[_HTTP_Request] = []
+        responses: List[bytearray] = []
+
+        def lookup(src, dst):
+            for k, request in enumerate(requests):
+                if request.src == dst and request.dst == src:
+                    requests.pop(k)
+                    return self.labelled(data, url=request.url)
+            return None
 
         for stream in self.pcap.process(data):
             try:
                 data = http_parser.process(stream)
             except Exception:
                 with suppress(Exception):
-                    requests.append(_parse_http_request(stream))
+                    rq = _parse_http_request(stream)
+                    requests.append(rq)
                 continue
             if not data:
                 continue
-            keywords = {}
-            for k, request in enumerate(requests):
-                if request.src == stream['dst'] and request.dst == stream['src']:
-                    requests.pop(k)
-                    keywords['url'] = request.url
-                    break
-            yield self.labelled(data, **keywords)
+            src, dst = stream['src'], stream['dst']
+            item = lookup(src, dst)
+            if item is None:
+                responses.append((src, dst, data))
+                continue
+            yield item
+
+        while responses:
+            src, dst, data = responses.pop()
+            item = lookup(src, dst)
+            yield data if item is None else item
