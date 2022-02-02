@@ -29,18 +29,25 @@ class xt7z(ArchiveUnit):
         zp = max(0, data.find(B'7z\xBC\xAF\x27\x1C'))
 
         if pwd:
-            archive = mk7z(password=pwd.decode(self.codec))
+            try:
+                archive = mk7z(password=pwd.decode(self.codec))
+            except self._py7zr.Bad7zFile:
+                raise ValueError('corrupt archive; the password is likely invalid.')
         else:
-            archive = mk7z()
-            for pwd in self._COMMON_PASSWORDS:
+            def passwords():
+                yield None
+                yield from self._COMMON_PASSWORDS
+            for pwd in passwords():
                 try:
+                    archive = mk7z(password=pwd)
                     problem = archive.testzip()
                 except self._py7zr.PasswordRequired:
                     problem = True
                 if not problem:
                     break
                 self.log_debug(F'trying password: {pwd}')
-                archive = mk7z(password=pwd)
+            else:
+                raise ValueError('a password is required and none of the default passwords worked.')
 
         for info in archive.list():
             def extract(archive: SevenZipFile = archive, info: FileInfo = info):
