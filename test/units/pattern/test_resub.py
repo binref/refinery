@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery import drain
 from .. import TestUnitBase
 
 
@@ -125,4 +124,4 @@ class TestRegexSubstitution(TestUnitBase):
         )
         unit = self.load('yara:(?P<op>DD057822480083EC08DD1C24E8[4]DDD883C408)', '{90!H:rep[{len(op)}]}')
         goal = B'\x90' * 66 + B'\xE8\0\0\0\0'
-        self.assertEqual(data | unit | drain, goal)
+        self.assertEqual(data | unit | bytearray, goal)
