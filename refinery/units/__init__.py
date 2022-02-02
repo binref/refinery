@@ -123,6 +123,7 @@ from typing import (
     Dict,
     Iterable,
     BinaryIO,
+    Sequence,
     Set,
     Type,
     TypeVar,
@@ -200,6 +201,9 @@ class Argument:
     """
     __slots__ = 'args', 'kwargs'
 
+    args: List[Any]
+    kwargs: Dict[str, Any]
+
     def __init__(self, *args, **kwargs):
         self.args = list(args)
         self.kwargs = kwargs
@@ -259,13 +263,13 @@ class arg(Argument):
             required : Union[omit, bool]          = omit, # noqa
             type     : Union[omit, type]          = omit, # noqa
             group    : Optional[str]              = None, # noqa
-            guess    : bool                       = False # noqa
+            guessed  : Optional[Set[str]]         = None, # noqa
     ) -> None:
         kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
             help=help, metavar=metavar, nargs=nargs, required=required, type=type)
         kwargs = {key: value for key, value in kwargs.items() if value is not arg.omit}
         self.group = group
-        self.guess = guess
+        self.guessed = set(guessed or ())
         super().__init__(*args, **kwargs)
 
     def update_help(self):
@@ -415,14 +419,17 @@ class arg(Argument):
             raise AttributeError(F'The argument with these values has no destination: {self!r}')
 
     @classmethod
-    def infer(cls, pt: inspect.Parameter) -> Argument:
+    def infer(cls, pt: inspect.Parameter):
         """
         This class method can be used to infer the argparse argument for a Python function
         parameter. This guess is based on the annotation, name, and default value.
         """
 
-        def needs_type(item):
-            return item.get('action', 'store') == 'store'
+        def needs_type(item: Dict[str, str]):
+            try:
+                return item['action'] == 'store'
+            except KeyError:
+                return True
 
         def get_argp_type(annotation_type):
             if issubclass(annotation_type, (bytes, bytearray, memoryview)):
@@ -436,24 +443,33 @@ class arg(Argument):
         name = pt.name.replace('_', '-')
         default = pt.default
         guessed_pos_args = []
-        guessed_kwd_args = dict(dest=pt.name, guess=True)
+        guessed_kwd_args = dict(dest=pt.name)
+        guessed = set()
         annotation = pt.annotation
+
+        def guess(key, value):
+            try:
+                return guessed_kwd_args[key]
+            except KeyError:
+                guessed_kwd_args[key] = value
+                guessed.add(key)
+                return value
 
         if isinstance(annotation, str):
             try: annotation = eval(annotation)
             except Exception: pass
 
         if annotation is not pt.empty:
-            if isinstance(annotation, Argument):
+            if isinstance(annotation, arg):
                 if annotation.kwargs.get('dest', pt.name) != pt.name:
                     raise ValueError(
                         F'Incompatible argument destination specified; parameter {pt.name} '
                         F'was annotated with {annotation!r}.')
                 guessed_pos_args = annotation.args
                 guessed_kwd_args.update(annotation.kwargs)
-                guessed_kwd_args['guess'] = False
-                guessed_kwd_args['group'] = annotation.group
+                guessed_kwd_args.update(group=annotation.group)
             elif isinstance(annotation, type):
+                guessed.add('type')
                 if not issubclass(annotation, bool) and needs_type(guessed_kwd_args):
                     guessed_kwd_args.update(type=get_argp_type(annotation))
                 elif not isinstance(default, bool):
@@ -463,7 +479,7 @@ class arg(Argument):
             guessed_pos_args = guessed_pos_args or [F'--{name}' if pt.kind is pt.KEYWORD_ONLY else name]
 
         if pt.kind is pt.VAR_POSITIONAL:
-            oldnargs = guessed_kwd_args.setdefault('nargs', ZERO_OR_MORE)
+            oldnargs = guess('nargs', ZERO_OR_MORE)
             if oldnargs not in (ONE_OR_MORE, ZERO_OR_MORE, REMAINDER):
                 raise ValueError(F'Variadic positional arguments has nargs set to {oldnargs!r}')
             return cls(*guessed_pos_args, **guessed_kwd_args)
@@ -472,24 +488,25 @@ class arg(Argument):
             if isinstance(default, Enum):
                 default = default.name
             if isinstance(default, (list, tuple)):
-                guessed_kwd_args.setdefault('nargs', ZERO_OR_MORE)
+                guess('nargs', ZERO_OR_MORE)
                 if not pt.default:
                     default = pt.empty
                 else:
-                    guessed_kwd_args.setdefault('default', pt.default)
+                    guessed_kwd_args['default'] = pt.default
                     default = default[0]
             else:
-                guessed_kwd_args.setdefault('default', default)
+                guessed_kwd_args['default'] = default
                 if pt.kind is pt.POSITIONAL_ONLY:
-                    guessed_kwd_args.setdefault('nargs', OPTIONAL)
+                    guess('nargs', OPTIONAL)
 
         if default is not pt.empty:
             if isinstance(default, bool):
-                guessed_kwd_args['action'] = 'store_false' if default else 'store_true'
-            elif needs_type(guessed_kwd_args) and 'type' not in guessed_kwd_args:
-                guessed_kwd_args['type'] = get_argp_type(type(default))
+                action = 'store_false' if default else 'store_true'
+                guessed_kwd_args['action'] = action
+            elif needs_type(guessed_kwd_args):
+                guess('type', get_argp_type(type(default)))
 
-        return cls(*guessed_pos_args, **guessed_kwd_args)
+        return cls(*guessed_pos_args, **guessed_kwd_args, guessed=guessed)
 
     def merge_args(self, them: Argument) -> None:
         def iterboth():
@@ -509,15 +526,20 @@ class arg(Argument):
         if not self.args:
             self.args = list(them.args)
 
-    def merge_all(self, them: Argument) -> None:
+    def merge_all(self, them: arg) -> None:
         for key, value in them.kwargs.items():
             if value is arg.delete:
                 self.kwargs.pop(key, None)
+                self.guessed.discard(key)
                 continue
+            if key in them.guessed:
+                if key in self.kwargs and key not in self.guessed:
+                    continue
+                else:
+                    self.guessed.add(key)
             self.kwargs[key] = value
         self.merge_args(them)
-        self.guess = self.guess and them.guess
-        self.group = self.group or them.group
+        self.group = them.group or self.group
 
     def __copy__(self) -> Argument:
         cls = self.__class__
@@ -525,7 +547,7 @@ class arg(Argument):
         clone.kwargs = dict(self.kwargs)
         clone.args = list(self.args)
         clone.group = self.group
-        clone.guess = self.guess
+        clone.guessed = set(self.guessed)
         return clone
 
     def __repr__(self) -> str:
@@ -542,12 +564,12 @@ class arg(Argument):
         return init
 
 
-class ArgumentSpecification(OrderedDict, Dict[str, Argument]):
+class ArgumentSpecification(OrderedDict):
     """
     A container object that stores `refinery.units.arg` specifications.
     """
 
-    def merge(self, argument: arg):
+    def merge(self: Dict[str, arg], argument: arg):
         """
         Insert or update the specification with the given argument.
         """
@@ -624,10 +646,9 @@ class Executable(ABCMeta):
 
     _argument_specification: Dict[str, arg]
 
-    def _infer_argspec(cls, parameters, args: Optional[ArgumentSpecification] = None):
+    def _infer_argspec(cls, parameters: Dict[str, inspect.Parameter], args: Optional[Dict[str, arg]] = None):
 
-        args = ArgumentSpecification() if args is None else args
-        temp = ArgumentSpecification()
+        args: Dict[str, arg] = ArgumentSpecification() if args is None else args
 
         exposed = [pt.name for pt in skipfirst(parameters.values()) if pt.kind != pt.VAR_KEYWORD]
         # The arguments are added in reverse order to the argument parser later.
@@ -639,23 +660,7 @@ class Executable(ABCMeta):
                 argument = arg.infer(parameters[name])
             except KeyError:
                 continue
-            if argument.guess:
-                temp.merge(argument)
-            else:
-                args.merge(argument)
-
-        for guess in temp.values():
-            known = args.get(guess.destination, None)
-            if known is None:
-                args.merge(guess)
-                continue
-            if not known.positional:
-                known.merge_args(guess)
-            for k, v in guess.kwargs.items():
-                if k == 'default':
-                    known.kwargs[k] = v
-                else:
-                    known.kwargs.setdefault(k, v)
+            args.merge(argument)
 
         for name in exposed:
             args.move_to_end(name)
@@ -676,7 +681,7 @@ class Executable(ABCMeta):
                 known.kwargs.setdefault('type', multibin)
         return args
 
-    def __new__(mcs, name, bases, nmspc, abstract=False):
+    def __new__(mcs, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False):
         def decorate(**decorations):
             for method, decorator in decorations.items():
                 try:
@@ -699,7 +704,7 @@ class Executable(ABCMeta):
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
-    def __init__(cls, name, bases, nmspc, abstract=False):
+    def __init__(cls, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
         cls._argument_specification = ArgumentSpecification()
 
@@ -710,9 +715,10 @@ class Executable(ABCMeta):
         for base in bases:
             base: Executable
             for key, value in base._argument_specification.items():
-                if not value.guess and key in parameters:
+                if key in parameters:
                     cls._argument_specification[key] = value.__copy__()
-            cls._infer_argspec(parameters, cls._argument_specification)
+
+        cls._infer_argspec(parameters, cls._argument_specification)
 
         if not abstract and any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
             @wraps(cls.__init__)
