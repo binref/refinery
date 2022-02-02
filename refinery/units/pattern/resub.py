@@ -12,14 +12,15 @@ class resub(RegexUnit):
     syntax `{k}` to insert the `k`-th match group, the unit supports processing the contents of
     match groups with arbitrary refinery units. To do so, use the following F-string-like syntax:
 
-        {match-group:pipeline}
+        {match-group:handlers}
 
-    where `:pipeline` is an optional pipeline of refinery commands as it would be specified on
-    the command line. The value of the corresponding match is post-processed with this command.
+    where `:handlers` is an optional reverse multibin expression that is used to post-process the
+    binary data from the match. For example, `{2:hex:b64}` represents the base64-decoding of the
+    hex-decoding of the second match group.
     """
     def __init__(
         self,
-        regex,
+        regex: arg(help='Regular expression to be searched and replaced. The default is "{default}".') = '\\s+',
         subst: arg('subst', help=(
             'Substitution value: use {1} for group 1, {0} for entire match. Matches are removed '
             '(replaced by an empty string) by default.'
