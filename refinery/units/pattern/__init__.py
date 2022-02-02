@@ -19,10 +19,10 @@ class PatternExtractorBase(Unit, abstract=True):
     def __init__(
         self,
         min        : arg.number('-n', help='Matches must have length at least N.') = 1,
-        max        : arg.number('-N', help='Matches must have length at most N.') = None,
-        len        : arg.number('-E', help='Matches must be of length N.') = None,
-        stripspace : arg.switch('-S', help='Strip all whitespace from input data.') = False,
-        duplicates : arg.switch('-D', help='Yield every (transformed) Match, even when it was found before.') = False,
+        max        : arg.number('-m', help='Matches must have length at most N.') = None,
+        len        : arg.number('-e', help='Matches must be of length N.') = None,
+        stripspace : arg.switch('-x', help='Strip all whitespace from input data.') = False,
+        duplicates : arg.switch('-r', help='Yield every (transformed) Match, even when it was found before.') = False,
         longest    : arg.switch('-l', help='Sort results by length.') = False,
         take       : arg.number('-t', help='Return only the first N occurrences in order of appearance.') = None,
         **keywords
