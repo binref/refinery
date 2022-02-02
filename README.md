@@ -160,7 +160,10 @@ emit 81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b [ \
 ```
 And get the domains for the next stage:
 ```
-emit payload.ps1 | carveb64z | deob-ps1 | carveb64z | deob-ps1 | xtp -f domain
+emit payload.ps1 
+  | carve -sd b64 | zl | deob-ps1 
+  | carve -sd b64 | zl | deob-ps1
+  | xtp -f domain
 ```
 Extract the configuration of unpacked HawkEye samples:
 ```
