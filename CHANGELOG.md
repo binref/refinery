@@ -1,5 +1,11 @@
 # Binary Refinery Changelog
 
+## Version 0.4.20
+- Renames the `blockop` unit to `alu`.
+- Removes the shortcut unit `carveb64z`.
+- Renames a number of command-line switches for `carve`, `xtp`, and other pattern extraction units.
+- Adds a default argument to `resub` that makes it strip whitespace from the input by default.
+
 ## Version 0.4.19
 Improves performance by replacing an import of `pkg_resources` with equivalent functionality from `importlib`. On a test machine, this removes between 250 and 500 milliseconds from the execution time of any single unit.
 
