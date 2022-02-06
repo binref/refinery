@@ -10,7 +10,7 @@ from flake8.api import legacy as flake8
 from . import TestUnitBase
 
 from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L
-from refinery.units import Unit
+from refinery.units import arg, Unit
 
 
 class TestPipelines(TestUnitBase):
@@ -241,3 +241,14 @@ class TestSimpleInvertible(TestUnitBase):
                 result = convert(inverted)
                 self.assertEqual(buffer, result,
                     msg=F'inversion property failed for {name} testing structured buffer #{k}.')
+
+    def test_argument_representation(self):
+        argument = arg.switch('--switch', help="halp")
+        self.assertEqual(repr(argument), "arg('--switch', action='store_true', help='halp')")
+        self.assertEqual(argument.destination, 'switch')
+
+    def test_unit_output_01(self):
+        self.assertEqual(Unit._output(lambda: B'w00t'), 'w00t')
+        self.assertEqual(Unit._output(lambda: R'w00t'), 'w00t')
+        self.assertEqual(Unit._output(lambda: B'\xF3'), 'F3')
+        self.assertEqual(Unit._output(lambda: B'\x03'), '03')

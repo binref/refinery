@@ -1478,9 +1478,9 @@ class Unit(UnitBase, abstract=True):
                 return message
             if isbuffer(message):
                 import codecs
-                pmsg: str = codecs.decode(message, cls.codec, errors='backslashreplace')
+                pmsg: str = codecs.decode(message, cls.codec, 'surrogateescape')
                 if not pmsg.isprintable():
-                    pmsg = message.hex()
+                    pmsg = message.hex().upper()
                 return pmsg
             else:
                 import pprint
@@ -1491,7 +1491,7 @@ class Unit(UnitBase, abstract=True):
             from refinery.lib.tools import get_terminal_size
             message = shorten(
                 message,
-                get_terminal_size() - len(cls.name) - 14,
+                get_terminal_size(75) - len(cls.name) - 14,
             )
         return message
 

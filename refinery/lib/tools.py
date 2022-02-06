@@ -45,7 +45,7 @@ def lookahead(iterator):
         yield last, item
 
 
-def get_terminal_size():
+def get_terminal_size(default=0):
     """
     Returns the size of the currently attached terminal. If the environment variable
     `REFINERY_TERMSIZE` is set to an integer value, it takes prescedence. If the width
@@ -56,16 +56,16 @@ def get_terminal_size():
         return int(os.environ['REFINERY_TERMSIZE'])
     except (KeyError, ValueError):
         pass
-    width = 0
+    width = default
     for stream in (sys.stderr, sys.stdout):
         if stream.isatty():
             try:
                 width = os.get_terminal_size(stream.fileno()).columns
             except Exception:
-                width = 0
+                width = default
             else:
                 break
-    return 0 if width < 9 else width - 1
+    return default if width < 2 else width - 1
 
 
 def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
