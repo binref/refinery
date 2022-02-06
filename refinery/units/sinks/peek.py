@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Generator, Optional
+from typing import ByteString, Generator, Optional
 
 import sys
 import textwrap
@@ -12,6 +12,15 @@ from refinery.lib.meta import metavars, CustomStringRepresentation, SizeInt
 from refinery.lib.types import INF
 from refinery.lib.tools import isbuffer, lookahead
 from refinery.lib.patterns import formats
+from refinery.lib.argformats import DelayedBinaryArgument
+
+
+def requires_prefix(value: ByteString, decoded: str) -> bool:
+    try:
+        dba = DelayedBinaryArgument(decoded)
+        return dba() != value
+    except Exception:
+        return True
 
 
 class peek(HexViewer):
@@ -96,7 +105,7 @@ class peek(HexViewer):
                         if not formats.printable.fullmatch(decoded):
                             decoded = None
                     if decoded is not None:
-                        if prefix == 's' and ':' not in decoded:
+                        if prefix == 's' and not requires_prefix(value, decoded):
                             value = decoded
                         else:
                             value = F'{prefix}:{decoded}'

@@ -7,6 +7,10 @@ import sys
 
 from .. import TestUnitBase
 
+from refinery.lib.frame import Chunk
+from refinery.lib.loader import load_pipeline as L
+from refinery import drain
+
 
 @contextlib.contextmanager
 def errbuf():
@@ -243,3 +247,16 @@ class TestPeek(TestUnitBase):
             peek(data)
             out = stderr.getvalue().strip()
         self.assertIn('1F 8B 08 00 00 00 00 00 04 00', out)
+
+    def test_encoding_metavars(self):
+        pfmt = 'emit s: [| put test "s:{}" | peek ]'
+        for value, requires_prefix in {
+            'b64:b64:b64' : True,
+            'accu:$msvc'  : True,
+            'u[:!krz--dk' : False,
+            'ftp://t.com' : False,
+        }.items():
+            with errbuf() as stderr:
+                prefix = 's:' * requires_prefix
+                L(pfmt.format(value))()
+                self.assertIn(F'test = {prefix}{value}', stderr.getvalue())
