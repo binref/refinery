@@ -25,15 +25,18 @@ class TestCommonMeta(TestUnitBase):
             'entropy': '60.00%',
             'ext'    : 'pdf',
             'ic'     : '0.0645',
-            'magic'  : 'PDF document, version 1.1',
             'md5'    : 'ee188312467228b061b430f7432de410',
             'mime'   : 'application/pdf',
             'sha1'   : '976c1f31b9d374078bc0093d837dbb5f58c7136d',
             'sha256' : '054dd1d7b1faaca9ee2296f1c62d2f5ab7d46d48b48784cbe843fa103c4fa61a',
             'size'   : '0.794 kB',
         }
+
         for name, value in meta.items():
             self.assertIn(value, {
                 str(pdf | self.load(name) | self.ldu('cfmt', F'{{{name}}}')).strip(),
                 str(pdf | self.load(name) | self.ldu('cfmt', F'{{{name}!r}}')).strip()
             })
+
+        magic = str(pdf | self.load(name) | self.ldu('cfmt', '{magic}'))
+        self.assertTrue(magic.startswith('PDF document'))
