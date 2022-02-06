@@ -153,3 +153,34 @@ class TestPatternExtractor(TestUnitBase):
         ]
         data = b'Lower: %s\nUpper: %s' % tuple(hashes)
         self.assertListEqual(list(data | self.load('sha1')), hashes)
+
+    def test_ipv4_filters(self):
+        data = inspect.cleandoc(
+            """
+            1.0.0.0
+            ..............................
+            Version 2.1.1.0
+            ..............................
+            192.168.2.1
+            10.12.12.1
+            ..............................
+            254.12.3.13
+            185.12.3.13
+            """
+        ).encode('latin1')
+        self.assertEqual(
+            {bytes(v) for v in data | self.load('ipv4', filter=0)},
+            {B'185.12.3.13', B'254.12.3.13', B'1.0.0.0', B'2.1.1.0', B'192.168.2.1', B'10.12.12.1'}
+        )
+        self.assertEqual(
+            {bytes(v) for v in data | self.load('ipv4', filter=1)},
+            {B'185.12.3.13', B'254.12.3.13', B'192.168.2.1', B'10.12.12.1'}
+        )
+        self.assertEqual(
+            {bytes(v) for v in data | self.load('ipv4', filter=3)},
+            {B'185.12.3.13'}
+        )
+
+    def test_url_filters(self):
+        self.assertEqual('http://www.example.com/',
+            str(B'tthttp://www.example.com/' | self.load('url', filter=1)))
