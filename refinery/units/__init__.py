@@ -586,7 +586,7 @@ ProcType = Callable[['Unit', ByteString], Optional[Union[DataType, Iterable[Data
 
 def UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]:
     @wraps(operation)
-    def wrapped(self, data: ByteString) -> Optional[Union[Chunk, Iterable[Chunk]]]:
+    def wrapped(self: Unit, data: ByteString) -> Optional[Union[Chunk, Iterable[Chunk]]]:
         ChunkType = Chunk
         if data is None:
             data = B''
