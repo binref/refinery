@@ -3,6 +3,8 @@
 import logging
 import os.path
 import inspect
+import io
+import sys
 
 from glob import glob
 from flake8.api import legacy as flake8
@@ -10,6 +12,7 @@ from flake8.api import legacy as flake8
 from . import TestUnitBase
 
 from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L
+from refinery.lib.structures import MemoryFile
 from refinery.units import arg, Unit
 
 
@@ -252,3 +255,22 @@ class TestSimpleInvertible(TestUnitBase):
         self.assertEqual(Unit._output(lambda: R'w00t'), 'w00t')
         self.assertEqual(Unit._output(lambda: B'\xF3'), 'F3')
         self.assertEqual(Unit._output(lambda: B'\x03'), '03')
+
+    def test_run_method(self):
+        from refinery.units.strings.cfmt import cfmt
+
+        class dummy:
+            def __init__(self, b): self.buffer = b
+            def isatty(self): return False
+
+        sys_stdin = sys.stdin
+        sys_stdout = sys.stdout
+        sys.stdin = dummy(MemoryFile(B'test'))
+        sys.stdout = out = dummy(MemoryFile())
+        sys.argv = ['cfmt', '=={}==', cfmt._SECRET_DEBUG_TIMING_FLAG]
+        try:
+            cfmt.run()
+            self.assertEqual(out.buffer.getvalue(), b'==test==')
+        finally:
+            sys.stdin = sys_stdin
+            sys.stdout = sys_stdout
