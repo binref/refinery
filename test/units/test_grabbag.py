@@ -57,13 +57,13 @@ class TestGrabBagExamples(TestBase):
 
     def test_warzone_sample(self):
         data = self.download_sample('4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5')
-        pipeline = L('vsect .bss') | L('struct L{key:{0}}$') [
-            L('rc4 xvar:key') | L('struct L{host:{}}{port:H}$ {host:u16}:{port}') ]
+        pipeline = L('vsect .bss') | L('struct I{key:{}}{}') [
+            L('rc4 xvar:key') | L('struct I{host:{}}{port:H} {host:u16}:{port}') ]
         self.assertEqual(str(data | pipeline), '165.22.5''.''66:1111')
 
     def test_blackmatter_sample(self):
         data = self.download_sample('c6e2ef30a86baa670590bd21acf5b91822117e0cbe6060060bc5fe0182dace99')
-        pipeline = load_pipeline('push [| vsect .rsrc | struct {KS:L}$ | pop | vsect .data | struct L{:{0}}'
+        pipeline = load_pipeline('push [| vsect .rsrc | struct {KS:L}{} | pop | vsect .data | struct -m L{:{0}}'
             '| xor -B4 "accu[KS,1,32]:(A*0x8088405+1)#((KS*A)>>32)" | repl h:00 | carve -n8 printable ]]')
         strings = str(data | pipeline).splitlines(False)
         self.assertIn('Safari/537.36', strings)
@@ -88,7 +88,7 @@ class TestGrabBagExamples(TestBase):
 
     def test_shellcode_loader(self):
         data = self.download_sample('58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3')
-        pipeline = load_pipeline('rex yara:50607080.* [| struct LL{s:L}$ | xor -B2 accu[s]:$msvc | xtp url ]')
+        pipeline = load_pipeline('rex yara:50607080.* [| struct LL{s:L}{} | xor -B2 accu[s]:$msvc | xtp url ]')
         self.assertEqual(str(data | pipeline), 'http://64.235.39''.82')
 
     def test_example_02_maldoc(self):

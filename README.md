@@ -175,13 +175,13 @@ emit ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c \
 Warzone RAT:
 ```
 emit 4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5 \
-  | vsect .bss | struct L{key:{0}}$ [\
-  | rc4 xvar:key | struct L{host:{}}{port:H}$ {host:u16}:{port} ]
+  | vsect .bss | struct I{key:{}}{} [\
+  | rc4 xvar:key | struct I{host:{}}{port:H} {host:u16}:{port} ]
 ```
 Extract payload from a shellcode loader and carve its c2:
 ```
 emit 58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3 \
-  | rex yara:50607080.* [| struct LL{s:L}$ | xor -B2 accu[s]:$msvc | xtp url ]
+  | rex yara:50607080.* [| struct LL{s:L}{} | xor -B2 accu[s]:$msvc | xtp url ]
 ```
 Extract the malicious downloader payload from a malicious document's text body:
 ```

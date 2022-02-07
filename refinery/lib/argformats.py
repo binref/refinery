@@ -180,8 +180,8 @@ class PythonExpression:
         if mapping is not None:
             values, tmp = mapping, values
             values.update(tmp)
-        variables = {}
-        for v in self.variables:
+        variables = dict(values)
+        for v in self.variables.difference(variables):
             try:
                 variables[v] = values[v]
             except KeyError:

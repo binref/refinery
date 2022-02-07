@@ -22,11 +22,11 @@ class TestStructUnit(TestUnitBase):
         self.assertEqual(out, body)
 
     def test_no_last_field(self):
-        unit = self.load('6sB8s')
-        self.assertEqual(bytes(B'Binary Refinery' | unit), B'Refinery')
+        unit = self.load('6sB6s')
+        self.assertEqual(bytes(B'Binary Refinery' | unit), B'Binary Refine')
 
     def test_zero_length(self):
-        unit = self.load('{s:H}{d:s}')
+        unit = self.load('{s:H}{d:s}', multi=True)
         data = (
             B'\x00\x00'
             B'\x02\x00' b'ok'
