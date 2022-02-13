@@ -117,8 +117,8 @@ class ef(Unit):
                             self.log_info(lambda: F'reading: {path!s} ({len(data)} bytes)')
                             yield self.labelled(data, path=path.as_posix(), **kwargs)
                 except PermissionError:
-                    self.log_warn('permission denied:', path)
+                    self.log_warn('permission denied:', path.as_posix())
                 except FileNotFoundError:
-                    self.log_warn('file is missing:', path)
+                    self.log_warn('file is missing:', path.as_posix())
                 except Exception:
-                    self.log_warn('unknown error while reading:', path)
+                    self.log_warn('unknown error while reading:', path.as_posix())
