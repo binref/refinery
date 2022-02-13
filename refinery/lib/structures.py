@@ -235,6 +235,9 @@ class MemoryFile(Generic[T], io.IOBase):
             raise OSError(str(T)) from T
         return len(data)
 
+    def __getitem__(self, slice):
+        return self._data[slice]
+
 
 class order(str, enum.Enum):
     big = '>'

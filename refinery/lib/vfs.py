@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import builtins
 import os
+import io
 import stat
 import tempfile
 import uuid
@@ -51,12 +52,10 @@ class VirtualFile:
         """
         Emulate the result of an `mmap` call to the virtual file.
         """
-        class bv(bytearray):
-            def close(self): pass
         view = memoryview(self.data)
         if length:
             view = view[offset:offset + length]
-        return bv(view)
+        return MemoryFile(view)
 
     def open(self, mode: str) -> MemoryFile:
         """
@@ -153,7 +152,7 @@ class VirtualFileSystem:
                 with self._lock:
                     vf = self._by_name[os.path.basename(file)]
             except BaseException:
-                return self._open(file, *args, **kwargs)
+                return self._builtins_open(file, *args, **kwargs)
             else:
                 return vf.open(args[0])
 
@@ -162,7 +161,7 @@ class VirtualFileSystem:
                 with self._lock:
                     vf = self._by_name[os.path.basename(file)]
             except BaseException:
-                return self._stat(file)
+                return self._os_stat(file)
             else:
                 return vf.stat()
 
@@ -171,21 +170,24 @@ class VirtualFileSystem:
                 with self._lock:
                     vf = self._by_node[fileno]
             except BaseException:
-                return self._mmap(fileno, length, *args, **kwargs)
+                return self._mmap_mmap(fileno, length, *args, **kwargs)
             else:
                 return vf.mmap(length, kwargs.get('offset', 0))
 
-        self._open = builtins.open
-        self._stat = os.stat
-        self._mmap = mmap.mmap
+        self._builtins_open = builtins.open
+        self._os_stat = os.stat
+        self._mmap_mmap = mmap.mmap
+        self._io_open = io.open
         builtins.open = hook_open
+        io.open = hook_open
         os.stat = hook_stat
         mmap.mmap = hook_mmap
         return self
 
     def __exit__(self, *args):
-        builtins.open = self._open
-        os.stat = self._stat
-        mmap.mmap = self._mmap
+        builtins.open = self._builtins_open
+        os.stat = self._os_stat
+        mmap.mmap = self._mmap_mmap
+        io.open = self._io_open
         self._VFS_LOCK.release()
         return False
