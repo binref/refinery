@@ -22,30 +22,24 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
 
     overlay_value = overlay and pe.get_overlay_data_start_offset() or 0
 
-    def mmax(sequence):
-        try:
-            return max(sequence)
-        except Exception:
-            return 0
-
-    sections_value = sections and mmax(
+    sections_value = sections and max((
         s.PointerToRawData + s.SizeOfRawData
         for s in pe.sections
-    ) or 0
+    ), default=0) or 0
 
-    memdump_value = memdump and mmax(
+    memdump_value = memdump and max((
         s.VirtualAddress + s.Misc_VirtualSize
         for s in pe.sections
-    ) or 0
-
-    cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[IMAGE_DIRECTORY_ENTRY_SECURITY]
+    ), default=0) or 0
+    cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[
+        IMAGE_DIRECTORY_ENTRY_SECURITY]
 
     if directories:
-        directories_value = mmax(
+        directories_value = max((
             pe.get_offset_from_rva(d.VirtualAddress) + d.Size
             for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
             if d.name != 'IMAGE_DIRECTORY_ENTRY_SECURITY'
-        )
+        ), default=0)
         if certificate:
             # The certificate overlay is given as a file offset
             # rather than a virtual address.
