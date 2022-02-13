@@ -14,86 +14,86 @@ class xlmdeobf(Unit):
     def __init__(
         self,
         extract_only: Unit.Arg.switch(
-            "-x", help="only extract cells without any emulation"
+            '-x', help='only extract cells without any emulation'
         ) = False,
         sort_formulas: Unit.Arg.switch(
-            "--sort-formulas",
-            help="sort extracted formulas based on their cell address (requires -x)",
+            '--sort-formulas',
+            help='sort extracted formulas based on their cell address (requires -x)',
         ) = False,
         defined_names: Unit.Arg.switch(
-            "--defined-names", help="extract all defined names"
+            '--defined-names', help='extract all defined names'
         ) = False,
         with_ms_excel: Unit.Arg.switch(
-            "--with-ms-excel", help="use MS Excel to process XLS files"
+            '--with-ms-excel', help='use MS Excel to process XLS files'
         ) = False,
         start_with_shell: Unit.Arg.switch(
-            "-s", help="open an XLM shell before interpreting the macros in the input"
+            '-s', help='open an XLM shell before interpreting the macros in the input'
         ) = False,
         day: Unit.Arg(
-            "-d",
-            "--day",
+            '-d',
+            '--day',
             type=int,
             default=-1,
-            action="store",
-            help="Specify the day of month",
+            action='store',
+            help='Specify the day of month',
         ) = -1,
         output_formula_format: Unit.Arg(
-            "--output-formula-format",
+            '--output-formula-format',
             type=str,
-            default="CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]",
-            action="store",
-            help="Specify the format for output formulas ([[CELL-ADDR]], [[INT-FORMULA]], and [[STATUS]]",
-        ) = "CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]",
+            default='CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]',
+            action='store',
+            help='Specify the format for output formulas ([[CELL-ADDR]], [[INT-FORMULA]], and [[STATUS]]',
+        ) = 'CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]',
         extract_formula_format: Unit.Arg(
-            "--extract-formula-format",
+            '--extract-formula-format',
             type=str,
-            default="CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]",
-            action="store",
-            help="Specify the format for extracted formulas ([[CELL-ADDR]], [[CELL-FORMULA]], and [[CELL-VALUE]]",
-        ) = "CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]",
+            default='CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
+            action='store',
+            help='Specify the format for extracted formulas ([[CELL-ADDR]], [[CELL-FORMULA]], and [[CELL-VALUE]]',
+        ) = 'CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
         no_indent: Unit.Arg.switch(
-            "--no-indent",
-            help="Do not show indent before formulas",
+            '--no-indent',
+            help='Do not show indent before formulas',
         ) = False,
         start_point: Unit.Arg(
-            "--start-point",
+            '--start-point',
             type=str,
-            default="",
-            action="store",
-            help="Start interpretation from a specific cell address",
-            metavar=("CELL_ADDR"),
-        ) = "",
+            default='',
+            action='store',
+            help='Start interpretation from a specific cell address',
+            metavar=('CELL_ADDR'),
+        ) = '',
         password: Unit.Arg(
-            "-p",
-            "--password",
+            '-p',
+            '--password',
             type=str,
-            action="store",
-            default="",
-            help="Password to decrypt the protected document",
-        ) = "",
+            action='store',
+            default='',
+            help='Password to decrypt the protected document',
+        ) = '',
         output_level: Unit.Arg(
-            "-o",
-            "--output-level",
+            '-o',
+            '--output-level',
             type=int,
-            action="store",
+            action='store',
             default=0,
             help=(
-                "Set the level of details to be shown (0:all commands, 1: commands no jump 2:important "
-                "commands 3:strings in important commands)."
+                'Set the level of details to be shown (0:all commands, 1: commands no jump 2:important '
+                'commands 3:strings in important commands).'
             ),
         ) = 0,
         timeout: Unit.Arg(
-            "--timeout",
+            '--timeout',
             type=int,
-            action="store",
+            action='store',
             default=0,
-            metavar=("N"),
-            help="stop emulation after N seconds (0: not interruption N>0: stop emulation after N seconds)",
+            metavar=('N'),
+            help='stop emulation after N seconds (0: not interruption N>0: stop emulation after N seconds)',
         ) = 0,
     ):
         pass
 
-    @Unit.Requires("XLMMacroDeobfuscator", optional=False)
+    @Unit.Requires('XLMMacroDeobfuscator', optional=False)
     def _process_file():
         from XLMMacroDeobfuscator.deobfuscator import process_file
 
@@ -119,4 +119,4 @@ class xlmdeobf(Unit):
                 output_level=self.args.output_level,
                 timeout=self.args.timeout,
             )
-        return "\n".join(result).encode(self.codec)
+        return '\n'.join(result).encode(self.codec)
