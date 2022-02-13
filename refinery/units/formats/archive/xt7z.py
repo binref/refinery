@@ -28,6 +28,9 @@ class xt7z(ArchiveUnit):
         mv = memoryview(data)
         zp = max(0, data.find(B'7z\xBC\xAF\x27\x1C'))
 
+        if zp > 0:
+            self.log_warn(F'found header at offset 0x{zp:X}, extracting from there.')
+
         if pwd:
             try:
                 archive = mk7z(password=pwd.decode(self.codec))
@@ -43,6 +46,8 @@ class xt7z(ArchiveUnit):
                     problem = archive.testzip()
                 except self._py7zr.PasswordRequired:
                     problem = True
+                except SystemError:
+                    problem = True
                 if not problem:
                     break
                 self.log_debug(F'trying password: {pwd}')
@@ -55,4 +60,4 @@ class xt7z(ArchiveUnit):
                 return archive.read(info.filename).get(info.filename).read()
             if info.is_directory:
                 continue
-            yield self._pack(info.filename, info.creationtime, extract)
+            yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32)
