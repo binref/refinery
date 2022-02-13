@@ -2,9 +2,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import tempfile
-
 from refinery.units.formats import Unit
+from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 
 
 class XLMMacroDeobfuscator(Unit):
@@ -78,7 +77,10 @@ class XLMMacroDeobfuscator(Unit):
             type=int,
             action="store",
             default=0,
-            help="Set the level of details to be shown (0:all commands, 1: commands no jump 2:important commands 3:strings in important commands).",
+            help=(
+                "Set the level of details to be shown (0:all commands, 1: commands no jump 2:important "
+                "commands 3:strings in important commands)."
+            ),
         ) = 0,
         timeout: Unit.Arg(
             "--timeout",
@@ -98,10 +100,9 @@ class XLMMacroDeobfuscator(Unit):
         return process_file
 
     def process(self, data: bytearray):
-        with tempfile.NamedTemporaryFile() as nf:
-            nf.write(data)
+        with VirtualFileSystem() as vfs:
             result = self._process_file(
-                file=nf.name,
+                file=VirtualFile(vfs, data),
                 noninteractive=True,
                 return_deobfuscated=True,
                 silent=True,
@@ -118,4 +119,4 @@ class XLMMacroDeobfuscator(Unit):
                 output_level=self.args.output_level,
                 timeout=self.args.timeout,
             )
-            return "\n".join(result).encode("utf-8")
+        return "\n".join(result).encode(self.codec)
