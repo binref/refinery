@@ -8,7 +8,7 @@ from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 
 class xlmdeobf(Unit):
     """
-    Wrapper around XLMMacroDeobfuscator to decode obfuscated XLM macros
+    Wrapper around XLMMacroDeobfuscator to decode obfuscated Excel v4.0 (XLM) macros.
     """
 
     def __init__(
