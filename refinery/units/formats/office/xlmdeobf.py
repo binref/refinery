@@ -6,7 +6,7 @@ from refinery.units.formats import Unit
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 
 
-class XLMMacroDeobfuscator(Unit):
+class xlmdeobf(Unit):
     """
     Wrapper around XLMMacroDeobfuscator to decode obfuscated XLM macros
     """
