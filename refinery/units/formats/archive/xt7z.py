@@ -48,9 +48,14 @@ class xt7z(ArchiveUnit):
                     problem = True
                 except SystemError:
                     problem = True
+                except Exception:
+                    if pwd is None:
+                        raise
+                    problem = True
                 if not problem:
                     break
-                self.log_debug(F'trying password: {pwd}')
+                if pwd is not None:
+                    self.log_debug(F'trying password: {pwd}')
             else:
                 raise ValueError('a password is required and none of the default passwords worked.')
 
