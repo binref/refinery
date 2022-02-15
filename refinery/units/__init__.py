@@ -1186,6 +1186,8 @@ class Unit(UnitBase, abstract=True):
                     yield from (x for x in result if x is not None)
                 elif result is not None:
                     yield result
+            except KeyboardInterrupt:
+                raise
             except BaseException as B:
                 result = self._exception_handler(B, data)
                 message = str(B).strip() or 'unknown'
