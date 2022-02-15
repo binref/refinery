@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.4.21
+- Thanks to [@baderj][], the unit `xlmdeobf` was added which wraps the extremely useful [XLMMacroDeobfuscator][] tool for extracting and deobfuscating Excel V4 macros.
+- Adds the `carve-7z` unit for carving 7zip archives from blobs.
+
 ## Version 0.4.20
 - Renames the `blockop` unit to `alu`.
 - Removes the shortcut unit `carveb64z`.
@@ -35,7 +39,7 @@ Changes the format for the binary formatter used in `struct`, `rex`, `resub`, an
 ## Version 0.4.12 -- bugfix release
 
 ## Version 0.4.11
-- The `doctxt` unit was added; courtesy of [@baderj](https://github.com/baderj)
+- The `doctxt` unit was added; courtesy of [@baderj][]
 
 ## Version 0.4.10 -- bugfix release
 
@@ -366,9 +370,11 @@ Updates build system.
 - Cryptographic units have been refactored; the `salsa` and `chacha` units now take a `--nonce` parameter rather than an `--iv` parameter, as they should.
 
 
-[python-registry]: https://pypi.org/project/python-registry/
-[python-registry-gh]: https://github.com/williballenthin/python-registry
+[@baderj]: https://github.com/baderj
+[XLMMacroDeobfuscator]: https://github.com/DissectMalware/XLMMacroDeobfuscator
 [javaobj-issue-29]: https://github.com/tcalmant/python-javaobj/issues/29
 [javaobj]: https://pypi.org/project/javaobj-py3/
 [jsbeautifier]: https://pypi.org/project/jsbeautifier/
 [malshare]: https://www.malshare.com/
+[python-registry-gh]: https://github.com/williballenthin/python-registry
+[python-registry]: https://pypi.org/project/python-registry/
