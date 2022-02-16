@@ -162,7 +162,12 @@ class ByteStringWrapper(CustomStringRepresentation):
         yield from self.binary
 
     def __getattr__(self, key):
-        return getattr(self.binary, key)
+        try:
+            return getattr(self.binary, key)
+        except AttributeError:
+            if hasattr(bytearray, key):
+                self._binary = upgrade = bytearray(self._binary)
+                return getattr(upgrade, key)
 
     def __repr__(self):
         if self._buffer:
