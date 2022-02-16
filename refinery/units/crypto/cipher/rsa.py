@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery.units import arg, Unit
 from refinery.lib.tools import splitchunks
-from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
+from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, PRIVATEKEYBLOB, TYPES
 from refinery.lib.xml import ForgivingParse
 
 from base64 import b64decode
@@ -14,7 +14,11 @@ from Crypto.PublicKey import RSA
 from Crypto.Util import number
 
 
-def normalize_rsa_key(key):
+def normalize_rsa_key(key, force_public=False):
+    try:
+        key = b64decode(key, validate=True)
+    except Exception:
+        pass
     try:
         dom = ForgivingParse(key)
     except ValueError:
@@ -22,10 +26,11 @@ def normalize_rsa_key(key):
     else:
         data = {child.tag.upper(): number.bytes_to_long(b64decode(child.text)) for child in dom.getroot()}
         components = (data['MODULUS'], data['EXPONENT'])
-        if 'D' in data:
-            components += data['D'],
-        if 'P' in data and 'Q' in data:
-            components += data['P'], data['Q']
+        if not force_public:
+            if 'D' in data:
+                components += data['D'],
+            if 'P' in data and 'Q' in data:
+                components += data['P'], data['Q']
         return RSA.construct(components)
     try:
         blob = CRYPTOKEY(key)
@@ -34,14 +39,18 @@ def normalize_rsa_key(key):
     else:
         if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
             raise ValueError(F'The provided key is of invalid type {blob.header.type!s}, the algorithm is {blob.header.algorithm!s}.')
+        if force_public and blob.header.type is TYPES.PRIVATEKEYBLOB:
+            blob = blob.pub
         return blob.key.convert()
-
     try:
         blob = BCRYPT_RSAKEY_BLOB(key)
     except ValueError:
-        return RSA.import_key(key)
+        key = RSA.import_key(key)
+        if force_public:
+            key = key.public_key()
+        return key
     else:
-        return blob.convert()
+        return blob.convert(force_public=force_public)
 
 
 class PAD(IntEnum):

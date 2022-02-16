@@ -146,9 +146,9 @@ class BCRYPT_RSAKEY_BLOB(Struct):
             BCRYPT_MAGIC.BCRYPT_RSAFULLPRIVATE_MAGIC
         )
 
-    def convert(self):
+    def convert(self, force_public=False):
         components = self.modulus, self.exponent
-        if self.has_private_key:
+        if not force_public and self.has_private_key:
             components += self.exp_private, self.prime1, self.prime2
         return RSA.construct(components)
 

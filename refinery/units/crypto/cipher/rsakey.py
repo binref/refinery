@@ -26,8 +26,12 @@ class rsakey(Unit):
     """
     Parse RSA keys in various formats; PEM, DER, Microsoft BLOB, and W3C-XKMS (XML) format are supported.
     """
-    def __init__(self, output: arg(help='Select an output format (PEM/DER/XKMS/TEXT/JSON), default is PEM.') = RSAFormat.PEM):
-        super().__init__(output=arg.as_option(output, RSAFormat))
+    def __init__(
+        self,
+        public: arg.switch('-p', help='Force public key output even if the input is private.') = False,
+        output: arg(help='Select an output format (PEM/DER/XKMS/TEXT/JSON), default is PEM.') = RSAFormat.PEM
+    ):
+        super().__init__(public=public, output=arg.as_option(output, RSAFormat))
 
     def _xkms_wrap(self, number: int):
         size, r = divmod(number.bit_length(), 8)
@@ -35,7 +39,7 @@ class rsakey(Unit):
         return base64.b64encode(number.to_bytes(size, 'big'))
 
     def process(self, data):
-        key = normalize_rsa_key(data)
+        key = normalize_rsa_key(data, force_public=self.args.public)
         out = self.args.output
         if out is RSAFormat.PEM:
             yield key.export_key('PEM')
@@ -46,6 +50,7 @@ class rsakey(Unit):
         components = {
             'Modulus' : key.n,
             'Exponent': key.e,
+            'BitSize' : key.n.bit_length()
         }
         if key.has_private():
             decoded = DerSequence()
@@ -62,13 +67,15 @@ class rsakey(Unit):
             tags = '\n'.join(F'\t<{tag}>{value}</{tag}>' for tag, value in components.items())
             yield F'<RSAKeyPair>\n{tags}\n</RSAKeyPair>'.encode(self.codec)
             return
-        for tag in components:
-            components[tag] = F'{components[tag]:X}'
+        for tag, value in components.items():
+            if value.bit_length() > 32:
+                components[tag] = F'{value:X}'
         if out is RSAFormat.JSON:
-            yield json.dumps(components).encode(self.codec)
+            yield json.dumps(components, indent=4).encode(self.codec)
             return
         if out is RSAFormat.TEXT:
             table = list(flattened(components))
             for key, value in table:
-                value = '\n'.join(F'{L}' for L in textwrap.wrap(F'0x{value}', 80))
+                value = F'0x{value}' if isinstance(value, str) else str(value)
+                value = '\n'.join(F'{L}' for L in textwrap.wrap(value, 80))
                 yield F'-- {key+" ":-<77}\n{value!s}'.encode(self.codec)
