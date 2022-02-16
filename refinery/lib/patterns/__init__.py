@@ -253,6 +253,7 @@ __all__ = [
     'tokenize',
     'formats',
     'indicators',
+    'wallets',
     'defanged'
 ]
 
@@ -320,6 +321,19 @@ class formats(PatternEnum):
         return getattr(cls, key.replace('-', '_'))
 
 
+class wallets(PatternEnum):
+    LTC = pattern("[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}")
+    DASH = pattern("X[1-9A-HJ-NP-Za-km-z]{33}")
+    XMR = pattern("4[0-9AB][1-9A-HJ-NP-Za-km-z]{90,120}")
+    BTC = pattern("[13][a-km-zA-HJ-NP-Z1-9]{25,34}")
+    BTCP = pattern("5[HJK][1-9A-Za-z][^OIl]{48}")
+    ETH = pattern("0x[a-fA-F0-9]{40}")
+    XRP = pattern("r[0-9a-zA-Z]{24,34}")
+    NEO = pattern("A[0-9a-zA-Z]{33}")
+    BCH = pattern("(bitcoincash:)?(q|p)[a-z0-9]{41}|(BITCOINCASH:)?(Q|P)[A-Z0-9]{41}")
+    DOGE = pattern("D{1}[5-9A-HJ-NP-U]{1}[1-9A-HJ-NP-Za-km-z]{32}")
+
+
 class indicators(PatternEnum):
     """
     An enumeration of patterns for indicators.
@@ -348,11 +362,11 @@ class indicators(PatternEnum):
     "A domain which contains at least three parts, including the top level"
     url = pattern(_pattern_serrated_url)
     "Uniform resource locator addresses"
-    btc = alphabet('[a-km-zA-HJ-NP-Z0-9]', prefix=R'(?<!\w)[13]', at_least=26, at_most=33)
+    btc = wallets.BTC.value
     "Bitcoin addresses"
     pem = pattern(_pattern_pem)
     "A pattern matching PEM encoded cryptographic parameters"
-    xmr = alphabet('[1-9A-HJ-NP-Za-km-z]', prefix='4[0-9AB]', at_least=90, at_most=120)
+    xmr = wallets.XMR.value
     "Monero addresses"
     path = pattern(_pattern_any_path)
     "Windows and Linux path names"
