@@ -50,7 +50,6 @@ class rsakey(Unit):
         components = {
             'Modulus' : key.n,
             'Exponent': key.e,
-            'BitSize' : key.n.bit_length()
         }
         if key.has_private():
             decoded = DerSequence()
@@ -67,6 +66,7 @@ class rsakey(Unit):
             tags = '\n'.join(F'\t<{tag}>{value}</{tag}>' for tag, value in components.items())
             yield F'<RSAKeyPair>\n{tags}\n</RSAKeyPair>'.encode(self.codec)
             return
+        components['BitSize'] = key.n.bit_length()
         for tag, value in components.items():
             if value.bit_length() > 32:
                 components[tag] = F'{value:X}'
