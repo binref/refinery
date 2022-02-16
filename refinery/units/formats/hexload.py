@@ -82,8 +82,17 @@ class hexload(HexViewer):
             key=operator.itemgetter(1))
         end = offset + length
         del lengths
-        for line in lines:
+        for k, line in enumerate(lines, 1):
             encoded_line = line[offset:end]
+            onlyhex = re.search(r'^[\sA-Fa-f0-9]+', encoded_line)
+            if not onlyhex:
+                self.log_warn(F'ignoring line without hexadecimal data: {line}')
+                continue
+            if onlyhex.group(0) != encoded_line:
+                if k != len(lines):
+                    self.log_warn(F'ignoring line with mismatching hex data length: {line}')
+                    continue
+                encoded_line = onlyhex.group(0)
             self.log_debug(F'decoding: {encoded_line.strip()}')
             decoded_line = bytes.fromhex(encoded_line)
             decoded_bytes.extend(decoded_line)
