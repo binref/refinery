@@ -312,9 +312,14 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
     def fix(self):
         for key, value in self.items():
-            ctype = self.CUSTOM_TYPE_MAP.get(key)
-            if ctype and not isinstance(value, ctype) and issubclass(ctype, type(value)):
-                self[key] = ctype(value)
+            try:
+                ctype = self.CUSTOM_TYPE_MAP[key]
+            except KeyError:
+                if isinstance(value, str):
+                    self[key] = ByteStringWrapper(value)
+            else:
+                if not isinstance(value, ctype) and issubclass(ctype, type(value)):
+                    self[key] = ctype(value)
         return self
 
     def update_index(self, index: int):
