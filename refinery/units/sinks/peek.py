@@ -3,6 +3,7 @@
 from typing import ByteString, Generator, Optional
 
 import sys
+import os
 import textwrap
 import codecs
 import string
@@ -16,6 +17,12 @@ from refinery.lib.argformats import DelayedBinaryArgument
 
 
 def requires_prefix(value: ByteString, decoded: str) -> bool:
+    try:
+        path = value.decode('utf8')
+        if os.path.isfile(path):
+            return True
+    except Exception:
+        pass
     try:
         dba = DelayedBinaryArgument(decoded)
         return dba() != value
