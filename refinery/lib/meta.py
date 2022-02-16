@@ -146,6 +146,15 @@ class ByteStringWrapper(CustomStringRepresentation):
             self._string = value = codecs.decode(self._binary, self.codec, self.error)
         return value
 
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self.string == other
+        else:
+            return self.binary == other
+
+    def __hash__(self):
+        return hash(self.binary)
+
     def __len__(self):
         return len(self.binary)
 
