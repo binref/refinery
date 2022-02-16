@@ -230,21 +230,17 @@ class peek(HexViewer):
         if self.args.brief:
             final = False
         elif not self.args.bare:
-            magic = meta._derive_magic()
-            size = meta._derive_size()
-            if self.args.meta:
-                entropy_percent = meta['entropy'] * 100.0
-                meta['magic'] = magic
-                meta['size'] = size
-                meta['entropy'] = F'{entropy_percent:.2f}%'
-            else:
-                peek = repr(size).strip()
+            peek = None
+            if self.args.meta or all(k in meta.DERIVATION_MAP for k in meta):
+                peek = repr(meta._derive_size()).strip()
                 if len(data) <= 5_000_000:
                     peek = F'{peek}; {meta._derive_entropy()!r} entropy'
-                meta['peek'] = F'{peek}; {magic!s}'
+                meta['peek'] = F'{peek}; {meta._derive_magic()!s}'
             for line in self._peekmeta(metrics.hexdump_width, separator(), **meta):
                 empty = False
                 yield line
+            if peek is not None:
+                meta.pop('peek', None)
 
         if lines:
             empty = False
