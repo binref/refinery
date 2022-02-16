@@ -182,7 +182,7 @@ class PRIVATEKEYBLOB(Struct):
         self.exp1 = reader.read_integer(halfsize)
         self.exp2 = reader.read_integer(halfsize)
         self.coefficient = reader.read_integer(halfsize)
-        self.exponent = reader.read_integer(halfsize)
+        self.exponent = reader.read_integer(self.pub.size)
         self._check()
 
     def _check(self):
