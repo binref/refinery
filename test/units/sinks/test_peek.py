@@ -95,8 +95,7 @@ class TestPeek(TestUnitBase):
             ))
             output = stderr.getvalue()
 
-        for info in ('entropy = 45.87%', 'MS-DOS'):
-            self.assertIn(info, output)
+        self.assertIn('45.87% entropy', output)
 
         self.assertIn((
             '-------------------------------------\n'
