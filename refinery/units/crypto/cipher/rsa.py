@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery.units import arg, Unit
 from refinery.lib.tools import splitchunks
-from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, PRIVATEKEYBLOB, TYPES
+from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
 from refinery.lib.xml import ForgivingParse
 
 from base64 import b64decode
