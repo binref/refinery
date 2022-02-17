@@ -88,6 +88,7 @@ import zlib
 import codecs
 
 from io import StringIO
+from urllib.parse import quote_from_bytes, unquote_to_bytes
 from typing import Callable, Dict, Iterable, Optional, ByteString, Union
 
 from refinery.lib.structures import MemoryFile
@@ -475,7 +476,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     if conversion == 'h':
                         value = bytes.fromhex(field)
                     elif conversion == 'q':
-                        from urllib.parse import unquote_to_bytes
                         value = unquote_to_bytes(field)
                     elif conversion == 's':
                         value = field.encode(codec)
@@ -531,7 +531,8 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                         'H': lambda b: b.hex().upper(),
                         'h': lambda b: b.hex(),
                         'u': lambda b: b.decode('utf-16le'),
-                        'e': lambda b: b.decode('utf8', errors='backslashreplace')
+                        'e': lambda b: repr(bytes(b)).lstrip('bBrR')[1:-1],
+                        'q': lambda b: quote_from_bytes(bytes(b))
                     }.get(conversion)
                     if converter:
                         output = converter(value)
