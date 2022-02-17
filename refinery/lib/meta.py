@@ -302,6 +302,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         'size'    : SizeInt,
         'sha1'    : HexByteString,
         'sha256'  : HexByteString,
+        'sha512'  : HexByteString,
         'md5'     : HexByteString,
         'crc32'   : HexByteString,
     }
@@ -372,7 +373,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         defined:
 
         - `entropy` and `ic` are formatted as a percentage.
-        - `sha1`, `sha256`, and `md5` are formatted as hex strings.
+        - `sha1`, `sha256`, `sha512`, and `md5` are formatted as hex strings.
         - `size` is formatted as a human-readable size with unit.
         """
         return self.format(spec, codec, args, symb, False)
@@ -609,6 +610,10 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     @_derivation('sha256')
     def _derive_sha256(self):
         return HexByteString(hashlib.sha256(self.chunk).digest())
+
+    @_derivation('sha512')
+    def _derive_sha512(self):
+        return HexByteString(hashlib.sha512(self.chunk).digest())
 
     @_derivation('md5')
     def _derive_md5(self):
