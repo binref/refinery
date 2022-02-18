@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import datetime
 import string
 import itertools
 
@@ -53,9 +52,13 @@ class struct(Unit):
     default, the output format `{#}` is used, which represents either the last byte string field
     that was extracted, or the entire chunk of structured data if none of the fields were extracted.
 
-    Finally, reverse `refinery.lib.argformats.multibin` expressions can be used to post-process the
-    fields included in any output format. For example, `{F:b64:zl}` will be the base64-decoded and
-    inflate-decompressed contents of the data that was read as field `F`.
+    Reverse `refinery.lib.argformats.multibin` expressions can be used to post-process the fields
+    included in any output format. For example, `{F:b64:zl}` will be the base64-decoded and inflate-
+    decompressed contents of the data that was read as field `F`.
+
+    Finally, it is possible to specify a byte alignment by using the syntax `{field!T:a:b:c}` where
+    the letter `T` is either a single digit specifying the alignment, or a single letter variable
+    that holds the byte alignment value in the current metadata.
     """
 
     def __init__(
@@ -110,6 +113,9 @@ class struct(Unit):
                         args.extend(reader.read_struct(fixorder(prefix)))
                     if name is None:
                         continue
+                    if conversion:
+                        reader.byte_align(
+                            PythonExpression.evaluate(conversion, meta))
                     if spec:
                         spec = meta.format_str(spec, self.codec, args)
                     if spec != '':
@@ -130,14 +136,6 @@ class struct(Unit):
                             self.log_info(F'parsing field {name} produced {len(value)} items reading a tuple')
                         else:
                             value = value[0]
-                    if conversion == 'u':
-                        value = value.decode('utf-16le')
-                    if conversion == 's':
-                        value = value.decode('utf8')
-                    if conversion == 'a':
-                        value = value.decode('latin1')
-                    if conversion == 't':
-                        value = datetime.datetime.utcfromtimestamp(value).isoformat(' ', 'seconds')
 
                     args.append(value)
 
