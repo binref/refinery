@@ -1693,9 +1693,9 @@ class Unit(UnitBase, abstract=True):
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
                     source | unit | output
             except ArgumentTypeError as E:
-                unit.logger.info('delayed argument initialization failed:', str(E))
+                unit.logger.error(F'delayed argument initialization failed for argument "{E!s}"')
             except KeyboardInterrupt:
-                unit.logger.info('aborting due to keyboard interrupt')
+                unit.logger.warning('aborting due to keyboard interrupt')
             except OSError:
                 pass
 
