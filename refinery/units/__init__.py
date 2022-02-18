@@ -671,7 +671,7 @@ class Executable(ABCMeta):
                 known.kwargs.pop('dest', None)
                 if 'default' in known.kwargs:
                     known.kwargs.setdefault('nargs', OPTIONAL)
-            elif not any(a.startswith('--') for a in known.args):
+            elif not any(len(a) > 2 for a in known.args):
                 flagname = known.destination.replace('_', '-')
                 known.args.append(F'--{flagname}')
             action = known.kwargs.get('action', 'store')
