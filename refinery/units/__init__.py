@@ -134,6 +134,7 @@ from typing import (
     Tuple,
     Any,
     ByteString,
+    Generator,
     no_type_check,
     get_type_hints
 )
@@ -1179,7 +1180,7 @@ class Unit(UnitBase, abstract=True):
         if self._framed:
             return self._framed
 
-        def normalized_action(data: ByteString) -> Iterable[Chunk]:
+        def normalized_action(data: ByteString) -> Generator[Chunk, None, None]:
             try:
                 result = self.act(data)
                 if inspect.isgenerator(result):
