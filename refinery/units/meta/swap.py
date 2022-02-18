@@ -29,7 +29,9 @@ class swap(Unit):
         src = self.args.src
         dst = self.args.dst
         for chunk in chunks:
-            if dst is None:
+            if not chunk.visible:
+                pass
+            elif dst is None:
                 try:
                     value = chunk.meta[src]
                 except KeyError:
