@@ -62,8 +62,8 @@ class iff(ConditionalUnit):
         cmp = self.args.cmp
         lhs = lhs and PythonExpression.evaluate(lhs, meta)
         rhs = rhs and PythonExpression.evaluate(rhs, meta)
-        if not lhs:
+        if lhs is None:
             return bool(chunk)
-        if not rhs:
+        if rhs is None:
             return bool(lhs)
         return cmp(lhs, rhs)

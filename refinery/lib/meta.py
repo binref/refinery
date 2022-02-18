@@ -364,7 +364,8 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         spec: str,
         codec: str,
         args: Optional[Iterable] = None,
-        symb: Optional[dict] = None
+        symb: Optional[dict] = None,
+        escaped: bool = False
     ) -> str:
         """
         Formats the input expression like a normal Python format string expression. Certain refinery
@@ -376,7 +377,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         - `sha1`, `sha256`, `sha512`, and `md5` are formatted as hex strings.
         - `size` is formatted as a human-readable size with unit.
         """
-        return self.format(spec, codec, args, symb, False)
+        return self.format(spec, codec, args, symb, False, escaped=escaped)
 
     def format_bin(
         self,
@@ -413,6 +414,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         binary  : bool,
         fixup   : bool = True,
         used    : Optional[set] = None,
+        escaped : bool = False
     ) -> Union[str, ByteString]:
         """
         Formats a string using Python-like string fomatting syntax. The formatter for `binary`
@@ -460,8 +462,10 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             for prefix, field, modifier, conversion in formatter.parse(spec):
                 output = value = None
                 if prefix:
-                    prefix = prefix.encode(codec) if binary else (
-                        prefix.encode('latin-1', 'backslashreplace').decode('unicode-escape'))
+                    if binary:
+                        prefix = prefix.encode(codec)
+                    elif escaped:
+                        prefix = prefix.encode('latin-1', 'backslashreplace').decode('unicode-escape')
                     stream.write(prefix)
                 if field is None:
                     continue

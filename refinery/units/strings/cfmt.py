@@ -48,7 +48,7 @@ class cfmt(Unit):
             formatter = partial(meta.format_bin, codec=self.codec, args=args)
         else:
             def formatter(spec):
-                return meta.format_str(spec, self.codec, args).encode(self.codec)
+                return meta.format_str(spec, self.codec, args, escaped=True).encode(self.codec)
         for spec in self.args.formats:
             result = formatter(spec)
             if variable is not None:
