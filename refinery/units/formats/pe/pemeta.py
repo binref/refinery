@@ -21,6 +21,7 @@ from pefile import (
 from refinery.lib.dotnet.header import DotNetHeader
 from refinery.units import arg, Unit
 from refinery.units.sinks.ppjson import ppjson
+from refinery.units.formats.pe import get_pe_size
 
 
 class VIT(str, Enum):
@@ -385,6 +386,7 @@ class pemeta(Unit):
         else:
             address_width = 16
         header_information['ImageBase'] = F'0x{pe.OPTIONAL_HEADER.ImageBase:0{address_width}X}'
+        header_information['ImageSize'] = get_pe_size(pe)
         return header_information
 
     def parse_time_stamps(self, pe: PE, raw_time_stamps: bool) -> dict:
