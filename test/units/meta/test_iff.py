@@ -19,3 +19,11 @@ class TestIfExpr(TestUnitBase):
             B'James',
             B'Meredith'
         ]))
+
+    def test_comparison_01(self):
+        pl = L('emit A BB C D EEE') [ self.load('size', '-ge', '2') ]
+        self.assertEqual(pl(), B'BBEEE')
+
+    def test_comparison_02(self):
+        pl = L('emit A BB C D EEE') [ self.load('size', '-lt', '2') ]
+        self.assertEqual(pl(), B'ACD')
