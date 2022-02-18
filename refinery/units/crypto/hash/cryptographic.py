@@ -36,7 +36,7 @@ class md5(HashUnit):
 
 class sha1(HashUnit):
     """
-    Returns the SHA1 Hash of the input data.
+    Returns the SHA1 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.sha1(data)
@@ -44,7 +44,7 @@ class sha1(HashUnit):
 
 class sha224(HashUnit):
     """
-    Returns the SHA224 Hash of the input data.
+    Returns the SHA224 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.sha224(data)
@@ -52,7 +52,7 @@ class sha224(HashUnit):
 
 class sha256(HashUnit):
     """
-    Returns the SHA256 Hash of the input data.
+    Returns the SHA256 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.sha256(data)
@@ -60,7 +60,7 @@ class sha256(HashUnit):
 
 class sha384(HashUnit):
     """
-    Returns the SHA384 Hash of the input data.
+    Returns the SHA384 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.sha384(data)
@@ -68,7 +68,7 @@ class sha384(HashUnit):
 
 class sha512(HashUnit):
     """
-    Returns the SHA512 Hash of the input data.
+    Returns the SHA512 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.sha512(data)
@@ -76,7 +76,7 @@ class sha512(HashUnit):
 
 class blk224(HashUnit):
     """
-    Returns the BLK224 Hash of the input data.
+    Returns the BLK224 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.blake2b(data, digest_size=28)
@@ -84,7 +84,7 @@ class blk224(HashUnit):
 
 class blk256(HashUnit):
     """
-    Returns the BLK256 Hash of the input data.
+    Returns the BLK256 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.blake2b(data, digest_size=32)
@@ -92,7 +92,7 @@ class blk256(HashUnit):
 
 class blk384(HashUnit):
     """
-    Returns the BLK384 Hash of the input data.
+    Returns the BLK384 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.blake2b(data, digest_size=48)
@@ -100,7 +100,16 @@ class blk384(HashUnit):
 
 class blk512(HashUnit):
     """
-    Returns the BLK512 Hash of the input data.
+    Returns the BLK512 hash of the input data.
     """
     def _algorithm(self, data):
         return hashlib.blake2b(data, digest_size=64)
+
+
+class ripemd(HashUnit):
+    """
+    Returns the RIPEMD-160 hash of the input data.
+    """
+    def _algorithm(self, data):
+        from Crypto.Hash import RIPEMD160
+        return RIPEMD160.new(data)
