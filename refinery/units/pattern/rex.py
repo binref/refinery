@@ -66,6 +66,7 @@ class rex(RegexUnit, PatternExtractor):
                 item = meta.format(s, self.codec, args, symb, True, True, used)
                 for variable in used:
                     symb.pop(variable, None)
+                symb.update(offset=match.start())
                 for name, value in meta.items():
                     symb.setdefault(name, value)
                 return self.labelled(item, **symb)
