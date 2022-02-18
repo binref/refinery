@@ -43,6 +43,9 @@ class iemap(Unit):
         meta = metavars(data)
 
         label = meta.format_str(self.args.label, self.codec, [data])
+        if label and not label.endswith(' '):
+            label += ' '
+
         bgmap = [
             colorama.Back.BLACK,
             colorama.Back.WHITE,
