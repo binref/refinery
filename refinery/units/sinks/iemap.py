@@ -70,7 +70,7 @@ class iemap(Unit):
         _reset = colorama.Back.BLACK + colorama.Fore.WHITE + colorama.Style.RESET_ALL
 
         clrmap = fgmap if nobg else bgmap
-        footer = '{}] [{}]\n'.format(_reset, repr(meta['entropy']))
+        footer = '{}] [{:>7}]\n'.format(_reset, repr(meta['entropy']))
         header = '[{1}{0}] ['.format(_reset, ''.join(F'{bg}{k}' for k, bg in enumerate(clrmap, 1)))
         header_length = 4 + len(clrmap)
         footer_length = 4 + len(str(meta['entropy']))
