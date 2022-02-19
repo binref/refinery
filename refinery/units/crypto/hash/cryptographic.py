@@ -106,10 +106,19 @@ class blk512(HashUnit):
         return hashlib.blake2b(data, digest_size=64)
 
 
-class ripemd(HashUnit):
+class ripemd160(HashUnit):
     """
     Returns the RIPEMD-160 hash of the input data.
     """
     def _algorithm(self, data):
         from Crypto.Hash import RIPEMD160
         return RIPEMD160.new(data)
+
+
+class ripemd128(HashUnit):
+    """
+    Returns the RIPEMD-128 hash of the input data.
+    """
+    def _algorithm(self, data):
+        from refinery.lib.ripemd128 import ripemd128
+        return ripemd128(data)
