@@ -83,6 +83,7 @@ from __future__ import annotations
 import abc
 import contextlib
 import hashlib
+import os
 import string
 import zlib
 import codecs
@@ -94,6 +95,7 @@ from typing import Callable, Dict, Iterable, Optional, ByteString, Union
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
 from refinery.lib.mime import get_cached_file_magic_info
+from refinery.lib.patterns import formats
 
 
 class CustomStringRepresentation(abc.ABC):
@@ -110,7 +112,7 @@ class CustomStringRepresentation(abc.ABC):
     def __repr__(self): ...
 
 
-class ByteStringWrapper(CustomStringRepresentation):
+class ByteStringWrapper(bytearray, CustomStringRepresentation):
     """
     Represents a binary string and a preferred codec in case it is printable. Casting this wrapper class
     will decode the string using the given codec, using backslash escape sequences to handle decoding
@@ -118,73 +120,96 @@ class ByteStringWrapper(CustomStringRepresentation):
     proxies attribute access to the wrapped binary string.
     """
 
-    def __init__(self, string: Union[str, ByteString], codec: str = 'latin1', error: str = 'backslashreplace'):
+    _CODECS = {
+        codecs.lookup(c).name: p
+        for c, p in [('utf8', 's'), ('latin1', 'a'), ('utf-16le', 'u')]
+    }
+
+    def __init__(self, string: Union[str, ByteString], codec: Optional[str] = None, error: str = 'backslashreplace'):
         if isinstance(string, str):
-            self._binary = None
             self._string = string
             self._buffer = False
+            codec = codec or 'utf8'
+            string = string.encode(codec, error)
         elif isbuffer(string):
-            self._binary = string
             self._string = None
             self._buffer = True
         else:
             raise TypeError(F'The argument {string!r} is not a buffer or string.')
+
+        super().__init__(string)
+
+        if codec is not None:
+            nc = codecs.lookup(codec).name
+            if nc not in self._CODECS:
+                raise ValueError(F'The codec {nc} is not a supported codec.')
+            codec = nc
+
         self.codec = codec
         self.error = error
 
-    @property
-    def binary(self):
-        value = self._binary
-        if value is None:
-            encoded = codecs.encode(self._string, self.codec, self.error)
-            self._binary = value = memoryview(encoded)
-        return value
+    def __fspath__(self):
+        return self.string
+
+    def requires_prefix(self) -> bool:
+        try:
+            if os.path.isfile(self.string):
+                return True
+        except Exception:
+            pass
+        try:
+            from refinery.lib.argformats import DelayedBinaryArgument
+            dba = DelayedBinaryArgument(self.string)
+            return dba() != self
+        except Exception:
+            return True
 
     @property
     def string(self):
         value = self._string
         if value is None:
-            self._string = value = codecs.decode(self._binary, self.codec, self.error)
+            _codec = self.codec
+            codecs = self._CODECS if _codec is None else [_codec]
+            for codec in codecs:
+                try:
+                    value = self.decode(codec, self.error)
+                except UnicodeDecodeError:
+                    pass
+                else:
+                    self.codec = codec
+                    break
+            else:
+                raise AttributeError('Codec unknown.')
         return value
 
     def __eq__(self, other):
         if isinstance(other, str):
             return self.string == other
-        else:
-            return self.binary == other
+        return super().__eq__(other)
 
     def __hash__(self):
-        return hash(self.binary)
-
-    def __len__(self):
-        return len(self.binary)
-
-    def __iter__(self):
-        yield from self.binary
-
-    def __getattr__(self, key):
-        try:
-            return getattr(self.binary, key)
-        except AttributeError:
-            if hasattr(bytearray, key):
-                self._binary = upgrade = bytearray(self._binary)
-                return getattr(upgrade, key)
+        return hash(self.string)
 
     def __repr__(self):
-        if self._buffer:
-            return self._binary.hex().lower()
-        return self._string
-
-    def __bytes__(self):
-        value = self.binary
-        if isinstance(value, memoryview):
-            if len(value) == len(value.obj):
-                return value.obj
+        try:
+            return self._representation
+        except AttributeError:
+            pass
+        try:
+            representation = self.string
+        except AttributeError:
+            representation = None
+        else:
+            if not formats.printable.fullmatch(representation):
+                representation = None
             else:
-                value = bytes(value)
-        if isinstance(value, bytearray):
-            value = bytes(value)
-        return value
+                prefix = self._CODECS[self.codec]
+                if prefix != 's' or self.requires_prefix():
+                    representation = F'{prefix}:{representation}'
+        if representation is None:
+            representation = F'h:{self.hex()}'
+        self._representation = representation
+        return representation
 
     def __str__(self):
         return self.string
@@ -331,7 +356,9 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             try:
                 ctype = self.CUSTOM_TYPE_MAP[key]
             except KeyError:
-                if isinstance(value, str):
+                if isinstance(value, ByteStringWrapper):
+                    continue
+                with contextlib.suppress(TypeError):
                     self[key] = ByteStringWrapper(value)
             else:
                 if not isinstance(value, ctype) and issubclass(ctype, type(value)):
@@ -342,16 +369,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         self['index'] = index
 
     def serializable(self) -> dict:
-        result = dict(self)
-        for key, value in result.items():
-            try:
-                value: ByteStringWrapper
-                value = value.binary
-            except AttributeError:
-                continue
-            else:
-                result[key] = value
-        return result
+        return self
 
     def items(self):
         for key, value in super().items():
@@ -519,8 +537,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                 if binary:
                     modifier = modifier.strip()
                     if modifier:
-                        if isinstance(value, ByteStringWrapper):
-                            value = value.binary
                         expression = self.format(modifier, codec, args, symb, True, False, used)
                         output = multibin(expression.decode(codec), reverse=True, seed=value)
                     elif isbuffer(value):
@@ -563,6 +579,15 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         if isinstance(item, str):
             return item.encode('utf8')
         return item
+
+    def __getattr__(self, key):
+        if not super().__contains__(key):
+            deduction = self.DERIVATION_MAP.get(key)
+            if deduction is None:
+                raise AttributeError(key)
+            return deduction(self)
+        else:
+            return self[key]
 
     def __missing__(self, key):
         deduction = self.DERIVATION_MAP.get(key)

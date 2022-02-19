@@ -81,7 +81,7 @@ class TestPeek(TestUnitBase):
     ).encode('utf8')
 
     def test_hex_peek(self):
-        peek = self.load(width=8, lines=15, meta=True)
+        peek = self.load(width=8, lines=15)
         with errbuf() as stderr:
             peek(bytes.fromhex(
                 '4D 5A 90 00 03 00 00 00 04 00 00 00 FF FF 00 00'  # MZ..............

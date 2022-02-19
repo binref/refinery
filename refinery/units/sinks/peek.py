@@ -1,33 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import ByteString, Generator, Optional
+from typing import Generator, Optional
 
 import sys
-import os
 import textwrap
 import codecs
 import string
 
 from refinery.units.sinks import arg, HexViewer
-from refinery.lib.meta import metavars, CustomStringRepresentation, SizeInt
+from refinery.lib.meta import ByteStringWrapper, metavars, CustomStringRepresentation, SizeInt
 from refinery.lib.types import INF
 from refinery.lib.tools import isbuffer, lookahead
-from refinery.lib.patterns import formats
-from refinery.lib.argformats import DelayedBinaryArgument
-
-
-def requires_prefix(value: ByteString, decoded: str) -> bool:
-    try:
-        path = value.decode('utf8')
-        if os.path.isfile(path):
-            return True
-    except Exception:
-        pass
-    try:
-        dba = DelayedBinaryArgument(decoded)
-        return dba() != value
-    except Exception:
-        return True
 
 
 class peek(HexViewer):
@@ -46,7 +29,7 @@ class peek(HexViewer):
         decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         escape : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
         index  : arg('-i', help='Display the index of each chunk within the current frame.') = False,
-        meta   : arg('-m', group='META', help='Accumulate metadata that requires a full scan.') = False,
+        meta   : arg('-m', group='META', help='Only display attached metadata, do not add the peek value.') = False,
         bare   : arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
         stdout : arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
         narrow=False, blocks=1, dense=False, expand=False, width=0
@@ -90,7 +73,7 @@ class peek(HexViewer):
         if not meta:
             return
         width = max(len(name) for name in meta)
-        yield sep
+        separators = iter((sep,))
         for name in sorted(meta):
             value = meta[name]
             if value is None:
@@ -98,27 +81,7 @@ class peek(HexViewer):
             if isinstance(value, CustomStringRepresentation):
                 value = repr(value).strip()
             elif isbuffer(value):
-                value: bytes
-                for prefix, codec in (
-                    ('s', 'utf8'),
-                    ('a', 'latin1'),
-                    ('u', 'utf-16le'),
-                ):
-                    try:
-                        decoded: str = value.decode(codec)
-                    except UnicodeDecodeError:
-                        decoded = None
-                    if decoded is not None:
-                        if not formats.printable.fullmatch(decoded):
-                            decoded = None
-                    if decoded is not None:
-                        if prefix == 's' and not requires_prefix(value, decoded):
-                            value = decoded
-                        else:
-                            value = F'{prefix}:{decoded}'
-                        break
-                else:
-                    value = F'h:{value.hex()}'
+                value = repr(ByteStringWrapper(value))
             elif isinstance(value, int):
                 value = F'0x{value:X}'
             elif isinstance(value, float):
@@ -126,6 +89,7 @@ class peek(HexViewer):
             metavar = F'{name:>{width}} = {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
+            yield from separators
             yield metavar
 
     def _trydecode(self, data, codec: Optional[str], width: int, linecount: int) -> str:
@@ -231,16 +195,14 @@ class peek(HexViewer):
             final = False
         elif not self.args.bare:
             peek = None
-            if self.args.meta or all(k in meta.DERIVATION_MAP for k in meta):
-                peek = repr(meta._derive_size()).strip()
+            if not self.args.meta:
+                peek = repr(meta.size).strip()
                 if len(data) <= 5_000_000:
-                    peek = F'{peek}; {meta._derive_entropy()!r} entropy'
-                meta['peek'] = F'{peek}; {meta._derive_magic()!s}'
-            for line in self._peekmeta(metrics.hexdump_width, separator(), **meta):
+                    peek = F'{peek}; {meta.entropy!r} entropy'
+                peek = F'{peek}; {meta.magic!s}'
+            for line in self._peekmeta(metrics.hexdump_width, separator(), peek=peek, **meta):
                 empty = False
                 yield line
-            if peek is not None:
-                meta.pop('peek', None)
 
         if lines:
             empty = False

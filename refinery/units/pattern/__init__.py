@@ -158,6 +158,5 @@ class RegexUnit(Unit, abstract=True):
     def regex(self):
         flags = self.args.flags
         regex = self.args.regex
-        if isinstance(regex, str):
-            regex = regex.encode(self.codec)
+        regex = regex.encode(self.codec) if isinstance(regex, str) else bytes(regex)
         return re.compile(regex, flags=flags)
