@@ -67,9 +67,11 @@ class iemap(Unit):
             colorama.Fore.LIGHTMAGENTA_EX,
         ]
 
+        _reset = colorama.Back.BLACK + colorama.Fore.WHITE + colorama.Style.RESET_ALL
+
         clrmap = fgmap if nobg else bgmap
-        footer = '{}] [{}]\n'.format(colorama.Style.RESET_ALL, repr(meta['entropy']))
-        header = '[{1}{0}] ['.format(colorama.Style.RESET_ALL, ''.join(F'{bg}{k}' for k, bg in enumerate(clrmap, 1)))
+        footer = '{}] [{}]\n'.format(_reset, repr(meta['entropy']))
+        header = '[{1}{0}] ['.format(_reset, ''.join(F'{bg}{k}' for k, bg in enumerate(clrmap, 1)))
         header_length = 4 + len(clrmap)
         footer_length = 4 + len(str(meta['entropy']))
 
@@ -130,9 +132,10 @@ class iemap(Unit):
                 stderr.flush()
         except BaseException:
             eraser = ' ' * width
-            stderr.write(F'\r{colorama.Style.RESET_ALL}{eraser}\r')
+            stderr.write(F'\r{_reset}{eraser}\r')
             raise
         else:
             stderr.write(footer)
+            stderr.flush()
         if not self.isatty:
             yield data
