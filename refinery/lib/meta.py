@@ -125,12 +125,12 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         for c, p in [('utf8', 's'), ('latin1', 'a'), ('utf-16le', 'u')]
     }
 
-    def __init__(self, string: Union[str, ByteString], codec: Optional[str] = None, error: str = 'backslashreplace'):
+    def __init__(self, string: Union[str, ByteString], codec: Optional[str] = None):
         if isinstance(string, str):
             self._string = string
             self._buffer = False
             codec = codec or 'utf8'
-            string = string.encode(codec, error)
+            string = string.encode(codec)
         elif isbuffer(string):
             self._string = None
             self._buffer = True
@@ -146,7 +146,6 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             codec = nc
 
         self.codec = codec
-        self.error = error
 
     def __fspath__(self):
         return self.string
@@ -172,7 +171,7 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             codecs = self._CODECS if _codec is None else [_codec]
             for codec in codecs:
                 try:
-                    value = self.decode(codec, self.error)
+                    value = self.decode(codec)
                 except UnicodeDecodeError:
                     pass
                 else:
