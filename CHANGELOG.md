@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.23 -- bugfix release
+
 ## Version 0.4.22
 - Adds the `ripemd160` and `ripemd128` units.
 - Adds the `xtw` unit for extracting cryptocurrency wallet addresses.
