@@ -1,5 +1,14 @@
 # Binary Refinery Changelog
 
+## Version 0.4.22
+- Adds the `ripemd160` and `ripemd128` units.
+- Adds the `xtw` unit for extracting cryptocurrency wallet addresses.
+- Adds the `iemap` unit to display a colored entropy heatmap.
+- Introduces new syntax to the `struct` unit for handling byte alignment.
+- The `rsakey` unit supports a new option to output the public key portion of a private key.
+- The `pemeta` unit now computes the size of the PE file based on header information.
+- Several switches for comparison operators were added to the `iff` unit.
+
 ## Version 0.4.21
 - Thanks to [@baderj][], the unit `xlmdeobf` was added which wraps the extremely useful [XLMMacroDeobfuscator][] tool for extracting and deobfuscating Excel V4 macros.
 - Adds the `carve-7z` unit for carving 7zip archives from blobs.
