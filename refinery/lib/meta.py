@@ -465,7 +465,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                     if binary:
                         prefix = prefix.encode(codec)
                     elif escaped:
-                        prefix = prefix.encode('latin-1', 'backslashreplace').decode('unicode-escape')
+                        prefix = prefix.encode('raw-unicode-escape').decode('unicode-escape')
                     stream.write(prefix)
                 if field is None:
                     continue
