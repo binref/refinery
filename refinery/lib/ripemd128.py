@@ -64,9 +64,7 @@ def ripemd128(message):
     h2 = 0x98BADCFE
     h3 = 0x10325476
 
-    X = _ripemd128_blocks(message)
-
-    for block in X:
+    for block in _ripemd128_blocks(message):
         A_, B_, C_, D_ = h0, h1, h2, h3
         Ap, Bp, Cp, Dp = h0, h1, h2, h3
         for j in range(64):
