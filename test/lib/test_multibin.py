@@ -84,3 +84,7 @@ class TestMultiBin(TestBase):
         out1 = bytes(sub1(data))
         out2 = bytes(sub2(data))
         self.assertEqual(out1, out2)
+
+    def test_readme_01(self):
+        m = multibin('repl[q:1%2c2%2c3,2]:1,2,3,4,5')
+        self.assertEqual(m, B'2,4,5')
