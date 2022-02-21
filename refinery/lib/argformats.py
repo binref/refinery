@@ -39,6 +39,32 @@ The modifiers `s`, `u`, `h`, `copy` (or `c`), and `cut` (or `x`) along with usin
 should cover most use cases. To learn about other existing modifiers, refer to the rest of this
 documentation.
 
+## Arguments For Handlers
+
+Neither `refinery.lib.argformats.DelayedArgument.s`, `refinery.lib.argformats.DelayedArgument.u`,
+not `refinery.lib.argformats.DelayedArgument.h` require any additional arguments except for the
+input string that they are applied to. However, if a refinery unit is used as a handler, there is
+an option to add arguments to the handler that will be passed to the unit as command-line
+arguments. For example, the following will output the hexadecimal text representation of the MD5
+hash of the string "password":
+
+    emit md5[-t]:password
+
+Inside the square brackets that follow the handler name, arguments are separated by commas. This
+also means that arguments passed to handlers in this way cannot contain any commas. There is no
+escape sequence, but it is possible to use nested multibin expressions to work around this. For
+example, the multibin expression `q:1%2c2%2c3` corresponds to the string `1,2,3` and the output
+of the following command will be `2,4,5`:
+
+    emit repl[q:1%2c2%2c3,2]:1,2,3,4,5
+
+The first argument to the `refinery.repl` unit is the multibin argument `q:1%2c2%2c3`, which uses
+the `refinery.lib.argformats.DelayedArgument.q` handler to return `1,2,3`. The second argument to
+this unit-based handler is `2`, separated from the previous one by a comma. Hence, `refinery.repl`
+will replace all occurrences of `1,2,3` in the input with just `2`.
+
+Some of the more complex non-unit handlers also have optional arguments.
+
 ## Technical Details
 
 This module implements all argument parser types for the binary refinery. Notable classes for the
