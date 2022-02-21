@@ -832,16 +832,20 @@ class DelayedArgument(LazyEvaluation):
         to it. Slices are given in Python syntax, so `take[::2]` will extract every second item from
         the incoming data. The default sequence is `1:`, i.e. skipping the first element.
         """
-        bounds = bounds and sliceobj(bounds, {}) or slice(1, None)
-        try:
-            return it[bounds]
-        except TypeError:
-            subsequence = itertools.islice(it, bounds.start, bounds.stop, bounds.step)
-            if bounds.stop is not None:
-                subsequence = list(subsequence)
-                if all(t in range(0x100) for t in subsequence):
-                    subsequence = bytearray(subsequence)
-            return subsequence
+        def sliced(bounds):
+            try:
+                return it[bounds]
+            except TypeError:
+                subsequence = itertools.islice(it, bounds.start, bounds.stop, bounds.step)
+                if bounds.stop is not None:
+                    subsequence = list(subsequence)
+                    if all(t in range(0x100) for t in subsequence):
+                        subsequence = bytearray(subsequence)
+                return subsequence
+        bounds = bounds and sliceobj(bounds) or slice(1, None)
+        if isinstance(bounds, slice):
+            return sliced(bounds)
+        return lambda d: sliced(bounds(d))
 
     @handler.register('cycle')
     def cycle(self, it: Iterable[int]) -> Iterable[int]:
