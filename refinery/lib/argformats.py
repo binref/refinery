@@ -591,6 +591,14 @@ class DelayedArgument(LazyEvaluation):
         import base64
         return base64.b16decode(string, casefold=True)
 
+    @handler.register('q', 'Q', final=True)
+    def q(self, string: str) -> bytes:
+        """
+        The final modifier `q:string` (or `Q:string`) returns the url-quote decoding of `string`.
+        """
+        import urllib.parse
+        return urllib.parse.unquote_to_bytes(string)
+
     @handler.register('f', 'F', final=True)
     def f(self, path: str, region: str = None) -> bytes:
         """
