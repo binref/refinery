@@ -213,7 +213,7 @@ class SliceAgain(LazyEvaluation):
         return sliceobj(expression, metavars(data))
 
 
-def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False) -> slice:
+def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False) -> Union[slice, SliceAgain]:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
