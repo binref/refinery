@@ -212,7 +212,7 @@ _pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]*%'
 
 _pattern_win_path = R'(?:{s})(?P<pathsep>[\\\/])(?:{p}(?P=pathsep))*{p}\b'.format(
     s='|'.join([
-        _pattern_win_env_variable,     # environment variable
+        _pattern_win_env_variable,    # environment variable
         R'[A-Za-z]:',                 # drive letter with colon
         R'\\\\[a-zA-Z0-9_.$]{1,50}',  # UNC path
         R'HK[A-Z_]{1,30}',            # registry root key
@@ -355,7 +355,7 @@ class indicators(PatternEnum):
     sha256 = alphabet('[0-9A-Fa-f]', at_least=64, at_most=64)
     "Hexadecimal strings of length 64"
     hostname = pattern(_pattern_serrated_hostname)
-    "Any domain name or IPv4 address, optionally followd by a colon and a port number."
+    "Any domain name or IPv4 address, optionally followed by a colon and a port number."
     socket = pattern(_pattern_serrated_socket)
     "Any domain name or IPv4 address followed by a colon and a (port) number"
     subdomain = pattern(_pattern_subdomain)
