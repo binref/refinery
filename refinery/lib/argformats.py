@@ -42,7 +42,7 @@ documentation.
 ## Arguments For Handlers
 
 Neither `refinery.lib.argformats.DelayedArgument.s`, `refinery.lib.argformats.DelayedArgument.u`,
-not `refinery.lib.argformats.DelayedArgument.h` require any additional arguments except for the
+nor `refinery.lib.argformats.DelayedArgument.h` require any additional arguments except for the
 input string that they are applied to. However, if a refinery unit is used as a handler, there is
 an option to add arguments to the handler that will be passed to the unit as command-line
 arguments. For example, the following will output the hexadecimal text representation of the MD5
