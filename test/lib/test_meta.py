@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery.lib.meta import metavars
 from refinery.lib.frame import Chunk
+from refinery.lib.loader import load_pipeline
 
 from .. import TestBase
 
@@ -25,3 +26,7 @@ class TestMeta(TestBase):
         self.assertEqual(meta.format_bin('{refinery!a}', 'utf8'), 'refinery'.encode('latin1'))
         self.assertEqual(meta.format_bin('{refinery!s}', 'utf8'), 'refinery'.encode('utf8'))
         self.assertEqual(meta.format_bin('{refinery!u}', 'utf8'), 'refinery'.encode('utf-16le'))
+
+    def test_hex_byte_strings(self):
+        pl = load_pipeline('emit Hello [| cm -2 | cfmt {sha256!r} ]')
+        self.assertEqual(pl(), b'185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969')

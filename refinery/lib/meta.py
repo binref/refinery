@@ -152,14 +152,8 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
 
     def requires_prefix(self) -> bool:
         try:
-            if os.path.isfile(self.string):
-                return True
-        except Exception:
-            pass
-        try:
-            from refinery.lib.argformats import DelayedBinaryArgument
-            dba = DelayedBinaryArgument(self.string)
-            return dba() != self
+            from refinery.lib.argformats import DelayedArgument
+            return bool(DelayedArgument(self.string).modifiers)
         except Exception:
             return True
 
@@ -463,6 +457,8 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             ):
                 for key, value in it:
                     with contextlib.suppress(TypeError):
+                        if isinstance(value, CustomStringRepresentation):
+                            continue
                         store[key] = ByteStringWrapper(value, codec)
 
         formatter = string.Formatter()
