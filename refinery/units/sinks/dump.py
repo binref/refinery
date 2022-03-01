@@ -132,7 +132,7 @@ class dump(Unit):
             if self._paste:
                 import codecs
                 self._pyperclip.copy(codecs.decode(
-                    data, 'utf-8', errors='backslashreplace'))
+                    data, self.codec, errors='backslashreplace'))
             elif not self.stream:
                 # This should happen only when the unit is called from Python code
                 # rather than via the command line.
