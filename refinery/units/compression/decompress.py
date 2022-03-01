@@ -4,13 +4,14 @@ from refinery.units import arg, Unit, RefineryPartialResult
 from refinery.lib.types import INF
 
 from .ap import aplib
+from .blz import blz
 from .bz2 import bz2
 from .lz import lzma
-from .lznt1 import lznt1
-from .zl import zl
 from .lz4 import lz4
-from .blz import blz
+from .lznt1 import lznt1
 from .lzo import lzo
+from .szdd import szdd
+from .zl import zl
 
 
 class decompress(Unit):
@@ -41,7 +42,7 @@ class decompress(Unit):
             raise ValueError('The compression factor must be nonnegative.')
         super().__init__(tolerance=tolerance, prepend=prepend, min_ratio=min_ratio)
         self.engines = [
-            engine() for engine in [zl, lzma, aplib, bz2, blz, lz4, lzo, lznt1]
+            engine() for engine in [szdd, zl, lzma, aplib, bz2, blz, lz4, lzo, lznt1]
         ]
 
     def process(self, data):

@@ -11,6 +11,8 @@ class szdd(Unit):
     def process(self, data):
         with StructReader(data) as archive:
             if archive.read(8) != b'SZDD\x88\xF0\x27\x33':
+                if not self.args.lenient:
+                    raise ValueError('signature missing')
                 self.log_fail('the header signature is invalid, this is likely not an SZDD archive')
             if archive.read_byte() != 0x41:
                 raise ValueError('Unsupported compression mode')
