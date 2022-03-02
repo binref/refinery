@@ -1038,6 +1038,11 @@ class DelayedNumSeqArgument(DelayedArgument):
         to the parent `refinery.lib.argformats.DelayedArgument.default_handler`.
         """
         try:
+            with open(expression, 'rb') as stream:
+                return stream.read()
+        except Exception:
+            pass
+        try:
             return LazyPythonExpression(expression)
         except Exception:
             if isinstance(expression, str):
