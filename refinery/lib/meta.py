@@ -83,7 +83,6 @@ from __future__ import annotations
 import abc
 import contextlib
 import hashlib
-import os
 import string
 import zlib
 import codecs
