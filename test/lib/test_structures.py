@@ -107,7 +107,7 @@ class TestStructures(TestBase):
         self.assertEqual(sr.read_integer(3), 0b100)
         self.assertEqual(sr.read_integer(3), 0b000)
         self.assertEqual(sr.read_integer(3), 0b111)
-        self.assertEqual(sr.u64(), 0b101010101010010010111100000101001010101100000001110010111110100)
+        self.assertEqual(sr.u64(), 0b0101010101010010010111100000101001010101100000001110010111110100)
         self.assertFalse(any(sr.read_flags(8, reverse=True)))
         self.assertEqual(sr.read_bit(), 1)
         self.assertRaises(ValueError, lambda: sr.read_struct(''))
