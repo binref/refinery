@@ -267,27 +267,28 @@ class xtp(PatternExtractor):
                 ix += 1
             return None if at - ix < 3 else value[ix:]
         elif name == indicators.path.name:
-            try:
-                path = value.decode(self.codec)
-            except Exception:
-                return None
-            try:
-                path = Path(path)
-            except Exception as E:
-                self.log_debug(F'error parsing path "{path}": {E!s}')
-                return None
-            for k, part in enumerate(path.parts):
-                if not k:
-                    if part.endswith(':') and len(part) == 2:
-                        continue
-                    if part[0] == part[~0] == '%':
-                        continue
-                if LetterWeights.Path(part) < 0.6:
-                    return None
             if len(value) < 8:
                 return None
             if len(value) > 16 and len(re.findall(RB'\\x\d\d', value)) > len(value) // 10:
                 return None
+            if self.args.filter >= 2:
+                try:
+                    path = value.decode(self.codec)
+                except Exception:
+                    return None
+                try:
+                    path = Path(path)
+                except Exception as E:
+                    self.log_debug(F'error parsing path "{path}": {E!s}')
+                    return None
+                for k, part in enumerate(path.parts):
+                    if not k:
+                        if part.endswith(':') and len(part) == 2:
+                            continue
+                        if part[0] == part[~0] == '%':
+                            continue
+                    if LetterWeights.Path(part) < 0.6:
+                        return None
         return value
 
     def process(self, data):
