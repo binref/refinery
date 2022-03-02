@@ -63,11 +63,14 @@ class lzjb(Unit):
                 if not copy & mask:
                     dst.append(src.read_byte())
                     continue
+                elif not dst:
+                    raise ValueError('copy requested against empty buffer')
                 with src.be:
                     match_len = src.read_integer(6) + _MATCH_MIN
-                    match_pos = len(dst) - src.read_integer(10)
-                if match_pos < 0:
-                    raise RuntimeError(F'negative match offset at position {src.tell()}')
+                    match_pos = src.read_integer(10)
+                if not match_pos or match_pos > len(dst):
+                    raise RuntimeError(F'invalid match offset at position {src.tell()}')
+                match_pos = len(dst) - match_pos
                 while match_len > 0:
                     match = dst[match_pos:match_pos + match_len]
                     dst.extend(match)

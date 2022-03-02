@@ -8,6 +8,7 @@ from .blz import blz
 from .bz2 import bz2
 from .lz import lzma
 from .lz4 import lz4
+from .lzjb import lzjb
 from .lznt1 import lznt1
 from .lzo import lzo
 from .szdd import szdd
@@ -42,7 +43,7 @@ class decompress(Unit):
             raise ValueError('The compression factor must be nonnegative.')
         super().__init__(tolerance=tolerance, prepend=prepend, min_ratio=min_ratio)
         self.engines = [
-            engine() for engine in [szdd, zl, lzma, aplib, bz2, blz, lz4, lzo, lznt1]
+            engine() for engine in [szdd, zl, lzma, aplib, bz2, blz, lzjb, lz4, lzo, lznt1]
         ]
 
     def process(self, data):
