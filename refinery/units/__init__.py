@@ -1110,13 +1110,6 @@ class Unit(UnitBase, abstract=True):
             return False
 
     @property
-    def is_lenient(self) -> bool:
-        try:
-            return self.args.lenient
-        except AttributeError:
-            return False
-
-    @property
     def log_level(self) -> LogLevel:
         """
         Returns the current log level as an element of `refinery.units.LogLevel`.
@@ -1143,8 +1136,13 @@ class Unit(UnitBase, abstract=True):
         return self
 
     def _exception_handler(self, exception: BaseException, data: ByteString):
+        if self.args.lenient > 1:
+            try:
+                return exception.partial
+            except AttributeError:
+                return data
         if self.log_level >= LogLevel.DETACHED:
-            if isinstance(exception, RefineryPartialResult) and self.is_lenient:
+            if isinstance(exception, RefineryPartialResult) and self.args.lenient > 0:
                 return None
             raise exception
         elif isinstance(exception, RefineryCriticalException):
@@ -1157,7 +1155,7 @@ class Unit(UnitBase, abstract=True):
             raise exception
         elif isinstance(exception, RefineryPartialResult):
             self.log_warn(F'error, partial result returned: {exception}')
-            if not self.is_lenient:
+            if self.args.lenient < 1:
                 return None
             return exception.partial
         elif isinstance(exception, RefineryImportMissing):
@@ -1519,7 +1517,7 @@ class Unit(UnitBase, abstract=True):
 
         base.set_defaults(reverse=False, squeeze=False)
         base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
-        base.add_argument('-L', '--lenient', action='store_true', help='Allow partial results as output.')
+        base.add_argument('-L', '--lenient', action='count', default=0, help='Allow partial results as output.')
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
         base.add_argument('-v', '--verbose', action='count', default=0,
