@@ -108,7 +108,7 @@ class asm(Unit):
                             rmap[alias] = register
                 return rmap[reg_name]
 
-        with NoLogging:
+        with NoLogging():
             pr = self._angr.project.Project(
                 MemoryFile(data),
                 default_analysis_mode='static',
@@ -123,7 +123,7 @@ class asm(Unit):
 
         self.log_debug('computing control flow graph')
 
-        with NoLogging:
+        with NoLogging():
             cfg: CFGFast = pr.analyses.CFGFast()
             cfg.normalize()
 

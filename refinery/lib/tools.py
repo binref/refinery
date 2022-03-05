@@ -10,10 +10,12 @@ import itertools
 import logging
 import os
 import sys
+import io
 import warnings
 
 from typing import ByteString, Iterable, Optional, TypeVar
 from math import log
+from enum import IntFlag
 
 
 _T = TypeVar('_T')
@@ -274,18 +276,41 @@ def cached_property(p):
     return property(functools.lru_cache(maxsize=1)(p))
 
 
-@_singleton
 class NoLogging:
+    class Mode(IntFlag):
+        STD_OUT = 0b0001
+        STD_ERR = 0b0010
+        WARNING = 0b0100
+        LOGGING = 0b1000
+        ALL     = 0b1111 # noqa
+
+    def __init__(self, mode: Mode = Mode.WARNING | Mode.LOGGING):
+        self.mode = mode
+
     def __enter__(self):
-        self._warning_filters = list(warnings.filters)
-        logging.disable(logging.CRITICAL)
-        warnings.filterwarnings('ignore')
+        if self.mode & NoLogging.Mode.LOGGING:
+            logging.disable(logging.CRITICAL)
+        if self.mode & NoLogging.Mode.WARNING:
+            self._warning_filters = list(warnings.filters)
+            warnings.filterwarnings('ignore')
+        if self.mode & NoLogging.Mode.STD_ERR:
+            self._stderr = sys.stderr
+            sys.stderr = io.TextIOWrapper(open(os.devnull, 'wb'), encoding='latin1')
+        if self.mode & NoLogging.Mode.STD_OUT:
+            self._stdout = sys.stdout
+            sys.stdout = io.TextIOWrapper(open(os.devnull, 'wb'), encoding='latin1')
         return self
 
     def __exit__(self, *_):
-        logging.disable(logging.NOTSET)
-        warnings.resetwarnings()
-        warnings.filters[:] = self._warning_filters
+        if self.mode & NoLogging.Mode.LOGGING:
+            logging.disable(logging.NOTSET)
+        if self.mode & NoLogging.Mode.WARNING:
+            warnings.resetwarnings()
+            warnings.filters[:] = self._warning_filters
+        if self.mode & NoLogging.Mode.STD_ERR:
+            sys.stderr = self._stderr
+        if self.mode & NoLogging.Mode.STD_OUT:
+            sys.stdout = self._stdout
 
 
 def one(iterable: Iterable[_T]) -> _T:

@@ -39,7 +39,7 @@ class xtmail(PathExtractorUnit):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
         def make_message(name, msg):
-            with NoLogging:
+            with NoLogging():
                 try:
                     htm = msg.htmlBody
                 except Exception:
@@ -55,7 +55,7 @@ class xtmail(PathExtractorUnit):
 
         msgcount = 0
 
-        with NoLogging:
+        with NoLogging():
             msg = self._extract_msg.Message(bytes(data))
 
         yield from self._get_headparts(msg.header.items())
