@@ -20,3 +20,7 @@ class xtace(ArchiveUnit):
                 lambda a=ace, m=member: a.read(m, pwd=self.args.pwd),
                 **comment
             )
+
+    def handles(self, data: bytearray) -> bool:
+        view = memoryview(data)
+        return b'**ACE**' in view[:0x1000]

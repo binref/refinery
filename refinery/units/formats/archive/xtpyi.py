@@ -503,3 +503,6 @@ class xtpyi(ArchiveUnit):
                 if name.startswith('pyiboot'):
                     continue
             yield self._pack(name, None, file.data, type=file.type.name)
+
+    def handles(self, data: ByteString) -> Optional[bool]:
+        return PyInstallerArchiveEpilogue.MagicSignature in data

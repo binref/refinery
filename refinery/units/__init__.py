@@ -1018,6 +1018,14 @@ class UnitBase(metaclass=Executable, abstract=True):
         """
 
     @abc.abstractmethod
+    def handles(self, data: ByteString) -> Optional[bool]:
+        """
+        This tri-state routine returns `True` if the unit is certain that it can process the
+        given input data, and `False` if it is convinced of the opposite. `None` is returned
+        when no clear verdict is available.
+        """
+
+    @abc.abstractmethod
     def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
         """
         Receives an iterable of `refinery.lib.frame.Chunk`s and yields only those that
@@ -1210,6 +1218,9 @@ class Unit(UnitBase, abstract=True):
 
     def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
         return inputs
+
+    def handles(self, data: ByteString) -> Optional[bool]:
+        return None
 
     def reset(self):
         try:

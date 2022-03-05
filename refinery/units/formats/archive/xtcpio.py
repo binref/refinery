@@ -44,3 +44,12 @@ class xtcpio(ArchiveUnit):
             if entry.name == 'TRAILER!!!':
                 break
             yield self._pack(entry.name, entry.mtime, entry.data)
+
+    def handles(self, data: bytearray) -> bool:
+        for signature in (B'\x71\xC7', B'\xC7\x71', B'0707'):
+            if data.startswith(signature):
+                if B'TRAILER!!' in data:
+                    return True
+                else:
+                    return None
+        return False

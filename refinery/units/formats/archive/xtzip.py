@@ -75,3 +75,6 @@ class xtzip(ArchiveUnit):
                 filename = filename_bytes.decode(guessed_encoding, 'replace')
 
             yield self._pack(filename, date, xt)
+
+    def handles(self, data: bytearray) -> Optional[bool]:
+        return data.startswith('PK') and data.find(B'PK\x05\x06') > 0

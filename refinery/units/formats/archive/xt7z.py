@@ -66,3 +66,6 @@ class xt7z(ArchiveUnit):
             if info.is_directory:
                 continue
             yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32)
+
+    def handles(self, data: bytearray) -> bool:
+        return data.startswith(B'7z\xBC\xAF\x27\x1C')

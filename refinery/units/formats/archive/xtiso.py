@@ -95,3 +95,10 @@ class xtiso(ArchiveUnit):
                         return buffer.getvalue()
 
                     yield self._pack(path, date, extract)
+
+    def handles(self, data: bytearray) -> bool:
+        return any(data[k] == B'CD001' for k in (
+            slice(0x8001, 0x8006),
+            slice(0x8801, 0x8806),
+            slice(0x9001, 0x9006),
+        ))
