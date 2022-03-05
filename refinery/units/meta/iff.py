@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import operator
+from typing import Any, Callable, Optional
 
 from refinery.lib.meta import metavars
-from refinery.lib.argformats import PythonExpression
+from refinery.lib.argformats import PythonExpression, ParserVariableMissing
 from refinery.units.meta import arg, ConditionalUnit
 
 
 class iff(ConditionalUnit):
     """
     Filter incoming chunks depending on whether a given Python expression evaluates to true. If no
-    expression is given, the unit filters out empty chunks.
+    expression is given, the unit filters out empty chunks. If the expression cannot be parsed, the
+    unit assumes that it is the name of a meta variable and filters out chunks where that variable
+    is defined and evaluates to true.
     """
     def __init__(
         self,
@@ -57,10 +60,13 @@ class iff(ConditionalUnit):
 
     def match(self, chunk):
         meta = metavars(chunk)
-        lhs = self.args.lhs
-        rhs = self.args.rhs
-        cmp = self.args.cmp
-        lhs = lhs and PythonExpression.evaluate(lhs, meta)
+        lhs: Optional[str] = self.args.lhs
+        rhs: Optional[str] = self.args.rhs
+        cmp: Optional[Callable[[Any, Any], bool]] = self.args.cmp
+        try:
+            lhs = lhs and PythonExpression.evaluate(lhs, meta)
+        except ParserVariableMissing:
+            return lhs in meta
         rhs = rhs and PythonExpression.evaluate(rhs, meta)
         if lhs is None:
             return bool(chunk)
