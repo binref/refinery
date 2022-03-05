@@ -33,3 +33,9 @@ class TestISOFileExtractor(TestUnitBase):
         self.assertEqual('eaf3aa81fe9fa245e4b9f9d0978e70b1a3822ef8cf4f4d7f2029aeadd3970b47', chunks['isolinux.cfg'])
         self.assertEqual('2ecb32325499df028e8cf980918a91964c0c15c4b0e65cc01c5f2a2899a77363', chunks['isolinux.bin'])
         self.assertEqual('637e2c44c586bb18b4d72791eda901fb5ff8c1e80a7977719df2f98768b1f75d', chunks['boot.catalog'])
+
+    def test_stripping_revision_numbers(self):
+        data = self.download_sample('52e488784d46b3b370836597b1565cf18a5fa4a520d0a71297205db845fc9d26')
+        unit = self.load()
+        chunks = {chunk['path']: repr(chunk['sha256']) for chunk in data | unit}
+        self.assertEqual('187c69325af91afb8df501ba842fe993496f1e4e7914c437f26cdb365f1105dd', chunks['TL2064100007xls.exe'])

@@ -34,6 +34,11 @@ class xtiso(ArchiveUnit):
         pycdlib.dates.VolumeDescriptorDate.parse = fixed_parse
         return pycdlib
 
+    @staticmethod
+    def _strip_revision(name: str):
+        base, split, revision = name.partition(';')
+        return base if split and revision.isdigit() else name
+
     def unpack(self, data):
         with MemoryFile(data, read_as_bytes=True) as stream:
             iso = self._pycdlib.PyCdlib()
@@ -48,18 +53,22 @@ class xtiso(ArchiveUnit):
                 }
                 facade = mkfacade[fs]()
             elif iso.has_udf():
+                self.log_info('using format: udf')
                 facade = iso.get_udf_facade()
             elif iso.has_joliet():
+                self.log_info('using format: joliet')
                 facade = iso.get_joliet_facade()
             elif iso.has_rock_ridge():
+                self.log_info('using format: rr')
                 facade = iso.get_rock_ridge_facade()
             else:
+                self.log_info('using format: iso')
                 facade = iso.get_iso9660_facade()
 
             for root, _, files in facade.walk('/'):
                 root = root.rstrip('/')
                 for name in files:
-                    name = name.lstrip('/')
+                    name = self._strip_revision(name).lstrip('/')
                     path = F'{root}/{name}'
                     try:
                         info = facade.get_record(path)
