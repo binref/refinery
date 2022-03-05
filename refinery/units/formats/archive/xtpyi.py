@@ -20,6 +20,7 @@ from importlib.util import MAGIC_NUMBER
 from refinery.units.formats.archive import arg, ArchiveUnit
 from refinery.units.pattern.carve import carve
 from refinery.lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
+from refinery.lib.tools import NoLogging
 
 from Crypto.Cipher import AES
 
@@ -52,41 +53,40 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
         sys.stderr = sys_stderr
     if not isinstance(codez, list):
         codez = [codez]
-    errors = 0
-    decompiled = MemoryFile()
-    with io.TextIOWrapper(decompiled, xtpyi.codec, newline='') as output:
-        for code in codez:
-            try:
-                xtpyi._uncompyle6.main.decompile(
-                    version,
-                    code,
-                    output,
-                    timestamp=timestamp,
-                    code_objects=code_objects,
-                    is_pypy=is_pypy,
-                    magic_int=magic_int,
-                )
-            except Exception as E:
-                output.flush()
-                output.write('\n')
-                for line in ('DECOMPILATION ERROR OCCURRED:\n', *str(E).splitlines(True)):
-                    output.write(F'# {line}')
-                errors += 1
-        output.flush()
-    result = decompiled.getbuffer()
-    if not errors:
-        return result
-    decompiled.seek(0)
-    for line in decompiled.readlines():
-        line = bytes(line).strip()
-        if line and not line.startswith(B'#'):
-            return result
+    errors = ''
+    python = ''
+    for code in codez:
+        for name, engine in {
+            'decompyle3': xtpyi._decompyle3,
+            'uncompyle6': xtpyi._uncompyle6,
+        }.items():
+            with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
+                try:
+                    engine.main.decompile(
+                        version,
+                        code,
+                        output,
+                        timestamp=timestamp,
+                        code_objects=code_objects,
+                        is_pypy=is_pypy,
+                        magic_int=magic_int,
+                    )
+                except Exception as E:
+                    errors += '\n'.join(F'# {line}' for line in (
+                        F'Error while decompiling with {name}:', *str(E).splitlines(True)))
+                    errors += '\n'
+                else:
+                    python = output.getvalue()
+                    break
+    if python:
+        return python.encode(xtpyi.codec)
     embedded = bytes(buffer | carve('printable', single=True))
     if len(buffer) - len(embedded) < 0x20:
         return embedded
     disassembly = MemoryFile()
     with io.TextIOWrapper(disassembly, xtpyi.codec, newline='\n') as output:
-        output.write('# Decompilation Failed: Generating Disassembly:\n\n')
+        output.write(errors)
+        output.write('# Generating Disassembly:\n\n')
         for code in codez:
             instructions = list(xtpyi._xdis.std.Bytecode(code))
             width_offset = max(len(str(i.offset)) for i in instructions)
@@ -481,6 +481,12 @@ class xtpyi(ArchiveUnit):
         import uncompyle6
         import uncompyle6.main
         return uncompyle6
+
+    @ArchiveUnit.Requires('decompyle3', optional=False)
+    def _decompyle3():
+        import decompyle3
+        import decompyle3.main
+        return decompyle3
 
     def unpack(self, data):
         view = memoryview(data)
