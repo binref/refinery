@@ -35,7 +35,7 @@ class xtiso(ArchiveUnit):
         return pycdlib
 
     def unpack(self, data):
-        with MemoryFile(data) as stream:
+        with MemoryFile(data, read_as_bytes=True) as stream:
             iso = self._pycdlib.PyCdlib()
             iso.open_fp(stream)
             fs = self.args.fs
