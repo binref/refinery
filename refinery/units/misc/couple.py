@@ -47,6 +47,7 @@ class couple(Unit):
         ]
 
         if 0 in used:
+            self.log_info('input used as command-line argument; sending no input to process stdin')
             data = None
 
         self.log_debug(shlexjoin)
@@ -58,7 +59,7 @@ class couple(Unit):
         if self.args.buffer and not self.args.timeout:
             out, err = process.communicate(data)
             for line in err.splitlines():
-                self.log_debug(line)
+                self.log_info(line)
             yield out
             return
 
