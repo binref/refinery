@@ -85,7 +85,7 @@ def iterspread(
                 yield _var_a + _var_b
 
     where `_arg_a` and `_arg_b` are closure variables that are bound to the primary iterator, and the
-    single element of `inline_args`, respectively. If one ofthe elements in `inline_args` is a constant,
+    single element of `inline_args`, respectively. If one of the elements in `inline_args` is a constant,
     then this constant will instead be set initially in front of the loop:
 
         def iterspread_method(self):
