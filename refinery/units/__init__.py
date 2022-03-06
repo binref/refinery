@@ -149,7 +149,7 @@ from argparse import (
 
 from refinery.lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
-from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, skipfirst, isbuffer
+from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, one, skipfirst, isbuffer
 from refinery.lib.frame import Framed, Chunk
 from refinery.lib.structures import MemoryFile
 
@@ -1327,22 +1327,49 @@ class Unit(UnitBase, abstract=True):
         return result
 
     def __or__(self, stream: Union[BinaryIO, Unit]):
+        def get_converter(it: Iterable):
+            try:
+                c = one(it)
+            except LookupError:
+                return None
+            if ... is c:
+                def identity(x):
+                    return x
+                return identity
+            if callable(c):
+                return c
+
         if isinstance(stream, type) and issubclass(stream, Entry):
             stream = stream()
+        if isinstance(stream, type(...)):
+            def stream(c): return c
         if isinstance(stream, Entry):
             return stream.__copy__().__ror__(self)
         elif isinstance(stream, list):
-            stream.extend(self)
-            return stream
+            converter = get_converter(stream)
+            if converter is None:
+                stream.extend(self)
+                return stream
+            return [converter(chunk) for chunk in self]
         elif isinstance(stream, set):
-            stream.update(self)
-            return stream
+            converter = get_converter(stream)
+            if converter is None:
+                stream.update(self)
+                return stream
+            return {converter(chunk) for chunk in self}
         elif isinstance(stream, dict):
-            if len(stream) == 1:
-                key, check = next(iter(stream.items()))
-                if check is ...:
-                    return {item[key]: item for item in self}
-            raise ValueError('dict consumption target must be of format {"key": ...}')
+            key, convert = one(stream.items())
+            output: Dict[Any, List[Any]] = {}
+            for item in self:
+                try:
+                    value = item.meta[key]
+                except KeyError:
+                    value = None
+                bag = output.setdefault(value, [])
+                if convert is not ...:
+                    item = convert(item)
+                bag.append(item)
+            return output
         elif isinstance(stream, (bytearray, memoryview)):
             with MemoryFile(stream) as stdout:
                 return (self | stdout).getvalue()
