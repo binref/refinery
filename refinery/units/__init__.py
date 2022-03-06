@@ -882,6 +882,19 @@ class LogLevel(IntEnum):
     INFO     = logging.INFO      # noqa
     DEBUG    = logging.DEBUG     # noqa
 
+    @property
+    def verbosity(self) -> int:
+        if self.value >= LogLevel.DETACHED:
+            return -1
+        if self.value >= LogLevel.WARNING:
+            return +0
+        if self.value >= LogLevel.INFO:
+            return +1
+        if self.value >= LogLevel.DEBUG:
+            return +2
+        else:
+            return -1
+
 
 class DelayedArgumentProxy:
     """
@@ -1135,14 +1148,18 @@ class Unit(UnitBase, abstract=True):
     def __iter__(self):
         return self
 
+    @property
+    def leniency(self) -> int:
+        return getattr(self.args, 'lenient', 0)
+
     def _exception_handler(self, exception: BaseException, data: ByteString):
-        if self.args.lenient > 1:
+        if self.leniency > 1:
             try:
                 return exception.partial
             except AttributeError:
                 return data
         if self.log_level >= LogLevel.DETACHED:
-            if isinstance(exception, RefineryPartialResult) and self.args.lenient > 0:
+            if isinstance(exception, RefineryPartialResult) and self.leniency > 0:
                 return None
             raise exception
         elif isinstance(exception, RefineryCriticalException):
@@ -1155,7 +1172,7 @@ class Unit(UnitBase, abstract=True):
             raise exception
         elif isinstance(exception, RefineryPartialResult):
             self.log_warn(F'error, partial result returned: {exception}')
-            if self.args.lenient < 1:
+            if self.leniency < 1:
                 return None
             return exception.partial
         elif isinstance(exception, RefineryImportMissing):

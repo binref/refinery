@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.25 -- bugfix release
+
 ## Version 0.4.24
 - Adds the `szdd` decompression unit.
 - Adds the `lzjb` decompression unit.

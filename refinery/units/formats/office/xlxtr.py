@@ -188,7 +188,8 @@ class xlxtr(Unit):
 
     def _process_old(self, data):
         with io.StringIO() as logfile:
-            wb = self._xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=self.args.verbose - 1, on_demand=True)
+            vb = max(self.log_level.verbosity - 1, 0)
+            wb = self._xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=vb, on_demand=True)
             logfile.seek(0)
             for entry in logfile:
                 entry = entry.strip()
