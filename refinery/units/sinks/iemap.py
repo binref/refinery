@@ -19,7 +19,7 @@ class iemap(Unit):
     """
     def __init__(
         self,
-        background: Unit.Arg.switch('-b', help='Generate the bar by coloring the background.'),
+        background: Unit.Arg.switch('-b', help='Generate the bar by coloring the background.') = False,
         block_char: Unit.Arg('-c', '--block-char', type=str, metavar='C',
             help='Character used for filling the bar, default is {default}') = '#',
         *label: Unit.Arg(type=str, metavar='label-part', help=(
