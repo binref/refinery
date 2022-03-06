@@ -1,5 +1,14 @@
 # Binary Refinery Changelog
 
+## Version 0.4.24
+- Adds the `szdd` decompression unit.
+- Adds the `lzjb` decompression unit.
+- Adds an option to the `iff` unit to check for the existence of a certain meta variable.
+- The `xtpyi` unit now uses both `uncompyle6` and `decompyle3`, even though they currently appear to have feature parity at best - there is some hope that one of them will support Python 3.9 in the future.
+- Adds the `groupby` unit.
+- Adds the `isaac` cipher unit.
+- Adds the `bat` unit for deobfuscating batch scripts.
+
 ## Version 0.4.23 -- bugfix release
 
 ## Version 0.4.22
