@@ -68,7 +68,7 @@ class xtiso(ArchiveUnit):
             for root, _, files in facade.walk('/'):
                 root = root.rstrip('/')
                 for name in files:
-                    name = self._strip_revision(name).lstrip('/')
+                    name = name.lstrip('/')
                     path = F'{root}/{name}'
                     try:
                         info = facade.get_record(path)
@@ -94,7 +94,7 @@ class xtiso(ArchiveUnit):
                         facade.get_file_from_iso_fp(buffer, path)
                         return buffer.getvalue()
 
-                    yield self._pack(path, date, extract)
+                    yield self._pack(self._strip_revision(path), date, extract)
 
     def handles(self, data: bytearray) -> bool:
         return any(data[k] == B'CD001' for k in (
