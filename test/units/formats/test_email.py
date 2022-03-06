@@ -33,7 +33,7 @@ class TestEmailUnpacker(TestUnitBase):
             'body.txt',
             'attachments/request.zip',
         })
-        self.assertIn(b'figures,12.18.2020.doc', out['attachments/request.zip'])
+        self.assertIn(b'figures,12.18.2020.doc', out['attachments/request.zip'][0])
 
     def test_embedded_attachment_extraction(self):
         data = self.download_sample('8f567c5fe40e15394ccf158356e445ea6b9afcbab8a225ad1c6c697f95ce36b9')
