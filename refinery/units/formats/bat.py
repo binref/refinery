@@ -16,10 +16,10 @@ class bat(Unit):
     """
     def __init__(
         self,
-        keep_all         : Unit.Arg.switch('-a', help='Do not strip anything after deobfuscation.'),
-        keep_comment     : Unit.Arg.switch('-c', help='Do not strip comments from the script.'),
-        keep_definitions : Unit.Arg.switch('-d', help='Do not strip variable definitions.'),
-        keep_echo        : Unit.Arg.switch('-e', help='Do not strip echo calls in the script.'),
+        keep_all         : Unit.Arg.switch('-a', help='Do not strip anything after deobfuscation.') = False,
+        keep_comment     : Unit.Arg.switch('-c', help='Do not strip comments from the script.') = False,
+        keep_definitions : Unit.Arg.switch('-d', help='Do not strip variable definitions.') = False,
+        keep_echo        : Unit.Arg.switch('-e', help='Do not strip echo calls in the script.') = False,
     ): ...
 
     @unicoded
