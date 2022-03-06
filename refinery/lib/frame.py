@@ -330,6 +330,12 @@ class Chunk(bytearray):
         metas = metas and F' meta=({metas})'
         return F'<chunk{layer}{metas} size={len(self)} data={repr(bytes(self))}>'
 
+    def __str__(self):
+        try:
+            return self.decode('UTF8')
+        except UnicodeDecodeError:
+            return self.hex()
+
     def __hash__(self):
         return hash((
             len(self),
