@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.26
+Adds various convenience output options in the Python REPL and adds documentation for those.
+
 ## Version 0.4.25 -- bugfix release
 
 ## Version 0.4.24

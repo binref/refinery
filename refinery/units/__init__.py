@@ -145,8 +145,11 @@ result will be a dictionary where all converted results have been grouped under
 the respective value of their meta variable. With all of the above options, it
 is always possible to use a literal ellipsis (`...`).
 
-Finally, you can connect pipelines to `bytearray` and (writable) `memoryview`
-instances. In this case, the output will be appended to the end of this buffer.
+You can connect pipelines to `bytearray` and (writable) `memoryview` instances.
+In this case, the output will be appended to the end of this buffer. Finally, if
+you connect a pipeline to `None`, this will execute the unit but discard all
+output. This is useful for using units with side-effects, like `refinery.peek`,
+in a REPL.
 """
 from __future__ import annotations
 
@@ -1382,6 +1385,10 @@ class Unit(UnitBase, abstract=True):
             if callable(c):
                 return c
 
+        if stream is None:
+            with open(os.devnull, 'wb') as null:
+                self | null
+            return
         if isinstance(stream, type) and issubclass(stream, Entry):
             stream = stream()
         if isinstance(stream, type(...)):

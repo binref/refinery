@@ -27,7 +27,7 @@ as their content is relevant for command line use of the `refinery`.
 Furthermore, the module documentation of `refinery.units` contains a brief
 example of how to write simple units.
 """
-__version__ = '0.4.25'
+__version__ = '0.4.26'
 __distribution__ = 'binary-refinery'
 
 from typing import Dict, Type
