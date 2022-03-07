@@ -274,7 +274,7 @@ class FileMagicInfo:
             mv = memoryview(data)
             cursor = 0
             buffer = bytearray()
-            while len(buffer) < self._GZIP_PEEK_MAXIMUM:
+            while cursor < len(mv):
                 end = cursor + self._GZIP_DC_CHUNK_LEN
                 try:
                     buffer.extend(dc.decompress(mv[cursor:end]))
@@ -282,6 +282,8 @@ class FileMagicInfo:
                     break
                 else:
                     cursor = end
+                if len(buffer) >= self._GZIP_PEEK_MAXIMUM:
+                    break
             if len(buffer) > self._GZIP_PEEK_MINIMUM:
                 try:
                     inner = FileMagicInfo(buffer, default).extension
