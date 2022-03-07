@@ -373,7 +373,7 @@ class BatchDeobfuscator:
                 cmd, _, _ = cmd.partition('/')
                 if mode & STRIP.ECHO and cmd == 'echo':
                     continue
-                if mode & STRIP.COMMENT and cmd in ('::', 'rem'):
+                if mode & STRIP.COMMENT and (line.value.startswith('::') or cmd == 'rem'):
                     continue
                 if line.depth > depth:
                     yield F'{tab(depth)}:: SUBCOMMAND'

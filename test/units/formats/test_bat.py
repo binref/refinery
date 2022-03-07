@@ -39,3 +39,9 @@ class TestBAT(TestUnitBase):
             'aQBkAGYAZwBkACkAewBpAGYAKAAoAGcAZQB0AC0AaQBUAGUAbQAgACQAcgBoAHkAawBhAGoAZABoAGYA'
             'cwA3AGkAZABmAGcAZAApAC4ATABlAG4AZwB0AGgAIAAtAGcAZQAgADQANQAwADAAMAApAHsAYgByAGUA'
             'YQBrADsAfQB9AH0A')
+
+    def test_comments(self):
+        unit = self.load()
+        self.assertEqual(unit.process(b':: comment1'), b'')
+        self.assertEqual(unit.process(b'::comment2'), b'')
+        self.assertEqual(unit.process(b'rem comment3'), b'')
