@@ -6,6 +6,7 @@ from refinery.units.obfuscation import IterativeDeobfuscator
 
 from .arithmetic import deob_vba_arithmetic
 from .brackets import deob_vba_brackets
+from .char import deob_vba_char_function
 from .comments import deob_vba_comments
 from .concat import deob_vba_concat
 from .constants import deob_vba_constants
@@ -18,6 +19,7 @@ class deob_vba(IterativeDeobfuscator):
     _SUBUNITS = [sub() for sub in [
         deob_vba_comments,
         deob_vba_brackets,
+        deob_vba_char_function,
         deob_vba_concat,
         deob_vba_arithmetic,
         deob_vba_constants,
