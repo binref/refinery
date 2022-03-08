@@ -12,12 +12,25 @@ class deob_vba_arithmetic(Deobfuscator):
     def deobfuscate(self, data):
         strings = StringLiterals(formats.vbastr, data)
 
+        def vba_int_eval(match: re.Match[str]) -> str:
+            s = match[0].lower()
+            if not s.startswith('&'):
+                return s
+            t, s = s[1], s[2:].rstrip('&')
+            if t == 'h':
+                return str(int(s, 16))
+            if t == 'b':
+                return str(int(s, 2))
+            if t == 'o':
+                return str(int(s, 8))
+
         @strings.outside
         def evaluate(match: re.Match[str]):
             expression = match[0]
             expression = expression.strip()
             if not any(c.isdigit() for c in expression):
                 return expression
+            expression = re.sub(str(formats.vbaint), vba_int_eval, expression)
             brackets = 0
             for end, character in enumerate(expression):
                 if character == '(':
@@ -36,7 +49,7 @@ class deob_vba_arithmetic(Deobfuscator):
                 result = str(cautious_eval(expression)) + self.deobfuscate(tail)
             except ExpressionParsingFailure:
                 result = expression
-                self.log_warn(F'error trying to parse arithmetic expression at offset {match.start()}: {expression}')
+                self.log_warn(F'error trying to parse arithmetic expression at offset {match.start()}: ({expression})')
             else:
                 if expression.startswith('(') and expression.endswith(')'):
                     result = F'({result})'
