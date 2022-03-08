@@ -179,11 +179,13 @@ _pattern_defanged_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=_pattern_defa
 _pattern_serrated_hostname = _pattern_serrated_socket + '?'
 _pattern_defanged_hostname = _pattern_defanged_socket + '?'
 
+
 _pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?=[uU]?[iI]\\d{1,2}|[LlHh]|[^a-zA-Z0-9]|$)'
 _pattern_float = R'[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?'
 _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 _pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
-
+_pattern_vbastr = R'''"(?:""|[^"])*"'''
+_pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]*|[-+]?(?:[1-9][0-9]*|0))(?=&|$)'
 _pattern_string = R'''(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*')'''
 _pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
 _pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
@@ -272,6 +274,10 @@ class formats(PatternEnum):
     "Windows command line escaped string literal"
     ps1str = pattern(_pattern_ps1str)
     "PowerShell escaped string literal"
+    vbastr = pattern(_pattern_vbastr)
+    "VBS/VBA string literal"
+    vbaint = pattern(_pattern_vbaint)
+    "VBS/VBA integer literal"
     printable = alphabet(R'[\s!-~]')
     "Any sequence of printable characters"
     url_encoded_coarse = pattern(_pattern_urlenc_coarse)

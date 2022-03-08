@@ -61,6 +61,9 @@ class carve(PatternExtractor):
         elif self.args.format is formats.ps1str:
             from ..encoding.ps1str import ps1str
             decoder = ps1str()
+        elif self.args.format is formats.vbastr:
+            from ..encoding.ps1str import ps1str
+            decoder = ps1str()
         elif self.args.format is formats.hexarray:
             from ..blockwise.pack import pack
             decoder = pack(0x10)

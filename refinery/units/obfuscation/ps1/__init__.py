@@ -2,10 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 
-from functools import wraps
-from typing import Callable
-
 from refinery.lib.patterns import formats
+from refinery.units.obfuscation import StringLiterals
 from refinery.units.encoding.ps1str import ps1str
 
 
@@ -117,43 +115,6 @@ def string_apply(string, callback):
     return string_quote(application(string_unquote(string)))
 
 
-class Ps1StringLiterals:
-
+class Ps1StringLiterals(StringLiterals):
     def __init__(self, data: str):
-        self.update(data)
-
-    def update(self, data):
-        self.data = data
-        self.ranges = [
-            match.span() for match in re.finditer(str(formats.ps1str), data)
-        ]
-
-    def shift(self, by, start=0):
-        for k in range(start, len(self.ranges)):
-            a, b = self.ranges[k]
-            self.ranges[k] = a + by, b + by
-
-    def outside(self, function: Callable[[re.Match], str]) -> Callable[[re.Match], str]:
-        @wraps(function)
-        def wrapper(match: re.Match) -> str:
-            if match.string != self.data:
-                self.update(match.string)
-            a, b = match.span()
-            for x, y in self.ranges:
-                if x > b: break
-                if (a in range(x, y) or x in range(a, b)) and (x < a or y > b):
-                    return match[0]
-            result = function(match)
-            if result is not None:
-                return result
-            return match[0]
-        return wrapper
-
-    def __contains__(self, index):
-        return any(index in range(*L) for L in self.ranges)
-
-    def get_container(self, offset):
-        for k, L in enumerate(self.ranges):
-            if offset in range(*L):
-                return k
-        return None
+        super().__init__(formats.ps1str, data)

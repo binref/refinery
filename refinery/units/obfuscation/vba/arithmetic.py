@@ -1,42 +1,48 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 import re
 
-from refinery.units.obfuscation import Deobfuscator
-from refinery.lib.deobfuscation import cautious_eval_or_default, cautious_eval
+from refinery.units.obfuscation import Deobfuscator, StringLiterals
+from refinery.lib.deobfuscation import ExpressionParsingFailure, cautious_eval
 from refinery.lib.patterns import formats
 
 
 class deob_vba_arithmetic(Deobfuscator):
     def deobfuscate(self, data):
+        strings = StringLiterals(formats.vbastr, data)
 
-        def evaluate(match):
-            match = match[0]
-            expr = match.strip()
+        @strings.outside
+        def evaluate(match: re.Match[str]):
+            expression = match[0]
+            expression = expression.strip()
+            if not any(c.isdigit() for c in expression):
+                return expression
             brackets = 0
-            for end, character in enumerate(expr):
+            for end, character in enumerate(expression):
                 if character == '(':
                     brackets += 1
                     continue
                 if character == ')':
                     brackets -= 1
                     if brackets < 0:
-                        expr, tail = expr[:end], expr[end:]
+                        expression, tail = expression[:end], expression[end:]
                         break
             else:
                 tail = ''
-            if expr.isdigit() or brackets > 0:
-                return match
-            if self.log_debug('evaluating', expr):
-                evaluator = cautious_eval
+            if expression.isdigit() or brackets > 0:
+                return expression
+            try:
+                result = str(cautious_eval(expression)) + self.deobfuscate(tail)
+            except ExpressionParsingFailure:
+                result = expression
+                self.log_warn(F'error trying to parse arithmetic expression at offset {match.start()}: {expression}')
             else:
-                def evaluator(e): return cautious_eval_or_default(e, e)
-            result = str(evaluator(expr)) + self.deobfuscate(tail)
-            if expr.startswith('(') and expr.endswith(')'):
-                result = F'({result})'
+                if expression.startswith('(') and expression.endswith(')'):
+                    result = F'({result})'
             return result
 
         pattern = re.compile(R'(?:{i}|{f}|[-+(])(?:[^\S\r\n]{{0,20}}(?:{i}|{f}|[-%|&~<>()+/*^]))+'.format(
-            i=str(formats.integer), f=str(formats.float)))
+            i=str(formats.vbaint), f=str(formats.float)))
 
         return pattern.sub(evaluate, data)
