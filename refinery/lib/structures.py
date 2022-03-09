@@ -419,12 +419,16 @@ class StructReader(MemoryFile[T]):
         else:
             byteorder = self.byteorder_format
         data = []
-        for part in re.split('(a|u)', spec):
+        for part in re.split('(a|u|w)', spec):
             if part == 'a':
                 data.append(self.read_c_string())
                 continue
             if part == 'u':
                 data.append(self.read_w_string())
+                continue
+            if part == 'w':
+                wstr = self.read_w_string()
+                data.append(wstr.decode('utf-16le'))
                 continue
             part = F'{byteorder}{part}'
             data.extend(struct.unpack(part, self.read_bytes(struct.calcsize(part))))
@@ -460,12 +464,9 @@ class StructReader(MemoryFile[T]):
         except AttributeError:
             result = bytearray()
             while not self.eof:
-                result.append(self.read_byte())
+                result.extend(self.read_bytes(alignment))
                 if result.endswith(terminator):
-                    t = len(result) - len(terminator)
-                    if not t % alignment:
-                        result[t:] = []
-                        return result
+                    return result[:-len(terminator)]
             self.seek(pos)
             raise EOF
         else:
