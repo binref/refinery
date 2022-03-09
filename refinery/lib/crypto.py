@@ -57,6 +57,10 @@ def des_set_odd_parity(key: bytearray):
     key[:] = (_DES_PARITYTABLE[b] for b in key)
 
 
+def rotl128(x: int, c: int):
+    return ((x << c) | (x >> (0x80 - c))) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+
+
 def rotl64(x: int, c: int):
     return ((x << c) | (x >> (0x40 - c))) & 0xFFFFFFFFFFFFFFFF
 
@@ -69,8 +73,12 @@ def rotl16(x: int, c: int):
     return ((x << c) | (x >> (0x10 - c))) & 0xFFFF
 
 
-def rotl08(x: int, c: int):
+def rotl8(x: int, c: int):
     return ((x << c) | (x >> (0x08 - c))) & 0xFF
+
+
+def rotr128(x: int, c: int):
+    return (x << (0x80 - c) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF) | (x >> c)
 
 
 def rotr64(x: int, c: int):
@@ -85,7 +93,7 @@ def rotr16(x: int, c: int):
     return (x << (0x10 - c) & 0xFFFF) | (x >> c)
 
 
-def rotr08(x: int, c: int):
+def rotr8(x: int, c: int):
     return (x << (0x08 - c) & 0xFF) | (x >> c)
 
 
