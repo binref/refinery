@@ -126,7 +126,7 @@ ef "**" [| sha256 -t | cfmt {} {path} ]]
 ```
 Extract indicators from all files recursively enumerated inside the current directory:
 ```
-ef "**" [| xtp -qn6 ipv4 socket url email | dedup ]]
+ef "**" [| xtp -n6 ipv4 socket url email | dedup ]]
 ```
 Convert the hard-coded IP address `0xC0A80C2A` in network byte order to a readable format:
 ```
