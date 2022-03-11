@@ -32,6 +32,16 @@ class dnfields(PathExtractorUnit):
         '^[us]?int.?64$' : 8,
     }
 
+    def __init__(
+        self, *paths,
+        regex=False,
+        list=False,
+        path=b'name',
+        join_path=False,
+        drop_path=False,
+    ):
+        super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, regex=regex, path=path)
+
     def _guess_field_info(self, tables, data, t) -> FieldInfo:
         pattern = (
             BR'(\x20....|\x1F.)'                # ldc.i4  count
@@ -70,11 +80,14 @@ class dnfields(PathExtractorUnit):
         iwidth = len(str(len(fields)))
         rwidth = max(len(F'{field.RVA:X}') for field in fields)
         rwidth = max(rwidth, 4)
+        remaining_field_indices = set(range(len(tables.Field)))
 
         for k, rv in enumerate(fields):
             index = rv.Field.Index
             field = tables.Field[index - 1]
+            remaining_field_indices.discard(index - 1)
             fname = field.Name
+            ftype = None
             if len(field.Signature) == 2:
                 # Crude signature parser for non-array case. Reference:
                 # https://www.codeproject.com/Articles/42649/NET-File-Format-Signatures-Under-the-Hood-Part-1
@@ -102,9 +115,36 @@ class dnfields(PathExtractorUnit):
                 fname = guess.name
             if not fname.isprintable():
                 fname = F'F{rv.RVA:0{rwidth}X}'
-            name = F'{fname}.{guess.type}'
+            ftype = guess.type
             if guess.count > 1:
-                name += F'[{guess.count}]'
+                ftype += F'[{guess.count}]'
             self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {guess.type}, count: {guess.count}, name: {fname}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
-            yield UnpackResult(name, lambda t=offset, s=totalsize: data[t:t + s])
+            yield UnpackResult(fname, lambda t=offset, s=totalsize: data[t:t + s], type=ftype)
+
+        for index in remaining_field_indices:
+            field = tables.Field[index]
+            name = field.Name
+            if field.Flags.HasFieldRVA:
+                self.log_warn(F'field {name} has RVA flag set, but no RVA was found')
+            token = index.to_bytes(3, 'little')
+            values = set()
+            for match in re.finditer((
+                BR'\x72(?P<token>...)\x70'          # ldstr
+                BR'(?:\x6F(?P<function>...)\x0A)?'  # call GetBytes
+                BR'\x80%s\x04'                      # stsfld
+            ) % re.escape(token), data, re.DOTALL):
+                md = match.groupdict()
+                fn_token = md.get('function')
+                fn_index = fn_token and int.from_bytes(fn_token, 'little') or None
+                if fn_index is not None:
+                    fn_name = tables.MemberRef[fn_index].Name
+                    if fn_name != 'GetBytes':
+                        self.log_warn(F'skipping string assignment passing through call to {fn_name}')
+                        continue
+                k = int.from_bytes(md['token'], 'little')
+                values.add(header.meta.Streams.US[k].encode(self.codec))
+            if not values:
+                continue
+            if len(values) == 1:
+                yield UnpackResult(name, next(iter(values)), type='string')
