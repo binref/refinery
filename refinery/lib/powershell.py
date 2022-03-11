@@ -120,8 +120,9 @@ class PS1OutputWrapper(Ps1Wrapper):
                 if not ev:
                     import logging
                     logging.getLogger('root').critical(
-                        U'WARNING: PowerShell has no support for binary pipelines or streaming. As a result, BinaryRefinery '
-                        U'uses an unreliable and slow band-aid. Proceed at your own peril!\n'
+                        U'WARNING: PowerShell has no support for binary pipelines or streaming. Binary Refinery '
+                        U'uses an unreliable and slow workaround: It is strongly recommended to use the command '
+                        U'processor instead. Proceed at your own peril!\n'
                         U'- To get more information: https://github.com/binref/refinery/issues/5\n'
                         F'- To disable this warning: $env:{EV}=1'
                     )
