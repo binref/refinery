@@ -13,7 +13,7 @@ import sys
 import io
 import warnings
 
-from typing import ByteString, Iterable, Optional, TypeVar
+from typing import ByteString, Generator, Iterable, Optional, Tuple, TypeVar
 from math import log
 from enum import IntFlag
 
@@ -26,7 +26,7 @@ def _singleton(cls):
     return cls()
 
 
-def lookahead(iterator):
+def lookahead(iterator: Iterable[_T]) -> Generator[Tuple[bool, _T], None, None]:
     """
     Implements a new iterator from a given one which returns elements
     `(last, item)` where each `item` is taken from the original iterator

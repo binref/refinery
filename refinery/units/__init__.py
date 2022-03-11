@@ -1191,7 +1191,7 @@ class Unit(UnitBase, abstract=True):
         self.log_level = LogLevel.DETACHED
         return self
 
-    def __iter__(self):
+    def __iter__(self) -> Generator[Chunk, None, None]:
         return self
 
     @property
@@ -1432,7 +1432,8 @@ class Unit(UnitBase, abstract=True):
 
         self._target = stream
 
-        def cname(x): return x.lower().replace('-', '')
+        def cname(x: str):
+            return x.lower().replace('-', '')
 
         recode = self.isatty and cname(self.codec) != cname(sys.stdout.encoding)
         chunk = None
