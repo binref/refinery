@@ -161,7 +161,7 @@ import os
 import sys
 
 from abc import ABCMeta
-from enum import IntEnum, Enum
+from enum import Enum
 from functools import wraps
 from collections import OrderedDict
 
@@ -198,6 +198,7 @@ from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, one, skipfirst, isbuffer
 from refinery.lib.frame import Framed, Chunk
 from refinery.lib.structures import MemoryFile
+from refinery.lib.environment import LogLevel, environment
 
 
 class RefineryPartialResult(ValueError):
@@ -895,51 +896,6 @@ class Executable(ABCMeta):
             logger.addHandler(stream)
         logger.propagate = False
         return logger
-
-
-class LogLevel(IntEnum):
-    """
-    An enumeration representing the current log level:
-    """
-    DETACHED = logging.CRITICAL + 100
-    """
-    This unit is not attached to a terminal but has been instantiated in
-    code. This means that the only way to communicate problems is to throw
-    an exception.
-    """
-    NONE = logging.CRITICAL + 50
-
-    @classmethod
-    def FromVerbosity(cls, verbosity: int):
-        if verbosity < 0:
-            return cls.DETACHED
-        return {
-            0: cls.WARNING,
-            1: cls.INFO,
-            2: cls.DEBUG
-        }.get(verbosity, cls.DEBUG)
-
-    NOTSET   = logging.NOTSET    # noqa
-    CRITICAL = logging.CRITICAL  # noqa
-    FATAL    = logging.FATAL     # noqa
-    ERROR    = logging.ERROR     # noqa
-    WARNING  = logging.WARNING   # noqa
-    WARN     = logging.WARN      # noqa
-    INFO     = logging.INFO      # noqa
-    DEBUG    = logging.DEBUG     # noqa
-
-    @property
-    def verbosity(self) -> int:
-        if self.value >= LogLevel.DETACHED:
-            return -1
-        if self.value >= LogLevel.WARNING:
-            return +0
-        if self.value >= LogLevel.INFO:
-            return +1
-        if self.value >= LogLevel.DEBUG:
-            return +2
-        else:
-            return -1
 
 
 class DelayedArgumentProxy:
@@ -1746,8 +1702,11 @@ class Unit(UnitBase, abstract=True):
         this method will be executed when a class inheriting from `refinery.units.Unit` is defined in
         the current `__main__` module.
         """
-        from refinery.lib import powershell
-        ps1 = powershell.bandaid(cls.codec)
+        if not environment.disable_ps1_bandaid.value:
+            from refinery.lib import powershell
+            ps1 = powershell.bandaid(cls.codec)
+        else:
+            ps1 = None
 
         argv = argv if argv is not None else sys.argv[1:]
         start_clock = None
@@ -1778,20 +1737,7 @@ class Unit(UnitBase, abstract=True):
             if ps1:
                 unit.log_debug(F'applying PowerShell band-aid for: {unit.name}')
 
-            try:
-                loglevel = os.environ['REFINERY_VERBOSITY']
-            except KeyError:
-                loglevel = None
-            else:
-                if loglevel.isdigit():
-                    loglevel = LogLevel.FromVerbosity(int(loglevel))
-                else:
-                    try:
-                        loglevel = LogLevel[loglevel]
-                    except KeyError:
-                        levels = ', '.join(ll.name for ll in LogLevel)
-                        unit.log_warn(F'unknown verbosity {loglevel!r}, pick from {levels}')
-                        loglevel = None
+            loglevel = environment.verbosity.value
             if loglevel:
                 unit.log_level = loglevel
 

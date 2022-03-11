@@ -39,8 +39,9 @@ def get_help_string(unit, brief=False, width=None):
     else:
         from io import StringIO
         from os import environ
+        from refinery.lib.environment import environment
         try:
-            environ['REFINERY_TERMSIZE'] = str(width)
+            environ[environment.term_size.key] = str(width)
             argp = unit.argparser()
         except ArgparseError as fail:
             argp = fail.parser

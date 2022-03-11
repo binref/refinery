@@ -9,6 +9,8 @@ import os
 import sys
 from inspect import stack
 
+from refinery.lib.environment import environment, LogLevel
+
 here = os.path.dirname(os.path.abspath(stack()[0][1]))
 
 argp = argparse.ArgumentParser()
@@ -17,7 +19,7 @@ argp.add_argument('pattern', type=lambda s: str(s).strip('*'), nargs='?', defaul
 args = argp.parse_args()
 
 os.chdir('test')
-os.environ['REFINERY_VERBOSITY'] = 'DETACHED'
+os.environ[environment.verbosity.key] = LogLevel.DETACHED.name
 
 suite = unittest.TestLoader().discover('test', F'test_*{args.pattern}*')
 tests = unittest.TextTestRunner(verbosity=2)

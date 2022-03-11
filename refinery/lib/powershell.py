@@ -8,6 +8,8 @@ from __future__ import annotations
 import ctypes
 import os
 
+from refinery.lib.environment import environment
+
 _PS1_MAGIC = B'[BRPS1]:'
 
 
@@ -112,19 +114,16 @@ class PS1OutputWrapper(Ps1Wrapper):
         if not self._header_written:
             self.stream.write(_PS1_MAGIC)
             self._header_written = True
-            if not Ps1Wrapper.WRAPPED:
-                EV = 'REFINERY_SUPPRESS_PS1_WARNING'
-                ev = os.environ.get(EV, '0')
-                ev = int(ev) if ev.isdigit() else bool(ev)
-                if not ev:
-                    import logging
-                    logging.getLogger('root').critical(
-                        U'WARNING: PowerShell has no support for binary pipelines or streaming. Binary Refinery '
-                        U'uses an unreliable and slow workaround: It is strongly recommended to use the command '
-                        U'processor instead. Proceed at your own peril!\n'
-                        U'- To get more information: https://github.com/binref/refinery/issues/5\n'
-                        F'- To disable this warning: $env:{EV}=1'
-                    )
+            if not Ps1Wrapper.WRAPPED and not environment.silence_ps1_warning.value:
+                import logging
+                logging.getLogger('root').critical(
+                    U'WARNING: PowerShell has no support for binary pipelines or streaming. Binary Refinery '
+                    U'uses an unreliable and slow workaround: It is strongly recommended to use the command '
+                    U'processor instead. Proceed at your own peril!\n'
+                    F'- To silence this warning: $env:{environment.silence_ps1_warning.key}=1\n'
+                    F'- To disable the band-aid: $env:{environment.disable_ps1_bandaid.key}=1\n'
+                    U'- To get more information: https://github.com/binref/refinery/issues/5'
+                )
         view = memoryview(data)
         size = 1 << 15
         for k in range(0, len(view), size):
