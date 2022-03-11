@@ -8,8 +8,6 @@ from __future__ import annotations
 import ctypes
 import os
 
-from typing import BinaryIO
-
 _PS1_MAGIC = B'[BRPS1]:'
 
 
@@ -82,15 +80,16 @@ def is_powershell_process() -> bool:
 class Ps1Wrapper:
     WRAPPED = False
 
-    def __new__(cls, stream: BinaryIO):
-        if stream.isatty():
-            return stream
+    def __new__(cls, stream):
+        sb = stream.buffer
+        if stream.isatty() or sb.isatty():
+            return sb
         return super().__new__(cls)
 
-    def __init__(self, stream: BinaryIO):
+    def __init__(self, stream):
         if self is stream:
             return
-        self.stream = stream
+        self.stream = stream.buffer
 
     def __getattr__(self, key):
         return getattr(self.stream, key)
@@ -160,14 +159,16 @@ class PS1InputWrapper(Ps1Wrapper):
             return self.stream.read(size)
 
 
-def bandaid(codec):
+def bandaid(codec) -> bool:
     if not is_powershell_process():
-        return
+        return False
 
     import io
     import sys
 
     sys.stdout = io.TextIOWrapper(
-        PS1OutputWrapper(sys.stdout.buffer), codec, line_buffering=False, write_through=True)
+        PS1OutputWrapper(sys.stdout), codec, line_buffering=False, write_through=True)
     sys.stdin = io.TextIOWrapper(
-        PS1InputWrapper(sys.stdin.buffer), codec, line_buffering=False)
+        PS1InputWrapper(sys.stdin), codec, line_buffering=False)
+
+    return True
