@@ -1747,7 +1747,7 @@ class Unit(UnitBase, abstract=True):
         the current `__main__` module.
         """
         from refinery.lib import powershell
-        powershell.bandaid(cls.codec)
+        ps1 = powershell.bandaid(cls.codec)
 
         argv = argv if argv is not None else sys.argv[1:]
         start_clock = None
@@ -1774,6 +1774,9 @@ class Unit(UnitBase, abstract=True):
                 for line in traceback.format_exc().splitlines(keepends=False):
                     cls.logger.critical(cls._output(line))
                 return
+
+            if ps1:
+                unit.log_debug(F'applying PowerShell band-aid for: {unit.name}')
 
             try:
                 loglevel = os.environ['REFINERY_VERBOSITY']
