@@ -260,13 +260,21 @@ class TestSimpleInvertible(TestUnitBase):
         from refinery.units.strings.cfmt import cfmt
 
         class dummy:
-            def __init__(self, b): self.buffer = b
-            def isatty(self): return False
+            def __init__(self, buffer, isatty):
+                self._buffer = buffer
+                self._isatty = isatty
+
+            def isatty(self):
+                return self._isatty
+
+            @property
+            def buffer(self):
+                return self._buffer
 
         sys_stdin = sys.stdin
         sys_stdout = sys.stdout
-        sys.stdin = dummy(MemoryFile(B'test'))
-        sys.stdout = out = dummy(MemoryFile())
+        sys.stdin = dummy(MemoryFile(B'test'), False)
+        sys.stdout = out = dummy(MemoryFile(), True)
         sys.argv = ['cfmt', '=={}==', cfmt._SECRET_DEBUG_TIMING_FLAG]
         try:
             cfmt.run()
