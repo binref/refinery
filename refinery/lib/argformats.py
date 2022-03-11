@@ -1064,7 +1064,8 @@ class DelayedNumSeqArgument(DelayedArgument):
                 it = iter(value)
                 top = next(it)
                 if not isinstance(top, int):
-                    raise ArgumentTypeError(F'The first item {top!r} of the iterable computed from {self.expression} was not an integer.')
+                    raise ArgumentTypeError(
+                        F'The first item {top!r} of the iterable computed from {self.expression} was not an integer.')
                 return rewind()
             else:
                 if not all(isinstance(t, int) for t in value):
@@ -1079,7 +1080,7 @@ class DelayedNumSeqArgument(DelayedArgument):
         if not self.typecheck:
             return value
         raise ArgumentTypeError(
-            F'The value {value} computed from {self.expression} is of type {type(value).__name__} but the unit requested an '
+            F'The value computed from {self.expression} is of type {type(value).__name__} but the unit requested an '
             R'integer or a sequence of integers.'
         )
 
@@ -1182,7 +1183,7 @@ class DelayedNumberArgument(DelayedArgument):
         value = super().__call__(data)
         if not isinstance(value, int):
             tv = type(value).__name__
-            raise ArgumentTypeError(F'The value {value} computed from {self.expression} is of type {tv}, it should be an integer.')
+            raise ArgumentTypeError(F'The value computed from {self.expression} is of type {tv}, it should be an integer.')
         if self.min is not None and value < self.min or self.max is not None and value > self.max:
             a = '-∞' if self.min is None else self.min
             b = '∞' if self.max is None else self.max
