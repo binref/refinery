@@ -1745,6 +1745,9 @@ class Unit(UnitBase, abstract=True):
         this method will be executed when a class inheriting from `refinery.units.Unit` is defined in
         the current `__main__` module.
         """
+        from refinery.lib import powershell
+        powershell.bandaid(cls.codec)
+
         argv = argv if argv is not None else sys.argv[1:]
         start_clock = None
 

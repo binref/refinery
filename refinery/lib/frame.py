@@ -119,12 +119,10 @@ from __future__ import annotations
 import copy
 import json
 import base64
-import os
 import itertools
 
 from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
 from refinery.lib.structures import MemoryFile
-from refinery.lib.powershell import is_powershell_process
 from refinery.lib.tools import isbuffer
 from refinery.lib.meta import LazyMetaOracle
 
@@ -157,11 +155,7 @@ class BytesDecoder(json.JSONDecoder):
         return obj
 
 
-MAGIC = bytes.fromhex(os.environ.get('REFINERY_FRAME_MAGIC', 'C0CAC01AC0DE'))
-ISPS1 = is_powershell_process()
-
-if ISPS1:
-    MAGIC = B'[[%s]]' % base64.b85encode(MAGIC)
+MAGIC = bytes.fromhex('FEED1985C0CAC01AC0DE')
 
 
 def generate_frame_header(gauge: int):
@@ -308,8 +302,6 @@ class Chunk(bytearray):
         Classmethod to read a serialized chunk from an unpacker stream.
         """
         item = next(stream)
-        if ISPS1:
-            item = json.loads(item, cls=BytesDecoder)
         path, view, meta, fill, data = item
         return cls(data, path, view=view, meta=meta, fill=fill)
 
@@ -318,9 +310,6 @@ class Chunk(bytearray):
         Return the serialized representation of this chunk.
         """
         obj = (self._path, self._view, self._meta.serializable(), self._fill, self)
-        if ISPS1:
-            packed = json.dumps(obj, cls=BytesEncoder, separators=(',', ':')) + '\n'
-            return packed.encode('utf8')
         return msgpack.packb(obj)
 
     def __repr__(self) -> str:
@@ -398,8 +387,7 @@ class FrameUnpacker(Iterable[Chunk]):
             self.gauge, = stream.read(1)
             self.framed = True
             self.stream = stream
-            if not ISPS1:
-                self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=False)
+            self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=False)
             self._advance()
         else:
             self.unpacker = None
@@ -412,12 +400,8 @@ class FrameUnpacker(Iterable[Chunk]):
 
     def _advance(self) -> bool:
         while not self.finished:
-            if ISPS1:
-                ps1stream = self.stream
-            else:
-                ps1stream = self.unpacker
             try:
-                self.next_chunk = chunk = Chunk.unpack(ps1stream)
+                self.next_chunk = chunk = Chunk.unpack(self.unpacker)
                 if len(chunk.path) != self.gauge:
                     raise RuntimeError(F'Frame with gauge {self.gauge} contained chunk of depth {len(chunk.path)}.')
                 return True

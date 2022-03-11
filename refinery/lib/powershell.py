@@ -6,39 +6,33 @@ Windows-specific module to determine whether the current Python process is runni
 from __future__ import annotations
 
 import ctypes
-import functools
 import os
 
-from typing import Iterable, get_type_hints
+from typing import BinaryIO
+
+_PS1_MAGIC = B'[BRPS1]:'
 
 
 class NotWindows(RuntimeError):
     pass
 
 
-class FieldsFromTypeHints(type(ctypes.Structure)):
-    def __new__(cls, name, bases, namespace):
-        class AnnotationDummy:
-            __annotations__ = namespace.get('__annotations__', {})
-        annotations = get_type_hints(AnnotationDummy)
-        namespace['_fields_'] = list(annotations.items())
-        return type(ctypes.Structure).__new__(cls, name, bases, namespace)
+class PROCESSENTRY32(ctypes.Structure):
+    _fields_ = [
+        ('dwSize',              ctypes.c_uint32),                 # noqa
+        ('cntUsage',            ctypes.c_uint32),                 # noqa
+        ('th32ProcessID',       ctypes.c_uint32),                 # noqa
+        ('th32DefaultHeapID',   ctypes.POINTER(ctypes.c_ulong)),  # noqa
+        ('th32ModuleID',        ctypes.c_uint32),                 # noqa
+        ('cntThreads',          ctypes.c_uint32),                 # noqa
+        ('th32ParentProcessID', ctypes.c_uint32),                 # noqa
+        ('pcPriClassBase',      ctypes.c_long),                   # noqa
+        ('dwFlags',             ctypes.c_uint32),                 # noqa
+        ('szExeFile',           ctypes.c_char * 260),             # noqa
+    ]
 
 
-class PROCESSENTRY32(ctypes.Structure, metaclass=FieldsFromTypeHints):
-    dwSize              : ctypes.c_uint32
-    cntUsage            : ctypes.c_uint32
-    th32ProcessID       : ctypes.c_uint32
-    th32DefaultHeapID   : ctypes.POINTER(ctypes.c_ulong)
-    th32ModuleID        : ctypes.c_uint32
-    cntThreads          : ctypes.c_uint32
-    th32ParentProcessID : ctypes.c_uint32
-    pcPriClassBase      : ctypes.c_long
-    dwFlags             : ctypes.c_uint32
-    szExeFile           : ctypes.c_char * 260
-
-
-def get_parent_processes() -> Iterable[str]:
+def get_parent_processes():
     try:
         k32 = ctypes.windll.kernel32
     except AttributeError:
@@ -49,14 +43,15 @@ def get_parent_processes() -> Iterable[str]:
     if not snap:
         raise RuntimeError('could not create snapshot')
     try:
+        def NextProcess():
+            return k32.Process32Next(snap, ctypes.byref(entry))
         if not k32.Process32First(snap, ctypes.byref(entry)):
             raise RuntimeError('could not iterate processes')
         processes = {
             entry.th32ProcessID: (
                 entry.th32ParentProcessID,
                 bytes(entry.szExeFile).decode('latin1')
-            ) for _ in iter(
-                functools.partial(k32.Process32Next, snap, ctypes.byref(entry)), 0)
+            ) for _ in iter(NextProcess, 0)
         }
     finally:
         k32.CloseHandle(snap)
@@ -77,6 +72,101 @@ def is_powershell_process() -> bool:
                 return False
             if name == 'powershell':
                 return True
+            if name == 'pwsh':
+                return True
     except NotWindows:
         pass
     return False
+
+
+class Ps1Wrapper:
+    WRAPPED = False
+
+    def __new__(cls, stream: BinaryIO):
+        if stream.isatty():
+            return stream
+        return super().__new__(cls)
+
+    def __init__(self, stream: BinaryIO):
+        if self is stream:
+            return
+        self.stream = stream
+
+    def __getattr__(self, key):
+        return getattr(self.stream, key)
+
+    def __enter__(self):
+        self.stream.__enter__()
+        return self
+
+    def __exit__(self, *a):
+        return self.stream.__exit__(*a)
+
+
+class PS1OutputWrapper(Ps1Wrapper):
+    _header_written = False
+
+    def write(self, data):
+        if not data:
+            return
+        import base64
+        if not self._header_written:
+            self.stream.write(_PS1_MAGIC)
+            self._header_written = True
+            if not Ps1Wrapper.WRAPPED:
+                EV = 'REFINERY_SUPPRESS_PS1_WARNING'
+                ev = os.environ.get(EV, '0')
+                ev = int(ev) if ev.isdigit() else bool(ev)
+                if not ev:
+                    import logging
+                    logging.getLogger('root').critical(
+                        U'WARNING: PowerShell has no support for binary pipelines or streaming. As a result, BinaryRefinery '
+                        U'uses an unreliable and slow band-aid. Proceed at your own peril!\n'
+                        U'- To get more information: https://github.com/binref/refinery/issues/5\n'
+                        F'- To disable this warning: $env:{EV}=1'
+                    )
+        view = memoryview(data)
+        size = 1 << 15
+        for k in range(0, len(view), size):
+            self.stream.write(base64.b16encode(view[k:k + size]))
+
+
+class PS1InputWrapper(Ps1Wrapper):
+
+    _init = True
+
+    def read(self, size=None):
+        return self.read1(size)
+
+    def read1(self, size=None):
+        if size is None:
+            size = -1
+        if self._init:
+            if 0 < size < len(_PS1_MAGIC):
+                raise RuntimeError(F'Unexpectedly small initial read: {size}')
+            self._init = False
+            length = len(_PS1_MAGIC)
+            header = self.stream.read(length)
+            if header != _PS1_MAGIC:
+                return header + self.stream.read(max(size - length, -1))
+            Ps1Wrapper.WRAPPED = True
+        if Ps1Wrapper.WRAPPED:
+            if size > 0:
+                size *= 2
+            import base64
+            return base64.b16decode(self.stream.read(size).strip())
+        else:
+            return self.stream.read(size)
+
+
+def bandaid(codec):
+    if not is_powershell_process():
+        return
+
+    import io
+    import sys
+
+    sys.stdout = io.TextIOWrapper(
+        PS1OutputWrapper(sys.stdout.buffer), codec, line_buffering=False, write_through=True)
+    sys.stdin = io.TextIOWrapper(
+        PS1InputWrapper(sys.stdin.buffer), codec, line_buffering=False)
