@@ -27,6 +27,8 @@ In recognition of the fact that reference documentation can be somewhat dry, the
 - [OALabs](https://www.youtube.com/c/OALabs) was kind enough to let me [demo the toolkit in a feature video](https://www.youtube.com/watch?v=4gTaGfFyMK4).
 - [Johannes Bader](https://bin.re/) wrote an amazing [blog post about how to analyze TA551 malspam with binary refinery](https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/). It should really be turned into a tutorial at some point.
 
+Full-text search of the description and help text for every unit is also available on the command line, via the provided `binref` command.
+
 ## License
 
 The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [3-Clause BSD License][license]. This repository also contains [a copy of the full license text](LICENSE). If you want to do something with it that's not covered by this license, please feel free to contact the author.
