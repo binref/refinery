@@ -38,17 +38,20 @@ def get_help_string(unit, brief=False, width=None):
         return terminalfit(documentation(unit), width=width)
     else:
         from io import StringIO
-        from os import environ
         from refinery.lib.environment import environment
+        _ts = environment.term_size.value
+        environment.term_size.value = width
         try:
-            environ[environment.term_size.key] = str(width)
             argp = unit.argparser()
         except ArgparseError as fail:
             argp = fail.parser
-        buffer = StringIO('w')
-        argp.print_help(buffer)
-        info = buffer.getvalue()
-        return info
+        else:
+            buffer = StringIO('w')
+            argp.print_help(buffer)
+            info = buffer.getvalue()
+            return info
+        finally:
+            environment.term_size.value = _ts
 
 
 def explorer(keyword_color='91', unit_color='93'):

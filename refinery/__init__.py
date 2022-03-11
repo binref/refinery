@@ -157,7 +157,7 @@ class __pdoc__(dict):
                     bt = getattr(unit.mro()[1], method, None)
                     if at and at is not bt:
                         self[F'{name}.{method}'] = False
-            hlp = get_help_string(unit, width=74)
+            hlp = get_help_string(unit, width=97)
             hlp = hlp.replace('\x60', '')
             hlp = self._strip_globals(hlp).strip()
             hlp = (

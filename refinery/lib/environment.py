@@ -84,22 +84,18 @@ def logger(name: str) -> logging.Logger:
 
 class EnvironmentVariableSetting:
     key: str
-    val: Any
+    value: Any
 
     def __init__(self, name: str):
         self.key = F'REFINERY_{name}'
-        self.val = self.read()
-
-    @property
-    def value(self):
-        return self.val
+        self.value = self.read()
 
     def read(self):
         return None
 
 
 class EVBool(EnvironmentVariableSetting):
-    val: bool
+    value: bool
 
     def read(self):
         value = os.environ.get(self.key, None)
@@ -115,7 +111,7 @@ class EVBool(EnvironmentVariableSetting):
 
 
 class EVInt(EnvironmentVariableSetting):
-    val: int
+    value: int
 
     def read(self) -> int:
         try:
@@ -125,7 +121,7 @@ class EVInt(EnvironmentVariableSetting):
 
 
 class EVLog(EnvironmentVariableSetting):
-    val: Optional[LogLevel]
+    value: Optional[LogLevel]
 
     def read(self):
         try:
