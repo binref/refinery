@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.28
+- Adds the option to completely disable the PowerShell band-aid introduced in 0.4.27 to allow using the `Use-RawPipeline` module.
+
 ## Version 0.4.27
 - Adds several VBA/VBS deobfuscation units and a `deob-vba` unit that applies all of them, similar to `deob-ps1`.
 - Adds the `camellia` cipher unit.
