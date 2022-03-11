@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.lib.powershell import NotWindows, get_parent_processes, is_powershell_process
+from refinery.lib.powershell import NotWindows, get_parent_processes
 
 from .. import TestBase
 
@@ -14,6 +14,3 @@ class TestPowerShellDetection(TestBase):
             pass
         else:
             self.assertTrue(any('python' in p for p in processes))
-
-    def test_not_running_in_powershell(self):
-        self.assertFalse(is_powershell_process())
