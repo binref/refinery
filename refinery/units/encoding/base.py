@@ -1,79 +1,104 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units import arg, Unit
+from refinery.lib.argformats import numseq
+
+
+_DEFAULT_ALPH_STR = R'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+_DEFAULT_ALPHABET = B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+_LARGER_ALPHABETS = {
+    64: b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',
+    85: b'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~'
+}
 
 
 class base(Unit):
     """
     Encodes and decodes integers in arbitrary base.
     """
-
-    _DEFAULT_APHABET = B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-
     def __init__(
         self,
-        base: arg.number(bound=(2, None), metavar='base', help=(
-            'Base to be used for conversion; The value defaults to the length of the alphabet '
-            'if given, or 0 otherwise. Base 0 treats the input as a Python integer literal.')) = 0,
-        little_endian: arg('-e', help='Use little endian instead byte order.') = False,
-        alphabet: arg('-a', metavar='STR', help=(
-            'The alphabet of digits. Has to have length at least equal to the chosen base. '
-            'The default is: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.')) = B'',
+        base: arg(type=numseq, metavar='base|alphabet', help=(
+            R'Either the base to be used or an alphabet. If an explicit alphabet is given, its length '
+            R'determines the base. The default base 0 treats the input as a Python integer literal. If '
+            F'a numeric base is given, digits from the alphabet "{_DEFAULT_ALPH_STR}" are used. ')) = 0,
+        little_endian: arg.switch('-e', help='Use little endian byte order instead of big endian.') = False,
+        strict_digits: arg.switch('-s', help='Check that all input digits are part of the alphabet.') = False,
     ):
-        if alphabet:
-            if len(alphabet) < 2:
-                raise ValueError('an alphabet with at least two digits is required')
+        super().__init__(base=base, little_endian=little_endian, strict_digits=strict_digits)
+
+    @property
+    def _args(self):
+        base = self.args.base
+        if isinstance(base, int):
             if not base:
-                base = len(alphabet)
-        else:
-            alphabet = self._DEFAULT_APHABET
-        if base and base not in range(2, len(alphabet) + 1):
-            raise ValueError(F'base may only be an integer between 2 and {len(alphabet)}')
-        super().__init__(base=base, little_endian=little_endian, alphabet=alphabet)
+                return 0, B''
+            if base in _LARGER_ALPHABETS:
+                return base, _LARGER_ALPHABETS[base]
+            if base not in range(2, len(_DEFAULT_ALPHABET) + 1):
+                raise ValueError(F'base may only be an integer between 2 and {len(_DEFAULT_ALPHABET)}')
+            return base, _DEFAULT_ALPHABET[:base]
+        if len(set(base)) != len(base):
+            raise ValueError('the given alphabet contains duplicate letters')
+        return len(base), bytearray(base)
 
     @property
     def byteorder(self):
         return 'little' if self.args.little_endian else 'big'
 
     def reverse(self, data):
+        base, alphabet = self._args
         self.log_info('using byte order', self.byteorder)
         number = int.from_bytes(data, byteorder=self.byteorder)
 
         if number == 0:
             return B'0'
-        if self.args.base == 0:
+        if base == 0:
             return B'0x%X' % number
-        if self.args.base > len(self.args.alphabet):
-            raise ValueError(
-                F'Only {len(self.args.alphabet)} available; not enough to '
-                F'encode base {self.args.base}'
-            )
+        if base > len(alphabet):
+            raise ValueError(F'Only {len(alphabet)} available; not enough to encode base {base}')
 
         def reverse_result(number):
             while number:
-                yield self.args.alphabet[number % self.args.base]
-                number //= self.args.base
+                yield alphabet[number % base]
+                number //= base
 
         return bytes(reversed(tuple(reverse_result(number))))
 
     def process(self, data: bytearray):
-        data = data.strip()
-        base = self.args.base
-        defaults = self._DEFAULT_APHABET[:base]
-        alphabet = self.args.alphabet[:base]
-        if len(alphabet) == len(defaults):
+        base, alphabet = self._args
+        if base and base != 64 and not self.args.strict_digits:
+            check = set(alphabet)
+            index = 0
+            it = iter(data)
+            for b in it:
+                if b not in check:
+                    break
+                index += 1
+            for b in it:
+                if b in check:
+                    data[index] = b
+                    index += 1
+            self.log_info(F'stripped {len(data)-index} invalid digits from input data')
+            del data[index:]
+        if len(alphabet) <= len(_DEFAULT_ALPHABET):
+            defaults = _DEFAULT_ALPHABET[:base]
             if alphabet != defaults:
                 self.log_info('translating input data to a default alphabet for faster conversion')
                 data = data.translate(bytes.maketrans(alphabet, defaults))
             result = int(data, self.args.base)
         elif len(alphabet) == 64:
             import base64
-            _b64_alphabet = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-            return base64.b64decode(data.translate(bytes.maketrans(alphabet, _b64_alphabet)))
+            _b64_alphabet = _LARGER_ALPHABETS[64]
+            if alphabet != _b64_alphabet:
+                data = data.translate(bytes.maketrans(alphabet, _b64_alphabet))
+            return base64.b64decode(data + b'===', validate=self.args.strict_digits)
         elif len(alphabet) == 85:
             import base64
-            _b85_alphabet = b'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~'
-            return base64.b85decode(data.translate(bytes.maketrans(alphabet, _b85_alphabet)))
+            _b85_alphabet = _LARGER_ALPHABETS[85]
+            if alphabet != _b85_alphabet:
+                data = data.translate(bytes.maketrans(alphabet, _b85_alphabet))
+            return base64.b85decode(data)
         else:
             self.log_warn('very long alphabet, unable to use built-ins; reverting to (slow) fallback.')
             result = 0
