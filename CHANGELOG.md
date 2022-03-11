@@ -1,5 +1,12 @@
 # Binary Refinery Changelog
 
+## Version 0.4.27
+- Adds several VBA/VBS deobfuscation units and a `deob-vba` unit that applies all of them, similar to `deob-ps1`.
+- Adds the `camellia` cipher unit.
+- Adds the new `struct` unit format character `w` for decoded wide strings.
+- The `dnfields` unit was extended and now also extracts string fields which are assigned a unique value.
+- Implements a better PowerShell band-aid and displays a warning message.
+
 ## Version 0.4.26
 Adds various convenience output options in the Python REPL and adds documentation for those.
 
