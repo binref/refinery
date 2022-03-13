@@ -24,11 +24,11 @@ If you want your custom refinery unit to accept command line parameters, you can
 write an initialization routine. For example, the following unit implements a
 very simple XOR unit (less versatile than the already existing `refinery.xor`):
 
-    from refinery import Unit, arg
+    from refinery import Unit
     import itertools
 
     class myxor (Unit):
-        def __init__(self, key: arg(help='Encryption key')):
+        def __init__(self, key: Unit.Arg.Binary(help='Encryption key')):
             pass
 
         def process(self, data: bytearray):
@@ -37,13 +37,15 @@ very simple XOR unit (less versatile than the already existing `refinery.xor`):
                 data[k] ^= next(key)
             return data
 
-The `refinery.arg` decorator is optional and only used here to provide a help
-message on the command line. The example also shows that the `__init__` code can
-be left empty: In this case, refinery automatically adds boilerplate code that
-copies all `__init__` parameters to the `args` member variable of the unit. In
-this case, the constructor will be completed to have the following code:
+The `refinery.Arg` decorator is optional and only used here to provide a help
+message on the command line. It is also available as the `Arg` class property
+of the `refinery.Unit` class for convenience. The example also shows that the
+`__init__` code can be left empty: In this case, refinery automatically adds
+boilerplate code that copies all `__init__` parameters to the `args` member
+variable of the unit. In this case, the constructor will be completed to have
+the following code:
 
-        def __init__(self, key: arg(help='Encryption key')):
+        def __init__(self, key: Unit.Arg.Binary(help='Encryption key')):
             super().__init__(key=key)
 
 The option of writing an empty `__init__` was added because it is rarely needed
@@ -605,7 +607,7 @@ class Arg(Argument):
         return clone
 
     def __repr__(self) -> str:
-        return F'arg({super().__repr__()})'
+        return F'{self.__class__.__name__}({super().__repr__()})'
 
     def __call__(self, init: Callable) -> Callable:
         parameters = inspect.signature(init).parameters

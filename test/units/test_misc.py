@@ -247,7 +247,7 @@ class TestSimpleInvertible(TestUnitBase):
 
     def test_argument_representation(self):
         argument = Arg.Switch('--switch', help="halp")
-        self.assertEqual(repr(argument), "arg('--switch', action='store_true', help='halp')")
+        self.assertEqual(repr(argument), "Arg('--switch', action='store_true', help='halp')")
         self.assertEqual(argument.destination, 'switch')
 
     def test_unit_output_01(self):
