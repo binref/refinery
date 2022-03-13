@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import copy
-
 from refinery.units import Arg, Unit, Chunk
 
 
@@ -22,7 +20,7 @@ class push(Unit):
         super().__init__(data=data)
 
     def process(self, data: Chunk):
-        tos = self.args.data or copy.copy(data)
+        tos = self.args.data or data.copy()
         if self.args.nesting > 0:
             data.set_next_scope(False)
         else:

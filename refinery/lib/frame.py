@@ -197,7 +197,7 @@ class Chunk(bytearray):
 
         self._view: Tuple[bool] = view
         self._path: Tuple[int] = path
-        self._fill: bool = fill
+        self._fill: Optional[bool] = fill
 
         self._meta = m = LazyMetaOracle(self)
         if meta is not None:
@@ -290,8 +290,8 @@ class Chunk(bytearray):
         """
         This method can be used to take over properties of a parent `refinery.lib.frame.Chunk`.
         """
-        self._path = parent.path
-        self._view = parent.view
+        self._path = parent._path
+        self._view = self._view or parent._view
         for kv in parent.meta.items():
             self._meta.setdefault(*kv)
         return self
@@ -342,6 +342,9 @@ class Chunk(bytearray):
             self._meta[bounds] = value
         else:
             bytearray.__setitem__(self, bounds, value)
+
+    def copy(self) -> Chunk:
+        return self.__copy__()
 
     def __copy__(self):
         return Chunk(self, self._path, self._view, self._meta, self._fill)
