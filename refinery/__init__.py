@@ -36,6 +36,7 @@ __distribution__ = 'binary-refinery'
 
 from typing import Dict, Type
 from importlib import resources
+from datetime import datetime
 
 import pickle
 
@@ -71,6 +72,7 @@ class _cache:
         self.loaded = False
         self.units = {}
         self.cache = {}
+        self.last_reload = datetime(1985, 8, 5)
         self.load()
 
     def load(self):
@@ -106,8 +108,13 @@ class _cache:
 
     def _resolve(self, name, retry=0):
         if retry > 2:
-            raise AttributeError
+            raise AttributeError(name)
         elif retry >= 2:
+            now = datetime.utcnow()
+            delta = now - self.last_reload
+            if delta.total_seconds() < 10:
+                raise AttributeError(name)
+            self.last_reload = now
             self.reload()
         elif retry >= 1:
             self.load()
