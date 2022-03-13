@@ -3,7 +3,6 @@
 import logging
 import os.path
 import inspect
-import io
 import sys
 
 from glob import glob
