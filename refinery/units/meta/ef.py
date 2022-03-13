@@ -75,7 +75,7 @@ class ef(Unit):
                 out.seek(0)
                 out.truncate()
 
-    def glob(self, pattern: str) -> Iterable[Path]:
+    def _glob(self, pattern: str) -> Iterable[Path]:
         if pattern.endswith('**'):
             pattern += '/*'
         root = Path(next(iter(re.split(R'[\?\*\[\]]', pattern, maxsplit=1)))).parent
@@ -89,7 +89,7 @@ class ef(Unit):
             mask = meta.format_str(mask, self.codec, [data])
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
-            for path in self.glob(mask):
+            for path in self._glob(mask):
                 if not path.is_file():
                     continue
                 if self.args.meta:
