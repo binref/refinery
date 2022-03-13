@@ -185,7 +185,7 @@ def drain(stream):
     return bytearray(stream)
 
 
-__all__ = [x for x, _ in sorted(_cache.units.items(), key=lambda x: x[1])] + [
+__all__ = sorted(_cache.units, key=lambda x: x.lower()) + [
     Unit.__name__, arg.__name__, '__pdoc__', 'drain', 'UNIT_CACHE_PATH']
 
 
