@@ -279,20 +279,21 @@ class Argument:
 
 class Arg(Argument):
     """
-    This child class of `refinery.units.Argument` is specifically an argument for the
-    `add_argument` method of an `ArgumentParser` from the `argparse` module. It can also
-    be used as a decorator for the constructor of a refinery unit to better control
-    the argument parser of that unit's command line interface. Example:
+    This class is specifically an argument for the `add_argument` method of an `ArgumentParser` from
+    the `argparse` module. It can also be used as a decorator or annotation for the constructor of a
+    refinery unit to better control the argument parser of that unit's command line interface.
+    Example:
     ```
     class prefixer(Unit):
-        @arg('prefix', help='this data will be prepended to the input.')
-        def __init__(self, prefix): pass
-
+        def __init__(
+            self,
+            prefix: Arg.Binary(help='This data will be prepended to the input.')
+        ): ...
         def process(self, data):
             return self.args.prefix + data
     ```
-    Note that when the init of a unit has a return annotation that is a base class of
-    itself, then all its parameters will automatically be forwarded to that base class.
+    Note that when the init of a unit has a return annotation that is a base class of itself, then
+    all its parameters will automatically be forwarded to that base class.
     """
 
     class delete: pass
