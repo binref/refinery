@@ -4,7 +4,7 @@ import operator
 from typing import Any, Callable, Optional
 
 from refinery.lib.meta import metavars
-from refinery.lib.argformats import PythonExpression, ParserVariableMissing
+from refinery.lib.argformats import DelayedNumSeqArgument, PythonExpression, ParserVariableMissing
 from refinery.units.meta import Arg, ConditionalUnit
 
 
@@ -30,6 +30,8 @@ class iff(ConditionalUnit):
             help='check that the expression is less than {varname}') = None,
         ct: Arg('-in', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is contained in {varname}') = None,
+        eq: Arg('-eq', type=str, metavar='<right-hand-side>', group='OP',
+            help='check that the expression is equal to {varname}') = None,
         negate=False, temporary=False
     ):
         operators = [
@@ -37,6 +39,7 @@ class iff(ConditionalUnit):
             (gt, operator.__gt__),
             (le, operator.__le__),
             (lt, operator.__lt__),
+            (eq, None),
             (ct, lambda a, b: operator.__contains__(b, a)),
         ]
         operators = [
@@ -61,12 +64,15 @@ class iff(ConditionalUnit):
     def match(self, chunk):
         meta = metavars(chunk)
         lhs: Optional[str] = self.args.lhs
-        rhs: Optional[str] = self.args.rhs
+        rhs: Optional[Any] = self.args.rhs
         cmp: Optional[Callable[[Any, Any], bool]] = self.args.cmp
         try:
             lhs = lhs and PythonExpression.evaluate(lhs, meta)
         except ParserVariableMissing:
             return lhs in meta
+        if cmp is None and rhs is not None:
+            rhs = DelayedNumSeqArgument(rhs)(chunk)
+            return lhs == rhs
         rhs = rhs and PythonExpression.evaluate(rhs, meta)
         if lhs is None:
             return bool(chunk)
