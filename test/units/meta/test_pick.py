@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery import Unit
 from refinery.units.meta.pick import pick
+from refinery.lib.loader import load_pipeline
 from itertools import count
 
 from . import TestMetaBase
@@ -124,3 +125,7 @@ class TestPick(TestMetaBase):
         unit = pick(slice(None, 2))
         data = str(B'' | inf[unit])
         self.assertEqual(data, '$$')
+
+    def test_scroll_past_invisible_chunks(self):
+        pl = load_pipeline('emit FOO [| push [| rex . | pick :1 | pop o ]| ccp var:o ]')
+        self.assertEqual(pl(), B'FFOO')
