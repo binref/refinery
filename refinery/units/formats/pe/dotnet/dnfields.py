@@ -32,16 +32,6 @@ class dnfields(PathExtractorUnit):
         '^[us]?int.?64$' : 8,
     }
 
-    def __init__(
-        self, *paths,
-        regex=False,
-        list=False,
-        path=b'name',
-        join_path=False,
-        drop_path=False,
-    ):
-        super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, regex=regex, path=path)
-
     def _guess_field_info(self, tables, data, t) -> FieldInfo:
         pattern = (
             BR'(\x20....|\x1F.)'                # ldc.i4  count
@@ -115,12 +105,17 @@ class dnfields(PathExtractorUnit):
                 fname = guess.name
             if not fname.isprintable():
                 fname = F'F{rv.RVA:0{rwidth}X}'
-            ftype = guess.type
+            ext = ftype = guess.type.lower()
             if guess.count > 1:
                 ftype += F'[{guess.count}]'
             self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {guess.type}, count: {guess.count}, name: {fname}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
-            yield UnpackResult(fname, lambda t=offset, s=totalsize: data[t:t + s], type=ftype)
+            yield UnpackResult(
+                F'{fname}.{ext}',
+                lambda t=offset, s=totalsize: data[t:t + s],
+                name=fname,
+                type=ftype,
+            )
 
         for index in remaining_field_indices:
             field = tables.Field[index]
@@ -147,4 +142,9 @@ class dnfields(PathExtractorUnit):
             if not values:
                 continue
             if len(values) == 1:
-                yield UnpackResult(name, next(iter(values)), type='string')
+                yield UnpackResult(
+                    F'{name}.str',
+                    next(iter(values)),
+                    name=name,
+                    type='string'
+                )
