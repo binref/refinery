@@ -13,50 +13,48 @@ import logging
 
 import refinery
 
-from typing import Dict, Iterable
+from typing import Dict, Generator, Type
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from refinery.units import Executable, Unit
+    from types import ModuleType
 
 
 class EntryNotFound(NameError):
     pass
 
 
-def get_all_entry_points() -> Iterable[Executable]:
+def get_all_entry_points() -> Generator[Type[Unit], None, None]:
     """
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
     """
-    path = ['refinery', 'units']
-    root = __import__('.'.join(path))
+    path = 'refinery.units'
+    root = __import__(path).units
 
-    for name in path[1:]:
-        root = getattr(root, name)
-
-    def iterate(parent, *path):
-        for _, name, ispkg in pkgutil.iter_modules(parent.__path__):
-            module_name = '.'.join([*path, name])
+    def iterate(parent: ModuleType, path: str, is_package: bool = True) -> Generator[Type[Unit], None, None]:
+        for attr in dir(parent):
+            item = getattr(parent, attr)
+            if getattr(item, '__module__', None) != path:
+                continue
+            if isinstance(item, type) and issubclass(item, root.Entry) and item is not root.Entry:
+                yield item
+        if not is_package:
+            return
+        for _, name, is_package in pkgutil.iter_modules(parent.__path__):
+            mp = F'{path}.{name}'
             try:
-                importlib.import_module(module_name)
+                importlib.import_module(mp)
                 module = getattr(parent, name)
             except ModuleNotFoundError as error:
-                logging.error(F'could not load {module_name} because {error.name} is missing.')
-                continue
+                logging.error(F'could not load {mp} because {error.name} is missing.')
             except Exception as error:
-                logging.error(F'could not load {module_name} due to unknown error: {error!s}')
-                continue
-            if ispkg:
-                yield from iterate(module, *path, name)
-            for attr in dir(module):
-                item = getattr(module, attr)
-                if getattr(item, '__module__', None) != module_name:
-                    continue
-                if isinstance(item, type) and issubclass(item, root.Entry) and item is not root.Entry:
-                    yield item
+                logging.error(F'could not load {mp} due to unknown error: {error!s}')
+            else:
+                yield from iterate(module, mp, is_package)
 
-    yield from iterate(root, *path)
+    yield from iterate(root, path)
 
 
 @functools.lru_cache(maxsize=1, typed=True)
