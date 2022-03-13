@@ -50,6 +50,7 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
         version, timestamp, magic_int, codez, is_pypy, _, _ = \
             xtpyi._xdis.load.load_module_from_file_object(MemoryFile(buffer), file_name, code_objects)
     finally:
+        sys.stderr.close()
         sys.stderr = sys_stderr
     if not isinstance(codez, list):
         codez = [codez]

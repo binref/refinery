@@ -15,6 +15,7 @@ def errbuf():
     sys_stderr = sys.stderr
     sys.stderr = io.StringIO()
     yield sys.stderr
+    sys.stderr.close()
     sys.stderr = sys_stderr
 
 
