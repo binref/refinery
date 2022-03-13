@@ -13,6 +13,7 @@
                 top_ancestor=not show_inherited_members)
     return '<a title="{}" href="{}">{}</a>'.format(d.refname, url, name)
 
+  is_toplevel = module.name == 'refinery'
 
   def to_html(text):
     return _to_html(text, module=module, link=link, latex_math=latex_math)
@@ -186,7 +187,7 @@
 
       <dd>${show_desc(c)}
 
-      % if mro:
+      % if mro and not is_toplevel:
           <h3>Ancestors</h3>
           <ul class="hlist">
           % for cls in mro:
@@ -195,7 +196,7 @@
           </ul>
       %endif
 
-      % if subclasses:
+      % if subclasses and not is_toplevel:
           <h3>Subclasses</h3>
           <ul class="hlist">
           % for sub in subclasses:
@@ -203,7 +204,7 @@
           % endfor
           </ul>
       % endif
-      % if class_vars:
+      % if class_vars and not is_toplevel:
           <h3>Class variables</h3>
           <dl>
           % for v in class_vars:
@@ -238,7 +239,7 @@
           </dl>
       % endif
 
-      % if not show_inherited_members:
+      % if not show_inherited_members and not is_toplevel:
           <%
               members = c.inherited_members()
           %>
