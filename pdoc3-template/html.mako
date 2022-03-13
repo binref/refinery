@@ -222,7 +222,7 @@
           % endfor
           </dl>
       % endif
-      % if inst_vars:
+      % if inst_vars and not is_toplevel:
           <h3>Instance variables</h3>
           <dl>
           % for v in inst_vars:
