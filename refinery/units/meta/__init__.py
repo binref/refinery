@@ -43,9 +43,7 @@ class ConditionalUnit(Unit, abstract=True):
     def filter(self, chunks: Iterable[Chunk]):
         temporary = self.args.temporary
         for chunk in chunks:
-            if not chunk.visible:
-                continue
-            if self.match(chunk) is self.args.negate:
+            if chunk.visible and self.match(chunk) is self.args.negate:
                 if not temporary:
                     continue
                 chunk.visible = False

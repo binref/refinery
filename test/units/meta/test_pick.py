@@ -127,5 +127,5 @@ class TestPick(TestMetaBase):
         self.assertEqual(data, '$$')
 
     def test_scroll_past_invisible_chunks(self):
-        pl = load_pipeline('emit FOO [| push [| rex . | pick :1 | pop o ]| ccp var:o ]')
+        pl = load_pipeline('emit FOO [| push [| rex . | pick :1 | iff size -eq 1 | pop o ]| ccp var:o ]')
         self.assertEqual(pl(), B'FFOO')

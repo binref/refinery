@@ -75,8 +75,3 @@ class pick(Unit):
                     stop -= 1
                     discards += 1
                 yield chunk
-
-        if not consumed:
-            for chunk in it:
-                if not chunk.visible:
-                    yield chunk

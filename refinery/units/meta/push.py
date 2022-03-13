@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import Arg, Unit
+import copy
+
+from refinery.units import Arg, Unit, Chunk
 
 
 class push(Unit):
@@ -19,8 +21,8 @@ class push(Unit):
     def __init__(self, data: Arg(help='The data to be pushed, by default a copy of the input.') = B''):
         super().__init__(data=data)
 
-    def process(self, data):
-        yield self.args.data or data
+    def process(self, data: Chunk):
+        tos = self.args.data or copy.copy(data)
         if self.args.nesting > 0:
             data.set_next_scope(False)
         else:
@@ -29,3 +31,4 @@ class push(Unit):
             except AttributeError:
                 self.log_warn('application has no effect outside frame.')
         yield data
+        yield tos
