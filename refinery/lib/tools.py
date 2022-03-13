@@ -308,8 +308,10 @@ class NoLogging:
             warnings.resetwarnings()
             warnings.filters[:] = self._warning_filters
         if self.mode & NoLogging.Mode.STD_ERR:
+            sys.stderr.close()
             sys.stderr = self._stderr
         if self.mode & NoLogging.Mode.STD_OUT:
+            sys.stdout.close()
             sys.stdout = self._stdout
 
 
