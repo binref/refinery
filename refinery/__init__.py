@@ -177,21 +177,8 @@ class __pdoc__(dict):
         return super().items()
 
 
-def drain(stream):
-    """
-    A function wrapper around the `bytearray` data type. Can be used as the final sink in
-    a refinery pipeline in Python code, i.e.:
-
-        from refinery import *
-        # ...
-        output = data | carve('b64', single=True) | b64 | zl | drain
-        assert isinstance(output, bytearray)
-    """
-    return bytearray(stream)
-
-
 __all__ = sorted(_cache.units, key=lambda x: x.lower()) + [
-    Unit.__name__, Arg.__name__, '__pdoc__', 'drain', 'UNIT_CACHE_PATH']
+    Unit.__name__, Arg.__name__, '__pdoc__', 'UNIT_CACHE_PATH']
 
 
 def __getattr__(name):

@@ -8,7 +8,6 @@ import inspect
 from configparser import ConfigParser
 from pathlib import Path
 
-from refinery import drain
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.encoding.esc import esc
 from refinery.lib.structures import MemoryFile
@@ -58,7 +57,7 @@ class winreg(PathExtractorUnit):
             return bytes.fromhex(re.sub('[^a-f0-9]+', '', data))
 
         def REG_SZ(data: str) -> bytes:
-            return data.encode(self.codec) | esc(quoted=True) | drain
+            return data.encode(self.codec) | esc(quoted=True) | bytes
 
         def REG_EXPAND_SZ(data: str):
             return REG_BINARY(data).decode('UTF-16LE').rstrip('\0').encode(self.codec)

@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 from ... import TestUnitBase
 
-from refinery import drain
 from refinery.lib.crypto import BlockCipher, BlockCipherFactory, rotl16, rotr16, CIPHER_MODES
 from refinery.units.crypto.cipher.rc2 import rc2, StandardBlockCipherUnit
 
@@ -149,7 +148,7 @@ class TestModesUsingRC2(TestUnitBase):
             except ValueError:
                 continue
             M = self.generate_random_buffer(RC2.block_size * 20)
-            self.assertEqual(M, M | E | D | drain,
+            self.assertEqual(M, M | E | D | memoryview,
                 F'check failed for mode {mode}.')
 
     def test_compatibility_encrypt(self):
@@ -161,7 +160,7 @@ class TestModesUsingRC2(TestUnitBase):
             except ValueError:
                 continue
             M = self.generate_random_buffer(RC2.block_size * 20)
-            self.assertEqual(M, M | E | D | drain,
+            self.assertEqual(M, M | E | D | memoryview,
                 F'check failed for mode {mode}.')
 
     def test_ctr_mode(self):
@@ -169,7 +168,7 @@ class TestModesUsingRC2(TestUnitBase):
         E = -jc2(key, mode='ctr', iv=B'n0nc3', raw=True)
         D = +rc2(key, mode='ctr', iv=B'n0nc3', raw=True)
         M = self.generate_random_buffer(RC2.block_size * 20)
-        self.assertEqual(M, M | E | D | drain)
+        self.assertEqual(M, M | E | D | memoryview)
 
     def test_kryptografie_de_rc2_example(self):
         data = B'BeispielklartextBeispielklartext'

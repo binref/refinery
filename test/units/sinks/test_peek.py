@@ -7,9 +7,7 @@ import sys
 
 from .. import TestUnitBase
 
-from refinery.lib.frame import Chunk
 from refinery.lib.loader import load_pipeline as L
-from refinery import drain
 
 
 @contextlib.contextmanager
