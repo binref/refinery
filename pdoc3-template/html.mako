@@ -14,6 +14,7 @@
     return '<a title="{}" href="{}">{}</a>'.format(d.refname, url, name)
 
   is_toplevel = module.name == 'refinery'
+  CLASSES = 'Units' if is_toplevel else 'Classes'
 
   def to_html(text):
     return _to_html(text, module=module, link=link, latex_math=latex_math)
@@ -166,7 +167,7 @@
 
   <section>
     % if classes:
-    <h2 class="section-title" id="header-classes">Classes</h2>
+    <h2 class="section-title" id="header-classes">${CLASSES}</h2>
     <dl>
     % for c in classes:
       <%
@@ -313,7 +314,7 @@
     % endif
 
     % if classes:
-    <li><h3><a href="#header-classes">Classes</a></h3>
+    <li><h3><a href="#header-classes">${CLASSES}</a></h3>
       <ul>
       % for c in classes:
         <li>
