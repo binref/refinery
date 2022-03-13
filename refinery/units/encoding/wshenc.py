@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.patterns import formats
 
 
@@ -102,7 +102,7 @@ class wshenc(Unit):
 
     def __init__(
         self,
-        marker: arg.switch('-m', '--no-marker', off=True, help=(
+        marker: Arg.Switch('-m', '--no-marker', off=True, help=(
             'Do not require magic marker when encoding and do not search for '
             'marker when decoding.')
         ) = True

@@ -10,13 +10,13 @@ from abc import abstractmethod
 if TYPE_CHECKING:
     from refinery.lib.frame import Chunk
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.argformats import sliceobj
 
 
 class FrameSlicer(Unit, abstract=True):
 
-    def __init__(self, *slice: arg(
+    def __init__(self, *slice: Arg(
         type=sliceobj, nargs='*', default=[slice(None, None)],
         help='Specify start:stop:step in Python slice syntax.'
     ), **keywords):
@@ -30,8 +30,8 @@ class ConditionalUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        negate: arg.switch('-n', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
-        temporary: arg.switch('-t', help='do not remove chunks from the frame entirely; move them out of scope instead') = False,
+        negate: Arg.Switch('-n', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
+        temporary: Arg.Switch('-t', help='do not remove chunks from the frame entirely; move them out of scope instead') = False,
         **kwargs
     ):
         super().__init__(negate=negate, temporary=temporary, **kwargs)

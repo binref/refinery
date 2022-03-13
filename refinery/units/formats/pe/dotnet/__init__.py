@@ -7,7 +7,7 @@ from enum import Enum
 from hashlib import md5, sha1, sha256, sha512
 from zlib import crc32
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.units.encoding.hex import hex
 from refinery.units.encoding.esc import esc
 from refinery.units.encoding.url import url
@@ -50,15 +50,15 @@ class JSONEncoderUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        encode: arg.option('-e', group='BIN', choices=UNIT, help=(
+        encode: Arg.Option('-e', group='BIN', choices=UNIT, help=(
             'Select an encoder unit used to represent binary data in the JSON output. Available are: {choices}.')) = None,
-        digest: arg.option('-d', group='BIN', choices=HASH, help=(
+        digest: Arg.Option('-d', group='BIN', choices=HASH, help=(
             'Select a hashing algorithm to digest binary data; instead of the data, only the hash will be displayed. The '
             'available algorithms are: {choices}.')) = None,
         **keywords
     ):
-        encode = arg.as_option(encode, UNIT)
-        digest = arg.as_option(digest, HASH)
+        encode = Arg.AsOption(encode, UNIT)
+        digest = Arg.AsOption(digest, HASH)
 
         super().__init__(**keywords)
 

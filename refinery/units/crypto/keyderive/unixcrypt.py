@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.crypto.keyderive import arg, KeyDerivation
+from refinery.units.crypto.keyderive import Arg, KeyDerivation
 from refinery.units import RefineryPartialResult
 
 from typing import List
@@ -339,8 +339,8 @@ class ucrypt(KeyDerivation):
     """
     def __init__(
         self,
-        size: arg(help='The number of bytes to generate, default is 13.') = 13,
-        salt: arg(help='Salt for the derivation, the default is "AA".') = B'AA'
+        size: Arg(help='The number of bytes to generate, default is 13.') = 13,
+        salt: Arg(help='Salt for the derivation, the default is "AA".') = B'AA'
     ):
         super().__init__(size=size, salt=salt)
 

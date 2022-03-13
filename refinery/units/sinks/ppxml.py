@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import io
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.xml import ForgivingParse
 
 
@@ -12,9 +12,9 @@ class ppxml(Unit):
     """
 
     def __init__(self,
-        indent: arg.number('-i', help=(
+        indent: Arg.Number('-i', help=(
             'Controls the amount of space characters used for indentation in the output. Default is 4.')) = 4,
-        header: arg.switch('-x', help='Add an XML header to the formatted output.') = False
+        header: Arg.Switch('-x', help='Add an XML header to the formatted output.') = False
     ):
         super().__init__(indent=indent, header=header)
 

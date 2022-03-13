@@ -6,7 +6,7 @@ from typing import Generator, TYPE_CHECKING
 if TYPE_CHECKING:
     from refinery.lib.frame import Chunk
 
-from refinery.units import arg
+from refinery.units import Arg
 from refinery.units.meta import FrameSlicer
 
 
@@ -18,7 +18,7 @@ class scope(FrameSlicer):
     frame closes or the frame is being rescoped by a second application of
     this unit, they become visible again.
     """
-    def __init__(self, *slice, visible: arg.switch('-n', '--not', off=True, help=(
+    def __init__(self, *slice, visible: Arg.Switch('-n', '--not', off=True, help=(
         'Hide the given chunks instead of making them the only ones visible.')) = True
     ):
         super().__init__(*slice, visible=visible)

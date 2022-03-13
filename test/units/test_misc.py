@@ -13,7 +13,7 @@ from . import TestUnitBase
 
 from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L
 from refinery.lib.structures import MemoryFile
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class TestPipelines(TestUnitBase):
@@ -246,7 +246,7 @@ class TestSimpleInvertible(TestUnitBase):
                     msg=F'inversion property failed for {name} testing structured buffer #{k}.')
 
     def test_argument_representation(self):
-        argument = arg.switch('--switch', help="halp")
+        argument = Arg.Switch('--switch', help="halp")
         self.assertEqual(repr(argument), "arg('--switch', action='store_true', help='halp')")
         self.assertEqual(argument.destination, 'switch')
 

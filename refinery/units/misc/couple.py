@@ -4,7 +4,7 @@ import sys
 
 from subprocess import PIPE, Popen
 
-from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.meta import metavars
 
 
@@ -22,12 +22,12 @@ class couple(Unit):
     _JOIN_TIME = 0.1
 
     def __init__(
-        self, *commandline : arg(nargs='...', type=str, metavar='(all remaining)', help=(
+        self, *commandline : Arg(nargs='...', type=str, metavar='(all remaining)', help=(
             'All remaining command line tokens form an arbitrary command line to be executed. Use format string syntax '
             'to insert meta variables and incoming data chunks.')),
-        buffer: arg.switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
-        noerror: arg('-e', help='do not merge stdin and stderr; stderr will only be output if -v is also specified.') = False,
-        timeout: arg('-t', metavar='T',
+        buffer: Arg.Switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
+        noerror: Arg('-e', help='do not merge stdin and stderr; stderr will only be output if -v is also specified.') = False,
+        timeout: Arg('-t', metavar='T',
             help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
     ):
         if not commandline:

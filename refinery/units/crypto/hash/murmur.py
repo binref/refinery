@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.lib.murmur import mmh128digest32, mmh128digest64, mmh32digest
-from refinery.units.crypto.hash import HashUnit, arg
+from refinery.units.crypto.hash import HashUnit, Arg
 
 
 class MurMurHash(HashUnit, abstract=True):
-    def __init__(self, seed: arg.number(help='optional seed value') = 0, text=False):
+    def __init__(self, seed: Arg.Number(help='optional seed value') = 0, text=False):
         super().__init__(seed=seed, text=text)
 
 

@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 from itertools import cycle, repeat, islice
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class stretch(Unit):
     """
     Stretch the input data by repeating every byte a number of times.
     """
-    def __init__(self, *count: arg.number(metavar='count', help=(
+    def __init__(self, *count: Arg.Number(metavar='count', help=(
         'The number of times every byte should be repeated. By default,  '
         'every byte is repeated once.'
     ))):

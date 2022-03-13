@@ -4,12 +4,12 @@
 A simple tool to output binary data. Multiple arguments are output in framed
 format, see `refinery.lib.frame`.
 """
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class emit(Unit):
 
-    def __init__(self, *data: arg(help=(
+    def __init__(self, *data: Arg(help=(
         'Data to be emitted. If no argument is specified, data '
         'is retrieved from the clipboard. Multiple arguments are '
         'output in framed format.'

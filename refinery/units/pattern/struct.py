@@ -3,7 +3,7 @@
 import string
 import itertools
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 from refinery.lib.meta import SizeInt, metavars
 from refinery.lib.structures import EOF, StructReader, StreamDetour
@@ -64,13 +64,13 @@ class struct(Unit):
 
     def __init__(
         self,
-        spec: arg(type=str, help='Structure format as explained above.'),
-        *outputs: arg(metavar='output', type=str, help='Output format as explained above.'),
-        multi: arg.switch('-m', help=(
+        spec: Arg(type=str, help='Structure format as explained above.'),
+        *outputs: Arg(metavar='output', type=str, help='Output format as explained above.'),
+        multi: Arg.Switch('-m', help=(
             'Read as many pieces of structured data as possible intead of just one.')) = False,
-        count: arg.number('-n', help=(
+        count: Arg.Number('-n', help=(
             'A limit on the number of chunks to read in multi mode; default is {default}.')) = INF,
-        until: arg('-u', metavar='E', type=str, help=(
+        until: Arg('-u', metavar='E', type=str, help=(
             'An expression evaluated on each chunk in multi mode. New chunks will be parsed '
             'only if the result is nonzero.')) = None,
     ):

@@ -7,7 +7,7 @@ modules in `refinery.units.crypto.cipher`.
 """
 import importlib
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.argformats import number
 from refinery.lib.types import ByteStr
 
@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Callable
 
 
-__all__ = ['arg', 'HASH', 'KeyDerivation']
+__all__ = ['Arg', 'HASH', 'KeyDerivation']
 
 
 class HASH(str, Enum):
@@ -43,15 +43,15 @@ class KeyDerivation(Unit, abstract=True):
 
     def __init__(
         self,
-        size: arg(help='The number of bytes to generate.', type=number),
-        salt: arg(help='Salt for the derivation.'),
-        hash: arg.option(choices=HASH, metavar='hash',
+        size: Arg(help='The number of bytes to generate.', type=number),
+        salt: Arg(help='Salt for the derivation.'),
+        hash: Arg.Option(choices=HASH, metavar='hash',
             help='Specify one of these algorithms (default is {default}): {choices}') = None,
-        iter: arg.number(metavar='iter', help='Number of iterations; default is {default}.') = None,
+        iter: Arg.Number(metavar='iter', help='Number of iterations; default is {default}.') = None,
         **kw
     ):
         if hash is not None:
-            name = arg.as_option(hash, HASH)
+            name = Arg.AsOption(hash, HASH)
             hash = importlib.import_module(F'Crypto.Hash.{name}')
         return super().__init__(salt=salt, size=size, iter=iter, hash=hash, **kw)
 

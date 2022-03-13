@@ -6,7 +6,7 @@ import itertools
 import json
 import textwrap
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.json import flattened
 from refinery.units.crypto.cipher.rsa import normalize_rsa_key
 
@@ -28,10 +28,10 @@ class rsakey(Unit):
     """
     def __init__(
         self,
-        public: arg.switch('-p', help='Force public key output even if the input is private.') = False,
-        output: arg(help='Select an output format (PEM/DER/XKMS/TEXT/JSON), default is PEM.') = RSAFormat.PEM
+        public: Arg.Switch('-p', help='Force public key output even if the input is private.') = False,
+        output: Arg(help='Select an output format (PEM/DER/XKMS/TEXT/JSON), default is PEM.') = RSAFormat.PEM
     ):
-        super().__init__(public=public, output=arg.as_option(output, RSAFormat))
+        super().__init__(public=public, output=Arg.AsOption(output, RSAFormat))
 
     def _xkms_wrap(self, number: int):
         size, r = divmod(number.bit_length(), 8)

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import sys
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.suffixtree import SuffixTree
 from refinery.lib.types import INF
 
@@ -30,16 +30,16 @@ class drp(Unit):
     """
     def __init__(
         self,
-        consecutive: arg.switch('-c', help='Assume that the repeating pattern is consecutive when observable.') = False,
-        align: arg.switch('-d', help='Assume that the pattern occurs at offsets that are multiples of its length.') = False,
-        min: arg.number('-n', help='Minimum size of the pattern to search for. Default is {default}.') = 1,
-        max: arg.number('-N', help='Maximum size of the pattern to search for. Default is {default}.') = INF,
-        len: arg.number('-l', help='Set the exact size of the pattern. This is equivalent to --min=N --max=N.') = None,
-        all: arg.switch('-a', help='Produce one output for each repeating pattern that was detected.') = False,
-        threshold: arg.number('-t', help='Patterns must match this performance threshold in percent, lest they be discarded.') = 20,
-        weight: arg.number('-w', help='Specifies how much longer patterns are favored over small ones. Default is {default}.') = 0,
-        buffer: arg.number('-b', group='BFR', help='Maximum number of bytes to inspect at once. The default is {default}.') = 1024,
-        chug  : arg.switch('-g', group='BFR', help='Compute the prefix tree for the entire buffer instead of chunking it.') = False
+        consecutive: Arg.Switch('-c', help='Assume that the repeating pattern is consecutive when observable.') = False,
+        align: Arg.Switch('-d', help='Assume that the pattern occurs at offsets that are multiples of its length.') = False,
+        min: Arg.Number('-n', help='Minimum size of the pattern to search for. Default is {default}.') = 1,
+        max: Arg.Number('-N', help='Maximum size of the pattern to search for. Default is {default}.') = INF,
+        len: Arg.Number('-l', help='Set the exact size of the pattern. This is equivalent to --min=N --max=N.') = None,
+        all: Arg.Switch('-a', help='Produce one output for each repeating pattern that was detected.') = False,
+        threshold: Arg.Number('-t', help='Patterns must match this performance threshold in percent, lest they be discarded.') = 20,
+        weight: Arg.Number('-w', help='Specifies how much longer patterns are favored over small ones. Default is {default}.') = 0,
+        buffer: Arg.Number('-b', group='BFR', help='Maximum number of bytes to inspect at once. The default is {default}.') = 1024,
+        chug  : Arg.Switch('-g', group='BFR', help='Compute the prefix tree for the entire buffer instead of chunking it.') = False
     ):
         if len is not None:
             min = max = len

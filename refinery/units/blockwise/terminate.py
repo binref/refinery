@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.blockwise import arg, numseq, chunks, BlockTransformationBase
+from refinery.units.blockwise import Arg, numseq, chunks, BlockTransformationBase
 
 
 class terminate(BlockTransformationBase):
@@ -14,7 +14,7 @@ class terminate(BlockTransformationBase):
     """
     def __init__(
         self,
-        sentinel: arg(type=numseq, help='sentinel value to look for; default is {default}') = 0,
+        sentinel: Arg(type=numseq, help='sentinel value to look for; default is {default}') = 0,
         blocksize=1,
         bigendian=False
     ):

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from enum import IntEnum
 
-from refinery.units import Unit, arg
+from refinery.units import Unit, Arg
 from refinery.lib.structures import MemoryFile
 
 
@@ -22,14 +22,14 @@ class stego(Unit):
     """
     def __init__(
         self,
-        parts: arg('parts', nargs='?', type=str, help=(
+        parts: Arg('parts', nargs='?', type=str, help=(
             'A string containing any ordering of the letters R, G, B, and A (case-insensitive). '
             'These pixel components will be extracted from every pixel in the given order. The '
             'default value is {default}.'
         )) = 'RGB'
     ):
         super().__init__(
-            parts=tuple(arg.as_option(p, PIXEL_PART) for p in parts)
+            parts=tuple(Arg.AsOption(p, PIXEL_PART) for p in parts)
         )
 
     @Unit.Requires('Pillow', optional=False)

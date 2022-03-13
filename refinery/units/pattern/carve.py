@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.pattern import arg, PatternExtractor
+from refinery.units.pattern import Arg, PatternExtractor
 from refinery.lib.patterns import formats
 
 
@@ -9,11 +9,11 @@ class carve(PatternExtractor):
     Extracts patches of data in particular formats from the input.
     """
     def __init__(
-        self, format: arg.choice(choices=[p.dashname for p in formats], metavar='format',
+        self, format: Arg.Choice(choices=[p.dashname for p in formats], metavar='format',
             help='Specify one of the following formats: {choices}'),
-        unique: arg.switch('-q', help='Yield every match only once.') = False,
-        decode: arg.switch('-d', help='Automatically decode known patterns.') = False,
-        single: arg.switch('-s', help='Only get the biggest match; equivalent to -qlt1') = False,
+        unique: Arg.Switch('-q', help='Yield every match only once.') = False,
+        decode: Arg.Switch('-d', help='Automatically decode known patterns.') = False,
+        single: Arg.Switch('-s', help='Only get the biggest match; equivalent to -qlt1') = False,
         min=1, max=None, len=None,
         stripspace=False, longest=False, take=None, utf16=True, ascii=True
     ):

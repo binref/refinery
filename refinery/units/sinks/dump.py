@@ -6,7 +6,7 @@ import os.path
 from itertools import cycle
 from string import Formatter
 
-from refinery.units import arg, Unit, RefineryCriticalException
+from refinery.units import Arg, Unit, RefineryCriticalException
 from refinery.lib.meta import metavars
 
 
@@ -34,11 +34,11 @@ class dump(Unit):
     """
 
     def __init__(
-        self, *files: arg(metavar='file', type=str, help='Optionally formatted filename.'),
-        tee    : arg.switch('-t', help='Forward all inputs to STDOUT.') = False,
-        stream : arg.switch('-s', help='Dump all incoming data to the same file.') = False,
-        plain  : arg.switch('-p', help='Never apply any formatting to file names.') = False,
-        force  : arg.switch('-f', help='Remove files if necessary to create dump path.') = False,
+        self, *files: Arg(metavar='file', type=str, help='Optionally formatted filename.'),
+        tee    : Arg.Switch('-t', help='Forward all inputs to STDOUT.') = False,
+        stream : Arg.Switch('-s', help='Dump all incoming data to the same file.') = False,
+        plain  : Arg.Switch('-p', help='Never apply any formatting to file names.') = False,
+        force  : Arg.Switch('-f', help='Remove files if necessary to create dump path.') = False,
     ):
         if stream and len(files) != 1:
             raise ValueError('Can only use exactly one file in stream mode.')

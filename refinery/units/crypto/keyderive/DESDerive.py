@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery.units import RefineryPartialResult
 from refinery.lib.crypto import des_set_odd_parity
-from refinery.units.crypto.keyderive import arg, KeyDerivation
+from refinery.units.crypto.keyderive import Arg, KeyDerivation
 
 __all__ = ['DESDerive']
 
@@ -13,7 +13,7 @@ class DESDerive(KeyDerivation):
     converts a string to an 8 byte DES key with odd byte parity, per FIPS
     specification. This is not a modern key derivation function.
     """
-    def __init__(self, size: arg(help='The number of bytes to generate, default is the maximum of 8.') = 8):
+    def __init__(self, size: Arg(help='The number of bytes to generate, default is the maximum of 8.') = 8):
         super().__init__(size=size, salt=None)
 
     def process(self, password):

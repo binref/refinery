@@ -13,17 +13,17 @@ class xlmdeobf(Unit):
 
     def __init__(
         self,
-        extract_only: Unit.Arg.switch(
+        extract_only: Unit.Arg.Switch(
             '-x', help='Only extract cells without any emulation.'
         ) = False,
-        sort_formulas: Unit.Arg.switch(
+        sort_formulas: Unit.Arg.Switch(
             '-s', '--sort-formulas',
             help='Sort extracted formulas based on their cell address (implies -x).',
         ) = False,
-        with_ms_excel: Unit.Arg.switch(
+        with_ms_excel: Unit.Arg.Switch(
             '-X', '--with-ms-excel', help='Use MS Excel to process XLS files.'
         ) = False,
-        day: Unit.Arg.number(
+        day: Unit.Arg.Number(
             '-d',
             '--day',
             help='Specify the day of month',
@@ -40,7 +40,7 @@ class xlmdeobf(Unit):
             type=str,
             help='Specify the format for extracted formulas (using [[CELL-ADDR]], [[CELL-FORMULA]], and [[CELL-VALUE]])',
         ) = 'CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
-        no_indent: Unit.Arg.switch(
+        no_indent: Unit.Arg.Switch(
             '-I', '--no-indent',
             help='Do not show indent before formulas',
         ) = False,
@@ -56,7 +56,7 @@ class xlmdeobf(Unit):
             type=str,
             help='Password to decrypt the protected document',
         ) = '',
-        output_level: Unit.Arg.number(
+        output_level: Unit.Arg.Number(
             '-o',
             '--output-level',
             help=(
@@ -64,7 +64,7 @@ class xlmdeobf(Unit):
                 'commands 3:strings in important commands).'
             ),
         ) = 0,
-        timeout: Unit.Arg.number(
+        timeout: Unit.Arg.Number(
             '-t',
             '--timeout',
             help='Stop emulation after N seconds (0: not interruption N>0: stop emulation after N seconds)',

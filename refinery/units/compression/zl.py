@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import zlib
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class zl(Unit):
@@ -12,11 +12,11 @@ class zl(Unit):
 
     def __init__(
         self,
-        level  : arg.number('-l', bound=(0, 0X9), help='Specify a compression level between 0 and 9.') = 9,
-        window : arg.number('-w', bound=(8, 0XF), help='Manually specify the window size between 8 and 15.') = 15,
-        force  : arg.switch('-f', help='Decompress as far as possible, even if all known methods fail.') = False,
-        zlib_header: arg.switch('-z', group='MODE', help='Use a ZLIB header.') = False,
-        gzip_header: arg.switch('-g', group='MODE', help='Use a GZIP header.') = False
+        level  : Arg.Number('-l', bound=(0, 0X9), help='Specify a compression level between 0 and 9.') = 9,
+        window : Arg.Number('-w', bound=(8, 0XF), help='Manually specify the window size between 8 and 15.') = 15,
+        force  : Arg.Switch('-f', help='Decompress as far as possible, even if all known methods fail.') = False,
+        zlib_header: Arg.Switch('-z', group='MODE', help='Use a ZLIB header.') = False,
+        gzip_header: Arg.Switch('-g', group='MODE', help='Use a GZIP header.') = False
     ):
         if zlib_header and gzip_header:
             raise ValueError('You can only specify one header type (ZLIB or GZIP).')

@@ -4,7 +4,7 @@ from typing import List, Match
 
 from refinery.lib.argformats import utf8
 from refinery.lib.meta import metavars
-from refinery.units.pattern import arg, RegexUnit, PatternExtractor
+from refinery.units.pattern import Arg, RegexUnit, PatternExtractor
 
 
 class rex(RegexUnit, PatternExtractor):
@@ -23,13 +23,13 @@ class rex(RegexUnit, PatternExtractor):
         self, regex,
         # TODO: Use positional only in Python 3.8
         # /,
-        *transformation: arg(type=utf8, help=(
+        *transformation: Arg(type=utf8, help=(
             'An optional sequence of transformations to be applied to each match. '
             'Each transformation produces one output in the order in which they   '
             'are given. The default transformation is {0}, i.e. the entire match.  '
         )),
-        unicode: arg.switch('-u', help='Also find unicode strings.') = False,
-        unique: arg.switch('-q', help='Yield every (transformed) match only once.') = False,
+        unicode: Arg.Switch('-u', help='Also find unicode strings.') = False,
+        unique: Arg.Switch('-q', help='Yield every (transformed) match only once.') = False,
         multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
         longest=False, take=None
     ):

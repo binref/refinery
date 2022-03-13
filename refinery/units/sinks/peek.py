@@ -7,7 +7,7 @@ import textwrap
 import codecs
 import string
 
-from refinery.units.sinks import arg, HexViewer
+from refinery.units.sinks import Arg, HexViewer
 from refinery.lib.meta import ByteStringWrapper, metavars, CustomStringRepresentation, SizeInt
 from refinery.lib.types import INF
 from refinery.lib.tools import isbuffer, lookahead
@@ -23,15 +23,15 @@ class peek(HexViewer):
 
     def __init__(
         self,
-        lines  : arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
-        all    : arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
-        brief  : arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
-        decode : arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
-        escape : arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
-        index  : arg('-i', help='Display the index of each chunk within the current frame.') = False,
-        meta   : arg('-m', group='META', help='Only display attached metadata, do not add the peek value.') = False,
-        bare   : arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
-        stdout : arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
+        lines  : Arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
+        all    : Arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
+        brief  : Arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
+        decode : Arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
+        escape : Arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
+        index  : Arg('-i', help='Display the index of each chunk within the current frame.') = False,
+        meta   : Arg('-m', group='META', help='Only display attached metadata, do not add the peek value.') = False,
+        bare   : Arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
+        stdout : Arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if bare and meta:

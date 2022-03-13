@@ -10,7 +10,7 @@ class evtx(Unit):
     output chunk in XML format.
     """
 
-    def __init__(self, raw: Unit.Arg.switch('-r', help='Extract raw event data rather than XML.') = False):
+    def __init__(self, raw: Unit.Arg.Switch('-r', help='Extract raw event data rather than XML.') = False):
         super().__init__(raw=raw)
 
     @Unit.Requires('python-evtx')

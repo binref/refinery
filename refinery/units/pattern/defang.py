@@ -3,7 +3,7 @@
 import re
 import itertools
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.patterns import defanged, indicators
 
 
@@ -26,10 +26,10 @@ class defang(Unit):
 
     def __init__(
         self,
-        url_only: arg.switch('-u', help='Only defang URLs, do not look for domains or IPs.') = False,
-        url_protocol: arg.switch('-p', help='Escape the protocol in URLs.') = False,
-        dot_only: arg.switch('-d', help='Do not escape the protocol colon in URLs.') = False,
-        quote_md: arg.switch('-q', help='Wrap all indicators in backticks for markdown code.') = False
+        url_only: Arg.Switch('-u', help='Only defang URLs, do not look for domains or IPs.') = False,
+        url_protocol: Arg.Switch('-p', help='Escape the protocol in URLs.') = False,
+        dot_only: Arg.Switch('-d', help='Do not escape the protocol colon in URLs.') = False,
+        quote_md: Arg.Switch('-q', help='Wrap all indicators in backticks for markdown code.') = False
     ):
         self.superinit(super(), **vars())
 

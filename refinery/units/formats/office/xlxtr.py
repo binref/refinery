@@ -7,7 +7,7 @@ import io
 import defusedxml
 import functools
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.structures import MemoryFile
 
 
@@ -132,7 +132,7 @@ class xlxtr(Unit):
     hashtag, i.e. `sheet#B1:C12` or `1#B1:C12`. Note that indices are 1-based. To get all elements of one sheet, use `sheet#`. The unit
     If parsing a sheet reference fails, the script will assume that the given reference specifies a sheet.
     """
-    def __init__(self, *references: arg(metavar='reference', type=SheetReference, help=(
+    def __init__(self, *references: Arg(metavar='reference', type=SheetReference, help=(
         'A sheet reference to be extracted. '
         'If no sheet references are given, the unit lists all sheet names.'
     ))):

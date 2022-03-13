@@ -5,7 +5,7 @@ import dataclasses
 
 from typing import ByteString, Iterable, Optional
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.tools import get_terminal_size, lookahead
 from refinery.lib import chunks
 
@@ -117,11 +117,11 @@ class HexViewer(Unit, abstract=True):
 
     def __init__(
         self,
-        blocks  : arg.number('-B', help='Group hexadecimal bytes in blocks of the given size; default is {default}.') = 1,
-        dense   : arg.switch('-D', help='Do not insert spaces in hexdump.') = False,
-        expand  : arg.switch('-E', help='Do not compress sequences of identical lines in hexdump') = False,
-        narrow  : arg.switch('-N', help='Do not show addresses in hexdump') = False,
-        width   : arg.number('-W', help='Specify the number of hexadecimal characters to use in preview.') = 0,
+        blocks  : Arg.Number('-B', help='Group hexadecimal bytes in blocks of the given size; default is {default}.') = 1,
+        dense   : Arg.Switch('-D', help='Do not insert spaces in hexdump.') = False,
+        expand  : Arg.Switch('-E', help='Do not compress sequences of identical lines in hexdump') = False,
+        narrow  : Arg.Switch('-N', help='Do not show addresses in hexdump') = False,
+        width   : Arg.Number('-W', help='Specify the number of hexadecimal characters to use in preview.') = 0,
         **kwargs
     ):
         super().__init__(

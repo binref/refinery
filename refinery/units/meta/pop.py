@@ -3,7 +3,7 @@
 from typing import Iterable
 from itertools import chain
 
-from refinery.units import arg, Unit, Chunk
+from refinery.units import Arg, Unit, Chunk
 from refinery.lib.meta import check_variable_name
 
 
@@ -52,7 +52,7 @@ class pop(Unit):
     """
     def __init__(
         self,
-        *names: arg(type=str, metavar=F'[name|count|{_popcount._MERGE_SYMBOL}]', help=(
+        *names: Arg(type=str, metavar=F'[name|count|{_popcount._MERGE_SYMBOL}]', help=(
             R'Specify either the name of a single variable to receive the contents of an input chunk, or '
             R'an integer expression that specifies a number of values to be removed from the input without '
             F'storing them. Additionally, it is possible to specify the symbol "{_popcount._MERGE_SYMBOL}" '

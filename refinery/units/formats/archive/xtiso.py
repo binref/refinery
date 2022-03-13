@@ -3,7 +3,7 @@
 import datetime
 
 from refinery.lib.structures import MemoryFile
-from refinery.units.formats.archive import arg, ArchiveUnit
+from refinery.units.formats.archive import Arg, ArchiveUnit
 
 _ISO_FILE_SYSTEMS = ['udf', 'joliet', 'rr', 'iso', 'auto']
 
@@ -13,7 +13,7 @@ class xtiso(ArchiveUnit):
     Extract files from a ISO archive.
     """
     def __init__(self, *paths, list=False, join_path=False, drop_path=False, path=b'path', date=b'date',
-        fs: arg.choice('-s', metavar='TYPE', choices=_ISO_FILE_SYSTEMS, help=(
+        fs: Arg.Choice('-s', metavar='TYPE', choices=_ISO_FILE_SYSTEMS, help=(
             'Specify a file system ({choices}) extension to use. The default setting {default} will automatically '
             'detect the first of the other available options and use it.')) = 'auto'
     ):

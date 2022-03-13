@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 _UCASE = range(ord('A'), ord('Z') + 1)
 _LCASE = range(ord('a'), ord('z') + 1)
@@ -12,7 +12,7 @@ class rot(Unit):
     amount is 13, providing the common (and weak) string obfuscation method.
     """
 
-    def __init__(self, amount: arg.number(help='Number of letters to rotate by; Default is 13.') = 13):
+    def __init__(self, amount: Arg.Number(help='Number of letters to rotate by; Default is 13.') = 13):
         super().__init__(amount=amount)
 
     def process(self, data: bytearray):

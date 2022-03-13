@@ -3,7 +3,7 @@
 import json
 import re
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.json import flattened
 
 
@@ -16,8 +16,8 @@ class ppjson(Unit):
 
     def __init__(
         self,
-        tabular: arg.switch('-t', group='OUT', help='Convert JSON input into a flattened table.') = False,
-        indent : arg.number('-i', group='OUT', help='Number of spaces used for indentation. Default is {default}.') = 4
+        tabular: Arg.Switch('-t', group='OUT', help='Convert JSON input into a flattened table.') = False,
+        indent : Arg.Number('-i', group='OUT', help='Number of spaces used for indentation. Default is {default}.') = 4
     ):
         return super().__init__(indent=indent, tabular=tabular)
 

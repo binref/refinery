@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.units.formats.exe import exeroute
 from refinery.lib.argformats import sliceobj
 
@@ -41,13 +41,13 @@ class vsnip(Unit):
     """
 
     def __init__(
-        self, addresses: arg(type=sliceobj, nargs='+', metavar='start:count:align', help=(
+        self, addresses: Arg(type=sliceobj, nargs='+', metavar='start:count:align', help=(
             'Use Python slice syntax to describe an area of virtual memory to read. If a chunksize is '
             'specified, then the unit will always read a multiple of that number of bytes')),
-        ascii: arg.switch('-a', group='END', help='Read ASCII strings; equivalent to -th:00') = False,
-        utf16: arg.switch('-u', group='END', help='Read UTF16 strings; equivalent to -th:0000 (also sets chunksize to 2)') = False,
-        until: arg.binary('-t', group='END', help='Read until sequence {varname} is read.') = B'',
-        base : arg.number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
+        ascii: Arg.Switch('-a', group='END', help='Read ASCII strings; equivalent to -th:00') = False,
+        utf16: Arg.Switch('-u', group='END', help='Read UTF16 strings; equivalent to -th:0000 (also sets chunksize to 2)') = False,
+        until: Arg.Binary('-t', group='END', help='Read until sequence {varname} is read.') = B'',
+        base : Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
     ):
         if sum(1 for t in (until, utf16, ascii) if t) > 1:
             raise ValueError('Only one of utf16, ascii, and until can be specified.')

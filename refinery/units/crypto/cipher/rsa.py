@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.tools import splitchunks
 from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
 from refinery.lib.xml import ForgivingParse
@@ -71,15 +71,15 @@ class rsa(Unit):
     """
     def __init__(
         self,
-        key: arg(help='RSA key in PEM, DER, or Microsoft BLOB format.'),
-        swapkeys: arg.switch('-s', help='Swap public and private exponent.') = False,
-        textbook: arg.switch('-t', group='PAD', help='Equivalent to --padding=NONE.') = False,
-        padding : arg.option('-p', group='PAD', choices=PAD,
+        key: Arg(help='RSA key in PEM, DER, or Microsoft BLOB format.'),
+        swapkeys: Arg.Switch('-s', help='Swap public and private exponent.') = False,
+        textbook: Arg.Switch('-t', group='PAD', help='Equivalent to --padding=NONE.') = False,
+        padding : Arg.Option('-p', group='PAD', choices=PAD,
             help='Choose one of the following padding modes: {choices}. The default is AUTO.') = PAD.AUTO,
-        rsautl  : arg.switch('-r', group='PAD',
+        rsautl  : Arg.Switch('-r', group='PAD',
             help='Act as rsautl from OpenSSH; This is equivalent to --swapkeys --padding=PKCS10') = False,
     ):
-        padding = arg.as_option(padding, PAD)
+        padding = Arg.AsOption(padding, PAD)
         if textbook:
             if padding != PAD.AUTO:
                 raise ValueError('Conflicting padding options!')

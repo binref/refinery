@@ -4,7 +4,7 @@ import io
 import struct
 import copy
 
-from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.units import Arg, Unit, RefineryPartialResult
 
 
 class lznt1(Unit):
@@ -144,5 +144,5 @@ class lznt1(Unit):
             out.write(chunk)
         return out.getvalue()
 
-    def __init__(self, chunk_size: arg.number('-c', help='Optionally specify the chunk size for compression, default is 0x1000.') = 0x1000):
+    def __init__(self, chunk_size: Arg.Number('-c', help='Optionally specify the chunk size for compression, default is 0x1000.') = 0x1000):
         super().__init__(chunk_size=chunk_size)

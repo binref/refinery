@@ -3,7 +3,7 @@
 import itertools
 import functools
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.argformats import numseq
 from refinery.lib.tools import isbuffer
 from refinery.lib.meta import check_variable_name
@@ -16,8 +16,8 @@ class put(Unit):
     """
     def __init__(
         self,
-        name : arg(help='The name of the variable to be used.', type=str),
-        value: arg(help='The value for the variable.', type=functools.partial(numseq, typecheck=False))
+        name : Arg(help='The name of the variable to be used.', type=str),
+        value: Arg(help='The value for the variable.', type=functools.partial(numseq, typecheck=False))
     ):
         super().__init__(name=check_variable_name(name), value=value)
 

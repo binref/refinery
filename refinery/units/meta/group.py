@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class group(Unit):
     """
     Group incoming chunks into frames of the given size.
     """
-    def __init__(self, size: arg.number(help='Size of each group; must be at least 2.', bound=(2, None))):
+    def __init__(self, size: Arg.Number(help='Size of each group; must be at least 2.', bound=(2, None))):
         super().__init__(size=size)
 
     def process(self, data):

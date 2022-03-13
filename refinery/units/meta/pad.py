@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class pad(Unit):
@@ -11,12 +11,12 @@ class pad(Unit):
     """
 
     def __init__(
-        self, padding: arg('padding', help=(
+        self, padding: Arg('padding', help=(
             'This custom binary sequence is used (repeatedly, if necessary) '
             'to pad the input. The default is a zero byte.')) = B'\0',
-        absolute : arg.number('-a', group='HOW', help='Pad inputs to be at least N bytes in size.') = 0,
-        blocksize: arg.number('-b', group='HOW', help='Pad inputs to any even multiple of N.') = 0,
-        left: arg.switch('-l', help='Pad on the left instead of the right.') = False
+        absolute : Arg.Number('-a', group='HOW', help='Pad inputs to be at least N bytes in size.') = 0,
+        blocksize: Arg.Number('-b', group='HOW', help='Pad inputs to any even multiple of N.') = 0,
+        left: Arg.Switch('-l', help='Pad on the left instead of the right.') = False
     ):
         if absolute and blocksize:
             raise ValueError('Cannot pad simultaneously to a given block size and absolutely.')

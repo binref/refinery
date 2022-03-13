@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from itertools import repeat
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class rep(Unit):
@@ -10,7 +10,7 @@ class rep(Unit):
     Duplicates the given input a given number of times.
     """
 
-    def __init__(self, count: arg(help='Defines the number of outputs for each input. The default is the minimum of 2.') = 2):
+    def __init__(self, count: Arg(help='Defines the number of outputs for each input. The default is the minimum of 2.') = 2):
         super().__init__(count=count)
 
     def process(self, data: bytes):

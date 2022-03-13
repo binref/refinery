@@ -10,7 +10,7 @@ from string import ascii_letters
 from pathlib import Path
 from enum import Enum
 
-from refinery.units.pattern import arg, PatternExtractor
+from refinery.units.pattern import Arg, PatternExtractor
 from refinery.units import RefineryCriticalException
 from refinery.lib.patterns import indicators
 
@@ -63,7 +63,7 @@ class xtp(PatternExtractor):
 
     def __init__(
         self,
-        *pattern: arg('pattern', type=str,
+        *pattern: Arg('pattern', type=str,
             default=(
                 indicators.hostname.name,
                 indicators.url.name,
@@ -74,7 +74,7 @@ class xtp(PatternExtractor):
                 'are: {}'.format(', '.join(p.dashname for p in indicators))
             )
         ),
-        filter: arg('-f', dest='filter', action='count',
+        filter: Arg('-f', dest='filter', action='count',
             help=(
                 'If this setting is enabled, the xtp unit will attempt to reduce the number '
                 'of false positives by certain crude heuristics. Specify multiple times to '

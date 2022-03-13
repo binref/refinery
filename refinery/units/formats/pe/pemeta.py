@@ -19,7 +19,7 @@ from pefile import (
 )
 
 from refinery.lib.dotnet.header import DotNetHeader
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
 from refinery.units.formats.pe import get_pe_size
 
@@ -129,18 +129,18 @@ class pemeta(Unit):
     extracted.
     """
     def __init__(
-        self, all : arg('-c', '--custom',
+        self, all : Arg('-c', '--custom',
             help='Unless enabled, all default categories will be extracted.') = True,
-        debug      : arg('-D', help='Parse the PDB path from the debug directory.') = False,
-        dotnet     : arg('-N', help='Parse the .NET header.') = False,
-        signatures : arg('-S', help='Parse digital signatures.') = False,
-        timestamps : arg('-T', help='Extract time stamps.') = False,
-        version    : arg('-V', help='Parse the VERSION resource.') = False,
-        header     : arg('-H', help='Parse data from the PE header.') = False,
-        exports    : arg('-E', help='List all exported functions.') = False,
-        imports    : arg('-I', help='List all imported functions.') = False,
-        tabular    : arg('-t', help='Print information in a table rather than as JSON') = False,
-        timeraw    : arg('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
+        debug      : Arg('-D', help='Parse the PDB path from the debug directory.') = False,
+        dotnet     : Arg('-N', help='Parse the .NET header.') = False,
+        signatures : Arg('-S', help='Parse digital signatures.') = False,
+        timestamps : Arg('-T', help='Extract time stamps.') = False,
+        version    : Arg('-V', help='Parse the VERSION resource.') = False,
+        header     : Arg('-H', help='Parse data from the PE header.') = False,
+        exports    : Arg('-E', help='List all exported functions.') = False,
+        imports    : Arg('-I', help='List all imported functions.') = False,
+        tabular    : Arg('-t', help='Print information in a table rather than as JSON') = False,
+        timeraw    : Arg('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
     ):
         super().__init__(
             debug=all or debug,

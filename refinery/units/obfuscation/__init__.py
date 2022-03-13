@@ -8,7 +8,7 @@ from functools import wraps
 from typing import ByteString, Callable
 from zlib import crc32
 
-from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.decorators import unicoded
 
 
@@ -64,7 +64,7 @@ class Deobfuscator(Unit, abstract=True):
 
 class IterativeDeobfuscator(Deobfuscator, abstract=True):
 
-    def __init__(self, timeout: arg('-t', help='Maximum number of iterations; the default is 100.') = 100):
+    def __init__(self, timeout: Arg('-t', help='Maximum number of iterations; the default is 100.') = 100):
         if timeout < 1:
             raise ValueError('The timeout must be at least 1.')
         super().__init__()

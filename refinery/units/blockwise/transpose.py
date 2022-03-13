@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.blockwise import arg, BlockTransformationBase
+from refinery.units.blockwise import Arg, BlockTransformationBase
 
 
 class transpose(BlockTransformationBase):
@@ -9,7 +9,7 @@ class transpose(BlockTransformationBase):
     blocks that correspond to the columns of this matrix.
     """
     def __init__(
-        self, padding: arg(help='Optional byte sequence to use as padding for tail end.') = B'',
+        self, padding: Arg(help='Optional byte sequence to use as padding for tail end.') = B'',
         blocksize=1
     ):
         super().__init__(bigendian=False, blocksize=blocksize, padding=padding)

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class url(Unit):
@@ -13,8 +13,8 @@ class url(Unit):
 
     def __init__(
         self,
-        plus: arg.switch('-p', help='also replace plus signs by spaces') = False,
-        hex : arg.switch('-x', help='hex encode every character in reverse mode') = False
+        plus: Arg.Switch('-p', help='also replace plus signs by spaces') = False,
+        hex : Arg.Switch('-x', help='hex encode every character in reverse mode') = False
     ):
         super().__init__(plus=plus, hex=hex)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class sep(Unit):
@@ -11,8 +11,8 @@ class sep(Unit):
     """
 
     def __init__(
-        self, separator: arg(help='Separator; the default is a line break.') = B'\n',
-        scoped: arg.switch('-s', help=(
+        self, separator: Arg(help='Separator; the default is a line break.') = B'\n',
+        scoped: Arg.Switch('-s', help=(
             'Maintain chunk scope; i.e. do not turn all input chunks visible.')) = False
     ):
         super().__init__(separator=separator, scoped=scoped)

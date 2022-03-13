@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 from refinery.lib.argformats import PythonExpression
 from refinery.lib.meta import metavars
@@ -14,8 +14,8 @@ class sorted(Unit):
 
     def __init__(
         self,
-        key: arg('key', type=str, help='A meta variable expression to sort by instead of sorting the content.') = None,
-        ascending: arg.switch('-a', help='Sort in ascending order, the default is descending.') = False
+        key: Arg('key', type=str, help='A meta variable expression to sort by instead of sorting the content.') = None,
+        ascending: Arg.Switch('-a', help='Sort in ascending order, the default is descending.') = False
     ):
         super().__init__(key=key, ascending=ascending)
 

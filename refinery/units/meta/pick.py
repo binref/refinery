@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.argformats import sliceobj
 
 from itertools import islice, repeat, chain
@@ -12,7 +12,7 @@ class pick(Unit):
     Picks sequences from the array of multiple inputs. For example, `pick 0 2:`
     will return all but the second ingested input (which has index `1`).
     """
-    def __init__(self, *slice: arg(
+    def __init__(self, *slice: Arg(
         type=sliceobj, nargs='*', default=[slice(None, None)],
         help='Specify start:stop:step in Python slice syntax.'
     )):

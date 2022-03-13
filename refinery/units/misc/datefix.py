@@ -3,7 +3,7 @@
 from re import compile as re_compile
 from datetime import datetime, timedelta
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.decorators import linewise
 
 
@@ -30,8 +30,8 @@ class datefix(Unit):
 
     def __init__(
         self,
-        format: arg(help='Specify the output format as a strftime-like string, using ISO by default.') = '%Y-%m-%d %H:%M:%S',
-        dos: arg('-d', help='Parse timestamps in DOS rather than Unix format.') = False
+        format: Arg(help='Specify the output format as a strftime-like string, using ISO by default.') = '%Y-%m-%d %H:%M:%S',
+        dos: Arg('-d', help='Parse timestamps in DOS rather than Unix format.') = False
     ):
         super().__init__(format=format, dos=dos)
 

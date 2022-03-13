@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.types import INF
 
 from .ap import aplib
@@ -24,16 +24,16 @@ class decompress(Unit):
     """
     def __init__(
         self,
-        prepend: arg.switch('-P', '--no-prepend', off=True, help=(
+        prepend: Arg.Switch('-P', '--no-prepend', off=True, help=(
             'By default, if decompression fails, the unit attempts to prefix '
             'the data with all possible values of a single byte and decompress '
             'the result. This behavior can be disabled with this flag.')
         ) = True,
-        tolerance: arg.number('-t', help=(
+        tolerance: Arg.Number('-t', help=(
             'Maximum number of bytes to strip from the beginning of the data; '
             'The default value is 12.')
         ) = 12,
-        min_ratio: arg('-r', metavar='R', help=(
+        min_ratio: Arg('-r', metavar='R', help=(
             'To determine whether a decompression algorithm was successful, the '
             'ratio of compressed size to decompressed size is required to be at '
             'least this number, a floating point value R; default value is 1.')

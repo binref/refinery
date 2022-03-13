@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.dotnet.header import DotNetHeader
 
 
@@ -12,8 +12,8 @@ class dnstr(Unit):
 
     def __init__(
         self,
-        user: arg.switch('-m', '--meta', off=True, group='HEAP', help='Only extract from #Strings.') = True,
-        meta: arg.switch('-u', '--user', off=True, group='HEAP', help='Only extract from #US.') = True,
+        user: Arg.Switch('-m', '--meta', off=True, group='HEAP', help='Only extract from #Strings.') = True,
+        meta: Arg.Switch('-u', '--user', off=True, group='HEAP', help='Only extract from #US.') = True,
     ):
         if not meta and not user:
             raise ValueError('Either ascii or utf16 strings must be enabled.')

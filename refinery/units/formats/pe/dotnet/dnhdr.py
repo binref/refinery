@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.formats.pe.dotnet import arg, JSONEncoderUnit
+from refinery.units.formats.pe.dotnet import Arg, JSONEncoderUnit
 from refinery.lib.dotnet.header import DotNetHeader
 
 
@@ -11,7 +11,7 @@ class dnhdr(JSONEncoderUnit):
     """
     def __init__(
         self,
-        resources: arg.switch('-r', '--resources', help='Also parse .NET resources.') = False,
+        resources: Arg.Switch('-r', '--resources', help='Also parse .NET resources.') = False,
         encode=None, digest=None
     ):
         super().__init__(encode=encode, digest=digest, resources=resources)

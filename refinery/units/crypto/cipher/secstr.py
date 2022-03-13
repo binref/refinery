@@ -6,7 +6,7 @@ from Crypto.Cipher import AES
 from Crypto.Random import urandom
 from Crypto.Util.Padding import pad, unpad
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class secstr(Unit):
@@ -25,10 +25,10 @@ class secstr(Unit):
     _PSVER = 2
 
     def __init__(
-        self, key: arg(
+        self, key: Arg(
             help='Secure string encryption 16-byte AES key; the default are the bytes from 1 to 16.'
         ) = bytes(range(1, 17)),
-        iv: arg('-i', help='Optionally specify an IV to use for encryption.') = None
+        iv: Arg('-i', help='Optionally specify an IV to use for encryption.') = None
     ):
         super().__init__(key=key, iv=iv)
 

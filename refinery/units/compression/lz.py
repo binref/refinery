@@ -6,7 +6,7 @@ from itertools import repeat
 
 import lzma as std_lzma
 
-from refinery.units import arg, Unit, RefineryPartialResult
+from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.argformats import OptionFactory, extract_options
 from refinery.lib.structures import MemoryFile
 
@@ -27,13 +27,13 @@ class lzma(Unit):
     _LZMA_PARSER = OptionFactory(_LZMA_FILTER)
 
     def __init__(
-        self, filter: arg.choice(choices=list(_LZMA_FILTER), metavar='FILTER', help=(
+        self, filter: Arg.Choice(choices=list(_LZMA_FILTER), metavar='FILTER', help=(
             'Specifies a bcj filter to be applied. Possible values are: {choices}')) = None,
-        raw   : arg.switch('-r', group='MODE', help='Use raw (no container) format.') = False,
-        alone : arg.switch('-a', group='MODE', help='Use the lzma container format.') = False,
-        xz    : arg.switch('-x', group='MODE', help='Use the default xz format.') = False,
-        level : arg.number('-l', bound=(0, 9), help='The compression level preset; between 0 and 9.') = 9,
-        delta : arg.number('-d', help='Add a delta filter when compressing.') = None,
+        raw   : Arg.Switch('-r', group='MODE', help='Use raw (no container) format.') = False,
+        alone : Arg.Switch('-a', group='MODE', help='Use the lzma container format.') = False,
+        xz    : Arg.Switch('-x', group='MODE', help='Use the default xz format.') = False,
+        level : Arg.Number('-l', bound=(0, 9), help='The compression level preset; between 0 and 9.') = 9,
+        delta : Arg.Number('-d', help='Add a delta filter when compressing.') = None,
     ):
         filter = filter and self._LZMA_PARSER(filter)
         if (raw, alone, xz).count(True) > 1:

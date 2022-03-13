@@ -2,7 +2,7 @@
 # -*- coding: utf - 8 -* -
 from typing import NamedTuple, Union, TYPE_CHECKING
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 from refinery.lib.structures import MemoryFile
 
@@ -63,7 +63,7 @@ class pcap(Unit):
     and backwards, respectively, and emitting these as two chunks, for each TCP conversation that took place.
     """
 
-    def __init__(self, merge: arg.switch('-m', help='Merge both parts of each TCP conversation into one chunk.') = False):
+    def __init__(self, merge: Arg.Switch('-m', help='Merge both parts of each TCP conversation into one chunk.') = False):
         super().__init__(merge=merge)
 
     @Unit.Requires('pypcapkit[scapy]')

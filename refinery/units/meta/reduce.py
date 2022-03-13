@@ -3,7 +3,7 @@
 from typing import Iterable
 from refinery.lib.frame import Chunk
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.loader import load_pipeline
 
 
@@ -13,12 +13,12 @@ class reduce(Unit):
     """
 
     def __init__(self,
-        *reduction: arg(type=str, metavar='pipeline', help=(
+        *reduction: Arg(type=str, metavar='pipeline', help=(
             'The remaining command line is a refinery pipeline. The input for this pipeline is the currently accumulated data '
             'and the next chunk to be combined is passed in a temporary meta variable.'
         )),
-        init: arg.binary('-i', help='Optionally specify the initial buffer. When omitted, the first chunk is used.') = None,
-        temp: arg('-t', type=str, metavar='name', help='The name of the temporary variable. The default is "{default}".') = 't',
+        init: Arg.Binary('-i', help='Optionally specify the initial buffer. When omitted, the first chunk is used.') = None,
+        temp: Arg('-t', type=str, metavar='name', help='The name of the temporary variable. The default is "{default}".') = 't',
     ):
         super().__init__(reduction=reduction, temp=temp, init=init)
 

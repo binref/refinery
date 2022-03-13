@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from refinery.units.blockwise import arg, ArithmeticUnit, FastBlockError
+from refinery.units.blockwise import Arg, ArithmeticUnit, FastBlockError
 from refinery.lib.meta import metavars
 from refinery.lib.argformats import PythonExpression
 
@@ -54,17 +54,17 @@ class alu(ArithmeticUnit):
         return PythonExpression(definition, *'IBASNV', all_variables_allowed=True)
 
     def __init__(
-        self, operator: arg(type=str, help='A Python expression defining the operation.'), *argument,
-        seed: arg('-s', type=str, help=(
+        self, operator: Arg(type=str, help='A Python expression defining the operation.'), *argument,
+        seed: Arg('-s', type=str, help=(
             'Optional seed value for the state variable S. The default is zero. This can be an expression '
             'involving the variable N.')) = 0,
-        prologue: arg('-p', type=str, metavar='E', help=(
+        prologue: Arg('-p', type=str, metavar='E', help=(
             'Optional expression with which the state variable S is updated before a block is operated on.')) = None,
-        epilogue: arg('-e', type=str, metavar='E', group='EPI', help=(
+        epilogue: Arg('-e', type=str, metavar='E', group='EPI', help=(
             'Optional expression with which the state variable S is updated after a block was operated on.')) = None,
-        inc: arg('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
-        dec: arg('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
-        cbc: arg('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
+        inc: Arg('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
+        dec: Arg('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
+        cbc: Arg('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
         bigendian=False, blocksize=1, precision=None
     ):
         for flag, flag_is_set, expression in [

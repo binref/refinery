@@ -6,7 +6,7 @@ Pure Python implementation of the RABBIT stream cipher.
 import struct
 from typing import Iterable, Optional, ByteString, List
 
-from refinery.units.crypto.cipher import arg, StreamCipherUnit
+from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 
 class RabbitCipher:
@@ -91,7 +91,7 @@ class rabbit(StreamCipherUnit):
     """
     key_sizes = 16
 
-    def __init__(self, key, stateful=False, iv: arg('-i', '--iv', help='Optional initialization vector.') = B''):
+    def __init__(self, key, stateful=False, iv: Arg('-i', '--iv', help='Optional initialization vector.') = B''):
         super().__init__(key=key, iv=iv, stateful=stateful)
 
     def keystream(self) -> Iterable[int]:

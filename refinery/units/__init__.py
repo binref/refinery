@@ -277,7 +277,7 @@ class Argument:
         return ', '.join(arglist)
 
 
-class arg(Argument):
+class Arg(Argument):
     """
     This child class of `refinery.units.Argument` is specifically an argument for the
     `add_argument` method of an `ArgumentParser` from the `argparse` module. It can also
@@ -315,7 +315,7 @@ class arg(Argument):
     ) -> None:
         kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
             help=help, metavar=metavar, nargs=nargs, required=required, type=type)
-        kwargs = {key: value for key, value in kwargs.items() if value is not arg.omit}
+        kwargs = {key: value for key, value in kwargs.items() if value is not Arg.omit}
         self.group = group
         self.guessed = set(guessed or ())
         super().__init__(*args, **kwargs)
@@ -351,7 +351,7 @@ class arg(Argument):
         return super().__rmatmul__(method)
 
     @staticmethod
-    def as_option(value: Optional[Any], cls: Enum) -> Enum:
+    def AsOption(value: Optional[Any], cls: Enum) -> Enum:
         if value is None or isinstance(value, cls):
             return value
         if isinstance(value, str):
@@ -367,68 +367,73 @@ class arg(Argument):
             choices = ', '.join(cls)
             raise ValueError(F'Could not transform {value} into {cls.__name__}; the choices are: {choices}') from E
 
-    @staticmethod
-    def switch(
+    @classmethod
+    def Switch(
+        cls,
         *args   : str, off=False,
         help    : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
         group   : Optional[str] = None,
-    ) -> Argument:
+    ):
         """
         A convenience method to add argparse arguments that change a boolean value from True to False or
         vice versa. By default, a switch will have a False default and change it to True when specified.
         """
-        return arg(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
+        return cls(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
 
-    @staticmethod
-    def binary(
+    @classmethod
+    def Binary(
+        cls,
         *args   : str,
         help    : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
-    ) -> Argument:
+    ):
         """
         Used to add argparse arguments that contain binary data.
         """
-        return arg(*args, group=group, help=help, dest=dest, type=multibin, metavar=metavar or 'B')
+        return cls(*args, group=group, help=help, dest=dest, type=multibin, metavar=metavar or 'B')
 
-    @staticmethod
-    def number(
+    @classmethod
+    def Number(
+        cls,
         *args   : str,
         bound   : Union[omit, Tuple[int, int]] = omit,
         help    : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
-    ) -> Argument:
+    ):
         """
         Used to add argparse arguments that contain a number.
         """
         nt = number
-        if bound is not arg.omit:
+        if bound is not cls.omit:
             lower, upper = bound
             nt = nt[lower:upper]
-        return arg(*args, group=group, help=help, dest=dest, type=nt, metavar=metavar or 'N')
+        return cls(*args, group=group, help=help, dest=dest, type=nt, metavar=metavar or 'N')
 
-    @staticmethod
-    def option(
+    @classmethod
+    def Option(
+        cls,
         *args   : str,
         choices : Enum,
         help    : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
-    ) -> Argument:
+    ):
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
         """
         cnames = [c.name for c in choices]
         metavar = metavar or choices.__name__
-        return arg(*args, group=group, help=help, metavar=metavar, dest=dest, choices=cnames, type=str)
+        return cls(*args, group=group, help=help, metavar=metavar, dest=dest, choices=cnames, type=str)
 
-    @staticmethod
-    def choice(
+    @classmethod
+    def Choice(
+        cls,
         *args   : str,
         choices : List[str],
         help    : Union[omit, str] = omit,
@@ -441,7 +446,7 @@ class arg(Argument):
         """
         Used to add argparse arguments with a fixed set of options, based on a list of strings.
         """
-        return arg(*args, group=group, type=type, metavar=metavar, nargs=nargs,
+        return cls(*args, group=group, type=type, metavar=metavar, nargs=nargs,
             dest=dest, help=help, choices=choices)
 
     @property
@@ -467,7 +472,7 @@ class arg(Argument):
             raise AttributeError(F'The argument with these values has no destination: {self!r}')
 
     @classmethod
-    def infer(cls, pt: inspect.Parameter):
+    def Infer(cls, pt: inspect.Parameter):
         """
         This class method can be used to infer the argparse argument for a Python function
         parameter. This guess is based on the annotation, name, and default value.
@@ -508,7 +513,7 @@ class arg(Argument):
             except Exception: pass
 
         if annotation is not pt.empty:
-            if isinstance(annotation, arg):
+            if isinstance(annotation, Arg):
                 if annotation.kwargs.get('dest', pt.name) != pt.name:
                     raise ValueError(
                         F'Incompatible argument destination specified; parameter {pt.name} '
@@ -574,9 +579,9 @@ class arg(Argument):
         if not self.args:
             self.args = list(them.args)
 
-    def merge_all(self, them: arg) -> None:
+    def merge_all(self, them: Arg) -> None:
         for key, value in them.kwargs.items():
-            if value is arg.delete:
+            if value is Arg.delete:
                 self.kwargs.pop(key, None)
                 self.guessed.discard(key)
                 continue
@@ -604,7 +609,7 @@ class arg(Argument):
     def __call__(self, init: Callable) -> Callable:
         parameters = inspect.signature(init).parameters
         try:
-            inferred = arg.infer(parameters[self.destination])
+            inferred = Arg.Infer(parameters[self.destination])
             inferred.merge_all(self)
             init.__annotations__[self.destination] = inferred
         except KeyError:
@@ -617,7 +622,7 @@ class ArgumentSpecification(OrderedDict):
     A container object that stores `refinery.units.arg` specifications.
     """
 
-    def merge(self: Dict[str, arg], argument: arg):
+    def merge(self: Dict[str, Arg], argument: Arg):
         """
         Insert or update the specification with the given argument.
         """
@@ -692,11 +697,11 @@ class Executable(ABCMeta):
     for the other ones.
     """
 
-    _argument_specification: Dict[str, arg]
+    _argument_specification: Dict[str, Arg]
 
-    def _infer_argspec(cls, parameters: Dict[str, inspect.Parameter], args: Optional[Dict[str, arg]] = None):
+    def _infer_argspec(cls, parameters: Dict[str, inspect.Parameter], args: Optional[Dict[str, Arg]] = None):
 
-        args: Dict[str, arg] = ArgumentSpecification() if args is None else args
+        args: Dict[str, Arg] = ArgumentSpecification() if args is None else args
 
         exposed = [pt.name for pt in skipfirst(parameters.values()) if pt.kind != pt.VAR_KEYWORD]
         # The arguments are added in reverse order to the argument parser later.
@@ -705,7 +710,7 @@ class Executable(ABCMeta):
 
         for name in exposed:
             try:
-                argument = arg.infer(parameters[name])
+                argument = Arg.Infer(parameters[name])
             except KeyError:
                 continue
             args.merge(argument)
@@ -1065,7 +1070,7 @@ class Unit(UnitBase, abstract=True):
     implement the _framing_ syntax for producing multiple outputs and ingesting
     multiple inputs in a common format. For more details, see `refinery.lib.frame`.
     """
-    Arg = arg
+    Arg = Arg
 
     optional_dependencies: Optional[Set[str]] = None
     required_dependencies: Optional[Set[str]] = None

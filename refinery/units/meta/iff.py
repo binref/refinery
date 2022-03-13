@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional
 
 from refinery.lib.meta import metavars
 from refinery.lib.argformats import PythonExpression, ParserVariableMissing
-from refinery.units.meta import arg, ConditionalUnit
+from refinery.units.meta import Arg, ConditionalUnit
 
 
 class iff(ConditionalUnit):
@@ -17,18 +17,18 @@ class iff(ConditionalUnit):
     """
     def __init__(
         self,
-        *expression: arg(metavar='token', type=str, help=(
+        *expression: Arg(metavar='token', type=str, help=(
             'All "token" arguments to this unit are joined with spaces to produce the expression '
             'to be evaluated. This is done so that unnecessary shell quoting is avoided.')),
-        ge: arg('-ge', type=str, metavar='<right-hand-side>', group='OP',
+        ge: Arg('-ge', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is greater or equal to {varname}') = None,
-        gt: arg('-gt', type=str, metavar='<right-hand-side>', group='OP',
+        gt: Arg('-gt', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is greater than {varname}') = None,
-        le: arg('-le', type=str, metavar='<right-hand-side>', group='OP',
+        le: Arg('-le', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is less or equal to {varname}') = None,
-        lt: arg('-lt', type=str, metavar='<right-hand-side>', group='OP',
+        lt: Arg('-lt', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is less than {varname}') = None,
-        ct: arg('-in', type=str, metavar='<right-hand-side>', group='OP',
+        ct: Arg('-in', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is contained in {varname}') = None,
         negate=False, temporary=False
     ):

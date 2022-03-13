@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import collections
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class xfcc(Unit):
@@ -15,8 +15,8 @@ class xfcc(Unit):
     """
     def __init__(
         self,
-        variable: arg(help='The variable which is used as the accumulator') = 'count',
-        relative: arg.switch('-r', help='Normalize the accumulator to a number between 0 and 1.') = False
+        variable: Arg(help='The variable which is used as the accumulator') = 'count',
+        relative: Arg.Switch('-r', help='Normalize the accumulator to a number between 0 and 1.') = False
     ):
         super().__init__(variable=variable, relative=relative)
         self._trunk = None

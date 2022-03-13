@@ -35,7 +35,7 @@ from importlib import resources
 
 import pickle
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 def _singleton(cls):
@@ -186,7 +186,7 @@ def drain(stream):
 
 
 __all__ = sorted(_cache.units, key=lambda x: x.lower()) + [
-    Unit.__name__, arg.__name__, '__pdoc__', 'drain', 'UNIT_CACHE_PATH']
+    Unit.__name__, Arg.__name__, '__pdoc__', 'drain', 'UNIT_CACHE_PATH']
 
 
 def __getattr__(name):

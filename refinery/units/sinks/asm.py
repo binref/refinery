@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Type, TYPE_CHECKING
 
-from refinery.units.sinks import arg, hexdump, HexDumpMetrics, Unit
+from refinery.units.sinks import Arg, hexdump, HexDumpMetrics, Unit
 from refinery.lib.tools import NoLogging, one
 from refinery.lib.structures import MemoryFile
 
@@ -29,15 +29,15 @@ class asm(Unit):
     """
     def __init__(
         self,
-        mode: arg.choice(
+        mode: Arg.Choice(
             help='Machine code architecture, default is {default}. Select from the following list: {choices}.',
             choices=['x16', 'x32', 'x64', 'ppc32', 'ppc64', 'mips32', 'mips64'],
             metavar='[x32|x64|..]',
         ) = 'x32',
         *,
-        angr: arg.switch('-a', help='Force use of Angr to perform a CFG computation before disassembly.') = False,
-        no_address: arg.switch('-A', help='Disable address display.') = False,
-        no_hexdump: arg.switch('-H', help='Disable opcodes hexdump.') = False,
+        angr: Arg.Switch('-a', help='Force use of Angr to perform a CFG computation before disassembly.') = False,
+        no_address: Arg.Switch('-A', help='Disable address display.') = False,
+        no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
     ):
         super().__init__(
             mode=mode,

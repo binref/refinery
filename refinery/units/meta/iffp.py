@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from refinery.lib.patterns import formats, indicators, pattern
 
-from refinery.units.meta import arg, ConditionalUnit
+from refinery.units.meta import Arg, ConditionalUnit
 
 _PATTERNS = {}
 _PATTERNS.update({p.name: p.value for p in formats})
@@ -15,7 +15,7 @@ class iffp(ConditionalUnit):
     patterns are the following: {", ".join(_PATTERNS)}.
     """
 
-    def __init__(self, *patterns: arg.choice(metavar='pattern', choices=_PATTERNS), negate=False, temporary=False):
+    def __init__(self, *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS), negate=False, temporary=False):
         super().__init__(negate=negate, temporary=temporary, patterns=patterns)
 
     def match(self, chunk):

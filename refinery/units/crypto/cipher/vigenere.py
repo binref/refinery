@@ -7,7 +7,7 @@ from operator import (
     __xor__,
 )
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.decorators import unicoded
 
 
@@ -25,16 +25,16 @@ class vigenere(Unit):
 
     def __init__(
         self,
-        key: arg(type=str, help='The encryption key'),
-        alphabet: arg(
+        key: Arg(type=str, help='The encryption key'),
+        alphabet: Arg(
             help='The alphabet, by default the Latin one is used: "{default}"'
         ) = 'abcdefghijklmnopqrstuvwxyz',
-        operator: arg.choice('-:', choices=['add', 'sub', 'xor'], metavar='OP', help=(
+        operator: Arg.Choice('-:', choices=['add', 'sub', 'xor'], metavar='OP', help=(
             'Choose the vigenere block operation. The default is {default}, and the available options are: {choices}')) = 'add',
-        case_sensitive: arg.switch('-c', help=(
+        case_sensitive: Arg.Switch('-c', help=(
             'Unless this option is set, the key will be case insensitive. Uppercase letters from the input are transformed '
             'using the same shift as would be the lowercase variant, but case is retained.')) = False,
-        ignore_unknown: arg.switch('-i', help=(
+        ignore_unknown: Arg.Switch('-i', help=(
             'Unless this option is set, the key stream will be iterated even '
             'for letters that are not contained in the alphabet.'
         )) = False

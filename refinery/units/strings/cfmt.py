@@ -3,7 +3,7 @@
 from codecs import encode, decode
 from functools import partial
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars
 
 
@@ -23,13 +23,13 @@ class cfmt(Unit):
 
     def __init__(
         self,
-        *formats : arg(help='Format strings.', type=str, metavar='format'),
-        variable : arg('-n', type=str, metavar='NAME', help='Store the formatted string in a meta variable.') = None,
-        separator: arg('-s', group='SEP', metavar='S',
+        *formats : Arg(help='Format strings.', type=str, metavar='format'),
+        variable : Arg('-n', type=str, metavar='NAME', help='Store the formatted string in a meta variable.') = None,
+        separator: Arg('-s', group='SEP', metavar='S',
             help='Separator to insert between format strings. The default is a space character.') = ' ',
-        multiplex: arg.switch('-m', group='SEP',
+        multiplex: Arg.Switch('-m', group='SEP',
             help='Do not join the format strings along the separator, generate one output for each.') = False,
-        binary   : arg.switch('-b', help='Use the binary formatter instead of the string formatter.') = False,
+        binary   : Arg.Switch('-b', help='Use the binary formatter instead of the string formatter.') = False,
     ):
         def fixfmt(fmt):
             if not isinstance(fmt, str):

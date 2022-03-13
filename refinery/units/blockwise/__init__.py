@@ -8,7 +8,7 @@ import abc
 import itertools
 import operator
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.argformats import numseq
 from refinery.lib import chunks
 from refinery.lib.tools import infinitize, cached_property
@@ -29,9 +29,9 @@ class BlockTransformationBase(Unit, abstract=True):
 
     def __init__(
         self,
-        bigendian: arg.switch('-E', help='Read chunks in big endian.') = False,
-        blocksize: arg.number('-B', help='The size of each block in bytes, default is 1.') = 1,
-        precision: arg.number('-P', help=(
+        bigendian: Arg.Switch('-E', help='Read chunks in big endian.') = False,
+        blocksize: Arg.Number('-B', help='The size of each block in bytes, default is 1.') = 1,
+        precision: Arg.Number('-P', help=(
             'The size of the variables used for computing the result. By default, this is equal to the block size. The value may be '
             'zero, indicating that arbitrary precision is required.')) = None,
         **keywords
@@ -118,7 +118,7 @@ class BlockTransformation(BlockTransformationBase, abstract=True):
 
 class ArithmeticUnit(BlockTransformation, abstract=True):
 
-    def __init__(self, *argument: arg(type=numseq, help=(
+    def __init__(self, *argument: Arg(type=numseq, help=(
         'A single numeric expression which provides the right argument to the operation, '
         'where the left argument is each block in the input data. This argument can also '
         'contain a sequence of bytes which is then split into blocks of the same size as '
@@ -226,7 +226,7 @@ class UnaryOperation(ArithmeticUnit, abstract=True):
 
 
 class BinaryOperation(ArithmeticUnit, abstract=True):
-    def __init__(self, argument: arg(nargs=arg.delete), bigendian=False, blocksize=1):
+    def __init__(self, argument: Arg(nargs=Arg.delete), bigendian=False, blocksize=1):
         super().__init__(argument,
             bigendian=bigendian, blocksize=blocksize)
 

@@ -8,7 +8,7 @@ from typing import Iterable
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class ef(Unit):
@@ -18,21 +18,21 @@ class ef(Unit):
     """
 
     def __init__(self,
-        *filenames: arg(metavar='FILEMASK', nargs='+', type=str, help=(
+        *filenames: Arg(metavar='FILEMASK', nargs='+', type=str, help=(
             'A list of file masks (with wildcard patterns). Each matching '
             'file will be read from disk and emitted. In addition to glob '
             'patterns, the file mask can include format string expressions '
             'which will be substituted from the current meta variables.'
         )),
-        list: arg.switch('-l', help='Only lists files with metadata.') = False,
-        meta: arg.switch('-m', help=(
+        list: Arg.Switch('-l', help='Only lists files with metadata.') = False,
+        meta: Arg.Switch('-m', help=(
             'Adds the atime, mtime, ctime, and size metadata variables.'
         )) = False,
-        size: arg.number('-s', help=(
+        size: Arg.Number('-s', help=(
             'If specified, files will be read in chunks of size N and each '
             'chunk is emitted as one element in the output list.'
         )) = 0,
-        linewise: arg.switch('-w', help=(
+        linewise: Arg.Switch('-w', help=(
             'Read the file linewise. By default, one line is read at a time. '
             'In line mode, the --size argument can be used to read the given '
             'number of lines in each chunk.'

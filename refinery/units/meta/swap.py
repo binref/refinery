@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from typing import Iterable
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 from refinery.lib.meta import check_variable_name
 from refinery.lib.frame import Chunk
@@ -17,8 +17,8 @@ class swap(Unit):
     """
     def __init__(
         self,
-        src: arg(type=str, help='The meta variable name.'),
-        dst: arg(type=str, help='Optional name of the second meta variable.') = None
+        src: Arg(type=str, help='The meta variable name.'),
+        dst: Arg(type=str, help='Optional name of the second meta variable.') = None
     ):
         super().__init__(
             src=check_variable_name(src),

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class trim(Unit):
@@ -9,9 +9,9 @@ class trim(Unit):
     """
 
     def __init__(
-        self, *junk: arg(help='Binary strings to be removed, default are all whitespace characters.'),
-        left: arg.switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
-        right: arg.switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True
+        self, *junk: Arg(help='Binary strings to be removed, default are all whitespace characters.'),
+        left: Arg.Switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
+        right: Arg.Switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True
     ):
         super().__init__(junk=junk, left=left, right=right)
 

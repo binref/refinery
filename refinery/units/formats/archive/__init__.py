@@ -3,15 +3,15 @@
 from typing import ByteString, Callable, Optional, Union
 from datetime import datetime
 
-from refinery.units.formats import arg, PathExtractorUnit, UnpackResult
+from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 
 class ArchiveUnit(PathExtractorUnit, abstract=True):
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, path=b'path',
-        date: arg('-D', metavar='NAME',
+        date: Arg('-D', metavar='NAME',
             help='Name of the meta variable to receive the extracted file date. The default value is "{default}".') = b'date',
-        pwd: arg('-p', help='Optionally specify an extraction password.') = B'',
+        pwd: Arg('-p', help='Optionally specify an extraction password.') = B'',
         **kwargs
     ):
         super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, pwd=pwd, date=date, **kwargs)

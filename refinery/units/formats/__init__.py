@@ -14,7 +14,7 @@ from pathlib import Path
 from zlib import adler32
 from typing import ByteString, Iterable, Callable, List, Union
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars, ByteStringWrapper
 
 
@@ -77,16 +77,16 @@ class PathExtractorUnit(Unit, abstract=True):
     _STRICT_PATH_MATCHING = False
     _CUSTOM_PATH_SEPARATE = None
 
-    def __init__(self, *paths: arg(
+    def __init__(self, *paths: Arg(
         metavar='path', nargs='*', default=(), type=pathspec, help=(
             'Wildcard pattern for the name of the item to be extracted. Each item is returned'
             ' as a separate output of this unit. Paths may contain wildcards. The default is '
             'a single wildcard, which means that every item will be extracted.')),
-        list: arg.switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
-        join_path: arg.switch('-j', group='PATH', help='Join path names from container with previous path names.') = False,
-        drop_path: arg.switch('-d', group='PATH', help='Do not modify the path variable for output chunks.') = False,
-        regex: arg.switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
-        path: arg('-P', metavar='NAME',
+        list: Arg.Switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
+        join_path: Arg.Switch('-j', group='PATH', help='Join path names from container with previous path names.') = False,
+        drop_path: Arg.Switch('-d', group='PATH', help='Do not modify the path variable for output chunks.') = False,
+        regex: Arg.Switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
+        path: Arg('-P', metavar='NAME',
             help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
         **keywords
     ):

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class esc(Unit):
@@ -37,12 +37,12 @@ class esc(Unit):
     }
 
     def __init__(self,
-        hex     : arg.switch('-x', help='Hex encode everything, do not use C escape sequences.') = False,
-        unicode : arg.switch('-u', help='Use unicode escape sequences and UTF-8 encoding.') = False,
-        greedy  : arg.switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.') = False,
-        quoted  : arg.switch('-q', help='Remove enclosing quotes while decoding and add them for encoding.') = False,
-        bare    : arg.switch('-b', help='Do not escape quote characters.') = False,
-        expand  : arg.switch('-p', help='Decode sequences of the form \\uHHLL as two bytes when the upper byte is nonzero.') = False,
+        hex     : Arg.Switch('-x', help='Hex encode everything, do not use C escape sequences.') = False,
+        unicode : Arg.Switch('-u', help='Use unicode escape sequences and UTF-8 encoding.') = False,
+        greedy  : Arg.Switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.') = False,
+        quoted  : Arg.Switch('-q', help='Remove enclosing quotes while decoding and add them for encoding.') = False,
+        bare    : Arg.Switch('-b', help='Do not escape quote characters.') = False,
+        expand  : Arg.Switch('-p', help='Decode sequences of the form \\uHHLL as two bytes when the upper byte is nonzero.') = False,
     ) -> Unit: pass  # noqa
 
     def process(self, data):

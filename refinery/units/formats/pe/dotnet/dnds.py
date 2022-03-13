@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.formats.pe.dotnet import arg, JSONEncoderUnit
+from refinery.units.formats.pe.dotnet import Arg, JSONEncoderUnit
 from refinery.lib.dotnet.deserialize import BinaryFormatterParser
 
 
@@ -11,7 +11,7 @@ class dnds(JSONEncoderUnit):
     """
 
     def __init__(
-        self, dereference: arg.switch('-r', '--keep-references', off=True,
+        self, dereference: Arg.Switch('-r', '--keep-references', off=True,
             help='Do not resolve Object references in serialized data.') = True,
         encode=None, digest=None
     ):

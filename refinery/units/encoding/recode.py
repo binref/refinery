@@ -3,7 +3,7 @@
 import codecs
 import enum
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class Handler(enum.Enum):
@@ -23,21 +23,21 @@ class recode(Unit):
 
     def __init__(
         self,
-        decode: arg(metavar='decode-as', type=str, help='Input encoding; Guess encoding by default.') = None,
-        encode: arg(metavar='encode-as', type=str, help=F'Output encoding; The default is {Unit.codec}.') = Unit.codec,
-        decerr: arg.option('-d', choices=Handler,
+        decode: Arg(metavar='decode-as', type=str, help='Input encoding; Guess encoding by default.') = None,
+        encode: Arg(metavar='encode-as', type=str, help=F'Output encoding; The default is {Unit.codec}.') = Unit.codec,
+        decerr: Arg.Option('-d', choices=Handler,
             help='Specify an error handler for decoding.') = None,
-        encerr: arg.option('-e', choices=Handler,
+        encerr: Arg.Option('-e', choices=Handler,
             help='Specify an error handler for encoding.') = None,
-        errors: arg.option('-E', choices=Handler, help=(
+        errors: Arg.Option('-E', choices=Handler, help=(
             'Specify an error handler for both encoding and decoding. '
             'The possible choices are the following: {choices}')) = None,
     ):
         super().__init__(
             decode=decode,
             encode=encode,
-            decerr=arg.as_option(decerr or errors or 'STRICT', Handler).value,
-            encerr=arg.as_option(encerr or errors or 'STRICT', Handler).value
+            decerr=Arg.AsOption(decerr or errors or 'STRICT', Handler).value,
+            encerr=Arg.AsOption(encerr or errors or 'STRICT', Handler).value
         )
 
     @Unit.Requires('chardet', optional=False)

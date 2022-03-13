@@ -17,7 +17,7 @@ import sys
 
 from importlib.util import MAGIC_NUMBER
 
-from refinery.units.formats.archive import arg, ArchiveUnit
+from refinery.units.formats.archive import Arg, ArchiveUnit
 from refinery.units.pattern.carve import carve
 from refinery.lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import NoLogging
@@ -447,10 +447,10 @@ class xtpyi(ArchiveUnit):
     """
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, path=b'path', date=b'date',
-        user_code: arg.switch('-u', group='FILTER', help=(
+        user_code: Arg.Switch('-u', group='FILTER', help=(
             'Extract only source code files from the root of the archive. These usually implement '
             'the actual domain logic.')) = False,
-        unmarshal: arg('-y', action='count', group='FILTER', help=(
+        unmarshal: Arg('-y', action='count', group='FILTER', help=(
             '(DANGEROUS) Unmarshal embedded PYZ archives. Warning: Maliciously crafted packages can '
             'potentially exploit this to execute code. It is advised to only use this option inside '
             'an isolated environment. Specify twice to decompile unmarshalled Python bytecode.'

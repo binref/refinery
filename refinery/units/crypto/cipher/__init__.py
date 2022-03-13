@@ -24,7 +24,7 @@ from refinery.lib.argformats import (
     OptionFactory,
 )
 from refinery.units import (
-    arg,
+    Arg,
     Executable,
     RefineryCriticalException,
     RefineryPartialResult,
@@ -51,7 +51,7 @@ class CipherExecutable(Executable):
 
 class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
-    def __init__(self, key: arg(help='The encryption key.'), **keywords):
+    def __init__(self, key: Arg(help='The encryption key.'), **keywords):
         super().__init__(key=key, **keywords)
 
     @abc.abstractmethod
@@ -75,7 +75,7 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
     def __init__(
         self, key,
-        stateful: arg.switch('-s', help='Do not reset the key stream while processing the chunks of one frame.') = False,
+        stateful: Arg.Switch('-s', help='Do not reset the key stream while processing the chunks of one frame.') = False,
         **keywords
     ):
         super().__init__(key=key, stateful=stateful, **keywords)
@@ -115,14 +115,14 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
-        self, key, iv: arg('-i', '--iv', help=(
+        self, key, iv: Arg('-i', '--iv', help=(
             'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')) = B'',
-        padding: arg.choice('-p', type=str.lower, choices=['pkcs7', 'iso7816', 'x923', 'raw'],
+        padding: Arg.Choice('-p', type=str.lower, choices=['pkcs7', 'iso7816', 'x923', 'raw'],
             nargs=1, metavar='P', help=(
             'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, all other algorithms '
             'are attempted. In most cases, the data was not correctly decrypted if none of these work.')
         ) = None,
-        raw: arg.switch('-r', '--raw', help='Set the padding to raw; ignored when a padding is specified.') = False,
+        raw: Arg.Switch('-r', '--raw', help='Set the padding to raw; ignored when a padding is specified.') = False,
         **keywords
     ):
         if not padding:
@@ -193,8 +193,8 @@ class StandardCipherExecutable(CipherExecutable):
                 F'but no cipher block mode constants were found.'
             )
         cls._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
-        cls._argument_specification['mode'].merge_all(arg(
-            '-m', '--mode', type=str.upper, metavar='M', nargs=arg.delete, choices=list(modes),
+        cls._argument_specification['mode'].merge_all(Arg(
+            '-m', '--mode', type=str.upper, metavar='M', nargs=Arg.delete, choices=list(modes),
             help=(
                 'Choose cipher mode to be used. Possible values are: {}. By default, the CBC mode'
                 '  is used when an IV is is provided, and ECB otherwise.'.format(', '.join(modes))
@@ -282,16 +282,16 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
 
     def __init__(
         self, key,
-        nonce: arg(help='The nonce. Default is the string {default}.') = B'REFINERY',
-        magic: arg('-m', help='The magic constant; depends on the key size by default.') = B'',
-        offset: arg.number('-x', help='Optionally specify the stream index, default is {default}.') = 0,
-        rounds: arg.number('-r', help='The number of rounds. Has to be an even number.') = 20,
+        nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY',
+        magic: Arg('-m', help='The magic constant; depends on the key size by default.') = B'',
+        offset: Arg.Number('-x', help='Optionally specify the stream index, default is {default}.') = 0,
+        rounds: Arg.Number('-r', help='The number of rounds. Has to be an even number.') = 20,
     ):
         super().__init__(key=key, nonce=nonce, magic=magic, offset=offset, rounds=rounds)
 
 
 class LatinCipherStandardUnit(StandardCipherUnit):
-    def __init__(self, key, nonce: arg(help='The nonce. Default is the string {default}.') = B'REFINERY'):
+    def __init__(self, key, nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY'):
         super().__init__(key, nonce=nonce)
 
     def _get_cipher_instance(self, **optionals) -> Any:

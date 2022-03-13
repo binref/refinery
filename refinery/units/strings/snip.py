@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from copy import copy
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.tools import lookahead
 
 
@@ -17,8 +17,8 @@ class snip(Unit):
     """
     def __init__(
         self,
-        slices: arg(help='Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
-        remove: arg.switch('-r', help='Remove the slices from the input rather than selecting them.') = False
+        slices: Arg(help='Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
+        remove: Arg.Switch('-r', help='Remove the slices from the input rather than selecting them.') = False
     ):
         super().__init__(slices=slices, remove=remove)
 

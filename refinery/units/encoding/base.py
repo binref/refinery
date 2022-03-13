@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.argformats import numseq
 
 
@@ -18,12 +18,12 @@ class base(Unit):
     """
     def __init__(
         self,
-        base: arg(type=numseq, metavar='base|alphabet', help=(
+        base: Arg(type=numseq, metavar='base|alphabet', help=(
             R'Either the base to be used or an alphabet. If an explicit alphabet is given, its length '
             R'determines the base. The default base 0 treats the input as a Python integer literal. If '
             F'a numeric base is given, digits from the alphabet "{_DEFAULT_ALPH_STR}" are used. ')) = 0,
-        little_endian: arg.switch('-e', help='Use little endian byte order instead of big endian.') = False,
-        strict_digits: arg.switch('-s', help='Check that all input digits are part of the alphabet.') = False,
+        little_endian: Arg.Switch('-e', help='Use little endian byte order instead of big endian.') = False,
+        strict_digits: Arg.Switch('-s', help='Check that all input digits are part of the alphabet.') = False,
     ):
         super().__init__(base=base, little_endian=little_endian, strict_digits=strict_digits)
 

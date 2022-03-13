@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 from refinery.lib.tools import splitchunks
 
 
@@ -10,10 +10,10 @@ class chop(Unit):
     """
 
     def __init__(
-        self, size: arg.number('size', help='Chop data into chunks of this size.'),
-        truncate: arg.switch('-t', help=(
+        self, size: Arg.Number('size', help='Chop data into chunks of this size.'),
+        truncate: Arg.Switch('-t', help=(
             'Truncate possible excess bytes at the end of the input, by default they are appended as a single chunk.')) = False,
-        into: arg.switch('-i', help=(
+        into: Arg.Switch('-i', help=(
             'If this flag is specified, the size parameter determines the number of blocks to be produced rather than the size '
             'of each block. In this case, truncation is performed before the data is split.')) = False
     ):

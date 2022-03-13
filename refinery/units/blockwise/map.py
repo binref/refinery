@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import Dict, Optional, Sequence
-from refinery.units.blockwise import arg, BlockTransformation
+from refinery.units.blockwise import Arg, BlockTransformation
 
 
 class map(BlockTransformation):
@@ -13,8 +13,8 @@ class map(BlockTransformation):
 
     def __init__(
         self,
-        index: arg(help='index characters'),
-        image: arg(help='image characters'),
+        index: Arg(help='index characters'),
+        image: Arg(help='image characters'),
         blocksize=1
     ):
         super().__init__(blocksize=blocksize, index=index, image=image)

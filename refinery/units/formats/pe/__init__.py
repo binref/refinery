@@ -6,7 +6,7 @@ A package containing Portable Executable (PE) file related units.
 from pefile import PE, DIRECTORY_ENTRY
 from typing import Union, ByteString
 
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 IMAGE_DIRECTORY_ENTRY_SECURITY = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
 
@@ -61,11 +61,11 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
 class OverlayUnit(Unit, abstract=True):
     def __init__(
         self,
-        certificate: arg.switch('--no-cert', '-c',
+        certificate: Arg.Switch('--no-cert', '-c',
             help='Do not include digital signatures for the size computation.') = True,
-        directories: arg.switch('--no-dirs', '-d',
+        directories: Arg.Switch('--no-dirs', '-d',
             help='Do not include any data directories for size computation (implies --no-cert).') = True,
-        memdump: arg.switch('-m', help='Assume that the file data was a memory-mapped PE file.') = False,
+        memdump: Arg.Switch('-m', help='Assume that the file data was a memory-mapped PE file.') = False,
     ):
         super().__init__(certificate=certificate, directories=directories, memdump=memdump)
 

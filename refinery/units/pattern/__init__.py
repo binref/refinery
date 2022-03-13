@@ -11,20 +11,20 @@ from hashlib import blake2b
 
 from refinery.lib.types import INF, AST
 from refinery.lib.argformats import regexp
-from refinery.units import arg, Unit
+from refinery.units import Arg, Unit
 
 
 class PatternExtractorBase(Unit, abstract=True):
 
     def __init__(
         self,
-        min        : arg.number('-n', help='Matches must have length at least N.') = 1,
-        max        : arg.number('-m', help='Matches must have length at most N.') = None,
-        len        : arg.number('-e', help='Matches must be of length N.') = None,
-        stripspace : arg.switch('-x', help='Strip all whitespace from input data.') = False,
-        duplicates : arg.switch('-r', help='Yield every (transformed) Match, even when it was found before.') = False,
-        longest    : arg.switch('-l', help='Sort results by length.') = False,
-        take       : arg.number('-t', help='Return only the first N occurrences in order of appearance.') = None,
+        min        : Arg.Number('-n', help='Matches must have length at least N.') = 1,
+        max        : Arg.Number('-m', help='Matches must have length at most N.') = None,
+        len        : Arg.Number('-e', help='Matches must be of length N.') = None,
+        stripspace : Arg.Switch('-x', help='Strip all whitespace from input data.') = False,
+        duplicates : Arg.Switch('-r', help='Yield every (transformed) Match, even when it was found before.') = False,
+        longest    : Arg.Switch('-l', help='Sort results by length.') = False,
+        take       : Arg.Number('-t', help='Return only the first N occurrences in order of appearance.') = None,
         **keywords
     ):
         keywords.setdefault('ascii', True)
@@ -120,8 +120,8 @@ class PatternExtractorBase(Unit, abstract=True):
 class PatternExtractor(PatternExtractorBase, abstract=True):
     def __init__(
         self, min=1, max=None, len=None, stripspace=False, duplicates=False, longest=False, take=None,
-        ascii: arg.switch('-u', '--no-ascii', group='AvsU', help='Search for UTF16 encoded patterns only.') = True,
-        utf16: arg.switch('-a', '--no-utf16', group='AvsU', help='Search for ASCII encoded patterns only.') = True,
+        ascii: Arg.Switch('-u', '--no-ascii', group='AvsU', help='Search for UTF16 encoded patterns only.') = True,
+        utf16: Arg.Switch('-a', '--no-utf16', group='AvsU', help='Search for ASCII encoded patterns only.') = True,
         **keywords
     ):
         super().__init__(
@@ -141,12 +141,12 @@ class PatternExtractor(PatternExtractorBase, abstract=True):
 class RegexUnit(Unit, abstract=True):
 
     def __init__(
-        self, regex: arg(type=regexp, help='Regular expression to match.'),
-        multiline: arg.switch('-M',
+        self, regex: Arg(type=regexp, help='Regular expression to match.'),
+        multiline: Arg.Switch('-M',
             help='Caret and dollar match the beginning and end of a line, a dot does not match line breaks.') = False,
-        ignorecase: arg.switch('-I',
+        ignorecase: Arg.Switch('-I',
             help='Ignore capitalization for alphabetic characters.') = False,
-        count: arg.number('-c', help='Specify the maximum number of operations to perform.') = 0,
+        count: Arg.Number('-c', help='Specify the maximum number of operations to perform.') = 0,
         **keywords
     ):
         flags = re.MULTILINE if multiline else re.DOTALL
