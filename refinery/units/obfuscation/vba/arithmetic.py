@@ -49,7 +49,7 @@ class deob_vba_arithmetic(Deobfuscator):
                 result = str(cautious_eval(expression)) + self.deobfuscate(tail)
             except ExpressionParsingFailure:
                 result = expression
-                self.log_warn(F'error trying to parse arithmetic expression at offset {match.start()}: ({expression})')
+                self.log_info(F'error trying to parse arithmetic expression at offset {match.start()}: ({expression})')
             else:
                 if expression.startswith('(') and expression.endswith(')'):
                     result = F'({result})'
