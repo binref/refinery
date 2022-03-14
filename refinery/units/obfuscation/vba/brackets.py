@@ -20,9 +20,9 @@ class deob_vba_brackets(Deobfuscator):
         @strlit.outside
         def replacement(match):
             nonlocal repeat
-            if match[3] == ')':
+            if match[2] == ')':
                 repeat = True
-                return (match[1] or '') + match[2]
+                return match[1]
 
         while repeat:
             repeat = False
