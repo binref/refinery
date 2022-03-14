@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import Dict, Optional, Sequence
+
 from refinery.units.blockwise import Arg, BlockTransformation
+from refinery.lib.tools import isbuffer
 
 
 class map(BlockTransformation):
@@ -13,8 +15,8 @@ class map(BlockTransformation):
 
     def __init__(
         self,
-        index: Arg(help='index characters'),
-        image: Arg(help='image characters'),
+        index: Arg.NumSeq(help='index characters'),
+        image: Arg.NumSeq(help='image characters'),
         blocksize=1
     ):
         super().__init__(blocksize=blocksize, index=index, image=image)
@@ -23,6 +25,15 @@ class map(BlockTransformation):
     def process(self, data):
         index: Sequence[int] = self.args.index
         image: Sequence[int] = self.args.image
+        if not self.bytestream:
+            if isbuffer(index):
+                self.log_info(F'chunking index sequence into blocks of size {self.args.blocksize}')
+                index = list(self.chunk(index))
+                self.log_debug(F'index sequence: {index}')
+            if isbuffer(image):
+                self.log_info(F'chunking image sequence into blocks of size {self.args.blocksize}')
+                image = list(self.chunk(image))
+                self.log_debug(F'image sequence: {image}')
         if len(set(index)) != len(index):
             raise ValueError('The index sequence contains duplicates.')
         if len(index) > len(image):
@@ -35,7 +46,7 @@ class map(BlockTransformation):
             data[:] = (mapping[b] for b in data)
             return data
         try:
-            self._map = dict(zip(self.chunk(index), self.chunk(image)))
+            self._map = dict(zip(index, image))
             return super().process(data)
         finally:
             self._map = None

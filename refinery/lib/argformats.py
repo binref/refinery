@@ -565,6 +565,18 @@ class DelayedArgument(LazyEvaluation):
                 arg = arg(data)
         return arg
 
+    def __eq__(self, other):
+        if isinstance(other, DelayedArgument):
+            return other.expression == self.expression
+        try:
+            # Try to realize on a completely empty chunk of data. If the result equals the
+            # other object, we are likely identical and we were too cautious when delaying.
+            value = self(B'')
+        except Exception:
+            return False
+        else:
+            return value == other
+
     def default_handler(self, expression: str) -> bytes:
         try:
             return open(expression, 'rb').read()

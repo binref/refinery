@@ -195,7 +195,7 @@ from argparse import (
     ZERO_OR_MORE
 )
 
-from refinery.lib.argformats import pending, manifest, multibin, number, sliceobj, VariableMissing
+from refinery.lib.argformats import pending, manifest, multibin, numseq, number, sliceobj, VariableMissing
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, one, skipfirst, isbuffer
 from refinery.lib.frame import Framed, Chunk
@@ -397,6 +397,20 @@ class Arg(Argument):
         Used to add argparse arguments that contain binary data.
         """
         return cls(*args, group=group, help=help, dest=dest, type=multibin, metavar=metavar or 'B')
+
+    @classmethod
+    def NumSeq(
+        cls,
+        *args   : str,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        metavar : Optional[str] = None,
+        group   : Optional[str] = None,
+    ):
+        """
+        Used to add argparse arguments that contain a numeric sequence.
+        """
+        return cls(*args, group=group, help=help, dest=dest, type=numseq, metavar=metavar)
 
     @classmethod
     def Number(
