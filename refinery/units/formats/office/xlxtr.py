@@ -215,7 +215,7 @@ class xlxtr(Unit):
                 sheet = workbook[name]
                 cells = [row for row in sheet.iter_rows(values_only=True)]
                 nrows = len(cells)
-                ncols = max(len(row) for row in cells)
+                ncols = max((len(row) for row in cells), default=0)
                 for row, col in ref.cells(nrows, ncols):
                     yield from self._get_value(k, name, lambda r, c: cells[r][c], row, col)
 
