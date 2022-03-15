@@ -292,8 +292,13 @@ class Chunk(bytearray):
         """
         self._path = parent._path
         self._view = self._view or parent._view
-        for kv in parent.meta.items():
-            self._meta.setdefault(*kv)
+        for key, value in parent.meta.items():
+            # this code is used over .setdefault because it triggers a value derivation for
+            # intrinsic properties.
+            try:
+                self._meta[key]
+            except KeyError:
+                self._meta[key] = value
         return self
 
     @classmethod

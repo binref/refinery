@@ -30,3 +30,7 @@ class TestMeta(TestBase):
     def test_hex_byte_strings(self):
         pl = load_pipeline('emit Hello [| cm -2 | cfmt {sha256!r} ]')
         self.assertEqual(pl(), b'185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969')
+
+    def test_intrinsic_properties_are_recomputed(self):
+        pl = load_pipeline('emit FOO-BAR [| cm size | snip :1 | cfmt {size} ]')
+        self.assertEqual(pl(), B'1')
