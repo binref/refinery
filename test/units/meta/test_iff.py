@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa
 from refinery.lib.loader import load_detached as L
+from refinery.lib.loader import load_pipeline
 from .. import TestUnitBase
 
 
@@ -27,3 +28,7 @@ class TestIfExpr(TestUnitBase):
     def test_comparison_02(self):
         pl = L('emit A BB C D EEE') [ self.load('size', '-lt', '2') ]
         self.assertEqual(pl(), B'ACD')
+
+    def test_filter_empty_chunks(self):
+        pl = load_pipeline('emit AAA==FCC [| resplit = | b64 | iff | emit . ]')
+        self.assertEqual(pl(), B'..')

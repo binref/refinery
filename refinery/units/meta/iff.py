@@ -46,7 +46,7 @@ class iff(ConditionalUnit):
             (rhs, cmp) for (rhs, cmp) in operators
             if rhs is not None
         ]
-        rhs, cmp, lhs = None, None, '\x20'.join(expression)
+        rhs, cmp, lhs = None, None, '\x20'.join(expression) or None
         if len(operators) > 0:
             if not lhs:
                 raise ValueError('Comparison operator with empty left hand side.')
