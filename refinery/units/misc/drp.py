@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import sys
 
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.suffixtree import SuffixTree
 from refinery.lib.types import INF
 
@@ -110,6 +110,10 @@ class drp(Unit):
         return pattern
 
     def process(self, data: bytearray):
+        if len(data) <= 1:
+            yield data
+            return
+
         memview = memoryview(data)
         weight = 1 + (self.args.weight / 10)
 
@@ -121,7 +125,7 @@ class drp(Unit):
             for k in range(0, len(memview), chunksize):
                 patterns |= self._get_patterns(memview[k:k + chunksize])
         if not patterns:
-            raise RuntimeError('unexpected state: no repeating sequences found')
+            raise RefineryPartialResult('no repeating sequences found', data)
 
         self.log_debug('removing duplicate pattern detections')
         duplicates = set()

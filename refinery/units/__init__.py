@@ -1182,9 +1182,14 @@ class Unit(UnitBase, abstract=True):
                 return exception.partial
             except AttributeError:
                 return data
-        if self.log_level >= LogLevel.DETACHED:
-            if isinstance(exception, RefineryPartialResult) and self.leniency > 0:
+        if isinstance(exception, RefineryPartialResult):
+            self.log_warn(F'error, partial result returned: {exception}')
+            if self.leniency >= 1:
+                return exception.partial
+            elif self.log_level < LogLevel.DETACHED:
                 return None
+            raise exception
+        elif self.log_level >= LogLevel.DETACHED:
             raise exception
         elif isinstance(exception, RefineryCriticalException):
             self.log_warn(F'critical error, terminating: {exception}')
@@ -1194,11 +1199,6 @@ class Unit(UnitBase, abstract=True):
             raise RefineryCriticalException
         elif isinstance(exception, GeneratorExit):
             raise exception
-        elif isinstance(exception, RefineryPartialResult):
-            self.log_warn(F'error, partial result returned: {exception}')
-            if self.leniency < 1:
-                return None
-            return exception.partial
         elif isinstance(exception, RefineryImportMissing):
             self.log_fail(F'dependencies missing; install {exception.install}')
         else:

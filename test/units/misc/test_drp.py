@@ -56,3 +56,15 @@ class TestAutoXOR(TestUnitBase):
         self.assertEqual(unit1(data), bytes.fromhex(
             '67 71 0D F1 07 03 9C FC C2 CF F0 77 BF 38 2D FB'
         ))
+
+    def test_empty_input(self):
+        self.assertEqual(bytes(B'' | self.load()), B'')
+
+    def test_short_string_01(self):
+        self.assertEqual(bytes(B'A' | self.load()), B'A')
+
+    def test_short_string_02(self):
+        self.assertEqual(bytes(B'AB' | self.load(lenient=1)), B'AB')
+
+    def test_short_string_03(self):
+        self.assertEqual(bytes(B'AAB' | self.load()), B'A')
