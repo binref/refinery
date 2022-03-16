@@ -324,6 +324,14 @@ class Chunk(bytearray):
         metas = metas and F' meta=({metas})'
         return F'<chunk{layer}{metas} size={len(self)} data={repr(bytes(self))}>'
 
+    def __iand__(self, other: Chunk):
+        other_meta = other._meta
+        meta = self._meta
+        for key, value in list(meta.items()):
+            if other_meta.get(key) != value:
+                meta.discard(key)
+        return self
+
     def __str__(self):
         try:
             return self.decode('UTF8')
@@ -554,6 +562,7 @@ class Framed:
             buffer = MemoryFile(header)
             buffer.seek(len(header))
         for item in it:
+            header &= item
             buffer.write(item)
         yield header
 
@@ -610,6 +619,7 @@ class Framed:
                         if not trunk:
                             trunk = result
                         elif result.path[gauge:] == trunk.path[gauge:]:
+                            trunk &= result
                             trunk.extend(result)
                         else:
                             trunk.truncate(gauge)
