@@ -128,7 +128,7 @@ def documentation(unit):
     return docs.replace('`', '')
 
 
-def skipfirst(iterable):
+def skipfirst(iterable: Iterable[_T]) -> Generator[_T, None, None]:
     """
     Returns an interable where the first element of the input iterable was
     skipped.
