@@ -776,21 +776,27 @@ class Executable(ABCMeta):
 
     def __init__(cls, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False):
         super(Executable, cls).__init__(name, bases, nmspc)
-        cls._argument_specification = ArgumentSpecification()
+        cls._argument_specification = args = ArgumentSpecification()
 
         cls_init = cls.__init__
         sig_init = inspect.signature(cls_init)
         parameters = sig_init.parameters
+        has_keyword = any(p.kind == p.VAR_KEYWORD for p in parameters.values())
 
         for base in bases:
             base: Executable
             for key, value in base._argument_specification.items():
                 if key in parameters:
-                    cls._argument_specification[key] = value.__copy__()
+                    args[key] = value.__copy__()
 
-        cls._infer_argspec(parameters, cls._argument_specification)
+        if not abstract and bases and has_keyword:
+            for key, value in bases[0]._argument_specification.items():
+                if key not in args:
+                    args[key] = value.__copy__()
 
-        if not abstract and any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+        cls._infer_argspec(parameters, args)
+
+        if not abstract and has_keyword:
             @wraps(cls.__init__)
             def init(self, *args, **kwargs): super(cls, self).__init__(*args, **kwargs)
             init.__signature__ = sig_init.replace(parameters=tuple(
