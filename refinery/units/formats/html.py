@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from refinery.lib.xml import XMLNodeBase
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats import PathExtractorUnit, UnpackResult, Arg
 
 import collections
 import io
@@ -101,6 +101,9 @@ class xthtml(PathExtractorUnit):
     The unit processes an HTML document and extracts the contents of all elemnts in the DOM of the
     given tag. The main purpose is to extract scripts from HTML documents.
     """
+    def __init__(self, *paths, outer: Arg.Switch('-o', help='Include the HTML tags for an extracted element.'), **keywords):
+        super().__init__(*paths, outer=outer, **keywords)
+
     def unpack(self, data):
         def tree(root: HTMLNode, *path):
 
@@ -114,9 +117,10 @@ class xthtml(PathExtractorUnit):
 
             if root.root:
                 yield UnpackResult(tagpath, inner)
+            elif self.args.outer:
+                yield UnpackResult(tagpath, outer)
             else:
-                yield UnpackResult(F'{tagpath}.outer', outer)
-                yield UnpackResult(F'{tagpath}.inner', inner)
+                yield UnpackResult(tagpath, inner)
 
             tag_count = collections.defaultdict(int)
             tag_index = collections.defaultdict(int)
