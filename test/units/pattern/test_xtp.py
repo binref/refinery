@@ -184,3 +184,14 @@ class TestPatternExtractor(TestUnitBase):
     def test_url_filters(self):
         self.assertEqual('http://www.example.com/',
             str(B'tthttp://www.example.com/' | self.load('url', filter=1)))
+
+    def test_path_extraction(self):
+        data = inspect.cleandoc(
+            R"""
+            C:\Users\Public\payload.ps1
+            C:\Users\Public\Health\payload.ps1
+            C:\Users\Public\Health\launcher.exe
+            C:\Users\Public\Health\launcher.exe.manifest
+            """
+        ).encode("utf8")
+        self.assertEqual(data | self.load('path', filter=2) | bytes, data)

@@ -283,7 +283,8 @@ class xtp(PatternExtractor):
                     return None
                 for k, part in enumerate(path.parts):
                     if not k:
-                        if part.endswith(':') and len(part) == 2:
+                        drive, colon, slash = part.partition(':')
+                        if colon and len(drive) == 1 and len(slash) <= 1:
                             continue
                         if part[0] == part[~0] == '%':
                             continue
