@@ -782,6 +782,7 @@ class Executable(ABCMeta):
         sig_init = inspect.signature(cls_init)
         parameters = sig_init.parameters
         has_keyword = any(p.kind == p.VAR_KEYWORD for p in parameters.values())
+        inherited = []
 
         for base in bases:
             base: Executable
@@ -793,14 +794,20 @@ class Executable(ABCMeta):
             for key, value in bases[0]._argument_specification.items():
                 if key not in args:
                     args[key] = value.__copy__()
+                    inherited.append(key)
 
         cls._infer_argspec(parameters, args)
 
         if not abstract and has_keyword:
             @wraps(cls.__init__)
-            def init(self, *args, **kwargs): super(cls, self).__init__(*args, **kwargs)
-            init.__signature__ = sig_init.replace(parameters=tuple(
-                p for p in parameters.values() if p.kind != p.VAR_KEYWORD))
+            def init(self, *args, **kwargs):
+                super(cls, self).__init__(*args, **kwargs)
+            params = [p for p in parameters.values() if p.kind != p.VAR_KEYWORD]
+            if inherited:
+                pp = inspect.signature(bases[0].__init__).parameters
+                for name in inherited:
+                    params.append(pp[name])
+            init.__signature__ = sig_init.replace(parameters=tuple(params))
             cls.__init__ = init
 
         try:
