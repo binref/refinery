@@ -3,6 +3,7 @@
 """
 A package with units for generic executables. Usually, PE, ELF, and MachO formats are covered.
 """
+import os
 
 
 class ParsingFailure(ValueError):
@@ -39,13 +40,9 @@ def exeroute(data, handler_elf, handler_macho, handler_pe, *args, **kwargs):
         import macholib.MachO
 
         class InMemoryMachO(macholib.MachO.MachO):
-            def __init__(self):
-                self.graphident = None
-                self.filename = None
-                self.loader_path = None
-                self.fat = None
-                self.headers = []
-                self.load(MemoryFile(data))
+            def __init__(self): super().__init__(os.devnull)
+            def load(self, _): return super().load(MemoryFile(data))
+
         try:
             parsed = InMemoryMachO()
             assert parsed.headers
