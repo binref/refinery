@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Iterable
+from typing import Iterable, Iterator
 from itertools import chain
 
 from refinery.units import Arg, Unit, Chunk
@@ -70,7 +70,7 @@ class pop(Unit):
     def filter(self, chunks: Iterable[Chunk]):
         invisible = []
         variables = {}
-        remaining: Iterable[_popcount] = iter(self.args.names)
+        remaining: Iterator[_popcount] = iter(self.args.names)
 
         it = iter(chunks)
         pop = next(remaining).reset()
