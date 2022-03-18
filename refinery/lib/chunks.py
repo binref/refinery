@@ -23,18 +23,19 @@ def unpack(data: bytes, blocksize: int, bigendian: bool = False) -> Iterable[int
     """
     if blocksize == 1:
         return data
+    overlap = len(data) % blocksize
+    if overlap != 0:
+        data = memoryview(data)[:-overlap]
     if blocksize in _TYPE_CODES:
-        overlap = len(data) % blocksize
-        if overlap != 0:
-            data = memoryview(data)[:-overlap]
         unpacked = array.array(_TYPE_CODES[blocksize])
         unpacked.frombytes(data)
         if _BIG_ENDIAN != bigendian:
             unpacked.byteswap()
         return unpacked
     else:
-        blocks = zip(*([iter(data)] * blocksize))
-        byteorder = ('little', 'big')[bigendian]
+        memory = memoryview(data)
+        blocks = (memory[i:i + blocksize] for i in range(0, len(memory), blocksize))
+        byteorder = 'big' if bigendian else 'little'
         return (int.from_bytes(block, byteorder) for block in blocks)
 
 
