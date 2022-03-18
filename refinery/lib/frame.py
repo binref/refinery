@@ -616,7 +616,7 @@ class Framed:
                         yield from results
                         continue
                     for result in results:
-                        if not trunk:
+                        if trunk is None:
                             trunk = result
                         elif result.path[gauge:] == trunk.path[gauge:]:
                             trunk &= result
@@ -625,8 +625,8 @@ class Framed:
                             trunk.truncate(gauge)
                             yield trunk.pack()
                             trunk = result
-                if not gauge or not trunk:
+                if not gauge or trunk is None:
                     continue
-            if trunk:
+            if trunk is not None:
                 trunk.truncate(gauge)
                 yield trunk.pack()
