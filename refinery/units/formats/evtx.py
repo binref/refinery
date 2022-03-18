@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf - 8 -* -
 from refinery.units import Unit
-from refinery.lib.vfs import VirtualFileSystem, VirtualFile
+from refinery.lib.vfs import VirtualFileSystem
 
 
 class evtx(Unit):
@@ -21,6 +21,6 @@ class evtx(Unit):
     def process(self, data):
         with VirtualFileSystem() as vfs:
             raw = self.args.raw
-            with self._evtx(VirtualFile(vfs, data)) as log:
+            with self._evtx(vfs.new(data)) as log:
                 for record in log.records():
                     yield record.data() if raw else record.xml().encode(self.codec)

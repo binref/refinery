@@ -131,6 +131,9 @@ class VirtualFileSystem:
         self._by_name: Dict[str, VirtualFile] = {}
         self._by_node: Dict[int, VirtualFile] = {}
 
+    def new(self, data: Optional[ByteString] = None, extension: Optional[str] = None):
+        return VirtualFile(self, data, extension)
+
     def install(self, file: VirtualFile):
         """
         Add a new virtual file into the file system. This function is called by the constructor

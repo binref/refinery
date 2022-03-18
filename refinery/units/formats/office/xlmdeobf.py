@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from refinery.units.formats import Unit
-from refinery.lib.vfs import VirtualFileSystem, VirtualFile
+from refinery.lib.vfs import VirtualFileSystem
 
 
 class xlmdeobf(Unit):
@@ -81,7 +81,7 @@ class xlmdeobf(Unit):
     def process(self, data: bytearray):
         with VirtualFileSystem() as vfs:
             result = self._process_file(
-                file=VirtualFile(vfs, data),
+                file=vfs.new(data),
                 noninteractive=True,
                 return_deobfuscated=True,
                 extract_only=self.args.extract_only,
