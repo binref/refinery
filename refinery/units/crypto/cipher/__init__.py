@@ -11,6 +11,7 @@ from typing import (
     ClassVar,
     Iterable,
     Optional,
+    Sequence,
     Tuple,
     Type,
 )
@@ -50,6 +51,9 @@ class CipherExecutable(Executable):
 
 
 class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
+
+    key_sizes: ClassVar[Sequence[int]]
+    blocksize: ClassVar[int]
 
     def __init__(self, key: Arg(help='The encryption key.'), **keywords):
         super().__init__(key=key, **keywords)
@@ -168,30 +172,33 @@ class StandardCipherExecutable(CipherExecutable):
     _cipher_object_factory: ClassVar[CipherObjectFactory]
 
     def __new__(mcs, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
-        if cipher is None:
-            keywords = dict(abstract=True)
-        else:
-            keywords = dict(
-                abstract=False,
-                blocksize=cipher.block_size,
-                key_sizes=cipher.key_size,
-            )
+        keywords = dict(abstract=bool(cipher))
+        try:
+            keywords.update(blocksize=cipher.block_size)
+        except AttributeError:
+            pass
+        try:
+            keywords.update(key_sizes=cipher.key_size)
+        except AttributeError:
+            pass
         return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
 
     def __init__(cls, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
-        cls: Executable
         abstract = cipher is None
-        super(StandardCipherExecutable, cls).__init__(
-            name, bases, nmspc, abstract=abstract)
+        super(StandardCipherExecutable, cls).__init__(name, bases, nmspc, abstract=abstract)
         cls._cipher_object_factory = cipher
-        if abstract or cipher.block_size <= 1 or 'mode' not in cls._argument_specification:
+        try:
+            block_size = cipher.block_size
+        except AttributeError:
+            pass
+        else:
+            if block_size <= 1:
+                return
+        if abstract or 'mode' not in cls._argument_specification:
             return
         modes = extract_options(cipher)
         if not modes:
-            raise RefineryCriticalException(
-                F'The cipher {cipher.name} is a block cipher module, '
-                F'but no cipher block mode constants were found.'
-            )
+            raise RefineryCriticalException(F'No cipher block mode constants found in {cipher!r}')
         cls._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
         cls._argument_specification['mode'].merge_all(Arg(
             '-m', '--mode', type=str.upper, metavar='M', nargs=Arg.delete, choices=list(modes),

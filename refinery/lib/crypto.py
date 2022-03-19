@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Callable, Container, Generator, Optional, Type, Union, Dict
+from typing import Callable, ClassVar, Container, Generator, Optional, Type, Union, Dict
 from abc import ABC, abstractmethod
 from enum import Enum
 
@@ -12,8 +12,14 @@ BufferType = Union[bytearray, bytes, memoryview]
 CIPHER_MODES: Dict[str, CipherMode] = {}
 
 
-def _register_cipher_mode(cls):
+class SpecifiedAtRuntime:
+    pass
+
+
+def _register_cipher_mode(cls: Type[CipherMode]):
+    cls._identifier = nr = len(CIPHER_MODES)
     CIPHER_MODES[cls.__name__] = cls
+    setattr(SpecifiedAtRuntime, F'MODE_{cls.__name__}', nr)
     return cls
 
 
@@ -97,6 +103,18 @@ def rotr8(x: int, c: int):
     return (x << (0x08 - c) & 0xFF) | (x >> c)
 
 
+def rotr(size: int, x: int, c: int) -> int:
+    mask = (1 << size) - 1
+    c %= size
+    return (x >> c) | (x << (size - c) & mask)
+
+
+def rotl(size: int, x: int, c: int) -> int:
+    mask = (1 << size) - 1
+    c %= size
+    return (x >> (size - c)) | (x << c & mask)
+
+
 class Direction(str, Enum):
     Encrypt = 'encrypt'
     Decrypt = 'decrypt'
@@ -106,6 +124,7 @@ class CipherMode(ABC):
 
     encrypt_block: Callable[[memoryview], memoryview]
     decrypt_block: Callable[[memoryview], memoryview]
+    _identifier: ClassVar[int]
 
     @abstractmethod
     def encrypt(self) -> Generator[memoryview, memoryview, None]:
@@ -390,7 +409,7 @@ class BlockCipherFactory(CipherObjectFactory):
         self.cipher = cipher
         self._modes = []
         for name, mode in CIPHER_MODES.items():
-            setattr(self, F'MODE_{name}', len(self._modes))
+            setattr(self, F'MODE_{name}', mode._identifier)
             self._modes.append(mode)
 
     def new(self, key, mode=None, **mode_args) -> CipherInterface:
