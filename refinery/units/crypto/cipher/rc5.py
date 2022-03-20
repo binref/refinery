@@ -4,6 +4,7 @@ import math
 
 from decimal import localcontext, Decimal
 from typing import List, Optional
+from functools import partial
 
 from refinery.units.crypto.cipher import StandardBlockCipherUnit, Arg
 from refinery.lib import chunks
@@ -16,6 +17,9 @@ from refinery.lib.crypto import (
     SpecifiedAtRuntime,
     BufferType,
 )
+
+itob = partial(int.to_bytes, byteorder='little')
+btoi = partial(int.from_bytes, byteorder='little')
 
 
 def rc5constants(w: int):
@@ -58,26 +62,26 @@ class RC5(BlockCipher):
         w = self._w
         M = self._m
         S = self._S
-        A: int = int.from_bytes(block[:u], 'little')
-        B: int = int.from_bytes(block[u:], 'little')
+        A: int = btoi(block[:u])
+        B: int = btoi(block[u:])
         for i in range(self._r, 0, -1):
             B = rotr(w, B - S[2 * i + 1] & M, A) ^ A
             A = rotr(w, A - S[2 * i + 0] & M, B) ^ B
         B = B - S[1] & M
         A = A - S[0] & M
-        return A.to_bytes(u, 'little') + B.to_bytes(u, 'little')
+        return itob(A, u) + itob(B, u)
 
     def block_encrypt(self, block) -> BufferType:
         u = self._u
         w = self._w
         M = self._m
         S = self._S
-        A: int = int.from_bytes(block[:u], 'little') + S[0] & M
-        B: int = int.from_bytes(block[u:], 'little') + S[1] & M
+        A: int = btoi(block[:u]) + S[0] & M
+        B: int = btoi(block[u:]) + S[1] & M
         for i in range(1, self._r + 1):
             A = rotl(w, A ^ B, B) + S[2 * i + 0] & M
             B = rotl(w, B ^ A, A) + S[2 * i + 1] & M
-        return A.to_bytes(u, 'little') + B.to_bytes(u, 'little')
+        return itob(A, u) + itob(B, u)
 
     @property
     def key(self):
