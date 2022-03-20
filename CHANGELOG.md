@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.4.29
+- Unit execution time has been improved significantly.
+- The `rc5`, `rc6`, and `xxtea` cipher units were added.
+
 ## Version 0.4.28
 - Adds the option to completely disable the PowerShell band-aid introduced in 0.4.27 to allow using the `Use-RawPipeline` module.
 
