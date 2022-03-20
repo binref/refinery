@@ -9,7 +9,8 @@ import re
 
 from typing import Optional
 
-from .tlds import tlds
+from refinery.lib.patterns.tlds import tlds
+from refinery.lib.tools import cached_property
 
 
 class pattern:
@@ -30,11 +31,11 @@ class pattern:
     def __bytes__(self):
         return self.bin_pattern
 
-    @functools.cached_property
+    @cached_property
     def bin_compiled(self):
         return re.compile(B'(%s)' % self.bin_pattern)
 
-    @functools.cached_property
+    @cached_property
     def str_compiled(self):
         return re.compile(self.str_pattern)
 

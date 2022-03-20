@@ -272,8 +272,11 @@ def infinitize(it):
     return it
 
 
-def cached_property(p):
-    return property(functools.lru_cache(maxsize=1)(p))
+try:
+    cached_property = functools.cached_property
+except AttributeError:
+    def cached_property(p):
+        return property(functools.lru_cache(maxsize=1)(p))
 
 
 class NoLogging:
