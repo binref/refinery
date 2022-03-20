@@ -92,12 +92,12 @@ class RC5(BlockCipher):
         w = self._w  # word size
         u = self._u  # length of a word in bytes
         r = self._r  # round count
+        M = self._m  # bit mask
         L = list(chunks.unpack(key + (-len(key) % u) * B'\0', u))
         c = len(L)
         t = 2 * (r + 1)
         P, Q = rc5constants(w)
         S = [P]
-        M = (1 << w) - 1
         for i in range(1, t):
             S.append(S[i - 1] + Q & M)
         i = j = 0
