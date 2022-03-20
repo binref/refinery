@@ -82,9 +82,7 @@ from __future__ import annotations
 
 import abc
 import contextlib
-import hashlib
 import string
-import zlib
 import codecs
 
 from io import StringIO
@@ -93,8 +91,6 @@ from typing import Callable, Dict, Iterable, Optional, ByteString, Union
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
-from refinery.lib.mime import get_cached_file_magic_info
-from refinery.lib.patterns import formats
 
 
 class CustomStringRepresentation(abc.ABC):
@@ -192,7 +188,8 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         except AttributeError:
             representation = None
         else:
-            if not formats.printable.fullmatch(representation):
+            import re
+            if not re.fullmatch(r'[\s!-~]+', representation):
                 representation = None
             else:
                 prefix = self._CODECS[self.codec]
@@ -600,14 +597,17 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
     @_derivation('mime')
     def _derive_mime(self):
+        from refinery.lib.mime import get_cached_file_magic_info
         return get_cached_file_magic_info(self.chunk).mime
 
     @_derivation('ext')
     def _derive_ext(self):
+        from refinery.lib.mime import get_cached_file_magic_info
         return get_cached_file_magic_info(self.chunk).extension
 
     @_derivation('magic')
     def _derive_magic(self):
+        from refinery.lib.mime import get_cached_file_magic_info
         return get_cached_file_magic_info(self.chunk).description
 
     @_derivation('size')
@@ -624,22 +624,27 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
     @_derivation('crc32')
     def _derive_crc32(self):
+        import zlib
         return HexByteString((zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big'))
 
     @_derivation('sha1')
     def _derive_sha1(self):
+        import hashlib
         return HexByteString(hashlib.sha1(self.chunk).digest())
 
     @_derivation('sha256')
     def _derive_sha256(self):
+        import hashlib
         return HexByteString(hashlib.sha256(self.chunk).digest())
 
     @_derivation('sha512')
     def _derive_sha512(self):
+        import hashlib
         return HexByteString(hashlib.sha512(self.chunk).digest())
 
     @_derivation('md5')
     def _derive_md5(self):
+        import hashlib
         return HexByteString(hashlib.md5(self.chunk).digest())
 
 

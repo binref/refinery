@@ -25,20 +25,25 @@ class pattern:
 
     def __init__(self, pattern: str):
         self.str_pattern = pattern
-        self.bin_pattern = None
-        self.bin_compiled = re.compile(B'(%s)' % self)
-        self.str_compiled = re.compile(self.str_pattern)
+        self.bin_pattern = pattern.encode('ascii')
 
     def __bytes__(self):
-        bin_pattern = self.bin_pattern
-        if bin_pattern is None:
-            self.bin_pattern = bin_pattern = self.str_pattern.encode('ascii')
-        return bin_pattern
+        return self.bin_pattern
+
+    @functools.cached_property
+    def bin_compiled(self):
+        return re.compile(B'(%s)' % self.bin_pattern)
+
+    @functools.cached_property
+    def str_compiled(self):
+        return re.compile(self.str_pattern)
 
     def __str__(self):
         return self.str_pattern
 
     def __getattr__(self, verb):
+        if not hasattr(re.Pattern, verb):
+            raise AttributeError(verb)
         bin_attr = getattr(self.bin_compiled, verb)
         if not callable(bin_attr):
             return bin_attr
