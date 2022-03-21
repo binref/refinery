@@ -612,27 +612,27 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     @_derivation('crc32')
     def _derive_crc32(self):
         import zlib
-        return (ByteStringWrapper(zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big').hex())
+        return ByteStringWrapper((zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big').hex())
 
     @_derivation('sha1')
     def _derive_sha1(self):
         import hashlib
-        return ByteStringWrapper(hashlib.sha1(self.chunk).digest().hex())
+        return ByteStringWrapper(hashlib.sha1(self.chunk).hexdigest())
 
     @_derivation('sha256')
     def _derive_sha256(self):
         import hashlib
-        return ByteStringWrapper(hashlib.sha256(self.chunk).digest().hex())
+        return ByteStringWrapper(hashlib.sha256(self.chunk).hexdigest())
 
     @_derivation('sha512')
     def _derive_sha512(self):
         import hashlib
-        return ByteStringWrapper(hashlib.sha512(self.chunk).digest().hex())
+        return ByteStringWrapper(hashlib.sha512(self.chunk).hexdigest())
 
     @_derivation('md5')
     def _derive_md5(self):
         import hashlib
-        return ByteStringWrapper(hashlib.md5(self.chunk).digest().hex())
+        return ByteStringWrapper(hashlib.md5(self.chunk).hexdigest())
 
 
 def metavars(chunk, ghost: bool = False) -> LazyMetaOracle:
