@@ -500,12 +500,15 @@ class StructMeta(type):
         original__init__ = cls.__init__
 
         @functools.wraps(original__init__)
-        def wrapped__init__(self, data, *args, **kwargs):
-            if not isinstance(data, StructReader):
-                data = StructReader(data)
+        def wrapped__init__(self, reader, *args, **kwargs):
+            if not isinstance(reader, StructReader):
+                reader = StructReader(reader)
             for key, value in kwargs.items():
                 setattr(self, key, value)
-            original__init__(self, data, *args)
+            start = reader.tell()
+            view = memoryview(reader.getbuffer())
+            original__init__(self, reader, *args)
+            self._data = view[start:reader.tell()]
 
         cls.__init__ = wrapped__init__
 
@@ -523,6 +526,19 @@ class Struct(metaclass=StructMeta):
     Before initialization of the struct, the member `bar` of the newly created structure will be
     set to the value `29`.
     """
+    _data: Union[memoryview, bytearray]
+
+    def __len__(self):
+        return len(self._data)
+
+    def __bytes__(self):
+        return bytes(self._data)
+
+    def decouple(self):
+        if isinstance(self._data, memoryview):
+            self._data = bytearray(self._data)
+        return self
+
     def __init__(self, data): pass
 
 
