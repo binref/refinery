@@ -7,6 +7,7 @@ from zipfile import ZipInfo, ZipFile
 
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.lib.structures import MemoryFile
+from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
 
@@ -20,7 +21,13 @@ class xtzip(ArchiveUnit):
         import chardet
         return chardet
 
-    def unpack(self, data):
+    def unpack(self, data: bytearray):
+        if not data.startswith(B'PK'):
+            self.log_info('input file is not a zip file, attempting to carve one')
+            data = next(data | carve_zip)
+            offset = data['offset']
+            self.log_debug(F'carved a zip file from 0x{offset:X}')
+
         password = self.args.pwd.decode(self.codec)
         archive = ZipFile(MemoryFile(data))
 
@@ -77,4 +84,4 @@ class xtzip(ArchiveUnit):
             yield self._pack(filename, date, xt)
 
     def handles(self, data: bytearray) -> Optional[bool]:
-        return data.startswith('PK') and data.find(B'PK\x05\x06') > 0
+        return data.rfind(ZipEndOfCentralDirectory.SIGNATURE) > 0
