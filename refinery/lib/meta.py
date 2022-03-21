@@ -274,14 +274,6 @@ class Percentage(float, CustomStringRepresentation):
         return F'{self*100:05.2f}%'
 
 
-class HexByteString(bytes, CustomStringRepresentation):
-    def __str__(self):
-        return self.hex()
-
-    def __repr__(self):
-        return self.hex()
-
-
 class _NoDerivationAvailable(Exception):
     pass
 
@@ -314,11 +306,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     CUSTOM_TYPE_MAP = {
         'entropy' : Percentage,
         'size'    : SizeInt,
-        'sha1'    : HexByteString,
-        'sha256'  : HexByteString,
-        'sha512'  : HexByteString,
-        'md5'     : HexByteString,
-        'crc32'   : HexByteString,
     }
 
     DERIVATION_MAP: Dict[str, Callable[[LazyMetaOracle], Union[str, int, float]]] = {}
@@ -625,27 +612,27 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     @_derivation('crc32')
     def _derive_crc32(self):
         import zlib
-        return HexByteString((zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big'))
+        return (ByteStringWrapper(zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big').hex())
 
     @_derivation('sha1')
     def _derive_sha1(self):
         import hashlib
-        return HexByteString(hashlib.sha1(self.chunk).digest())
+        return ByteStringWrapper(hashlib.sha1(self.chunk).digest().hex())
 
     @_derivation('sha256')
     def _derive_sha256(self):
         import hashlib
-        return HexByteString(hashlib.sha256(self.chunk).digest())
+        return ByteStringWrapper(hashlib.sha256(self.chunk).digest().hex())
 
     @_derivation('sha512')
     def _derive_sha512(self):
         import hashlib
-        return HexByteString(hashlib.sha512(self.chunk).digest())
+        return ByteStringWrapper(hashlib.sha512(self.chunk).digest().hex())
 
     @_derivation('md5')
     def _derive_md5(self):
         import hashlib
-        return HexByteString(hashlib.md5(self.chunk).digest())
+        return ByteStringWrapper(hashlib.md5(self.chunk).digest().hex())
 
 
 def metavars(chunk, ghost: bool = False) -> LazyMetaOracle:
