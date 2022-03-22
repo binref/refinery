@@ -93,7 +93,7 @@ example, the multibin expression `xor[0xAA]:b64:2c/J2M/e` will return the binary
 the final expression `2c/J2M/e` is base64-decoded and each byte xor'ed with the key `0xAA`. As a
 second example, the expression
 
-    hex[-R]:sha256:file:foobar.txt
+    hex[-R]:sha256:read:foobar.txt
 
 will be parsed as the hexadecimal representation of the SHA256 hash of the file `foobar.txt`.
 """
@@ -637,35 +637,53 @@ class DelayedArgument(LazyEvaluation):
         import urllib.parse
         return urllib.parse.unquote_to_bytes(string)
 
-    @handler.register('f', 'F', final=True)
-    def f(self, path: str, region: str = None) -> bytes:
+    @handler.register('read', final=True)
+    def read(self, path: str, region: str = None) -> bytes:
         """
-        Final variant of the `refinery.lib.argformats.DelayedArgument.file` handler.
-        """
-        return self._file(path, region)
-
-    @handler.register('file')
-    def file(self, path: str, region: str = None) -> bytes:
-        """
-        Returns the contents of the file located at the given path. The path may contain
+        Returns the contents of the file located at the given path. This path may contain
         wildcard characters, but this pattern has to match a single file. It is also possible
-        to use the handler as `file[offset]` or as `file[offset:count]` to read `count`
-        many bytes from the file at the given offset.
+        to use the handler as `read[offset]` or as `read[offset:count]` to read `count` many
+        bytes from the file at the given offset.
         """
         return self._file(path, region)
 
-    def _file(self, path: str, region: str) -> bytes:
+    @handler.register('readfrom')
+    def readfrom(self, path: bytes, region: str = None) -> bytes:
+        """
+        A non-final variant of the `refinery.lib.argformats.DelayedArgument.read` handler. This
+        handler should only be used to read from path names that were the result of a previous
+        handler. Using `readfrom:sample.bin` will cause an error: Since `readfrom` is not final,
+        the default handler will be applied to `sample.bin`, feeding the binary contents of the
+        file into `readfrom`, but the handler is expecting a path name.
+        """
+        try:
+            path = path.decode('utf8')
+        except UnicodeDecodeError:
+            raise ArgumentTypeError(
+                'The input for the readfrom handler was not a path. Consider using the read '
+                'handler instead, which is final.')
+        else:
+            return self._file(path, region)
+
+    def _file(self, pattern: str, region: str) -> Optional[bytes]:
         def read(data: Optional[Chunk] = None):
             if not region:
                 bounds = slice(0, None)
             else:
                 bounds = sliceobj(region, metavars(data), range=True)
             if bounds.step:
-                raise ValueError('step size is not supported for file slices')
+                raise ValueError('Step size is not supported for file slices.')
             with path.open('rb') as stream:
                 stream.seek(bounds.start or 0)
                 return stream.read(bounds.stop)
-        path: Path = one(Path.cwd().glob(path))
+        try:
+            path: Path = one(Path.cwd().glob(pattern))
+        except NotImplementedError:
+            path: Path = Path(pattern)
+        except LookupError:
+            path = None
+        if not path or not path.exists() or not path.is_file():
+            raise ArgumentTypeError(F'File not found: {pattern}')
         try:
             return read()
         except ParserVariableMissing:
