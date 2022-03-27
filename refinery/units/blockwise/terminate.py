@@ -14,31 +14,26 @@ class terminate(BlockTransformationBase):
     """
     def __init__(
         self,
-        sentinel: Arg(type=numseq, help='sentinel value to look for; default is {default}') = 0,
-        blocksize=1,
-        bigendian=False
+        sentinel: Arg(help='sentinel value to look for; default is {default}') = B'\0',
+        blocksize=1, bigendian=False
     ):
-        if not isinstance(sentinel, int):
-            sentinel = next(chunks.unpack(sentinel, blocksize, bigendian))
         super().__init__(blocksize=blocksize, bigendian=bigendian, sentinel=sentinel)
 
     def process(self, data: bytearray):
-        sentinel: int = self.args.sentinel
+        sentinel = self.args.sentinel
+        position = 0
+        blocksize = self.args.blocksize
 
-        self.log_debug(F'using sentinel value: 0x{sentinel:0{self.args.blocksize*2}X}')
-
-        if self.bytestream:
-            pos = data.find(sentinel)
-            if pos < 0:
-                self.log_info(F'the sentinel value {sentinel} was not found')
+        while position >= 0:
+            position = data.find(sentinel, position)
+            if position < 0:
+                self.log_info(F'The sentinel value {sentinel} was not found.')
+                break
+            if position % blocksize:
+                position += 1
+                continue
             else:
-                data[pos:] = []
-            return data
+                data[position:] = []
+                break
 
-        def seek(it):
-            for chunk in it:
-                if chunk == sentinel:
-                    break
-                yield chunk
-
-        return self.unchunk(seek(self.chunk(data)))
+        return data
