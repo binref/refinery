@@ -40,6 +40,8 @@ class xtiso(ArchiveUnit):
         return base if split and revision.isdigit() else name
 
     def unpack(self, data):
+        if not self.handles(data):
+            self.log_warn('The data does not look like an ISO file.')
         with MemoryFile(data, read_as_bytes=True) as stream:
             iso = self._pycdlib.PyCdlib()
             iso.open_fp(stream)
@@ -72,18 +74,19 @@ class xtiso(ArchiveUnit):
                     path = F'{root}/{name}'
                     try:
                         info = facade.get_record(path)
+                        date = info.date
                     except Exception:
                         info = None
                         date = None
                     else:
                         date = datetime.datetime(
-                            info.date.years_since_1900 + 1900,
-                            info.date.month,
-                            info.date.day_of_month,
-                            info.date.hour,
-                            info.date.minute,
-                            info.date.second,
-                            tzinfo=datetime.timezone(datetime.timedelta(minutes=15 * info.date.gmtoffset))
+                            date.years_since_1900 + 1900,
+                            date.month,
+                            date.day_of_month,
+                            date.hour,
+                            date.minute,
+                            date.second,
+                            tzinfo=datetime.timezone(datetime.timedelta(minutes=15 * date.gmtoffset))
                         )
 
                     def extract(info=info, path=path):
