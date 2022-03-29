@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.30 -- bugfix release
+
 ## Version 0.4.29
 - Unit execution time has been improved significantly.
 - The `rc5`, `rc6`, and `xxtea` cipher units were added.
