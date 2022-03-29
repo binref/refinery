@@ -6,6 +6,7 @@ Interfaces and classes to read structured data.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import enum
 import functools
 import io
@@ -419,19 +420,25 @@ class StructReader(MemoryFile[T]):
         else:
             byteorder = self.byteorder_format
         data = []
-        for part in re.split('(a|u|w)', spec):
-            if part == 'a':
-                data.append(self.read_c_string())
+
+        # reserved struct characters: xcbB?hHiIlLqQnNefdspP
+        for k, part in enumerate(re.split('(\\d*[auwE])', spec)):
+            if k % 2 == 1:
+                count = 1 if len(part) == 1 else int(part[:~0])
+                part = part[~0]
+                for _ in range(count):
+                    if part == 'a':
+                        data.append(self.read_c_string())
+                    elif part == 'u':
+                        data.append(self.read_w_string())
+                    elif part == 'w':
+                        data.append(self.read_w_string().decode('utf-16le'))
+                    elif part == 'E':
+                        data.append(self.read_7bit_encoded_int())
                 continue
-            if part == 'u':
-                data.append(self.read_w_string())
-                continue
-            if part == 'w':
-                wstr = self.read_w_string()
-                data.append(wstr.decode('utf-16le'))
-                continue
-            part = F'{byteorder}{part}'
-            data.extend(struct.unpack(part, self.read_bytes(struct.calcsize(part))))
+            else:
+                part = F'{byteorder}{part}'
+                data.extend(struct.unpack(part, self.read_bytes(struct.calcsize(part))))
         if unwrap and len(data) == 1:
             return data[0]
         return data
@@ -486,6 +493,16 @@ class StructReader(MemoryFile[T]):
             data = data.decode(encoding)
         return data
 
+    def read_7bit_encoded_int(self, max_bits: int = 0) -> int:
+        value = 0
+        for shift in itertools.count(0, step=7):
+            b = self.read_byte()
+            value |= (b & 0x7F) << shift
+            if not b & 0x80:
+                return value
+            if shift > max_bits > 0:
+                raise RuntimeError('Maximum bits were exceeded by encoded integer.')
+
 
 class StructMeta(type):
     """
@@ -539,7 +556,8 @@ class Struct(metaclass=StructMeta):
             self._data = bytearray(self._data)
         return self
 
-    def __init__(self, data): pass
+    def __init__(self, reader: StructReader):
+        pass
 
 
 AttrType = TypeVar('AttrType')
