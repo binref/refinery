@@ -258,6 +258,13 @@ class pemeta(Unit):
                             info.update(MoreInfo=attr['value']['moreInfo'])
                 except KeyError:
                     continue
+            try:
+                valid_from = crt['validity']['not_before']
+                valid_until = crt['validity']['not_after']
+            except KeyError:
+                pass
+            else:
+                info.update(ValidFrom=valid_from, ValidUntil=valid_until)
             info.update(
                 Issuer=crt['issuer']['common_name'], Fingerprint=main_certificate['fingerprint'], Serial=serial)
             return info
