@@ -24,7 +24,7 @@ class TestMicrosoftKeyBlob(TestUnitBase):
             '02'
             '0000'
             '10660000'
-            '0000A400'
+            '00A40000'
         ) + wish
         unit = self.load()
         self.assertEqual(unit(data), wish)

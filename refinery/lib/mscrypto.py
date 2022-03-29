@@ -105,7 +105,7 @@ class SIMPLEBLOB(Struct):
 
     def __init__(self, reader: StructReader):
         self.magic = reader.read(4)
-        if self.magic != B'\0\0\xA4\0':
+        if self.magic != B'\0\xA4\0\0':
             raise ValueError(F'Invalid magic bytes: {self.magic.hex(":").upper()}')
         self.data = reader.read(0x100)
 
