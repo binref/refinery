@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import json
+
 from contextlib import suppress
 from datetime import datetime
 
@@ -23,6 +25,23 @@ class pkcs7(Unit):
         asn1 = self._asn1crypto.core
         cms = self._asn1crypto.cms
         signature = cms.ContentInfo.load(data)
+
+        def unsign(data):
+            if isinstance(data, int):
+                size = data.bit_length()
+                if data < 0:
+                    data = (1 << (size + 1)) - ~data - 1
+                if data > 0xFFFFFFFF_FFFFFFFF:
+                    size, r = divmod(size, 8)
+                    size += bool(r)
+                    data = data.to_bytes(size, 'big').hex()
+                return data
+            elif isinstance(data, dict):
+                return {key: unsign(value) for key, value in data.items()}
+            elif isinstance(data, list):
+                return [unsign(x) for x in data]
+            else:
+                return data
 
         class SpcString(asn1.Choice):
             _alternatives = [
@@ -123,4 +142,6 @@ class pkcs7(Unit):
                 raise ValueError(F'Unable to determine JSON encoding of {obj.__class__.__name__} object.')
 
         with ParsedASN1ToJSON as encoder:
-            return encoder.dumps(signature).encode(self.codec)
+            encoded = encoder.dumps(signature)
+            converted = unsign(json.loads(encoded))
+            return json.dumps(converted, indent=4).encode(self.codec)

@@ -232,17 +232,8 @@ class pemeta(Unit):
                 main_certificate = certificates_with_extended_use[0]
         if main_certificate:
             crt = main_certificate['tbs_certificate']
-            serial: int = crt['serial_number']
-            if not isinstance(serial, int):
-                serial = int(serial, 0)
-            serial_size = serial.bit_length()
-            if serial < 0:
-                serial = (1 << (serial_size + 1)) - ~serial - 1
-            serial_size, r = divmod(serial_size, 8)
-            serial_size += bool(r)
-            serial = serial.to_bytes(serial_size, 'big')
-            assert serial in data
-            serial = serial.hex()
+            serial = crt['serial_number']
+            assert bytes.fromhex(serial) in data
             subject = crt['subject']
             location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
             info.update(Subject=subject['common_name'])
