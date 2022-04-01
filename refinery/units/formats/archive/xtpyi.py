@@ -511,5 +511,6 @@ class xtpyi(ArchiveUnit):
                     continue
             yield self._pack(name, None, file.data, type=file.type.name)
 
-    def handles(self, data: ByteString) -> Optional[bool]:
+    @classmethod
+    def handles(cls, data: ByteString) -> Optional[bool]:
         return PyInstallerArchiveEpilogue.MagicSignature in data

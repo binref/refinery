@@ -99,3 +99,7 @@ class xtpdf(PathExtractorUnit):
                 pdf = self._pypdf2.PdfFileReader(stream)
                 catalog = pdf.trailer['/Root']
                 yield from self._walk(catalog)
+
+    @classmethod
+    def handles(self, data: bytearray) -> Optional[bool]:
+        return data.startswith(B'%PDF-')

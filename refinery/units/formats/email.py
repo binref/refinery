@@ -123,3 +123,9 @@ class xtmail(PathExtractorUnit):
         except Exception:
             self.log_debug('failed parsing input as Outlook message')
             yield from self._get_parts_regular(data)
+
+    @classmethod
+    def handles(cls, data: bytearray) -> bool:
+        if data.startswith(B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'):
+            return True
+        return b'\nReceived: from' in data

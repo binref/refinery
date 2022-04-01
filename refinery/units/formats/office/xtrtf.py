@@ -50,3 +50,7 @@ class xtrtf(PathExtractorUnit):
                     if pos >= 0:
                         meta['ole_header'] = item.oledata[:pos]
             yield UnpackResult(path, data, **meta)
+
+    @classmethod
+    def handles(self, data: bytearray) -> bool:
+        return data[:50].lower().lstrip().startswith(b'{\\rtf1')

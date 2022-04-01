@@ -83,5 +83,6 @@ class xtzip(ArchiveUnit):
 
             yield self._pack(filename, date, xt)
 
-    def handles(self, data: bytearray) -> Optional[bool]:
+    @classmethod
+    def handles(cls, data: bytearray) -> Optional[bool]:
         return data.rfind(ZipEndOfCentralDirectory.SIGNATURE) > 0

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import Optional
+
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.archive.xtzip import xtzip
 from refinery.lib.structures import MemoryFile
@@ -34,3 +36,9 @@ class xtdoc(PathExtractorUnit):
                     path = '/'.join(item)
                 self.log_debug('exploring:', path)
                 yield UnpackResult(path, olestream.read())
+
+    @classmethod
+    def handles(self, data: bytearray) -> Optional[bool]:
+        if data.startswith(B'\xD0\xCF\x11\xE0'):
+            return True
+        return xtzip.handles(data)

@@ -25,7 +25,8 @@ class xttar(ArchiveUnit):
             date = datetime.datetime.fromtimestamp(info.mtime)
             yield self._pack(info.name, date, lambda e=extractor: e.read())
 
-    def handles(self, data: bytearray) -> bool:
+    @classmethod
+    def handles(cls, data: bytearray) -> bool:
         ustar = data.find(B'ustar')
         if ustar >= 0:
             return data[ustar:ustar + 3] in (B'\x00\x30\x30', B'\x20\x20\x00')

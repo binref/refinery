@@ -21,6 +21,7 @@ class xtace(ArchiveUnit):
                 **comment
             )
 
-    def handles(self, data: bytearray) -> bool:
+    @classmethod
+    def handles(cls, data: bytearray) -> bool:
         view = memoryview(data)
         return b'**ACE**' in view[:0x1000]

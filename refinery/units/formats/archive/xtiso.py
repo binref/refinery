@@ -99,7 +99,8 @@ class xtiso(ArchiveUnit):
 
                     yield self._pack(self._strip_revision(path), date, extract)
 
-    def handles(self, data: bytearray) -> bool:
+    @classmethod
+    def handles(cls, data: bytearray) -> bool:
         return any(data[k] == B'CD001' for k in (
             slice(0x8001, 0x8006),
             slice(0x8801, 0x8806),

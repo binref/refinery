@@ -1067,7 +1067,7 @@ class UnitBase(metaclass=Executable, abstract=True):
         `refinery.units.UnitBase`.
         """
 
-    @abc.abstractmethod
+    @abc.abstractclassmethod
     def handles(self, data: ByteString) -> Optional[bool]:
         """
         This tri-state routine returns `True` if the unit is certain that it can process the
@@ -1271,6 +1271,7 @@ class Unit(UnitBase, abstract=True):
     def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
         return inputs
 
+    @classmethod
     def handles(self, data: ByteString) -> Optional[bool]:
         return None
 

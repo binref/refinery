@@ -17,6 +17,7 @@ class xt7z(ArchiveUnit):
     @ArchiveUnit.Requires('py7zr', optional=False)
     def _py7zr():
         import py7zr
+        import py7zr.exceptions
         return py7zr
 
     def unpack(self, data):
@@ -46,6 +47,9 @@ class xt7z(ArchiveUnit):
                     problem = archive.testzip()
                 except self._py7zr.PasswordRequired:
                     problem = True
+                except self._py7zr.exceptions.InternalError:
+                    # ignore internal errors during testzip
+                    break
                 except SystemError:
                     problem = True
                 except Exception:
@@ -67,5 +71,6 @@ class xt7z(ArchiveUnit):
                 continue
             yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32)
 
-    def handles(self, data: bytearray) -> bool:
+    @classmethod
+    def handles(cls, data: bytearray) -> bool:
         return data.startswith(B'7z\xBC\xAF\x27\x1C')

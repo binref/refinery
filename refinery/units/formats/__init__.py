@@ -90,14 +90,13 @@ class PathExtractorUnit(Unit, abstract=True):
             help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
         **keywords
     ):
-        strict = getattr(self.__class__, '_STRICT_PATH_MATCHING', False)
-        paths = paths or (['.*'] if regex else ['*'])
         super().__init__(
-            patterns=[PathPattern(p, regex, strict) for p in paths],
+            paths=paths,
             list=list,
             join=join_path,
             drop=drop_path,
             path=path,
+            regex=regex,
             **keywords
         )
 
@@ -109,6 +108,10 @@ class PathExtractorUnit(Unit, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
+        strict = getattr(self.__class__, '_STRICT_PATH_MATCHING', False)
+        paths = self.args.paths or (['.*'] if self.args.regex else ['*'])
+        patterns = [PathPattern(p, self.args.regex, strict) for p in paths]
+
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
@@ -147,7 +150,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 else:
                     result.path = F'{base}.v{counter:0{width}d}{extension}'
 
-        for p in self.args.patterns:
+        for p in patterns:
             for result in results:
                 path = Path(result.path)
                 try:

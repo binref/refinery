@@ -19,5 +19,6 @@ class xtcab(ArchiveUnit):
         for item in arc.find_files('*'):
             yield self._pack(item.filename, datetime.combine(item.date, item.time), item.buf)
 
-    def handles(self, data: bytearray):
+    @classmethod
+    def handles(cls, data: bytearray):
         return data.startswith(B'MSCF')
