@@ -683,13 +683,16 @@ def UnitFilterBoilerplate(
 ) -> Callable[[Any, Iterable[Chunk]], Iterable[Chunk]]:
     @wraps(operation)
     def peekfilter(self, chunks: Iterable[Chunk]) -> Iterable[Chunk]:
-        def rewind(*head):
-            yield from head
+        def _apply_args_to_head():
+            it = iter(chunks)
+            for chunk in it:
+                if chunk.visible:
+                    yield self.args @ chunk
+                    break
+                else:
+                    yield chunk
             yield from it
-        it = iter(chunks)
-        for head in it:
-            yield from operation(self, rewind(self.args @ head))
-            break
+        yield from operation(self, _apply_args_to_head())
     return peekfilter
 
 
