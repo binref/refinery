@@ -89,7 +89,7 @@ class vsnip(Unit):
             if area.count:
                 end = min(end, offset + area.count)
 
-            yield data[offset:end]
+            yield self.labelled(data[offset:end], offset=offset)
 
     def _rebase(self, addr, truebase):
         self.log_info(F'using base address: 0x{truebase:X}')
