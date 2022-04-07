@@ -73,9 +73,9 @@ class dnfields(PathExtractorUnit):
         remaining_field_indices = set(range(len(tables.Field)))
 
         for k, rv in enumerate(fields):
-            index = rv.Field.Index
-            field = tables.Field[index - 1]
-            remaining_field_indices.discard(index - 1)
+            _index = rv.Field.Index
+            field = tables.Field[_index - 1]
+            remaining_field_indices.discard(_index - 1)
             fname = field.Name
             ftype = None
             if len(field.Signature) == 2:
@@ -96,7 +96,7 @@ class dnfields(PathExtractorUnit):
                     0x0D: FieldInfo('Double', 1, 8, None),  # noqa
                 }.get(field.Signature[1], None)
             else:
-                guess = self._guess_field_info(tables, data, index)
+                guess = self._guess_field_info(tables, data, _index)
             if guess is None:
                 self.log_debug(lambda: F'field {k:0{iwidth}d} name {field.Signature}: unable to guess type information')
                 continue
@@ -117,8 +117,9 @@ class dnfields(PathExtractorUnit):
                 type=ftype,
             )
 
-        for index in remaining_field_indices:
-            field = tables.Field[index]
+        for _index in remaining_field_indices:
+            field = tables.Field[_index]
+            index = _index + 1
             name = field.Name
             if field.Flags.HasFieldRVA:
                 self.log_warn(F'field {name} has RVA flag set, but no RVA was found')
