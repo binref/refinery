@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json
+import re
 
 from email.parser import BytesParser
 from functools import partial
@@ -81,6 +82,9 @@ class xtmail(PathExtractorUnit):
             yield UnpackResult(F'attachments/{path}', attachment.data)
 
     def _get_parts_regular(self, data):
+        if not re.match(BR'^[\s!-~]+$', data):
+            raise ValueError('This is not a plaintext email message.')
+
         msg = BytesParser().parsebytes(data)
 
         yield from self._get_headparts(msg.items())
