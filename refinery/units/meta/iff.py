@@ -28,8 +28,10 @@ class iff(ConditionalUnit):
             help='check that the expression is less or equal to {varname}') = None,
         lt: Arg('-lt', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is less than {varname}') = None,
-        ct: Arg('-in', type=str, metavar='<right-hand-side>', group='OP',
+        iN: Arg('-in', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is contained in {varname}') = None,
+        ct: Arg('-ct', type=str, metavar='<right-hand-side>', group='OP',
+            help='check that the expression contains {varname}') = None,
         eq: Arg('-eq', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is equal to {varname}') = None,
         negate=False, temporary=False
@@ -40,7 +42,8 @@ class iff(ConditionalUnit):
             (le, operator.__le__),
             (lt, operator.__lt__),
             (eq, None),
-            (ct, lambda a, b: operator.__contains__(b, a)),
+            (ct, operator.__contains__),
+            (iN, lambda a, b: operator.__contains__(b, a)),
         ]
         operators = [
             (rhs, cmp) for (rhs, cmp) in operators
@@ -73,7 +76,12 @@ class iff(ConditionalUnit):
         if cmp is None and rhs is not None:
             rhs = DelayedNumSeqArgument(rhs)(chunk)
             return lhs == rhs
-        rhs = rhs and PythonExpression.evaluate(rhs, meta)
+        try:
+            rhs = rhs and PythonExpression.evaluate(rhs, meta)
+        except ParserVariableMissing:
+            raise
+        except Exception:
+            rhs = rhs.encode(self.codec)
         if lhs is None:
             return bool(chunk)
         if rhs is None:
