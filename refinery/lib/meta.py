@@ -189,14 +189,15 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             representation = None
         else:
             import re
-            if not re.fullmatch(r'[\s!-~]+', representation):
+            if not re.fullmatch(r'[!-~]+', representation):
                 representation = None
             else:
                 prefix = self._CODECS[self.codec]
                 if prefix != 's' or self.requires_prefix():
                     representation = F'{prefix}:{representation}'
         if representation is None:
-            representation = F'h:{self.hex()}'
+            from urllib.parse import quote
+            representation = F'q:{quote(self)}'
         self._representation = representation
         return representation
 
