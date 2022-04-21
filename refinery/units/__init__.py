@@ -404,13 +404,14 @@ class Arg(Argument):
         *args   : str,
         help    : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
+        nargs   : Union[omit, int, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments that contain a numeric sequence.
         """
-        return cls(*args, group=group, help=help, dest=dest, type=numseq, metavar=metavar)
+        return cls(*args, group=group, help=help, nargs=nargs, dest=dest, type=numseq, metavar=metavar)
 
     @classmethod
     def Number(
