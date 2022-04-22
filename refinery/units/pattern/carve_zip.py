@@ -17,8 +17,11 @@ class ZipEndOfCentralDirectory(Struct):
         self.entries_in_directory = reader.u16()
         self.directory_size = reader.u32()
         self.directory_offset = reader.u32()
-        cl = reader.u32()
-        self.comment = cl and reader.read(cl) or None
+        try:
+            cl = reader.u32()
+            self.comment = cl and reader.read(cl) or None
+        except EOFError:
+            self.comment = None
 
 
 class ZipCentralDirectory(Struct):
@@ -61,9 +64,11 @@ class carve_zip(Unit):
                 break
             try:
                 end_marker = ZipEndOfCentralDirectory(mem[end:])
-            except ValueError:
+            except ValueError as e:
+                self.log_info(F'error parsing end of central directory at 0x{end:X}: {e!s}')
                 continue
-            self.log_info(F'end of central directory at 0x{end:X}')
+            else:
+                self.log_info(F'successfully parsed end of central directory at 0x{end:X}')
             start = end - end_marker.directory_size
             shift = start - end_marker.directory_offset
             if start < 0:

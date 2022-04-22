@@ -22,7 +22,7 @@ T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
 UnpackType = Union[int, bool, float, bytes]
 
 
-class EOF(ValueError):
+class EOF(EOFError):
     def __init__(self, rest: ByteString = B''):
         super().__init__('Unexpected end of buffer.')
         self.rest = rest
