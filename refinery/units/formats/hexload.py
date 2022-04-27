@@ -44,7 +44,7 @@ class hexload(HexViewer):
         )(?=\s|$)                               # terminated by a whitespace or line end
         """
 
-    def __init__(self, blocks=1, dense=False, expand=False, narrow=True, width=0):
+    def __init__(self, blocks=1, dense=False, expand=False, narrow=False, width=0):
         super().__init__(blocks=blocks, dense=dense, expand=expand, narrow=narrow, width=width)
         self._hexline_pattern = re.compile(F'{make_hexline_pattern(1)}(?:[\r\n]|$)', flags=re.MULTILINE)
 
@@ -106,5 +106,7 @@ class hexload(HexViewer):
             yield decoded_bytes
 
     def reverse(self, data):
-        for line in self.hexdump(data):
+        metrics = self._get_metrics(len(data))
+        metrics.fit_to_width(allow_increase=True)
+        for line in self.hexdump(data, metrics):
             yield line.encode(self.codec)
