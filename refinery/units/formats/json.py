@@ -47,7 +47,7 @@ class xj0(Unit):
     """
     def __init__(
         self,
-        key: Unit.Arg(help='The key of the value to be extracted as the main body of the chunk.'),
+        key: Unit.Arg.Binary(help='Optional key of a value to become the main body of the chunk.') = None,
         raw: Unit.Arg('-r', group='META', help='Do not extract any other fields as metadata.') = False,
         all: Unit.Arg('-a', group='META', help='Extract all other fields as metadata.') = False
     ):
@@ -74,7 +74,8 @@ class xj0(Unit):
         doc: dict = json.loads(data)
         if not isinstance(doc, dict):
             raise ValueError('The input must be a JSON dictionary.')
-        result = doc.pop(self.args.key.decode(self.codec), '').encode(self.codec)
+        key = self.args.key
+        result = key and doc.pop(key.decode(self.codec), '').encode(self.codec)
         if self.args.raw:
             return result
         else:
