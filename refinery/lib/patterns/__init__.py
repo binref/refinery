@@ -90,13 +90,12 @@ class tokenize(pattern):
     before and after each token, its default value is the regular expression zero length
     match for a word boundary.
     """
-    def __init__(self, token, sep, bound='\\b', **kwargs):
-        pattern.__init__(
-            self,
-            R'(?:{b}{t}{b}{s})+(?:{b}{t}{b})?'.format(
-                s=sep, b=bound, t=token),
-            **kwargs
-        )
+    def __init__(self, token, sep, bound='\\b', unique_sep=False, **kwargs):
+        if unique_sep:
+            p = R'(?:{b}{t}{b}(?P<__sep>{s}))(?:(?:{b}{t}{b}(?P=__sep))+{b}{t}{b}|{b}{t}{b})'
+        else:
+            p = R'(?:{b}{t}{b}{s})+(?:{b}{t}{b})'
+        pattern.__init__(self, p.format(s=sep, b=bound, t=token), **kwargs)
 
 
 class PatternEnum(enum.Enum):
@@ -292,7 +291,7 @@ class formats(PatternEnum):
     "Any sequence of url-encoded characters, narrow variant"
     url_encoded_hex = pattern(_pattern_urlenc_hex)
     "A hex-encoded buffer using URL escape sequences"
-    intarray = tokenize(_pattern_integer, sep=R'\s*[;,]\s*', bound='')
+    intarray = tokenize(_pattern_integer, sep=R'\s*[;,]\s*', bound='', unique_sep=True)
     "Sequences of integers, separated by commas or semicolons"
     word = alphabet(R'\\w')
     "Sequences of word characters"
