@@ -189,15 +189,20 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             representation = None
         else:
             import re
-            if not re.fullmatch(r'[!-~]+', representation):
+            if not re.fullmatch(r'[\x20!-~]+', representation):
                 representation = None
             else:
                 prefix = self._CODECS[self.codec]
                 if prefix != 's' or self.requires_prefix():
                     representation = F'{prefix}:{representation}'
         if representation is None:
-            from urllib.parse import quote
-            representation = F'q:{quote(self)}'
+            p = sum(1 for c in self if c in range(0x21, 0x7F))
+            if p * 2 >= len(self):
+                from urllib.parse import quote
+                from string import printable
+                representation = F'q:{quote(self,printable)}'
+            else:
+                representation = F'h:{self.hex()}'
         self._representation = representation
         return representation
 
