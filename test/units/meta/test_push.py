@@ -35,7 +35,7 @@ class TestMetaPushPop(TestUnitBase):
         self.assertEqual(pl(), B'EAB')
 
     def test_nested_push_pop(self):
-        pl = L('emit FOOBAR [| push [| snip 3: | push [| snip :1 | peek | pop a ]| cca var:a | pop b ]| ccp var:b ]')
+        pl = L('emit FOOBAR [| push [| snip 3: | push [| snip :1 | pop a ]| cca var:a | pop b ]| ccp var:b ]')
         self.assertEqual(pl(), B'BARBFOOBAR')
 
     def test_multiple_pops(self):
