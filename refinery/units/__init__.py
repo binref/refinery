@@ -868,7 +868,7 @@ class Executable(ABCMeta):
 
     def __neg__(cls):
         unit = cls()
-        unit.args.reverse = True
+        unit.args.reverse = 1
         return unit
 
     def __ror__(cls, other) -> Unit:
@@ -1338,7 +1338,7 @@ class Unit(UnitBase, abstract=True):
         cursor = self
         while isinstance(cursor, Unit):
             reversed = copy.copy(cursor)
-            reversed.args.reverse = True
+            reversed.args.reverse = 1
             reversed._source = None
             reversed.reset()
             pipeline.append(reversed)
@@ -1503,8 +1503,14 @@ class Unit(UnitBase, abstract=True):
             return B''
 
     def act(self, data: Union[Chunk, ByteString]) -> Optional[Chunk]:
-        op = self.reverse if self.args.reverse else self.process
-        return op(self.args @ data)
+        mode = self.args.reverse
+        data = self.args @ data
+        if not mode:
+            return self.process(data)
+        elif mode > 1:
+            return self.reverse(self.process(data))
+        elif mode > 0:
+            return self.reverse(data)
 
     def __call__(self, data: Optional[Union[ByteString, Chunk]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
@@ -1615,7 +1621,8 @@ class Unit(UnitBase, abstract=True):
             help='Specify up to two times to increase log level.')
 
         if cls.is_reversible:
-            base.add_argument('-R', '--reverse', action='store_true', help='Use the reverse operation.')
+            base.add_argument('-R', '--reverse', action='count', default=0,
+                help='Use the reverse operation; Specify twice to normalize (first decode, then encode).')
 
         groups = {None: argp}
 
