@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+from typing import Union
+
 import json
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult, Unit
@@ -82,3 +85,18 @@ class xj0(Unit):
             return self.labelled(result, **{
                 key: value for key, value in doc.items() if acceptable(key, value)
             })
+
+
+class xjl(Unit):
+    """
+    Returns all JSON elements from a JSON iterable as individual outputs.
+    """
+
+    def process(self, data):
+        doc: Union[list, dict] = json.loads(data)
+        try:
+            it = doc.values()
+        except AttributeError:
+            it = doc
+        for item in it:
+            yield json.dumps(item).encode(self.codec)
