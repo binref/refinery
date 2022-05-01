@@ -35,7 +35,7 @@ class secstr(Unit):
     @property
     def key(self):
         key = self.args.key
-        if len(key) != 0x10:
+        if len(key) not in (0x10, 0x18, 0x20):
             raise ValueError('The encryption key has to be 16 bytes long.')
         return key
 
