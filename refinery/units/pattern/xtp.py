@@ -110,28 +110,38 @@ class xtp(PatternExtractor):
         'archive.org'             : 2,
         'azure.com'               : 1,
         'baidu.com'               : 2,
+        'bootstrapcdn.com'        : 2,
+        'cdnjs.cloudflare.com'    : 4,
         'comodo.net'              : 1,
         'comodoca.com'            : 1,
         'curl.haxx.se'            : 1,
         'digicert.com'            : 1,
         'dublincore.org'          : 1,
+        'fontawesome.com'         : 1,
         'github.com'              : 3,
         'globalsign.com'          : 1,
         'globalsign.net'          : 1,
         'godaddy.com'             : 1,
         'google.com'              : 4,
+        'googleapis.com'          : 5,
+        'googleusercontent.com'   : 5,
         'gov'                     : 2,
+        'gstatic.com'             : 2,
         'iana.org'                : 1,
         'intel.com'               : 1,
+        'jquery.com'              : 1,
+        'jsdelivr.net'            : 2,
         'live.com'                : 1,
         'microsoft.com'           : 1,
         'msdn.com'                : 1,
         'msn.com'                 : 1,
         'office.com'              : 1,
+        'office365.com'           : 2,
         'openssl.org'             : 1,
         'openxmlformats.org'      : 1,
         'purl.org'                : 1,
         'python.org'              : 1,
+        'schema.org'              : 2,
         'sectigo.com'             : 1,
         'skype.com'               : 1,
         'sourceforge.net'         : 4,
@@ -150,13 +160,6 @@ class xtp(PatternExtractor):
         'xml.org'                 : 1,
         'xmlsoap.org'             : 1,
         'yahoo.com'               : 1,
-        'googleapis.com'          : 1,
-        'fontawesome.com'         : 1,
-        'jquery.com'              : 1,
-        'cdnjs.cloudflare.com'    : 4,
-        'bootstrapcdn.com'        : 2,
-        'jsdelivr.net'            : 2,
-        'office365.com'           : 2,
     }
 
     _DOMAIN_WHITELIST = [
@@ -205,8 +208,12 @@ class xtp(PatternExtractor):
         }:
             if self.args.filter >= 2:
                 if LetterWeights.IOC(value) < 0.6:
+                    self.log_info(value)
+                    self.log_info('excluding indicator because of low IOC score')
                     return None
                 if name != indicators.url.name and len(value) > 0x100:
+                    self.log_info(value)
+                    self.log_info('excluding indicator because it is too long')
                     return None
             ioc = value.decode(self.codec)
             if '://' not in ioc: ioc = F'tcp://{ioc}'
@@ -214,7 +221,12 @@ class xtp(PatternExtractor):
             host, _, _ = parts.netloc.partition(':')
             hl = host.lower()
             for white, level in self._LEGITIMATE_HOSTS.items():
-                if self.args.filter >= level and hl == white or hl.endswith(F'.{white}'):
+                if self.args.filter >= level and (hl == white or hl.endswith(F'.{white}')):
+                    self.log_info(value)
+                    self.log_info(
+                        F'excluding indicator because domain {hl} is whitelisted via {white}; '
+                        F'reduce level below {level} to allow, current level is {self.args.filter}'
+                    )
                     return None
             if name == indicators.url.name:
                 scheme = parts.scheme.lower()
@@ -224,6 +236,8 @@ class xtp(PatternExtractor):
                         value = value[pos:]
                         break
             if any(hl == w for w in self._DOMAIN_WHITELIST):
+                self.log_info(value)
+                self.log_info(F'excluding indicator because domain {hl} is whitelisted')
                 return None
             if name in {
                 indicators.hostname.name,
@@ -232,12 +246,14 @@ class xtp(PatternExtractor):
             }:
                 hostparts = host.split('.')
                 if self.args.filter >= 2:
-                    # remove hostnames where no part is longer than three characters.
                     if all(len(p) < 4 for p in hostparts):
+                        self.log_info(value)
+                        self.log_info('excluding host with too many short parts')
                         return None
                 if self.args.filter >= 3:
-                    # remove hostnames where more than one third of the parts are mixed case.
                     if len(hostparts) <= sum(3 for p in hostparts if p != p.lower() and p != p.upper()):
+                        self.log_info(value)
+                        self.log_info('excluding host with too many mixed case parts')
                         return None
                 # These heuristics attempt to filter out member access to variables in
                 # scripts which can be mistaken for domains because of the TLD inflation
@@ -247,18 +263,28 @@ class xtp(PatternExtractor):
                 if lowercase and uppercase:
                     caseratio = uppercase / lowercase
                     if 0.1 < caseratio < 0.9:
+                        self.log_info(value)
+                        self.log_info('excluding indicator with too much uppercase letters')
                         return None
                 if all(x.isidentifier() for x in hostparts):
-                    if len(hostparts) == 2 and hostparts[0] == 'this':
+                    if len(hostparts) == 2 and hostparts[0] in ('this', 'self'):
+                        self.log_info(value)
+                        self.log_info('excluding host that looks like a code snippet')
                         return None
                     if len(hostparts[-2]) < 3:
+                        self.log_info(value)
+                        self.log_info('excluding host with too short root domain name')
                         return None
                     if any(x.startswith('_') for x in hostparts):
+                        self.log_info(value)
+                        self.log_info('excluding host with underscores')
                         return None
                     if len(hostparts[-1]) > 3:
                         seen_before = len(set(re.findall(
                             R'{}(?:\.\w+)+'.format(hostparts[0]).encode('ascii'), data)))
                         if seen_before > 2:
+                            self.log_debug(value)
+                            self.log_debug('excluding indicator that was already seen')
                             return None
         elif name == indicators.email.name:
             at = value.find(B'@')
