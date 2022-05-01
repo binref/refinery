@@ -48,14 +48,14 @@ class TestPack(TestUnitBase):
         unpack = self.load(16, blocksize=2, reverse=True, prefix=True, bigendian=True)
         self.assertEqual(
             unpack(bytes.fromhex('C0CAC01A')),
-            B'\n'.join([B'0xC0CA', B'0xC01A'])
+            B','.join([B'0xC0CA', B'0xC01A'])
         )
 
     def test_pack_reverse_02(self):
         unpack = self.load('-B2', '-R', '16')
         self.assertEqual(
             unpack(bytes.fromhex('C0CAC01A')),
-            B'\n'.join([B'CAC0', B'1AC0'])
+            B','.join([B'CAC0', B'1AC0'])
         )
 
     def test_pack_reverse_03(self):
