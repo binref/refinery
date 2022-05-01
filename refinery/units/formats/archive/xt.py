@@ -18,8 +18,6 @@ class xt(ArchiveUnit):
         yield xtpdf
         from refinery.units.formats.office.xtrtf import xtrtf
         yield xtrtf
-        from refinery.units.formats.office.xtdoc import xtdoc
-        yield xtdoc
         from refinery.units.formats.archive.xtzip import xtzip
         yield xtzip
         from refinery.units.formats.archive.xt7z import xt7z
@@ -36,6 +34,8 @@ class xt(ArchiveUnit):
         yield xtpyi
         from refinery.units.formats.archive.xttar import xttar
         yield xttar
+        from refinery.units.formats.office.xtdoc import xtdoc
+        yield xtdoc
         from refinery.units.formats.exe.vsect import vsect
         yield vsect
 
