@@ -168,3 +168,7 @@ class TestCarve(TestUnitBase):
         unit = self.load('hex', min=4, longest=True)
         data = B'xAFxxxxABBAxxxx'
         self.assertEqual(str(data | unit), 'ABBA')
+
+    def test_carve_intarray(self):
+        data = B'$$$x = 1,2,3,4;\r\n'
+        self.assertEqual(bytes(data | self.load('intarray')), b'1,2,3,4')
