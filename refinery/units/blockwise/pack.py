@@ -25,8 +25,8 @@ class pack(BlockTransformationBase):
             'Find only numbers in given base. Default of 0 means that '
             'common expressions for hexadecimal, octal and binary are '
             'accepted.')) = 0,
-        prefix  : Arg.Switch('-r', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.') = False,
-        strict  : Arg.Switch('-s', help='Only parse integers that fit in one block of the given block size.') = False,
+        prefix : Arg.Switch('-r', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.') = False,
+        strict : Arg.Switch('-s', help='Only parse integers that fit in one block of the given block size.') = False,
         bigendian=False, blocksize=1
     ):
         super().__init__(
@@ -56,9 +56,8 @@ class pack(BlockTransformationBase):
             }.get(base, B'')
 
         converter = BaseUnit(base, not self.args.bigendian)
-
-        for n in self.chunk(data, raw=True):
-            yield prefix + converter.reverse(n)
+        return B','.join(
+            prefix + converter.reverse(n) for n in self.chunk(data, raw=True))
 
     def process(self, data):
         base: int = self.args.base
