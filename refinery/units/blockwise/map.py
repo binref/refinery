@@ -8,8 +8,10 @@ from refinery.lib.tools import isbuffer
 
 class map(BlockTransformation):
     """
-    Each block of the input data which occurs as a block of the index argument
-    is replaced by the corresponding block of the image argument.
+    Each block of the input data which occurs as a block of the index argument is replaced by the
+    corresponding block of the image argument. If a block size is specified, and if the index or
+    image argument are byte sequences, they are unpacked into chunks of that size. To prevent any
+    automatic chunking, the `refinery.lib.argformats.DelayedArgument.btoi` handler can be used.
     """
     _map: Optional[Dict[int, int]]
 
