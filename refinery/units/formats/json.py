@@ -93,7 +93,11 @@ class xjl(Unit):
     """
 
     def process(self, data):
-        doc: Union[list, dict] = json.loads(data)
+        try:
+            doc: Union[list, dict] = json.loads(data)
+        except Exception:
+            from refinery.units.pattern.carve_json import carve_json
+            doc = data | carve_json | json.loads
         try:
             it = doc.values()
         except AttributeError:
