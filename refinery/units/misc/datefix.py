@@ -9,7 +9,7 @@ from refinery.lib.decorators import linewise
 
 class datefix(Unit):
     """
-    Parses all kinds of date _formats and unifies them into the same format.
+    Parses all kinds of date formats and unifies them into the same format.
     """
 
     _FORMATS = [
