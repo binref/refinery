@@ -5,9 +5,10 @@ A selection of refinery-specific decorators.
 """
 import codecs
 import re
+import itertools
 
 from functools import wraps, WRAPPER_ASSIGNMENTS
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 from refinery.units import Unit
 
@@ -23,7 +24,7 @@ def wraps_without_annotations(method: Callable) -> Callable:
     return wraps(method, assigned=assignments)
 
 
-def unicoded(method: Callable[[Unit, str], str]) -> Callable[[Unit, bytes], bytes]:
+def unicoded(method: Callable[[Unit, str], Optional[str]]) -> Callable[[Unit, bytes], bytes]:
     """
     Can be used to decorate a `refinery.units.Unit.process` routine that takes a
     string argument and also returns one. The resulting routine takes a binary buffer
@@ -32,13 +33,19 @@ def unicoded(method: Callable[[Unit, str], str]) -> Callable[[Unit, bytes], byte
     once for each string patch that was successfully decoded.
     """
     @wraps_without_annotations(method)
-    def method_wrapper(self, data: bytes) -> bytes:
+    def method_wrapper(self: Unit, data: bytes) -> bytes:
         input_codec = self.codec if any(data[::2]) else 'UTF-16LE'
         partial = re.split(R'([\uDC80-\uDCFF]+)',  # surrogate escape range
             codecs.decode(data, input_codec, errors='surrogateescape'))
-        partial[::2] = [method(self, p) if p else '' for p in partial[::2]]
-        return codecs.encode(''.join(partial),
-            self.codec, errors='surrogateescape')
+        partial[::2] = (method(self, p) or '' if p else '' for p in itertools.islice(iter(partial), 0, None, 2))
+        nones = sum(1 for p in partial if p is None)
+        if nones == len(partial):
+            return None
+        if nones >= 1:
+            for k, p in enumerate(partial):
+                if p is None:
+                    partial[k] = ''
+        return codecs.encode(''.join(partial), self.codec, errors='surrogateescape')
     return method_wrapper
 
 
@@ -50,7 +57,7 @@ def linewise(method: Callable[[Unit, str], str]) -> Callable[[Unit, bytes], Iter
     line in the corresponding decoded string.
     """
     @wraps_without_annotations(method)
-    def method_wrapper(self, data: bytes) -> Iterable[bytes]:
+    def method_wrapper(self: Unit, data: bytes) -> Iterable[bytes]:
         lines = data.decode(self.codec).splitlines()
         width = len(str(len(lines)))
         for k, line in enumerate(lines):
