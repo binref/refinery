@@ -1502,7 +1502,7 @@ class Unit(UnitBase, abstract=True):
         except StopIteration:
             return B''
 
-    def act(self, data: Union[Chunk, ByteString]) -> Optional[Chunk]:
+    def act(self, data: Union[Chunk, ByteString]) -> Union[Optional[ByteString], Generator[ByteString, None, None]]:
         mode = self.args.reverse
         data = self.args @ data
         if not mode:
@@ -1528,7 +1528,7 @@ class Unit(UnitBase, abstract=True):
             return data
         return Chunk(data, meta=meta)
 
-    def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+    def process(self, data: ByteString) -> Union[Optional[ByteString], Generator[ByteString, None, None]]:
         return data
 
     @classmethod
