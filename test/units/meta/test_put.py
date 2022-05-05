@@ -11,5 +11,5 @@ class TestMetaPut(TestUnitBase):
         self.assertEqual(pl(), B'FFFFFFOO BAR')
 
     def test_pop_variable(self):
-        pl = L('emit AB CD EF [') | L('put k x::1') | L('sub xvar:k ]')
+        pl = L('emit AB CD EF [') | L('put k x::1') | L('sub eat:k ]')
         self.assertEqual(pl(), B'\x01\x01\x01')

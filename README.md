@@ -171,14 +171,14 @@ Extract the configuration of unpacked HawkEye samples:
 ```
 emit ee790d6f09c2292d457cbe92729937e06b3e21eb6b212bf2e32386ba7c2ff22c \
   | put cfg perc[RCDATA]:c:: [\
-  | xtp guid | pbkdf2 48 rep[8]:h:00 | cca xvar:cfg | aes -Q x::32 --iv x::16 ] \
+  | xtp guid | pbkdf2 48 rep[8]:h:00 | cca eat:cfg | aes -Q x::32 --iv x::16 ] \
   | dnds
 ```
 Warzone RAT:
 ```
 emit 4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5 \
   | vsect .bss | struct I{key:{}}{} [\
-  | rc4 xvar:key | struct I{host:{}}{port:H} {host:u16}:{port} ]
+  | rc4 eat:key | struct I{host:{}}{port:H} {host:u16}:{port} ]
 ```
 Extract payload from a shellcode loader and carve its c2:
 ```

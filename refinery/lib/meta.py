@@ -25,7 +25,7 @@ There are several units that are specifically designed to store meta variables:
 
 There are a number of ways in which meta variables can be used. The most straightforward way is to
 use the `refinery.lib.argformats.DelayedArgument.var` handler to read the contents of a variable
-and use it as part of a multibin expression. The `refinery.lib.argformats.DelayedArgument.xvar`
+and use it as part of a multibin expression. The `refinery.lib.argformats.DelayedArgument.eat`
 handler works in the same way, except that the variable is removed from the meta dictionary after
 it has been used. Example:
 

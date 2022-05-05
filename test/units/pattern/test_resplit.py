@@ -15,5 +15,5 @@ class TestRegexSplitter(TestUnitBase):
         self.assertEqual(pl(), B'eeny\nmeeny,miny,moe')
 
     def test_multibin_argument(self):
-        pl = L('emit foobar') [ L('put split oo') | L('resplit xvar:split') ]  # noqa
+        pl = L('emit foobar') [ L('put split oo') | L('resplit eat:split') ]  # noqa
         self.assertEqual(list(pl), [b'f', b'bar'])

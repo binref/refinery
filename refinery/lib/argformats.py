@@ -762,10 +762,10 @@ class DelayedArgument(LazyEvaluation):
             return self._interpret_variable(name, result)
         return extract
 
-    @handler.register('xvar', '#', final=True)
-    def xvar(self, name: str) -> bytes:
+    @handler.register('eat', '#', final=True)
+    def eat(self, name: str) -> bytes:
         """
-        The final handler `xvar:name` contains the value of the meta variable `name`.
+        The final handler `eat:name` contains the value of the meta variable `name`.
         The variable is removed from the chunk and no longer available to subsequent
         units.
         """
