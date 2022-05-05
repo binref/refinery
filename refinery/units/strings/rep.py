@@ -7,29 +7,44 @@ from refinery.units import Arg, Unit
 
 class rep(Unit):
     """
-    Duplicates the given input a given number of times.
+    Duplicates the given input a given number of times. It is also possible to specify
+    an iterable instead of a number, in which case the input will be replicated once for
+    each item in this iterable.
     """
 
-    def __init__(self, count: Arg(help='Defines the number of outputs for each input. The default is the minimum of 2.') = 2):
-        super().__init__(count=count)
+    def __init__(
+        self,
+        count: Arg.NumSeq(help=(
+            'Defines the number of outputs to generate for each input. The default is {default}. '
+            'You can specify any multibin expression that defines an integer iterable here: Each '
+            'input chunk will be replicated once for each element of that sequence.')) = 2,
+        label: Arg(type=str, help=(
+            'If specified, the meta variable with this name will be populated with the index of '
+            'the replicated chunk. When the count parameter is an integer, this label will be '
+            'equivalent to the index meta variable.')) = None
+    ):
+        super().__init__(count=count, label=label)
 
     def process(self, data: bytes):
-        if self.args.count < 2:
-            raise ValueError('The count must be at least two.')
-        squeeze = self.args.squeeze
-        if not squeeze:
-            framestate = self._framed
-            if not framestate:
-                squeeze = True
-            elif framestate.framebreak:
-                self.log_debug('all repeated items will be joined with line breaks')
-                yield B'\n'.join(repeat(data, self.args.count))
-                return
-            elif framestate.unframed:
-                squeeze = True
-        if not squeeze:
-            self.log_debug('emitting each repeated item as an individual chunk')
-            yield from repeat(data, self.args.count)
-        else:
+        def count():
+            count = self.args.count
+            if isinstance(count, int):
+                return count
+            return sum(1 for _ in count)
+
+        if self.args.squeeze or not self._framed:
             self.log_debug('compressing all repeated items into a single chunk')
-            yield data * self.args.count
+            yield data * count()
+            return
+
+        self.log_debug('emitting each repeated item as an individual chunk')
+
+        label = self.args.label
+        if label is None:
+            yield from repeat(data, count())
+            return
+
+        meta = {}
+        for counter in self.args.count:
+            meta[label] = counter
+            yield self.labelled(data, **meta)
