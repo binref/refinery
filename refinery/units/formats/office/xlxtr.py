@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import TYPE_CHECKING
 from fnmatch import fnmatch
 
 import re
@@ -9,6 +10,9 @@ import functools
 
 from refinery.units import Arg, Unit
 from refinery.lib.structures import MemoryFile
+
+if TYPE_CHECKING:
+    from pyxlsb2.records import SheetRecord
 
 
 defusedxml.defuse_stdlib()
@@ -150,6 +154,11 @@ class xlxtr(Unit):
         import openpyxl
         return openpyxl
 
+    @Unit.Requires('pyxlsb2', optional=False)
+    def _pyxlsb2():
+        import pyxlsb2
+        return pyxlsb2
+
     def _rcmatch(self, sheet_index, sheet_name, row, col):
         assert row > 0
         assert col > 0
@@ -186,7 +195,26 @@ class xlxtr(Unit):
             sheet=sheet
         )
 
-    def _process_old(self, data):
+    def _process_pyxlsb2(self, data):
+        with self._pyxlsb2.open_workbook(MemoryFile(data)) as wb:
+            for ref in self.args.references:
+                ref: SheetReference
+                for k, rec in enumerate(wb.sheets):
+                    rec: SheetRecord
+                    self.log_info(rec)
+                    name = rec.name
+                    if not ref.match(k, name):
+                        continue
+                    sheet = wb.get_sheet_by_name(name)
+                    rows = list(sheet.rows())
+                    nrows = len(rows)
+                    ncols = max((len(r) for r in rows), default=0)
+                    for row, col in ref.cells(nrows, ncols):
+                        def get(row, col):
+                            return rows[row][col].v
+                        yield from self._get_value(k, name, get, row, col)
+
+    def _process_xlrd(self, data):
         with io.StringIO() as logfile:
             vb = max(self.log_level.verbosity - 1, 0)
             wb = self._xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=vb, on_demand=True)
@@ -205,7 +233,7 @@ class xlxtr(Unit):
                 for row, col in ref.cells(sheet.nrows, sheet.ncols):
                     yield from self._get_value(k, name, sheet.cell_value, row, col)
 
-    def _process_new(self, data):
+    def _process_openpyxl(self, data):
         workbook = self._openpyxl.load_workbook(MemoryFile(data), read_only=True)
         for ref in self.args.references:
             ref: SheetReference
@@ -220,8 +248,18 @@ class xlxtr(Unit):
                     yield from self._get_value(k, name, lambda r, c: cells[r][c], row, col)
 
     def process(self, data):
-        try:
-            yield from self._process_new(data)
-        except Exception as e:
-            self.log_info(F'reverting to xlrd module due to exception: {e!s}')
-            yield from self._process_old(data)
+        last_error = None
+        for name, processor in (
+            ('openpyxl', self._process_openpyxl),
+            ('xlrd', self._process_xlrd),
+            ('pyxlsb2', self._process_pyxlsb2),
+        ):
+            try:
+                yield from processor(data)
+            except Exception as e:
+                last_error = e
+                self.log_debug(F'failed processing with {name}: {e!s}')
+            else:
+                break
+        else:
+            raise last_error
