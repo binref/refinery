@@ -16,6 +16,8 @@ class xt(ArchiveUnit):
         yield xtmail
         from refinery.units.formats.pdf import xtpdf
         yield xtpdf
+        from refinery.units.formats.archive.xtasar import xtasar
+        yield xtasar
         from refinery.units.formats.office.xtrtf import xtrtf
         yield xtrtf
         from refinery.units.formats.archive.xtzip import xtzip
