@@ -12,7 +12,7 @@ class xtxml(PathExtractorUnit):
     """
     Extract values from an XML document.
     """
-    _STRICT_PATH_MATCHING = True
+    _strict_path_matching = True
 
     def unpack(self, data):
         def walk(node: xml.XMLNode, *path: str):

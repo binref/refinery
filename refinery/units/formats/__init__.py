@@ -74,8 +74,8 @@ class PathPattern:
 
 class PathExtractorUnit(Unit, abstract=True):
 
-    _STRICT_PATH_MATCHING = False
-    _CUSTOM_PATH_SEPARATE = None
+    _strict_path_matching = False
+    _custom_path_separator = None
 
     def __init__(self, *paths: Arg(
         metavar='path', nargs='*', default=(), type=pathspec, help=(
@@ -108,14 +108,18 @@ class PathExtractorUnit(Unit, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        strict = getattr(self.__class__, '_STRICT_PATH_MATCHING', False)
+        results: List[UnpackResult] = list(self.unpack(data))
+
+        strict = self._strict_path_matching
         paths = self.args.paths or (['.*'] if self.args.regex else ['*'])
         patterns = [PathPattern(p, self.args.regex, strict) for p in paths]
+
+        if strict:
+            self.log_debug('using string path matching')
 
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
-        results: List[UnpackResult] = list(self.unpack(data))
         root = Path('.')
         meta = metavars(data)
 
@@ -159,8 +163,8 @@ class PathExtractorUnit(Unit, abstract=True):
                     pass
                 path = root / path
                 path = path.as_posix()
-                if self._CUSTOM_PATH_SEPARATE:
-                    path = path.replace('/', self._CUSTOM_PATH_SEPARATE)
+                if self._custom_path_separator:
+                    path = path.replace('/', self._custom_path_separator)
                 if not p.check(path):
                     continue
                 if self.args.list:

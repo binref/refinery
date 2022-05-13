@@ -88,6 +88,8 @@ class xt(ArchiveUnit):
                     fallback.append(handler)
 
         for handler in self._handlers():
+            self._strict_path_matching = handler._strict_path_matching
+            self._custom_path_separator = handler._custom_path_separator
             it = unpacker(handler, fallback=False)
             yield from it
             if it.success:
