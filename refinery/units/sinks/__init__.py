@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import colorama
 import re
 import dataclasses
 
@@ -63,12 +64,13 @@ class HexDumpMetrics:
         return width
 
 
-def hexdump(data: ByteString, metrics: HexDumpMetrics) -> Iterable[str]:
+def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterable[str]:
     separator = metrics.hex_char_spacer
     hex_width = metrics.hex_column_width
     addr_width = metrics.address_width
     columns = metrics.hex_columns
     hexformat = metrics.hex_char_format
+    printable = range(0x21, 0x7F)
 
     if columns <= 0:
         raise RuntimeError('Requested width is too small.')
@@ -98,8 +100,30 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics) -> Iterable[str]:
                 repetitions = 0
 
         blocks = chunks.unpack(chunk, metrics.block_size, metrics.big_endian)
-        dump = separator.join(hexformat.format(b) for b in blocks)
-        ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
+
+        if colorize:
+            def format_byte(value: int, text=False):
+                color = ''
+                if not text:
+                    formatted = hexformat.format(value)
+                elif value in printable:
+                    formatted = chr(value)
+                else:
+                    formatted = '.'
+                if not value:
+                    color = colorama.Fore.LIGHTBLACK_EX
+                elif value in B'\x20\t\n\r\v\f':
+                    color = colorama.Fore.LIGHTYELLOW_EX
+                elif value not in printable:
+                    color = colorama.Fore.LIGHTRED_EX
+                if color:
+                    formatted = F'{color}{formatted}{colorama.Style.RESET_ALL}'
+                return formatted
+            dump = separator.join(format_byte(b) for b in blocks)
+            ascii_preview = ''.join(format_byte(b, True) for b in chunk)
+        else:
+            dump = separator.join(hexformat.format(b) for b in blocks)
+            ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
         line = (
             F'{dump:<{hex_width*columns-len(separator)}}'
             F'{metrics.txt_separator}{ascii_preview:<{columns}}'
@@ -151,6 +175,6 @@ class HexViewer(Unit, abstract=True):
             metrics.fit_to_width()
         return metrics
 
-    def hexdump(self, data: ByteString, metrics: Optional[HexDumpMetrics] = None):
+    def hexdump(self, data: ByteString, metrics: Optional[HexDumpMetrics] = None, colorize=False):
         metrics = metrics or self._get_metrics(len(data))
-        yield from hexdump(data, metrics)
+        yield from hexdump(data, metrics, colorize)
