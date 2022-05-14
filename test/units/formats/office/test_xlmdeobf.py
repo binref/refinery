@@ -19,4 +19,4 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
         unit = self.load(extract_only=True)
         code = str(data | unit)
         self.assertNotIn(r'C:\ProgramData\Ropedjo1.ocx', code)
-        self.assertIn(r'"h"&"t"&"tp"&":"&"/"&"/"&Tiposa!E21&Tiposa1!G11&Sheet2!K12', code)
+        self.assertIn(r'"h"&"t"&"tp"&":"&"/"&"/"&', code)
