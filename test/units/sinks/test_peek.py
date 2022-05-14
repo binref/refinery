@@ -80,7 +80,7 @@ class TestPeek(TestUnitBase):
     ).encode('utf8')
 
     def test_hex_peek(self):
-        peek = self.load(width=8, lines=15)
+        peek = self.load(width=8, lines=15, gray=True)
         with errbuf() as stderr:
             peek(bytes.fromhex(
                 '4D 5A 90 00 03 00 00 00 04 00 00 00 FF FF 00 00'  # MZ..............
@@ -117,7 +117,7 @@ class TestPeek(TestUnitBase):
 
     def test_regression_all_output(self):
         data = b'Refining Binaries since 2019'
-        peek = self.load(all=True, decode=True)
+        peek = self.load(all=True, decode=True, gray=True)
         with errbuf() as stderr:
             peek(data)
             test = stderr.getvalue()
@@ -140,7 +140,7 @@ class TestPeek(TestUnitBase):
             -----------------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, narrow=True, width=16)
+        peek = self.load(bare=True, narrow=True, width=16, gray=True)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_BIN)
             out = stderr.getvalue().strip()
@@ -163,7 +163,7 @@ class TestPeek(TestUnitBase):
             ---------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, narrow=True, width=8, blocks=2)
+        peek = self.load(bare=True, narrow=True, width=8, blocks=2, gray=True)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_BIN)
             out = stderr.getvalue().strip()
@@ -186,7 +186,7 @@ class TestPeek(TestUnitBase):
             ----------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, narrow=False, width=4, blocks=4)
+        peek = self.load(bare=True, narrow=False, width=4, blocks=4, gray=True)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_BIN)
             out = stderr.getvalue().strip()
@@ -209,7 +209,7 @@ class TestPeek(TestUnitBase):
             --------------------------------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, decode=True, width=80)
+        peek = self.load(bare=True, decode=True, width=80, gray=True)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_TXT)
             out = stderr.getvalue().strip()
@@ -232,7 +232,7 @@ class TestPeek(TestUnitBase):
             ------------------------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, escape=True, width=72)
+        peek = self.load(bare=True, escape=True, width=72, gray=True)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_TXT)
             out = stderr.getvalue().strip()
@@ -240,14 +240,14 @@ class TestPeek(TestUnitBase):
 
     def test_gzip_from_libmagic(self):
         data = self.download_sample('2bda560f264fb4eea5e180f32913197ec441ed8d6852a5cbdb6763de7bbf4ecf')
-        peek = self.load(width=70)
+        peek = self.load(width=70, gray=True)
         with errbuf() as stderr:
             peek(data)
             out = stderr.getvalue().strip()
         self.assertIn('1F 8B 08 00 00 00 00 00 04 00', out)
 
     def test_encoding_metavars(self):
-        pfmt = 'emit s: [| put test "s:{}" | peek ]'
+        pfmt = 'emit s: [| put test "s:{}" | peek -m ]'
         for value, requires_prefix in {
             'b64:b64:b64' : True,
             'accu:$msvc'  : True,
