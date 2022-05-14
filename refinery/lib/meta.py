@@ -61,6 +61,30 @@ least 200 from the input to incrementally numbered files:
 
     emit sample | carve --min=200 b64 [| dump buffer{index}.b64 ]
 
+### Magic Meta Variables
+
+As alluded to in the previous section, there are several meta variables that are available on every
+chunk, such as `size`, `entropy`, and `md5`. These values are computed as soon as they are accessed.
+Some of them are formatted differently when using the `r`-transformation; for example, the `size`
+variable will be printed as a human-readable expression when formatted as `{size!r}`, but it will be
+a decimal string when formatted as `{size}` or `{size!s}`.
+
+- `index`: The index of the chunk in the current frame (see `refinery.lib.frame`).
+- `magic`: Human-readable file magic string.
+- `mime`: MIME type of the chunk according to file magic information.
+- `ext`: A guessed file extension based on file magic information.
+- `size`: The number of bytes in this chunk of data. The default formatting of this value is a
+   decimal integer, but its r-format is a human-readable size expression.
+- `entropy`: Information entropy value of the data. Its computation can be expensive for large
+   chunks. The r-format of this value is a percentage.
+- `ic`: The index of coincidence of the data. Its computation can be expensive for large chunks.
+   The r-format of this value is a percentage.
+- `crc32`: The hexadecimal representation of the CRC32-hash of the data.
+- `sha1`: The hexadecimal representation of the SHA1-hash of the data.
+- `sha256`: The hexadecimal representation of the SHA256-hash of the data.
+- `sha512`: The hexadecimal representation of the SHA512-hash of the data.
+- `md5`: The hexadecimal representation of the MD5-hash of the data.
+
 ### Using Push And Pop
 
 The `refinery.push` and `refinery.pop` units can be used to extract sub-pipelines as variables. For
