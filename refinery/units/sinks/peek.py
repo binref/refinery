@@ -26,16 +26,16 @@ class peek(HexViewer):
         lines  : Arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
         all    : Arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
         brief  : Arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
+        gray   : Arg('-g', group='SIZE', help='Do not colorize the output.') = False,
         decode : Arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         escape : Arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
         index  : Arg('-i', help='Display the index of each chunk within the current frame.') = False,
-        meta   : Arg('-m', group='META', help='Only display attached metadata, do not add the peek value.') = False,
-        bare   : Arg('-r', group='META', help='Do not list any metadata, only peek the data itself.') = False,
+        bare   : Arg('-r', help='Only peek the data itself, do not show a metadata preview.') = False,
         stdout : Arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
+        meta   : Arg('-m', action='count', help=(
+            'Give a preview of attached meta variables. Specify multiple times to populate more variables.')) = 0,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
-        if bare and meta:
-            raise ValueError('The bare and meta options are exclusive.')
         if decode and escape:
             raise ValueError('The decode and esc options are exclusive.')
         if brief:
@@ -43,6 +43,7 @@ class peek(HexViewer):
         lines = 1 if brief else INF if all else lines
         super(peek, self).__init__(
             brief=brief,
+            gray=gray,
             blocks=blocks,
             decode=decode,
             dense=dense,
@@ -185,7 +186,7 @@ class peek(HexViewer):
                 else:
                     codec = None
             if lines is None:
-                lines = list(self.hexdump(data, metrics))
+                lines = list(self.hexdump(data, metrics, not self.args.gray))
             else:
                 sepsize = txtsize
 
@@ -197,12 +198,23 @@ class peek(HexViewer):
         if self.args.brief:
             final = False
         elif not self.args.bare:
-            peek = None
+            peek = repr(meta.size).strip()
+            if len(data) <= 5_000_000:
+                peek = F'{peek}; {meta.entropy!r} entropy'
+            peek = F'{peek}; {meta.magic!s}'
             if not self.args.meta:
-                peek = repr(meta.size).strip()
-                if len(data) <= 5_000_000:
-                    peek = F'{peek}; {meta.entropy!r} entropy'
-                peek = F'{peek}; {meta.magic!s}'
+                if meta:
+                    variables = ',\x20'.join(meta)
+                    peek = F'{peek}\n\x20\x20(meta: {variables})'
+                meta = {}
+            if self.args.meta > 1:
+                meta['size']
+                meta['entropy']
+                meta['magic']
+                peek = None
+            if self.args.meta > 2:
+                meta['crc32']
+                meta['sha256']
             for line in self._peekmeta(metrics.hexdump_width, separator(), _x_peek=peek, **meta):
                 empty = False
                 yield line
