@@ -58,6 +58,11 @@ class peek(HexViewer):
             stdout=stdout,
         )
 
+    @HexViewer.Requires('colorama')
+    def _colorama():
+        import colorama
+        return colorama
+
     def process(self, data):
         lines = self._peeklines(data)
         if self.args.stdout:
@@ -65,10 +70,13 @@ class peek(HexViewer):
                 yield line.encode(self.codec)
             return
         if not self.args.gray:
-            from colorama import init, Back as BG, Fore as FG, Style as S
-            init()
+            cr = self._colorama
+            BG = cr.Back
+            FG = cr.Fore
+            ST = cr.Style
+            cr.init()
             _erase = ' ' * get_terminal_size()
-            _reset = F'\r{BG.BLACK}{FG.WHITE}{S.RESET_ALL}{_erase}\r'
+            _reset = F'\r{BG.BLACK}{FG.WHITE}{ST.RESET_ALL}{_erase}\r'
         else:
             _reset = ''
         try:
