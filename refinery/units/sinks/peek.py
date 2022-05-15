@@ -217,15 +217,16 @@ class peek(HexViewer):
         if self.args.brief:
             final = False
         elif not self.args.bare:
-            peek = repr(meta.size).strip()
+            peek = repr(meta.size)
+            magic = meta.magic
             if len(data) <= 5_000_000:
                 peek = F'{peek}; {meta.entropy!r} entropy'
-            peek = F'{peek}; {meta.magic!s}'
             if not self.args.meta:
                 if meta:
-                    variables = ',\x20'.join(meta)
-                    peek = F'{peek}\n\x20\x20(meta: {variables})'
+                    variables = ','.join(meta)
+                    peek = F'{peek}; variables: {variables}'
                 meta = {}
+            peek = F'{peek}; {magic!s}'
             if self.args.meta > 1:
                 meta['size']
                 meta['entropy']
