@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import colorama
 import re
 import dataclasses
 
@@ -9,8 +8,6 @@ from typing import ByteString, Iterable, Optional
 from refinery.units import Arg, Unit
 from refinery.lib.tools import get_terminal_size, lookahead
 from refinery.lib import chunks
-
-colorama.init()
 
 
 @dataclasses.dataclass
@@ -74,6 +71,8 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
     hexformat = metrics.hex_char_format
     printable = range(0x21, 0x7F)
 
+    from colorama import Fore as FG, Style as S
+
     if columns <= 0:
         raise RuntimeError('Requested width is too small.')
 
@@ -97,7 +96,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 line = F' repeats {repetitions} times '
                 line = F'{line:/^{hex_width*columns-1}}  {"":/<{columns}}'
                 if colorize:
-                    line = F'{colorama.Fore.LIGHTBLACK_EX}{line}{colorama.Style.RESET_ALL}'
+                    line = F'{FG.LIGHTBLACK_EX}{line}{S.RESET_ALL}'
                 if addr_width:
                     line = F'{".":.>{addr_width}}{metrics.hex_addr_spacer}{line}'
                 yield line
@@ -115,13 +114,13 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 else:
                     formatted = '.'
                 if not value:
-                    color = colorama.Fore.LIGHTBLACK_EX
+                    color = FG.LIGHTBLACK_EX
                 elif value in B'\x20\t\n\r\v\f':
-                    color = colorama.Fore.LIGHTYELLOW_EX
+                    color = FG.LIGHTYELLOW_EX
                 elif value not in printable:
-                    color = colorama.Fore.LIGHTRED_EX
+                    color = FG.LIGHTRED_EX
                 if color:
-                    formatted = F'{color}{formatted}{colorama.Style.RESET_ALL}'
+                    formatted = F'{color}{formatted}{S.RESET_ALL}'
                 return formatted
             dump = separator.join(format_byte(b) for b in blocks)
             ascii_preview = ''.join(format_byte(b, True) for b in chunk)

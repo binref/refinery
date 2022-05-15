@@ -65,7 +65,8 @@ class peek(HexViewer):
                 yield line.encode(self.codec)
             return
         if not self.args.gray:
-            from colorama import Back as BG, Fore as FG, Style as S
+            from colorama import init, Back as BG, Fore as FG, Style as S
+            init()
             _erase = ' ' * get_terminal_size()
             _reset = F'\r{BG.BLACK}{FG.WHITE}{S.RESET_ALL}{_erase}\r'
         else:
