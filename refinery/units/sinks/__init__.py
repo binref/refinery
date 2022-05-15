@@ -93,7 +93,9 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 continue
             elif repetitions > 0:
                 line = F' repeats {repetitions} times '
-                line = F'{line:=^{hex_width*columns-1}}  {"":=<{columns}}'
+                line = F'{line:/^{hex_width*columns-1}}  {"":/<{columns}}'
+                if colorize:
+                    line = F'{colorama.Fore.LIGHTBLACK_EX}{line}{colorama.Style.RESET_ALL}'
                 if addr_width:
                     line = F'{".":.>{addr_width}}{metrics.hex_addr_spacer}{line}'
                 yield line
