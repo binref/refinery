@@ -1,5 +1,17 @@
 # Binary Refinery Changelog
 
+## Version 0.4.31
+- The (still somewhat experimental) `xt` unit was added which attempts to extract data from known archive formats.
+- The `xtasar` unit was added which can extract data from ASAR files.
+- The `lnk` unit was added which is a thin wrapper around the LnkParse3 library which extracts metadata from Windows shortcut files.
+- The `urlfix` unit was added which can strip URL indicators of fragments and query strings.
+- The `iff` unit has gained several new features.
+- The `xjl` unit was added, it converts JSON-lists to a sequence of JSON chunks.
+- The `xvar:` handler was renamed to `eat:` (it is similar to `var:`, except that it removes the variable after use).
+- The `xlxtr` unit now supports XLSB format by virtue of the pyxlsb2 library.
+- The `base32` unit was made more robust against invalid paddings.
+- The `peek` unit design was changed yet again and colorization was added to the hexdump preview. It can be disabled through the `-g` switch.
+
 ## Version 0.4.30 -- bugfix release
 
 ## Version 0.4.29
