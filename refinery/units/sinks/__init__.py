@@ -10,6 +10,8 @@ from refinery.units import Arg, Unit
 from refinery.lib.tools import get_terminal_size, lookahead
 from refinery.lib import chunks
 
+colorama.init()
+
 
 @dataclasses.dataclass
 class HexDumpMetrics:

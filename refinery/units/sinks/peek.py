@@ -10,7 +10,7 @@ import string
 from refinery.units.sinks import Arg, HexViewer
 from refinery.lib.meta import ByteStringWrapper, metavars, CustomStringRepresentation, SizeInt
 from refinery.lib.types import INF
-from refinery.lib.tools import isbuffer, lookahead
+from refinery.lib.tools import get_terminal_size, isbuffer, lookahead
 
 
 class peek(HexViewer):
@@ -63,12 +63,22 @@ class peek(HexViewer):
         if self.args.stdout:
             for line in lines:
                 yield line.encode(self.codec)
+            return
+        if not self.args.gray:
+            from colorama import Back as BG, Fore as FG, Style as S
+            _erase = ' ' * get_terminal_size()
+            _reset = F'\r{BG.BLACK}{FG.WHITE}{S.RESET_ALL}{_erase}\r'
         else:
+            _reset = ''
+        try:
             for line in lines:
                 print(line, file=sys.stderr)
             if not self.isatty:
                 self.log_info('forwarding input to next unit')
                 yield data
+        except BaseException:
+            sys.stderr.write(_reset)
+            raise
 
     def _peekmeta(self, linewidth, sep, _x_peek=None, **meta) -> Generator[str, None, None]:
         if not meta and not _x_peek:

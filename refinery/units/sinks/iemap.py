@@ -75,7 +75,7 @@ class iemap(Unit):
         header_length = 4 + len(clrmap)
         footer_length = 4 + len(str(meta['entropy']))
 
-        width = get_terminal_size() - header_length - footer_length
+        width = get_terminal_size() - header_length - footer_length - 1
         if width < 16:
             raise RuntimeError(F'computed terminal width {width} is too small for heatmap')
 

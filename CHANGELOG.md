@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.32 -- bugfix release
+
 ## Version 0.4.31
 - The (still somewhat experimental) `xt` unit was added which attempts to extract data from known archive formats.
 - The `xtasar` unit was added which can extract data from ASAR files.
