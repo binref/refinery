@@ -6,6 +6,10 @@ from refinery.units.sinks.ppjson import ppjson
 
 
 class lnk(Unit):
+    """
+    Parse Windows Shortcuts (LNK files) and returns the parsed information in JSON format. This
+    unit is a thin wrapper around the LnkParse3 library.
+    """
 
     @Unit.Requires('LnkParse3', optional=False)
     def _LnkParse3():
