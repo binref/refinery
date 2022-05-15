@@ -34,7 +34,7 @@ combined.
 __version__ = '0.4.32'
 __distribution__ = 'binary-refinery'
 
-from typing import Dict, Type
+from typing import Dict, List, Type
 from importlib import resources
 from datetime import datetime
 
@@ -161,10 +161,12 @@ class __pdoc__(dict):
             unit = _cache[name]
             for base in unit.mro():
                 try:
-                    abstractmethods = base.__abstractmethods__
+                    abstractmethods: List[str] = base.__abstractmethods__
                 except AttributeError:
                     break
                 for method in abstractmethods:
+                    if method.startswith('_'):
+                        continue
                     at = getattr(unit, method, None)
                     bt = getattr(unit.mro()[1], method, None)
                     if at and at is not bt:
