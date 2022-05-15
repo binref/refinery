@@ -60,11 +60,11 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
         engines = {}
         try:
             engines['decompyle3'] = xtpyi._decompyle3
-        except ImportError as error:
+        except Exception as error:
             xtpyi.log_warn(F'error importing decompyle3: {error!s}')
         try:
             engines['uncompyle6'] = xtpyi._uncompyle6
-        except ImportError as error:
+        except Exception as error:
             xtpyi.log_warn(F'error importing uncompyle6: {error!s}')
         for name, engine in engines.items():
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
