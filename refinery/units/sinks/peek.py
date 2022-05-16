@@ -26,7 +26,7 @@ class peek(HexViewer):
         lines  : Arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
         all    : Arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
         brief  : Arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
-        gray   : Arg('-g', group='SIZE', help='Do not colorize the output.') = False,
+        gray   : Arg('-g', help='Do not colorize the output.') = False,
         decode : Arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         escape : Arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
         index  : Arg('-i', help='Display the index of each chunk within the current frame.') = False,
@@ -74,7 +74,7 @@ class peek(HexViewer):
             BG = cr.Back
             FG = cr.Fore
             ST = cr.Style
-            cr.init()
+            cr.reinit()
             _erase = ' ' * get_terminal_size()
             _reset = F'\r{BG.BLACK}{FG.WHITE}{ST.RESET_ALL}{_erase}\r'
         else:
@@ -255,6 +255,8 @@ class peek(HexViewer):
             yield separator()
 
     def filter(self, chunks):
+        if not self.args.gray:
+            self._colorama.init(convert=True)
         discarded = 0
         for final, item in lookahead(chunks):
             item.temp = final
