@@ -1509,10 +1509,10 @@ class Unit(UnitBase, abstract=True):
         data = self.args @ data
         if not mode:
             return self.process(data)
-        elif mode > 1:
-            return self.reverse(self.process(data))
-        elif mode > 0:
+        elif mode % 2:
             return self.reverse(data)
+        else:
+            return self.reverse(self.process(data))
 
     def __call__(self, data: Optional[Union[ByteString, Chunk]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
