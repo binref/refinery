@@ -50,9 +50,7 @@ class xfcc(Unit):
         if len(head.path) < 2:
             self.log_warn(F'the current frame is nested {len(head.path)} layers deep, at least two layers are required.')
             yield head
-            for item in it:
-                self.log_debug(repr(item))
-                yield item
+            yield from it
             return
         trunk = head.path[:-2]
         store = self._store
