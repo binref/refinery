@@ -120,6 +120,7 @@ import copy
 import json
 import base64
 import itertools
+import zlib
 
 from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
 from refinery.lib.structures import MemoryFile
@@ -339,11 +340,7 @@ class Chunk(bytearray):
             return self.hex()
 
     def __hash__(self):
-        return hash((
-            len(self),
-            bytes(self[:+64]),
-            bytes(self[-64:])
-        ))
+        return hash(zlib.adler32(self))
 
     def __getitem__(self, bounds):
         if isinstance(bounds, str):
