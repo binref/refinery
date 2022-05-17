@@ -189,7 +189,7 @@ class asm(Unit):
 
         metrics_hex = HexDumpMetrics(padding=addr_width + len(dbword) + 1)
         metrics_hex.txt_separator += '; '
-        metrics_hex.hex_char_format = '0x{:02X}'
+        metrics_hex.hex_char_prefix = '0x'
         metrics_hex.hex_char_spacer = ','
         metrics_hex.fit_to_width(full_width, allow_increase=True)
         gap = full_width - addr_width - len(dbword) - 3 - metrics_hex.hexdump_width

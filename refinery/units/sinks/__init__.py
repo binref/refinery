@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+import io
 import dataclasses
 
 from typing import ByteString, Iterable, Optional
@@ -21,9 +22,13 @@ class HexDumpMetrics:
     expand: bool = False
     max_width: int = 0
     txt_separator: str = '  '
-    hex_char_format: str = '{:02X}'
+    hex_char_prefix: str = ''
     hex_char_spacer: str = ' '
     hex_addr_spacer: str = ': '
+
+    @property
+    def hex_char_format(self):
+        return F'{self.hex_char_prefix}{{:0{2*self.block_size}X}}'
 
     @property
     def hex_column_width(self):
@@ -105,25 +110,34 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
         blocks = chunks.unpack(chunk, metrics.block_size, metrics.big_endian)
 
         if colorize:
-            def format_byte(value: int, text=False):
-                color = ''
-                if not text:
-                    formatted = hexformat.format(value)
-                elif value in printable:
-                    formatted = chr(value)
-                else:
-                    formatted = '.'
+            def byte_color(value: int):
                 if not value:
-                    color = FG.LIGHTBLACK_EX
+                    return FG.LIGHTBLACK_EX
                 elif value in B'\x20\t\n\r\v\f':
-                    color = FG.LIGHTYELLOW_EX
+                    return FG.LIGHTYELLOW_EX
                 elif value not in printable:
-                    color = FG.LIGHTRED_EX
-                if color:
-                    formatted = F'{color}{formatted}{S.RESET_ALL}'
-                return formatted
-            dump = separator.join(format_byte(b) for b in blocks)
-            ascii_preview = ''.join(format_byte(b, True) for b in chunk)
+                    return FG.LIGHTRED_EX
+                else:
+                    return S.RESET_ALL
+            with io.StringIO() as _hex, io.StringIO() as _asc:
+                current_color = S.RESET_ALL
+                block_size = metrics.block_size
+                for k, b in enumerate(chunk):
+                    if k % block_size == 0:
+                        if k != 0:
+                            _hex.write(separator)
+                        _hex.write(metrics.hex_char_prefix)
+                    color = byte_color(b)
+                    if color != current_color:
+                        _hex.write(color)
+                        _asc.write(color)
+                        current_color = color
+                    _hex.write(F'{b:02X}')
+                    _asc.write(chr(b) if b in printable else '.')
+                _hex.write(S.RESET_ALL)
+                _asc.write(S.RESET_ALL)
+                dump = _hex.getvalue()
+                ascii_preview = _asc.getvalue()
         else:
             dump = separator.join(hexformat.format(b) for b in blocks)
             ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
@@ -168,7 +182,6 @@ class HexViewer(Unit, abstract=True):
             padding=padding,
             expand=self.args.expand,
             block_size=blocks,
-            hex_char_format=F'{{:0{2*blocks}X}}'
         )
         if not self.args.narrow:
             metrics.address_width = len(F'{data_size:X}')
