@@ -109,7 +109,14 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
 
         blocks = chunks.unpack(chunk, metrics.block_size, metrics.big_endian)
 
-        if colorize:
+        if not colorize:
+            dump = separator.join(hexformat.format(b) for b in blocks)
+            ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
+            line = (
+                F'{dump:<{hex_width*columns-len(separator)}}'
+                F'{metrics.txt_separator}{ascii_preview:<{columns}}'
+            )
+        else:
             def byte_color(value: int):
                 if not value:
                     return FG.LIGHTBLACK_EX
@@ -122,29 +129,29 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
             with io.StringIO() as _hex, io.StringIO() as _asc:
                 current_color = S.RESET_ALL
                 block_size = metrics.block_size
+                prefix = metrics.hex_char_prefix
+                remaining_hex_width = hex_width * columns - len(separator)
                 for k, b in enumerate(chunk):
                     if k % block_size == 0:
                         if k != 0:
                             _hex.write(separator)
-                        _hex.write(metrics.hex_char_prefix)
+                            remaining_hex_width -= len(separator)
+                        if prefix:
+                            _hex.write(prefix)
+                            remaining_hex_width -= len(prefix)
                     color = byte_color(b)
                     if color != current_color:
                         _hex.write(color)
                         _asc.write(color)
                         current_color = color
                     _hex.write(F'{b:02X}')
+                    remaining_hex_width -= 2
                     _asc.write(chr(b) if b in printable else '.')
                 _hex.write(S.RESET_ALL)
+                _hex.write(' ' * remaining_hex_width)
                 _asc.write(S.RESET_ALL)
-                dump = _hex.getvalue()
-                ascii_preview = _asc.getvalue()
-        else:
-            dump = separator.join(hexformat.format(b) for b in blocks)
-            ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
-        line = (
-            F'{dump:<{hex_width*columns-len(separator)}}'
-            F'{metrics.txt_separator}{ascii_preview:<{columns}}'
-        )
+                line = F'{_hex.getvalue()}{metrics.txt_separator}{_asc.getvalue():<{columns}}'
+
         if addr_width:
             line = F'{lno*columns:0{addr_width}X}: {line}'
 
