@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.34 -- bugfix release
+
 ## Version 0.4.33 -- bugfix release
 
 ## Version 0.4.32 -- bugfix release
