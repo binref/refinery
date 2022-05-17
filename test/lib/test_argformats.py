@@ -28,7 +28,7 @@ class TestArgumentFormats(TestBase):
             self.assertEqual(result, k ** 2, F'Failed for {k}.')
 
     def test_msvc(self):
-        pl = loader.load_pipeline('emit rep[32]:H:00 [| put s 0xF23CA2 | xor -B2 accu[s]:$msvc ]')
+        pl = loader.load_pipeline('emit rep[32]:H:00 [| put s 0xF23CA2 | xor -B2 accu[s]:@msvc ]')
         self.assertEqual(pl(),
             bytes.fromhex('500BC53065647A48899EE4D7F07166A7643AB3EC9F4343A64DF5C45B4CC4D9B2'))
 
