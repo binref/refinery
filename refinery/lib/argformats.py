@@ -747,7 +747,7 @@ class DelayedArgument(LazyEvaluation):
             return obj
         raise ArgumentTypeError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion is known.')
 
-    @handler.register('var', '$', final=True)
+    @handler.register('var', final=True)
     def var(self, name: str) -> bytes:
         """
         The final handler `var:name` contains the value of the meta variable `name`.
@@ -762,7 +762,7 @@ class DelayedArgument(LazyEvaluation):
             return self._interpret_variable(name, result)
         return extract
 
-    @handler.register('eat', '#', final=True)
+    @handler.register('eat', final=True)
     def eat(self, name: str) -> bytes:
         """
         The final handler `eat:name` contains the value of the meta variable `name`.
@@ -938,22 +938,22 @@ class DelayedArgument(LazyEvaluation):
         Instead of a Python expression, the  variable `update` can also be one of the following values, which
         are pre-defined update routines based on popular generators:
 
-        - `$libc`: `A * 0x041C64E6D + 0x003039`
-        - `$ansi`: `A * 0x041C64E6D + 0x003039 # (A >> 0x10)`
-        - `$msvc`: `A * 0x0000343FD + 0x269EC3 # (A >> 0x10)`
-        - `$msvb`: `A * 0x043FD43FD + 0xC39EC3`
-        - `$java`: `A * 0x5DEECE66D + 0x00000B`
-        - `$mmix`: `A * 6364136223846793005 + 1442695040888963407`
+        - `@libc`: `A * 0x041C64E6D + 0x003039`
+        - `@ansi`: `A * 0x041C64E6D + 0x003039 # (A >> 0x10)`
+        - `@msvc`: `A * 0x0000343FD + 0x269EC3 # (A >> 0x10)`
+        - `@msvb`: `A * 0x043FD43FD + 0xC39EC3`
+        - `@java`: `A * 0x5DEECE66D + 0x00000B`
+        - `@mmix`: `A * 6364136223846793005 + 1442695040888963407`
         """
-        if spec.startswith('$'):
+        if spec.startswith('@'):
             try:
                 spec = {
-                    '$libc': 'A * 0x041C64E6D + 0x003039',
-                    '$ansi': 'A * 0x041C64E6D + 0x003039 # (A >> 0x10)',
-                    '$msvc': 'A * 0x0000343FD + 0x269EC3 # (A >> 0x10)',
-                    '$msvb': 'A * 0x043FD43FD + 0xC39EC3',
-                    '$java': 'A * 0x5DEECE66D + 0x00000B',
-                    '$mmix': 'A * 6364136223846793005 + 1442695040888963407'
+                    '@libc': 'A * 0x041C64E6D + 0x003039',
+                    '@ansi': 'A * 0x041C64E6D + 0x003039 # (A >> 0x10)',
+                    '@msvc': 'A * 0x0000343FD + 0x269EC3 # (A >> 0x10)',
+                    '@msvb': 'A * 0x043FD43FD + 0xC39EC3',
+                    '@java': 'A * 0x5DEECE66D + 0x00000B',
+                    '@mmix': 'A * 6364136223846793005 + 1442695040888963407'
                 }[spec]
             except KeyError:
                 raise ArgumentTypeError(F'The generator type {spec} is unknown.')
