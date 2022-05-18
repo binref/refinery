@@ -10,9 +10,9 @@ _PATTERNS.update({p.name: p.value for p in indicators})
 
 
 class iffp(ConditionalUnit):
-    F"""
+    """
     Filter incoming chunks depending on whether it matches any of a given set of patterns. The available
-    patterns are the following: {", ".join(_PATTERNS)}.
+    patterns are the following: {}.
     """
 
     def __init__(self, *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS), negate=False, temporary=False):
@@ -24,3 +24,6 @@ class iffp(ConditionalUnit):
             if p.fullmatch(chunk):
                 return True
         return False
+
+
+iffp.__doc__ = iffp.__doc__.format(", ".join(_PATTERNS))

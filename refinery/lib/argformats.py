@@ -843,11 +843,11 @@ class DelayedArgument(LazyEvaluation):
 
     @handler.register('inc')
     def inc(self, it: Iterable[int], precision=None) -> Iterable[int]:
-        F"""
-        The modifier `inc:it` or `inc[N={_DEFAULT_BITS}]:it` expects a sequence `it` of integers
-        (a binary string is interpreted as the sequence of its byte values), iterates it cyclically
-        and perpetually adds an increasing counter to the result. If the number `N` is nonzero,
-        then the counter is limited to `N` bits.
+        """
+        The modifier `inc:it` or `inc[N=64]:it` expects a sequence `it` of integers (a binary
+        string is interpreted as the sequence of its byte values), iterates it cyclically and
+        perpetually adds an increasing counter to the result. If the number `N` is nonzero, then
+        the counter is limited to `N` bits.
         """
         precision = precision and int(precision, 0) or _DEFAULT_BITS
         it = infinitize(it)
@@ -920,10 +920,10 @@ class DelayedArgument(LazyEvaluation):
         skip: Optional[str] = None,
         precision: Optional[str] = None
     ) -> Iterable[int]:
-        F"""
+        """
         The final handler
 
-            accu[seed=0,skip=1,precision={_DEFAULT_BITS}]:update[#feed]
+            accu[seed=0,skip=1,precision=64]:update[#feed]
 
         expects `seed`, `skip`, `update`, and `feed` to be Python expressions. It generates an infinite integer
         sequence maintaining an internal state `A`: The initial value for `A` is `seed`. Each subsequent state is
