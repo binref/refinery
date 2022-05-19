@@ -183,6 +183,7 @@ from typing import (
     Any,
     ByteString,
     Generator,
+    overload,
     no_type_check,
     get_type_hints
 )
@@ -653,6 +654,8 @@ class ArgumentSpecification(OrderedDict):
 
 DataType = TypeVar('DataType', bound=ByteString)
 ProcType = Callable[['Unit', ByteString], Optional[Union[DataType, Iterable[DataType]]]]
+
+_T = TypeVar('_T')
 
 
 def UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]:
@@ -1370,7 +1373,47 @@ class Unit(UnitBase, abstract=True):
             result = bytes((self | stdout).getbuffer())
         return result
 
-    def __or__(self, stream: Union[BinaryIO, Unit]):
+    @overload
+    def __or__(self, stream: Callable[[ByteString], _T]) -> _T:
+        ...
+
+    @overload
+    def __or__(self, stream: Union[Unit, Type[Unit]]) -> Unit:
+        ...
+
+    @overload
+    def __or__(self, stream: dict) -> dict:
+        ...
+
+    @overload
+    def __or__(self, stream: list) -> list:
+        ...
+
+    @overload
+    def __or__(self, stream: set) -> set:
+        ...
+
+    @overload
+    def __or__(self, stream: bytearray) -> bytearray:
+        ...
+
+    @overload
+    def __or__(self, stream: memoryview) -> memoryview:
+        ...
+
+    @overload
+    def __or__(self, stream: Type[None]) -> None:
+        ...
+
+    @overload
+    def __or__(self, stream: Type[...]) -> bytearray:
+        ...
+
+    @overload
+    def __or__(self, stream: BinaryIO) -> BinaryIO:
+        ...
+
+    def __or__(self, stream):
         def get_converter(it: Iterable):
             try:
                 c = one(it)
