@@ -81,6 +81,7 @@ class cm(Unit):
         for index, chunk in enumerate(chunks):
             chunk: Chunk
             if not chunk.visible:
+                yield chunk
                 continue
             meta = metavars(chunk)
             if reset:
