@@ -239,11 +239,11 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
     blocksize: int
     key_sizes: Tuple[int, ...]
 
-    def __init__(self, key, iv=B'', padding=None, mode=None, raw=False):
+    def __init__(self, key, iv=B'', padding=None, mode=None, raw=False, **keywords):
         mode = self._available_block_cipher_modes(mode or iv and 'CBC' or 'ECB')
         if iv and mode.name == 'ECB':
             raise ValueError('No initialization vector can be specified for ECB mode.')
-        super().__init__(key=key, iv=iv, padding=padding, mode=mode, raw=raw)
+        super().__init__(key=key, iv=iv, padding=padding, mode=mode, raw=raw, **keywords)
 
     def _get_cipher_instance(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name
