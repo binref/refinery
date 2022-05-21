@@ -74,13 +74,13 @@ class BlockTransformationBase(Unit, abstract=True):
         if not raw:
             return chunks.unpack(data, self.args.blocksize, self.args.bigendian)
 
-        def chunkraw(data):
+        def chunkraw(data, b: int):
             stop = len(data)
-            stop = stop - stop % self.args.blocksize
-            for k in range(0, stop, self.args.blocksize):
-                yield data[k : k + self.args.blocksize]
+            stop = stop - stop % b
+            for k in range(0, stop, b):
+                yield data[k : k + b]
 
-        return chunkraw(data)
+        return chunkraw(data, self.args.blocksize)
 
     def unchunk(self, data, raw=False):
         if self.args.precision > self.args.blocksize:
