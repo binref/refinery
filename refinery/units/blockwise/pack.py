@@ -27,12 +27,14 @@ class pack(BlockTransformationBase):
             'accepted.')) = 0,
         prefix: Arg.Switch('-r', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.') = False,
         strict: Arg.Switch('-s', help='Only parse integers that fit in one block of the given block size.') = False,
+        width : Arg.Number('-w', help='Pad numbers with the specified amount of leading zeros.') = 0,
         bigendian=False, blocksize=1
     ):
         super().__init__(
             base=base,
             prefix=prefix,
             strict=strict,
+            width=width,
             bigendian=bigendian,
             blocksize=blocksize
         )
@@ -44,6 +46,7 @@ class pack(BlockTransformationBase):
 
     def reverse(self, data):
         base = self.args.base or 10
+        width = self.args.width
         prefix = B''
 
         self.log_debug(F'using base {base:d}')
@@ -58,7 +61,12 @@ class pack(BlockTransformationBase):
         converter = BaseUnit(base, not self.args.bigendian)
 
         for n in self.chunk(data, raw=True):
-            yield prefix + converter.reverse(n)
+            converted = converter.reverse(n)
+            if width:
+                converted = converted.rjust(width, B'0')
+            if prefix:
+                converted = prefix + converted
+            yield converted
 
     def process(self, data):
         base: int = self.args.base

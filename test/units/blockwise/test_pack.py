@@ -69,3 +69,7 @@ class TestPack(TestUnitBase):
             pack(B'0x90,0x90,0x34,0x65,0xAF,0xFD,0x01,0x02'),
             bytes.fromhex('90 90 34 65 AF FD 01 02')
         )
+
+    def test_pack_with_width(self):
+        pack = self.load(16, reverse=True, width=2)
+        self.assertEqual(str(B'\x01\x02\x34\x07' | pack), '01\n02\n34\n07')
