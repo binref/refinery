@@ -106,7 +106,7 @@ class _cache:
             self.reloading = False
             self.save()
 
-    def _resolve(self, name):
+    def resolve(self, name) -> Optional[Unit]:
         if not self.loaded:
             self.load()
         try:
@@ -116,10 +116,7 @@ class _cache:
             self.cache[name] = entry
             return entry
         except (KeyError, ModuleNotFoundError):
-            raise AttributeError(name)
-
-    def __getitem__(self, name):
-        return self._resolve(name)
+            return None
 
 
 @_singleton
@@ -182,7 +179,10 @@ __all__ = sorted(_cache.units, key=lambda x: x.lower()) + [
 
 
 def __getattr__(name):
-    return _cache[name]
+    unit = _cache.resolve(name)
+    if unit is None:
+        raise AttributeError(name)
+    return unit
 
 
 def __dir__():
@@ -190,4 +190,4 @@ def __dir__():
 
 
 def load(name) -> Optional[Unit]:
-    return _cache[name]
+    return _cache.resolve(name)
