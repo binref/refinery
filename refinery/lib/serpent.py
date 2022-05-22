@@ -4,10 +4,10 @@
 """
 This implementation of the Serpent cipher is based on the original C reference implementation, available
 from the [official website](https://www.cl.cam.ac.uk/~rja14/serpent.html). The C macros for each of the
-round macros was turned into a Python function and the unrolled loops were reverted back to loops because
-the performance gain in Python would be negligible for the substantial loss of readability.
+round operations were turned into a Python function, and the unrolled loops were reverted back because the
+performance gain in Python would be negligible for the substantial loss of readability.
 
-All functions allow a "swap" option to be passed which will has the equivalent effect of  reversing the
+All functions allow a "swap" option to be passed which will has the equivalent effect of reversing the
 byte order of the input. This option is available because different implementations use different byte
 orders for the various parts of the algorithm.
 """
