@@ -38,3 +38,12 @@ class TestMeta(TestBase):
     def test_magic_values_update(self):
         pl = load_pipeline('emit FOO-BAR [| cm sha256 | snip :3 | cfmt {sha256} ]')
         self.assertEqual(pl(), b'9520437ce8902eb379a7d8aaa98fc4c94eeb07b6684854868fa6f72bf34b0fd3')
+
+    def test_costly_variable_is_discarded(self):
+        out, = load_pipeline('emit rep[0x2000]:X [| cm sha256 | snip 1: ]')
+        self.assertNotIn('sha256', out.meta.keys())
+
+    def test_cheap_variable_is_not_discarded(self):
+        out, = load_pipeline('emit rep[0x100]:X [| cm sha256 | snip 1: ]')
+        self.assertIn('sha256', out.meta.keys())
+        self.assertEqual(out.meta['sha256'], '439d26737c1313821f1b5e953a866e680a3712086f7b27ffc2e3e3f224e04f3f')

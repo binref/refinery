@@ -293,9 +293,8 @@ class Chunk(bytearray):
         """
         self._path = parent._path
         self._view = self._view or parent._view
+        meta = self._meta
         for key, value in parent.meta.items():
-            # this code is used over .setdefault because it triggers a value derivation for
-            # intrinsic properties.
             try:
                 costly = self._meta.DERIVATION_MAP[key].costly
             except KeyError:
@@ -303,10 +302,11 @@ class Chunk(bytearray):
             else:
                 recompute = True
             if recompute:
-                if not costly or len(self) < 0x1000 or hash(self) == hash(parent):
-                    self._meta[key]
-            else:
-                self._meta[key] = value
+                if costly and len(self) >= 0x1000 and hash(self) != hash(parent):
+                    # discard meta-variables that would be too costly to recompute
+                    continue
+                value = meta[key]
+            meta[key] = value
         return self
 
     @classmethod
