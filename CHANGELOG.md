@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.4.35
+- Adds the `lzip` unit.
+- Reworks the `serpent` unit to work with real-world examples and adds a `--swap` option to change the block byte order to become compatible with other implementations.
+- Changes the `peek` design and fixes problems with colored output on Windows.
+
 ## Version 0.4.34 -- bugfix release
 
 ## Version 0.4.33 -- bugfix release
