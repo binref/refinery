@@ -13,16 +13,15 @@ import sys
 import io
 import warnings
 
-from typing import ByteString, Generator, Iterable, Optional, Tuple, TypeVar
+from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar
 from math import log
 from enum import IntFlag
 
 
 _T = TypeVar('_T')
-_D = TypeVar('_D')
 
 
-def _singleton(cls):
+def _singleton(cls: Callable[..., _T]) -> _T:
     return cls()
 
 
@@ -138,7 +137,7 @@ def skipfirst(iterable: Iterable[_T]) -> Generator[_T, None, None]:
     yield from it
 
 
-def autoinvoke(method, keywords: dict):
+def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
     """
     For each parameter that `method` expects, this function looks for an entry
     in `keywords` which has the same name as that parameter. `autoinvoke` then
