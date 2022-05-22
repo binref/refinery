@@ -328,7 +328,7 @@ class MemberDecoder:
 
 class lzip(Unit):
     """
-    LZIP compression and decompression.
+    LZIP decompression
     """
     def process(self, data: bytearray):
         view = memoryview(data)
