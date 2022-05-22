@@ -14,6 +14,7 @@ There are several units that are specifically designed to store meta variables:
   sub-pipeline inside a meta variable; more on this later.
 - The `refinery.cm` unit is a catch-all helper to generate common metadata such as size, frame
   index, hashes, entropy, etcetera.
+- The unit `refinery.wm` can be used to remove all metadata from a chunk.
 - The `refinery.struct` parses structured data from the beginning of a chunk into meta variables.
 - You can use named capture groups in regular expressions when using the `refinery.rex` unit, and
   these matches will be stored under their name as a meta variable in each output chunk.
@@ -54,7 +55,7 @@ that can contain meta variables. For example, the following command will print a
 of the current directory with human-readable file sizes, entropy in percent, and the md5 hash of
 each file:
 
-    ef ** [| cm size | sha256 -t | cfmt {size!r} {entropy!r} {md5} {path} ]]
+    ef ** [| cfmt {size!r} {entropy!r} {md5} {path} ]]
 
 Another example would be the following command, which dumps the base64 encoded buffer of length at
 least 200 from the input to incrementally numbered files:
