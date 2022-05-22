@@ -115,7 +115,6 @@ from typing import get_type_hints
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one
-from refinery.lib.loader import resolve, EntryNotFound
 from refinery.lib.meta import metavars
 
 FinalType = TypeVar('FinalType')
@@ -353,26 +352,23 @@ class DelayedArgumentDispatch:
             return dispatcher
         return wrap
 
-    def __init__(self, method, parent: Optional[DelayedArgumentDispatch] = None):
+    def __init__(self, method):
         update_wrapper(self, method)
         self.default = method
         self.handlers = {}
         self.final = {}
         self.units = {}
 
-    def _get_unit(self, name, *args):
+    def _get_unit(self, name: str, *args):
         name = name.replace('-', '_')
         uhash = hash((name,) + args)
         if uhash in self.units:
             return self.units[uhash]
-        try:
-            unit = resolve(name)
-        except EntryNotFound:
-            return None
-        else:
-            unit = unit and unit.assemble(*args).log_detach()
-            self.units[uhash] = unit
-            return unit
+        from refinery import load
+        unit = load(name)
+        unit = unit and unit.assemble(*args).log_detach()
+        self.units[uhash] = unit
+        return unit
 
     def __get__(self, instance, t=None):
         return self.Wrapper(self, instance)

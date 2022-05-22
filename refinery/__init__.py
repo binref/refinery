@@ -34,7 +34,7 @@ combined.
 __version__ = '0.4.35'
 __distribution__ = 'binary-refinery'
 
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 from importlib import resources
 from datetime import datetime
 
@@ -106,17 +106,8 @@ class _cache:
             self.reloading = False
             self.save()
 
-    def _resolve(self, name, retry=0):
-        if retry > 2:
-            raise AttributeError(name)
-        elif retry >= 2:
-            now = datetime.utcnow()
-            delta = now - self.last_reload
-            if delta.total_seconds() < 10:
-                raise AttributeError(name)
-            self.last_reload = now
-            self.reload()
-        elif retry >= 1:
+    def _resolve(self, name):
+        if not self.loaded:
             self.load()
         try:
             module_path = self.units[name]
@@ -125,7 +116,7 @@ class _cache:
             self.cache[name] = entry
             return entry
         except (KeyError, ModuleNotFoundError):
-            return self._resolve(name, retry + 1)
+            raise AttributeError(name)
 
     def __getitem__(self, name):
         return self._resolve(name)
@@ -198,7 +189,5 @@ def __dir__():
     return __all__
 
 
-def load(name):
-    if _cache.loaded:
-        return _cache.cache.get(name)
+def load(name) -> Optional[Unit]:
     return _cache[name]
