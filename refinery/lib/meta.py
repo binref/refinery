@@ -112,10 +112,21 @@ import codecs
 
 from io import StringIO
 from urllib.parse import quote_from_bytes, unquote_to_bytes
-from typing import Callable, Dict, Iterable, Optional, ByteString, Protocol, Union
+from typing import Callable, Dict, Iterable, Optional, ByteString, Union, TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
+
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    class _Derivation(Protocol):
+        costly: bool
+        name: str
+
+        def __call__(self, object: LazyMetaOracle) -> Union[str, int, float]:
+            ...
 
 
 class CustomStringRepresentation(abc.ABC):
@@ -307,14 +318,6 @@ class Percentage(float, CustomStringRepresentation):
 
 class _NoDerivationAvailable(Exception):
     pass
-
-
-class _Derivation(Protocol):
-    name: str
-    costly: bool
-
-    def __call__(self, object: LazyMetaOracle) -> Union[str, int, float]:
-        ...
 
 
 class _LazyMetaMeta(type):
