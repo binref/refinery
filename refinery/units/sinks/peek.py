@@ -3,6 +3,7 @@
 from typing import Generator, Optional
 
 import sys
+import os
 import textwrap
 import codecs
 import string
@@ -64,30 +65,38 @@ class peek(HexViewer):
         return colorama
 
     def process(self, data):
-        lines = self._peeklines(data)
+        colorize = not self.args.gray and not self.args.stdout
+        if os.name == 'nt' and not self.isatty:
+            # coloring stderr does not work properly in Windows when stdout is redirected:
+            # https://github.com/tartley/colorama/issues/200
+            colorize = False
+        lines = self._peeklines(data, colorize)
+
         if self.args.stdout:
             for line in lines:
                 yield line.encode(self.codec)
             return
-        if not self.args.gray:
-            cr = self._colorama
-            BG = cr.Back
-            FG = cr.Fore
-            ST = cr.Style
-            cr.reinit()
+
+        stderr = sys.stderr
+
+        if colorize:
+            colorama = self._colorama
+            if os.name == 'nt':
+                stderr = colorama.AnsiToWin32(stderr).stream
             _erase = ' ' * get_terminal_size()
-            _reset = F'\r{BG.BLACK}{FG.WHITE}{ST.RESET_ALL}{_erase}\r'
+            _reset = F'\r{colorama.Style.RESET_ALL}{_erase}\r'
         else:
             _reset = ''
+
         try:
             for line in lines:
-                print(line, file=sys.stderr)
-            if not self.isatty:
-                self.log_info('forwarding input to next unit')
-                yield data
+                print(line, file=stderr)
         except BaseException:
-            sys.stderr.write(_reset)
+            stderr.write(_reset)
             raise
+        if not self.isatty:
+            self.log_info('forwarding input to next unit')
+            yield data
 
     def _peekmeta(self, linewidth, sep, _x_peek=None, **meta) -> Generator[str, None, None]:
         if not meta and not _x_peek:
@@ -162,7 +171,7 @@ class peek(HexViewer):
             result.extend(wrapped)
         return result[:abs(linecount)]
 
-    def _peeklines(self, data) -> Generator[str, None, None]:
+    def _peeklines(self, data: bytearray, colorize: bool) -> Generator[str, None, None]:
 
         meta = metavars(data)
 
@@ -205,7 +214,7 @@ class peek(HexViewer):
                 else:
                     codec = None
             if lines is None:
-                lines = list(self.hexdump(data, metrics, not self.args.gray))
+                lines = list(self.hexdump(data, metrics, colorize))
             else:
                 sepsize = txtsize
 
@@ -255,8 +264,7 @@ class peek(HexViewer):
             yield separator()
 
     def filter(self, chunks):
-        if not self.args.gray:
-            self._colorama.init(convert=True)
+        self._colorama.init(wrap=False)
         discarded = 0
         for final, item in lookahead(chunks):
             item.temp = final
