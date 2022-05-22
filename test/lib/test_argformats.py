@@ -12,6 +12,18 @@ class TestArgumentFormats(TestBase):
         self.assertEqual(argformats.number('045FAD'), 0x45FAD)
         self.assertEqual(argformats.number('45FADH'), 0x45FAD)
 
+    def test_accu(self):
+        self.assertEqual(
+            argformats.multibin('itob[1]:take[:16]:accu:@msvc'),
+            bytes.fromhex('26 27 F6 85 97 15 AD 1D D2 94 DD C4 76 19 39 31')
+        )
+
+    def test_empty_value_passed_to_itob(self):
+        self.assertEqual(argformats.multibin('itob:take[:0]:foo'), b'')
+
+    def test_itob_byte_width(self):
+        self.assertEqual(argformats.multibin('itob[1]:eval:(0x00,0x12,0x3412)'), b'\0\x12\x12')
+
     def test_yara_regular_expression_lowercase(self):
         self.assertEqual(argformats.DelayedRegexpArgument('yara:deefaced')(), BR'\xde\xef\xac\xed')
 

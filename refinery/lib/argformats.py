@@ -833,8 +833,11 @@ class DelayedArgument(LazyEvaluation):
                 return width
             if not isinstance(integers, list):
                 integers = list(integers)
-            size = max(byte_length(n) for n in integers)
+            size = max((byte_length(n) for n in integers), default=1)
             size = max(size, 1)
+        else:
+            mask = (1 << (size * 8)) - 1
+            integers = (integer & mask for integer in integers)
         return chunks.pack(integers, size, bigE)
 
     @handler.register('inc')
@@ -955,7 +958,8 @@ class DelayedArgument(LazyEvaluation):
                 raise ArgumentTypeError(F'The generator type {spec} is unknown.')
         update, _, feed = spec.partition('#')
         update = PythonExpression(update, all_variables_allowed=True)
-        seed = seed and PythonExpression(seed, all_variables_allowed=True)
+        seed = seed or '0'
+        seed = PythonExpression(seed, all_variables_allowed=True)
         feed = feed and PythonExpression(feed, all_variables_allowed=True)
         skip = 1 if skip is None else int(skip, 0)
         precision = precision and int(precision, 0) or _DEFAULT_BITS
