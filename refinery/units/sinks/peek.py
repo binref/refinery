@@ -27,14 +27,14 @@ class peek(HexViewer):
         lines  : Arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
         all    : Arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
         brief  : Arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
-        gray   : Arg('-g', help='Do not colorize the output.') = False,
         decode : Arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
         escape : Arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
+        bare   : Arg('-r', group='META', help='Only peek the data itself, do not show a metadata preview.') = False,
+        meta   : Arg('-m', group='META', action='count', help=(
+            'Show more auto-derivable metadata. Specify multiple times to populate more variables.')) = 0,
+        gray   : Arg('-g', help='Do not colorize the output.') = False,
         index  : Arg('-i', help='Display the index of each chunk within the current frame.') = False,
-        bare   : Arg('-r', help='Only peek the data itself, do not show a metadata preview.') = False,
         stdout : Arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
-        meta   : Arg('-m', action='count', help=(
-            'Give a preview of attached meta variables. Specify multiple times to populate more variables.')) = 0,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if decode and escape:
@@ -104,7 +104,7 @@ class peek(HexViewer):
         width = max((len(name) for name in meta), default=0)
         separators = iter([sep])
         if _x_peek is not None:
-            yield sep
+            yield from separators
             yield _x_peek
         for name in sorted(meta):
             value = meta[name]
@@ -118,7 +118,7 @@ class peek(HexViewer):
                 value = F'0x{value:X}'
             elif isinstance(value, float):
                 value = F'{value:.4f}'
-            metavar = F'{name:>{width}} = {value!s}'
+            metavar = F'{name:>{width+2}} = {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
             yield from separators
@@ -227,23 +227,20 @@ class peek(HexViewer):
             final = False
         elif not self.args.bare:
             peek = repr(meta.size)
-            magic = meta.magic
             if len(data) <= 5_000_000:
                 peek = F'{peek}; {meta.entropy!r} entropy'
-            if not self.args.meta:
-                if meta:
-                    variables = ','.join(meta)
-                    peek = F'{peek}; variables: {variables}'
-                meta = {}
-            peek = F'{peek}; {magic!s}'
-            if self.args.meta > 1:
+            peek = F'{peek}; {meta.magic!s}'
+            if self.args.meta > 0:
                 meta['size']
-                meta['entropy']
                 meta['magic']
+                meta['entropy']
                 peek = None
-            if self.args.meta > 2:
+            if self.args.meta > 1:
                 meta['crc32']
                 meta['sha256']
+            if self.args.meta > 2:
+                for name in meta.DERIVATION_MAP:
+                    meta[name]
             for line in self._peekmeta(metrics.hexdump_width, separator(), _x_peek=peek, **meta):
                 empty = False
                 yield line
