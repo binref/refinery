@@ -296,10 +296,9 @@ class Chunk(bytearray):
         for key, value in parent.meta.items():
             # this code is used over .setdefault because it triggers a value derivation for
             # intrinsic properties.
-            try:
-                self._meta[key]
-            except KeyError:
-                self._meta[key] = value
+            if key in self._meta.DERIVATION_MAP:
+                continue
+            self._meta[key] = value
         return self
 
     @classmethod
