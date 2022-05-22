@@ -111,7 +111,7 @@ import codecs
 
 from io import StringIO
 from urllib.parse import quote_from_bytes, unquote_to_bytes
-from typing import Callable, Dict, Iterable, Optional, ByteString, Union
+from typing import Callable, Dict, Iterable, Optional, ByteString, Protocol, Union
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
@@ -308,20 +308,30 @@ class _NoDerivationAvailable(Exception):
     pass
 
 
+class _Derivation(Protocol):
+    name: str
+    costly: bool
+
+    def __call__(self, object: LazyMetaOracle) -> Union[str, int, float]:
+        ...
+
+
 class _LazyMetaMeta(type):
     def __new__(cls, name: str, bases, namespace: dict):
         derivations: dict = namespace['DERIVATION_MAP']
         for obj in namespace.values():
             try:
+                obj: _Derivation
                 derivations[obj.name] = obj
             except AttributeError:
                 pass
         return type.__new__(cls, name, bases, namespace)
 
 
-def _derivation(name):
-    def decorator(method):
+def _derivation(name, costly: bool = False) -> Callable[[_Derivation], _Derivation]:
+    def decorator(method: _Derivation) -> _Derivation:
         method.name = name
+        method.costly = costly
         return method
     return decorator
 
@@ -338,7 +348,7 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         'size'    : SizeInt,
     }
 
-    DERIVATION_MAP: Dict[str, Callable[[LazyMetaOracle], Union[str, int, float]]] = {}
+    DERIVATION_MAP: Dict[str, _Derivation] = {}
     """
     A dictionary mapping the names of common properties to anonymous functions that compute their
     corresponding value on a chunk of binary input data.
@@ -346,11 +356,13 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
     ghost: bool
     chunk: ByteString
+    cache: Dict[str, Union[str, int, float]]
 
     def __init__(self, chunk: ByteString, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ghost = False
         self.chunk = chunk
+        self.cache = {}
         self.fix()
 
     def update(self, *args, **kwargs):
@@ -598,13 +610,20 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             return self[key]
 
     def __missing__(self, key):
+        try:
+            return self.cache[key]
+        except KeyError:
+            pass
         deduction = self.DERIVATION_MAP.get(key)
         if deduction is None:
             raise KeyError(F'The meta variable {key} is unknown.')
         try:
-            return self.setdefault(key, deduction(self))
+            value = deduction(self)
         except _NoDerivationAvailable:
             raise KeyError(F'unable to derive the {key} property here, you have to use the cm unit.')
+        else:
+            self.cache[key] = value
+            return value
 
     def discard(self, key):
         try:
@@ -631,11 +650,11 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     def _derive_size(self):
         return SizeInt(len(self.chunk))
 
-    @_derivation('entropy')
+    @_derivation('entropy', True)
     def _derive_entropy(self):
         return Percentage(entropy(self.chunk))
 
-    @_derivation('ic')
+    @_derivation('ic', True)
     def _derive_ic(self):
         return Percentage(index_of_coincidence(self.chunk))
 
@@ -644,22 +663,24 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
         import zlib
         return ByteStringWrapper((zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big').hex())
 
-    @_derivation('sha1')
+    @_derivation('sha1', True)
     def _derive_sha1(self):
         import hashlib
         return ByteStringWrapper(hashlib.sha1(self.chunk).hexdigest())
 
-    @_derivation('sha256')
+    @_derivation('sha256', True)
     def _derive_sha256(self):
         import hashlib
+        import sys
+        print("computing sha", file=sys.stderr)
         return ByteStringWrapper(hashlib.sha256(self.chunk).hexdigest())
 
-    @_derivation('sha512')
+    @_derivation('sha512', True)
     def _derive_sha512(self):
         import hashlib
         return ByteStringWrapper(hashlib.sha512(self.chunk).hexdigest())
 
-    @_derivation('md5')
+    @_derivation('md5', True)
     def _derive_md5(self):
         import hashlib
         return ByteStringWrapper(hashlib.md5(self.chunk).hexdigest())
