@@ -671,8 +671,6 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     @_derivation('sha256', True)
     def _derive_sha256(self):
         import hashlib
-        import sys
-        print("computing sha", file=sys.stderr)
         return ByteStringWrapper(hashlib.sha256(self.chunk).hexdigest())
 
     @_derivation('sha512', True)
