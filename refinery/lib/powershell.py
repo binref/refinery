@@ -4,6 +4,7 @@
 Windows-specific module to determine whether the current Python process is running in a PowerShell process.
 """
 from __future__ import annotations
+from typing import TextIO
 
 import ctypes
 import os
@@ -82,13 +83,13 @@ def is_powershell_process() -> bool:
 class Ps1Wrapper:
     WRAPPED = False
 
-    def __new__(cls, stream):
+    def __new__(cls, stream: TextIO):
         sb = stream.buffer
         if stream.isatty() or sb.isatty():
             return sb
         return super().__new__(cls)
 
-    def __init__(self, stream):
+    def __init__(self, stream: TextIO):
         if self is stream:
             return
         self.stream = stream.buffer
@@ -140,6 +141,8 @@ class PS1InputWrapper(Ps1Wrapper):
     def read1(self, size=None):
         if size is None:
             size = -1
+        if size == 0:
+            return B''
         if self._init:
             if 0 < size < len(_PS1_MAGIC):
                 raise RuntimeError(F'Unexpectedly small initial read: {size}')
