@@ -282,7 +282,7 @@ class SizeInt(int, CustomStringRepresentation):
             return F'{result:{width}} BYTES'
         else:
             width = 6 if align else ''
-            return F'{result:{width}.3f} {unit}'
+            return F'{result:0{width}.3f} {unit}'
 
     def __repr__(self):
         return self._s(True)

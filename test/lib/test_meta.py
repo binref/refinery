@@ -18,7 +18,7 @@ class TestMeta(TestBase):
     def test_binary_formatter_fallback(self):
         data = self.generate_random_buffer(3210)
         meta = metavars(data)
-        self.assertEqual(meta.format_bin('{size!r}', 'utf8', data).strip(), b'3.210 kB')
+        self.assertEqual(meta.format_bin('{size!r}', 'utf8', data).strip(), b'03.210 kB')
 
     def test_binary_formatter_literal(self):
         meta = metavars(B'')
@@ -34,3 +34,7 @@ class TestMeta(TestBase):
     def test_intrinsic_properties_are_recomputed(self):
         pl = load_pipeline('emit FOO-BAR [| cm size | snip :1 | cfmt {size} ]')
         self.assertEqual(pl(), B'1')
+
+    def test_magic_values_update(self):
+        pl = load_pipeline('emit FOO-BAR [| cm sha256 | snip :3 | cfmt {sha256} ]')
+        self.assertEqual(pl(), b'9520437ce8902eb379a7d8aaa98fc4c94eeb07b6684854868fa6f72bf34b0fd3')

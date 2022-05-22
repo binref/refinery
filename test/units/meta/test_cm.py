@@ -29,7 +29,7 @@ class TestCommonMeta(TestUnitBase):
             'mime'   : 'application/pdf',
             'sha1'   : '976c1f31b9d374078bc0093d837dbb5f58c7136d',
             'sha256' : '054dd1d7b1faaca9ee2296f1c62d2f5ab7d46d48b48784cbe843fa103c4fa61a',
-            'size'   : '0.794 kB',
+            'size'   : '00.794 kB',
         }
 
         for name, value in meta.items():
