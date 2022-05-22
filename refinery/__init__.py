@@ -146,7 +146,7 @@ class __pdoc__(dict):
         self['Unit'] = False
         self['Arg'] = False
         for name in _cache.units:
-            unit = _cache[name]
+            unit = _cache.resolve(name)
             for base in unit.mro():
                 try:
                     abstractmethods: List[str] = base.__abstractmethods__
