@@ -23,5 +23,4 @@ class xtace(ArchiveUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        view = memoryview(data)
-        return b'**ACE**' in view[:0x1000]
+        return b'**ACE**' in data[:0x100]
