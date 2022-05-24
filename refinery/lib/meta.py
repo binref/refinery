@@ -629,6 +629,9 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             self.cache[key] = value
             return value
 
+    def derive(self, key):
+        self[key] = self[key]
+
     def discard(self, key):
         try:
             dict.__delitem__(self, key)

@@ -231,13 +231,13 @@ class peek(HexViewer):
                 peek = F'{peek}; {meta.entropy!r} entropy'
             peek = F'{peek}; {meta.magic!s}'
             if self.args.meta > 0:
-                meta['size']
-                meta['magic']
-                meta['entropy']
+                meta.derive('size')
+                meta.derive('magic')
+                meta.derive('entropy')
                 peek = None
             if self.args.meta > 1:
-                meta['crc32']
-                meta['sha256']
+                meta.derive('crc32')
+                meta.derive('sha256')
             if self.args.meta > 2:
                 for name in meta.DERIVATION_MAP:
                     meta[name]
