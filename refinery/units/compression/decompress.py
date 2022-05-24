@@ -3,16 +3,17 @@
 from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.types import INF
 
-from .ap import aplib
-from .blz import blz
-from .bz2 import bz2
-from .lz import lzma
-from .lz4 import lz4
-from .lzjb import lzjb
-from .lznt1 import lznt1
-from .lzo import lzo
-from .szdd import szdd
-from .zl import zl
+from .ap     import aplib  # noqa
+from .blz    import blz    # noqa
+from .bz2    import bz2    # noqa
+from .jcalg  import jcalg  # noqa
+from .lz     import lzma   # noqa
+from .lz4    import lz4    # noqa
+from .lzjb   import lzjb   # noqa
+from .lznt1  import lznt1  # noqa
+from .lzo    import lzo    # noqa
+from .szdd   import szdd   # noqa
+from .zl     import zl     # noqa
 
 
 class decompress(Unit):
@@ -43,7 +44,7 @@ class decompress(Unit):
             raise ValueError('The compression factor must be nonnegative.')
         super().__init__(tolerance=tolerance, prepend=prepend, min_ratio=min_ratio)
         self.engines = [
-            engine() for engine in [szdd, zl, lzma, aplib, bz2, blz, lzjb, lz4, lzo, lznt1]
+            engine() for engine in [szdd, zl, lzma, aplib, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1]
         ]
 
     def process(self, data):

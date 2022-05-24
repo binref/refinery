@@ -221,10 +221,13 @@ class MemoryFile(Generic[T], io.IOBase):
 
     def truncate(self, size=None) -> None:
         if size is not None:
-            if not (0 <= size < len(self._data)):
+            if not (0 <= size <= len(self._data)):
                 raise ValueError('invalid size value')
             self._cursor = size
         del self._data[self._cursor:]
+
+    def write_byte(self, byte: int) -> bool:
+        return self.write(bytes((byte,))) == 1
 
     def write(self, data: ByteString) -> int:
         beginning = self._cursor
