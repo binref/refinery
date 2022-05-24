@@ -246,7 +246,7 @@ class xtp(PatternExtractor):
             }:
                 hostparts = host.split('.')
                 if self.args.filter >= 2:
-                    if all(len(p) < 4 for p in hostparts):
+                    if not all(p.isdigit() for p in hostparts) and all(len(p) < 4 for p in hostparts):
                         self.log_info(value)
                         self.log_info('excluding host with too many short parts')
                         return None
