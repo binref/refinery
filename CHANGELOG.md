@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.4.37
+- Adds the `jcalg` unit.
+- Adds the `byteswap` unit.
+
 ## Version 0.4.36 -- bugfix release
 
 ## Version 0.4.35
