@@ -70,7 +70,8 @@ class xt(ArchiveUnit):
                 if verdict is True:
                     try:
                         unit = handler(*pos_args, **key_args)
-                    except TypeError:
+                    except TypeError as error:
+                        self.unit.log_debug(F'handler {handler.name} failed: {error!s}')
                         return
                     if not self.fallback:
                         self.unit.log_info(F'handler {handler.name} can handle this input data')
