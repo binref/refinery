@@ -120,3 +120,7 @@ class TestFraming(TestBase):
     def test_bug_conditional_units_generate_empty_chunks(self):
         pipeline = load_pipeline('emit A | rex .. [| iff -t 1 | cfmt boom ]]')
         self.assertEqual(pipeline(), B'')
+
+    def test_units_can_overwrite_parent_metavars(self):
+        out, = load_pipeline('emit ABCD [| rex .... | rex B ]')
+        self.assertEqual(out['offset'], 1)

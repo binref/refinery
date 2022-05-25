@@ -295,6 +295,8 @@ class Chunk(bytearray):
         self._view = self._view or parent._view
         meta = self._meta
         for key, value in parent.meta.items():
+            if key in meta:
+                continue
             try:
                 costly = self._meta.DERIVATION_MAP[key].costly
             except KeyError:
