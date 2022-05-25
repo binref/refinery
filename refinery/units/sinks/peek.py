@@ -206,7 +206,7 @@ class peek(HexViewer):
             if self.args.escape:
                 lines = self._trydecode(data, None, txtsize, metrics.line_count)
             if self.args.decode:
-                for codec in ('UTF8', 'UTF-16LE', 'UTF-16', 'UTF-16BE'):
+                for codec in ('utf8', 'utf-16le', 'utf-16', 'utf-16be'):
                     lines = self._trydecode(data, codec, txtsize, metrics.line_count)
                     if lines:
                         codec = codec
@@ -221,7 +221,7 @@ class peek(HexViewer):
         def separator(title=None):
             if title is None or sepsize <= len(title) + 8:
                 return sepsize * '-'
-            return F'--{title}' + '-' * (sepsize - len(title) - 2)
+            return '-' * (sepsize - len(title) - 5) + F'[{title}]---'
 
         if self.args.brief:
             final = False
@@ -248,7 +248,7 @@ class peek(HexViewer):
         if lines:
             empty = False
             if not self.args.brief:
-                yield separator(F'CODEC={codec}' if codec else None)
+                yield separator(codec or None)
                 yield from lines
             else:
                 brief = next(iter(lines))
