@@ -595,6 +595,9 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
                 stream.write(output)
             return stream.getvalue()
 
+    def knows(self, key):
+        return super().__contains__(key) or self.cache.__contains__(key)
+
     def __contains__(self, key):
         return super().__contains__(key) or key in self.DERIVATION_MAP
 
