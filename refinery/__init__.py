@@ -31,7 +31,7 @@ combined.
 4. `refinery.units`: writing custom units, add command-line arguments, and how
    to use refinery units within Python code.
 """
-__version__ = '0.4.37'
+__version__ = '0.4.38'
 __distribution__ = 'binary-refinery'
 
 from typing import Dict, List, Optional, Type

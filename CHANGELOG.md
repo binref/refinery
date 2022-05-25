@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.38
+Fixes a critical bug in the meta variable propagation logic.
+
 ## Version 0.4.37
 - Adds the `jcalg` unit.
 - Adds the `byteswap` unit.
