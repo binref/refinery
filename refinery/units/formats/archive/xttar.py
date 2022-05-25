@@ -20,7 +20,7 @@ class xttar(ArchiveUnit):
                 if ustar < 257:
                     raise
                 stream.seek(ustar - 257)
-                archive = tarfile.open(fileobj=stream)       
+                archive = tarfile.open(fileobj=stream)
         for info in archive.getmembers():
             if not info.isfile():
                 continue
