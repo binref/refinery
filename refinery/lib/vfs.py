@@ -48,14 +48,15 @@ class VirtualFile:
     def node(self) -> int:
         return self.uuid.fields[1]
 
-    def mmap(self, length: int = 0, offset: int = 0) -> memoryview:
+    def mmap(self, length: int = 0, offset: int = 0) -> MemoryFile:
         """
         Emulate the result of an `mmap` call to the virtual file.
         """
         view = memoryview(self.data)
         if length:
             view = view[offset:offset + length]
-        return MemoryFile(view)
+        fd = MemoryFile(view, read_as_bytes=True, fileno=self.node)
+        return fd
 
     def open(self, mode: str) -> MemoryFile:
         """

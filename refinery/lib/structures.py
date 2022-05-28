@@ -240,7 +240,10 @@ class MemoryFile(Generic[T], io.IOBase):
         return len(data)
 
     def __getitem__(self, slice):
-        return self._data[slice]
+        result = self._data[slice]
+        if self.read_as_bytes and not isinstance(result, bytes):
+            result = bytes(result)
+        return result
 
 
 class order(str, enum.Enum):
