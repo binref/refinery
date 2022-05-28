@@ -9,12 +9,11 @@ class TestPDF(TestUnitBase):
         data = self.download_sample('76b19c1e705328cab4d98e546095eb5eb601d23d8102e6e0bfb0a8a6ab157366')
 
         unit = self.load(list=True)
-        self.assertEqual(list(data | unit), [
+        self.assertEqual({bytes(c) for c in data | unit}, {
             B'Metadata',
-            B'OpenAction/JS',
             B'Pages/Kids/0/Annots/0/NM',
             B'Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fq#4dB#67#7a#6f#4dV#75t#7a#4ew#6b.#73#77#66',
-        ])
+        })
 
         unit = self.load('Pages/*')
         name, swf = data | unit
