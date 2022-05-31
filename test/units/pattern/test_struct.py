@@ -21,6 +21,17 @@ class TestStructUnit(TestUnitBase):
         self.assertEqual(out.meta['type'], 0x34)
         self.assertEqual(out, body)
 
+    def test_variable_cleanup(self):
+        data = B'\x05ABCDE' B'BINARY' B'REFINERY'
+        unit = self.load('B{key:{0}}{_b:6}{_r:8}', '{_b}', '{_r}')
+        b, r = data | unit
+        self.assertNotIn('_b', b.meta)
+        self.assertNotIn('_r', b.meta)
+        self.assertNotIn('_b', r.meta)
+        self.assertNotIn('_r', r.meta)
+        self.assertEqual(b, B'BINARY')
+        self.assertEqual(r, B'REFINERY')
+
     def test_no_last_field(self):
         unit = self.load('6sB6s')
         self.assertEqual(bytes(B'Binary Refinery' | unit), B'Binary Refine')

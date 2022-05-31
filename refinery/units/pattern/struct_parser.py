@@ -162,11 +162,15 @@ class struct(Unit):
                 if last is None:
                     last = full
 
+                outputs = []
+
                 for template in self.args.outputs:
                     used = set()
-                    output = meta.format(template, self.codec, [full, *args], {_SHARP: last}, True, used=used)
+                    outputs.append(meta.format(template, self.codec, [full, *args], {_SHARP: last}, True, used=used))
                     for key in used:
                         meta.pop(key, None)
+
+                for output in outputs:
                     yield self.labelled(output, **meta)
 
             except EOF:
