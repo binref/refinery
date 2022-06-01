@@ -106,17 +106,6 @@ class jcalg(Unit):
         literal_bits = None
         literal_offset = None
 
-        def match(delta: int, length: int):
-            if delta <= 0:
-                raise ValueError
-            buffer = writer.getbuffer()
-            offset = -delta
-            rep, r = divmod(length, delta)
-            match = buffer[offset:offset + r]
-            if rep > 0:
-                match = buffer[offset:] * rep + match
-            writer.write(match)
-
         while True:
             if size and len(writer) >= size:
                 break
@@ -140,7 +129,7 @@ class jcalg(Unit):
                         match_length += 1
                     elif index <= 127:
                         match_length += 4
-                match(index, match_length)
+                writer.replay(index, match_length)
                 continue
             if not reader.jc_bit():
                 new_index = reader.jc_bits(7)
@@ -151,7 +140,7 @@ class jcalg(Unit):
                     base = reader.jc_bits(match_length + 1)
                 else:
                     index = new_index
-                    match(index, match_length)
+                    writer.replay(index, match_length)
                 continue
             one_byte_phrase_value = reader.jc_bits(4) - 1
             if one_byte_phrase_value == 0:

@@ -245,6 +245,16 @@ class MemoryFile(Generic[T], io.IOBase):
             result = bytes(result)
         return result
 
+    def replay(self, delta: int, length: int):
+        if delta not in range(self._cursor):
+            raise ValueError(F'The supplied delta {delta} is not in the valid range [0,{self._cursor}].')
+        offset = -delta - len(self) + self._cursor
+        rep, r = divmod(length, delta)
+        replay = self._data[offset:offset + r]
+        if rep > 0:
+            replay = bytes(self._data[offset:self._cursor]) * rep + replay
+        self.write(replay)
+
 
 class order(str, enum.Enum):
     big = '>'
