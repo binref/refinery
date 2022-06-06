@@ -22,6 +22,12 @@ T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
 UnpackType = Union[int, bool, float, bytes]
 
 
+def signed(k: int, bits: int):
+    M = 1 << bits
+    k = k & (M - 1)
+    return k - M if k >> (bits - 1) else k
+
+
 class EOF(EOFError):
     def __init__(self, rest: ByteString = B''):
         super().__init__('Unexpected end of buffer.')
@@ -127,16 +133,6 @@ class MemoryFile(Generic[T], io.IOBase):
         return isinstance(self._data, bytearray)
 
     def read(self, size: int = -1) -> T:
-        return self.read1(size)
-
-    def peek(self, size: int = -1) -> memoryview:
-        cursor = self._cursor
-        mv = memoryview(self._data)
-        if size is None or size < 0:
-            return mv[cursor:]
-        return mv[cursor:cursor + size]
-
-    def read1(self, size: int = -1) -> T:
         beginning = self._cursor
         if size is None or size < 0:
             self._cursor = len(self._data)
@@ -146,6 +142,16 @@ class MemoryFile(Generic[T], io.IOBase):
         if self.read_as_bytes and not isinstance(result, bytes):
             result = bytes(result)
         return result
+
+    def peek(self, size: int = -1) -> memoryview:
+        cursor = self._cursor
+        mv = memoryview(self._data)
+        if size is None or size < 0:
+            return mv[cursor:]
+        return mv[cursor:cursor + size]
+
+    def read1(self, size: int = -1) -> T:
+        return self.read(size)
 
     def _find_linebreak(self, beginning: int, end: int) -> int:
         if not isinstance(self._data, memoryview):
@@ -226,8 +232,17 @@ class MemoryFile(Generic[T], io.IOBase):
             self._cursor = size
         del self._data[self._cursor:]
 
-    def write_byte(self, byte: int) -> bool:
-        return self.write(bytes((byte,))) == 1
+    def write_byte(self, byte: int) -> None:
+        try:
+            cursor = self._cursor
+            if cursor < len(self._data):
+                self._data[cursor] = byte
+            else:
+                self._data.append(byte)
+        except Exception as T:
+            raise OSError(str(T)) from T
+        else:
+            self._cursor += 1
 
     def write(self, data: ByteString) -> int:
         beginning = self._cursor
@@ -245,11 +260,11 @@ class MemoryFile(Generic[T], io.IOBase):
             result = bytes(result)
         return result
 
-    def replay(self, delta: int, length: int):
-        if delta not in range(self._cursor):
-            raise ValueError(F'The supplied delta {delta} is not in the valid range [0,{self._cursor}].')
-        offset = -delta - len(self) + self._cursor
-        rep, r = divmod(length, delta)
+    def replay(self, offset: int, length: int):
+        if offset not in range(self._cursor + 1):
+            raise ValueError(F'The supplied delta {offset} is not in the valid range [0,{self._cursor}].')
+        rep, r = divmod(length, offset)
+        offset = -offset - len(self) + self._cursor
         replay = self._data[offset:offset + r]
         if rep > 0:
             replay = bytes(self._data[offset:self._cursor]) * rep + replay
@@ -465,15 +480,18 @@ class StructReader(MemoryFile[T]):
         """
         return self.read_integer(4)
 
+    def u8(self) -> int: return self.read_integer(8)
+    def i8(self) -> int: return signed(self.read_integer(8), 8)
+
     def u16(self) -> int: return self.read_integer(16)
     def u32(self) -> int: return self.read_integer(32)
     def u64(self) -> int: return self.read_integer(64)
-    def i16(self) -> int: return self.read_struct('h', True)
-    def i32(self) -> int: return self.read_struct('l', True)
-    def i64(self) -> int: return self.read_struct('q', True)
+    def i16(self) -> int: return signed(self.read_integer(16), 16)
+    def i32(self) -> int: return signed(self.read_integer(32), 32)
+    def i64(self) -> int: return signed(self.read_integer(64), 64)
 
     def read_byte(self) -> int: return self.read_integer(8)
-    def read_char(self) -> int: return self.read_struct('b', True)
+    def read_char(self) -> int: return signed(self.read_integer(8), 8)
 
     def read_terminated_array(self, alignment: int, terminator: bytes):
         pos = self.tell()
