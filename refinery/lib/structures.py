@@ -317,6 +317,10 @@ class StructReader(MemoryFile[T]):
     def byteorder_name(self) -> str:
         return 'big' if self.bigendian else 'little'
 
+    @property
+    def remaining_bytes(self) -> int:
+        return len(self._data) - self.tell()
+
     def seek(self, offset, whence=io.SEEK_SET) -> int:
         self._bbits = 0
         self._nbits = 0
