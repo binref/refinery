@@ -5,45 +5,7 @@ from typing import Optional
 
 from refinery.units import Unit
 from refinery.lib.structures import MemoryFile, StructReader
-
-
-class CompressionSourceData(StructReader[memoryview]):
-    """
-    A helper class to read bitwise from the compressed input stream.
-    """
-
-    def __init__(self, data: bytearray):
-        super().__init__(memoryview(data), bigendian=False)
-        self._bit_buffer_data: int = 0
-        self._bit_buffer_size: int = 0
-
-    def jc_integer(self) -> int:
-        value = 1
-        while True:
-            chunk = self.jc_bits(2)
-            value = (value << 1) + (chunk >> 1)
-            if not chunk & 1:
-                return value
-
-    def jc_bit(self) -> int:
-        return self.jc_bits(1)
-
-    def jc_bits(self, count):
-        offset = self._bit_buffer_size - count
-        bits: int = self._bit_buffer_data
-        if offset < 0:
-            more = count - self._bit_buffer_size
-            assert more <= 32
-            self._bit_buffer_data = self.u32()
-            self._bit_buffer_size = 32
-            bits = (bits << more) | self.jc_bits(more)
-        else:
-            bits >>= offset
-            self._bit_buffer_data ^= bits << offset
-            self._bit_buffer_size -= count
-        assert self._bit_buffer_data.bit_length() <= self._bit_buffer_size
-        assert bits.bit_length() <= count
-        return bits
+from refinery.lib.decompression import BitBufferedReader
 
 
 class jcalg(Unit):
@@ -58,7 +20,7 @@ class jcalg(Unit):
         super().__init__(ignore_header=ignore_header)
 
     def process(self, data: bytearray):
-        with MemoryFile() as output, CompressionSourceData(data) as reader:
+        with MemoryFile() as output, StructReader(data) as reader:
             if reader.read(2) != B'JC':
                 self.log_warn('data does not begin with magic sequence, assuming that header is missing')
                 reader.seek(0)
@@ -100,27 +62,28 @@ class jcalg(Unit):
             checksum &= 0xFFFFFFFF
         return checksum
 
-    def _decompress(self, writer: MemoryFile, reader: CompressionSourceData, size: Optional[int] = None):
+    def _decompress(self, writer: MemoryFile, reader_: StructReader[bytearray], size: Optional[int] = None):
         index = 1
         base = 8
         literal_bits = None
         literal_offset = None
+        flags = BitBufferedReader(reader_, 32)
 
         while True:
             if size and len(writer) >= size:
                 break
-            if reader.jc_bit():
-                b = reader.jc_bits(literal_bits) + literal_offset
+            if flags.next():
+                b = flags.read(literal_bits) + literal_offset
                 b = b & 0xFF
                 writer.write_byte(b)
                 continue
-            if reader.jc_bit():
-                high = reader.jc_integer()
+            if flags.next():
+                high = flags.variable_length_integer()
                 if(high == 2):
-                    match_length = reader.jc_integer()
+                    match_length = flags.variable_length_integer()
                 else:
-                    index = ((high - 3) << base) + reader.jc_bits(base)
-                    match_length = reader.jc_integer()
+                    index = ((high - 3) << base) + flags.read(base)
+                    match_length = flags.variable_length_integer()
                     if index >= 0x10000:
                         match_length += 3
                     elif index >= 0x37FF:
@@ -131,33 +94,33 @@ class jcalg(Unit):
                         match_length += 4
                 writer.replay(index, match_length)
                 continue
-            if not reader.jc_bit():
-                new_index = reader.jc_bits(7)
-                match_length = 2 + reader.jc_bits(2)
+            if not flags.next():
+                new_index = flags.read(7)
+                match_length = 2 + flags.read(2)
                 if new_index == 0:
                     if match_length == 2:
                         break
-                    base = reader.jc_bits(match_length + 1)
+                    base = flags.read(match_length + 1)
                 else:
                     index = new_index
                     writer.replay(index, match_length)
                 continue
-            one_byte_phrase_value = reader.jc_bits(4) - 1
+            one_byte_phrase_value = flags.read(4) - 1
             if one_byte_phrase_value == 0:
                 writer.write_byte(0)
             elif one_byte_phrase_value > 0:
                 b = writer.getbuffer()[-one_byte_phrase_value]
                 writer.write_byte(b)
             else:
-                if not reader.jc_bit():
-                    literal_bits = 7 + reader.jc_bit()
+                if not flags.next():
+                    literal_bits = 7 + flags.next()
                     literal_offset = 0
                     if literal_bits != 8:
-                        literal_offset = reader.jc_bits(8)
+                        literal_offset = flags.read(8)
                     continue
                 while True:
                     for _ in range(0x100):
-                        b = reader.jc_bits(8)
+                        b = flags.read(8)
                         writer.write_byte(b)
-                    if not reader.jc_bit():
+                    if not flags.next():
                         break
