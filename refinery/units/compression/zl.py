@@ -38,7 +38,7 @@ class zl(Unit):
         else:
             mode_candidates = [-self.args.window, self.args.window | 0x20, 0]
         for mode in mode_candidates:
-            self.log_debug(F'using mode {mode:+2X} for decompression')
+            self.log_debug(F'using mode {mode} for decompression')
             try:
                 z = zlib.decompressobj(mode)
                 return z.decompress(data)
