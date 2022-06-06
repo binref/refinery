@@ -6,7 +6,6 @@ import sys
 import os
 import textwrap
 import codecs
-import string
 
 from refinery.units.sinks import Arg, HexViewer
 from refinery.lib.meta import ByteStringWrapper, metavars, CustomStringRepresentation, SizeInt
@@ -136,11 +135,12 @@ class peek(HexViewer):
                 result.append(decoded[k:k + width])
             return result
         try:
-            printable = string.printable + string.whitespace
+            import unicodedata
+            unprintable = {'Cc', 'Cf', 'Co', 'Cs'}
             self.log_info(F'trying to decode as {codec}.')
             decoded = codecs.decode(data, codec, errors='strict')
-            count = sum(x in printable for x in decoded)
-            ratio = count / len(data)
+            count = sum(unicodedata.category(c) not in unprintable for c in decoded)
+            ratio = count / len(decoded)
         except UnicodeDecodeError as DE:
             self.log_info('decoding failed:', DE.reason)
             return None
