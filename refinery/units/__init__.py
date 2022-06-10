@@ -361,7 +361,7 @@ class Arg(Argument):
         if isinstance(value, str):
             try: return cls[value]
             except KeyError: pass
-            needle = value.upper()
+            needle = value.upper().replace('-', '_')
             for item in cls:
                 if item.name.upper() == needle:
                     return item
@@ -446,7 +446,7 @@ class Arg(Argument):
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
         """
-        cnames = [c.name for c in choices]
+        cnames = [c.name.replace('_', '-') for c in choices]
         metavar = metavar or choices.__name__
         return cls(*args, group=group, help=help, metavar=metavar, dest=dest, choices=cnames, type=str)
 
