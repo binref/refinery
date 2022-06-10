@@ -96,7 +96,8 @@ class xxhash:
             v4 = self.xxhround(v4, s4)
             mv = mv[16 - self.memsize:]
             self.memsize = 0
-        for i in range(0, len(mv), 16):
+        i = 0
+        while i <= len(mv) - 16:
             bfr = mv[i:i + 16]
             if len(bfr) < 16: break
             s1, s2, s3, s4 = struct.unpack('<IIII', bfr)
@@ -104,6 +105,7 @@ class xxhash:
             v2 = self.xxhround(v2, s2)
             v3 = self.xxhround(v3, s3)
             v4 = self.xxhround(v4, s4)
+            i += 16
         self.memsize = memsize = len(mv) - i
         assert memsize <= 16
         self.mem[:memsize] = mv[i:]
