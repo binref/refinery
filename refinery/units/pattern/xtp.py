@@ -184,9 +184,18 @@ class xtp(PatternExtractor):
                 value = value[:pos]
         if not self.args.filter:
             return value
+        if name == indicators.hostname.name:
+            if all(part.isdigit() for part in value.split(B'.')):
+                name = indicators.ipv4.name
+            elif B'.' not in value:
+                name = indicators.ipv6.name
+            else:
+                name = indicators.domain.name
         if name == indicators.ipv4.name:
             ocets = [int(x) for x in value.split(B'.')]
             if ocets.count(0) >= 3:
+                return None
+            if self.args.filter > 2 and sum(ocets) < 10:
                 return None
             for area in (
                 data[pos - 20 : pos + 20],
