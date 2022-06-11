@@ -144,11 +144,7 @@ class VirtualFileSystem:
             self._by_name[file.name] = file
             self._by_node[file.node] = file
 
-    def __enter__(self):
-        """
-        The context handler for the virtual file system initializes all hooks and releases them
-        when the context is left.
-        """
+    def acquire(self):
         self._VFS_LOCK.acquire()
 
         def hook_open(file, *args, **kwargs):
@@ -188,10 +184,20 @@ class VirtualFileSystem:
         mmap.mmap = hook_mmap
         return self
 
-    def __exit__(self, *args):
+    def release(self):
         builtins.open = self._builtins_open
         os.stat = self._os_stat
         mmap.mmap = self._mmap_mmap
         io.open = self._io_open
         self._VFS_LOCK.release()
+
+    def __enter__(self):
+        """
+        The context handler for the virtual file system initializes all hooks and releases them
+        when the context is left.
+        """
+        return self.acquire()
+
+    def __exit__(self, *args):
+        self.release()
         return False
