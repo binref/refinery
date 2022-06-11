@@ -8,15 +8,20 @@ import hashlib
 import io
 import os
 import sys
+import stat
 
 from refinery.lib.meta import SizeInt
 from refinery.lib.loader import load_pipeline
 from test import SampleStore
 
 try:
-    from IPython.core.magic import register_line_magic
+    from IPython.core import magic
 except ImportError:
     def register_line_magic(x): return x
+else:
+    def register_line_magic(f):
+        setattr(f, magic.MAGIC_NO_VAR_EXPAND_ATTR, True)
+        return magic.register_line_magic(f)
 
 
 class FakeTTY:
@@ -36,16 +41,38 @@ os.environ['REFINERY_TERMSIZE'] = '120'
 
 store = SampleStore()
 _open = builtins.open
+_stat = os.stat
 _root = os.path.abspath(os.getcwd())
 
 
-def _virtual_fs_open(name, mode='r'):
+def _virtual_fs_stat(name):
+    try:
+        data = store.cache[name]
+    except KeyError:
+        return _stat(name)
+    M = stat.S_IMODE(0xFFFF) | stat.S_IFREG
+    S = len(data)
+    return os.stat_result((
+        M,  # ST_MODE
+        0,  # ST_INO
+        0,  # ST_DEV
+        1,  # ST_NLINK
+        0,  # ST_UID
+        0,  # ST_GID
+        S,  # ST_SIZE
+        0,  # ST_ATIME
+        0,  # ST_MTIME
+        0,  # ST_CTIME
+    ))
+
+
+def _virtual_fs_open(name, mode='r', *args, **kwargs):
     path = os.path.abspath(name)
     directory = os.path.abspath(os.path.dirname(path))
     file_name = os.path.basename(path)
 
     if 'b' not in mode or directory != _root:
-        return _open(name, mode)
+        return _open(name, mode, *args, **kwargs)
 
     if 'r' in mode:
         try:
@@ -62,6 +89,8 @@ def _virtual_fs_open(name, mode='r'):
 
 
 builtins.open = _virtual_fs_open
+os.stat = _virtual_fs_stat
+io.open = _virtual_fs_open
 sys.stderr = sys.stdout
 
 

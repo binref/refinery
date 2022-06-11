@@ -674,14 +674,12 @@ class DelayedArgument(LazyEvaluation):
                 return stream.read(bounds.stop)
         try:
             path: Path = one(Path.cwd().glob(pattern))
-        except NotImplementedError:
+        except (NotImplementedError, LookupError):
             path: Path = Path(pattern)
-        except LookupError:
-            path = None
-        if not path or not path.exists() or not path.is_file():
-            raise ArgumentTypeError(F'File not found: {pattern}')
         try:
             return read()
+        except FileNotFoundError:
+            raise ArgumentTypeError(F'File not found: {pattern}')
         except ParserVariableMissing:
             return read
 
