@@ -731,7 +731,7 @@ class DelayedArgument(LazyEvaluation):
         return extract
 
     def _interpret_variable(self, name: str, obj: Any):
-        if isbuffer(obj) or isinstance(obj, int):
+        if isbuffer(obj) or isinstance(obj, int) or obj is None:
             return obj
         if isinstance(obj, str):
             return utf8(obj)
@@ -1042,6 +1042,8 @@ class DelayedBinaryArgument(DelayedArgument):
         if not isbuffer(value):
             if isinstance(value, str):
                 return value.encode('utf8')
+            if not value:
+                return B''
             raise ArgumentTypeError(
                 F'The expression {self.expression} returned a value of type {type(value).__name__}, '
                 R'which could not be converted to a byte string.'
