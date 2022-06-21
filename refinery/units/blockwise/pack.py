@@ -58,7 +58,11 @@ class pack(BlockTransformationBase):
                 0x10: b'0x'
             }.get(base, B'')
 
-        converter = BaseUnit(base, not self.args.bigendian)
+        converter = BaseUnit(
+            base,
+            little_endian=not self.args.bigendian,
+            strip_padding=True,
+        )
 
         for n in self.chunk(data, raw=True):
             converted = converter.reverse(n)
