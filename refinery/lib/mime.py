@@ -55,6 +55,7 @@ FileTypeMap = {
     'application/vnd.hp-pcl'        : 'pcl',
     'application/vnd.lotus-1-2-3'   : '123',
     'application/vnd.mozilla.xul+xml' : 'xul',
+    'application/vnd.ms-cab-compressed' : 'cab',
     'application/vnd.ms-excel'      : 'xls',
     'application/vnd.ms-fontobject' : 'eot',
     'application/vnd.ms-powerpoint' : 'ppt',
