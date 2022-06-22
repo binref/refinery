@@ -6,9 +6,10 @@ json module in order to support custom encoding of already serializable types.
 """
 from typing import List, Tuple, Union
 
-import uuid
+import datetime
 import json
 import re
+import uuid
 
 
 class JSONEncoderExMeta(type):
@@ -71,6 +72,11 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
         uid = str(uuid.uuid4())
         self.substitute[uid] = representation
         return uid
+
+    def default(self, obj):
+        if isinstance(obj, datetime.datetime):
+            return obj.isoformat(' ', 'seconds')
+        return super().default(obj)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

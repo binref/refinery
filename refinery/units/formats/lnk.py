@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units.formats import Unit
-from refinery.lib.structures import MemoryFile
 from refinery.units.sinks.ppjson import ppjson
+from refinery.lib.structures import MemoryFile
+from refinery.lib.json import JSONEncoderEx
 
 
 class lnk(Unit):
@@ -21,5 +22,7 @@ class lnk(Unit):
 
     def process(self, data):
         parsed = self._LnkParse3.lnk_file(MemoryFile(data)).get_json()
-        yield from ppjson(tabular=self.args.tabular)._pretty_output(
-            parsed, indent=4, ensure_ascii=False)
+        with JSONEncoderEx as encoder:
+            pp = ppjson(tabular=self.args.tabular)
+            yield from pp._pretty_output(
+                parsed, indent=4, cls=encoder, ensure_ascii=False)
