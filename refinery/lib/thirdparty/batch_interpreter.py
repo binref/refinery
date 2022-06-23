@@ -238,7 +238,7 @@ class BatchDeobfuscator:
         result = ''
         state = _S.INIT
         stack = []
-        for counter, token in enumerate(command):
+        for token in command:
             if state == _S.INIT:
                 if token == _T.QUOTE:
                     state = _S.STRING
@@ -284,15 +284,18 @@ class BatchDeobfuscator:
                 else:
                     result += token
             elif state == _S.VARIABLE_TYPE1:
-                if token == _T.V1 and result[-1] != _T.V1:
+                if token.isdigit() and result[-1] == _T.V1:
+                    result += token
+                    state = stack.pop()
+                elif token == _T.V1 and result[-1] != _T.V1:
                     result += _T.V1
                     value = self.evaluate_variable(lno, result[variable_start:].lower())
                     result = result[:variable_start]
                     result += value
                     state = stack.pop()
                 elif token == _T.V1:
+                    variable_start = len(result)
                     result += token
-                    variable_start = counter
                 elif token == _T.QUOTE:
                     if stack[-1] == _S.STRING:
                         result += token
@@ -313,8 +316,8 @@ class BatchDeobfuscator:
                     result += value
                     state = stack.pop()
                 elif token == _T.V2:
+                    variable_start = len(result)
                     result += token
-                    variable_start = counter
                 elif token == _T.QUOTE:
                     if stack[-1] == _S.STRING:
                         result += token
@@ -368,6 +371,8 @@ class BatchDeobfuscator:
             depth = 0
             for lno, line in enumerate(lines):
                 if lno in used:
+                    continue
+                if not line.value:
                     continue
                 cmd = line.value.split()[0].lower()
                 cmd, _, _ = cmd.partition('/')
