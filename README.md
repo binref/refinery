@@ -119,7 +119,7 @@ List PE file sections with their corresponding SHA-256 hash:
 ```
 emit file.exe | vsect [| sha256 -t | cfmt {} {path} ]]
 ```
-Recursively list all files in the current directory SHA-256 hash:
+Recursively list all files in the current directory with their respective SHA-256 hash:
 ```
 ef "**" [| sha256 -t | cfmt {} {path} ]]
 ```
