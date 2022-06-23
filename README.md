@@ -37,25 +37,22 @@ The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [3-Clau
 
 The refinery requires at least **Python 3.7**. It is recommended to install it into its own [virtual environment][venv]: The package has a **lot** of dependencies, and installing it into your global Python is somewhat prone to dependency conflicts. Also, since the toolkit introduces a large number of new commands, there is a good chance that some of these will clash on some systems, and keeping them in their own separate virtual environment is one way to prevent that.
 
-If you want to have all refinery commands available in your shell at all times, you also have the option to choose a _prefix_ for the installation, which will be put in front of every command shim that is installed. For example, if you choose `r.` as your prefix, then the [emit][] unit will be installed as the command `r.emit`. An added benefit is that you can type `r.` and hammer <kbd>Tab</kbd> twice to get a list of all available refinery commands. Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket. 
-
-If you specify the special prefix `!` (a single exclamation mark), then the refinery will be installed in library mode and no command shims will be created at all.
+If you want to have all refinery commands available in your shell at all times (i.e. without having to switch to a custom virtual environment), you also have the option to choose a _prefix_ for the installation, which will be put in front of every command shim that is installed. For example, if you choose `r.` as your prefix, then the [emit][] unit will be installed as the command `r.emit`. An added benefit is that you can type `r.` and hammer <kbd>Tab</kbd> twice to get a list of all available refinery commands. Note however that no prefix is assumed in documentation and it is a development goal of refinery to _not_ clash on most systems. The author does not use a prefix and provides this option as a safety blanket. 
 
 ## Installation
 
-To install or update refinery manually, simply set the environment variable `REFINERY_PREFIX` to the prefix you want and use pip. For example:
+The most straightforward way to install and update refinery is via pip:
 ```
-REFINERY_PREFIX=r. pip3 install -U binary-refinery
+pip install -U binary-refinery
 ```
-to install refinery into the current Python environment with prefix `r.`. As mentioned above, the special prefix `!` will have the effect that no shell commands are created and the refinery will be installed only as a library. If you want to install the current refinery `HEAD`, you can install the master of this repository instead. The following will install the very latest refinery commit:
+If you want to choose a prefix for the installed commands, you have to specify it via the environment variable `REFINERY_PREFIX`. For example, the following command will install refinery into the current Python environment with prefix `r.`:
 ```
-pip3 install -U git+git://github.com/binref/refinery.git
+REFINERY_PREFIX=r. pip install -U binary-refinery
 ```
-To update refinery, the most reliable option is to run
+Specifying the special prefix `!` will have the effect that no shell commands are created at all, and binary refinery will be installed only as a library. If you want to install the current refinery `HEAD`, you can repeat all of the above steps, specifying this repository instead of the pip package. For example, the following will install the very latest refinery commit:
 ```
-pip uninstall -y binary-refinery
+pip install -U git+git://github.com/binref/refinery.git
 ```
-and then install it again. This will be a lot faster than installing it, because resolving dependencies is what takes a lot of time during the install of binary refinery.
 
 ## Heavyweight Dependencies
 
