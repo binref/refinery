@@ -244,15 +244,37 @@ class MemoryFile(Generic[T], io.IOBase):
         else:
             self._cursor += 1
 
-    def write(self, data: ByteString) -> int:
+    def write(self, data: Iterable[int]) -> int:
+        out = self._data
+        end = len(out)
         beginning = self._cursor
-        self._cursor += len(data)
+        if beginning == end:
+            out[end:] = data
+            self._cursor = end = len(out)
+            return end - beginning
         try:
-            self._data[beginning:self._cursor] = data
-        except Exception as T:
-            self._cursor = beginning
-            raise OSError(str(T)) from T
-        return len(data)
+            size = len(data)
+        except Exception:
+            it = iter(data)
+            for cursor, b in enumerate(it, beginning):
+                out[cursor] = b
+                if cursor >= end - 1:
+                    break
+            else:
+                cursor += 1
+                self._cursor = cursor
+                return cursor - beginning
+            out[end:] = it
+        else:
+            self._cursor += size
+            try:
+                self._data[beginning:self._cursor] = data
+            except Exception as T:
+                self._cursor = beginning
+                raise OSError(str(T)) from T
+            return size
+        self._cursor = end = len(out)
+        return end - beginning
 
     def __getitem__(self, slice):
         result = self._data[slice]
