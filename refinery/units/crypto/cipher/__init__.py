@@ -297,7 +297,7 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
         super().__init__(key=key, nonce=nonce, magic=magic, offset=offset, rounds=rounds)
 
 
-class LatinCipherStandardUnit(StandardCipherUnit):
+class LatinCipherStandardUnit(StandardCipherUnit, abstract=True):
     def __init__(self, key, nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY'):
         super().__init__(key, nonce=nonce)
 
