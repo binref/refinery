@@ -171,7 +171,9 @@ class struct(Unit):
                         meta.pop(key, None)
 
                 for output in outputs:
-                    yield self.labelled(output, **meta)
+                    chunk = self.labelled(output, **meta)
+                    chunk.set_next_batch(index)
+                    yield chunk
 
             except EOF:
                 leftover = repr(SizeInt(len(reader) - checkpoint)).strip()

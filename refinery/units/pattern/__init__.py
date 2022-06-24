@@ -111,10 +111,14 @@ class PatternExtractorBase(Unit, abstract=True):
 
         if self.args.stripspace:
             data = re.sub(BR'\s+', B'', data)
-        for match in self.matchfilter(self.matches(memoryview(data), pattern)):
+        for k, match in enumerate(self.matchfilter(self.matches(memoryview(data), pattern))):
             for transform in transforms:
                 t = transform(match)
-                if t is not None: yield t
+                if t is None:
+                    continue
+                t = self.labelled(t)
+                t.set_next_batch(k)
+                yield t
 
 
 class PatternExtractor(PatternExtractorBase, abstract=True):

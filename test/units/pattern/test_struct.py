@@ -3,6 +3,8 @@
 from struct import pack
 from zlib import crc32
 
+from refinery.lib.loader import load_pipeline as L
+
 from .. import TestUnitBase
 
 
@@ -54,3 +56,7 @@ class TestStructUnit(TestUnitBase):
             B'\x03' b'bar'
         )
         self.assertListEqual([b'\x03foo\x03bar'], list(data | unit))
+
+    def test_auto_batch(self):
+        pl = L(R'emit ABCDEF | struct -m {k:B}{:1}{:1} {2} {3} [[| pop a | cfmt {a}{k} ]]')
+        self.assertEqual(pl(), B'B65E68')

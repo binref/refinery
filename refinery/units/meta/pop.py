@@ -4,13 +4,15 @@ from typing import Iterable, Iterator
 from itertools import chain
 
 from refinery.units import Arg, Unit, Chunk
+from refinery.lib.argformats import DelayedNumSeqArgument
 from refinery.lib.meta import check_variable_name
 
 
 class _popcount:
     _MERGE_SYMBOL = '@'
 
-    def __init__(self, name):
+    def __init__(self, name: str):
+        self.conversion = None
         if name == self._MERGE_SYMBOL:
             self.count = 1
             self.field = ...
@@ -21,8 +23,11 @@ class _popcount:
             else:
                 count = int(name, 0)
         except Exception:
+            name, colon, conversion = name.partition(':')
             self.count = 1
             self.field = check_variable_name(name)
+            if colon == ':':
+                self.conversion = conversion
         else:
             self.count = count
             self.field = None
@@ -33,14 +38,17 @@ class _popcount:
         self.current = self.count
         return self
 
-    def into(self, meta: dict, item: Chunk):
+    def into(self, meta: dict, chunk: Chunk):
         if self.current < 1:
             return False
         if self.field:
             if self.field is ...:
-                meta.update(item.meta)
+                meta.update(chunk.meta)
             else:
-                meta[self.field] = item
+                if self.conversion:
+                    delayed = DelayedNumSeqArgument(self.conversion, seed=chunk, typecheck=False)
+                    chunk = delayed(chunk)
+                meta[self.field] = chunk
         self.current -= 1
         return True
 
@@ -52,12 +60,16 @@ class pop(Unit):
     """
     def __init__(
         self,
-        *names: Arg(type=str, metavar=F'[name|count|{_popcount._MERGE_SYMBOL}]', help=(
+        *names: Arg(type=str, metavar=F'[name[:conversion]|count|{_popcount._MERGE_SYMBOL}]', help=(
             R'Specify either the name of a single variable to receive the contents of an input chunk, or '
             R'an integer expression that specifies a number of values to be removed from the input without '
             F'storing them. Additionally, it is possible to specify the symbol "{_popcount._MERGE_SYMBOL}" '
-            R'to remove a single chunk from the input and merge its meta data into the following ones. '
-            F'By default, a single merge is performed.'
+            R'to remove a single chunk from the input and merge its meta data into the following ones. By '
+            R'default, a single merge is performed. When a variable name is specified, a sequence of '
+            R'transformations can be appended to be applied before storing it. For example, the argument '
+            R'k:le:b64 would first decode the chunk using base64, then convert it to an integer in little '
+            R'endian format, and store the integer result in the variable `k`. The visual aid is that the '
+            R'content is passed from right to left through all conversions, into the variable `k`.'
         ))
     ):
         if not names:

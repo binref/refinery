@@ -1058,8 +1058,8 @@ class DelayedNumSeqArgument(DelayedArgument):
     attempts to evalue the input as a Python expression.
     """
 
-    def __init__(self, expression: str, typecheck=True):
-        super().__init__(expression)
+    def __init__(self, expression: str, reverse=False, seed=None, typecheck=True):
+        super().__init__(expression, reverse, seed)
         self.typecheck = typecheck
 
     def default_handler(self, expression: str) -> Iterable[int]:
@@ -1263,19 +1263,19 @@ expressions.
 """
 
 
-def numseq(expression: Union[int, str], typecheck=True) -> Union[Iterable[int], DelayedNumSeqArgument]:
+def numseq(expression: Union[int, str], reverse=False, seed=None, typecheck=True) -> Union[Iterable[int], DelayedNumSeqArgument]:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedNumSeqArgument`.
     """
     if isinstance(expression, int):
         return RepeatedInteger(expression)
-    arg = DelayedNumSeqArgument(expression, typecheck)
+    arg = DelayedNumSeqArgument(expression, reverse=reverse, seed=seed, typecheck=typecheck)
     with suppress(TooLazy):
         return arg()
     return arg
 
 
-def multibin(expression: Union[str, bytes, bytearray], reverse: bool = False, seed=None) -> Union[bytes, DelayedArgument]:
+def multibin(expression: Union[str, bytes, bytearray], reverse=False, seed=None) -> Union[bytes, DelayedArgument]:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedBinaryArgument`.
     """

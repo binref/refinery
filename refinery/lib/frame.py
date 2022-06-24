@@ -179,7 +179,8 @@ class Chunk(bytearray):
         path: Tuple[int] = (),
         view: Optional[Tuple[bool]] = None,
         meta: Optional[Dict[str, Any]] = None,
-        fill: Optional[bool] = None
+        fill_scope: Optional[bool] = None,
+        fill_batch: Optional[int] = None
     ):
         if data is None:
             bytearray.__init__(self)
@@ -194,11 +195,13 @@ class Chunk(bytearray):
             path = path or data.path
             view = view or data.view
             meta = meta or data.meta
-            fill = fill or data.fill
+            fill_scope = fill_scope or data._fill_scope
+            fill_batch = fill_batch or data._fill_batch
 
         self._view: Tuple[bool] = view
         self._path: Tuple[int] = path
-        self._fill: Optional[bool] = fill
+        self._fill_scope: Optional[bool] = fill_scope
+        self._fill_batch: Optional[bool] = fill_batch
 
         self._meta = m = LazyMetaOracle(self)
         if meta is not None:
@@ -208,12 +211,11 @@ class Chunk(bytearray):
     def guid(self) -> int:
         return hash((id(self), *(id(v) for v in self.meta.values())))
 
-    @property
-    def fill(self) -> bool:
-        return self._fill
-
     def set_next_scope(self, visible: bool) -> None:
-        self._fill = visible
+        self._fill_scope = visible
+
+    def set_next_batch(self, batch: int) -> None:
+        self._fill_batch = batch
 
     def truncate(self, gauge):
         self._path = self._path[:gauge]
@@ -226,12 +228,21 @@ class Chunk(bytearray):
         visibility of the `refinery.lib.frame.Chunk` at each new layer is inherited from its
         current visibility.
         """
-        if self._fill is not None:
-            self._view += (self.visible,) * (len(ids) - 1) + (self._fill,)
-            self._fill = None
+        if not ids:
+            raise ValueError('Empty nesting')
+        if self._fill_scope is not None:
+            self._view += (self.visible,) * (len(ids) - 1) + (self._fill_scope,)
+            self._fill_scope = None
         else:
             self._view += (self.visible,) * len(ids)
-        self._path += ids
+        if self._fill_batch is not None and len(ids) > 1:
+            if ids[-1] != 0:
+                raise RuntimeError('Expected flat nesting at lowest frame layer')
+            self._path += ids[:-1]
+            self._path += (self._fill_batch,)
+            self._fill_batch = None
+        else:
+            self._path += ids
         return self
 
     @property
@@ -317,22 +328,20 @@ class Chunk(bytearray):
         Classmethod to read a serialized chunk from an unpacker stream.
         """
         item = next(stream)
-        path, view, meta, fill, data = item
-        return cls(data, path, view=view, meta=meta, fill=fill)
+        path, view, meta, fs, data = item
+        return cls(data, path, view=view, meta=meta, fill_scope=fs)
 
     def pack(self):
         """
         Return the serialized representation of this chunk.
         """
-        obj = (self._path, self._view, self._meta.serializable(), self._fill, self)
+        obj = (self._path, self._view, self._meta.serializable(), self._fill_scope, self)
         return msgpack.packb(obj)
 
     def __repr__(self) -> str:
         layer = '/'.join('#' if not s else str(p) for p, s in zip(self._path, self._view))
         layer = layer and '/' + layer
-        metas = ','.join(self._meta)
-        metas = metas and F' meta=({metas})'
-        return F'<chunk{layer}{metas} size={len(self)} data={repr(bytes(self))}>'
+        return F'<chunk{layer}:{bytes(self)!r}>'
 
     def __iand__(self, other: Chunk):
         other_meta = other._meta
@@ -363,13 +372,13 @@ class Chunk(bytearray):
             bytearray.__setitem__(self, bounds, value)
 
     def copy(self) -> Chunk:
-        return self.__copy__()
+        return Chunk(self, self._path, self._view, self._meta, self._fill_scope, self._fill_batch)
 
     def __copy__(self):
-        return Chunk(self, self._path, self._view, self._meta, self._fill)
+        return self.copy()
 
     def __deepcopy__(self, memo):
-        dc = Chunk(self, self._path, self._view, self._fill)
+        dc = self.copy()
         memo[id(self)] = dc
         memo[id(self._meta)] = dc.meta
         for key, value in self._meta.items():

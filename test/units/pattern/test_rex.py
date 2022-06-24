@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from .. import TestUnitBase
+from refinery.lib.loader import load_pipeline as L
 
 
 class TestRex(TestUnitBase):
@@ -66,3 +67,7 @@ class TestRex(TestUnitBase):
         data = b'AXBXC'
         unit = self.load('(.)X(.)X(.)', '1{1}', '2{2}', '3{3}', '[]')
         self.assertEqual(unit(data), B''.join((B'1A', B'2B', B'3C')))
+
+    def test_auto_batch(self):
+        pl = L(R'emit Foo12Bar336 | rex (\\w+?)(\\d+) {2} {1} [[| pop k:eval ]| cfmt {k:x}{} ]')
+        self.assertEqual(pl(), B'cFoo150Bar')
