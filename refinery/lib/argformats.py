@@ -115,7 +115,7 @@ from typing import get_type_hints
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one
-from refinery.lib.meta import metavars
+from refinery.lib.meta import is_valid_variable_name, metavars
 
 FinalType = TypeVar('FinalType')
 
@@ -228,7 +228,7 @@ class SliceAgain(LazyEvaluation):
     Raised by `refinery.lib.argformats.sliceobj` to indicate that meta variables
     are required to compue this slice.
     """
-    def __init__(self, expr):
+    def __init__(self, expr: Union[DelayedBinaryArgument, str]):
         self.expr = expr
 
     def __call__(self, data):
@@ -249,15 +249,18 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
         return expression
     if isinstance(expression, int):
         return slice(expression, expression + 1)
-    try:
-        expression = DelayedBinaryArgument(expression)
-        expression = expression()
-    except TooLazy:
-        return SliceAgain(expression)
+    if isinstance(expression, (bytes, bytearray)):
+        expression = expression.decode('utf8')
 
-    expression = expression.decode('utf8')
+    if is_valid_variable_name(expression):
+        try:
+            return sliceobj(variables[expression], variables, range)
+        except (KeyError, TypeError):
+            return SliceAgain(expression)
+
     expression = expression or ':'
     sliced = expression.split(':')
+
     if not sliced or len(sliced) > 3:
         raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
     try:

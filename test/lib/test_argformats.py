@@ -75,7 +75,7 @@ class TestArgumentFormats(TestBase):
         self.assertEqual(pipeline(bytearray(10)), B'0123456789')
 
     def test_slices_can_be_variables(self):
-        pipeline = self.ldu('put', 'rg', '2:') [ self.ldu('snip', 'var:rg') ] # noqa
+        pipeline = self.ldu('put', 'rg', '2:') [ self.ldu('snip', 'rg') ] # noqa
         self.assertEqual(pipeline(b'FOOBAR'), B'OBAR')
 
     def test_inc(self):
