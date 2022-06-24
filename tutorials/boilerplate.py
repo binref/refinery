@@ -8,7 +8,10 @@ import hashlib
 import io
 import os
 import sys
+import re
 import stat
+
+os.environ['REFINERY_TERM_SIZE'] = '120'
 
 from refinery.lib.meta import SizeInt
 from refinery.lib.loader import load_pipeline
@@ -18,10 +21,12 @@ try:
     from IPython.core import magic
 except ImportError:
     def register_line_magic(x): return x
+    def register_cell_magic(x): return x
 else:
-    def register_line_magic(f):
-        setattr(f, magic.MAGIC_NO_VAR_EXPAND_ATTR, True)
-        return magic.register_line_magic(f)
+    def register_line_magic(f): # noqa
+        return magic.register_line_magic(magic.no_var_expand(f))
+    def register_cell_magic(f): # noqa
+        return magic.register_line_cell_magic(magic.no_var_expand(f))
 
 
 class FakeTTY:
@@ -36,8 +41,6 @@ class FakeTTY:
             b = b.decode('utf8')
         sys.stdout.write(b)
 
-
-os.environ['REFINERY_TERMSIZE'] = '120'
 
 store = SampleStore()
 _open = builtins.open
@@ -94,8 +97,12 @@ io.open = _virtual_fs_open
 sys.stderr = sys.stdout
 
 
-@register_line_magic
-def emit(line: str):
+@register_cell_magic
+def emit(line: str, cell=None):
+    if cell is not None:
+        line = line + re.sub(R'[\r\n]+\s*', '\x20', cell)
+        line = re.sub(R'(?<=\[|\])\x20*\|', '|', line)
+    load_pipeline.cache_clear()
     load_pipeline(F'emit {line}') | FakeTTY()
 
 
