@@ -172,7 +172,7 @@ class StandardCipherExecutable(CipherExecutable):
     _cipher_object_factory: ClassVar[CipherObjectFactory]
 
     def __new__(mcs, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
-        keywords = dict(abstract=bool(cipher))
+        keywords = dict(abstract=not cipher)
         try:
             keywords.update(blocksize=cipher.block_size)
         except AttributeError:
@@ -297,7 +297,7 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
         super().__init__(key=key, nonce=nonce, magic=magic, offset=offset, rounds=rounds)
 
 
-class LatinCipherStandardUnit(StandardCipherUnit, abstract=True):
+class LatinCipherStandardUnit(StandardCipherUnit):
     def __init__(self, key, nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY'):
         super().__init__(key, nonce=nonce)
 
