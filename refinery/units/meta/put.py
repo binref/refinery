@@ -17,12 +17,15 @@ class put(Unit):
     def __init__(
         self,
         name : Arg(help='The name of the variable to be used.', type=str),
-        value: Arg(help='The value for the variable.', type=functools.partial(numseq, typecheck=False))
+        value: Arg(help='The value for the variable. If no value is given, the entire current chunk is stored.',
+            type=functools.partial(numseq, typecheck=False)) = None
     ):
         super().__init__(name=check_variable_name(name), value=value)
 
     def process(self, data):
         value = self.args.value
+        if value is None:
+            value = data
         if not isinstance(value, (int, float)) and not isbuffer(value):
             try:
                 len(value)
