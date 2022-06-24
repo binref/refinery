@@ -8,6 +8,11 @@ Extract a NetWalker sample and its configuration from a PowerShell loader. The t
 
 A short tutorial extracting the strings (including C2 configuration) of an Amadey Loader sample. Revisits most of the concepts that were introduced in the tutorial.
 
+### [Volume 3 — SedUpLoader C2s][0x03]
+
+In this tutorial, we extract the C2 configuration from a SedUpLoader sample. The tutorial introduces the push/pop mechanic, which is used to first extract a decryption key, store it as a variable, continue to extract the C2 data, and then decrypt the C2 domains using the stored key.
+
 
 [0x01]: tbr-files.v0x01.netwalker.dropper.ipynb
 [0x02]: tbr-files.v0x02.amadey.loader.ipynb
+[0x03]: tbr-files.v0x03.seduploader.ipynb
