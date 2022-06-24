@@ -232,11 +232,17 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
                 if prefix != 's' or self.requires_prefix():
                     representation = F'{prefix}:{representation}'
         if representation is None:
-            p = sum(1 for c in self if c in range(0x21, 0x7F))
-            if p * 2 >= len(self):
-                from urllib.parse import quote
-                from string import printable
-                representation = F'q:{quote(self,printable)}'
+            printable = (
+                B'0123456789'
+                B'!#$%&()*,-./:;=?@[\\]^{}~'
+                B'abcdefghijklmnopqrstuvwxyz'
+                B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            )
+            p = sum(1 for c in self if c in printable)
+            if p >= len(self) * 0.8:
+                from urllib.parse import quote_from_bytes
+                quoted = quote_from_bytes(self, printable)
+                representation = F'q:{quoted}'
             else:
                 representation = F'h:{self.hex()}'
         self._representation = representation
