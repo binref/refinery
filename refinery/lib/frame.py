@@ -221,28 +221,25 @@ class Chunk(bytearray):
         self._path = self._path[:gauge]
         self._view = self._view[:gauge]
 
-    def nest(self, *ids):
+    def nest(self, origin, deeper=0):
         """
         Nest this chunk deeper by providing a sequence of indices inside each new layer of the
         frame. The `refinery.lib.frame.Chunk.path` tuple is extended by these values. The
         visibility of the `refinery.lib.frame.Chunk` at each new layer is inherited from its
         current visibility.
         """
-        if not ids:
-            raise ValueError('Empty nesting')
         if self._fill_scope is not None:
-            self._view += (self.visible,) * (len(ids) - 1) + (self._fill_scope,)
+            self._view += (self.visible,) * deeper + (self._fill_scope,)
             self._fill_scope = None
         else:
-            self._view += (self.visible,) * len(ids)
-        if self._fill_batch is not None and len(ids) > 1:
-            if ids[-1] != 0:
-                raise RuntimeError('Expected flat nesting at lowest frame layer')
-            self._path += ids[:-1]
-            self._path += (self._fill_batch,)
+            self._view += (self.visible,) * (deeper + 1)
+        if self._fill_batch is not None and deeper > 0:
+            padding = (0,) * (deeper - 1)
+            self._path += (origin, self._fill_batch, *padding)
             self._fill_batch = None
         else:
-            self._path += ids
+            padding = (0,) * deeper
+            self._path += (origin, *padding)
         return self
 
     @property
@@ -599,14 +596,13 @@ class Framed:
         if self.nesting > 0:
             assert gauge
             yield generate_frame_header(gauge)
-            rest = (0,) * (self.nesting - 1)
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
                     if not chunk.visible:
-                        yield chunk.nest(k, *rest).pack()
+                        yield chunk.nest(k, self.nesting - 1).pack()
                         continue
                     for result in self._generate_chunks(chunk):
-                        yield result.nest(k, *rest).pack()
+                        yield result.nest(k, self.nesting - 1).pack()
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
