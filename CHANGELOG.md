@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+## Version 0.4.39
+- Adds the `vbapc` and `vbastr` units which can extract (decompiled) VBA p-code and VBA strings from (potentially stomped) Word documents.
+- Adds the somewhat experimental `xkey` and `autoxor` units that can (sometimes) automatically decrypt XOR-encrypted files using frequency analysis. These units are still work in progress, though.
+- Adds the `mscf` unit which implements part of the Microsoft Compression API formats, with LZMS currently missing.
+- Adds the `b58` unit which does base58 encoding (used to encode Bitcoin addresses, for example). Simultaneously, the `base` unit was adjusted to no longer strip leading zero bytes unless explicitly instructed to do so.
+- Adds variable conversions to `pop`: It is now possible to prefix a variable with a sequence of multibin handlers to convert input data before storing it in the variable.
+- When executing the `put` unit without a second argument, it now stores the contents of the current chunk in the specified variable.
+
 ## Version 0.4.38
 Fixes a critical bug in the meta variable propagation logic.
 
