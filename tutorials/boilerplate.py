@@ -9,13 +9,18 @@ import io
 import os
 import sys
 import re
+import logging
 import stat
 
 os.environ['REFINERY_TERM_SIZE'] = '120'
 
 from refinery.lib.meta import SizeInt
 from refinery.lib.loader import load_pipeline
+from refinery.units import Executable
 from test import SampleStore
+
+logging.disable(logging.CRITICAL)
+Executable.Entry = '__DEMO__'
 
 try:
     from IPython.core import magic
