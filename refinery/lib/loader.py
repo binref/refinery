@@ -10,6 +10,7 @@ import importlib
 import pkgutil
 import shlex
 import logging
+import pathlib
 
 import refinery
 
@@ -133,9 +134,11 @@ def load_pipeline(commandline: str, pipe='|') -> Unit:
             pipeline |= load(*command)
             command.clear()
             for name in rest:
-                pipeline |= load(name)
+                pipeline |= load(pathlib.Path(name).stem)
             if not parsed:
                 continue
+        if not command:
+            parsed = pathlib.Path(parsed).stem
         command.append(parsed)
     if command:
         pipeline |= load(*command)
