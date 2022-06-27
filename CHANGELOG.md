@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.40 -- bugfix release
+
 ## Version 0.4.39
 - Adds the `vbapc` and `vbastr` units which can extract (decompiled) VBA p-code and VBA strings from (potentially stomped) Word documents.
 - Adds the somewhat experimental `xkey` and `autoxor` units that can (sometimes) automatically decrypt XOR-encrypted files using frequency analysis. These units are still work in progress, though.
