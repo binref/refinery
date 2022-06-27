@@ -44,3 +44,7 @@ class TestMetaPushPop(TestUnitBase):
         result = pl(data)
         self.assertEqual(result,
             B'foo-bar-baz-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')
+
+    def test_push_with_argument_works_in_frame(self):
+        pl = L('emit FOOBAR [| push BAZ | pop b | cca var:b ]')
+        self.assertEqual(pl(), B'FOOBARBAZ')
