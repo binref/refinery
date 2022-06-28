@@ -22,7 +22,17 @@ class ppxml(Unit):
 
         pad = self.args.indent * ' '
         etm = {}
-        dom = ForgivingParse(data, etm)
+
+        try:
+            dom = ForgivingParse(data, etm)
+        except Exception:
+            from refinery.lib.meta import metavars
+            msg = 'error parsing as XML, returning original content'
+            path = metavars(data).get('path')
+            if path:
+                msg = F'{msg}: {path}'
+            self.log_warn(msg)
+            return data
 
         def indent(element, level=0, more_sibs=False):
             """
