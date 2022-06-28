@@ -53,4 +53,4 @@ class xtrtf(PathExtractorUnit):
 
     @classmethod
     def handles(self, data: bytearray) -> bool:
-        return data[:50].lower().lstrip().startswith(b'{\\rtf1')
+        return data[:500].lower().lstrip().startswith(b'{\\rtf')
