@@ -3909,7 +3909,8 @@ class Parser:
               - print_linenum: boolean indicating if line numbers should be printed in the output or not. Please refer to function named "process"
         """
         for stream in self.myinput.keys():
-            self.queueLineOutput('# DECOMPILED STREAM : ' + stream, 0)
+            if stream:
+                self.queueLineOutput('# DECOMPILED STREAM : ' + stream, 0)
             for linenum in self.myinput[stream]:
                 try:
                     self.operations.clearstack()
