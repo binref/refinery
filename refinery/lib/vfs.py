@@ -13,7 +13,6 @@ import builtins
 import os
 import io
 import stat
-import tempfile
 import uuid
 import threading
 import mmap
@@ -80,9 +79,9 @@ class VirtualFile:
     def path(self):
         """
         Returns the absolute path to this virtual file. The virtual file is given a randomly
-        generated, uuid-formatted file name in the system's temporary directory.
+        generated, uuid-formatted file name in the current working directory.
         """
-        return os.path.join(tempfile.gettempdir(), self.name)
+        return os.path.join(os.getcwd(), self.name)
 
     def stat(self):
         """
