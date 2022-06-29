@@ -43,5 +43,5 @@ class carve_lnk(Unit):
                     break
                 end += extra.item_size()
 
-            yield mem[pos:end]
+            yield self.labelled(mem[pos:end], offset=pos)
             pos = end

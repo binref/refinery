@@ -33,7 +33,7 @@ class carve_7z(Unit):
 
     HEADER_SIGNATURE = B'7z\xBC\xAF\x27\x1C'
 
-    def process(self, data):
+    def process(self, data: bytearray):
         cursor = 0
         mv = memoryview(data)
         while True:
@@ -48,6 +48,6 @@ class carve_7z(Unit):
                 success = False
             if success:
                 cursor = start + mf.max_cursor
-                yield mv[start:cursor]
+                yield self.labelled(mv[start:cursor], offset=start)
             else:
                 cursor += 5

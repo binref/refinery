@@ -112,7 +112,7 @@ class XMLCarver:
                     decoded = self._try_decode(self.data[start:self.cursor])
                     if decoded is not None:
                         defusedxml.minidom.parseString(decoded)
-                        return decoded.encode(Unit.codec)
+                        return start, decoded.encode(Unit.codec)
                 except Exception:
                     pass
             self.cursor = start + 1
@@ -124,4 +124,5 @@ class carve_xml(Unit):
     """
 
     def process(self, data):
-        yield from XMLCarver(data)
+        for offset, chunk in XMLCarver(data):
+            yield self.labelled(chunk, offset=offset)

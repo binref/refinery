@@ -45,7 +45,7 @@ class JSONCarver:
             except json.JSONDecodeError:
                 continue
             self.cursor = end + 1
-            return self.data[start:end]
+            return start, self.data[start:end]
 
     def _find_json_end(self, start):
         token = self.data[start:start + 1]
@@ -89,4 +89,5 @@ class carve_json(Unit):
         super().__init__(dictonly=dictonly)
 
     def process(self, data):
-        yield from JSONCarver(data, dictonly=self.args.dictonly)
+        for start, chunk in JSONCarver(data, dictonly=self.args.dictonly):
+            yield self.labelled(chunk, offset=start)
