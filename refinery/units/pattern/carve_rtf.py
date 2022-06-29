@@ -20,18 +20,14 @@ class carve_rtf(Unit):
             if pos is None:
                 break
             pos = pos.start()
-            self.log_debug(F'potential RTF document at {pos}')
             end = pos + 1
             depth = 1
             while depth and end < len(mem):
-                try:
-                    k = B'}{'.index(mem[end])
-                except Exception:
-                    continue
-                else:
-                    depth += 2 * k - 1
-                finally:
-                    end += 1
+                if mem[end] == 0x7B:  # {
+                    depth += 1
+                if mem[end] == 0x7D:  # }
+                    depth -= 1
+                end += 1
             if depth > 0:
                 break
             yield self.labelled(mem[pos:end], offset=pos)
