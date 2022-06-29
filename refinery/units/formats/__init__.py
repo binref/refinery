@@ -124,7 +124,7 @@ class PathExtractorUnit(Unit, abstract=True):
         meta = metavars(data)
 
         def normalize(_path: str) -> str:
-            path = Path(_path)
+            path = Path(_path.replace('\\', '/'))
             try:
                 path = path.relative_to('/')
             except ValueError:
