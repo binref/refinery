@@ -10,7 +10,7 @@ import io
 
 from html.parser import HTMLParser
 
-_HTML_DATA_ROOT_TAG = '.'
+_HTML_DATA_ROOT_TAG = 'html'
 
 
 class HTMLNode(XMLNodeBase):
@@ -122,19 +122,8 @@ class xthtml(PathExtractorUnit):
             else:
                 yield UnpackResult(tagpath, inner)
 
-            tag_count = collections.defaultdict(int)
-            tag_index = collections.defaultdict(int)
-            for node in root.children:
-                tag_count[node.tag] += 1
-            for node in root.children:
-                node: HTMLNode
-                name: str = node.tag
-                if node.textual:
-                    continue
-                if tag_count[node.tag] > 1:
-                    tag_index[node.tag] = index = tag_index[node.tag] + 1
-                    name = F'{name}({index})'
-                yield from tree(node, *path, name)
+            for k, node in enumerate((n for n in root.children if not n.textual)):
+                yield from tree(node, *path, F'{k}.{node.tag}')
 
         parser = HTMLTreeParser()
         parser.feed(data.decode(self.codec))
@@ -142,5 +131,8 @@ class xthtml(PathExtractorUnit):
         while root.parent:
             self.log_info(F'tag was not closed: {root.tag}')
             root = root.parent
+
+        while len(root.children) == 1 and root.children[0].tag == root.tag:
+            root, = root.children
 
         yield from tree(root, root.tag)
