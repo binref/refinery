@@ -5,7 +5,6 @@ from __future__ import annotations
 from refinery.lib.xml import XMLNodeBase
 from refinery.units.formats import PathExtractorUnit, UnpackResult, Arg
 
-import collections
 import io
 
 from html.parser import HTMLParser
