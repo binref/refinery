@@ -123,6 +123,18 @@ class PathExtractorUnit(Unit, abstract=True):
         root = Path('.')
         meta = metavars(data)
 
+        def normalize(_path: str) -> str:
+            path = Path(_path)
+            try:
+                path = path.relative_to('/')
+            except ValueError:
+                pass
+            path = root / path
+            path = path.as_posix()
+            if self._custom_path_separator:
+                path = path.replace('/', self._custom_path_separator)
+            return path
+
         if self.args.join:
             try:
                 root = ByteStringWrapper(meta[metavar], self.codec)
@@ -130,12 +142,13 @@ class PathExtractorUnit(Unit, abstract=True):
                 pass
 
         for result in results:
-            path = '/'.join(result.path.split('\\'))
+            path = normalize(result.path)
             if not path:
                 from refinery.lib.mime import FileMagicInfo
-                self.log_warn('received an attachment without file name!')
                 ext = FileMagicInfo(result.get_data()).extension
-                path = F'[unknown].{ext}'
+                name = uuid.uuid4()
+                path = F'{name}.{ext}'
+                self.log_warn(F'read chunk with empty path; using generated name {path}')
             result.path = path
             occurrences[path] += 1
 
@@ -153,18 +166,11 @@ class PathExtractorUnit(Unit, abstract=True):
                     result.path = F'{base}.{uuid.uuid4()}{extension}'
                 else:
                     result.path = F'{base}.v{counter:0{width}d}{extension}'
+                self.log_warn(F'read chunk with duplicate path; deduplicating to {result.path}')
 
         for p in patterns:
             for result in results:
-                path = Path(result.path)
-                try:
-                    path = path.relative_to('/')
-                except ValueError:
-                    pass
-                path = root / path
-                path = path.as_posix()
-                if self._custom_path_separator:
-                    path = path.replace('/', self._custom_path_separator)
+                path = result.path
                 if not p.check(path):
                     continue
                 if self.args.list:
