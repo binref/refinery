@@ -16,10 +16,10 @@ class carve_rtf(Unit):
         sig = re.escape(b'{\\rtf')
 
         while True:
-            pos = re.search(sig, mem[pos:], flags=re.IGNORECASE)
-            if pos is None:
+            match = re.search(sig, mem[pos:], flags=re.IGNORECASE)
+            if match is None:
                 break
-            pos = pos.start()
+            pos = pos + match.start()
             end = pos + 1
             depth = 1
             while depth and end < len(mem):
