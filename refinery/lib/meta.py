@@ -193,17 +193,18 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         value = self._string
         if value is None:
             _codec = self.codec
-            codecs = self._CODECS if _codec is None else [_codec]
+            _error = None
+            codecs = self._CODECS if _codec is None else [_codec, 'latin1']
             for codec in codecs:
                 try:
                     value = self.decode(codec)
-                except UnicodeDecodeError:
-                    pass
+                except UnicodeError as e:
+                    _error = _error or e
                 else:
                     self.codec = codec
                     break
             else:
-                raise AttributeError('Codec unknown.')
+                raise AttributeError(F'Codec unknown: {_error!s}')
         return value
 
     def __eq__(self, other):
