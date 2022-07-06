@@ -23,27 +23,27 @@ class ISSReader(StructReader[bytearray]):
         except KeyError:
             raise ValueError('invalid signature for ISS archive')
         file_count = self.u16()
-        self.skip(0x04)
-        self.skip(0x08)
-        self.skip(0x02)
-        self.skip(0x10)
+        self.seekrel(0x04)
+        self.seekrel(0x08)
+        self.seekrel(0x02)
+        self.seekrel(0x10)
         return file_count
 
     def iss_file_header(self):
         if self.__version == 1:
             name = self.read(260).rstrip(B'\0').decode('utf8')
             flags = self.u32()
-            self.skip(4)
+            self.seekrel(4)
             size = self.u32()
-            self.skip(8)
+            self.seekrel(8)
             is_unicode = self.u16()
-            self.skip(30)
+            self.seekrel(30)
         else:
             name_length = self.u32()
             flags = self.u32()
-            self.skip(2)
+            self.seekrel(2)
             size = self.u32()
-            self.skip(8)
+            self.seekrel(8)
             is_unicode = self.u16()
             name = self.read(name_length).decode('utf-16le')
         return name, size, flags, is_unicode
