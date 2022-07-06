@@ -26,4 +26,14 @@ class b64(Unit):
         if len(data) == 1:
             raise ValueError('single byte can not be base64-decoded.')
         data.extend(B'===')
-        return base64.b64decode(data, altchars=self.altchars)
+        altchars = None
+        if (B'-' in data or B'_' in data) and (B'+' not in data and B'/' not in data) or self.args.urlsafe:
+            altchars = B'-_'
+        return base64.b64decode(data, altchars=altchars)
+
+    @classmethod
+    def handles(self, data: bytearray) -> bool:
+        from refinery.lib.patterns import formats
+        if not formats.b64space.fullmatch(data):
+            return False
+        return len(set(data)) in range(60, 67)

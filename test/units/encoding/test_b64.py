@@ -17,3 +17,9 @@ class TestBase64(TestUnitBase):
 
     def test_forward_empty(self):
         self.assertEqual(bytes(B'' | self.load()), B'')
+
+    def test_auto_urlsafe_decoding(self):
+        data = self.generate_random_buffer(400)
+        encoded = data | self.load(reverse=True, urlsafe=True) | bytes
+        decoded = encoded | self.load() | bytes
+        self.assertEqual(data, decoded)
