@@ -38,6 +38,8 @@ class xt(ArchiveUnit):
         yield xttar
         from refinery.units.formats.office.xtdoc import xtdoc
         yield xtdoc
+        from refinery.units.formats.archive.xtiss import xtiss
+        yield xtiss
         from refinery.units.formats.exe.vsect import vsect
         yield vsect
 
