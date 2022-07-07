@@ -53,10 +53,11 @@ class xt(ArchiveUnit):
             date=self.args.date,
             join_path=self.args.join,
             drop_path=self.args.drop,
-            regex=self.args.regex
         )
         if self.args.pwd:
             key_args.update(pwd=self.args.pwd)
+        if self.args.regex:
+            key_args.update(regex=self.args.regex)
 
         class unpacker:
             unit = self
