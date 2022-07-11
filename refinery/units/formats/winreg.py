@@ -5,12 +5,16 @@ import re
 import shlex
 import inspect
 
+from typing import List, TYPE_CHECKING
 from configparser import ConfigParser
 from pathlib import Path
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats import PathExtractorUnit, UnpackResult, PathPattern
 from refinery.units.encoding.esc import esc
 from refinery.lib.structures import MemoryFile
+
+if TYPE_CHECKING:
+    from Registry.Registry import RegistryKey, RegistryValue
 
 
 class ParseException(Exception):
@@ -33,22 +37,25 @@ class winreg(PathExtractorUnit):
         import Registry.RegistryParse
         return Registry
 
-    def _walk(self, key, *path):
+    @staticmethod
+    def _walk(patterns: List[PathPattern], key: RegistryKey, *path: str):
         here = '/'.join(path)
-        if not self._check_reachable(here):
-            self.log_debug(F'pruning search at {here}')
+        if not any(p.reach(here) for p in patterns):
+            winreg.log_debug(F'pruning search at {here}')
             return
         for value in key.values():
+            def raw(v: RegistryValue = value):
+                return v.raw_data()
             vpath = F'{here}/{value.name()}'
-            yield UnpackResult(vpath, lambda v=value: v.raw_data())
+            yield UnpackResult(vpath, raw)
         for subkey in key.subkeys():
-            yield from self._walk(subkey, *path, subkey.name())
+            yield from winreg._walk(patterns, subkey, *path, subkey.name())
 
     def _unpack_hive(self, data: bytearray):
         try:
             with MemoryFile(data) as stream:
                 root = self._registry.Registry.Registry(stream).root()
-                yield from self._walk(root, root.name())
+                yield from self._walk(self._patterns, root, root.name())
         except self._registry.RegistryParse.ParseException:
             raise ParseException
 

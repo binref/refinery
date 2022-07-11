@@ -100,8 +100,11 @@ class PathExtractorUnit(Unit, abstract=True):
             **keywords
         )
 
-    def _check_reachable(self, path: str) -> bool:
-        return any(p.reach(path) for p in self.args.patterns)
+    @property
+    def _patterns(self):
+        strict = self._strict_path_matching
+        paths = self.args.paths or (['.*'] if self.args.regex else ['*'])
+        return [PathPattern(p, self.args.regex, strict) for p in paths]
 
     @abc.abstractmethod
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
@@ -110,12 +113,7 @@ class PathExtractorUnit(Unit, abstract=True):
     def process(self, data: ByteString) -> ByteString:
         results: List[UnpackResult] = list(self.unpack(data))
 
-        strict = self._strict_path_matching
-        paths = self.args.paths or (['.*'] if self.args.regex else ['*'])
-        patterns = [PathPattern(p, self.args.regex, strict) for p in paths]
-
-        if strict:
-            self.log_debug('using string path matching')
+        patterns = self._patterns
 
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
