@@ -84,13 +84,13 @@ class struct(Unit):
         reader = StructReader(memoryview(data))
         mainspec = self.args.spec
         byteorder = mainspec[:1]
-        if byteorder in '<!=@>':
+        if byteorder in '<@=!>':
             mainspec = mainspec[1:]
         else:
             byteorder = '='
 
         def fixorder(spec):
-            if spec[0] not in '<!=@>':
+            if spec[0] not in '<@=!>':
                 spec = byteorder + spec
             return spec
 
