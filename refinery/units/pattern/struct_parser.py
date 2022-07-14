@@ -127,6 +127,10 @@ class struct(Unit):
                     if spec == '':
                         last = value = reader.read()
                     elif isinstance(spec, int):
+                        if spec < 0:
+                            spec += reader.remaining_bytes
+                        if spec < 0:
+                            raise ValueError(F'The specified negative read offset is {-spec} beyond the cursor.')
                         last = value = reader.read_bytes(spec)
                     else:
                         value = reader.read_struct(fixorder(spec))
