@@ -159,3 +159,19 @@ class TestStructures(TestBase):
         builder.write(B' ')
         builder.write(itertools.repeat(B'X'[0], 4))
         self.assertEqual(builder.getbuffer(), B'FOO XXXXXXX FOO FOO XXXX')
+
+    def test_peeking_bits(self):
+        seed = 0b_1011_0101_1100_0000_0111_1111
+        data = seed.to_bytes(3, 'big')
+        reader = StructReader(data, bigendian=True)
+        self.assertEqual(reader.peek(2), bytes((0b10110101, 0b11000000)))
+        T = True
+        F = False
+        self.assertEqual(reader.read_integer(0x18, peek=T), seed)
+        self.assertEqual(reader.read_integer(0x02, peek=T), 0b10)
+        self.assertEqual(reader.read_integer(0x02, peek=T), 0b10)
+        self.assertEqual(reader.peek(), data)
+        self.assertEqual(reader.read_integer(0x02, peek=F), 0b10)
+        self.assertEqual(reader.read_integer(0x02, peek=T), 0b11)
+        self.assertEqual(reader.read_integer(0x02, peek=T), 0b11)
+        self.assertEqual(reader.read_integer(0x02, peek=F), 0b11)
