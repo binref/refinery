@@ -88,7 +88,13 @@ class JvMethodHandleRefKind(IntEnum):
     InvokeInterface   = 9 # noqa
 
 
-class JvStructWithName(Struct):
+class _HasPoolAndTag(Struct):
+    def __init__(self, _: StructReader, pool: list, tag: JvConstType):
+        self.pool = pool
+        self.tag = tag
+
+
+class JvStructWithName(_HasPoolAndTag):
     name: str = Index(str)
     def __repr__(self): return self.name
 
@@ -96,41 +102,48 @@ class JvStructWithName(Struct):
 class JvNameAndType(JvStructWithName):
     descriptor: str = Index(str)
 
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, **kwargs):
+        super().__init__(reader, **kwargs)
         self.name = reader.u16()
         self.descriptor = reader.u16()
 
 
-class JvString(Struct):
+class JvString(_HasPoolAndTag):
     value: str = Index(str)
 
-    def __init__(self, reader: StructReader): self.value = reader.u16()
+    def __init__(self, reader: StructReader, **kwargs):
+        super().__init__(reader, **kwargs)
+        self.value = reader.u16()
+
     def __repr__(self): return repr(self.value)
 
     def __str__(self): return self.value
 
 
-class JvClassProperty(Struct):
+class JvClassProperty(_HasPoolAndTag):
     name: JvString = Index(JvString)
     info: JvNameAndType = Index(JvNameAndType)
 
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, **kwargs):
+        super().__init__(reader, **kwargs)
         self.name = reader.u16()
         self.info = reader.u16()
 
     def __repr__(self): return F'{self.name}::{self.info}'
 
 
-class JvMethodHandle(Struct):
+class JvMethodHandle(_HasPoolAndTag):
     reference: JvClassProperty = Index(JvClassProperty)
 
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, **kwargs):
+        super().__init__(reader, **kwargs)
         self.kind = JvMethodHandleRefKind(reader.read_byte())
         self.reference = reader.u16()
 
 
-class JvDynamic(Struct):
-    def __init__(self, reader: StructReader):
+class JvDynamic(_HasPoolAndTag):
+    def __init__(self, reader: StructReader, **kwargs):
+        super().__init__(reader, **kwargs)
         self.bootstrap_method_attr_index = reader.u16()
         self.info = reader.u16()
 
@@ -157,7 +170,8 @@ ParserType = TypeVar('ParserType')
 
 
 class JvAttribute(JvStructWithName, Generic[ParserType]):
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, pool: list):
+        self.pool = pool
         self.name = reader.u16()
         self.data = reader.read(reader.u32())
 
@@ -168,11 +182,12 @@ class JvAttribute(JvStructWithName, Generic[ParserType]):
 class JvClassMember(JvStructWithName):
     descriptor: str = Index(str)
 
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, pool: list):
+        self.pool = pool
         self.access = JvAccessFlags(reader)
         self.name = reader.u16()
         self.descriptor = reader.u16()
-        self.attributes = [JvAttribute(reader, pool=self.pool) for _ in range(reader.u16())]
+        self.attributes = [JvAttribute(reader, pool=pool) for _ in range(reader.u16())]
 
 
 class opc(IntEnum):
@@ -475,7 +490,7 @@ class JvOpCode(Struct):
     def __getitem__(self, k):
         return self.arguments[k]
 
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, pool: list):
         with StreamDetour(reader):
             self.code = opc(reader.read_byte())
             self.table: Optional[Dict[int, int]] = None
@@ -489,7 +504,7 @@ class JvOpCode(Struct):
                 self.arguments = [JvBaseType(reader.read_byte())]
             elif self.code in self.OPC_CONSTPOOL:
                 try:
-                    self.arguments[0] = self.pool[self.arguments[0] - 1]
+                    self.arguments[0] = pool[self.arguments[0] - 1]
                 except (AttributeError, IndexError):
                     pass
             elif self.code == opc.lookupswitch:
@@ -534,7 +549,7 @@ class JvException(Struct):
 
 
 class JvCode(Struct):
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, pool: list):
         reader.bigendian = True
         self.max_stack = reader.u16()
         self.max_locals = reader.u16()
@@ -542,7 +557,7 @@ class JvCode(Struct):
         with StructReader(reader.read(reader.u32())) as code:
             code.bigendian = True
             while not code.eof:
-                self.disassembly.append(JvOpCode(code, pool=self.pool))
+                self.disassembly.append(JvOpCode(code, pool=pool))
         self.exceptions = [JvException(reader) for _ in range(reader.u16())]
         self.attributes = [JvAttribute(reader) for _ in range(reader.u16())]
 
