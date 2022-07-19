@@ -37,5 +37,5 @@ class vbapc(Unit):
                 parser.parseInput()
                 parser.processInput(False)
                 code = parser.getOutput()
-                code = re.sub('^(Sub|Function)', r'\n\1', code, flags=re.MULTILINE)
+                code = re.sub(R'(?m)^((?:Sub|Function).*?)$(?!\n[^\s])', r'\n\1', code)
             return code.encode(self.codec)

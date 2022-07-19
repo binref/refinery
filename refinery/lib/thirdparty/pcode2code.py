@@ -53,7 +53,6 @@ the library. If this is what you want to do, use the GNU Lesser General
 Public License instead of this License. But first, please read:
   http://www.gnu.org/philosophy/why-not-lgpl.html.
 """
-import traceback
 import struct
 
 
@@ -94,13 +93,19 @@ class Stack:
 
 
 class Operations:
-    
-    def __init__(self, opstack):
+
+    def __init__(self, opstack: Stack):
         self.opstack = opstack
-        self.indentlevel = 0 #current indentation level
-        self.indentincrease_future = False #boolean indicating if indentation level should be increased after the current command
-        self.has_bos = False #boolean indicating to print all stack, like in one liner cases
-        self.onelineif = False #boolean indicating if we are on a onelineif. In this case, closing should not be treated the same as other if blocks
+        # number of blocks that will be ignored for indentation
+        self.unindented = 0
+        # current indentation level
+        self.indentlevel = 0
+        # boolean indicating if indentation level should be increased after the current command
+        self.indentincrease_future = False
+        # boolean indicating to print all stack, like in one liner cases
+        self.has_bos = False
+        # boolean indicating if we are on a onelineif. In this case, closing should not be treated the same as other if blocks
+        self.onelineif = False
         self.ops = {
             'Imp'                   : self.imp,
             'Eqv'                   : self.eqv,
@@ -580,9 +585,9 @@ class Operations:
     def indexld(self, *args):
         raise Pcode2codeException('not implemented indexld')
 
-    def argsld(self, varname, numparams ):
+    def argsld(self, varname, numparams):
         val = varname + '('
-        nb_parameters = int(numparams,16)
+        nb_parameters = int(numparams, 16)
         params = []
         if nb_parameters > 0:
             for i in range(nb_parameters):
@@ -639,7 +644,6 @@ class Operations:
         val += ')'
         self.opstack.push(val)
 
-
     # example line : Function giqw(str As String) As Variant: Dim bytes() As Byte: bytes = str: giqw = bytes: End Function
     # op line:
     # Line #13:
@@ -682,7 +686,7 @@ class Operations:
 
     # TODO: to check
     def argsst(self, var, numparams):
-        nb_parameters = int(numparams,16)
+        nb_parameters = int(numparams, 16)
         params = []
         if nb_parameters > 0:
             for i in range(nb_parameters):
@@ -1089,14 +1093,13 @@ class Operations:
                 val = val + params[0]
             else:
                 val = val + ' ' + params[0]
-            
+
             if nb_parameters > 1:
                 for param in params[1:]:
                     val = val + ', ' + param
             val += end_val
         self.opstack.push(val)
 
-        
     def argsmemcall(self, *args):
         """
         command to call a function of an object
@@ -1410,7 +1413,6 @@ class Operations:
                     val = val + ', ' + param
         self.opstack.push(val)
 
-
     def closeall(self):
         """
         command used when close is called with no arguments, effectively closing all files
@@ -1419,7 +1421,6 @@ class Operations:
         """
         self.opstack.push('Close')
 
-        
     def coerce_(self, arg):
         """
         command used for variable conversion
@@ -1489,7 +1490,6 @@ class Operations:
         """
         raise Pcode2codeException('not implemented deftype')
 
-
     # Dim hiz7dgus As String
     # Private Const DefaultBufferSize& = 32768
     # Private CRC_32_Tab(0 To 255) As Long
@@ -1533,7 +1533,6 @@ class Operations:
         self.opstack.push('Do')
         self.indentincrease_future = True
 
-        
     def doevents(self, *args):
         raise Pcode2codeException('not implemented doevents')
 
@@ -1562,7 +1561,6 @@ class Operations:
         """
         self.opstack.push('Do While ' + self.opstack.pop())
         self.indentincrease_future = True
-        
 
     def else_(self):
         """
@@ -1584,7 +1582,6 @@ class Operations:
         """
         self.opstack.push('Else')
 
-
     def elseblock(self):
         """
         command defining a new "else" for a block
@@ -1594,7 +1591,6 @@ class Operations:
         self.opstack.push('Else')
         self.indentlevel = self.indentlevel - 1
         self.indentincrease_future = True
-
 
     def elseifblock(self):
         """
@@ -1776,9 +1772,8 @@ class Operations:
                     val = val + ', ' + param
             val += ')'
         self.opstack.push(val)
-       
 
-    def argsmemraiseeventwith(self, *args):
+    def argsmemraiseeventwith(self, var, numparams):
         """
         command used when a raiseevent is called on a property of an object within a with block
         example: with myobj ... RaiseEvent .LogonCompleted("AntoineJan") ... end with
@@ -2061,7 +2056,7 @@ class Operations:
         self.opstack.push(val)
         self.indentincrease_future = True
             
-    def funcdefn(self, *args):
+    def funcdefn(self, *args: str):
         val = args[0]
         for arg in args[1:]:
             val += ' ' + arg
@@ -3771,19 +3766,19 @@ class Operations:
     def getstackpop(self):
         return self.opstack.pop()
 
-    
     def getstacksize(self):
         return self.opstack.size()
 
-    
     def increaseindentlevel_future(self):
         """
         when we increase the indent level, we need to first print out the line, and then to increase the indent level. 
         to do so, when a line has been printed, this function checks if the indent level need to be increased and do so.
         """
-        if self.indentincrease_future:
+        if self.unindented > 0:
+            self.unindented -= 1
+        elif self.indentincrease_future:
             self.indentlevel = self.indentlevel + 1
-            self.indentincrease_future = False
+        self.indentincrease_future = False
     
     def getindentlevel(self):
         """
@@ -3805,6 +3800,7 @@ class Parser:
         self.operations = Operations(self.opstack) # all operations that can be found in vba bytecode
         self.output = ''        # the output of global processing
         self.output_queue = []
+        self.unindented = 0
 
     def queueLineOutput(self, line, linenum, print_linenum=False, has_end=True):
         self.output_queue.append((line, linenum, print_linenum, has_end))
@@ -3827,10 +3823,9 @@ class Parser:
 
     def getOutput(self):
         """
-            simply a getter to output, used in the end of global processing
+        simply a getter to output, used in the end of global processing
         """
         return self.output
-        
 
     def parseInput(self):
         """
@@ -3842,10 +3837,10 @@ class Parser:
             Here the first line gives out the line number, and the rest are operation lines.
         """
         splittedInput = self.myinput.splitlines()
-        lines={}
-        i=0
-        started=False
-        streams={}
+        lines = {}
+        i = 0
+        started = False
+        streams = {}
         laststream = None
         opelinesblock = []
         # we parse each lines, and cut them by line blocks, to put them in "lines"
@@ -3911,6 +3906,14 @@ class Parser:
         for stream in self.myinput.keys():
             if stream:
                 self.queueLineOutput('# DECOMPILED STREAM : ' + stream, 0)
+            unindented = 0
+            for linenum, oplines in self.myinput[stream].items():
+                for line in oplines:
+                    if line.startswith('FuncDefn'):
+                        unindented += 1
+                    if line.startswith('EndFunc') or line.startswith('EndSub'):
+                        unindented -= 1
+            self.operations.unindented = unindented
             for linenum in self.myinput[stream]:
                 try:
                     self.operations.clearstack()
