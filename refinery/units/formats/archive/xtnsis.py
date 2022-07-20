@@ -1142,12 +1142,6 @@ class NSArchive(Struct):
                 reader = wrapper(reader)
             return self.LengthPrefixed(reader)
 
-    def _get_item_offset(self, index: int, solid: bool = True):
-        item = self.items[index]
-        if solid:
-            return self.size_of_header + item.offset
-        return self.offset_archive + self.item_delta + 4 * item.offset
-
 
 class xtnsis(ArchiveUnit):
     """
