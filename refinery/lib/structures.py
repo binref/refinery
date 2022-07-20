@@ -125,6 +125,10 @@ class MemoryFile(Generic[T], io.IOBase):
     def eof(self) -> bool:
         return self._closed or self._cursor >= len(self._data)
 
+    @property
+    def remaining_bytes(self) -> int:
+        return len(self._data) - self.tell()
+
     def writable(self) -> bool:
         if self._closed:
             return False
@@ -340,10 +344,6 @@ class StructReader(MemoryFile[T]):
     @cached_property
     def byteorder_name(self) -> str:
         return 'big' if self.bigendian else 'little'
-
-    @property
-    def remaining_bytes(self) -> int:
-        return len(self._data) - self.tell()
 
     def seek(self, offset, whence=io.SEEK_SET) -> int:
         self._bbits = 0
