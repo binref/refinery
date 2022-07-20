@@ -1198,21 +1198,12 @@ class xtnsis(ArchiveUnit):
         def info():
             yield F'{arc.header.type.name} archive'
             yield F'{arc.method.name.lower()} compression'
-            yield F'mystery value 0x{arc.header.unknown_value:08X}'
-            if arc.solid:
-                yield 'solid archive'
-            else:
-                yield 'fragmented archive'
-            if arc.header.is64bit:
-                yield '64-bit header'
-            else:
-                yield '32-bit header'
-            if arc.header.unicode:
-                yield 'unicode strings'
-            else:
-                yield 'ascii strings'
+            yield F'mystery value 0x{arc.header.unknown_value:X}'
+            yield 'solid archive' if arc.solid else 'fragmented archive'
+            yield '64-bit header' if arc.header.is64bit else '32-bit header'
+            yield 'unicode' if arc.header.unicode else 'ascii'
 
-        self.log_info(lambda: ', '.join(info()))
+        self.log_info(', '.join(info()))
 
         for item in arc.header.items:
             yield self._pack(item.path, item.mtime, lambda i=item: arc._extract_item_data(i))
