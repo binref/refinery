@@ -12,24 +12,27 @@ R"""
                                    \  /
                                     \/
 
-The main package `refinery` exports all `refinery.units.Unit`s which are also
-of type `refinery.units.Entry`, i.e. they expose a shell command. The command
-line interface for each of these units is given below, this is the same text
-as would be available by executing the command with the `-h` or `--help` option.
-The documentation for this module only lists the classes that correspond to
-exported refinery units, but for convenience, the `refinery` module also exports
-the classes `refinery.units.Unit` and `refinery.units.Arg`.
+This is the binary refinery package documentation; see
+ [GitHub](https://github.com/binref/refinery/) and
+ [PyPi](https://pypi.org/project/binary-refinery/)
+for more information.
 
-To better understand how the command line parameters are parsed, it is also
-recommended to study the module documentation of the following library modules,
-as their content is relevant for how the various `refinery.units.Unit`s can be
-combined.
+The package `refinery` exports all `refinery.units.Unit`s which are of type `refinery.units.Entry`;
+this marker implies that the unit exposes a shell command. The command line interface for each of
+these units is given below, this is the same text as would be available by executing the command
+with the `-h` or `--help` option. The documentation for this module only lists the classes that
+correspond to exported refinery units, but for convenience, the `refinery` module also exports the
+classes `refinery.units.Unit` and `refinery.units.Arg`.
+
+To better understand how the command line parameters are parsed, it is also recommended to study
+the module documentation of the following library modules, as their content is relevant for how the
+various `refinery.units.Unit`s can be combined.
 
 1. `refinery.lib.frame`: framing syntax for working on lists of binary chunks
 2. `refinery.lib.argformats`: the multibin syntax for refinery arguments
 3. `refinery.lib.meta`: defining and using metadata variables within frames
-4. `refinery.units`: writing custom units, add command-line arguments, and how
-   to use refinery units within Python code.
+4. `refinery.units`: writing custom units, add command-line arguments, and how to use refinery
+   units within Python code.
 """
 __version__ = '0.4.40'
 __distribution__ = 'binary-refinery'
