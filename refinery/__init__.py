@@ -57,12 +57,10 @@ with resources.path(__name__, '__init__.py') as this:
 @_singleton
 class _cache:
     """
-    Every unit can be imported from the refinery base module. The actual import
-    is performed on demand to reduce import times. On first import of the refinery
-    package, it creates a map of units and their corresponding module and stores
-    this map as `__init__.pkl` in the package directory; this process can take
-    several seconds. Subsequent imports of refinery should be faster, and the
-    loading of units from the module is nearly as fast as specifying the full path.
+    Every unit can be imported from the refinery base module. The import is performed on demand to
+    reduce import times. The library ships with a pickled dictionary that maps unit names to their
+    corresponding module path. This data is expected to be stored as `__init__.pkl` in the package
+    directory.
     """
     units: Dict[str, str]
     cache: Dict[str, Type[Unit]]
