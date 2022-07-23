@@ -304,6 +304,17 @@ class order(str, enum.Enum):
     little = '<'
 
 
+def once(function):
+    def wrapper(*args, **kwargs):
+        if function._executed:
+            raise RuntimeError(F'The function {function.__name__} may only be executed once.')
+        result = function(*args, **kwargs)
+        function._executed = True
+        return result
+    function._executed = False
+    return wrapper
+
+
 class StructReader(MemoryFile[T]):
     """
     An extension of a `refinery.lib.structures.MemoryFile` which provides methods to
@@ -528,10 +539,13 @@ class StructReader(MemoryFile[T]):
     def i32(self, peek: bool = False) -> int: return signed(self.read_integer(32, peek), 32)
     def i64(self, peek: bool = False) -> int: return signed(self.read_integer(64, peek), 64)
 
+    def f32(self, peek: bool = False) -> float: return self.read_struct('f', peek=peek)
+    def f64(self, peek: bool = False) -> float: return self.read_struct('d', peek=peek)
+
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
 
-    def read_terminated_array(self, alignment: int, terminator: bytes):
+    def read_terminated_array(self, alignment: int, terminator: bytes) -> bytearray:
         pos = self.tell()
         buf = self.getbuffer()
         try:
@@ -551,16 +565,33 @@ class StructReader(MemoryFile[T]):
         else:
             data = self.read_exactly(end - pos)
             self.seekrel(len(terminator))
-            return data
+            return bytearray(data)
 
-    def read_c_string(self, encoding=None) -> Union[str, bytes]:
+    def read_c_string(self, encoding=None) -> Union[str, bytearray]:
         data = self.read_terminated_array(1, B'\0')
         if encoding is not None:
             data = data.decode(encoding)
         return data
 
-    def read_w_string(self, encoding=None) -> Union[str, bytes]:
+    def read_w_string(self, encoding=None) -> Union[str, bytearray]:
         data = self.read_terminated_array(2, B'\0\0')
+        if encoding is not None:
+            data = data.decode(encoding)
+        return data
+
+    def read_length_prefixed_ascii(self, prefix_size: int = 32):
+        return self.read_length_prefixed(prefix_size, 'latin1')
+
+    def read_length_prefixed_utf8(self, prefix_size: int = 32):
+        return self.read_length_prefixed(prefix_size, 'utf8')
+
+    def read_length_prefixed_utf16(self, prefix_size: int = 32, bytecount: bool = False):
+        block_size = 1 if bytecount else 2
+        return self.read_length_prefixed(prefix_size, 'utf-16le', block_size)
+
+    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> Union[T, str]:
+        prefix = self.read_integer(prefix_size) * block_size
+        data = self.read(prefix)
         if encoding is not None:
             data = data.decode(encoding)
         return data
