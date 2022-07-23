@@ -59,6 +59,7 @@ class TestBase(unittest.TestCase):
     _STORE = SampleStore()
 
     def ldu(self, name, *args, **kwargs):
+        import refinery.lib.loader
         unit = refinery.lib.loader.load(name, *args, **kwargs)
         if not unit.args.quiet:
             unit.log_detach()
