@@ -1281,7 +1281,7 @@ class Unit(UnitBase, abstract=True):
         return inputs
 
     @classmethod
-    def handles(self, data: ByteString) -> Optional[bool]:
+    def handles(self, data: bytearray) -> Optional[bool]:
         return None
 
     def reset(self):
