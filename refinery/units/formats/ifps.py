@@ -16,7 +16,7 @@ from collections import OrderedDict
 from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
 from refinery.units.formats import Unit
-from refinery.lib.structures import Struct, StructReader, StreamDetour, once
+from refinery.lib.structures import Struct, StructReader, StreamDetour
 
 _CLS = TypeVar('_CLS')
 _TAB = '\x20\x20'
@@ -589,7 +589,6 @@ class IFPSFile(Struct):
         self._load_functions()
         self._load_variables()
 
-    @once
     def _load_types(self):
         reader = self.reader
         types = self.types
@@ -673,7 +672,6 @@ class IFPSFile(Struct):
             fields = tuple(self._read_value() for _ in range(reader.u32()))
             yield Attribute(name, fields)
 
-    @once
     def _load_functions(self):
         reader = self.reader
         width = len(F'{self.count_functions:X}')
@@ -711,7 +709,6 @@ class IFPSFile(Struct):
                     t: Function = self.functions[instruction.operands[0]]
                     instruction.operands[0] = t.reference()
 
-    @once
     def _load_variables(self):
         reader = self.reader
         width = len(str(self.count_variables))

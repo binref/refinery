@@ -304,17 +304,6 @@ class order(str, enum.Enum):
     little = '<'
 
 
-def once(function):
-    def wrapper(*args, **kwargs):
-        if function._executed:
-            raise RuntimeError(F'The function {function.__name__} may only be executed once.')
-        result = function(*args, **kwargs)
-        function._executed = True
-        return result
-    function._executed = False
-    return wrapper
-
-
 class StructReader(MemoryFile[T]):
     """
     An extension of a `refinery.lib.structures.MemoryFile` which provides methods to
