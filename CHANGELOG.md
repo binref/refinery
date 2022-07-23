@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+## Version 0.4.41
+- Adds the `carve-lnk` unit to carve Windows Shortcut files.
+- Adds the `carve-rtf` unit to carve RTF documents.
+- Adds the `subfiles` unit which unifies all structured file format carvers.
+- The `b64` unit now automatically detects and switches to the urlsafe encoding variant.
+- Adds the `xtnsis` unit which can extract files from NSIS archives and provide a rudimentary disassembly of the setup script.
+- Adds the `ifps` and `ifpsstr` units to disassemble and extract strings from compiled Pascal script files.
+
 ## Version 0.4.40 -- bugfix release
 
 ## Version 0.4.39
