@@ -303,9 +303,9 @@ class formats(PatternEnum):
     "Sequences of alpha-numeric characters"
     b32 = pattern('[A-Z2-7]+|[a-z2-7+]')
     "Base32 encoded strings"
-    b64 = alphabet(R'[0-9a-zA-Z\+\/]{4}', postfix=R'(?:[0-9a-zA-Z\+\/]{2,3}={0,3})?')
+    b64 = alphabet(R'(?:[-\w\+/]{4})', postfix=R'(?:(?:[-\w\+/]{2,3})={0,3})?')
     "Base64 encoded strings"
-    b64ws = alphabet(R'(?:[0-9a-zA-Z\+\/]{4,}\s{0,12})', postfix=R'(?:={0,3})?')
+    b64space = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
     "Base64 encoded strings, separated by whitespace"
     b64url = alphabet(R'[0-9a-zA-Z\_\-]{4}', postfix=R'(?:[0-9a-zA-Z\_\-]{2,3}={0,3})?')
     "Base64 encoded strings using URL-safe alphabet"
