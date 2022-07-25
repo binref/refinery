@@ -32,7 +32,7 @@ class xtzip(ArchiveUnit):
         archive = ZipFile(MemoryFile(data))
 
         if password:
-            archive.setpassword(self.args.pwd)
+            archive.setpassword(password.encode(self.codec))
         else:
             def password_invalid(pwd: Optional[str]):
                 if pwd is not None:
