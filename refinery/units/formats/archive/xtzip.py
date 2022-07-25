@@ -28,11 +28,11 @@ class xtzip(ArchiveUnit):
             offset = data['offset']
             self.log_debug(F'carved a zip file from 0x{offset:X}')
 
-        password = self.args.pwd.decode(self.codec)
+        password = bytes(self.args.pwd)
         archive = ZipFile(MemoryFile(data))
 
         if password:
-            archive.setpassword(self.args.pwd)
+            archive.setpassword(password)
         else:
             def password_invalid(pwd: Optional[str]):
                 if pwd is not None:
@@ -62,7 +62,7 @@ class xtzip(ArchiveUnit):
                     if not password:
                         raise RuntimeError('archive is password-protected')
                     else:
-                        raise RuntimeError(F'invalid password: {password}') from E
+                        raise RuntimeError(F'invalid password: {password.decode(self.codec)}') from E
             if info.is_dir():
                 continue
             try:
