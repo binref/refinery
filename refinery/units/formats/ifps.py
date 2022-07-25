@@ -771,9 +771,10 @@ class IFPSFile(Struct):
             def arg(k=1):
                 for _ in range(k):
                     args.append(self._read_operand(reader))
+            addr = reader.tell()
             cval = reader.u8()
             code = Op.FromInt(cval)
-            insn = Instruction(reader.tell(), code)
+            insn = Instruction(addr, code)
             args = insn.operands
             disassembly[insn.offset] = insn
             aryness = argcount.get(code)
@@ -795,22 +796,22 @@ class IFPSFile(Struct):
                     raise RuntimeError(F'Stack grew negative at instruction {len(disassembly)+1}.')
                 stackdepth -= 1
             elif code in (Op.Jump, Op.JumpFlag):
-                target = reader.i32() + 1
+                target = reader.i32()
                 args.append(reader.tell() + target)
             elif code is Op.Call:
                 args.append(reader.u32())
             elif code in (Op.JumpTrue, Op.JumpFalse):
-                target = reader.i32() + 1
+                target = reader.i32()
                 val = self._read_operand(reader)
                 args.append(reader.tell() + target)
                 args.append(val)
             elif code is Op.JumpPop1:
                 stackdepth -= 1
-                target = reader.i32() + 1
+                target = reader.i32()
                 args.append(reader.tell() + target)
             elif code is Op.JumpPop2:
                 stackdepth -= 2
-                target = reader.i32() + 1
+                target = reader.i32()
                 args.append(reader.tell() + target)
             elif code is Op.StackType:
                 args.append(self._read_variant(reader.u32()))
