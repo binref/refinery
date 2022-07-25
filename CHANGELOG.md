@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.42 -- bugfix release
+
 ## Version 0.4.41
 - Adds the `carve-lnk` unit to carve Windows Shortcut files.
 - Adds the `carve-rtf` unit to carve RTF documents.
