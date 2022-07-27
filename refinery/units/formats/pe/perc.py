@@ -57,10 +57,14 @@ class perc(PathExtractorUnit):
             if entry.struct.DataIsDirectory:
                 yield from self._search(pe, entry.directory, level + 1, *parts, identifier)
             else:
-                def extracted(p=pe, e=entry):
-                    return p.get_data(e.data.struct.OffsetToData, e.data.struct.Size)
+                rva = entry.data.struct.OffsetToData
+                size = entry.data.struct.Size
                 path = '/'.join((*parts, identifier))
-                yield UnpackResult(path, extracted)
+                yield UnpackResult(
+                    path,
+                    lambda pe=pe: pe.get_data(rva, size),
+                    offset=pe.get_offset_from_rva(rva)
+                )
 
     def unpack(self, data):
         pe = pefile.PE(data=data, fast_load=True)
