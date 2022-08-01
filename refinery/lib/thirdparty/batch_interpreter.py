@@ -216,7 +216,7 @@ class BatchDeobfuscator:
             match = re.search(pattern, command, re.IGNORECASE)
             if match and match.group('cmd'):
                 cmd = match.group('cmd').strip(_T.QUOTE)
-                self.pending_subcommand.append(cmd)
+                self.pending_subcommand = cmd
         else:
             pattern = (
                 r"(\s*(call)?\s*set\s+\"?(?P<var>[\w#$'()*+,-.?@\[\]`{}~ ]+)=\s*(?P<val>[^\"\n]*)\"?)|"
