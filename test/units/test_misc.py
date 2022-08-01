@@ -6,7 +6,6 @@ import inspect
 import sys
 
 from glob import glob
-from flake8.api import legacy as flake8
 
 from . import TestUnitBase
 
@@ -95,6 +94,8 @@ class TestPipelines(TestUnitBase):
 class TestMetaProperties(TestUnitBase):
 
     def test_style_guide(self):
+        from flake8.api import legacy as flake8
+        from flake8.main.options import JobsArgument
         logging.StreamHandler.terminator = '\n    '
         root = os.path.abspath(inspect.stack()[0][1])
         for _ in range(3):
@@ -109,7 +110,7 @@ class TestMetaProperties(TestUnitBase):
             'F722',  # syntax error in forward annotation
             'F821',  # undefined name
             'E261',  # at least two spaces before inline comment
-        ], max_line_length=140)
+        ], max_line_length=140, jobs=JobsArgument('1'))
         report = rules.check_files(path for path in glob(
             os.path.join(root, 'refinery', '**', '*.py'), recursive=True)
             if 'thirdparty' not in path
