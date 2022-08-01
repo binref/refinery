@@ -66,7 +66,7 @@ class pcap(Unit):
     def __init__(self, merge: Arg.Switch('-m', help='Merge both parts of each TCP conversation into one chunk.') = False):
         super().__init__(merge=merge)
 
-    @Unit.Requires('pypcapkit[scapy]')
+    @Unit.Requires('pypcapkit[scapy]<0.16.0')
     def _pcapkit():
         import pcapkit
         return pcapkit
