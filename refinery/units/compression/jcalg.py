@@ -79,7 +79,7 @@ class jcalg(Unit):
                 continue
             if flags.next():
                 high = flags.variable_length_integer()
-                if(high == 2):
+                if high == 2:
                     match_length = flags.variable_length_integer()
                 else:
                     index = ((high - 3) << base) + flags.read(base)
