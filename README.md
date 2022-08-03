@@ -54,6 +54,20 @@ Specifying the special prefix `!` will have the effect that no shell commands ar
 pip install -U git+git://github.com/binref/refinery.git
 ```
 
+## Shell Support
+
+The following is a summary of how well various shell environments are currently supported:
+
+| State           | Shell        | Comment                                                                                |
+|:----------------|--------------|----------------------------------------------------------------------------------------|
+| 🔵 Good         | `cmd`        |                                                                                        |
+| 🔵 Good         | `bash`       |                                                                                        |
+| 🔵 Good         | `sh`         |                                                                                        |
+| 🟡 Minor Issues | `zsh`        | [discussion](https://github.com/binref/refinery/discussions/18) / [script](shells/zsh) |
+| 🔴 Terrible     | `powershell` | [discussion](https://github.com/binref/refinery/issues/5)                              |
+
+If you are using a different shell and have some feedback to share, please [let me know](https://github.com/binref/refinery/discussions)!
+
 ## Heavyweight Dependencies
 
 There are some units that have rather heavy-weight dependencies. For example, [pcap][] is the only unit that requires a packet capture file parsing library. These libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users. The corresponding units will tell you what to do when their dependency is missing:
