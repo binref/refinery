@@ -11,6 +11,9 @@ _UNCOMPRESSED_END        = 4       # noqa
 
 
 class qlz(Unit):
+    """
+    This unit implements QuickLZ decompression levels 1 and 3.
+    """
 
     def process(self, data):
         source = memoryview(data)
