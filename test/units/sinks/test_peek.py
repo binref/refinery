@@ -229,10 +229,13 @@ class TestPeek(TestUnitBase):
             n most of\nthe other kids, this crap they teach us bores me...\n    Damn
              underachiever.  They're all alike.\n\n    I'm in junior high or high sc
             hool.  I've listened to teachers explain\nfor the fifteenth time how to 
+            reduce a fraction.  I understand it.  "No, Ms.\nSmith, I didn't show my 
+            work.  I did it in my head..."\n    Damn kid.  Probably copied it.  They
+            're all alike.
             ------------------------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, escape=True, width=72, gray=True)
+        peek = self.load(bare=True, escape=True, width=72, all=True, gray=True)
         with errbuf() as stderr:
             peek(self.TESTBUFFER_TXT)
             out = stderr.getvalue().strip()

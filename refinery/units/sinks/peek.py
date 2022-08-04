@@ -130,7 +130,7 @@ class peek(HexViewer):
             from refinery.units.encoding.esc import esc
             decoded = data[:abs(width * linecount)]
             decoded = str(decoded | -esc(bare=True))
-            limit = min(abs(linecount) * width, len(decoded))
+            limit = abs(min(linecount * width, len(decoded)))
             for k in range(0, limit, width):
                 result.append(decoded[k:k + width])
             return result
