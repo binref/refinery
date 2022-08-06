@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import ByteString, List, Optional
+
 from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.types import INF
 
@@ -45,19 +47,22 @@ class decompress(Unit):
         if min_ratio <= 0:
             raise ValueError('The compression factor must be nonnegative.')
         super().__init__(tolerance=tolerance, prepend=prepend, min_ratio=min_ratio)
-        self.engines = [
+        self.engines: List[Unit] = [
             engine() for engine in [
                 szdd, zl, lzma, aplib, qlz, lzf, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1]
         ]
 
     def process(self, data):
-        best = None
-        current_ratio = 1
-
-        class result:
+        class Decompression:
             unit = self
 
-            def __init__(self, engine, cutoff=0, prefix=None):
+            result: ByteString
+            engine: Unit
+            prefix: Optional[ByteString]
+            cutoff: int
+            ratio: float
+
+            def __init__(self, engine: Unit, cutoff: int = 0, prefix: Optional[ByteString] = None):
                 feed = data
 
                 self.engine = engine
@@ -100,16 +105,20 @@ class decompress(Unit):
                     best = self
                     current_ratio = self.ratio
 
+        best = None
+        current_ratio = 1
+
         for engine in self.engines:
             self.log_debug(F'attempting engine: {engine.name}')
             for t in range(self.args.tolerance):
-                result(engine, t).schedule()
+                Decompression(engine, t).schedule()
             if self.args.prepend:
                 for p in range(0x100):
-                    result(engine, 0, bytes((p,))).schedule()
+                    Decompression(engine, 0, bytes((p,))).schedule()
 
         if best is None:
             self.log_warn('no compression engine worked, returning original data.')
             return data
-
-        return best.result
+        else:
+            best: Decompression
+            return self.labelled(best.result, method=best.engine.name)
