@@ -82,9 +82,7 @@ class lzf(Unit):
             else:
                 commit_literal()
 
-            length = 2
-            maxlen = len(data) - ipos - length
-            maxlen = min(_MAX_REF, maxlen)
+            maxlen = min(_MAX_REF, len(data) - ipos)
 
             try:
                 it = enumerate(zip(ref[:maxlen], ip[:maxlen]))
@@ -100,10 +98,10 @@ class lzf(Unit):
                 op.append((off >> 8) + (7 << 5))
                 op.append(length - 7)
             op.append(off & 0xFF)
-            begin_literal()
             if ip.nbytes <= length + 2:
-                break
-            elif fast:
+                return op
+            begin_literal()
+            if fast:
                 ip = ip[length:]
                 hval = FRST(ip)
                 for _ in range(2):
