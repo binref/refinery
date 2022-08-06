@@ -8,6 +8,7 @@ import sys
 from glob import glob
 
 from . import TestUnitBase
+from .compression import KADATH1, KADATH2
 
 from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L
 from refinery.lib.structures import MemoryFile
@@ -209,7 +210,9 @@ class TestSimpleInvertible(TestUnitBase):
             B'A' * 1024,
             B'B' + B'A' * 1024,
             B'FOO' * 200,
-            bytes(range(1, 200))
+            bytes(range(1, 200)),
+            KADATH1.encode('utf8'),
+            KADATH2.encode('utf8'),
         ]
         for item in get_all_entry_points():
             if item.is_reversible:
