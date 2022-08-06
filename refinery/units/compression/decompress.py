@@ -101,6 +101,8 @@ class decompress(Unit):
             if prefix is not None:
                 buffer[0] = prefix
                 ingest = buffer
+            if engine.handles(ingest) is False:
+                return Decompression(engine, None, cutoff, prefix)
             try:
                 result = engine.process(ingest)
             except RefineryPartialResult as pr:
