@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import ByteString, List, Optional
+from typing import ByteString, List, NamedTuple, Optional
 
 from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.types import INF
@@ -38,87 +38,114 @@ class decompress(Unit):
             'Maximum number of bytes to strip from the beginning of the data; '
             'The default value is 12.')
         ) = 12,
-        min_ratio: Arg('-r', metavar='R', help=(
+        max_ratio: Arg('-m', metavar='R', help=(
             'To determine whether a decompression algorithm was successful, the '
-            'ratio of compressed size to decompressed size is required to be at '
-            'least this number, a floating point value R; default value is 1.')
+            'ratio of compressed size to decompressed size may at most be as large '
+            'as this number, a floating point value R; default value is {default}.')
         ) = 1,
+        min_ratio: Arg('-n', metavar='R', help=(
+            'Require that compression ratios must be at least as large as R. This '
+            'is a "too good to be true" heuristic against algorithms like lznt1 '
+            'that can produce false positives. The default is {default}.')
+        ) = 0.0001,
     ):
         if min_ratio <= 0:
             raise ValueError('The compression factor must be nonnegative.')
-        super().__init__(tolerance=tolerance, prepend=prepend, min_ratio=min_ratio)
+        super().__init__(
+            tolerance=tolerance,
+            prepend=prepend,
+            min_ratio=min_ratio,
+            max_ratio=max_ratio
+        )
         self.engines: List[Unit] = [
-            engine() for engine in [
+            engine.assemble() for engine in [
                 szdd, zl, lzma, aplib, qlz, lzf, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1]
         ]
+        for engine in self.engines:
+            engine.log_detach()
 
     def process(self, data):
-        class Decompression:
-            unit = self
 
-            result: ByteString
+        data = memoryview(data)
+
+        class Decompression(NamedTuple):
             engine: Unit
-            prefix: Optional[ByteString]
-            cutoff: int
-            ratio: float
+            result: Optional[ByteString] = None
+            cutoff: int = 0
+            prefix: Optional[int] = None
+            failed: bool = False
 
-            def __init__(self, engine: Unit, cutoff: int = 0, prefix: Optional[ByteString] = None):
-                feed = data
-
-                self.engine = engine
-                self.prefix = prefix
-                self.cutoff = cutoff
-
-                if cutoff:
-                    feed = data[cutoff:]
-                if prefix is not None:
-                    feed = prefix + data
-
-                try:
-                    self.result = engine.process(feed)
-                except RefineryPartialResult as pr:
-                    self.result = pr.partial
-                except Exception:
-                    self.result = B''
-
+            @property
+            def ratio(self):
                 if not self.result:
-                    self.ratio = INF
-                else:
-                    self.ratio = len(data) / len(self.result)
+                    return INF
+                return len(data) / len(self.result)
 
             @property
             def unmodified(self):
-                return not self.prefix and not self.cutoff
+                return self.prefix is None and self.cutoff == 0
 
-            def schedule(self):
-                nonlocal best, current_ratio
-                if self.ratio >= self.unit.args.min_ratio:
-                    return
-                prefix = hex(self.prefix[0]) if self.prefix else None
-                r = 1 if self.unmodified and best and not best.unmodified else 0.9
-                if self.engine.__class__ is lznt1:
-                    r /= 2
-                if not best or self.ratio / current_ratio < r:
-                    self.unit.log_info(lambda: (
-                        F'obtained {self.ratio:.2f} compression ratio with: prefix={prefix}, '
-                        F'cutoff={self.cutoff}, engine={self.engine.name}'))
-                    best = self
-                    current_ratio = self.ratio
+            @property
+            def method(self):
+                return self.engine.name
 
-        best = None
-        current_ratio = 1
+        if self.args.prepend:
+            buffer = bytearray(1 + len(data))
+            buffer[1:] = data
+
+        best: Optional[Decompression] = None
+
+        def decompress(engine: Unit, cutoff: int = 0, prefix: Optional[int] = None):
+            ingest = data[cutoff:]
+            failed = False
+            if prefix is not None:
+                buffer[0] = prefix
+                ingest = buffer
+            try:
+                result = engine.process(ingest)
+            except RefineryPartialResult as pr:
+                result = pr.partial
+                failed = True
+            except Exception as error:
+                self.log_debug(F'error from {engine.name}: {error!s}')
+                result = None
+            return Decompression(engine, result, cutoff, prefix, failed)
+
+        def update(new: Decompression, discard_if_too_good=False) -> Decompression:
+            ratio = new.ratio
+            if ratio > self.args.max_ratio:
+                return best
+            if ratio < self.args.min_ratio:
+                return best
+            prefix = new.prefix and hex(new.prefix)
+            r = 1 if new.unmodified and best and not best.unmodified else 0.9
+            q = best and ratio / best.ratio
+            if not best or q < r:
+                if best and discard_if_too_good:
+                    if q < 0.5:
+                        return best
+                    if new.failed:
+                        return best
+                self.log_info(lambda: (
+                    F'obtained {ratio:.2f} compression ratio with: prefix={prefix}, '
+                    F'cutoff={new.cutoff}, engine={new.engine.name}'))
+                return new
+            else:
+                return best
 
         for engine in self.engines:
             self.log_debug(F'attempting engine: {engine.name}')
+            careful = isinstance(engine, lznt1)
             for t in range(self.args.tolerance):
-                Decompression(engine, t).schedule()
-            if self.args.prepend:
+                if best and careful and t > 0:
+                    break
+                best = update(decompress(engine, t), careful)
+            if self.args.prepend and best and not careful:
                 for p in range(0x100):
-                    Decompression(engine, 0, bytes((p,))).schedule()
+                    best = update(decompress(engine, 0, p), careful)
 
         if best is None:
             self.log_warn('no compression engine worked, returning original data.')
             return data
         else:
-            best: Decompression
-            return self.labelled(best.result, method=best.engine.name)
+            return self.labelled(best.result, method=best.method)

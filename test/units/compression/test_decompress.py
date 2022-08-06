@@ -4,6 +4,7 @@ import inspect
 import os.path
 
 from .. import TestUnitBase
+from . import KADATH1, KADATH2
 
 
 class TestAutoDecompressor(TestUnitBase):
@@ -19,7 +20,9 @@ class TestAutoDecompressor(TestUnitBase):
         self.buffers = [
             B'AAFOOBAR/BAR' * 2000,
             code[:16000],
-            self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')
+            self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916'),
+            KADATH1.encode('utf8'),
+            KADATH2.encode('utf8'),
         ]
 
     def _mangle(self, data):
@@ -30,7 +33,7 @@ class TestAutoDecompressor(TestUnitBase):
         yield B'\x01\x00' + data
 
     def test_mangled_buffers(self):
-        unit = self.load(min_ratio=0.7)
+        unit = self.load()
         for e in unit.engines:
             if not e.is_reversible:
                 continue
@@ -38,10 +41,13 @@ class TestAutoDecompressor(TestUnitBase):
                 compressed = e.reverse(buffer)
                 failures = []
                 success = 0
-                self.assertEqual(unit(compressed), buffer,
-                    msg=F'Failed for {e.name}, buffer {k}')
+                result, = compressed | unit
+                method = result.meta.get("method", "uncompressed")
+                self.assertEqual(result, buffer,
+                    msg=F'Failed for {e.name}, reported as {method} for buffer #{k}')
                 for m, sample in enumerate(self._mangle(compressed), 1):
-                    if buffer not in unit(sample):
+                    result, = sample | unit
+                    if buffer not in result:
                         failures.append(m)
                     else:
                         success += 1
