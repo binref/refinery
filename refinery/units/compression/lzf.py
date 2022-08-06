@@ -16,7 +16,7 @@ class lzf(Unit):
     This unit implements LZF compression and decompression.
     """
 
-    def __init__(self, fast: Arg.Switch('-x', help='Enable fast compression mode.')):
+    def __init__(self, fast: Arg.Switch('-x', help='Enable fast compression mode.') = False):
         super().__init__(fast=fast)
 
     def reverse(self, data):

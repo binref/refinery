@@ -15,6 +15,7 @@ from .lzo    import lzo    # noqa
 from .szdd   import szdd   # noqa
 from .zl     import zl     # noqa
 from .qlz    import qlz    # noqa
+from .lzf    import lzf    # noqa
 
 
 class decompress(Unit):
@@ -45,7 +46,8 @@ class decompress(Unit):
             raise ValueError('The compression factor must be nonnegative.')
         super().__init__(tolerance=tolerance, prepend=prepend, min_ratio=min_ratio)
         self.engines = [
-            engine() for engine in [szdd, zl, lzma, aplib, qlz, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1]
+            engine() for engine in [
+                szdd, zl, lzma, aplib, qlz, lzf, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1]
         ]
 
     def process(self, data):
