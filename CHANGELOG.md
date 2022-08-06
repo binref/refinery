@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.4.44
+- Adds the `lzf` unit for LZF compression and decompression.
+
 ## Version 0.4.43
 - Adds the `qlz` unit for QuickLZ decompression.
 
