@@ -370,3 +370,7 @@ class lzip(Unit):
                     break
 
             return output.getvalue()
+
+    @classmethod
+    def handles(self, data: bytearray):
+        return data[:4] == B'LZIP'

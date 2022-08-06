@@ -50,3 +50,7 @@ class szdd(Unit):
                             window_pos &= 0xFFF
                             match_pos &= 0xFFF
             return output
+
+    @classmethod
+    def handles(self, data: bytearray):
+        return data[:4] == B'SZDD'

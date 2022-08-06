@@ -58,3 +58,14 @@ class zl(Unit):
         zl = zlib.compressobj(self.args.level, zlib.DEFLATED, mode)
         zz = zl.compress(data)
         return zz + zl.flush(zlib.Z_FINISH)
+
+    @classmethod
+    def handles(self, data: bytearray):
+        for sig in (
+            B'\x1F\x8B',  # gzip header
+            B'\x78\x01',  # zlib low compression
+            B'\x78\x9C',  # zlib medium compression
+            B'\x78\xDA',  # zlib high compression
+        ):
+            if data[:2] == sig:
+                return True

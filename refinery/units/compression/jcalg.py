@@ -46,7 +46,7 @@ class jcalg(Unit):
 
     @classmethod
     def handles(cls, data: bytearray):
-        if data.startswith(B'JC'):
+        if data[:2] == B'JC':
             return True
 
     def _checksum(self, data):

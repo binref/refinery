@@ -122,3 +122,10 @@ class lzma(Unit):
                 self.log_info(F'decompression failed with strategy {strategy}: {p.message}')
                 errors.append(p)
         raise max(errors, key=lambda e: len(e.partial))
+
+    @classmethod
+    def handles(self, data: bytearray):
+        if data[:4] == B'\x5D\0\0\0':
+            return True
+        if data[:5] == B'\xFD7zXZ':
+            return True

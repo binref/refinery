@@ -18,3 +18,7 @@ class bz2(Unit):
 
     def reverse(self, data):
         return bz2_.compress(data, self.args.level)
+
+    @classmethod
+    def handles(self, data: bytearray):
+        return data[:3] == B'BZh'

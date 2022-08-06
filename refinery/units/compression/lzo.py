@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from enum import IntEnum, IntFlag
-from typing import ByteString, Generator
+from typing import ByteString, Generator, Optional
 from zlib import adler32, crc32
 from datetime import datetime
 
@@ -57,10 +57,12 @@ class LZOChunk(Struct):
 
 
 class LZO(Struct):
+    SIGNATURE = B'\x89\x4c\x5a\x4f\x00\x0d\x0a\x1a\x0a'
+
     def __init__(self, reader: StructReader[memoryview]):
         signature = reader.read(9)
 
-        if signature != B'\x89\x4c\x5a\x4f\x00\x0d\x0a\x1a\x0a':
+        if signature != self.SIGNATURE:
             raise LZOError(F'Invalid Signature: {signature.hex()}')
 
         reader.bigendian = True
@@ -272,3 +274,9 @@ class lzo(Unit):
                 path=lzo.name,
                 date=datetime.utcfromtimestamp(lzo.mtime)
             )
+
+    @classmethod
+    def handles(self, data: bytearray) -> Optional[bool]:
+        sig = LZO.SIGNATURE
+        if data[:len(sig)] == sig:
+            return True
