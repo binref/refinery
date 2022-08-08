@@ -1,9 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import inspect
+import random
 
 import refinery.lib.tools as tools
 from .. import TestBase
+
+
+class TestEntropy(TestBase):
+
+    def test_low_entropy(self):
+        data = B'2' * 2000
+        self.assertLessEqual(tools.entropy_fallback(data), 0.001)
+
+    def test_high_entropy_01(self):
+        data = bytes((random.randrange(0, 0x100) for _ in range(2000)))
+        self.assertGreaterEqual(tools.entropy_fallback(data), 0.98)
+
+    def test_high_entropy_02(self):
+        data = bytes((random.randrange(0, 0x100) for _ in range(2000)))
+        self.assertGreaterEqual(tools.entropy(data), 0.98)
 
 
 class TestTools(TestBase):
