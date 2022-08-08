@@ -88,3 +88,8 @@ class TestMultiBin(TestBase):
     def test_readme_01(self):
         m = multibin('repl[q:1%2c2%2c3,2]:1,2,3,4,5')
         self.assertEqual(m, B'2,4,5')
+
+    def test_pbkdf2(self):
+        r = bytes.fromhex('E6 16 47 03 3A 80 F6 22 BC 62 1D 0B EC 0E B4 48')
+        m = multibin('pbkdf2[16,foo,100]:bar')
+        self.assertEqual(m, r)
