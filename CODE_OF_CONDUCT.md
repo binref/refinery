@@ -25,7 +25,7 @@ _You bet your ass we're all alike..._
 _we've been spoon-fed baby food at school when we hungered for steak..._
 _the bits of meat that you did let slip through were pre-chewed and tasteless._
 _We've been dominated by sadists, or ignored by the apathetic._
-_The few that had something to teach found us will-ing pupils,_
+_The few that had something to teach found us willing pupils,_
 _but those few are like drops of water in the desert._
 
 _This is our world now..._
