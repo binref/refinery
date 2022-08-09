@@ -1,4 +1,4 @@
-# The Conscience of a Hacker[¹](http://www.phrack.org/issues/7/3.html)
+# The Conscience of a Hacker[*](http://www.phrack.org/issues/7/3.html)
 
 _I made a discovery today._
 _I found a computer._
