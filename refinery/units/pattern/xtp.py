@@ -176,7 +176,7 @@ class xtp(PatternExtractor):
         B'<'[0]: B'>',
     }
 
-    def _check_match(self, data, pos, name, value):
+    def _check_match(self, data: bytearray, pos: int, name: str, value: bytes):
         term = self._BRACKETING.get(data[pos - 1], None)
         if term:
             pos = value.find(term)
@@ -330,7 +330,7 @@ class xtp(PatternExtractor):
     def process(self, data):
         whitelist = set()
 
-        def check(match):
+        def check(match: re.Match):
             for name, value in match.groupdict().items():
                 if value is not None:
                     break
@@ -338,7 +338,7 @@ class xtp(PatternExtractor):
                 raise RefineryCriticalException('Received empty match.')
             if value in whitelist:
                 return None
-            result = self._check_match(data, match.start(), name, value)
+            result = self._check_match(match.string, match.start(), name, value)
             if result is not None:
                 return self.labelled(result, pattern=name)
             whitelist.add(value)

