@@ -4,7 +4,7 @@ import re
 
 from fnmatch import fnmatch
 from ipaddress import ip_address
-from typing import AnyStr
+from typing import AnyStr, Union
 from urllib.parse import urlparse
 from string import ascii_letters
 from pathlib import Path
@@ -176,7 +176,7 @@ class xtp(PatternExtractor):
         B'<'[0]: B'>',
     }
 
-    def _check_match(self, data: bytearray, pos: int, name: str, value: bytes):
+    def _check_match(self, data: Union[memoryview, bytearray], pos: int, name: str, value: bytes):
         term = self._BRACKETING.get(data[pos - 1], None)
         if term:
             pos = value.find(term)
@@ -198,9 +198,9 @@ class xtp(PatternExtractor):
             if self.args.filter > 2 and sum(ocets) < 10:
                 return None
             for area in (
-                data[pos - 20 : pos + 20],
-                data[pos * 2 - 40 : pos * 2 + 40 : 2],
-                data[pos * 2 - 41 : pos * 2 + 39 : 2]
+                bytes(data[pos - 20 : pos + 20]),
+                bytes(data[pos * 2 - 40 : pos * 2 + 40 : 2]),
+                bytes(data[pos * 2 - 41 : pos * 2 + 39 : 2]),
             ):
                 if B'version' in area.lower():
                     return None
