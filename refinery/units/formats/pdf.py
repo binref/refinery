@@ -94,7 +94,7 @@ class xtpdf(PathExtractorUnit):
                 yield from self._walk(value, memo, *path, key)
 
     def unpack(self, data):
-        with MemoryFile(data) as stream:
+        with MemoryFile(data, read_as_bytes=True) as stream:
             with NoLogging():
                 pdf = self._pypdf2.PdfFileReader(stream)
                 catalog = pdf.trailer['/Root']
