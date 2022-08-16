@@ -558,8 +558,8 @@ class JvCode(Struct):
             code.bigendian = True
             while not code.eof:
                 self.disassembly.append(JvOpCode(code, pool=pool))
-        self.exceptions = [JvException(reader) for _ in range(reader.u16())]
-        self.attributes = [JvAttribute(reader) for _ in range(reader.u16())]
+        self.exceptions = [JvException(reader      ) for _ in range(reader.u16())] # noqa
+        self.attributes = [JvAttribute(reader, pool) for _ in range(reader.u16())] # noqa
 
 
 class JvClassFile(Struct):

