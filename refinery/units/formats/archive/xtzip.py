@@ -63,8 +63,9 @@ class xtzip(ArchiveUnit):
                         raise RuntimeError('archive is password-protected')
                     else:
                         raise RuntimeError(F'invalid password: {password.decode(self.codec)}') from E
-            if info.is_dir():
-                continue
+            if info.filename:
+                if info.is_dir():
+                    continue
             try:
                 date = datetime(*info.date_time)
             except Exception:

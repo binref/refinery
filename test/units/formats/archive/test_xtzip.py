@@ -22,3 +22,17 @@ class TestZipFileExtractor(TestUnitBase):
         put = self.ldu('put', 'p', 'refined')
         xtzip = self.load(pwd='var:p')
         self.assertEqual(str(data | put[xtzip]), 'foobar.')
+
+    def test_empty_filename(self):
+        data = bytes.fromhex(
+            '504b0304140000080e00359eff54a5004e70a90000009400000000000000091405005d0000000100'
+            '03008cc274baf7b3de2d96ead6a430098a4c88fdaddf5f4c29a3233472aedccfebda2bafb00162f0'
+            '84cf660a7824199d6a3e1f68766e78dc5539561a8a1cfaba3192d7daee41449e4304188998b59f2a'
+            'e06dc233c9e7164eef4055a129a79bc044c7eaab667314030b8dcc20535c0c003b681ae3a08c6f10'
+            'cdc06d140dbe7a5c56d19085ce86d93feb2031a5a36e92cd085ceca38044f84eb0ec8d04f1800050'
+            '4b01021400140000080e00359eff54a5004e70a90000009400000000000000000000000000000000'
+            '0000000000504b050600000000010001002e000000c700000000000505050505'
+        )
+        unit = self.load()
+        result, = data | unit
+        self.assertEqual(result[:12], b'\x06\x02\0\0\0\xA4\0\0RSA1')
