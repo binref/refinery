@@ -15,7 +15,7 @@ class xkey(Unit):
     """
     def __init__(
         self,
-        range: Arg(type=sliceobj, help='range of length values to try, the default is 1:128.') = slice(1, 129),
+        range: Arg(type=sliceobj, help='range of length values to try, the default is 1:32.') = slice(1, 32),
     ):
         super().__init__(range=range)
 
@@ -42,9 +42,6 @@ class xkey(Unit):
         for length in range(start, stop, step):
             _guess = [Counter(data[j::length]).most_common(1)[0] for j in range(length)]
             _score = sum(count for _, count in _guess)
-            if _score == score and guess and len(_guess) % len(guess) == 0 and len(guess) >= 3:
-                self.log_info('found same score at multiple of length of best performer, exiting')
-                break
             if _score > score:
                 self.log_info(F'got score {_score*100/n:5.2f}% for length {length}')
                 score = _score
