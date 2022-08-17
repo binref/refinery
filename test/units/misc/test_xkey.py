@@ -11,7 +11,7 @@ class TestXKey(TestUnitBase):
         for length in (3, 7, 12, 25, 112):
             key = self.generate_random_buffer(length)
             encrypted, = data | self.ldu('xor', key)
-            recovered, = encrypted | self.load()
+            recovered, = encrypted | self.load(slice(1, 128))
             self.assertEqual(recovered, key, F'failure for length={length}')
 
     def test_blocksize_4(self):
