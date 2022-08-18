@@ -45,7 +45,7 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
             # rather than a virtual address.
             cert_value = cert_entry.VirtualAddress + cert_entry.Size
         else:
-            cert_value = cert_entry.VirtualAddress
+            cert_value = 0
         directories_value = max(directories_value, cert_value)
     else:
         directories_value = 0
