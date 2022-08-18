@@ -182,7 +182,7 @@ class BatchDeobfuscator:
             r'''(:~\s*(?P<index>[+-]?\d+)\s*,\s*(?P<length>[+-]?\d+)\s*)?(?P=delim)''')
         match = re.fullmatch(pattern, variable)
         if match is None:
-            raise ValueError(F'Input string is not a variable evaluation: {variable}')
+            return variable
         var = self.variables.get(match.group('name').lower())
         if var is None:
             return variable
