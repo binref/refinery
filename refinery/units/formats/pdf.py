@@ -25,7 +25,10 @@ class xtpdf(PathExtractorUnit):
 
     def _walk(self, blob, memo: Optional[Set[int]] = None, *path):
         while isinstance(blob, self._pypdf2.generic.IndirectObject):
-            blob = blob.getObject()
+            try:
+                blob = blob.getObject()
+            except Exception:
+                break
         if memo is None:
             memo = {id(blob)}
         elif id(blob) in memo:
