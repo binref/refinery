@@ -15,13 +15,12 @@ class PIXEL_PART(IntEnum):
 
 class stego(Unit):
     """
-    Decodes the RGBA (red/green/blue/alpha) values of the pixels of a given image file and
-    outputs these values as bytes. Each row of the image is transformed and output as and
-    individual chunk. To obtain the data in columns, the `refinery.transpose` unit can be
-    used.
+    Decodes the RGBA (red/green/blue/alpha) values of the pixels of a given image file and outputs
+    these values as bytes. Each row of the image is transformed and output as and individual chunk.
     """
     def __init__(
         self,
+        transpose: Arg.Switch('-t', help='Return the columns of the image rather than the rows.'),
         parts: Arg('parts', nargs='?', type=str, help=(
             'A string containing any ordering of the letters R, G, B, and A (case-insensitive). '
             'These pixel components will be extracted from every pixel in the given order. The '
@@ -29,6 +28,7 @@ class stego(Unit):
         )) = 'RGB'
     ):
         super().__init__(
+            transpose=transpose,
             parts=tuple(Arg.AsOption(p, PIXEL_PART) for p in parts)
         )
 
@@ -39,6 +39,8 @@ class stego(Unit):
 
     def process(self, data):
         image = self._image.open(MemoryFile(data))
+        if self.args.transpose:
+            image = image.transpose(self._image.Transpose.ROTATE_90)
         width, height = image.size
         for y in range(height):
             yield bytearray(
