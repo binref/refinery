@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.45 -- bugfix release
+
 ## Version 0.4.44
 - Adds the `lzf` unit for LZF compression and decompression.
 
