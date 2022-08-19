@@ -368,7 +368,7 @@ class Arg(Argument):
         try:
             return cls(value)
         except Exception as E:
-            choices = ', '.join(cls)
+            choices = ', '.join([option.name for option in cls])
             raise ValueError(F'Could not transform {value} into {cls.__name__}; the choices are: {choices}') from E
 
     @classmethod
