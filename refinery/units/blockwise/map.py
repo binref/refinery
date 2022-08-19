@@ -24,9 +24,13 @@ class map(BlockTransformation):
         super().__init__(blocksize=blocksize, index=index, image=image)
         self._map = None
 
+    def reverse(self, data):
+        return self._process(data, self.args.image, self.args.index)
+
     def process(self, data):
-        index: Sequence[int] = self.args.index
-        image: Sequence[int] = self.args.image
+        return self._process(data, self.args.index, self.args.image)
+
+    def _process(self, data: bytearray, index: Sequence[int], image: Sequence[int]):
         if not self.bytestream:
             if isbuffer(index):
                 self.log_info(F'chunking index sequence into blocks of size {self.args.blocksize}')
