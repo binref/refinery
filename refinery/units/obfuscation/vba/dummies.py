@@ -31,14 +31,16 @@ class deob_vba_dummy_variables(Deobfuscator):
             return True
 
         pattern = re.compile(
-            R'^\s{0,8}(?:const\s{1,8})?(\w+)\s{1,8}=\s{1,8}.*$',
-            flags=re.IGNORECASE
+            R'(?i)^\s{0,8}(?:const\s{1,8})?(\w+)\s{1,8}=\s{1,8}.*$'
         )
 
         for k, line in enumerate(lines):
             try:
                 name = pattern.match(line)[1]
             except (AttributeError, TypeError):
+                continue
+            if re.search(r'\w+\(', line):
+                # might be a function call
                 continue
             names[name].append(k)
 
