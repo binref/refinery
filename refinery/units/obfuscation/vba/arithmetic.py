@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from refinery.units.obfuscation import Deobfuscator, StringLiterals
-from refinery.lib.deobfuscation import ExpressionParsingFailure, cautious_eval
+from refinery.lib.deobfuscation import cautious_eval
 from refinery.lib.patterns import formats
 
 
