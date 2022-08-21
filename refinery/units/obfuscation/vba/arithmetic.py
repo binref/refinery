@@ -44,10 +44,10 @@ class deob_vba_arithmetic(Deobfuscator):
             else:
                 tail = ''
             if expression.isdigit() or brackets > 0:
-                return expression
+                return match[0]
             try:
                 result = str(cautious_eval(expression)) + self.deobfuscate(tail)
-            except ExpressionParsingFailure:
+            except Exception:
                 result = expression
                 self.log_info(F'error trying to parse arithmetic expression at offset {match.start()}: ({expression})')
             else:
