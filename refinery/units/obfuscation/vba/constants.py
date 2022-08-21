@@ -36,6 +36,6 @@ class deob_vba_constants(Deobfuscator):
         codelines = [line for k, line in enumerate(codelines) if k not in constline.values()]
         data = ''.join(codelines)
         for name, value in constants.items():
-            data = re.sub(RF'\b{re.escape(name)!s}\b', value, data)
+            data = re.sub(RF'\b{re.escape(name)!s}\b', lambda _: value, data)
 
         return data
