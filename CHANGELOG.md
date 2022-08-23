@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.4.46 -- bugfix release
+
 ## Version 0.4.45 -- bugfix release
 
 ## Version 0.4.44
