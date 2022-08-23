@@ -78,7 +78,9 @@ class carve_zip(Unit):
                 central_directory = ZipCentralDirectory(mem[start:])
             except ValueError:
                 self.log_debug('computed location of central directory is invalid')
-            start = central_directory.header_offset + shift
-            zip = mem[start:end + len(end_marker)]
-            yield self.labelled(zip, offset=start)
-            end = start
+                end = end - len(ZipEndOfCentralDirectory.SIGNATURE)
+            else:
+                start = central_directory.header_offset + shift
+                zip = mem[start:end + len(end_marker)]
+                yield self.labelled(zip, offset=start)
+                end = start
