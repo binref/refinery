@@ -1,0 +1,2128 @@
+{
+  "pid": {
+    "0000": "Import (old)",
+    "0001": "Import",
+    "0002": "Linker510",
+    "0003": "Cvtomf510",
+    "0004": "Linker600",
+    "0005": "Cvtomf600",
+    "0006": "Cvtres500",
+    "0007": "Utc11_Basic",
+    "0008": "Utc11_C",
+    "0009": "Utc12_Basic",
+    "000A": "Utc12_C",
+    "000B": "Utc12_CPP",
+    "000C": "AliasObj60",
+    "000D": "VisualBasic60",
+    "000E": "Masm613",
+    "000F": "Masm710",
+    "0010": "Linker511",
+    "0011": "Cvtomf511",
+    "0012": "Masm614",
+    "0013": "Linker512",
+    "0014": "Cvtomf512",
+    "0015": "Utc12_C_Std",
+    "0016": "Utc12_CPP_Std",
+    "0017": "Utc12_C_Book",
+    "0018": "Utc12_CPP_Book",
+    "0019": "Implib700",
+    "001A": "Cvtomf700",
+    "001B": "Utc13_Basic",
+    "001C": "Utc13_C",
+    "001D": "Utc13_CPP",
+    "001E": "Linker610",
+    "001F": "Cvtomf610",
+    "0020": "Linker601",
+    "0021": "Cvtomf601",
+    "0022": "Utc12_1_Basic",
+    "0023": "Utc12_1_C",
+    "0024": "Utc12_1_CPP",
+    "0025": "Linker620",
+    "0026": "Cvtomf620",
+    "0027": "AliasObj70",
+    "0028": "Linker621",
+    "0029": "Cvtomf621",
+    "002A": "Masm615",
+    "002B": "Utc13_LTCG_C",
+    "002C": "Utc13_LTCG_CPP",
+    "002D": "Masm620",
+    "002E": "ILAsm100",
+    "002F": "Utc12_2_Basic",
+    "0030": "Utc12_2_C",
+    "0031": "Utc12_2_CPP",
+    "0032": "Utc12_2_C_Std",
+    "0033": "Utc12_2_CPP_Std",
+    "0034": "Utc12_2_C_Book",
+    "0035": "Utc12_2_CPP_Book",
+    "0036": "Implib622",
+    "0037": "Cvtomf622",
+    "0038": "Cvtres501",
+    "0039": "Utc13_C_Std",
+    "003A": "Utc13_CPP_Std",
+    "003B": "Cvtpgd1300",
+    "003C": "Linker622",
+    "003D": "Linker700",
+    "003E": "Export622",
+    "003F": "Export700",
+    "0040": "Masm700",
+    "0041": "Utc13_POGO_I_C",
+    "0042": "Utc13_POGO_I_CPP",
+    "0043": "Utc13_POGO_O_C",
+    "0044": "Utc13_POGO_O_CPP",
+    "0045": "Cvtres700",
+    "0046": "Cvtres710p",
+    "0047": "Linker710p",
+    "0048": "Cvtomf710p",
+    "0049": "Export710p",
+    "004A": "Implib710p",
+    "004B": "Masm710p",
+    "004C": "Utc1310p_C",
+    "004D": "Utc1310p_CPP",
+    "004E": "Utc1310p_C_Std",
+    "004F": "Utc1310p_CPP_Std",
+    "0050": "Utc1310p_LTCG_C",
+    "0051": "Utc1310p_LTCG_CPP",
+    "0052": "Utc1310p_POGO_I_C",
+    "0053": "Utc1310p_POGO_I_CPP",
+    "0054": "Utc1310p_POGO_O_C",
+    "0055": "Utc1310p_POGO_O_CPP",
+    "0056": "Linker624",
+    "0057": "Cvtomf624",
+    "0058": "Export624",
+    "0059": "Implib624",
+    "005A": "Linker710",
+    "005B": "Cvtomf710",
+    "005C": "Export710",
+    "005D": "Implib710",
+    "005E": "Cvtres710",
+    "005F": "Utc1310_C",
+    "0060": "Utc1310_CPP",
+    "0061": "Utc1310_C_Std",
+    "0062": "Utc1310_CPP_Std",
+    "0063": "Utc1310_LTCG_C",
+    "0064": "Utc1310_LTCG_CPP",
+    "0065": "Utc1310_POGO_I_C",
+    "0066": "Utc1310_POGO_I_CPP",
+    "0067": "Utc1310_POGO_O_C",
+    "0068": "Utc1310_POGO_O_CPP",
+    "0069": "AliasObj710",
+    "006A": "AliasObj710p",
+    "006B": "Cvtpgd1310",
+    "006C": "Cvtpgd1310p",
+    "006D": "Utc1400_C",
+    "006E": "Utc1400_CPP",
+    "006F": "Utc1400_C_Std",
+    "0070": "Utc1400_CPP_Std",
+    "0071": "Utc1400_LTCG_C",
+    "0072": "Utc1400_LTCG_CPP",
+    "0073": "Utc1400_POGO_I_C",
+    "0074": "Utc1400_POGO_I_CPP",
+    "0075": "Utc1400_POGO_O_C",
+    "0076": "Utc1400_POGO_O_CPP",
+    "0077": "Cvtpgd1400",
+    "0078": "Linker800",
+    "0079": "Cvtomf800",
+    "007A": "Export800",
+    "007B": "Implib800",
+    "007C": "Cvtres800",
+    "007D": "Masm800",
+    "007E": "AliasObj800",
+    "007F": "PhoenixPrerelease",
+    "0080": "Utc1400_CVTCIL_C",
+    "0081": "Utc1400_CVTCIL_CPP",
+    "0082": "Utc1400_LTCG_MSIL",
+    "0083": "Utc1500_C",
+    "0084": "Utc1500_CPP",
+    "0085": "Utc1500_C_Std",
+    "0086": "Utc1500_CPP_Std",
+    "0087": "Utc1500_CVTCIL_C",
+    "0088": "Utc1500_CVTCIL_CPP",
+    "0089": "Utc1500_LTCG_C",
+    "008A": "Utc1500_LTCG_CPP",
+    "008B": "Utc1500_LTCG_MSIL",
+    "008C": "Utc1500_POGO_I_C",
+    "008D": "Utc1500_POGO_I_CPP",
+    "008E": "Utc1500_POGO_O_C",
+    "008F": "Utc1500_POGO_O_CPP",
+    "0090": "Cvtpgd1500",
+    "0091": "Linker900",
+    "0092": "Export900",
+    "0093": "Implib900",
+    "0094": "Cvtres900",
+    "0095": "Masm900",
+    "0096": "AliasObj900",
+    "0097": "Resource",
+    "0098": "AliasObj1000",
+    "0099": "Cvtpgd1600",
+    "009A": "Cvtres1000",
+    "009B": "Export1000",
+    "009C": "Implib1000",
+    "009D": "Linker1000",
+    "009E": "Masm1000",
+    "009F": "Phx1600_C",
+    "00A0": "Phx1600_CPP",
+    "00A1": "Phx1600_CVTCIL_C",
+    "00A2": "Phx1600_CVTCIL_CPP",
+    "00A3": "Phx1600_LTCG_C",
+    "00A4": "Phx1600_LTCG_CPP",
+    "00A5": "Phx1600_LTCG_MSIL",
+    "00A6": "Phx1600_POGO_I_C",
+    "00A7": "Phx1600_POGO_I_CPP",
+    "00A8": "Phx1600_POGO_O_C",
+    "00A9": "Phx1600_POGO_O_CPP",
+    "00AA": "Utc1600_C",
+    "00AB": "Utc1600_CPP",
+    "00AC": "Utc1600_CVTCIL_C",
+    "00AD": "Utc1600_CVTCIL_CPP",
+    "00AE": "Utc1600_LTCG_C",
+    "00AF": "Utc1600_LTCG_CPP",
+    "00B0": "Utc1600_LTCG_MSIL",
+    "00B1": "Utc1600_POGO_I_C",
+    "00B2": "Utc1600_POGO_I_CPP",
+    "00B3": "Utc1600_POGO_O_C",
+    "00B4": "Utc1600_POGO_O_CPP",
+    "00B5": "AliasObj1010",
+    "00B6": "Cvtpgd1610",
+    "00B7": "Cvtres1010",
+    "00B8": "Export1010",
+    "00B9": "Implib1010",
+    "00BA": "Linker1010",
+    "00BB": "Masm1010",
+    "00BC": "Utc1610_C",
+    "00BD": "Utc1610_CPP",
+    "00BE": "Utc1610_CVTCIL_C",
+    "00BF": "Utc1610_CVTCIL_CPP",
+    "00C0": "Utc1610_LTCG_C",
+    "00C1": "Utc1610_LTCG_CPP",
+    "00C2": "Utc1610_LTCG_MSIL",
+    "00C3": "Utc1610_POGO_I_C",
+    "00C4": "Utc1610_POGO_I_CPP",
+    "00C5": "Utc1610_POGO_O_C",
+    "00C6": "Utc1610_POGO_O_CPP",
+    "00C7": "AliasObj1100",
+    "00C8": "Cvtpgd1700",
+    "00C9": "Cvtres1100",
+    "00CA": "Export1100",
+    "00CB": "Implib1100",
+    "00CC": "Linker1100",
+    "00CD": "Masm1100",
+    "00CE": "Utc1700_C",
+    "00CF": "Utc1700_CPP",
+    "00D0": "Utc1700_CVTCIL_C",
+    "00D1": "Utc1700_CVTCIL_CPP",
+    "00D2": "Utc1700_LTCG_C",
+    "00D3": "Utc1700_LTCG_CPP",
+    "00D4": "Utc1700_LTCG_MSIL",
+    "00D5": "Utc1700_POGO_I_C",
+    "00D6": "Utc1700_POGO_I_CPP",
+    "00D7": "Utc1700_POGO_O_C",
+    "00D8": "Utc1700_POGO_O_CPP",
+    "00D9": "AliasObj1200",
+    "00DA": "Cvtpgd1800",
+    "00DB": "Cvtres1200",
+    "00DC": "Export1200",
+    "00DD": "Implib1200",
+    "00DE": "Linker1200",
+    "00DF": "Masm1200",
+    "00E0": "Utc1800_C",
+    "00E1": "Utc1800_CPP",
+    "00E2": "Utc1800_CVTCIL_C",
+    "00E3": "Utc1800_CVTCIL_CPP",
+    "00E4": "Utc1800_LTCG_C",
+    "00E5": "Utc1800_LTCG_CPP",
+    "00E6": "Utc1800_LTCG_MSIL",
+    "00E7": "Utc1800_POGO_I_C",
+    "00E8": "Utc1800_POGO_I_CPP",
+    "00E9": "Utc1800_POGO_O_C",
+    "00EA": "Utc1800_POGO_O_CPP",
+    "00EB": "AliasObj1210",
+    "00EC": "Cvtpgd1810",
+    "00ED": "Cvtres1210",
+    "00EE": "Export1210",
+    "00EF": "Implib1210",
+    "00F0": "Linker1210",
+    "00F1": "Masm1210",
+    "00F2": "Utc1810_C",
+    "00F3": "Utc1810_CPP",
+    "00F4": "Utc1810_CVTCIL_C",
+    "00F5": "Utc1810_CVTCIL_CPP",
+    "00F6": "Utc1810_LTCG_C",
+    "00F7": "Utc1810_LTCG_CPP",
+    "00F8": "Utc1810_LTCG_MSIL",
+    "00F9": "Utc1810_POGO_I_C",
+    "00FA": "Utc1810_POGO_I_CPP",
+    "00FB": "Utc1810_POGO_O_C",
+    "00FC": "Utc1810_POGO_O_CPP",
+    "00FD": "AliasObj1400",
+    "00FE": "Cvtpgd1900",
+    "00FF": "Cvtres1400",
+    "0100": "Export1400",
+    "0101": "Implib1400",
+    "0102": "Linker1400",
+    "0103": "Masm1400",
+    "0104": "Utc1900_C",
+    "0105": "Utc1900_CPP",
+    "0106": "Utc1900_CVTCIL_C",
+    "0107": "Utc1900_CVTCIL_CPP",
+    "0108": "Utc1900_LTCG_C",
+    "0109": "Utc1900_LTCG_CPP",
+    "010A": "Utc1900_LTCG_MSIL",
+    "010B": "Utc1900_POGO_I_C",
+    "010C": "Utc1900_POGO_I_CPP",
+    "010D": "Utc1900_POGO_O_C",
+    "010E": "Utc1900_POGO_O_CPP"
+  },
+  "ver": {
+    "0B62": {
+      "ide": ".NET Framework",
+      "ver": "1.0 beta 2"
+    },
+    "0DB8": {
+      "ide": ".NET Framework",
+      "ver": "1.0 RC3"
+    },
+    "0E79": {
+      "ide": ".NET Framework",
+      "ver": "1.0"
+    },
+    "10E2": {
+      "ide": ".NET Framework",
+      "ver": "1.1"
+    },
+    "52DD": {
+      "ide": ".NET Framework",
+      "ver": "1.2 pre-alpha"
+    },
+    "77EF": {
+      "ide": ".NET Framework",
+      "ver": "1.2 alpha"
+    },
+    "9D6D": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "9DEA": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "9E9F": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "9FC7": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "A09B": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "C3BE": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "C427": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "C5A9": {
+      "ide": ".NET Framework",
+      "ver": "2.0"
+    },
+    "C616": {
+      "ide": ".NET Framework",
+      "ver": "4.5"
+    },
+    "C6F4": {
+      "ide": ".NET Framework",
+      "ver": "4.5.1"
+    },
+    "C6FA": {
+      "ide": ".NET Framework",
+      "ver": "4.5.1"
+    },
+    "C792": {
+      "ide": ".NET Framework",
+      "ver": "4.5.2"
+    },
+    "C809": {
+      "ide": ".NET Framework",
+      "ver": "4.5.2"
+    },
+    "C9B9": {
+      "ide": ".NET Framework",
+      "ver": "4.5.1"
+    },
+    "C9C3": {
+      "ide": ".NET Framework",
+      "ver": "4.5.2"
+    },
+    "041F": {
+      "ide": ".NET Framework",
+      "ver": "4.6"
+    },
+    "5D5E": {
+      "ide": ".NET Core",
+      "ver": "5.0"
+    },
+    "0684": {
+      "ide": "Visual Studio 5.0 CvtRes.exe",
+      "ver": "5.0"
+    },
+    "06B8": {
+      "ide": "Visual Studio 5.0 CvtRes.exe",
+      "ver": "5.0"
+    },
+    "06C7": {
+      "ide": "Visual Studio 5.0 CvtRes.exe",
+      "ver": "5.0"
+    },
+    "070B": {
+      "ide": "Visual Studio 5.0 CvtRes.exe",
+      "ver": "5.0"
+    },
+    "0820": {
+      "ide": "Visual Studio 5.0 CvtRes.exe",
+      "ver": "5.0"
+    },
+    "082A": {
+      "ide": "Visual Studio 5.0 CvtRes.exe",
+      "ver": "5.0"
+    },
+    "1B60": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.0"
+    },
+    "1B6E": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.0 SP0"
+    },
+    "1BDC": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.2 SP1"
+    },
+    "1C6A": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.10 SP3"
+    },
+    "1C87": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.10 SP3"
+    },
+    "1F56": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.12"
+    },
+    "1F62": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.12"
+    },
+    "1F8E": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.12"
+    },
+    "1FBC": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.12"
+    },
+    "1FD8": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.12"
+    },
+    "2359": {
+      "ide": "Visual Studio 5.0",
+      "ver": "5.12"
+    },
+    "1C7B": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "1FE7": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "22AD": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP4"
+    },
+    "2304": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP5"
+    },
+    "260A": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP6"
+    },
+    "2636": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP6"
+    },
+    "2637": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP6"
+    },
+    "1FE8": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "1FE9": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "1FF0": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "212F": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP3"
+    },
+    "1F69": {
+      "ide": "Visual Basic 6.0",
+      "ver": "5.0"
+    },
+    "224F": {
+      "ide": "Visual Basic 6.0",
+      "ver": "5.0"
+    },
+    "CD20": {
+      "ide": "Visual Studio 6.0",
+      "ver": "5.0"
+    },
+    "1F6F": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "209D": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "209E": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "20CD": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0"
+    },
+    "20FF": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP3"
+    },
+    "2179": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP3"
+    },
+    "2233": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP3"
+    },
+    "2241": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP3"
+    },
+    "225D": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP4"
+    },
+    "225E": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP4"
+    },
+    "225F": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP4"
+    },
+    "2264": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP4"
+    },
+    "22EF": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP5 Processor Pack"
+    },
+    "2306": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP5"
+    },
+    "2354": {
+      "ide": "Visual Studio 6.0",
+      "ver": "6.0 SP5 Processor Pack"
+    },
+    "1C83": {
+      "ide": "Visual Studio 6.0 MASM",
+      "ver": "6.13 SP1"
+    },
+    "20FC": {
+      "ide": "Visual Studio 6.0 MASM",
+      "ver": "6.14 SP3"
+    },
+    "2263": {
+      "ide": "Visual Studio 6.0 MASM",
+      "ver": "6.15 SP4"
+    },
+    "22C9": {
+      "ide": "Visual Studio 6.0 MASM",
+      "ver": "6.15 SP4"
+    },
+    "212B": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "2260": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "227E": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "2346": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0 beta 1"
+    },
+    "234D": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "2353": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "2397": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "23CA": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "23D9": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "18EA": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "23DA": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "2032": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "23FA": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0 XP DDK"
+    },
+    "2426": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0 beta 2"
+    },
+    "249C": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0 RC1"
+    },
+    "24FA": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "1B92": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "1A30": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "26E3": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0 SP1"
+    },
+    "07F3": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10 beta"
+    },
+    "0813": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10 beta"
+    },
+    "0DD2": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "C8CB": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "64A7": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "6DBF": {
+      "ide": "Visual Studio 2002",
+      "ver": "7.0"
+    },
+    "0883": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "088E": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "0895": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "08C1": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "0BEC": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10 Free Toolkit"
+    },
+    "0C05": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "0C10": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "0CEE": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "DA29": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "0FB1": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "042F": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "0FBF": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10 SDK"
+    },
+    "0FC3": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10 SDK"
+    },
+    "178E": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10 SP1"
+    },
+    "17D5": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10 SP1"
+    },
+    "0870": {
+      "ide": "Visual Studio 2003",
+      "ver": "7.10"
+    },
+    "75A8": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "77ED": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "7920": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "9D76": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0 SDK"
+    },
+    "A0F4": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "C497": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "C5B0": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "2708": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "C612": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "EC64": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0"
+    },
+    "C627": {
+      "ide": "Visual Studio 2005",
+      "ver": "08.00"
+    },
+    "089F": {
+      "ide": "Visual Studio 2005",
+      "ver": "08.00"
+    },
+    "08B4": {
+      "ide": "Visual Studio 2005",
+      "ver": "08.00"
+    },
+    "EE49": {
+      "ide": "Visual Studio 2005",
+      "ver": "8.0 SP1 MFC Update"
+    },
+    "4FBD": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "76CB": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "521E": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "77FE": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "077B": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "2435": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "7809": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "0D0F": {
+      "ide": "Visual Studio 2008",
+      "ver": "9.0"
+    },
+    "4E93": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "52D2": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "7552": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7556": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7667": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "766A": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "766F": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "76CE": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "0C7F": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "0EF6": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "2709": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.0"
+    },
+    "77FC": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.10 SP1"
+    },
+    "798E": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.10 SP1"
+    },
+    "9D1B": {
+      "ide": "Visual Studio 2010",
+      "ver": "10.10 SP1"
+    },
+    "A09E": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C483": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C493": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C4ED": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C55A": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C4F9": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C547": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C563": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C5B4": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C5C4": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C615": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C622": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C6F1": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C748": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "C74C": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.1"
+    },
+    "C7A2": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.1"
+    },
+    "C7AA": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.2"
+    },
+    "C804": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.2"
+    },
+    "ECC2": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.3"
+    },
+    "EB9B": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.2"
+    },
+    "EE66": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.4"
+    },
+    "EF23": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0.5"
+    },
+    "EF30": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "FFDC": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "FFDD": {
+      "ide": "Visual Studio 2012",
+      "ver": "11.0"
+    },
+    "EE02": {
+      "ide": "Visual Studio 2012 MASM",
+      "ver": "11.0"
+    },
+    "4F62": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "4FB3": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "5015": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "5089": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "5146": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "520D": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0 RTM"
+    },
+    "7596": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.10"
+    },
+    "9CB3": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.10"
+    },
+    "9CB4": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.10"
+    },
+    "9EC9": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "9ED4": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "9ED8": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0"
+    },
+    "759E": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0.1"
+    },
+    "7674": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0.2"
+    },
+    "7725": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0.2"
+    },
+    "7803": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0.3"
+    },
+    "797D": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0.4"
+    },
+    "9EB5": {
+      "ide": "Visual Studio 2013",
+      "ver": "12.0.5"
+    },
+    "59DF": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "59E5": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "59F2": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5B6E": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5BE4": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5C3F": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "64EA": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "64EB": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "685B": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.15"
+    },
+    "6B14": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "70E4": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "70F8": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6FCB": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7085": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7086": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "71B8": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "71BE": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7297": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7298": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "746C": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "72D3": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5BD2": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.1"
+    },
+    "5D63": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.1"
+    },
+    "5D6D": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0 preview 2"
+    },
+    "5D6E": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2"
+    },
+    "5D77": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2"
+    },
+    "5E3B": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3 RC"
+    },
+    "5E92": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3"
+    },
+    "5E94": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.b"
+    },
+    "5E95": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "5E97": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "5E9A": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "5EA1": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "5EA7": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "5EA9": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "5EAA": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "5EAD": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5EB5": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6741": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6AB4": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6B74": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "74D9": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "74DB": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "75B5": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7555": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5F56": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0 preview 4"
+    },
+    "5F69": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0 TFS Test VMs"
+    },
+    "5927": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0 RC"
+    },
+    "5A43": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5DD3": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5E34": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "5F05": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6022": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6090": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.1"
+    },
+    "6093": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.1.a"
+    },
+    "6098": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.1.b"
+    },
+    "609A": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.1.c"
+    },
+    "61C1": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6223": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2"
+    },
+    "6225": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2"
+    },
+    "6226": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2.a"
+    },
+    "622A": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2.b"
+    },
+    "622B": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2.b"
+    },
+    "622C": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.2.c"
+    },
+    "6273": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6611": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6288": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "62D9": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "654A": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "634C": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3"
+    },
+    "634D": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3"
+    },
+    "634E": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.a"
+    },
+    "6350": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.b"
+    },
+    "6351": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.c"
+    },
+    "6357": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0.3.d"
+    },
+    "6DC9": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6E9B": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "6035": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.10 RC"
+    },
+    "61B0": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.10"
+    },
+    "61B9": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.10"
+    },
+    "61BB": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.10"
+    },
+    "63A4": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.11"
+    },
+    "63CB": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.11"
+    },
+    "646F": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.12"
+    },
+    "6610": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.12"
+    },
+    "6613": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.13"
+    },
+    "6665": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.13"
+    },
+    "6852": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.15"
+    },
+    "69A3": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.15"
+    },
+    "6866": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.15"
+    },
+    "6E9C": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.15"
+    },
+    "6F0B": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.15"
+    },
+    "698F": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "6990": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "6992": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "6993": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "6996": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "6997": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "699A": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "6FC6": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.16"
+    },
+    "6F66": {
+      "ide": "Visual Studio 2005",
+      "ver": "14.0"
+    },
+    "75BD": {
+      "ide": "Visual Studio 2005",
+      "ver": "14.0"
+    },
+    "66C0": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.0.0 preview 1"
+    },
+    "6785": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.0 Office tools"
+    },
+    "6788": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.0"
+    },
+    "66CB": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.0.0 preview 2"
+    },
+    "66D3": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.0.0 preview 3"
+    },
+    "6674": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.0.x"
+    },
+    "6723": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.1.x"
+    },
+    "672C": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.2.0 preview 1"
+    },
+    "6733": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.2.0 preview 2"
+    },
+    "6738": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.2.0 preview 3"
+    },
+    "673E": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.2.x"
+    },
+    "678B": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 1"
+    },
+    "678E": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 1.1"
+    },
+    "67EE": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 2"
+    },
+    "67F0": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 2.1"
+    },
+    "67FD": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 3"
+    },
+    "6857": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 4"
+    },
+    "6860": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 5"
+    },
+    "6864": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.0 preview 6"
+    },
+    "686A": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.x"
+    },
+    "686C": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.3.x"
+    },
+    "68C7": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.4.0 preview 1"
+    },
+    "691A": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.4.0 preview 2"
+    },
+    "692B": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.4.0 preview 3"
+    },
+    "6931": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.4.0 preview 4"
+    },
+    "697C": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.4.x"
+    },
+    "6981": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.5.0 preview 1"
+    },
+    "698B": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.5.0 preview 2"
+    },
+    "69A5": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.5.0 preview 2"
+    },
+    "69DE": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.5.0 preview 3"
+    },
+    "69E6": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.5.0 preview 4"
+    },
+    "69F8": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.5.0 preview 5"
+    },
+    "69FA": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.5.x"
+    },
+    "6A45": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.6.0 preview 1"
+    },
+    "6A47": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.0 MSI tools"
+    },
+    "6AAD": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.6.0 preview 2"
+    },
+    "6ABB": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.6.0 preview 3"
+    },
+    "6B0E": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.6.0 preview 4"
+    },
+    "6B15": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.6.0 preview 5"
+    },
+    "6B1D": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.6.0 preview 6"
+    },
+    "6B24": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.6.x"
+    },
+    "6B78": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 1"
+    },
+    "6B80": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 2"
+    },
+    "6B81": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 2"
+    },
+    "6BD4": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 3"
+    },
+    "6BE1": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 4"
+    },
+    "6BE9": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 5"
+    },
+    "6C35": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 6"
+    },
+    "6C36": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.0 preview 6"
+    },
+    "6C37": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.7.x"
+    },
+    "6C39": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.8.0 preview 1"
+    },
+    "6C51": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.8.0 preview 2"
+    },
+    "6CB1": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.8.0 preview 3"
+    },
+    "6D02": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.8.0 preview 4"
+    },
+    "6D14": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.8.0 preview 5"
+    },
+    "6D6A": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.8.x"
+    },
+    "6D70": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.9.0 preview 1"
+    },
+    "6DCB": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.9.0 preview 2"
+    },
+    "6DE0": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.9.0 preview 3"
+    },
+    "6E3B": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.9.0 preview 4"
+    },
+    "6E8E": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.9.0 preview 5"
+    },
+    "6E93": {
+      "ide": "Visual Studio 2017",
+      "ver": "15.9.x"
+    },
+    "6C3A": {
+      "ide": "Visual Studio 2019",
+      "ver": "14.22"
+    },
+    "6C4C": {
+      "ide": "Visual Studio 2019",
+      "ver": "14.22"
+    },
+    "6C9F": {
+      "ide": "Visual Studio 2019",
+      "ver": "14.22"
+    },
+    "6CA4": {
+      "ide": "Visual Studio 2019",
+      "ver": "14.22"
+    },
+    "6CAD": {
+      "ide": "Visual Studio 2019",
+      "ver": "14.22"
+    },
+    "6D01": {
+      "ide": "Visual Studio 2019",
+      "ver": "14.22"
+    },
+    "6DD5": {
+      "ide": "Visual Studio 2019",
+      "ver": "14.24"
+    },
+    "6EA9": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 1"
+    },
+    "6EF8": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 1.1"
+    },
+    "6F6A": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 2"
+    },
+    "6F71": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 2.1"
+    },
+    "6FBA": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 2.2"
+    },
+    "6FC0": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 3"
+    },
+    "6FD1": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 4"
+    },
+    "701D": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 4.1"
+    },
+    "7021": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 4.1.1"
+    },
+    "7027": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 4.2"
+    },
+    "702A": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 4.3"
+    },
+    "7031": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0 preview 4.4"
+    },
+    "7039": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.0"
+    },
+    "7083": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.0.x"
+    },
+    "7089": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.0 preview 1"
+    },
+    "7096": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.0 preview 2"
+    },
+    "70E6": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.0 preview 3"
+    },
+    "70F5": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.0"
+    },
+    "70FA": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.1"
+    },
+    "7149": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.2"
+    },
+    "7151": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.3"
+    },
+    "715C": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.4"
+    },
+    "7161": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.5"
+    },
+    "71AE": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.1.6"
+    },
+    "714E": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.0 preview 2"
+    },
+    "715D": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.0 preview 3"
+    },
+    "71B7": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.0 preview 4"
+    },
+    "71C3": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.0"
+    },
+    "7211": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.1"
+    },
+    "7219": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.2"
+    },
+    "721F": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.3"
+    },
+    "722E": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.4"
+    },
+    "727A": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.2.5"
+    },
+    "727F": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.0 preview 4"
+    },
+    "7286": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.0"
+    },
+    "728C": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.1"
+    },
+    "728E": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.2"
+    },
+    "72DB": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.3"
+    },
+    "72E1": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.4"
+    },
+    "72E3": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.5"
+    },
+    "72EA": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.6"
+    },
+    "72F0": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.7"
+    },
+    "733F": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.8"
+    },
+    "7345": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.3.9"
+    },
+    "7287": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.4.0 preview 1"
+    },
+    "72F6": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.4.0 preview 3"
+    },
+    "7341": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.4.0 preview 4"
+    },
+    "7348": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.4.0 preview 5"
+    },
+    "734F": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.4.0"
+    },
+    "73A9": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.4.1"
+    },
+    "7351": {
+      "ide": "Visual Studio 2019",
+      "ver": "16.5.0 preview 1"
+    },
+    "0000": {
+      "ide": "Visual Studio",
+      "ver": ""
+    },
+    "7A64": {
+      "ide": "VS2022 v17.2.5 build 31332"
+    },
+    "7A61": {
+      "ide": "VS2022 v17.2.1 build 31329"
+    },
+    "7BE9": {
+      "ide": "VS2022 v17.4.0 pre 1.0 build 31721"
+    },
+    "7B8D": {
+      "ide": "VS2022 v17.3.0 build 31629"
+    },
+    "7B8C": {
+      "ide": "VS2022 v17.3.0 pre 4.0 build 31628 (*)"
+    },
+    "7B8B": {
+      "ide": "VS2022 v17.3.0 pre 3.0 build 31627"
+    },
+    "7B1D": {
+      "ide": "VS2022 v17.3.0 pre 2.0 build 31517"
+    },
+    "7AC0": {
+      "ide": "VS2022 v17.3.0 pre 1.0 build 31424"
+    },
+    "7A60": {
+      "ide": "VS2022 v17.2.0 build 31328"
+    },
+    "7A5E": {
+      "ide": "VS2022 v17.2.0 pre 3.0 build 31326"
+    },
+    "7A46": {
+      "ide": "VS2022 v17.2.0 pre 2.1 build 31302"
+    },
+    "798A": {
+      "ide": "VS2022 v17.2.0 pre 1.0 build 31114"
+    },
+    "7980": {
+      "ide": "VS2022 v17.1.0 pre 5.0 build 31104"
+    },
+    "797F": {
+      "ide": "VS2022 v17.1.0 pre 3.0 build 31103"
+    },
+    "78C7": {
+      "ide": "VS2022 v17.1.0 pre 2.0 build 30919"
+    },
+    "7862": {
+      "ide": "VS2022 v17.1.0 pre 1.0 build 30818"
+    },
+    "77F1": {
+      "ide": "VS2022 v17.0.0 pre 7.0 build 30705"
+    },
+    "77F0": {
+      "ide": "VS2022 v17.0.0 pre 5.0 build 30704"
+    },
+    "7740": {
+      "ide": "VS2022 v17.0.0 pre 4.0 build 30528"
+    },
+    "76D7": {
+      "ide": "VS2022 v17.0.0 pre 3.1 build 30423"
+    },
+    "76C1": {
+      "ide": "VS2022 v17.0.0 preview2 build 30401"
+    },
+    "75C2": {
+      "ide": "VS2019 v16.11.17 build 30146"
+    },
+    "75C1": {
+      "ide": "VS2019 v16.11.15 build 30145"
+    },
+    "75C0": {
+      "ide": "VS2019 v16.11.14 build 30144 (*)"
+    },
+    "75BF": {
+      "ide": "VS2019 v16.11.13 build 30143"
+    },
+    "75BE": {
+      "ide": "VS2019 v16.11.12 build 30142 (*)"
+    },
+    "75BC": {
+      "ide": "VS2019 v16.11.10 build 30140"
+    },
+    "75BB": {
+      "ide": "VS2019 v16.11.9 build 30139"
+    },
+    "75BA": {
+      "ide": "VS2019 v16.11.8 build 30138"
+    },
+    "75B9": {
+      "ide": "VS2019 v16.11.6 build 30137"
+    },
+    "75B8": {
+      "ide": "VS2019 v16.11.5 build 30136"
+    },
+    "7558": {
+      "ide": "VS2019 v16.10.4 build 30040"
+    },
+    "74DA": {
+      "ide": "VS2019 v16.9.4 build 29914"
+    },
+    "74D6": {
+      "ide": "VS2019 v16.9.0 build 29910 (*)"
+    },
+    "7299": {
+      "ide": "VS2019 v16.8.5 build 29337"
+    },
+    "7296": {
+      "ide": "VS2019 v16.8.2 build 29334"
+    },
+    "7295": {
+      "ide": "VS2019 v16.8.0 build 29333 (*)"
+    },
+    "71B6": {
+      "ide": "VS2019 v16.7.0 build 29110"
+    },
+    "6FC4": {
+      "ide": "VS2019 v16.5.2 build 28612 (*)"
+    },
+    "6FC3": {
+      "ide": "VS2019 v16.5.1 build 28611 (*)"
+    },
+    "6FC2": {
+      "ide": "VS2019 v16.5.0 build 28610 (*)"
+    },
+    "6E9F": {
+      "ide": "VS2019 v16.4.6 build 28319 (*)"
+    },
+    "6E9A": {
+      "ide": "VS2019 v16.4.0 build 28314 (*)"
+    },
+    "6991": {
+      "ide": "VS2017 v15.9.4 build 27025 (*)"
+    },
+    "6869": {
+      "ide": "VS2017 v15.8.4 build 26729 (*)"
+    },
+    "673F": {
+      "ide": "VS2017 v15.7.4 build 26431 (*)"
+    },
+    "673D": {
+      "ide": "VS2017 v15.7.2 build 26429 (*)"
+    },
+    "673C": {
+      "ide": "VS2017 v15.7.1 build 26428 (*)"
+    },
+    "6614": {
+      "ide": "VS2017 v15.6.7 build 26132 (*)"
+    },
+    "64E7": {
+      "ide": "VS2017 v15.5.2 build 25831 (*)"
+    },
+    "63C6": {
+      "ide": "VS2017 v15.4.4 build 25542 (*)"
+    },
+    "63A3": {
+      "ide": "VS2017 v15.3.3 build 25507 (*)"
+    },
+    "63A2": {
+      "ide": "VS2017 v15.3 build 25506 (*)"
+    },
+    "527A": {
+      "ide": "VS2013 Nobemver CTP [12.0] build 21114 (*)"
+    },
+    "515B": {
+      "ide": "VS2013 RC [12.0] build 20827 (*)"
+    },
+    "C751": {
+      "ide": "VS2012 November CTP [11.0] build 51025 (*)"
+    },
+    "520B": {
+      "ide": "VS2010 Beta 2 [10.0] build 21003 (*)"
+    },
+    "501A": {
+      "ide": "VS2010 Beta 1 [10.0] build 20506 (*)"
+    },
+    "50E2": {
+      "ide": "VS2008 Beta 2 [9.0] build 20706 (*)"
+    },
+    "C490": {
+      "ide": "VS2005 [8.0] build 50320 (*)"
+    },
+    "23D8": {
+      "ide": "Windows XP SP1 DDK build 9176 (*)"
+    }
+  }
+}

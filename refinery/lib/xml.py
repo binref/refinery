@@ -106,6 +106,12 @@ class XMLNodeBase:
     def get_attribute(self, key, default=None):
         return self.attributes.get(key, default)
 
+    def child(self, tag: str):
+        for child in self.children:
+            if child.tag == tag:
+                return child
+        raise LookupError(tag)
+
     @property
     def subtree(self) -> Iterable[XMLNodeBase]:
         yield self
