@@ -24,6 +24,8 @@ from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
 from refinery.units.formats.pe import get_pe_size
 
+from refinery import data
+
 
 class VIT(str, Enum):
     ERR = 'unknown'
@@ -62,8 +64,8 @@ class VersionInfo:
         return not self.err
 
 
-with resources.path('refinery', 'data') as data:
-    with (data / 'rich.json').open('r') as stream:
+with resources.path(data, 'rich.json') as path:
+    with path.open('r') as stream:
         RICH = json.load(stream)
 
 
