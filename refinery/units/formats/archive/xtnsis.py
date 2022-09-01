@@ -480,6 +480,8 @@ class NSHeader(Struct):
 
     def __init__(self, reader: StructReader[bytearray], size: int):
         self.is64bit = size >= 4 + 12 * 8 and all(struct.unpack('8xI' * 8, reader.peek(12 * 8)))
+        if self.is64bit:
+            xtnsis.log_debug('64bit archive detected')
         bho_size = 12 if self.is64bit else 8
         required = 4 + bho_size * 8
         if size < required:
@@ -491,19 +493,27 @@ class NSHeader(Struct):
         self.bh_strings = self.block_header_offsets[3]
         self.bh_langtbl = self.block_header_offsets[4]
 
+        for k, offset in enumerate(self.block_header_offsets):
+            w = 0x10 if self.is64bit else 8
+            t = {2: 'entries', 3: 'strings', 4: 'language'}.get(k)
+            msg = F'block header offset {k}: 0x{offset.offset:0{w}X}'
+            if t is not None:
+                msg = F'{msg} ({t})'
+            xtnsis.log_debug(msg)
+
         self.type = NSType.Nsis2
 
         reader.seekset(self.bh_entries.offset)
         self.instructions: List[NSScriptInstruction] = [NSScriptInstruction(reader) for _ in range(self.bh_entries.count)]
 
         if self.bh_entries.offset > size:
-            raise ValueError(F'Header size is 0x{size:08X}, but entries block header offset is 0x{self.bh_entries.offset:08X}.')
+            raise ValueError(F'Invalid NSIS header: Size is 0x{size:08X}, but entries block header offset is 0x{self.bh_entries.offset:08X}.')
         if self.bh_strings.offset > size:
-            raise ValueError(F'Header size is 0x{size:08X}, but strings block header offset is 0x{self.bh_strings.offset:08X}.')
+            raise ValueError(F'Invalid NSIS header: Size is 0x{size:08X}, but strings block header offset is 0x{self.bh_strings.offset:08X}.')
         if self.bh_langtbl.offset > size:
-            raise ValueError(F'Header size is 0x{size:08X}, but langtbl block header offset is 0x{self.bh_langtbl.offset:08X}.')
+            raise ValueError(F'Invalid NSIS header: Size is 0x{size:08X}, but language list header offset is 0x{self.bh_langtbl.offset:08X}.')
         if self.bh_langtbl.offset < self.bh_strings.offset:
-            raise ValueError(U'Language table lies before string table.')
+            raise ValueError(U'Invalid NSIS header: Language table lies before string table.')
         string_table_size = self.bh_langtbl.offset - self.bh_strings.offset
         if string_table_size < 2:
             raise ValueError(F'The calculated string table size is {string_table_size}, too small to parse.')
@@ -954,6 +964,8 @@ class NSArchive(Struct):
         self.size_of_header = reader.u32()
         self.size_of_archive = reader.u32()
         self.offset_archive = reader.tell()
+        xtnsis.log_debug(F'size of headers: {self.size_of_header}')
+        xtnsis.log_debug(F'size of archive: {self.size_of_archive}')
         self.size_of_body = self.size_of_archive - self.offset_archive
         if self.size_of_body < 0:
             raise ValueError('Header indicates that the archive size is less than the header size.')
@@ -1018,6 +1030,8 @@ class NSArchive(Struct):
         elif bzipcheck(preview_bytes):
             self.method = NSMethod.BZip2
 
+        xtnsis.log_debug(F'compression: {self.method.name}')
+
         reader.seekset(self.offset_archive)
 
         self.entries: Dict[int, bytearray] = {}
@@ -1039,6 +1053,8 @@ class NSArchive(Struct):
             header_data = header_entry.data
         else:
             self.entry_offset_delta = len(header_data)
+
+        xtnsis.log_debug(F'read header of length {len(header_data)}')
 
         self.header = NSHeader(header_data, size=self.size_of_header)
         self.reader = reader
@@ -1149,7 +1165,7 @@ class xtnsis(ArchiveUnit):
     """
 
     @classmethod
-    def _find_archive_offset(cls, data: bytearray):
+    def _find_archive_offset(cls, data: bytearray, before: int = -1):
         def signatures(*magics):
             for changes in range(3):
                 for magic in magics:
