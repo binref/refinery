@@ -20,6 +20,8 @@ class xt(ArchiveUnit):
         yield xtasar
         from refinery.units.formats.office.xtrtf import xtrtf
         yield xtrtf
+        from refinery.units.formats.archive.xtnsis import xtnsis
+        yield xtnsis
         from refinery.units.formats.archive.xtzip import xtzip
         yield xtzip
         from refinery.units.formats.archive.xt7z import xt7z
