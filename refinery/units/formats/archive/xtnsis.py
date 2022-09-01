@@ -1180,6 +1180,8 @@ class xtnsis(ArchiveUnit):
         best_guess = None
         for flaws, sig in signatures(*NSArchive.MAGICS):
             matches = [m.start() - 4 for m in re.finditer(sig, data, flags=re.DOTALL)]
+            if before >= 0:
+                matches = [match for match in matches if match < before]
             matches.reverse()
             archive = None
             for match in matches:
@@ -1190,8 +1192,10 @@ class xtnsis(ArchiveUnit):
                 if matches and not best_guess:
                     best_guess = matches[-1]
             else:
+                msg = F'Archive signature was found at offset 0x{archive:X}'
                 if flaws > 0:
-                    cls.log_info(F'Archive signature has {flaws} imperfections; it was likely modified.')
+                    msg = F'{msg}; it has {flaws} imperfections and was likely modified'
+                cls.log_info(F'{msg}.')
                 return archive
         if best_guess:
             cls.log_info(F'A signature was found at offset 0x{best_guess:08X}; it is not properly aligned.')
@@ -1200,10 +1204,20 @@ class xtnsis(ArchiveUnit):
 
     def unpack(self, data):
         memory = memoryview(data)
-        offset = self._find_archive_offset(data)
-        if offset is None:
-            raise ValueError('Unable to find an NSIS archive marker.')
-        arc = NSArchive(memory[offset:])
+        before = -1
+        _error = None
+        while True:
+            offset = self._find_archive_offset(data, before)
+            if offset is None:
+                _error = _error or ValueError('Unable to find an NSIS archive marker.')
+                raise _error
+            try:
+                arc = NSArchive(memory[offset:])
+            except Exception as e:
+                _error = e
+                before = offset
+            else:
+                break
 
         def info():
             yield F'{arc.header.type.name} archive'
