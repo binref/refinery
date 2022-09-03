@@ -507,11 +507,14 @@ class NSHeader(Struct):
         self.instructions: List[NSScriptInstruction] = [NSScriptInstruction(reader) for _ in range(self.bh_entries.count)]
 
         if self.bh_entries.offset > size:
-            raise ValueError(F'Invalid NSIS header: Size is 0x{size:08X}, but entries block header offset is 0x{self.bh_entries.offset:08X}.')
+            raise ValueError(
+                F'Invalid NSIS header: Size is 0x{size:08X}, but entries block header offset is 0x{self.bh_entries.offset:08X}.')
         if self.bh_strings.offset > size:
-            raise ValueError(F'Invalid NSIS header: Size is 0x{size:08X}, but strings block header offset is 0x{self.bh_strings.offset:08X}.')
+            raise ValueError(
+                F'Invalid NSIS header: Size is 0x{size:08X}, but strings block header offset is 0x{self.bh_strings.offset:08X}.')
         if self.bh_langtbl.offset > size:
-            raise ValueError(F'Invalid NSIS header: Size is 0x{size:08X}, but language list header offset is 0x{self.bh_langtbl.offset:08X}.')
+            raise ValueError(
+                F'Invalid NSIS header: Size is 0x{size:08X}, but language list header offset is 0x{self.bh_langtbl.offset:08X}.')
         if self.bh_langtbl.offset < self.bh_strings.offset:
             raise ValueError(U'Invalid NSIS header: Language table lies before string table.')
         string_table_size = self.bh_langtbl.offset - self.bh_strings.offset
