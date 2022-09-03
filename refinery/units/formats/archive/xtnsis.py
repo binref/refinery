@@ -479,7 +479,7 @@ class NSHeader(Struct):
         return F'$LSTR_{index:04X}'
 
     def __init__(self, reader: StructReader[bytearray], size: int):
-        self.is64bit = size >= 4 + 12 * 8 and all(struct.unpack('8xI' * 8, reader.peek(12 * 8)))
+        self.is64bit = size >= 4 + 12 * 8 and not any(struct.unpack('8xI' * 8, reader.peek(12 * 8)))
         if self.is64bit:
             xtnsis.log_debug('64bit archive detected')
         bho_size = 12 if self.is64bit else 8
