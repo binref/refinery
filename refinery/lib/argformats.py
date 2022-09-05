@@ -201,7 +201,7 @@ class PythonExpression:
     def __str__(self):
         return self.definition
 
-    def __call__(self, mapping=None, **values):
+    def __call__(self, mapping: dict = None, **values):
         if mapping is not None:
             values, tmp = mapping, values
             values.update(tmp)
@@ -970,7 +970,7 @@ class DelayedArgument(LazyEvaluation):
             @lru_cache(maxsize=512, typed=False)
             def accumulate(A):
                 return update(meta, A=A)
-            meta = metavars(data)
+            meta = dict(metavars(data))
             A = seed and seed(meta) or 0
             F = feed and feed(meta, A=A) or A
             S = skip
@@ -1025,7 +1025,7 @@ class DelayedArgument(LazyEvaluation):
         reduction = PythonExpression(reduction, all_variables_allowed=True)
 
         def finalize(data: Optional[Chunk] = None):
-            args = metavars(data)
+            args = dict(metavars(data))
             return reduce(lambda S, B: reduction(args, S=S, B=B), it, seed and seed(args) or 0)
 
         try:
