@@ -1786,6 +1786,7 @@ class Unit(UnitBase, abstract=True):
         self.log_detach()
 
     _SECRET_DEBUG_TIMING_FLAG = '--debug-timing'
+    _SECRET_YAPPI_TIMING_FLAG = '--yappi-timing'
 
     @classmethod
     def run(cls: Union[Type[Unit], Executable], argv=None, stream=None) -> None:
@@ -1801,14 +1802,24 @@ class Unit(UnitBase, abstract=True):
             ps1 = None
 
         argv = argv if argv is not None else sys.argv[1:]
-        start_clock = None
+        clock = None
+        yappi = None
 
         if cls._SECRET_DEBUG_TIMING_FLAG in argv:
             from time import process_time
             argv.remove(cls._SECRET_DEBUG_TIMING_FLAG)
-            start_clock = process_time()
+            clock = process_time()
             cls.logger.setLevel(logging.INFO)
-            cls.logger.info('starting clock: {:.4f}'.format(start_clock))
+            cls.logger.info('starting clock: {:.4f}'.format(clock))
+
+        if cls._SECRET_YAPPI_TIMING_FLAG in argv:
+            argv.remove(cls._SECRET_YAPPI_TIMING_FLAG)
+            try:
+                import yappi as _yappi
+            except ImportError:
+                cls.logger.warn('unable to start yappi; package is missing')
+            else:
+                yappi = _yappi
 
         if stream is None:
             stream = open(os.devnull, 'rb') if sys.stdin.isatty() else sys.stdin.buffer
@@ -1833,9 +1844,13 @@ class Unit(UnitBase, abstract=True):
             if loglevel:
                 unit.log_level = loglevel
 
-            if start_clock:
+            if clock:
                 unit.log_level = min(unit.log_level, LogLevel.INFO)
-                unit.logger.info('unit launching: {:.4f}'.format(start_clock))
+                unit.logger.info('unit launching: {:.4f}'.format(clock))
+
+            if yappi is not None:
+                yappi.set_clock_type('cpu')
+                yappi.start()
 
             try:
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
@@ -1847,10 +1862,16 @@ class Unit(UnitBase, abstract=True):
             except OSError:
                 pass
 
-            if start_clock:
+            if yappi is not None:
+                stats = yappi.get_func_stats()
+                filename = F'{unit.name}.perf'
+                stats.save(filename, type='CALLGRIND')
+                cls.logger.info(F'wrote yappi results to file: {filename}')
+
+            if clock:
                 stop_clock = process_time()
                 unit.logger.info('stopping clock: {:.4f}'.format(stop_clock))
-                unit.logger.info('time delta was: {:.4f}'.format(stop_clock - start_clock))
+                unit.logger.info('time delta was: {:.4f}'.format(stop_clock - clock))
 
 
 __pdoc__ = {
