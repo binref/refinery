@@ -70,12 +70,11 @@ class iemap(Unit):
         _reset = colorama.Back.BLACK + colorama.Fore.WHITE + colorama.Style.RESET_ALL
 
         clrmap = fgmap if nobg else bgmap
-        footer = '{}] [{:>7}]\n'.format(_reset, repr(meta['entropy']))
         header = '[{1}{0}] ['.format(_reset, ''.join(F'{bg}{k}' for k, bg in enumerate(clrmap, 1)))
         header_length = 4 + len(clrmap)
-        footer_length = 4 + len(str(meta['entropy']))
+        footer_length = 4 + 7
 
-        width = get_terminal_size() - header_length - footer_length - 1
+        width = get_terminal_size() - header_length - footer_length
         if width < 16:
             raise RuntimeError(F'computed terminal width {width} is too small for heatmap')
 
@@ -135,7 +134,10 @@ class iemap(Unit):
             stderr.write(F'\r{_reset}{eraser}\r')
             raise
         else:
-            stderr.write(footer)
+            stderr.write(F'{_reset}] [---.--%]')
+            te = meta['entropy']
+            stderr.write('\b' * footer_length)
+            stderr.write(F'] [{te!r:>7}]\n')
             stderr.flush()
         if not self.isatty:
             yield data
