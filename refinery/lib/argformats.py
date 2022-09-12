@@ -628,6 +628,15 @@ class DelayedArgument(LazyEvaluation):
         import base64
         return base64.b16decode(string, casefold=True)
 
+    @handler.register('n')
+    def n(self, string: bytes) -> bytes:
+        """
+        The final modifier `n:string` returns the un-escaped version of a string containing
+        backslash escape sequences.
+        """
+        from refinery.units.encoding.esc import esc
+        return esc().process(string)
+
     @handler.register('q', 'Q', final=True)
     def q(self, string: str) -> bytes:
         """
