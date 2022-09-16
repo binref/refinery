@@ -368,9 +368,10 @@ class Chunk(bytearray):
         else:
             bytearray.__setitem__(self, bounds, value)
 
-    def copy(self, meta_only=False) -> Chunk:
-        data = None if meta_only else self
-        return Chunk(data, self._path, self._view, self._meta, self._fill_scope, self._fill_batch)
+    def copy(self, meta=True, data=True) -> Chunk:
+        data = data and self or None
+        meta = meta and self._meta or None
+        return Chunk(data, self._path, self._view, meta, self._fill_scope, self._fill_batch)
 
     def __copy__(self):
         return self.copy()

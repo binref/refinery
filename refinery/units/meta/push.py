@@ -21,7 +21,7 @@ class push(Unit):
 
     def process(self, data: Chunk):
         src = self.args.data
-        tos = data.copy(meta_only=True)
+        tos = data.copy(meta=True, data=False)
         tos[:] = src or data
         if self.args.nesting > 0:
             data.set_next_scope(False)
