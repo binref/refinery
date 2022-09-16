@@ -193,8 +193,8 @@ _pattern_vbastr = R'''"(?:""|[^"])*"'''
 _pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]*|[-+]?(?:[1-9][0-9]*|0))(?=&|$)'
 _pattern_string = R'''(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*')'''
 _pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
-_pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
-_pattern_urlenc_hex = R'''(?:%[0-9a-fA-F]{2})+'''
+_pattern_urlenc = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
+_pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2})+'''
 
 _pattern_wshenc = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
@@ -285,11 +285,11 @@ class formats(PatternEnum):
     "VBS/VBA integer literal"
     printable = alphabet(R'[\s!-~]')
     "Any sequence of printable characters"
-    url_encoded_coarse = pattern(_pattern_urlenc_coarse)
-    "Any sequence of url-encoded characters, coarse variant"
-    url_encoded_narrow = pattern(_pattern_urlenc_narrow)
-    "Any sequence of url-encoded characters, narrow variant"
-    url_encoded_hex = pattern(_pattern_urlenc_hex)
+    urlquote = pattern(_pattern_urlenc)
+    "Any sequence of url-encoded characters, default char set"
+    urlquote_coarse = pattern(_pattern_urlenc_coarse)
+    "Any sequence of url-encoded characters, coarser variant with more characters allowed"
+    urlquote_narrow = pattern(_pattern_urlenc_narrow)
     "A hex-encoded buffer using URL escape sequences"
     intarray = tokenize(_pattern_integer, sep=R'\s*[;,]\s*', bound='', unique_sep=True)
     "Sequences of integers, separated by commas or semicolons"

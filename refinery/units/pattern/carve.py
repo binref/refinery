@@ -74,9 +74,9 @@ class carve(PatternExtractor):
             from ..encoding.uuenc import uuenc
             decoder = uuenc()
         elif self.args.format in (
-            formats.url_encoded_hex,
-            formats.url_encoded_narrow,
-            formats.url_encoded_coarse,
+            formats.urlquote,
+            formats.urlquote_coarse,
+            formats.urlquote_narrow,
         ):
             from ..encoding.url import url
             decoder = url()
