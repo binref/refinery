@@ -17,11 +17,11 @@ class TestFileReader(TestUnitBase):
             self.root = os.path.dirname(self.root)
 
     def test_read_myself_linewise(self):
-        lines = list(self.load(os.path.join(self.root, '**', 'test_ef.py'), linewise=True).process(None))
+        lines = list(self.load(os.path.join(self.root, '**', 'test_ef.py'), wild=True, linewise=True).process(None))
         self.assertIn(B'bananapalooza', lines[9])
 
     def test_read_myself(self):
-        data = self.load(os.path.join(self.root, '**', 'test_ef.py'))()
+        data = self.load(os.path.join(self.root, '**', 'test_ef.py'), wild=True)()
         self.assertEqual(data.count(B'bananapalooza'), 3)
 
     def test_count_lines(self):
@@ -29,7 +29,7 @@ class TestFileReader(TestUnitBase):
         log = logging.getLogger()
         logging.StreamHandler.terminator = ': '
 
-        for line in self.load(os.path.join(self.root, 'refinery', '**', '*.py'), linewise=True).process(None):
+        for line in self.load(os.path.join(self.root, 'refinery', '**', '*.py'), wild=True, linewise=True).process(None):
             if not line or line.isspace() or line.startswith(B'#'):
                 continue
             loc += 1
