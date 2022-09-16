@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import re
+import os
 
 from pathlib import Path
 from datetime import datetime
@@ -19,10 +20,13 @@ class ef(Unit):
 
     def __init__(self,
         *filenames: Arg(metavar='FILEMASK', nargs='+', type=str, help=(
-            'A list of file masks (with wildcard patterns). Each matching '
-            'file will be read from disk and emitted. In addition to glob '
-            'patterns, the file mask can include format string expressions '
-            'which will be substituted from the current meta variables.'
+            'A list of file masks. Each matching file will be read from disk and '
+            'emitted. The file masks can include format string expressions which '
+            'will be substituted from the current meta variables. The masks can '
+            'use wild-card expressions, but this feature is disabled by default on '
+            'Posix platforms, where it has to be enabled explicitly using the -w '
+            'switch. On Windows, the feature is enabled by default and can be '
+            'disabled using the -t switch.'
         )),
         list: Arg.Switch('-l', help='Only lists files with metadata.') = False,
         meta: Arg.Switch('-m', help=(
@@ -32,16 +36,22 @@ class ef(Unit):
             'If specified, files will be read in chunks of size N and each '
             'chunk is emitted as one element in the output list.'
         )) = 0,
-        linewise: Arg.Switch('-w', help=(
+        wild: Arg.Switch('-w', group='W', help='Force use of wildcard patterns in file masks.') = False,
+        tame: Arg.Switch('-t', group='W', help='Disable wildcard patterns in file masks.') = False,
+        linewise: Arg.Switch('-i', help=(
             'Read the file linewise. By default, one line is read at a time. '
             'In line mode, the --size argument can be used to read the given '
             'number of lines in each chunk.'
         )) = False
     ):
+        if wild and tame:
+            raise ValueError('Cannot be both wild and tame!')
         super().__init__(
             size=size,
             list=list,
             meta=meta,
+            wild=wild,
+            tame=tame,
             linewise=linewise,
             filenames=filenames
         )
@@ -85,11 +95,18 @@ class ef(Unit):
 
     def process(self, data):
         meta = metavars(data, ghost=True)
+
+        if (os.name == 'nt' or self.args.wild) and not self.args.tame:
+            paths = self._glob
+        else:
+            def paths(mask):
+                yield Path(mask)
+
         for mask in self.args.filenames:
             mask = meta.format_str(mask, self.codec, [data])
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
-            for path in self._glob(mask):
+            for path in paths(mask):
                 if not path.is_file():
                     continue
                 if self.args.meta:
