@@ -41,7 +41,7 @@ class TestAES(TestUnitBase):
         ] | L('aes -r -mCBC H:C0CAC01AFACEBEA75DEFACEDBEEFCACE')
 
         # flake8: noqa
-        E = L('pad -b 16') | L('aes -rR -mCBC H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('chop 16') [
+        E = L('pad 16') | L('aes -rR -mCBC H:C0CAC01AFACEBEA75DEFACEDBEEFCACE') | L('chop 16') [
                 L('pick :(-2) (-1) (-2)') ]
 
         C = E(M)[:N]

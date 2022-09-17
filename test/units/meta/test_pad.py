@@ -6,7 +6,7 @@ from . import TestMetaBase
 class TestPad(TestMetaBase):
 
     def test_block_size_padding(self):
-        unit = self.load('-b', 17)
+        unit = self.load(17)
         data = unit(
             self.generate_random_buffer(0 * 17 + 12),
             self.generate_random_buffer(9 * 17 + 3),
