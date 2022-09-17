@@ -947,10 +947,10 @@ class NSHeader(Struct):
 class NSArchive(Struct):
     MAGICS = [
         # https://nsis.sourceforge.io/Can_I_decompile_an_existing_installer
-        B'\xEF\xBE\xAD\xDE' B'Null' B'soft' B'Inst',  # v1.6
-        B'\xEF\xBE\xAD\xDE' B'Null' B'Soft' B'Inst',  # v1.3
-        B'\xED\xBE\xAD\xDE' B'Null' B'Soft' B'Inst',  # v1.1
-        B'\xEF\xBE\xAD\xDE' B'nsis' B'inst' B'all\0', # v1.0
+        B'\xEF\xBE\xAD\xDE' B'Null' B'soft' B'Inst',   # v1.6
+        B'\xEF\xBE\xAD\xDE' B'Null' B'Soft' B'Inst',   # v1.3
+        B'\xED\xBE\xAD\xDE' B'Null' B'Soft' B'Inst',   # v1.1
+        B'\xEF\xBE\xAD\xDE' B'nsis' B'inst' B'all\0',  # v1.0
     ]
 
     class Entry(NamedTuple):
