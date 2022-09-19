@@ -272,7 +272,7 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
         elif variables is not None:
             parser = DelayedNumSeqArgument(expression)
             chunk = Chunk(expression.encode('utf8'), meta=variables)
-            return sliceobj(parser(chunk), variables, range, final)
+            return sliceobj(parser(chunk), variables, range, final=True)
         else:
             return SliceAgain(expression)
     if len(sliced) == 1:
