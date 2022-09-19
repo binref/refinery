@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from argparse import ArgumentTypeError
+
 from refinery.lib import argformats
 from refinery.lib import loader
 
@@ -81,3 +83,10 @@ class TestArgumentFormats(TestBase):
     def test_inc(self):
         result = argformats.DelayedArgument('take[:5]:inc[8]:e:0x30')(B'')
         self.assertEqual(result, b'01234')
+
+    def test_le(self):
+        with self.assertRaises(ArgumentTypeError):
+            argformats.multibin('le:0x5D000111')
+        self.assertEqual(
+            argformats.multibin('le:e:0x5D000111'),
+            b'\x11\x01\x00\x5D')
