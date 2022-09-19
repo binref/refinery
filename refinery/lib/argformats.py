@@ -238,7 +238,7 @@ class SliceAgain(LazyEvaluation):
         return sliceobj(expression, metavars(data))
 
 
-def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False) -> Union[slice, SliceAgain]:
+def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False, final=False) -> Union[slice, SliceAgain]:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
@@ -267,9 +267,14 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
         kwargs = variables or {}
         sliced = [None if not t else PythonExpression.evaluate(t, kwargs) for t in sliced]
     except ParserVariableMissing:
-        if variables is not None:
+        if final:
             raise
-        return SliceAgain(expression)
+        elif variables is not None:
+            parser = DelayedNumSeqArgument(expression)
+            chunk = Chunk(expression.encode('utf8'), meta=variables)
+            return sliceobj(parser(chunk), variables, range, final)
+        else:
+            return SliceAgain(expression)
     if len(sliced) == 1:
         k = sliced[0]
         if not range:

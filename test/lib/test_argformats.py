@@ -90,3 +90,8 @@ class TestArgumentFormats(TestBase):
         self.assertEqual(
             argformats.multibin('le:e:0x5D000111'),
             b'\x11\x01\x00\x5D')
+
+    def test_slice_objects_with_handlers(self):
+        L = loader.load_pipeline
+        p = L('emit h:01000000 | put a [| peek | snip le:var:a | peek ]')
+        self.assertEqual(p(), B'\0')
