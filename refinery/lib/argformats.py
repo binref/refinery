@@ -710,7 +710,12 @@ class DelayedArgument(LazyEvaluation):
         of bytes starting at zero.
         """
         def compute_range(data: Optional[Chunk] = None):
-            bounds = sliceobj(region, data, range=True)
+            try:
+                bounds = sliceobj(region, data, range=True)
+            except ParserVariableMissing:
+                raise TooLazy
+            if pending(bounds):
+                raise TooLazy
             start = bounds.start or 0
             stop = bounds.stop
             step = bounds.step or 1
@@ -722,7 +727,7 @@ class DelayedArgument(LazyEvaluation):
             return result
         try:
             return compute_range()
-        except ParserVariableMissing:
+        except TooLazy:
             return compute_range
 
     @handler.register('c', 'copy', final=True)
