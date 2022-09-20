@@ -235,10 +235,10 @@ class SliceAgain(LazyEvaluation):
         expression = self.expr
         if pending(expression):
             expression = expression(data).decode('utf8')
-        return sliceobj(expression, metavars(data))
+        return sliceobj(expression, data)
 
 
-def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = None, range=False, final=False) -> Union[slice, SliceAgain]:
+def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, range=False, final=False) -> Union[slice, SliceAgain]:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
@@ -252,27 +252,23 @@ def sliceobj(expression: Union[int, str, slice], variables: Optional[dict] = Non
     if isinstance(expression, (bytes, bytearray)):
         expression = expression.decode('utf8')
 
-    if is_valid_variable_name(expression):
-        try:
-            return sliceobj(variables[expression], variables, range)
-        except (KeyError, TypeError):
-            return SliceAgain(expression)
+    if data is None:
+        variables = {}
+    else:
+        variables = metavars(data)
 
-    expression = expression or ':'
-    sliced = expression.split(':')
+    sliced = expression and expression.split(':') or ['', '']
 
     if not sliced or len(sliced) > 3:
-        raise ArgumentTypeError(F'the expression {expression} is not a valid slice.')
+        raise ArgumentTypeError(F'the expression "{expression}" is not a valid slice.')
     try:
-        kwargs = variables or {}
-        sliced = [None if not t else PythonExpression.evaluate(t, kwargs) for t in sliced]
+        sliced = [None if not t else PythonExpression.evaluate(t, variables) for t in sliced]
     except ParserVariableMissing:
         if final:
             raise
-        elif variables is not None:
+        elif data is not None:
             parser = DelayedNumSeqArgument(expression)
-            chunk = Chunk(expression.encode('utf8'), meta=variables)
-            return sliceobj(parser(chunk), variables, range, final=True)
+            return sliceobj(parser(data), data, range, final=True)
         else:
             return SliceAgain(expression)
     if len(sliced) == 1:
