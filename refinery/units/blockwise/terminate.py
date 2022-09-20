@@ -24,13 +24,17 @@ class terminate(BlockTransformationBase):
         position = 0
         blocksize = self.args.blocksize
 
+        self.log_info('blocksize:', blocksize)
+        self.log_debug('separator:', sentinel)
+
         while position >= 0:
             position = data.find(sentinel, position)
             if position < 0:
                 self.log_info(F'The sentinel value {sentinel} was not found.')
                 break
-            if position % blocksize:
-                position += 1
+            q, r = divmod(position, blocksize)
+            if r:
+                position = (q + 1) * blocksize
                 continue
             else:
                 data[position:] = []
