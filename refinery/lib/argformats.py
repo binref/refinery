@@ -256,6 +256,11 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
         variables = {}
     else:
         variables = metavars(data)
+        if is_valid_variable_name(expression):
+            try:
+                return sliceobj(variables[expression], data, final=True)
+            except Exception:
+                pass
 
     sliced = expression and expression.split(':') or ['', '']
 
@@ -679,7 +684,7 @@ class DelayedArgument(LazyEvaluation):
             if not region:
                 bounds = slice(0, None)
             else:
-                bounds = sliceobj(region, metavars(data), range=True)
+                bounds = sliceobj(region, data, range=True)
             if bounds.step:
                 raise ValueError('Step size is not supported for file slices.')
             with path.open('rb') as stream:
@@ -705,8 +710,7 @@ class DelayedArgument(LazyEvaluation):
         of bytes starting at zero.
         """
         def compute_range(data: Optional[Chunk] = None):
-            meta = data and getattr(data, 'meta', None) or {}
-            bounds = sliceobj(region, meta, range=True)
+            bounds = sliceobj(region, data, range=True)
             start = bounds.start or 0
             stop = bounds.stop
             step = bounds.step or 1
@@ -728,7 +732,7 @@ class DelayedArgument(LazyEvaluation):
         as a `refinery.lib.argformats.sliceobj`. The result contains the corresponding slice
         of the input data.
         """
-        return lambda d: d[sliceobj(region, d.meta)]
+        return lambda d: d[sliceobj(region, d)]
 
     @handler.register('x', 'cut', final=True)
     def cut(self, region: str) -> bytes:
@@ -737,7 +741,7 @@ class DelayedArgument(LazyEvaluation):
         but the corresponding bytes are also removed from the input data.
         """
         def extract(data: Union[bytearray, Chunk]):
-            bounds = sliceobj(region, metavars(data))
+            bounds = sliceobj(region, data)
             result = bytearray(data[bounds])
             data[bounds] = []
             return result
