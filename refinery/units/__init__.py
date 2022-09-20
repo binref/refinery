@@ -196,7 +196,7 @@ from argparse import (
     ZERO_OR_MORE
 )
 
-from refinery.lib.argformats import pending, manifest, multibin, numseq, number, sliceobj, VariableMissing
+from refinery.lib.argformats import pending, manifest, multibin, numseq, number, sliceobj, VariableMissing, ParserVariableMissing
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, one, skipfirst, isbuffer
 from refinery.lib.frame import Framed, Chunk
@@ -1855,6 +1855,8 @@ class Unit(UnitBase, abstract=True):
             try:
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
                     source | unit | output
+            except ParserVariableMissing as E:
+                unit.logger.error(F'the variable "{E!s}" was missing while trying to parse an expression')
             except ArgumentTypeError as E:
                 unit.logger.error(F'delayed argument initialization failed: {E!s}')
             except KeyboardInterrupt:
