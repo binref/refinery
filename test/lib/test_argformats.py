@@ -102,8 +102,14 @@ class TestArgumentFormats(TestBase):
         d = next(p)
         self.assertNotIn('a', d.meta)
 
-    def test_variable_arg_regression(self):
+    def test_variable_arg_regression_1(self):
         L = loader.load_pipeline
         p = L('emit Helloooo | put s 4 [| terminate rep[var:s]:o ]')
+        d = next(p)
+        self.assertEqual(d, B'Hell')
+
+    def test_variable_arg_regression_2(self):
+        L = loader.load_pipeline
+        p = L('emit Helloooo | put s 4 [| terminate -Bs o ]')
         d = next(p)
         self.assertEqual(d, B'Hell')

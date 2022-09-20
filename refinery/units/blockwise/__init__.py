@@ -36,8 +36,6 @@ class BlockTransformationBase(Unit, abstract=True):
             'zero, indicating that arbitrary precision is required.')) = None,
         **keywords
     ):
-        if blocksize < 1:
-            raise ValueError('Block size can not be less than 1.')
         if precision is None:
             precision = blocksize
         super().__init__(bigendian=bigendian, blocksize=blocksize, precision=precision, **keywords)
