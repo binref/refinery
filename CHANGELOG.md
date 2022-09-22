@@ -1,5 +1,12 @@
 # Binary Refinery Changelog
 
+## Version 0.4.47
+- By default, the `ef` unit does no longer use glob-patterns on posix systems. The behavior can be explicitly adjusted using new command-line flags.
+- Adds the `queue` unit.
+- The names of urlencode patterns for `carve` were shortened.
+- Adds the `xtnsis` unit to the units used in `xt`.
+- The `pemeta` unit has improved RICH header data and displays RICH header counts.
+
 ## Version 0.4.46 -- bugfix release
 
 ## Version 0.4.45 -- bugfix release
