@@ -312,11 +312,24 @@ class pemeta(Unit):
         rich = []
         if rich_header:
             it = rich_header.get('values', [])
-            for idv in it[0::2]:
+            if self.args.tabular:
+                ii = filter(None, (get_rich_info(idv) for idv in it[0::2]))
+                cw = max(len(F'{c:d}') for c in it[1::2])
+                pw = max(len(i.pid) for i in ii)
+            for idv, count in zip(it[0::2], it[1::2]):
                 info = get_rich_info(idv)
                 if not info:
                     continue
-                rich.append(F'[{idv:08x}] {info}')
+                pid = info.pid.upper()
+                if self.args.tabular:
+                    rich.append(F'[{idv:08x}] {count:>{cw}d} {pid:<{pw}} {info.ver}')
+                else:
+                    rich.append({
+                        'Counter': count,
+                        'Encoded': F'{idv:08x}',
+                        'Library': pid,
+                        'Product': info.ver,
+                    })
             header_information['RICH'] = rich
 
         characteristics = [
