@@ -85,17 +85,18 @@ implemented in `refinery.lib.argformats.DelayedBinaryArgument.copy` and
 evaluated immediately after the command line is parsed, but only as soon as input data becomes
 available for processing.
 
-In addition to the handlers which are implemented here, each refinery unit defines a (non-final)
-modifier. For example, the expression `b64:Zm9v` corresponds to the binary string `foo`: The unit
-`refinery.b64` is used to decode the string `Zm9v` here. Arguments can be passed to units in square
-brackets and separated by commas, but there is no support for escaping comma characters. For
-example, the multibin expression `xor[0xAA]:b64:2c/J2M/e` will return the binary string `secret` as
-the final expression `2c/J2M/e` is base64-decoded and each byte xor'ed with the key `0xAA`. As a
-second example, the expression
+As explained above, each refinery unit defines a (non-final) modifier. The expression `b64:Zm9v`,
+for example, corresponds to the binary string `foo` - the unit `refinery.b64` is used to decode the
+string `Zm9v` to `foo`. Arguments can be passed to units in square brackets and separated by commas,
+but there is no support for escaping comma characters (see the previous section for more details).
 
-    hex[-R]:sha256:read:foobar.txt
+## Examples
 
-will be parsed as the hexadecimal representation of the SHA256 hash of the file `foobar.txt`.
+1. The multibin expression `xor[0xAA]:b64:2c/J2M/e` will return the binary string `secret`; the 
+   string `2c/J2M/e` is base64-decoded using `refinery.b64` and then each byte is xor'ed with the
+   key `0xAA` by the unit `refinery.xor`.
+2. The expression `hex[-R]:sha256:read:foobar.txt` is the hexadecimal representation of the SHA256
+   hash of the contents of the file `foobar.txt` on disk.
 """
 from __future__ import annotations
 
