@@ -92,7 +92,7 @@ but there is no support for escaping comma characters (see the previous section 
 
 ## Examples
 
-1. The multibin expression `xor[0xAA]:b64:2c/J2M/e` will return the binary string `secret`; the 
+1. The multibin expression `xor[0xAA]:b64:2c/J2M/e` will return the binary string `secret`; the
    string `2c/J2M/e` is base64-decoded using `refinery.b64` and then each byte is xor'ed with the
    key `0xAA` by the unit `refinery.xor`.
 2. The expression `hex[-R]:sha256:read:foobar.txt` is the hexadecimal representation of the SHA256
