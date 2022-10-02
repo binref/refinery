@@ -5,6 +5,7 @@ from typing import NamedTuple, Union, TYPE_CHECKING
 from refinery.units import Arg, Unit
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import NoLogging
 
 import logging
 
@@ -72,8 +73,10 @@ class pcap(Unit):
         return pcapkit
 
     def process(self, data):
-        pcapkit = self._pcapkit
-        logging.getLogger('pcapkit').disabled = True
+        with NoLogging():
+            pcapkit = self._pcapkit
+            logging.getLogger('pcapkit').disabled = True
+
         merge = self.args.merge
 
         with VirtualFileSystem() as fs:
