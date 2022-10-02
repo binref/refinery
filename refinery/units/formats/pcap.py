@@ -85,6 +85,8 @@ class pcap(Unit):
                 fin=vf.path, engine='scapy', store=False, nofile=True, extension=False, tcp=True, strict=True)
             tcp: list = list(extraction.reassembly.tcp)
 
+        tcp.sort(key=lambda p: min(p.index, default=0))
+
         count, convo = 0, None
         src_buffer = MemoryFile()
         dst_buffer = MemoryFile()
