@@ -114,7 +114,12 @@ class peek(HexViewer):
             elif isbuffer(value):
                 value = repr(ByteStringWrapper(value))
             elif isinstance(value, int):
-                value = F'0x{value:X}'
+                if value in range(-99, 100):
+                    value = str(value)
+                elif value > 0:
+                    value = F'0x{value:X}'
+                else:
+                    value = F'-0x{-value:X}'
             elif isinstance(value, float):
                 value = F'{value:.4f}'
             metavar = F'{name:>{width+2}} = {value!s}'
