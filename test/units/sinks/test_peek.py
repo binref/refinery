@@ -79,6 +79,13 @@ class TestPeek(TestUnitBase):
         """
     ).encode('utf8')
 
+    def test_unicode_variable(self):
+        with errbuf() as stderr:
+            pipeline = L('put u u:This!Is-A-Un1c0d3-String [| peek ]')
+            pipeline()
+            output = stderr.getvalue()
+        self.assertIn('u:This!Is-A-Un1c0d3-String', output)
+
     def test_hex_peek(self):
         peek = self.load(width=8, lines=15, gray=True)
         with errbuf() as stderr:

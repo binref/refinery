@@ -181,10 +181,10 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
     def __fspath__(self):
         return self.string
 
-    def requires_prefix(self) -> bool:
+    def requires_prefix(self, string) -> bool:
         try:
             from refinery.lib.argformats import DelayedArgument
-            return bool(DelayedArgument(self.string).modifiers)
+            return bool(DelayedArgument(string).modifiers)
         except Exception:
             return True
 
@@ -221,7 +221,12 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         except AttributeError:
             pass
         try:
-            representation = self.string
+            if not any(self[1::2]):
+                representation = self.decode('utf-16le')
+                prefix = 'u'
+            else:
+                representation = self.string
+                prefix = self._CODECS[self.codec]
         except AttributeError:
             representation = None
         else:
@@ -229,8 +234,7 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             if not re.fullmatch(r'[\x20!-~]+', representation):
                 representation = None
             else:
-                prefix = self._CODECS[self.codec]
-                if prefix != 's' or self.requires_prefix():
+                if prefix != 's' or self.requires_prefix(representation):
                     representation = F'{prefix}:{representation}'
         if representation is None:
             printable = (
