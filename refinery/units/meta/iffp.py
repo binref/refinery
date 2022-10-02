@@ -15,13 +15,19 @@ class iffp(ConditionalUnit):
     patterns are the following: {}.
     """
 
-    def __init__(self, *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS), negate=False, temporary=False):
-        super().__init__(negate=negate, temporary=temporary, patterns=patterns)
+    def __init__(
+        self,
+        *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS),
+        partial: Arg.Switch('-p', help='Allow partial matches on the data.') = False,
+        negate=False, temporary=False
+    ):
+        super().__init__(negate=negate, temporary=temporary, patterns=patterns, partial=partial)
 
     def match(self, chunk):
         for name in self.args.patterns:
             p: pattern = _PATTERNS[name]
-            if p.fullmatch(chunk):
+            matcher = p.match if self.args.partial else p.fullmatch
+            if matcher(chunk):
                 return True
         return False
 
