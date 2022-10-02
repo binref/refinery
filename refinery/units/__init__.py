@@ -1198,8 +1198,8 @@ class Unit(UnitBase, abstract=True):
     def leniency(self) -> int:
         return getattr(self.args, 'lenient', 0)
 
-    def _exception_handler(self, exception: BaseException, data: ByteString):
-        if self.leniency > 1:
+    def _exception_handler(self, exception: BaseException, data: Optional[ByteString]):
+        if data is not None and self.leniency > 1:
             try:
                 return exception.partial
             except AttributeError:
@@ -1225,7 +1225,7 @@ class Unit(UnitBase, abstract=True):
             self.log_fail(F'dependencies missing; install {exception.install}')
         else:
             message = F'exception of type {exception.__class__.__name__}; {exception!s}'
-            if self.log_level <= LogLevel.INFO:
+            if self.log_level <= LogLevel.INFO and data is not None:
                 from refinery.units.sinks.peek import peek
                 peeked = str(data | peek(lines=2, decode=True, stdout=True))
                 message = F'{message}\n{peeked}'
@@ -1241,8 +1241,13 @@ class Unit(UnitBase, abstract=True):
         while True:
             try:
                 return next(self._chunks)
+            except StopIteration:
+                raise
             except RefineryCriticalException as R:
                 raise StopIteration from R
+            except BaseException as B:
+                self._exception_handler(B, None)
+                raise StopIteration from B
 
     @property
     def _framehandler(self) -> Framed:
