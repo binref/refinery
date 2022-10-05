@@ -3,7 +3,18 @@
 import hashlib
 
 from ... import TestUnitBase
-from . import MACHO_TEST
+from . import (
+    MACHO_TEST,
+    MACHO_TEXT_text,
+    MACHO_LINKEDIT,
+    MACHO_TEXT__picsymbol_stub,
+    MACHO_TEXT__literal8,
+    MACHO_DATA__nl_symbol_ptr,
+    MACHO_DATA__dyld,
+    MACHO_DATA__common,
+    MACHO_TEXT__cstring,
+    MACHO_DATA__data,
+)
 
 
 class TestVirtualAddressSnip(TestUnitBase):
@@ -77,8 +88,17 @@ class TestVirtualAddressSnip(TestUnitBase):
                 B'__LINKEDIT',
             }
         )
-        unit = self.load('__TEXT/__cstring')
-        self.assertEqual(unit(MACHO_TEST), bytes.fromhex(
-            '666C6F61743332746F7331360000000000000000766C6300617564696F2066696C74657220666F7220666C6F617433322D3E'
-            '73313620636F6E76657273696F6E00000000617564696F2066696C74657200000000'
-        ))
+
+        for path, data in {
+            '__TEXT/__text': MACHO_TEXT_text,
+            '__TEXT/__picsymbol_stub': MACHO_TEXT__picsymbol_stub,
+            '__TEXT/__cstring': MACHO_TEXT__cstring,
+            '__TEXT/__literal8': MACHO_TEXT__literal8,
+            '__DATA/__data': MACHO_DATA__data,
+            '__DATA/__dyld': MACHO_DATA__dyld,
+            '__DATA/__nl_symbol_ptr': MACHO_DATA__nl_symbol_ptr,
+            '__DATA/__common': MACHO_DATA__common,
+            '__LINKEDIT': MACHO_LINKEDIT,
+        }.items():
+            unit = self.load(path)
+            self.assertEqual(unit(MACHO_TEST), data)
