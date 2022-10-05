@@ -19,6 +19,7 @@ class RSRC(enum.IntEnum):
     ACCELERATOR   = 0x09  # noqa
     RCDATA        = 0x0A  # noqa
     MESSAGETABLE  = 0x0B  # noqa
+    ICON_GROUP    = 0x0E  # noqa
     VERSION       = 0x10  # noqa
     DLGINCLUDE    = 0x11  # noqa
     PLUGPLAY      = 0x13  # noqa
