@@ -12,7 +12,7 @@ class vsect(PathExtractorUnit):
         self, *paths,
         enrich: Arg.Switch('-e', help=(
             'Populates the metadata variables vaddr and vsize containing the virtual address and size '
-            'of each section, respectively.')) = False, 
+            'of each section, respectively.')) = False,
         **keywords
     ):
         super().__init__(*paths, enrich=enrich, **keywords)
