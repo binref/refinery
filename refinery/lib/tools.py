@@ -166,8 +166,6 @@ def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
                 # when equality holds, we force identity
                 value = p.default
             posargs.append(value)
-        elif p.default == value:
-            continue
         elif p.kind is p.VAR_POSITIONAL:
             varargs = value
         elif p.kind is p.KEYWORD_ONLY:
