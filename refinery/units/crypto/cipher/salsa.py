@@ -11,7 +11,13 @@ from refinery.lib.crypto import rotl32
 
 
 class LatinCipher(ABC):
-    def __init__(self, key: ByteString, nonce: ByteString, magic: Optional[ByteString] = None, rounds: int = 20, index: int = 0):
+    _idx_magic: slice
+    _idx_key16: slice
+    _idx_key32: slice
+    _idx_nonce: slice
+    _idx_count: slice
+
+    def __init__(self, key: ByteString, nonce: ByteString, magic: Optional[ByteString] = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
             key += key
         elif len(key) != 32:
@@ -36,24 +42,24 @@ class LatinCipher(ABC):
         self.nonce = struct.unpack('<2L', nonce)
         self.state: List[int] = [0] * 4 * 4
         self.rounds = rounds // 2
-        self.reset(index)
+        self.reset(counter)
 
     def reset(self, index=0) -> None:
         state = self.state
-        self.index = [index & 0xFFFFFFFF, index >> 32 & 0xFFFFFFFF]
+        self.counter = [index & 0xFFFFFFFF, index >> 32 & 0xFFFFFFFF]
         state[self._idx_magic] = self.magic
         state[self._idx_key16] = self.key16
         state[self._idx_key32] = self.key32
         state[self._idx_nonce] = self.nonce
-        state[self._idx_index] = self.index
+        state[self._idx_count] = self.counter
         assert len(state) == 4 * 4
 
     def count(self):
-        lo, hi = self.index
+        lo, hi = self.counter
         lo = lo + 1 & 0xFFFFFFFF
         if not lo:
             hi = hi + 1 & 0xFFFFFFFF
-        self.state[self._idx_index] = self.index = lo, hi
+        self.state[self._idx_count] = self.counter = lo, hi
 
     @abstractmethod
     def quarter(self, x: List[int], a: int, b: int, c: int, d: int):
@@ -74,7 +80,7 @@ class SalsaCipher(LatinCipher):
     _idx_key16 = slice(0x01, 0x05)
     _idx_key32 = slice(0x0B, 0x0F)
     _idx_nonce = slice(0x06, 0x08)
-    _idx_index = slice(0x08, 0x0A)
+    _idx_count = slice(0x08, 0x0A)
     _round_access_pattern = (
         (0x0, 0x4, 0x8, 0xC),
         (0x5, 0x9, 0xD, 0x1),

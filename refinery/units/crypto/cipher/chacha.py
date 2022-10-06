@@ -12,7 +12,7 @@ class ChaChaCipher(LatinCipher):
     _idx_magic = slice(0x00, 0x04)
     _idx_key16 = slice(0x04, 0x08)
     _idx_key32 = slice(0x08, 0x0C)
-    _idx_index = slice(0x0C, 0x0E)
+    _idx_count = slice(0x0C, 0x0E)
     _idx_nonce = slice(0x0E, 0x10)
     _round_access_pattern = (
         (0x0, 0x4, 0x8, 0xC),
