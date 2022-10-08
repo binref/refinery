@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Union
+from typing import Optional, Union
 
 import builtins
 import contextlib
@@ -11,6 +11,8 @@ import sys
 import re
 import logging
 import stat
+import fnmatch
+import shlex
 
 os.environ['REFINERY_TERM_SIZE'] = '120'
 
@@ -112,11 +114,25 @@ def emit(line: str, cell=None):
 
 
 @register_line_magic
-def ls(line: str):
+def ls(line: str = ''):
     for name, data in store.cache.items():
         print(F'{SizeInt(len(data))!r}', hashlib.sha256(data).hexdigest().lower(), name)
 
 
-def store_sample(name: str, hash: str):
+@register_line_magic
+def rm(line: str):
+    patterns = shlex.split(line, posix=True)
+    for name in list(store.cache.keys()):
+        if any(fnmatch.fnmatch(name, pattern) for pattern in patterns):
+            store.cache.pop(name, None)
+
+
+def store_sample(hash: str, name: Optional[str] = None):
     store.download(hash)
+    if name is None:
+        name = hash
     store.cache[name] = store.cache.pop(hash)
+
+
+def store_clear():
+    store.cache.clear()
