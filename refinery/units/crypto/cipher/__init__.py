@@ -239,11 +239,24 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
     blocksize: int
     key_sizes: Tuple[int, ...]
 
-    def __init__(self, key, iv=B'', padding=None, mode=None, raw=False, **keywords):
+    def __init__(
+        self, key, iv=B'', padding=None, mode=None, raw=False,
+        segment_size: Arg.Number('-S', '--segment-size',
+            help='Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8.') = 0,
+        mac_len: Arg.Number('-M', '--mac-len', bound=(4, 16),
+            help='Only for EAX, GCM, OCB, and CCM: Length of the authentication tag, in bytes.') = 0,
+        assoc_len: Arg.Number('-A', '--assoc-len',
+            help='Only for CCM: Length of the associated data. If not specified, all associated data is buffered internally.') = 0,
+        **keywords
+    ):
         mode = self._available_block_cipher_modes(mode or iv and 'CBC' or 'ECB')
         if iv and mode.name == 'ECB':
             raise ValueError('No initialization vector can be specified for ECB mode.')
-        super().__init__(key=key, iv=iv, padding=padding, mode=mode, raw=raw, **keywords)
+        super().__init__(
+            key=key, iv=iv, padding=padding, mode=mode, raw=raw,
+            segment_size=segment_size, mac_len=mac_len, assoc_len=assoc_len,
+            **keywords
+        )
 
     def _get_cipher_instance(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name
@@ -255,6 +268,16 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
                     initial_value=int.from_bytes(iv, 'big'))
                 optionals['counter'] = counter
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
+                if mode in ('CCM', 'EAX', 'GCM', 'OCB'):
+                    ml = self.args.mac_len
+                    if ml > 0:
+                        if ml not in range(4, 17):
+                            raise ValueError(F'The given mac length {ml} is not in range [4,16].')
+                        optionals['mac_len'] = ml
+                if mode == 'CCM':
+                    al = self.args.assoc_len
+                    if al > 0:
+                        optionals['assoc_len'] = al
                 bounds = {
                     'CCM': (7, self.blocksize - 2),
                     'OCB': (1, self.blocksize),
@@ -264,6 +287,12 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
                     raise ValueError(F'Invalid nonce length, must be in {bounds} for {mode}.')
                 optionals['nonce'] = iv
             elif mode in ('PCBC', 'CBC', 'CFB', 'OFB', 'OPENPGP'):
+                if mode == 'CFB':
+                    sz = self.args.segment_size
+                    if sz % 8 != 0:
+                        raise ValueError(F'The given segment size {sz} is not a multiple of 8.')
+                    if sz > 0:
+                        optionals['segment_size'] = sz
                 if len(iv) > self.blocksize:
                     self.log_warn(F'The IV has length {len(self.args.iv)} and will be truncated to the blocksize {self.blocksize}.')
                     iv = iv[:self.blocksize]

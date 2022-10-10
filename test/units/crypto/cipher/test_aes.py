@@ -64,3 +64,9 @@ class TestAES(TestUnitBase):
         )
         unit = self.load(mode='ctr', padding='raw', key=b'sdaagsdagdsgddsg', iv=b'sdagdasghaswqwet')
         self.assertIn(b'your files have been encrypted with military grade algorithms', unit(data))
+
+    def test_custom_segment_size(self):
+        data = (L('emit b64:*O*ZQovuDl4bWaG/VhH4lW6y3luVi9/tBvTM0tRoe7cdQ=') |
+            L('aes -m CFB -i h:2D4E1D3B2B3B5A1C0E141B0739C8AD31 h:A8B5C1A7E4A2D8A9D93F53DBB0B2A1F7F928DAF3D2F6FACBE61FFF3BFEDCDDBA -S 128') | ...)
+        self.assertIn(B'xxxxxx22www2', data)
+        self.assertIn(B'vpknpomashni', data)
