@@ -25,6 +25,8 @@ class RSAFormat(str, enum.Enum):
 class rsakey(Unit):
     """
     Parse RSA keys in various formats; PEM, DER, Microsoft BLOB, and W3C-XKMS (XML) format are supported.
+    The same formats are supported for the input format, but you can also specify a key in the following
+    format, where both modulus and exponent have to be hex-encoded: `[modulus]:[exponent]`
     """
     def __init__(
         self,

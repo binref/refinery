@@ -5,7 +5,7 @@ from refinery.lib.tools import splitchunks
 from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
 from refinery.lib.xml import ForgivingParse
 
-from base64 import b64decode
+from base64 import b64decode, b16decode
 from contextlib import suppress
 from enum import IntEnum
 from Crypto.Random import get_random_bytes
@@ -14,7 +14,15 @@ from Crypto.PublicKey import RSA
 from Crypto.Util import number
 
 
-def normalize_rsa_key(key, force_public=False):
+def normalize_rsa_key(key: bytes, force_public=False):
+    try:
+        mod, colon, exp = key.partition(B':')
+        if colon == B':':
+            mod = number.bytes_to_long(b16decode(mod, casefold=True))
+            exp = number.bytes_to_long(b16decode(exp, casefold=True))
+            return RSA.construct((mod, exp))
+    except Exception:
+        pass
     try:
         key = b64decode(key, validate=True)
     except Exception:
