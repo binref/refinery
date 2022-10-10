@@ -127,6 +127,12 @@ def rm(line: str):
             store.cache.pop(name, None)
 
 
+@register_line_magic
+def show(line: str):
+    from IPython.display import Image
+    return Image(filename=line.strip())
+
+
 def store_sample(hash: str, name: Optional[str] = None):
     store.download(hash)
     if name is None:
