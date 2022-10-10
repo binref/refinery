@@ -232,9 +232,15 @@ class peek(HexViewer):
             final = False
         elif not self.args.bare:
             peek = repr(meta.size)
+            line = separator()
             if len(data) <= 5_000_000:
                 peek = F'{peek}; {meta.entropy!r} entropy'
             peek = F'{peek}; {meta.magic!s}'
+            if self.args.lines == 0:
+                peek = None
+            elif not data:
+                peek = None
+                line = separator('empty chunk')
             if self.args.meta > 0:
                 meta.derive('size')
                 meta.derive('magic')
@@ -246,7 +252,7 @@ class peek(HexViewer):
             if self.args.meta > 2:
                 for name in meta.DERIVATION_MAP:
                     meta[name]
-            for line in self._peekmeta(metrics.hexdump_width, separator(), _x_peek=peek, **meta):
+            for line in self._peekmeta(metrics.hexdump_width, line, _x_peek=peek, **meta):
                 empty = False
                 yield line
 
