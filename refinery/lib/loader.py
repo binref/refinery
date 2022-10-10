@@ -71,10 +71,17 @@ def get_entry_point(name: str) -> Executable:
     """
     Retrieve a refinery entry point by name.
     """
-    unit = getattr(refinery, name, None) or get_entry_point_map().get(name)
-    if unit is None:
+    try:
+        return getattr(refinery, name)
+    except AttributeError:
+        pass
+    for sc in refinery.Unit.__subclasses__():
+        if sc.name == name:
+            return sc
+    try:
+        return get_entry_point_map()[name]
+    except KeyError:
         raise EntryNotFound(F'no entry point named "{name}" was found.')
-    return unit
 
 
 def resolve(name: str) -> Executable:
