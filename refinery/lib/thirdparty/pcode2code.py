@@ -463,7 +463,7 @@ class Operations:
     def idiv(self):
         arg2 = self.opstack.pop()
         arg1 = self.opstack.pop()
-        val = arg1 + ' \ ' + arg2
+        val = arg1 + ' \\ ' + arg2
         self.opstack.push(val)
 
     def mul(self):
