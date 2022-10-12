@@ -1,5 +1,11 @@
 # Binary Refinery Changelog
 
+## Version 0.4.48
+- Block cipher unit backed by [pycryptodome][] (i.e. `aes`, `des`, `des3`) now support additional arguments for some of the less commonly used block cipher modes.
+- The `rsa` and `rsakey` unit now also support a simple key format of the form `[modulus]:[exponent]` where both `modulus` and `exponent` are hex-encoded numbers in big endian representation for a textbook RSA round.
+- The `perc` unit now has the `--pretty` option to fix bitmap and icon resources by adding the necessary headers (which are missing from the raw resource data).
+- The `pcap` and `pcap-http` unit now sort streams by the occurrence of the first packet.
+
 ## Version 0.4.47
 - By default, the `ef` unit does no longer use glob-patterns on posix systems. The behavior can be explicitly adjusted using new command-line flags.
 - Adds the `queue` unit.
@@ -488,3 +494,4 @@ Updates build system.
 [malshare]: https://www.malshare.com/
 [python-registry-gh]: https://github.com/williballenthin/python-registry
 [python-registry]: https://pypi.org/project/python-registry/
+[pycryptodome]: https://www.pycryptodome.org/
