@@ -45,7 +45,7 @@ class xtpdf(PathExtractorUnit):
         try:
             if TYPE_CHECKING:
                 blob: EncodedStreamObject = cast(EncodedStreamObject, blob)
-            extract = blob.getData
+            extract = blob.get_data
         except AttributeError:
             pass
         else:
