@@ -7,7 +7,7 @@ from refinery.units import Arg, Unit
 
 from refinery.lib.meta import SizeInt, metavars
 from refinery.lib.structures import EOF, StructReader, StreamDetour
-from refinery.lib.argformats import ParserError, PythonExpression
+from refinery.lib.argformats import ParserError, PythonExpression, multibin, is_valid_variable_name
 from refinery.lib.types import INF
 
 
@@ -110,21 +110,28 @@ class struct(Unit):
 
             try:
                 for prefix, name, spec, conversion in formatter.parse(mainspec):
+                    name: str
+                    spec: str = spec and spec.strip()
                     if prefix:
                         args.extend(reader.read_struct(fixorder(prefix)))
                     if name is None:
                         continue
+                    if not name.isdecimal() and not is_valid_variable_name(name):
+                        raise ValueError(F'The field name "{name}" is invalid; only identifiers and indexes are allowed.')
                     if conversion:
                         reader.byte_align(
                             PythonExpression.evaluate(conversion, meta))
+                    spec, _, pipeline = spec.partition(':')
                     if spec:
                         spec = meta.format_str(spec, self.codec, args)
-                    if spec != '':
+                    if spec:
                         try:
-                            spec = PythonExpression.evaluate(spec, meta)
+                            _exp = PythonExpression.evaluate(spec, meta)
                         except ParserError:
                             pass
-                    if spec == '':
+                        else:
+                            spec = _exp
+                    if not spec:
                         last = value = reader.read()
                     elif isinstance(spec, int):
                         if spec < 0:
@@ -142,6 +149,8 @@ class struct(Unit):
                         else:
                             value = value[0]
 
+                    if pipeline:
+                        value = multibin(pipeline, reverse=True, seed=value)
                     args.append(value)
 
                     if name == _SHARP:
