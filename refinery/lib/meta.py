@@ -221,7 +221,7 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         except AttributeError:
             pass
         try:
-            if not any(self[1::2]):
+            if self and not any(self[1::2]):
                 representation = self.decode('utf-16le')
                 prefix = 'u'
             else:
@@ -231,7 +231,7 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             representation = None
         else:
             import re
-            if not re.fullmatch(r'[\x20!-~]+', representation):
+            if not re.fullmatch(r'[\x20!-~]*', representation):
                 representation = None
             else:
                 if prefix != 's' or self.requires_prefix(representation):
