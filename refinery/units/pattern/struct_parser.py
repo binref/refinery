@@ -116,7 +116,7 @@ class struct(Unit):
                         args.extend(reader.read_struct(fixorder(prefix)))
                     if name is None:
                         continue
-                    if not name.isdecimal() and not is_valid_variable_name(name):
+                    if name and not name.isdecimal() and not is_valid_variable_name(name):
                         raise ValueError(F'The field name "{name}" is invalid; only identifiers and indexes are allowed.')
                     if conversion:
                         reader.byte_align(
@@ -131,7 +131,7 @@ class struct(Unit):
                             pass
                         else:
                             spec = _exp
-                    if not spec:
+                    if spec == '':
                         last = value = reader.read()
                     elif isinstance(spec, int):
                         if spec < 0:
