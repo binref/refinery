@@ -131,16 +131,16 @@ class pemeta(Unit):
             cls._ensure_string(val)
         ) for key, val in bin.items() if val)
 
-    def parse_signature(self, data: bytearray) -> dict:
+    @classmethod
+    def parse_signature(cls, data: bytearray) -> dict:
         """
         Extracts a JSON-serializable and human readable dictionary with information about
         time stamp and code signing certificates that are attached to the input PE file.
         """
         from refinery.units.formats.pkcs7 import pkcs7
-        from refinery.units.formats.pe.pesig import pesig
 
         try:
-            signature = data | pesig | pkcs7 | json.loads
+            signature = data | pkcs7 | json.loads
         except Exception as E:
             raise ValueError(F'PKCS7 parser failed with error: {E!s}')
 
@@ -500,7 +500,8 @@ class pemeta(Unit):
 
         if self.args.timestamps or self.args.signatures:
             with suppress(Exception):
-                signature = self.parse_signature(data)
+                from refinery.units.formats.pe.pesig import pesig
+                signature = self.parse_signature(next(data | pesig))
 
         if self.args.timestamps:
             ts = self.parse_time_stamps(pe, self.args.timeraw)
