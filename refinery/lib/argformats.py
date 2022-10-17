@@ -111,7 +111,7 @@ from pathlib import Path
 from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, reduce, lru_cache
-from typing import AnyStr, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
+from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 from typing import get_type_hints
 
 from refinery.lib.frame import Chunk
@@ -731,6 +731,43 @@ class DelayedArgument(LazyEvaluation):
             return compute_range()
         except TooLazy:
             return compute_range
+
+    @handler.register('pos')
+    def pos(self, regex: ByteString, occurrence: int = 0) -> int:
+        """
+        The handler pos[k=0]:[regex] returns the position of the k-th occurrence of the regular
+        expression [regex]. The value `k` can be set to `-1` to return the position of the last
+        match. If `k` is a negative value, then the handler returns the offset at the end of the
+        match rather than the one at the beginning. If no match is found, the handler returns
+        the value `-1`.
+        """
+        if isinstance(occurrence, str):
+            occurrence = int(occurrence, 0)
+
+        def _pos(data: bytearray) -> int:
+            import re
+            it: Iterable[re.Match] = re.finditer(bytes(regex), data, flags=re.DOTALL)
+
+            if occurrence < 0:
+                from collections import deque
+                matches: Deque[re.Match] = deque()
+                while len(matches) < -occurrence:
+                    try:
+                        matches.append(next(it))
+                    except StopIteration:
+                        return -1
+                for match in it:
+                    matches.append(match)
+                    matches.popleft()
+                return matches[0].end()
+            else:
+                for k, match in enumerate(it):
+                    if k == occurrence:
+                        return match.start()
+                else:
+                    return -1
+
+        return _pos
 
     @handler.register('c', 'copy', final=True)
     def copy(self, region: str) -> bytes:
