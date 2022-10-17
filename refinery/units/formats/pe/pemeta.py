@@ -230,6 +230,7 @@ class pemeta(Unit):
         the version resource of an input PE file, if available.
         """
         pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+        string_table_entries = []
         for FileInfo in pe.FileInfo:
             for FileInfoEntry in FileInfo:
                 with suppress(AttributeError):
@@ -253,7 +254,13 @@ class pemeta(Unit):
                                 separator = ', '
                                 if re.match(F'\\d+({re.escape(separator)}\\d+){{3}}', value):
                                     StringTableEntryParsed[key] = '.'.join(value.split(separator))
-                        return StringTableEntryParsed
+                        string_table_entries.append(StringTableEntryParsed)
+        if not string_table_entries:
+            return None
+        elif len(string_table_entries) == 1:
+            return string_table_entries[0]
+        else:
+            return string_table_entries
 
     def parse_exports(self, pe: PE, data=None) -> list:
         pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
@@ -322,7 +329,7 @@ class pemeta(Unit):
                     continue
                 pid = info.pid.upper()
                 if self.args.tabular:
-                    rich.append(F'[{idv:08x}] {count:>{cw}d} {pid:<{pw}} {info.ver}')
+                    rich.append(F'[{idv:08x}] {count:>0{cw}d} {pid:<{pw}} {info.ver}')
                 else:
                     rich.append({
                         'Counter': count,
