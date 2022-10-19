@@ -833,6 +833,10 @@
       "ide": "Visual Studio 2015",
       "ver": "14.0"
     },
+    "75BC": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
     "7667": {
       "ide": "Visual Studio 2010",
       "ver": "10.0"
@@ -1314,6 +1318,14 @@
       "ver": "14.0"
     },
     "6288": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7862": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7A61": {
       "ide": "Visual Studio 2015",
       "ver": "14.0"
     },
@@ -1941,11 +1953,20 @@
       "ide": "Visual Studio",
       "ver": ""
     },
+    "7B8E": {
+      "ide": "VS2022 v17.3.4 build 31630"
+    },
     "7A64": {
       "ide": "VS2022 v17.2.5 build 31332"
     },
-    "7A61": {
-      "ide": "VS2022 v17.2.1 build 31329"
+    "7CBB": {
+      "ide": "VS2022 v17.4.0 pre 4.0 build 31931"
+    },
+    "7CB1": {
+      "ide": "VS2022 v17.4.0 pre 3.0 build 31921"
+    },
+    "7C4F": {
+      "ide": "VS2022 v17.4.0 pre 2.0 build 31823"
     },
     "7BE9": {
       "ide": "VS2022 v17.4.0 pre 1.0 build 31721"
@@ -1986,9 +2007,6 @@
     "78C7": {
       "ide": "VS2022 v17.1.0 pre 2.0 build 30919"
     },
-    "7862": {
-      "ide": "VS2022 v17.1.0 pre 1.0 build 30818"
-    },
     "77F1": {
       "ide": "VS2022 v17.0.0 pre 7.0 build 30705"
     },
@@ -2018,9 +2036,6 @@
     },
     "75BE": {
       "ide": "VS2019 v16.11.12 build 30142 (*)"
-    },
-    "75BC": {
-      "ide": "VS2019 v16.11.10 build 30140"
     },
     "75BB": {
       "ide": "VS2019 v16.11.9 build 30139"
