@@ -3,7 +3,7 @@
 """
 A simple tool to queue binary data as one or more chunks in the current frame.
 """
-from typing import Iterable
+from typing import ByteString, Iterable, Union
 from refinery.units import Arg, Unit, Chunk
 
 
@@ -15,6 +15,9 @@ class queue(Unit):
         front: Arg.Switch('-f', help='Queue items at the top of the current frame.')
     ):
         super().__init__(data=data, front=front)
+
+    def act(self, data: Union[Chunk, ByteString]) -> ByteString:
+        return data
 
     def filter(self, chunks: Iterable[Chunk]):
         chunks = iter(chunks)
