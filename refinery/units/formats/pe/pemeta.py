@@ -315,6 +315,21 @@ class pemeta(Unit):
             'MinimumOS': MinimumOS,
         }
 
+        pe.parse_data_directories(directories=[
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
+        ])
+
+        try:
+            export_name = pe.DIRECTORY_ENTRY_EXPORT.name
+            if isinstance(export_name, bytes):
+                export_name = export_name.decode('latin1')
+            if not re.match('[\x20!-~]+', export_name):
+                export_name = None
+        except Exception:
+            export_name = None
+        if export_name:
+            header_information['ExportName'] = export_name
+
         rich_header = pe.parse_rich_header()
         rich = []
         if rich_header:
