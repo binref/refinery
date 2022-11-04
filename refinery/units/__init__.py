@@ -1809,7 +1809,10 @@ class Unit(UnitBase, abstract=True):
         else:
             ps1 = None
 
-        sys.set_int_max_str_digits(0)
+        try:
+            sys.set_int_max_str_digits(0)
+        except AttributeError:
+            pass
 
         argv = argv if argv is not None else sys.argv[1:]
         clock = None
