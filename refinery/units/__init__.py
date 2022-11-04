@@ -870,7 +870,7 @@ class Executable(ABCMeta):
         return cls()
 
     def __neg__(cls):
-        unit = cls()
+        unit: Unit = cls()
         unit.args.reverse = 1
         return unit
 
