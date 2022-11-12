@@ -16,8 +16,13 @@ In this tutorial, we extract the C2 configuration from a SedUpLoader sample. The
 
 A short tutorial about a loader using a custom run-length encoding. The tutorial showcases how to define custom refinery units when it would be too difficult to implement a decoding step using existing units.
 
+### [Volume 5 — FlareOn 9][0x05]
+
+This is a refinery-focused write-up of how to solve FlareOn9.
+
 
 [0x01]: tbr-files.v0x01.netwalker.dropper.ipynb
 [0x02]: tbr-files.v0x02.amadey.loader.ipynb
 [0x03]: tbr-files.v0x03.seduploader.ipynb
 [0x04]: tbr-files.v0x04.run.length.encoding.ipynb
+[0x05]: tbr-files.v0x05.flare.on.9.ipynb
