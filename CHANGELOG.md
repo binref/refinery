@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.4.49
+- The `pkcs7sig` unit was added.
+- The `pemeta` unit now also displays the module name stored in the export directory.
+- The `dedup` unit now uses MD5 instead of Python's built-in hash function because of the high risk of collisions.
+
 ## Version 0.4.48
 - Block cipher unit backed by [pycryptodome][] (i.e. `aes`, `des`, `des3`) now support additional arguments for some of the less commonly used block cipher modes.
 - The `rsa` and `rsakey` unit now also support a simple key format of the form `[modulus]:[exponent]` where both `modulus` and `exponent` are hex-encoded numbers in big endian representation for a textbook RSA round.
