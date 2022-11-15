@@ -38,13 +38,18 @@ class stego(Unit):
         return Image
 
     def process(self, data):
+        parts = self.args.parts
         image = self._image.open(MemoryFile(data))
         if self.args.transpose:
             image = image.transpose(self._image.Transpose.ROTATE_90)
         width, height = image.size
+        chunk_size = len(parts)
+        buffer = bytearray(chunk_size * width)
         for y in range(height):
-            yield bytearray(
-                image.getpixel((x, y))[p]
-                for x in range(width)
-                for p in self.args.parts
-            )
+            offset = 0
+            for x in range(width):
+                pixel = image.getpixel((x, y))
+                next_offset = offset + chunk_size
+                buffer[offset:next_offset] = (pixel[p] for p in parts)
+                offset = next_offset
+            yield buffer
