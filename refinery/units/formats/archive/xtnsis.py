@@ -1168,9 +1168,9 @@ class xtnsis(ArchiveUnit):
     """
 
     @classmethod
-    def _find_archive_offset(cls, data: bytearray, before: int = -1):
+    def _find_archive_offset(cls, data: bytearray, before: int = -1, flawmax=2):
         def signatures(*magics):
-            for changes in range(3):
+            for changes in range(flawmax + 1):
                 for magic in magics:
                     if not changes:
                         yield 0, magic
@@ -1181,8 +1181,11 @@ class xtnsis(ArchiveUnit):
                             signature[p] = 0x2E
                         yield changes, bytes(signature)
         best_guess = None
+        search_space = memoryview(data)
         for flaws, sig in signatures(*NSArchive.MAGICS):
-            matches = [m.start() - 4 for m in re.finditer(sig, data, flags=re.DOTALL)]
+            if flaws > 1:
+                search_space = search_space[:0x20_000]
+            matches = [m.start() - 4 for m in re.finditer(sig, search_space, flags=re.DOTALL)]
             if before >= 0:
                 matches = [match for match in matches if match < before]
             matches.reverse()
@@ -1238,4 +1241,4 @@ class xtnsis(ArchiveUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        return cls._find_archive_offset(data) is not None
+        return cls._find_archive_offset(data, flawmax=1) is not None
