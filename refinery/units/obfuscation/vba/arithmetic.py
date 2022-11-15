@@ -32,6 +32,8 @@ class deob_vba_arithmetic(Deobfuscator):
                 return expression
             expression = re.sub(str(formats.vbaint), vba_int_eval, expression)
             brackets = 0
+            ok = True
+            tail = rest = ''
             for end, character in enumerate(expression):
                 if character == '(':
                     brackets += 1
@@ -41,19 +43,29 @@ class deob_vba_arithmetic(Deobfuscator):
                     if brackets < 0:
                         expression, tail = expression[:end], expression[end:]
                         break
-            else:
-                tail = ''
+                    if brackets == 0 and expression[0] == '(':
+                        expression, rest = expression[:end + 1], expression[end + 1:]
+                        break
             if expression.isdigit() or brackets > 0:
                 return match[0]
             try:
-                result = str(cautious_eval(expression)) + self.deobfuscate(tail)
+                result = str(cautious_eval(expression + rest)) + self.deobfuscate(tail)
             except Exception:
+                ok = False
+            if not ok and rest:
+                try:
+                    result = str(cautious_eval(expression)) + self.deobfuscate(tail)
+                except Exception:
+                    expression += rest
+                else:
+                    ok = True
+            if not ok:
                 result = expression
                 self.log_info(F'error trying to parse arithmetic expression at offset {match.start()}: ({expression})')
             else:
                 if expression.startswith('(') and expression.endswith(')'):
                     result = F'({result})'
-            return result
+            return result + rest
 
         pattern = re.compile(R'(?:{i}|{f}|[-+(])(?:[^\S\r\n]{{0,20}}(?:{i}|{f}|[-%|&~<>()+/*^]))+'.format(
             i=str(formats.vbaint), f=str(formats.float)))
