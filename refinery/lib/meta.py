@@ -411,13 +411,12 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             yield key, value
 
     def keys(self):
-        return (x for x in super().keys() if is_valid_variable_name(x))
+        return (k for k, _ in self.items())
 
     def values(self):
-        return (v for k, v in self.items())
+        return (v for _, v in self.items())
 
-    def __iter__(self):
-        return self.keys()
+    __iter__ = keys
 
     def format_str(
         self,
