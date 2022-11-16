@@ -10,7 +10,7 @@ from glob import glob
 from . import TestUnitBase
 from .compression import KADATH1, KADATH2
 
-from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L
+from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L, load_pipeline as PL
 from refinery.lib.structures import MemoryFile
 from refinery.units import Arg, Unit
 
@@ -285,3 +285,8 @@ class TestSimpleInvertible(TestUnitBase):
         finally:
             sys.stdin = sys_stdin
             sys.stdout = sys_stdout
+
+    def test_regression_empty_chunk_unpack(self):
+        pl = PL('emit X [| struct {x:B} {bin} | peek ]')
+        # annoying, but by design
+        self.assertEqual(pl(), B'<built-in function bin>')
