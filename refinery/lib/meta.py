@@ -109,6 +109,7 @@ import abc
 import contextlib
 import string
 import codecs
+import itertools
 
 from io import StringIO
 from urllib.parse import quote_from_bytes, unquote_to_bytes
@@ -351,7 +352,7 @@ def _derivation(name, costly: bool = False) -> Callable[[_Derivation], _Derivati
     return decorator
 
 
-class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
+class LazyMetaOracle(metaclass=_LazyMetaMeta):
     """
     A dictionary that can be queried lazily for all potential options of the common meta variable
     unit. For example, a SHA-256 hash is computed only as soon as the oracle is accessed at the
@@ -373,48 +374,37 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
     chunk: ByteString
     cache: Dict[str, Union[str, int, float]]
 
-    def __init__(self, chunk: ByteString, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, chunk: ByteString, other: Optional[Union[LazyMetaOracle, Dict]] = None):
         self.ghost = False
         self.chunk = chunk
         self.cache = {}
-        self.fix()
+        self._data = {}
+        self._temp = {}
+        if other:
+            self.update(other)
 
-    def update(self, *args, **kwargs):
-        super().update(*args, **kwargs)
-        self.fix()
-
-    def fix(self):
-        for key, value in self.items():
-            try:
-                ctype = self.CUSTOM_TYPE_MAP[key]
-            except KeyError:
-                if isinstance(value, ByteStringWrapper):
-                    continue
-                with contextlib.suppress(TypeError):
-                    self[key] = ByteStringWrapper(value)
-            else:
-                if not isinstance(value, ctype) and issubclass(ctype, type(value)):
-                    self[key] = ctype(value)
-        return self
+    def update(self, other: Union[dict, LazyMetaOracle]):
+        if isinstance(other, LazyMetaOracle):
+            self._data.update(other._data)
+            self._temp.update(other._temp)
+        else:
+            for key, value in other.items():
+                self[key] = value
 
     def update_index(self, index: int):
         self['index'] = index
 
-    def serializable(self) -> dict:
-        return self
+    def serializable(self):
+        return self._data
 
     def items(self):
-        for key, value in super().items():
-            if not is_valid_variable_name(key):
-                continue
-            yield key, value
+        return itertools.chain(self._data.items(), self._temp.items())
 
     def keys(self):
-        return (k for k, _ in self.items())
+        return itertools.chain(self._data.keys(), self._temp.keys())
 
     def values(self):
-        return (v for _, v in self.items())
+        return itertools.chain(self._data.values(), self._temp.values())
 
     __iter__ = keys
 
@@ -615,19 +605,74 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
             return stream.getvalue()
 
     def knows(self, key):
-        return super().__contains__(key) or self.cache.__contains__(key)
+        return (
+            key in self._data or # noqa
+            key in self._temp or # noqa
+            key in self.cache
+        )
 
     def __contains__(self, key):
-        return super().__contains__(key) or key in self.DERIVATION_MAP
+        return (
+            key in self._data or # noqa
+            key in self._temp or # noqa
+            key in self.DERIVATION_MAP
+        )
+
+    def __len__(self):
+        return len(self._data) + len(self._temp)
+
+    def __setitem__(self, key, value):
+        try:
+            ctype = self.CUSTOM_TYPE_MAP[key]
+        except KeyError:
+            if not isinstance(value, ByteStringWrapper):
+                with contextlib.suppress(TypeError):
+                    value = ByteStringWrapper(value)
+        else:
+            if not isinstance(value, ctype) and issubclass(ctype, type(value)):
+                value = ctype(value)
+        if is_valid_variable_name(key):
+            self._data[key] = value
+        else:
+            self._temp[key] = value
+
+    class nodefault:
+        pass
+
+    def get(self, key, default=None):
+        try:
+            return self._data[key]
+        except KeyError:
+            try:
+                return self._temp[key]
+            except KeyError:
+                return default
+
+    def pop(self, key, default=nodefault):
+        try:
+            return self._data.pop(key)
+        except KeyError:
+            try:
+                return self._temp.pop(key)
+            except KeyError:
+                if default is self.nodefault:
+                    raise
+                return default
 
     def __getitem__(self, key):
-        item = super().__getitem__(key)
+        try:
+            item = self._data[key]
+        except KeyError:
+            try:
+                item = self._temp[key]
+            except KeyError:
+                item = self.__missing__(key)
         if isinstance(item, str):
             return item.encode('utf8')
         return item
 
     def __getattr__(self, key):
-        if not super().__contains__(key):
+        if key not in self._data:
             deduction = self.DERIVATION_MAP.get(key)
             if deduction is None:
                 raise AttributeError(key)
@@ -656,7 +701,11 @@ class LazyMetaOracle(dict, metaclass=_LazyMetaMeta):
 
     def discard(self, key):
         try:
-            dict.__delitem__(self, key)
+            del self._data[key]
+        except KeyError:
+            pass
+        try:
+            del self._temp[key]
         except KeyError:
             pass
 
