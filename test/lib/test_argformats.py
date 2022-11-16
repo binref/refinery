@@ -93,12 +93,12 @@ class TestArgumentFormats(TestBase):
 
     def test_slice_objects_with_handlers(self):
         L = loader.load_pipeline
-        p = L('emit h:01000000 | put a [| peek | snip le:var:a | peek ]')
+        p = L('emit h:01000000 | put a [| snip le:var:a ]')
         self.assertEqual(p(), B'\0')
 
     def test_slice_objects_with_handlers_eat_regression(self):
         L = loader.load_pipeline
-        p = L('emit h:01000000 | put a [| peek | snip le:eat:a ]')
+        p = L('emit h:01000000 | put a [| snip le:eat:a ]')
         d = next(p)
         self.assertNotIn('a', d.meta)
 
