@@ -94,7 +94,8 @@ class ef(Unit):
             yield match
 
     def process(self, data):
-        meta = metavars(data, ghost=True)
+        meta = metavars(data)
+        meta.ghost = True
 
         if (os.name == 'nt' or self.args.wild) and not self.args.tame:
             paths = self._glob

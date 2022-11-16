@@ -41,7 +41,8 @@ class cfmt(Unit):
         super().__init__(formats=formats, variable=variable, binary=binary)
 
     def process(self, data):
-        meta = metavars(data, ghost=True)
+        meta = metavars(data)
+        meta.ghost = True
         args = [data]
         variable = self.args.variable
         if self.args.binary:

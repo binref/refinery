@@ -102,8 +102,10 @@ class struct(Unit):
             if index >= self.args.count:
                 break
 
-            meta = metavars(data, ghost=True)
-            meta['index'] = index
+            meta = metavars(data)
+            meta.ghost = True
+            meta.update_index(index)
+
             args = []
             last = None
             checkpoint = reader.tell()

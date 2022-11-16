@@ -762,7 +762,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         return ByteStringWrapper(hashlib.md5(self.chunk).hexdigest())
 
 
-def metavars(chunk, ghost: bool = False) -> LazyMetaOracle:
+def metavars(chunk) -> LazyMetaOracle:
     """
     This method is the main function used by refinery units to get the meta variable dictionary
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`
@@ -773,5 +773,4 @@ def metavars(chunk, ghost: bool = False) -> LazyMetaOracle:
         if not isinstance(meta, dict):
             raise TypeError('Invalid meta type.')
         meta = LazyMetaOracle(chunk, meta)
-    meta.ghost = ghost
     return meta

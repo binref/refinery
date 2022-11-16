@@ -39,7 +39,8 @@ class couple(Unit):
             import shlex
             return ' '.join(shlex.quote(cmd) for cmd in commandline)
 
-        meta = metavars(data, ghost=True)
+        meta = metavars(data)
+        meta.ghost = True
         used = set()
         commandline = [
             meta.format(cmd, self.codec, [data], None, False, used=used)

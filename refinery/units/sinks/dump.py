@@ -180,8 +180,9 @@ class dump(Unit):
                     self.exhausted = True
                 else:
                     if self._has_format(path):
-                        meta = metavars(chunk, ghost=True)
-                        meta['index'] = index
+                        meta = metavars(chunk)
+                        meta.ghost = True
+                        meta.update_index(index)
                         path = meta.format_str(path, self.codec, [chunk])
                     self.stream = self._open(path)
             yield chunk
