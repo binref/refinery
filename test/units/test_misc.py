@@ -287,6 +287,6 @@ class TestSimpleInvertible(TestUnitBase):
             sys.stdout = sys_stdout
 
     def test_regression_empty_chunk_unpack(self):
-        pl = PL('emit X [| struct {x:B} {bin} | peek ]')
+        pl = PL('emit X [| struct {x:B} {bin} ]')
         # annoying, but by design
         self.assertEqual(pl(), B'<built-in function bin>')
