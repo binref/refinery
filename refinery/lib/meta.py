@@ -515,7 +515,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         if fixup:
             for (store, it) in (
                 (args, enumerate(args)),
-                (self, self.items()),
                 (symb, symb.items()),
             ):
                 for key, value in it:
