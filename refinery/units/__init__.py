@@ -851,12 +851,7 @@ class Executable(ABCMeta):
             cls.__init__ = cls__init__
 
         if not abstract and sys.modules[cls.__module__].__name__ == '__main__':
-            if Executable.Entry:
-                cls.logger.warning(cls._output(
-                    F'not executing this unit because the following unit was '
-                    F'already executed: {Executable.Entry}'
-                ))
-            else:
+            if not Executable.Entry:
                 Executable.Entry = cls.name
                 cls.run()
 
