@@ -14,7 +14,10 @@ There are several units that are specifically designed to store meta variables:
   sub-pipeline inside a meta variable; more on this later.
 - The `refinery.cm` unit is a catch-all helper to generate common metadata such as size, frame
   index, hashes, entropy, etcetera.
-- The unit `refinery.wm` can be used to remove all metadata from a chunk.
+- The unit `refinery.mvc` can be used to remove old variables.
+- By default, variables exist only throughout the `refinery.lib.frame` that they are defined in.
+  The unit `refinery.mvg` can be used to make variables global, which means that they do not
+  vanish until the topmost frame layer ends.
 - The `refinery.struct` parses structured data from the beginning of a chunk into meta variables.
 - You can use named capture groups in regular expressions when using the `refinery.rex` unit, and
   these matches will be stored under their name as a meta variable in each output chunk.
