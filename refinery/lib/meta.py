@@ -132,6 +132,7 @@ if TYPE_CHECKING:
     class _Derivation(Protocol):
         costly: bool
         name: str
+        wrap: type
 
         def __call__(self, object: LazyMetaOracle) -> Union[str, int, float]:
             ...
@@ -356,10 +357,11 @@ class _LazyMetaMeta(type):
         return type.__new__(cls, name, bases, namespace)
 
 
-def _derivation(name, costly: bool = False) -> Callable[[_Derivation], _Derivation]:
+def _derivation(name, costly: bool = False, wrap: type = ByteStringWrapper) -> Callable[[_Derivation], _Derivation]:
     def decorator(method: _Derivation) -> _Derivation:
         method.name = name
         method.costly = costly
+        method.wrap = wrap
         return method
     return decorator
 
@@ -376,11 +378,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     unit. For example, a SHA-256 hash is computed only as soon as the oracle is accessed at the
     key `'sha256'`.
     """
-
-    CUSTOM_TYPE_MAP = {
-        'entropy' : Percentage,
-        'size'    : SizeInt,
-    }
 
     DERIVATION_MAP: Dict[str, _Derivation] = {}
     """
@@ -402,7 +399,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             return
         for key, value in seed.items():
             v, s, a = value
-            seed[key] = ScopedValue(v, s, a + 1)
+            seed[key] = ScopedValue(self.autowrap(key, v), s, a + 1)
         self._data = seed
 
     def update(self, other: Union[dict, LazyMetaOracle]):
@@ -672,16 +669,18 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     def __len__(self):
         return len(self._data) + len(self._temp)
 
-    def setitem(self, key, value, scope=None, age=0):
+    def autowrap(self, key, value):
         try:
-            ctype = self.CUSTOM_TYPE_MAP[key]
+            wrap = self.DERIVATION_MAP[key].wrap
         except KeyError:
-            if not isinstance(value, ByteStringWrapper):
-                with contextlib.suppress(TypeError):
-                    value = ByteStringWrapper(value)
-        else:
-            if not isinstance(value, ctype) and issubclass(ctype, type(value)):
-                value = ctype(value)
+            wrap = ByteStringWrapper
+        if not isinstance(value, wrap):
+            with contextlib.suppress(TypeError):
+                value = ByteStringWrapper(value)
+        return value
+
+    def setitem(self, key, value, scope=None, age=0):
+        value = self.autowrap(key, value)
         if is_valid_variable_name(key):
             data = self._data
             try:
@@ -736,7 +735,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             deduction = self.DERIVATION_MAP.get(key)
             if deduction is None:
                 raise AttributeError(key)
-            return deduction(self)
+            return deduction.wrap(deduction(self))
         else:
             return self[key]
 
@@ -749,7 +748,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         if deduction is None:
             raise KeyError(F'The meta variable {key} is unknown.')
         try:
-            value = deduction(self)
+            value = deduction.wrap(deduction(self))
         except _NoDerivationAvailable:
             raise KeyError(F'unable to derive the {key} property here, you have to use the cm unit.')
         else:
@@ -784,42 +783,42 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         from refinery.lib.mime import get_cached_file_magic_info
         return get_cached_file_magic_info(self.chunk).description
 
-    @_derivation('size')
+    @_derivation('size', wrap=SizeInt)
     def _derive_size(self):
-        return SizeInt(len(self.chunk))
+        return len(self.chunk)
 
-    @_derivation('entropy', True)
+    @_derivation('entropy', True, Percentage)
     def _derive_entropy(self):
-        return Percentage(entropy(self.chunk))
+        return entropy(self.chunk)
 
-    @_derivation('ic', True)
+    @_derivation('ic', True, Percentage)
     def _derive_ic(self):
-        return Percentage(index_of_coincidence(self.chunk))
+        return index_of_coincidence(self.chunk)
 
     @_derivation('crc32')
     def _derive_crc32(self):
         import zlib
-        return ByteStringWrapper((zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big').hex())
+        return (zlib.crc32(self.chunk) & 0xFFFFFFFF).to_bytes(4, 'big').hex()
 
     @_derivation('sha1', True)
     def _derive_sha1(self):
         import hashlib
-        return ByteStringWrapper(hashlib.sha1(self.chunk).hexdigest())
+        return hashlib.sha1(self.chunk).hexdigest()
 
     @_derivation('sha256', True)
     def _derive_sha256(self):
         import hashlib
-        return ByteStringWrapper(hashlib.sha256(self.chunk).hexdigest())
+        return hashlib.sha256(self.chunk).hexdigest()
 
     @_derivation('sha512', True)
     def _derive_sha512(self):
         import hashlib
-        return ByteStringWrapper(hashlib.sha512(self.chunk).hexdigest())
+        return hashlib.sha512(self.chunk).hexdigest()
 
     @_derivation('md5', True)
     def _derive_md5(self):
         import hashlib
-        return ByteStringWrapper(hashlib.md5(self.chunk).hexdigest())
+        return hashlib.md5(self.chunk).hexdigest()
 
 
 def metavars(chunk) -> LazyMetaOracle:
