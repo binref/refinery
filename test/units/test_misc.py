@@ -305,3 +305,11 @@ class TestScoping(TestUnitBase):
         self.assertEqual(pl(), b'xy')
         pl = PL('emit X [| put x x [| put y y ]| cfmt {x}{y} ]')
         self.assertEqual(pl(), b'x{y}')
+
+    def test_variables_outside_scope_remain_01(self):
+        pl = PL('emit A [| put t [| emit B ]| cfmt {t} ]')
+        self.assertEqual(pl(), B'A')
+
+    def test_variables_outside_scope_remain_02(self):
+        pl = PL('emit A [| put t [| emit qq | rex . | struct x ]| cfmt {t} ]')
+        self.assertEqual(pl(), B'A')
