@@ -48,3 +48,7 @@ class TestMetaPushPop(TestUnitBase):
     def test_push_with_argument_works_in_frame(self):
         pl = L('emit FOOBAR [| push BAZ | pop b | cca var:b ]')
         self.assertEqual(pl(), B'FOOBARBAZ')
+
+    def test_docstring(self):
+        pl = L('emit key=value | push [[| rex =(.*)$ {1} | pop v ]| repl var:v censored ]')
+        self.assertEqual(pl(), b'key=censored')
