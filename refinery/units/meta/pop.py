@@ -13,6 +13,7 @@ class _popcount:
 
     def __init__(self, name: str):
         self.conversion = None
+        self.current = 0
         if name == self._MERGE_SYMBOL:
             self.count = 1
             self.field = ...
@@ -34,12 +35,16 @@ class _popcount:
         if self.count < 1:
             raise ValueError(F'Popcounts must be positive integer numbers, {self.count} is invalid.')
 
+    @property
+    def done(self):
+        return self.current < 1
+
     def reset(self):
         self.current = self.count
         return self
 
     def into(self, meta: dict, chunk: Chunk):
-        if self.current < 1:
+        if self.done:
             return False
         if self.field:
             if self.field is ...:
@@ -56,7 +61,8 @@ class _popcount:
 class pop(Unit):
     """
     In processing order, remove visible chunks from the current frame and store their contents in the given
-    meta variables. All chunks in the input stream are consequently made visible again.
+    meta variables. All chunks in the input stream are consequently made visible again. If pop is used at
+    the end of a frame, then variables will be local to the parent frame.
     """
     def __init__(
         self,
@@ -86,6 +92,7 @@ class pop(Unit):
 
         it = iter(chunks)
         pop = next(remaining).reset()
+        done = False
 
         for chunk in it:
             if not chunk.visible:
@@ -96,16 +103,26 @@ class pop(Unit):
                 while not pop.into(variables, chunk):
                     pop = next(remaining).reset()
             except StopIteration:
+                done = True
                 invisible.append(chunk)
                 break
-        try:
-            next(remaining)
-        except StopIteration:
-            pass
-        else:
+
+        if not done and pop.done:
+            try:
+                next(remaining)
+            except StopIteration:
+                done = True
+
+        if not done:
             raise ValueError('Not all variables could be assigned.')
 
+        nesting = self.args.nesting
+
         for chunk in chain(invisible, it):
-            chunk.meta.update(variables)
+            meta = chunk.meta
+            meta.update(variables)
+            if nesting < 0:
+                for name in variables:
+                    meta.set_scope(name, chunk.scope + nesting)
             chunk.visible = True
             yield chunk
