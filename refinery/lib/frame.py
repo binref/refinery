@@ -125,7 +125,7 @@ import zlib
 from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer
-from refinery.lib.meta import LazyMetaOracle
+from refinery.lib.meta import LazyMetaOracle, ScopedValue
 
 try:
     import msgpack
@@ -179,6 +179,7 @@ class Chunk(bytearray):
         path: Tuple[int] = (),
         view: Optional[Tuple[bool]] = None,
         meta: Optional[Dict[str, Any]] = None,
+        seed: Optional[Dict[str, ScopedValue]] = None,
         fill_scope: Optional[bool] = None,
         fill_batch: Optional[int] = None
     ):
@@ -203,7 +204,7 @@ class Chunk(bytearray):
         self._fill_scope: Optional[bool] = fill_scope
         self._fill_batch: Optional[bool] = fill_batch
 
-        self._meta = m = LazyMetaOracle(self)
+        self._meta = m = LazyMetaOracle(self, seed=seed)
         if meta is not None:
             m.update(meta)
 
@@ -217,9 +218,14 @@ class Chunk(bytearray):
     def set_next_batch(self, batch: int) -> None:
         self._fill_batch = batch
 
+    @property
+    def gauge(self) -> int:
+        return len(self._path)
+
     def truncate(self, gauge):
         self._path = self._path[:gauge]
         self._view = self._view[:gauge]
+        self.meta.truncate(gauge)
 
     def nest(self, origin, deeper=0):
         """
@@ -228,6 +234,7 @@ class Chunk(bytearray):
         visibility of the `refinery.lib.frame.Chunk` at each new layer is inherited from its
         current visibility.
         """
+        self._meta.update_scopes(self.gauge)
         if self._fill_scope is not None:
             self._view += (self.visible,) * deeper + (self._fill_scope,)
             self._fill_scope = None
@@ -326,7 +333,7 @@ class Chunk(bytearray):
         """
         item = next(stream)
         path, view, meta, fs, data = item
-        return cls(data, path, view=view, meta=meta, fill_scope=fs)
+        return cls(data, path, view=view, seed=meta, fill_scope=fs)
 
     def pack(self):
         """
@@ -371,7 +378,14 @@ class Chunk(bytearray):
     def copy(self, meta=True, data=True) -> Chunk:
         data = data and self or None
         meta = meta and self._meta or None
-        return Chunk(data, self._path, self._view, meta, self._fill_scope, self._fill_batch)
+        return Chunk(
+            data,
+            path=self._path,
+            view=self._view,
+            meta=meta,
+            fill_scope=self._fill_scope,
+            fill_batch=self._fill_batch,
+        )
 
     def __copy__(self):
         return self.copy()
@@ -432,7 +446,7 @@ class FrameUnpacker(Iterable[Chunk]):
         while not self.finished:
             try:
                 self.next_chunk = chunk = Chunk.unpack(self.unpacker)
-                if len(chunk.path) != self.gauge:
+                if chunk.gauge != self.gauge:
                     raise RuntimeError(F'Frame with gauge {self.gauge} contained chunk of depth {len(chunk.path)}.')
                 return True
             except StopIteration:

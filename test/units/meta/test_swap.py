@@ -19,5 +19,5 @@ class TestSwap(TestUnitBase):
         self.assertEqual(pl(), B'FOOBAR{FOO}')
 
     def test_swap_skips_invisible_chunks(self):
-        pl = L('emit range:65:91') [ L('push') [ L('rex MNO') | L('swap mno') | L('pop') ]| L('ccp var:mno') ] # noqa
+        pl = L('emit range:65:91') [ L('push') | L('rex MNO') | L('swap mno') | L('pop') | L('ccp var:mno') ] # noqa
         self.assertEqual(pl(), B'MNOABCDEFGHIJKLMNOPQRSTUVWXYZ')

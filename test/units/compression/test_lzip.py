@@ -11,7 +11,7 @@ class TestLZIP(TestUnitBase):
     def test_zenpak(self):
         data = self.download_sample('f690f484c1883571a8bbf19313025a1264d3e10f570380f7aca3cc92135e1d2e')
         pipe = L(
-            'push [[| rex yara:68(....)83E2FC68(....)E8 | struct x{len:L}4x{addr:L}x | pop ]|'
+            'push [| rex yara:68(....)83E2FC68(....)E8 | struct x{len:L}4x{addr:L}x | pop |'
             ' vsnip addr-0x100:len+0x100 | serpent -r snip[:8]:x::0x100 | lzip | pemeta ]')
         result = data | pipe | json.loads
         self.assertEqual(result['TimeStamp']['Linker'], '2022-05-04 12:29:18')

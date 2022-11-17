@@ -69,5 +69,5 @@ class TestRex(TestUnitBase):
         self.assertEqual(unit(data), B''.join((B'1A', B'2B', B'3C')))
 
     def test_auto_batch(self):
-        pl = L(R'emit Foo12Bar336 | rex (\\w+?)(\\d+) {2} {1} [[| pop k:eval ]| cfmt {k:x}{} ]')
+        pl = L(R'emit Foo12Bar336 | rex (\\w+?)(\\d+) {2} {1} [[| pop k:eval | cfmt {k:x}{} ]]')
         self.assertEqual(pl(), B'cFoo150Bar')

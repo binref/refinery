@@ -290,3 +290,18 @@ class TestSimpleInvertible(TestUnitBase):
         pl = PL('emit X [| struct {x:B} {bin} ]')
         # annoying, but by design
         self.assertEqual(pl(), B'<built-in function bin>')
+
+
+class TestScoping(TestUnitBase):
+
+    def test_hiding_variables_created_by_units_automatically(self):
+        pl = PL('emit TEST [[| rex E ]| cfmt {offset} ]')
+        self.assertEqual(pl(), b'{offset}')
+        pl = PL('emit TEST [[| rex E | cfmt {offset} ]]')
+        self.assertEqual(pl(), b'1')
+
+    def test_simple_scoping_01(self):
+        pl = PL('emit X [| put x x [| put y y | cfmt {x}{y} ]]')
+        self.assertEqual(pl(), b'xy')
+        pl = PL('emit X [| put x x [| put y y ]| cfmt {x}{y} ]')
+        self.assertEqual(pl(), b'x{y}')

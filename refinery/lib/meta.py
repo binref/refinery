@@ -109,11 +109,10 @@ import abc
 import contextlib
 import string
 import codecs
-import itertools
 
 from io import StringIO
 from urllib.parse import quote_from_bytes, unquote_to_bytes
-from typing import Callable, Dict, Iterable, Optional, ByteString, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, Optional, ByteString, Union, NamedTuple, TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
@@ -357,6 +356,11 @@ def _derivation(name, costly: bool = False) -> Callable[[_Derivation], _Derivati
     return decorator
 
 
+class ScopedValue(NamedTuple):
+    value: Any
+    scope: Optional[int] = None
+
+
 class LazyMetaOracle(metaclass=_LazyMetaMeta):
     """
     A dictionary that can be queried lazily for all potential options of the common meta variable
@@ -379,14 +383,17 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     chunk: ByteString
     cache: Dict[str, Union[str, int, float]]
 
-    def __init__(self, chunk: ByteString, other: Optional[Union[LazyMetaOracle, Dict]] = None):
+    def __init__(self, chunk: ByteString, seed: Optional[Dict[str, ScopedValue]] = None):
         self.ghost = False
         self.chunk = chunk
         self.cache = {}
-        self._data = {}
         self._temp = {}
-        if other:
-            self.update(other)
+        if not seed:
+            self._data = {}
+            return
+        for key, value in seed.items():
+            seed[key] = ScopedValue(*value)
+        self._data = seed
 
     def update(self, other: Union[dict, LazyMetaOracle]):
         if isinstance(other, LazyMetaOracle):
@@ -399,17 +406,30 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     def update_index(self, index: int):
         self['index'] = index
 
+    def update_scopes(self, scope: int):
+        data = self._data
+        for key, t in data.items():
+            if t.scope is None:
+                data[key] = ScopedValue(t.value, scope)
+
     def serializable(self):
         return self._data
 
+    def truncate(self, gauge: int):
+        for key, value in list(self._data.items()):
+            if value.scope is None or value.scope > gauge:
+                del self._data[key]
+
     def items(self):
-        return itertools.chain(self._data.items(), self._temp.items())
+        yield from self._temp.items()
+        for key, t in self._data.items():
+            yield (key, t.value)
 
     def keys(self):
-        return itertools.chain(self._data.keys(), self._temp.keys())
+        return (k for k, _ in self.items())
 
     def values(self):
-        return itertools.chain(self._data.values(), self._temp.values())
+        return (v for _, v in self.items())
 
     __iter__ = keys
 
@@ -637,7 +657,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             if not isinstance(value, ctype) and issubclass(ctype, type(value)):
                 value = ctype(value)
         if is_valid_variable_name(key):
-            self._data[key] = value
+            self._data[key] = ScopedValue(value)
         else:
             self._temp[key] = value
 
@@ -646,7 +666,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def get(self, key, default=None):
         try:
-            return self._data[key]
+            return self._data[key].value
         except KeyError:
             try:
                 return self._temp[key]
@@ -655,7 +675,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def pop(self, key, default=nodefault):
         try:
-            return self._data.pop(key)
+            return self._data.pop(key).value
         except KeyError:
             try:
                 return self._temp.pop(key)
@@ -666,7 +686,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def __getitem__(self, key):
         try:
-            item = self._data[key]
+            item = self._data[key].value
         except KeyError:
             try:
                 item = self._temp[key]
@@ -773,9 +793,9 @@ def metavars(chunk) -> LazyMetaOracle:
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`
     so that access to common variables is always possible.
     """
-    meta: Union[dict, LazyMetaOracle] = getattr(chunk, 'meta', {})
+    meta: Union[dict, LazyMetaOracle] = getattr(chunk, 'meta', None)
     if not isinstance(meta, LazyMetaOracle):
-        if not isinstance(meta, dict):
+        if meta is not None:
             raise TypeError('Invalid meta type.')
-        meta = LazyMetaOracle(chunk, meta)
+        meta = LazyMetaOracle(chunk)
     return meta
