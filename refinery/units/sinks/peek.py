@@ -250,7 +250,7 @@ class peek(HexViewer):
                 meta.derive('crc32')
                 meta.derive('sha256')
             if self.args.meta > 2:
-                for name in meta.DERIVATION_MAP:
+                for name in meta.derivations:
                     meta[name]
             for line in self._peekmeta(metrics.hexdump_width, line, _x_peek=peek, **meta):
                 empty = False

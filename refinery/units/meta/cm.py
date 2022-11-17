@@ -5,7 +5,7 @@ from refinery.lib.meta import metavars, LazyMetaOracle
 from refinery.lib.frame import Chunk
 
 
-_COMMON_PROPERTIES_LIST = ', '.join(LazyMetaOracle.DERIVATION_MAP)
+_COMMON_PROPERTIES_LIST = ', '.join(LazyMetaOracle.derivations)
 
 
 class cm(Unit):
@@ -67,9 +67,9 @@ class cm(Unit):
         if all:
             if invert:
                 raise ValueError('invert and all are both enabled, resulting in empty configuration.')
-            names = set(LazyMetaOracle.DERIVATION_MAP)
+            names = set(LazyMetaOracle.derivations)
         elif invert:
-            names = set(LazyMetaOracle.DERIVATION_MAP) - names
+            names = set(LazyMetaOracle.derivations) - names
         super().__init__(names=names, reset=reset)
 
     def process(self, data):

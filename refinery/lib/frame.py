@@ -313,7 +313,7 @@ class Chunk(bytearray):
             if meta.knows(key):
                 continue
             try:
-                costly = self._meta.DERIVATION_MAP[key].costly
+                costly = self._meta.derivations[key].costly
             except KeyError:
                 recompute = costly = False
             else:

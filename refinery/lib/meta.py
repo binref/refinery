@@ -347,7 +347,7 @@ class _NoDerivationAvailable(Exception):
 
 class _LazyMetaMeta(type):
     def __new__(cls, name: str, bases, namespace: dict):
-        derivations: dict = namespace['DERIVATION_MAP']
+        derivations: dict = namespace['derivations']
         for obj in namespace.values():
             try:
                 obj: _Derivation
@@ -379,7 +379,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     key `'sha256'`.
     """
 
-    DERIVATION_MAP: Dict[str, _Derivation] = {}
+    derivations: Dict[str, _Derivation] = {}
     """
     A dictionary mapping the names of common properties to anonymous functions that compute their
     corresponding value on a chunk of binary input data.
@@ -663,7 +663,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         return (
             key in self._data or # noqa
             key in self._temp or # noqa
-            key in self.DERIVATION_MAP
+            key in self.derivations
         )
 
     def __len__(self):
@@ -671,7 +671,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def autowrap(self, key, value):
         try:
-            wrap = self.DERIVATION_MAP[key].wrap
+            wrap = self.derivations[key].wrap
         except KeyError:
             wrap = ByteStringWrapper
         if not isinstance(value, wrap):
@@ -732,7 +732,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def __getattr__(self, key):
         if key not in self._data:
-            deduction = self.DERIVATION_MAP.get(key)
+            deduction = self.derivations.get(key)
             if deduction is None:
                 raise AttributeError(key)
             return deduction.wrap(deduction(self))
@@ -744,7 +744,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             return self.cache[key]
         except KeyError:
             pass
-        deduction = self.DERIVATION_MAP.get(key)
+        deduction = self.derivations.get(key)
         if deduction is None:
             raise KeyError(F'The meta variable {key} is unknown.')
         try:
