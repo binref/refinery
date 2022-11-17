@@ -359,6 +359,7 @@ def _derivation(name, costly: bool = False) -> Callable[[_Derivation], _Derivati
 class ScopedValue(NamedTuple):
     value: Any
     scope: Optional[int] = None
+    age: int = 0
 
 
 class LazyMetaOracle(metaclass=_LazyMetaMeta):
@@ -392,7 +393,8 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             self._data = {}
             return
         for key, value in seed.items():
-            seed[key] = ScopedValue(*value)
+            v, s, a = value
+            seed[key] = ScopedValue(v, s, a + 1)
         self._data = seed
 
     def update(self, other: Union[dict, LazyMetaOracle]):
@@ -410,7 +412,24 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         data = self._data
         for key, t in data.items():
             if t.scope is None:
-                data[key] = ScopedValue(t.value, scope)
+                data[key] = ScopedValue(t.value, scope, t.age)
+
+    def get_scope(self, key, default: int = 0) -> int:
+        try:
+            scope = self._data[key].scope
+        except KeyError:
+            return default
+        if scope is None:
+            return default
+        return scope
+
+    def set_scope(self, key, scope):
+        data = self._data
+        t = data[key]
+        data[key] = ScopedValue(t.value, scope, t.age)
+
+    def get_age(self, key):
+        return self._data[key].age
 
     def serializable(self):
         return self._data
@@ -645,7 +664,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     def __len__(self):
         return len(self._data) + len(self._temp)
 
-    def __setitem__(self, key, value):
+    def setitem(self, key, value, scope=None, age=0):
         try:
             ctype = self.CUSTOM_TYPE_MAP[key]
         except KeyError:
@@ -656,9 +675,18 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             if not isinstance(value, ctype) and issubclass(ctype, type(value)):
                 value = ctype(value)
         if is_valid_variable_name(key):
-            self._data[key] = ScopedValue(value)
+            data = self._data
+            try:
+                if value == data[key].value:
+                    return
+            except KeyError:
+                pass
+            data[key] = ScopedValue(value, scope, age)
         else:
             self._temp[key] = value
+
+    def __setitem__(self, key, value):
+        self.setitem(key, value)
 
     class nodefault:
         pass

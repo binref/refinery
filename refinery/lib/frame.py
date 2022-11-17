@@ -323,7 +323,8 @@ class Chunk(bytearray):
                     # discard meta-variables that would be too costly to recompute
                     continue
                 value = meta[key]
-            meta[key] = value
+            pm = parent.meta
+            meta.setitem(key, value, pm.get_scope(key, parent.scope), pm.get_age(key))
         return self
 
     @classmethod
@@ -377,12 +378,12 @@ class Chunk(bytearray):
 
     def copy(self, meta=True, data=True) -> Chunk:
         data = data and self or None
-        meta = meta and self._meta or None
+        meta = meta and self._meta.serializable()
         return Chunk(
             data,
             path=self._path,
             view=self._view,
-            meta=meta,
+            seed=meta,
             fill_scope=self._fill_scope,
             fill_batch=self._fill_batch,
         )
