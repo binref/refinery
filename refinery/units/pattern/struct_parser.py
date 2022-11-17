@@ -3,7 +3,7 @@
 import string
 import itertools
 
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, Chunk
 
 from refinery.lib.meta import SizeInt, metavars
 from refinery.lib.structures import EOF, StructReader, StreamDetour
@@ -77,7 +77,7 @@ class struct(Unit):
         outputs = outputs or [F'{{{_SHARP}}}']
         super().__init__(spec=spec, outputs=outputs, until=until, count=count, multi=multi)
 
-    def process(self, data: bytearray):
+    def process(self, data: Chunk):
         formatter = string.Formatter()
         until = self.args.until
         until = until and PythonExpression(until, all_variables_allowed=True)
@@ -88,6 +88,11 @@ class struct(Unit):
             mainspec = mainspec[1:]
         else:
             byteorder = '='
+
+        try:
+            scope = data.scope
+        except AttributeError:
+            scope = 0
 
         def fixorder(spec):
             if spec[0] not in '<@=!>':
@@ -183,10 +188,12 @@ class struct(Unit):
                     used = set()
                     outputs.append(meta.format(template, self.codec, [full, *args], {_SHARP: last}, True, used=used))
                     for key in used:
-                        meta.pop(key, None)
+                        if meta.get_scope(key, scope) >= scope:
+                            meta.pop(key, None)
 
                 for output in outputs:
-                    chunk = self.labelled(output, **meta)
+                    chunk = Chunk(output)
+                    chunk.meta.update(meta)
                     chunk.set_next_batch(index)
                     yield chunk
 

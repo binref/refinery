@@ -5,6 +5,7 @@ from typing import List, Match
 from refinery.lib.argformats import utf8
 from refinery.lib.meta import metavars
 from refinery.units.pattern import Arg, RegexUnit, PatternExtractor
+from refinery.units import Chunk
 
 
 class rex(RegexUnit, PatternExtractor):
@@ -67,8 +68,9 @@ class rex(RegexUnit, PatternExtractor):
                 for variable in used:
                     symb.pop(variable, None)
                 symb.update(offset=match.start())
-                for name, value in meta.items():
-                    symb.setdefault(name, value)
-                return self.labelled(item, **symb)
+                chunk = Chunk(item)
+                chunk.meta.update(meta)
+                chunk.meta.update(symb)
+                return chunk
             transformations.append(transformation)
         yield from self.matches_filtered(memoryview(data), self.regex, *transformations)
