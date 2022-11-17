@@ -41,7 +41,7 @@ class swap(Unit):
                 elif not isbuffer(value):
                     raise ValueError(F'Unable to swap data with variable {src} because it has type {type(value).__name__}.')
                 if not chunk:
-                    del chunk.meta[src]
+                    chunk.meta.discard(src)
                 else:
                     chunk.meta[src] = bytes(chunk)
                 chunk[:] = value
