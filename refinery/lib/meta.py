@@ -222,10 +222,15 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         except AttributeError:
             pass
         try:
-            if self and not any(self[1::2]):
-                representation = self.decode('utf-16le')
-                prefix = 'u'
+            if not self or any(self[1::2]):
+                prefix = None
             else:
+                try:
+                    representation = self.decode('utf-16le')
+                    prefix = 'u'
+                except UnicodeDecodeError:
+                    prefix = None
+            if prefix is None:
                 representation = self.string
                 prefix = self._CODECS[self.codec]
         except AttributeError:
