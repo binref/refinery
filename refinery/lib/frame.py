@@ -159,10 +159,10 @@ class BytesDecoder(json.JSONDecoder):
 MAGIC = bytes.fromhex('FEED1985C0CAC01AC0DE')
 
 
-def generate_frame_header(gauge: int):
-    if gauge > 0xFE:
+def generate_frame_header(scope: int):
+    if scope > 0xFE:
         raise ValueError('Maximum frame depth exceeded.')
-    return B'%s%c' % (MAGIC, gauge)
+    return B'%s%c' % (MAGIC, scope)
 
 
 class Chunk(bytearray):
@@ -219,13 +219,13 @@ class Chunk(bytearray):
         self._fill_batch = batch
 
     @property
-    def gauge(self) -> int:
+    def scope(self) -> int:
         return len(self._path)
 
-    def truncate(self, gauge):
-        self._path = self._path[:gauge]
-        self._view = self._view[:gauge]
-        self.meta.truncate(gauge)
+    def truncate(self, scope):
+        self._path = self._path[:scope]
+        self._view = self._view[:scope]
+        self.meta.truncate(scope)
 
     def nest(self, origin, deeper=0):
         """
@@ -234,7 +234,7 @@ class Chunk(bytearray):
         visibility of the `refinery.lib.frame.Chunk` at each new layer is inherited from its
         current visibility.
         """
-        self._meta.update_scopes(self.gauge)
+        self._meta.update_scopes(self.scope)
         if self._fill_scope is not None:
             self._view += (self.visible,) * deeper + (self._fill_scope,)
             self._fill_scope = None
@@ -413,7 +413,7 @@ class FrameUnpacker(Iterable[Chunk]):
     iterator over `[BOO, BAZ]`.
     """
     next_chunk: Optional[Chunk]
-    gauge: int
+    scope: int
     trunk: Tuple[int, ...]
     stream: Optional[BinaryIO]
     finished: bool
@@ -424,11 +424,11 @@ class FrameUnpacker(Iterable[Chunk]):
         self.finished = False
         self.trunk = ()
         self.stream = None
-        self.gauge = 0
+        self.scope = 0
         self.next_chunk = None
         buffer = stream and stream.read(len(MAGIC)) or None
         if buffer == MAGIC:
-            self.gauge, = stream.read(1)
+            self.scope, = stream.read(1)
             self.framed = True
             self.stream = stream
             self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=False)
@@ -436,7 +436,7 @@ class FrameUnpacker(Iterable[Chunk]):
         else:
             self.unpacker = None
             self.framed = False
-            self.gauge = 0
+            self.scope = 0
             self.next_chunk = Chunk()
             while buffer:
                 self.next_chunk.extend(buffer)
@@ -446,8 +446,8 @@ class FrameUnpacker(Iterable[Chunk]):
         while not self.finished:
             try:
                 self.next_chunk = chunk = Chunk.unpack(self.unpacker)
-                if chunk.gauge != self.gauge:
-                    raise RuntimeError(F'Frame with gauge {self.gauge} contained chunk of depth {len(chunk.path)}.')
+                if chunk.scope != self.scope:
+                    raise RuntimeError(F'Frame with scope {self.scope} contained chunk of depth {len(chunk.path)}.')
                 return True
             except StopIteration:
                 pass
@@ -475,7 +475,7 @@ class FrameUnpacker(Iterable[Chunk]):
         return True
 
     def abort(self):
-        if self.gauge > 1:
+        if self.scope > 1:
             while not self.finished and self.trunk == self.next_chunk.path:
                 self._advance()
         else:
@@ -561,7 +561,7 @@ class Framed:
         """
         This property is true if the output data is not framed.
         """
-        return self.nesting + self.unpack.gauge < 1
+        return self.nesting + self.unpack.scope < 1
 
     @property
     def framebreak(self) -> bool:
@@ -573,7 +573,7 @@ class Framed:
         """
         if not self.unpack.framed:
             return self.nesting < 1
-        return self.nesting + self.unpack.gauge < 0
+        return self.nesting + self.unpack.scope < 0
 
     def _generate_chunks(self, parent: Chunk):
         if not self.squeeze:
@@ -604,14 +604,14 @@ class Framed:
         yield buffer.getbuffer()
 
     def __iter__(self):
-        gauge = max(self.unpack.gauge + self.nesting, 0)
+        scope = max(self.unpack.scope + self.nesting, 0)
         if self.unpack.finished:
-            if gauge:
-                yield generate_frame_header(gauge)
+            if scope:
+                yield generate_frame_header(scope)
             return
         if self.nesting > 0:
-            assert gauge
-            yield generate_frame_header(gauge)
+            assert scope
+            yield generate_frame_header(scope)
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
                     if not chunk.visible:
@@ -623,8 +623,8 @@ class Framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
         elif self.nesting == 0:
-            assert gauge
-            yield generate_frame_header(gauge)
+            assert scope
+            yield generate_frame_header(scope)
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
                     if not chunk.visible:
@@ -634,26 +634,26 @@ class Framed:
                         yield result.pack()
         else:
             trunk = None
-            if gauge:
-                yield generate_frame_header(gauge)
+            if scope:
+                yield generate_frame_header(scope)
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
                     results = self._generate_chunks(chunk) if chunk.visible else (chunk,)
-                    if not gauge:
+                    if not scope:
                         yield from results
                         continue
                     for result in results:
                         if trunk is None:
                             trunk = result
-                        elif result.path[gauge:] == trunk.path[gauge:]:
+                        elif result.path[scope:] == trunk.path[scope:]:
                             trunk &= result
                             trunk.extend(result)
                         else:
-                            trunk.truncate(gauge)
+                            trunk.truncate(scope)
                             yield trunk.pack()
                             trunk = result
-                if not gauge or trunk is None:
+                if not scope or trunk is None:
                     continue
             if trunk is not None:
-                trunk.truncate(gauge)
+                trunk.truncate(scope)
                 yield trunk.pack()

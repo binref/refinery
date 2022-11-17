@@ -415,9 +415,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     def serializable(self):
         return self._data
 
-    def truncate(self, gauge: int):
+    def truncate(self, scope: int):
         for key, value in list(self._data.items()):
-            if value.scope is None or value.scope > gauge:
+            if value.scope is None or value.scope > scope:
                 del self._data[key]
 
     def items(self):
