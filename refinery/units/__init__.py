@@ -1231,7 +1231,7 @@ class Unit(UnitBase, abstract=True):
             import traceback
             traceback.print_exc(file=sys.stderr)
         if abort_execution:
-            raise RefineryCriticalException
+            raise RefineryCriticalException(str(exception))
 
     def __next__(self) -> Chunk:
         if not self._chunks:
