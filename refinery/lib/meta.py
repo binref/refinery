@@ -95,9 +95,14 @@ The `refinery.push` and `refinery.pop` units can be used to extract sub-pipeline
 example, the following command extracts the files from a password-protected attachment of an email
 message by first extracting the password from the email message body:
 
-    $ emit phish.eml | push [[
-    >   | xtmail body.txt | rex -I password:\s*(\w+) {1} | pop password ]
-    >   | xtmail evil.zip | xtzip -p var:password | dump {path} ]
+    $ emit phish.eml [                      |
+    >     push [                            |
+    >         xtmail body.txt               |
+    >         rex -I password:\s*(\w+) {1}  |
+    >         pop password ]                |
+    >       xt *.zip                        |
+    >       xt *.exe -p var:password        |
+    >       dump extracted/{path} ]
 
 The `refinery.push` unit emits two copies of the input data, and the second copy has been moved out
 of scope (it is not visible). The first `refinery.xtmail` unit extracts the `body.txt` part and we

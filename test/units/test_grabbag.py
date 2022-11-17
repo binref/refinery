@@ -4,6 +4,7 @@ import json
 
 from .. import TestBase
 from io import BytesIO
+from hashlib import sha256
 
 from refinery.lib.loader import load_pipeline, load_detached as L
 
@@ -114,7 +115,16 @@ class TestGrabBagExamples(TestBase):
 
     def test_sockaddr_decoding(self):
         pipeline = load_pipeline(
-            'emit "0x51110002 0xAFBAFA12" | pack -B4 | struct 2x{port:!H}{addr:4}{} ['
+            'emit 0x51110002 0xAFBAFA12 | pack -B4 | struct 2x{port:!H}{addr:4}{} ['
             ' | push var:addr | pack -R [| sep . ]| pop addr | cfmt {addr}:{port} ]')
         result = pipeline()
         self.assertEqual(result, B'18.250.186.175:4433')
+
+    def test_email_sample_from_meta_docstring(self):
+        data = self.download_sample('307b76e0b88904a5da7539a2e2c437b65d8e9d66574e992ea9f2abae1c699b6f')
+        pipeline = load_pipeline(
+            R'push [[| xt body.txt | rex -I password:\\s*(\\w+) {1} | pop p ]| xt *.zip | xt *.exe -p var:p ]')
+        exe = data | pipeline | bytearray
+        self.assertTrue(exe.startswith(b'MZ'))
+        self.assertEqual(sha256(exe).hexdigest().lower(),
+            '7c318ed4278ec449deebb5897daf2e547f7e1ab10e19be3fe5ec9ac5f061cb26')
