@@ -1469,7 +1469,11 @@ class Unit(UnitBase, abstract=True):
                 return (self | stdout).getvalue()
         elif callable(stream):
             with MemoryFile() as stdout:
-                return stream((self | stdout).getvalue())
+                self | stdout
+                out = stdout.getbuffer()
+                if isinstance(stream, type) and isinstance(out, stream):
+                    return out
+                return stream(out)
 
         if not stream.writable():
             raise ValueError('target stream is not writable')
