@@ -10,6 +10,7 @@ import functools
 
 from refinery.units import Arg, Unit
 from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import NoLogging
 
 if TYPE_CHECKING:
     from pyxlsb2.records import SheetRecord
@@ -241,7 +242,8 @@ class xlxtr(Unit):
                 if not ref.match(k, name):
                     continue
                 sheet = workbook[name]
-                cells = [row for row in sheet.iter_rows(values_only=True)]
+                with NoLogging():
+                    cells = [row for row in sheet.iter_rows(values_only=True)]
                 nrows = len(cells)
                 ncols = max((len(row) for row in cells), default=0)
                 for row, col in ref.cells(nrows, ncols):
