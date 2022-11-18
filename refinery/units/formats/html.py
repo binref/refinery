@@ -135,3 +135,13 @@ class xthtml(PathExtractorUnit):
             root, = root.children
 
         yield from tree(root, root.tag)
+
+    @classmethod
+    def handles(self, data: bytearray):
+        from refinery.lib import mime
+        info = mime.get_cached_file_magic_info(data)
+        if info.extension == 'html':
+            return True
+        if info.mime.endswith('html'):
+            return True
+        return False
