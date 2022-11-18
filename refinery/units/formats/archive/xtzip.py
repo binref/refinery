@@ -44,7 +44,8 @@ class xtzip(ArchiveUnit):
                         raise
                     return True
                 else:
-                    self.log_debug(pwd)
+                    if pwd:
+                        self.log_debug('using password:', pwd)
                     return False
             for pwd in [None, *self._COMMON_PASSWORDS]:
                 if not password_invalid(pwd):
