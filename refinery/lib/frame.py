@@ -190,7 +190,7 @@ class Chunk(bytearray):
 
         view = view or (False,) * len(path)
         if len(view) != len(path):
-            raise ValueError('skipping must have the same length as path')
+            raise ValueError('view must have the same length as path')
 
         if isinstance(data, Chunk):
             path = path or data.path
@@ -324,7 +324,7 @@ class Chunk(bytearray):
                     continue
                 value = meta[key]
             pm = parent.meta
-            meta.setitem(key, value, pm.get_scope(key, parent.scope), pm.get_age(key))
+            meta.setitem(key, value, pm.get_scope(key, parent.scope))
         return self
 
     @classmethod
@@ -340,6 +340,7 @@ class Chunk(bytearray):
         """
         Return the serialized representation of this chunk.
         """
+        self._meta.update_scopes(self.scope)
         obj = (self._path, self._view, self._meta.serializable(), self._fill_scope, self)
         return msgpack.packb(obj)
 

@@ -369,7 +369,6 @@ def _derivation(name, costly: bool = False, wrap: type = ByteStringWrapper) -> C
 class ScopedValue(NamedTuple):
     value: Any
     scope: Optional[int] = None
-    age: int = 0
 
 
 class LazyMetaOracle(metaclass=_LazyMetaMeta):
@@ -398,8 +397,8 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             self._data = {}
             return
         for key, value in seed.items():
-            v, s, a = value
-            seed[key] = ScopedValue(self.autowrap(key, v), s, a + 1)
+            value, scope = value
+            seed[key] = ScopedValue(self.autowrap(key, value), scope)
         self._data = seed
 
     def update(self, other: Union[dict, LazyMetaOracle]):
@@ -417,7 +416,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         data = self._data
         for key, t in data.items():
             if t.scope is None:
-                data[key] = ScopedValue(t.value, scope, t.age)
+                data[key] = ScopedValue(t.value, scope)
 
     def get_scope(self, key, default: int = 0) -> int:
         try:
@@ -431,10 +430,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     def set_scope(self, key, scope):
         data = self._data
         t = data[key]
-        data[key] = ScopedValue(t.value, scope, t.age)
-
-    def get_age(self, key):
-        return self._data[key].age
+        data[key] = ScopedValue(t.value, scope)
 
     def serializable(self):
         return self._data
@@ -679,7 +675,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 value = ByteStringWrapper(value)
         return value
 
-    def setitem(self, key, value, scope=None, age=0):
+    def setitem(self, key, value, scope=None):
         value = self.autowrap(key, value)
         if is_valid_variable_name(key):
             data = self._data
@@ -688,7 +684,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     return
             except KeyError:
                 pass
-            data[key] = ScopedValue(value, scope, age)
+            data[key] = ScopedValue(value, scope)
         else:
             self._temp[key] = value
 
