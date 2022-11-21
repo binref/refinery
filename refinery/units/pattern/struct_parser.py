@@ -89,15 +89,12 @@ class struct(Unit):
         else:
             byteorder = '='
 
-        try:
-            scope = data.scope
-        except AttributeError:
-            scope = 0
-
         def fixorder(spec):
             if spec[0] not in '<@=!>':
                 spec = byteorder + spec
             return spec
+
+        previously_existing_variables = set(metavars(data).keys())
 
         it = itertools.count() if self.args.multi else (0,)
         for index in it:
@@ -188,8 +185,9 @@ class struct(Unit):
                     used = set()
                     outputs.append(meta.format(template, self.codec, [full, *args], {_SHARP: last}, True, used=used))
                     for key in used:
-                        if meta.get_scope(key, scope) >= scope:
-                            meta.pop(key, None)
+                        if key in previously_existing_variables:
+                            continue
+                        meta.discard(key)
 
                 for output in outputs:
                     chunk = Chunk(output)
