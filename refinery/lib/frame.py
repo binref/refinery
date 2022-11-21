@@ -352,7 +352,7 @@ class Chunk(bytearray):
         layer = layer and '/' + layer
         return F'<chunk{layer}:{bytes(self)!r}>'
 
-    def __iand__(self, other: Chunk):
+    def intersect(self, other: Chunk):
         other_meta = other._meta
         meta = self._meta
         for key, value in list(meta.items()):
@@ -594,7 +594,7 @@ class Framed:
         else:
             return
         for item in it:
-            header &= item
+            header.intersect(item)
             buffer.write(item)
         yield header
 
@@ -650,7 +650,7 @@ class Framed:
                         if trunk is None:
                             trunk = result
                         elif result.path[scope:] == trunk.path[scope:]:
-                            trunk &= result
+                            trunk.intersect(result)
                             trunk.extend(result)
                         else:
                             trunk.truncate(scope)
