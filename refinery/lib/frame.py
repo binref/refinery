@@ -123,9 +123,12 @@ import itertools
 import zlib
 
 from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
+from typing import TYPE_CHECKING
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer
-from refinery.lib.meta import LazyMetaOracle, ScopedValue
+
+if TYPE_CHECKING:
+    from msgpack.fallback import Unpacker
 
 try:
     import msgpack
@@ -420,7 +423,7 @@ class FrameUnpacker(Iterable[Chunk]):
     stream: Optional[BinaryIO]
     finished: bool
     framed: bool
-    unpacker: Optional[msgpack.Unpacker]
+    unpacker: Optional[Unpacker]
 
     def __init__(self, stream: Optional[BinaryIO]):
         self.finished = False
