@@ -586,14 +586,13 @@ class Framed:
                 yield copy.copy(item).inherit(parent)
             return
         it = self.action(parent)
-        try:
-            header = next(it)
-        except StopIteration:
-            return
-        else:
+        for header in it:
             header.inherit(parent)
             buffer = MemoryFile(header)
             buffer.seek(len(header))
+            break
+        else:
+            return
         for item in it:
             header &= item
             buffer.write(item)
