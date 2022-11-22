@@ -76,13 +76,14 @@ def _virtual_fs_stat(name):
     ))
 
 
-def _virtual_fs_open(name, mode='r', *args, **kwargs):
+def _virtual_fs_open(name: str, mode='r', *args, **kwargs):
     path = os.path.abspath(name)
     directory = os.path.abspath(os.path.dirname(path))
-    file_name = os.path.basename(path)
 
-    if 'b' not in mode or directory != _root:
+    if 'b' not in mode or not directory.startswith(_root):
         return _open(name, mode, *args, **kwargs)
+
+    file_name = path[len(_root):].lstrip(os.path.sep).replace(os.path.sep, '/')
 
     if 'r' in mode:
         try:
