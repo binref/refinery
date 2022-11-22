@@ -20,7 +20,7 @@ class TestMetaVarGlobal(TestMetaBase):
 
     def test_mvg_04(self):
         pl = L('emit FOO [| rex . [| put x | mvg ]| cfmt {}{x} ]')
-        self.assertEqual(pl(), B'FOOF')
+        self.assertEqual(pl(), B'FOO{x}')
 
     def test_scope_cannot_be_increased(self):
         pl = L('emit s: [| put x alpha [| nop [| put x beta | mvg ]| nop ]| cfmt {x} ]')
