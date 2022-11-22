@@ -126,6 +126,7 @@ from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dic
 from typing import TYPE_CHECKING
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer
+from refinery.lib.meta import LazyMetaOracle
 
 if TYPE_CHECKING:
     from msgpack.fallback import Unpacker
@@ -182,7 +183,7 @@ class Chunk(bytearray):
         path: Tuple[int] = (),
         view: Optional[Tuple[bool]] = None,
         meta: Optional[Dict[str, Any]] = None,
-        seed: Optional[Dict[str, ScopedValue]] = None,
+        seed: Optional[Dict[str, list]] = None,
         fill_scope: Optional[bool] = None,
         fill_batch: Optional[int] = None
     ):
@@ -207,7 +208,7 @@ class Chunk(bytearray):
         self._fill_scope: Optional[bool] = fill_scope
         self._fill_batch: Optional[bool] = fill_batch
 
-        self._meta = m = LazyMetaOracle(self, seed=seed)
+        self._meta = m = LazyMetaOracle(self, scope=self.scope, seed=seed)
         if meta is not None:
             m.update(meta)
 
@@ -228,7 +229,6 @@ class Chunk(bytearray):
     def truncate(self, scope):
         self._path = self._path[:scope]
         self._view = self._view[:scope]
-        self.meta.truncate(scope)
 
     def nest(self, origin, deeper=0):
         """
@@ -237,7 +237,6 @@ class Chunk(bytearray):
         visibility of the `refinery.lib.frame.Chunk` at each new layer is inherited from its
         current visibility.
         """
-        self._meta.update_scopes(self.scope)
         if self._fill_scope is not None:
             self._view += (self.visible,) * deeper + (self._fill_scope,)
             self._fill_scope = None
@@ -311,23 +310,7 @@ class Chunk(bytearray):
         """
         self._path = parent._path
         self._view = self._view or parent._view
-        meta = self._meta
-        for key, value in parent.meta.items():
-            if meta.knows(key):
-                continue
-            try:
-                costly = self._meta.derivations[key].costly
-            except KeyError:
-                recompute = costly = False
-            else:
-                recompute = True
-            if recompute:
-                if costly and len(self) >= 0x1000 and hash(self) != hash(parent):
-                    # discard meta-variables that would be too costly to recompute
-                    continue
-                value = meta[key]
-            pm = parent.meta
-            meta.setitem(key, value, pm.get_scope(key, parent.scope))
+        self._meta.inherit(parent.meta)
         return self
 
     @classmethod
@@ -337,14 +320,15 @@ class Chunk(bytearray):
         """
         item = next(stream)
         path, view, meta, fs, data = item
+        path = tuple(path)
+        view = tuple(view)
         return cls(data, path, view=view, seed=meta, fill_scope=fs)
 
     def pack(self):
         """
         Return the serialized representation of this chunk.
         """
-        self._meta.update_scopes(self.scope)
-        obj = (self._path, self._view, self._meta.serializable(), self._fill_scope, self)
+        obj = (self._path, self._view, self._meta.serialize(self.scope), self._fill_scope, self)
         return msgpack.packb(obj)
 
     def __repr__(self) -> str:
@@ -353,6 +337,7 @@ class Chunk(bytearray):
         return F'<chunk{layer}:{bytes(self)!r}>'
 
     def intersect(self, other: Chunk):
+        # TODO: Is this necessary?
         other_meta = other._meta
         meta = self._meta
         for key, value in list(meta.items()):
@@ -382,15 +367,18 @@ class Chunk(bytearray):
 
     def copy(self, meta=True, data=True) -> Chunk:
         data = data and self or None
-        meta = meta and self._meta.serializable()
-        return Chunk(
+        copy = Chunk(
             data,
             path=self._path,
             view=self._view,
-            seed=meta,
             fill_scope=self._fill_scope,
             fill_batch=self._fill_batch,
         )
+        if meta:
+            copy.meta.update(self.meta)
+        if copy.meta.scope != copy.scope:
+            raise RuntimeError
+        return copy
 
     def __copy__(self):
         return self.copy()
@@ -418,7 +406,7 @@ class FrameUnpacker(Iterable[Chunk]):
     iterator over `[BOO, BAZ]`.
     """
     next_chunk: Optional[Chunk]
-    scope: int
+    depth: int
     trunk: Tuple[int, ...]
     stream: Optional[BinaryIO]
     finished: bool
@@ -429,19 +417,19 @@ class FrameUnpacker(Iterable[Chunk]):
         self.finished = False
         self.trunk = ()
         self.stream = None
-        self.scope = 0
+        self.depth = 0
         self.next_chunk = None
         buffer = stream and stream.read(len(MAGIC)) or None
         if buffer == MAGIC:
-            self.scope, = stream.read(1)
+            self.depth, = stream.read(1)
             self.framed = True
             self.stream = stream
-            self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=False)
+            self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=True)
             self._advance()
         else:
             self.unpacker = None
             self.framed = False
-            self.scope = 0
+            self.depth = 0
             self.next_chunk = Chunk()
             while buffer:
                 self.next_chunk.extend(buffer)
@@ -451,8 +439,8 @@ class FrameUnpacker(Iterable[Chunk]):
         while not self.finished:
             try:
                 self.next_chunk = chunk = Chunk.unpack(self.unpacker)
-                if chunk.scope != self.scope:
-                    raise RuntimeError(F'Frame with scope {self.scope} contained chunk of depth {len(chunk.path)}.')
+                if chunk.scope != self.depth:
+                    raise RuntimeError(F'Frame of depth {self.depth} contained chunk of scope {chunk.scope}.')
                 return True
             except StopIteration:
                 pass
@@ -480,7 +468,7 @@ class FrameUnpacker(Iterable[Chunk]):
         return True
 
     def abort(self):
-        if self.scope > 1:
+        if self.depth > 1:
             while not self.finished and self.trunk == self.next_chunk.path:
                 self._advance()
         else:
@@ -566,7 +554,7 @@ class Framed:
         """
         This property is true if the output data is not framed.
         """
-        return self.nesting + self.unpack.scope < 1
+        return self.nesting + self.unpack.depth < 1
 
     @property
     def framebreak(self) -> bool:
@@ -578,12 +566,13 @@ class Framed:
         """
         if not self.unpack.framed:
             return self.nesting < 1
-        return self.nesting + self.unpack.scope < 0
+        return self.nesting + self.unpack.depth < 0
 
     def _generate_chunks(self, parent: Chunk):
         if not self.squeeze:
             for item in self.action(parent):
-                yield copy.copy(item).inherit(parent)
+                chunk = item.copy().inherit(parent)
+                yield chunk
             return
         it = self.action(parent)
         for header in it:
@@ -608,7 +597,7 @@ class Framed:
         yield buffer.getbuffer()
 
     def __iter__(self):
-        scope = max(self.unpack.scope + self.nesting, 0)
+        scope = max(self.unpack.depth + self.nesting, 0)
         if self.unpack.finished:
             if scope:
                 yield generate_frame_header(scope)

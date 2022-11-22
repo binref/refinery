@@ -117,10 +117,11 @@ import abc
 import contextlib
 import string
 import codecs
+import itertools
 
 from io import StringIO
 from urllib.parse import quote_from_bytes, unquote_to_bytes
-from typing import Any, Callable, Dict, Iterable, Optional, ByteString, Union, NamedTuple, TYPE_CHECKING
+from typing import Callable, Dict, Iterable, Optional, ByteString, Union, TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
@@ -128,6 +129,7 @@ from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
 
 if TYPE_CHECKING:
     from typing import Protocol
+    from refinery.lib.frame import Chunk
 
     class _Derivation(Protocol):
         costly: bool
@@ -282,6 +284,8 @@ def is_valid_variable_name(name: str) -> bool:
         return False
     if not name.isidentifier():
         return False
+    if name == 'index':
+        return False
     return True
 
 
@@ -366,11 +370,6 @@ def _derivation(name, costly: bool = False, wrap: type = ByteStringWrapper) -> C
     return decorator
 
 
-class ScopedValue(NamedTuple):
-    value: Any
-    scope: Optional[int] = None
-
-
 class LazyMetaOracle(metaclass=_LazyMetaMeta):
     """
     A dictionary that can be queried lazily for all potential options of the common meta variable
@@ -388,65 +387,112 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     chunk: ByteString
     cache: Dict[str, Union[str, int, float]]
 
-    def __init__(self, chunk: ByteString, seed: Optional[Dict[str, ScopedValue]] = None):
+    def __init__(self, chunk: ByteString, scope: Optional[int] = 1, seed: Optional[Dict[str, list]] = None):
         self.ghost = False
         self.chunk = chunk
         self.cache = {}
-        self._temp = {}
-        if not seed:
-            self._data = {}
-            return
-        for key, value in seed.items():
-            value, scope = value
-            seed[key] = ScopedValue(self.autowrap(key, value), scope)
-        self._data = seed
+        self.scope = scope
+        self.tempval = {}
+        self.current = {}
+        self.updated = {}
+        self.rescope = {}
+        if seed is not None:
+            for key, stack in seed.items():
+                if not isinstance(stack, list):
+                    raise TypeError(R'Incorrect type in variable scope history.')
+                if len(stack) != scope:
+                    raise ValueError(F'History item had length {len(stack)}, but scope was specified as {scope}.')
+                for value in reversed(stack):
+                    if value is not None:
+                        self.current[key] = self.autowrap(key, value)
+                        self.updated[key] = False
+                        break
+                else:
+                    raise ValueError(R'History item was all None.')
+            self.history = seed
+        else:
+            self.history = {}
 
     def update(self, other: Union[dict, LazyMetaOracle]):
         if isinstance(other, LazyMetaOracle):
-            self._data.update(other._data)
-            self._temp.update(other._temp)
-        else:
-            for key, value in other.items():
-                self[key] = value
+            self.current.update(other.current)
+            self.updated.update(other.updated)
+            self.tempval.update(other.tempval)
+            self.rescope.update(other.rescope)
+            self.history = other.history
+            return
+        for key, value in other.items():
+            self[key] = value
 
     def update_index(self, index: int):
         self['index'] = index
 
-    def update_scopes(self, scope: int):
-        data = self._data
-        for key, t in data.items():
-            if t.scope is None:
-                data[key] = ScopedValue(t.value, scope)
+    def inherit(self, parent: LazyMetaOracle):
+        if self.history and self.history is not parent.history:
+            raise RuntimeError
+        self.history = parent.history
+        self.scope = parent.scope
+        for key in parent.keys():
+            try:
+                derivation = self.derivations[key]
+            except KeyError:
+                pass
+            else:
+                if derivation.costly and len(self.chunk) >= 0x1000:
+                    continue
+                self[key] = derivation.wrap(derivation(self))
 
-    def get_scope(self, key, default: int = 0) -> int:
-        try:
-            scope = self._data[key].scope
-        except KeyError:
-            return default
-        if scope is None:
-            return default
-        return scope
+    def set_scope(self, key: str, scope: int):
+        if scope > self.scope:
+            raise ValueError(F'Attempt to increase scope level of variable {key} to {scope}, it is currently at {self.scope}.')
+        if scope == self.scope:
+            return
+        self.rescope[key] = scope
 
-    def set_scope(self, key, scope):
-        data = self._data
-        t = data[key]
-        data[key] = ScopedValue(t.value, scope)
-
-    def serializable(self):
-        return self._data
-
-    def truncate(self, scope: int):
-        for key, value in list(self._data.items()):
-            if value.scope is None or value.scope > scope:
-                del self._data[key]
+    def serialize(self, scope: int):
+        if not scope:
+            return {}
+        serializable = {
+            key: list(stack) for key, stack in self.history.items()
+        }
+        vanishing = set()
+        for key, stack in serializable.items():
+            padding = scope - len(stack)
+            if padding > 0:
+                stack.extend(itertools.repeat(None, padding))
+                continue
+            stack[scope:] = ()
+            if not any(stack):
+                vanishing.add(key)
+        for key, value in self.current.items():
+            if not self.updated[key]:
+                continue
+            try:
+                spot = self.rescope[key]
+            except KeyError:
+                spot = self.scope
+            if spot > scope:
+                continue
+            if spot < 0:
+                raise RuntimeError('computed a negative spot for variable placement')
+            try:
+                stack = serializable[key]
+            except KeyError:
+                serializable[key] = stack = [None] * scope
+            else:
+                vanishing.discard(key)
+            stack[spot - 1] = value
+        for key in vanishing:
+            del serializable[key]
+        return serializable
 
     def items(self):
-        yield from self._temp.items()
-        for key, t in self._data.items():
-            yield (key, t.value)
+        yield from self.tempval.items()
+        yield from self.current.items()
 
     def keys(self):
-        return (k for k, _ in self.items())
+        yield from self.tempval.keys()
+        yield from self.current.keys()
 
     def values(self):
         return (v for _, v in self.items())
@@ -650,20 +696,20 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def knows(self, key):
         return (
-            key in self._data or # noqa
-            key in self._temp or # noqa
+            key in self.current or # noqa
+            key in self.tempval or # noqa
             key in self.cache
         )
 
     def __contains__(self, key):
         return (
-            key in self._data or # noqa
-            key in self._temp or # noqa
+            key in self.current or # noqa
+            key in self.tempval or # noqa
             key in self.derivations
         )
 
     def __len__(self):
-        return len(self._data) + len(self._temp)
+        return len(self.current) + len(self.tempval)
 
     def autowrap(self, key, value):
         try:
@@ -675,59 +721,71 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 value = ByteStringWrapper(value)
         return value
 
-    def setitem(self, key, value, scope=None):
-        value = self.autowrap(key, value)
-        if is_valid_variable_name(key):
-            data = self._data
-            try:
-                if value == data[key].value:
-                    return
-            except KeyError:
-                pass
-            data[key] = ScopedValue(value, scope)
-        else:
-            self._temp[key] = value
-
     def __setitem__(self, key, value):
-        self.setitem(key, value)
+        new = self.autowrap(key, value)
+        if not is_valid_variable_name(key):
+            self.tempval[key] = new
+            return
+        self.current[key] = new
+        try:
+            stack = self.history[key]
+        except KeyError:
+            self.updated[key] = True
+        else:
+            for old in reversed(stack):
+                if old is not None:
+                    break
+            self.updated[key] = (old != new)
 
     class nodefault:
         pass
 
     def get(self, key, default=None):
         try:
-            return self._data[key].value
+            return self[key]
         except KeyError:
-            try:
-                return self._temp[key]
-            except KeyError:
-                return default
+            return default
 
     def pop(self, key, default=nodefault):
         try:
-            return self._data.pop(key).value
+            value = self.current.pop(key)
         except KeyError:
             try:
-                return self._temp.pop(key)
+                return self.tempval.pop(key)
             except KeyError:
-                if default is self.nodefault:
-                    raise
-                return default
+                pass
+            if default is self.nodefault:
+                raise
+            return default
+        else:
+            return value
 
     def __getitem__(self, key):
         try:
-            item = self._data[key].value
+            value = self.current[key]
         except KeyError:
             try:
-                item = self._temp[key]
+                return self.tempval[key]
             except KeyError:
-                item = self.__missing__(key)
-        if isinstance(item, str):
-            return item.encode('utf8')
-        return item
+                pass
+            return self.__missing__(key)
+        if isinstance(value, str):
+            value = value.encode('utf8')
+        return value
+
+    def discard(self, key):
+        try:
+            del self.current[key]
+        except KeyError:
+            try:
+                del self.tempval[key]
+            except KeyError:
+                pass
+
+    __delitem__ = discard
 
     def __getattr__(self, key):
-        if key not in self._data:
+        if key not in self.current:
             deduction = self.derivations.get(key)
             if deduction is None:
                 raise AttributeError(key)
@@ -753,16 +811,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def derive(self, key):
         self[key] = self[key]
-
-    def discard(self, key):
-        try:
-            del self._data[key]
-        except KeyError:
-            pass
-        try:
-            del self._temp[key]
-        except KeyError:
-            pass
 
     @_derivation('mime')
     def _derive_mime(self):
@@ -817,15 +865,17 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         return hashlib.md5(self.chunk).hexdigest()
 
 
-def metavars(chunk) -> LazyMetaOracle:
+def metavars(chunk: Union[Chunk, ByteString]) -> LazyMetaOracle:
     """
     This method is the main function used by refinery units to get the meta variable dictionary
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`
     so that access to common variables is always possible.
     """
-    meta: Union[dict, LazyMetaOracle] = getattr(chunk, 'meta', None)
-    if not isinstance(meta, LazyMetaOracle):
-        if meta is not None:
-            raise TypeError('Invalid meta type.')
+    try:
+        meta = chunk.meta
+    except AttributeError:
         meta = LazyMetaOracle(chunk)
+    else:
+        if not isinstance(meta, LazyMetaOracle):
+            raise TypeError(F'Invalid meta variable dictionary on chunk: {meta!r}')
     return meta

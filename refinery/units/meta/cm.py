@@ -19,7 +19,6 @@ class cm(Unit):
         all     : Arg.Switch('-a', group='ALL', help='populate all options') = False,
         reset   : Arg.Switch('-r', help='discard all meta variables that were not explicitly specified') = False,
         size    : Arg.Switch('-S', help='size of the chunk') = False,
-        index   : Arg.Switch('-I', help='index of the chunk in the current frame') = False,
         ext     : Arg.Switch('-F', help='guess file extension') = False,
         entropy : Arg.Switch('-E', help='compute data entropy') = False,
         ic      : Arg.Switch('-C', help='compute the index of coincidence') = False,
@@ -31,8 +30,8 @@ class cm(Unit):
         hashes  : Arg.Switch('-H', help='compute all common hashes') = False,
         *names  : Arg(metavar='name', help=(
             F'A variable name that can include the common properties: {_COMMON_PROPERTIES_LIST}.'
-            R' If none is given, the variables index and size are populated. For most of these,'
-            R' an optional argument is available that can be used as a shorthand:'))
+            R' If none is given, the size variable is populated. For most of these, an optional '
+            R'argument is available that can be used as a shorthand:'))
     ):
         def stringify(name):
             if isinstance(name, str):
@@ -44,8 +43,6 @@ class cm(Unit):
             md5 = sha256 = sha1 = crc32 = True
         if size:
             names.add('size')
-        if index:
-            names.add('index')
         if ext:
             names.add('ext')
         if entropy:
@@ -63,7 +60,7 @@ class cm(Unit):
         if md5:
             names.add('md5')
         if not names and not reset:
-            names.update(('index', 'size'))
+            names.add('size')
         if all:
             if invert:
                 raise ValueError('invert and all are both enabled, resulting in empty configuration.')
@@ -78,7 +75,7 @@ class cm(Unit):
     def filter(self, chunks):
         names = self.args.names
         reset = self.args.reset
-        for index, chunk in enumerate(chunks):
+        for chunk in chunks:
             chunk: Chunk
             if not chunk.visible:
                 yield chunk
@@ -86,8 +83,6 @@ class cm(Unit):
             meta = metavars(chunk)
             if reset:
                 chunk.meta.clear()
-            if 'index' in names:
-                meta['index'] = index
             for name in names:
                 chunk[name] = meta[name]
             yield chunk

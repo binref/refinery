@@ -44,6 +44,6 @@ class TestMeta(TestBase):
         self.assertNotIn('sha256', out.meta.keys())
 
     def test_cheap_variable_is_not_discarded(self):
-        out, = load_pipeline('emit rep[0x100]:X [| cm sha256 | snip 1: ]')
-        self.assertIn('sha256', out.meta.keys())
+        out, = load_pipeline('emit rep[0x100]:X [| cm sha256 | snip 1: | mvg ]')
+        self.assertIn('sha256', set(out.meta.keys()))
         self.assertEqual(out.meta['sha256'], '439d26737c1313821f1b5e953a866e680a3712086f7b27ffc2e3e3f224e04f3f')
