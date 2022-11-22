@@ -317,3 +317,15 @@ class TestScoping(TestUnitBase):
     def test_variables_outside_scope_remain_02(self):
         pl = PL('emit A [| put t [| emit qq | rex . | struct x ]| cfmt {t} ]')
         self.assertEqual(pl(), B'A')
+
+    def test_variable_shadowing_01(self):
+        pl = PL('emit B [| put x R  [| put x A | cca var:x ]| cca var:x ]')
+        self.assertEqual(pl(), B'BAR')
+
+    def test_variable_shadowing_02(self):
+        pl = PL('emit B [| put x R  [| cca var:x ]| cca var:x ]')
+        self.assertEqual(pl(), B'BRR')
+
+    def test_push_can_overwrite_shadowed_variable_outside_scope(self):
+        pl = PL('emit F [| put x XX [| push OO | pop x ]| cca var:x ]')
+        self.assertEqual(pl(), B'FOO')
