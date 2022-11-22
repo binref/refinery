@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import Iterable, List
+
 from refinery.lib.meta import metavars
 from refinery.lib.frame import Chunk
-from refinery.lib.loader import load_pipeline
+from refinery.lib.loader import load_pipeline as L, load_detached as U
+from refinery.units import Unit
 
 from .. import TestBase
 
@@ -28,22 +31,51 @@ class TestMeta(TestBase):
         self.assertEqual(meta.format_bin('{refinery!u}', 'utf8'), 'refinery'.encode('utf-16le'))
 
     def test_hex_byte_strings(self):
-        pl = load_pipeline('emit Hello [| cm -2 | cfmt {sha256!r} ]')
+        pl = L('emit Hello [| cm -2 | cfmt {sha256!r} ]')
         self.assertEqual(pl(), b'185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969')
 
     def test_intrinsic_properties_are_recomputed(self):
-        pl = load_pipeline('emit FOO-BAR [| cm size | snip :1 | cfmt {size} ]')
+        pl = L('emit FOO-BAR [| cm size | snip :1 | cfmt {size} ]')
         self.assertEqual(pl(), B'1')
 
     def test_magic_values_update(self):
-        pl = load_pipeline('emit FOO-BAR [| cm sha256 | snip :3 | cfmt {sha256} ]')
+        pl = L('emit FOO-BAR [| cm sha256 | snip :3 | cfmt {sha256} ]')
         self.assertEqual(pl(), b'9520437ce8902eb379a7d8aaa98fc4c94eeb07b6684854868fa6f72bf34b0fd3')
 
     def test_costly_variable_is_discarded(self):
-        out, = load_pipeline('emit rep[0x2000]:X [| cm sha256 | snip 1: ]')
+        out, = L('emit rep[0x2000]:X [| cm sha256 | snip 1: ]')
         self.assertNotIn('sha256', out.meta.keys())
 
     def test_cheap_variable_is_not_discarded(self):
-        out, = load_pipeline('emit rep[0x100]:X [| cm sha256 | snip 1: | mvg ]')
+        out, = L('emit rep[0x100]:X [| cm sha256 | snip 1: | mvg ]')
         self.assertIn('sha256', set(out.meta.keys()))
         self.assertEqual(out.meta['sha256'], '439d26737c1313821f1b5e953a866e680a3712086f7b27ffc2e3e3f224e04f3f')
+
+    def test_history_storage(self):
+        class spy(Unit):
+            chunks: List[Chunk] = []
+
+            def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
+                for chunk in inputs:
+                    spy.chunks.append(chunk.copy())
+                    yield chunk
+
+        spy.chunks.clear()
+        B'' | U('put x alpha [') | U('nop [[') | U('put x alpha') | spy | U('nop ]]]') | None
+        self.assertEqual(len(spy.chunks), 1)
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', None, None]})
+
+        spy.chunks.clear()
+        B'' | U('put x alpha [') | U('nop [[') | U('put x alpha') | U('mvg ]') | spy | U('nop ]]') | None
+        self.assertEqual(len(spy.chunks), 1)
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', None]})
+
+        spy.chunks.clear()
+        B'' | U('put x alpha [') | U('nop [[') | U('put x beta') | spy | U('nop ]]]') | None
+        self.assertEqual(len(spy.chunks), 1)
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', None, b'beta']})
+
+        spy.chunks.clear()
+        B'' | U('put x alpha [') | U('nop [[') | U('put x beta') | U('mvg ]') | spy | U('nop ]]') | None
+        self.assertEqual(len(spy.chunks), 1)
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', b'beta']})

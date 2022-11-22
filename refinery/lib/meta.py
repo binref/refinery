@@ -443,46 +443,81 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 self[key] = derivation.wrap(derivation(self))
 
     def set_scope(self, key: str, scope: int):
-        if scope > self.scope:
+        current = self.scope
+        if key not in self.current:
+            raise KeyError(key)
+        if scope > current:
             raise ValueError(F'Attempt to increase scope level of variable {key} to {scope}, it is currently at {self.scope}.')
-        if scope == self.scope:
+        if scope < 1:
+            raise ValueError(F'Attempted to set scope of "{key}" to {scope}, but only positive integers are allowed.')
+        if scope == current:
             return
         self.rescope[key] = scope
+
+    def get_scope(self, key: str):
+        value = self.current[key]
+        scope = self.scope
+        try:
+            stack = self.history[key]
+        except KeyError:
+            return scope
+        for k, v in enumerate(reversed(stack)):
+            if v is not None:
+                if v == value:
+                    return scope - k
+                break
+        return scope
 
     def serialize(self, scope: int):
         if not scope:
             return {}
+        current_scope = self.scope
+        vanishing_variables = set()
         serializable = {
             key: list(stack) for key, stack in self.history.items()
         }
-        vanishing = set()
-        for key, stack in serializable.items():
-            padding = scope - len(stack)
-            if padding > 0:
+        if scope > current_scope:
+            padding = scope - current_scope
+            for key, stack in serializable.items():
                 stack.extend(itertools.repeat(None, padding))
-                continue
-            stack[scope:] = ()
-            if all(v is None for v in stack):
-                vanishing.add(key)
+        if scope < current_scope:
+            for key, stack in serializable.items():
+                del stack[scope:]
+                if all(v is None for v in stack):
+                    vanishing_variables.add(key)
         for key, value in self.current.items():
-            if not self.updated[key]:
-                continue
+            if value is None:
+                raise RuntimeError(F'Meta variable "{key}" was set to None.')
             try:
                 spot = self.rescope[key]
             except KeyError:
-                spot = self.scope
+                spot = current_scope
+            if spot == current_scope and not self.updated[key]:
+                continue
             if spot > scope:
                 continue
             if spot < 0:
                 raise RuntimeError('computed a negative spot for variable placement')
+            last_scope = None
+            last_value = None
             try:
                 stack = serializable[key]
             except KeyError:
                 serializable[key] = stack = [None] * scope
             else:
-                vanishing.discard(key)
+                vanishing_variables.discard(key)
+                for k, v in enumerate(reversed(stack)):
+                    if v is not None:
+                        last_scope = scope - k
+                        last_value = v
+                        break
+            if value == last_value:
+                spot = max(scope, last_scope)
             stack[spot - 1] = value
-        for key in vanishing:
+            unpadded_range = min(scope, current_scope)
+            if spot < unpadded_range:
+                stack[spot:unpadded_range] = itertools.repeat(None, unpadded_range - spot)
+        for key in vanishing_variables:
             del serializable[key]
         return serializable
 
@@ -784,6 +819,13 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 del self.tempval[key]
             except KeyError:
                 pass
+        try:
+            stack = self.history[key]
+        except KeyError:
+            pass
+        else:
+            if stack:
+                stack[-1] = None
 
     __delitem__ = discard
 
