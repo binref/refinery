@@ -10,6 +10,6 @@ class mvc(Unit):
     """
     def process(self, data: Chunk):
         meta = metavars(data)
-        for key in list(meta.keys()):
+        for key in list(meta.variable_names()):
             meta.discard(key)
         return data

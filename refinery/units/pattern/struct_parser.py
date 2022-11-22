@@ -94,7 +94,7 @@ class struct(Unit):
                 spec = byteorder + spec
             return spec
 
-        previously_existing_variables = set(metavars(data).keys())
+        previously_existing_variables = set(metavars(data).variable_names())
 
         it = itertools.count() if self.args.multi else (0,)
         for index in it:

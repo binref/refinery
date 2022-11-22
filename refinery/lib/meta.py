@@ -494,6 +494,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         yield from self.tempval.keys()
         yield from self.current.keys()
 
+    def variable_names(self):
+        yield from self.current.keys()
+
     def values(self):
         return (v for _, v in self.items())
 
