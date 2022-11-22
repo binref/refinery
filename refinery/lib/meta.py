@@ -462,7 +462,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 stack.extend(itertools.repeat(None, padding))
                 continue
             stack[scope:] = ()
-            if not any(stack):
+            if all(v is None for v in stack):
                 vanishing.add(key)
         for key, value in self.current.items():
             if not self.updated[key]:
