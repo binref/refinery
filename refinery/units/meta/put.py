@@ -3,7 +3,7 @@
 import itertools
 import functools
 
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, Chunk
 from refinery.lib.argformats import numseq
 from refinery.lib.tools import isbuffer
 from refinery.lib.meta import check_variable_name
@@ -22,7 +22,7 @@ class put(Unit):
     ):
         super().__init__(name=check_variable_name(name), value=value)
 
-    def process(self, data):
+    def process(self, data: Chunk):
         value = self.args.value
         if value is None:
             value = data
@@ -38,4 +38,5 @@ class put(Unit):
                 if not isinstance(value, list):
                     value = list(value)
         self.log_debug(F'storing {type(value).__name__}:', value)
-        return self.labelled(data, **{self.args.name: value})
+        data.meta[self.args.name] = value
+        return data

@@ -214,6 +214,12 @@ class Chunk(bytearray):
         if meta is not None:
             m.update(meta)
 
+    @classmethod
+    def Wrap(cls, data):
+        if isinstance(data, cls):
+            return data
+        return cls(data)
+
     @property
     def guid(self) -> int:
         return hash((id(self), *(id(v) for v in self.meta.values())))

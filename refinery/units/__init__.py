@@ -676,9 +676,11 @@ def UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]
         if not isinstance(data, ChunkType):
             data = ChunkType(data)
         result = operation(self, data)
-        if not inspect.isgenerator(result):
-            return self.labelled(result)
-        return (self.labelled(r) for r in result)
+        if isinstance(result, Chunk):
+            return result
+        elif not inspect.isgenerator(result):
+            return Chunk(result)
+        return (Chunk.Wrap(r) for r in result)
     return wrapped
 
 
