@@ -121,7 +121,7 @@ import base64
 import itertools
 import zlib
 
-from typing import Generator, Iterable, BinaryIO, Callable, Optional, Tuple, Dict, ByteString, Any
+from typing import Generator, Iterable, BinaryIO, Callable, Optional, List, Dict, ByteString, Any
 from typing import TYPE_CHECKING
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer
@@ -179,8 +179,8 @@ class Chunk(bytearray):
     def __init__(
         self,
         data: Optional[ByteString] = None,
-        path: Tuple[int] = (),
-        view: Optional[Tuple[bool]] = None,
+        path: Optional[List[int]] = None,
+        view: Optional[List[bool]] = None,
         meta: Optional[Dict[str, Any]] = None,
         seed: Optional[Dict[str, list]] = None,
         fill_scope: Optional[bool] = None,
@@ -191,8 +191,11 @@ class Chunk(bytearray):
         else:
             bytearray.__init__(self, data)
 
-        view = view or (False,) * len(path)
-        if len(view) != len(path):
+        if path is None:
+            path = []
+        if view is None:
+            view = [False] * len(path)
+        elif len(view) != len(path):
             raise ValueError('view must have the same length as path')
 
         if isinstance(data, Chunk):
@@ -202,8 +205,8 @@ class Chunk(bytearray):
             fill_scope = fill_scope or data._fill_scope
             fill_batch = fill_batch or data._fill_batch
 
-        self._view: Tuple[bool] = view
-        self._path: Tuple[int] = path
+        self._view: List[bool] = view
+        self._path: List[int] = path
         self._fill_scope: Optional[bool] = fill_scope
         self._fill_batch: Optional[bool] = fill_batch
 
@@ -225,12 +228,8 @@ class Chunk(bytearray):
     def scope(self) -> int:
         return len(self._path)
 
-    def truncate(self, scope):
-        self._path = self._path[:scope]
-        self._view = self._view[:scope]
-
     @property
-    def view(self) -> Tuple[bool]:
+    def view(self) -> List[bool]:
         """
         This tuple of boolean values indicates the visibility of this chunk at each layer of
         the frame tree. The `refinery.scope` unit can be used to change visibility of chunks
@@ -239,7 +238,7 @@ class Chunk(bytearray):
         return self._view
 
     @property
-    def path(self) -> Tuple[int]:
+    def path(self) -> List[int]:
         """
         The vertices in each frame tree layer are sequentially numbered by their order of
         appearance in the stream. The `refinery.lib.frame.Chunk.path` contains the numbers of
@@ -277,10 +276,12 @@ class Chunk(bytearray):
 
     @visible.setter
     def visible(self, value: bool):
-        if not value and not self._view:
-            raise AttributeError('cannot make chunk invisible outside frame')
-        if value != self.visible:
-            self._view = self._view[:~0] + (value,)
+        view = self._view
+        if not view:
+            if not value:
+                raise AttributeError('cannot make chunk invisible outside frame')
+        else:
+            view[~0] = value
 
     def inherit(self, parent: Chunk):
         """
@@ -298,11 +299,9 @@ class Chunk(bytearray):
         """
         item = next(stream)
         path, view, meta, fs, data = item
-        path = tuple(path)
-        view = tuple(view)
-        return cls(data, path, view=view, seed=meta, fill_scope=fs)
+        return cls(data, path=path, view=view, seed=meta, fill_scope=fs)
 
-    def pack(self, nest: Optional[int] = None, deeper: int = 0):
+    def pack(self, nest: int = 0, position: int = 0):
         """
         Return the serialized representation of this chunk.
         """
@@ -310,21 +309,32 @@ class Chunk(bytearray):
         path = self._path
         fs = self._fill_scope
         fb = self._fill_batch
+        scope = self.scope + nest
 
-        if nest is not None:
+        if nest > 0:
+            view = list(view)
+            path = list(path)
             if fs is not None:
-                view += (self.visible,) * deeper + (fs,)
+                view.extend(itertools.repeat(self.visible, nest - 1))
+                view.append(fs)
                 fs = None
             else:
-                view += (self.visible,) * (deeper + 1)
-            if fb is not None and deeper > 0:
-                padding = (0,) * (deeper - 1)
-                path += (nest, self._fill_batch, *padding)
+                view.extend(itertools.repeat(self.visible, nest))
+            if fb is not None and nest > 1:
+                path.append(position)
+                path.append(fb)
+                path.extend(itertools.repeat(0, nest - 2))
             else:
-                padding = (0,) * deeper
-                path += (nest, *padding)
+                path.append(position)
+                path.extend(itertools.repeat(0, nest - 1))
+        if nest < 0:
+            view = view[:nest]
+            path = path[:nest]
 
-        meta = self._meta.serialize(len(path))
+        assert len(path) == scope
+        assert len(view) == scope
+
+        meta = self._meta.serialize(scope)
         item = (path, view, meta, fs, self)
         return msgpack.packb(item)
 
@@ -334,7 +344,6 @@ class Chunk(bytearray):
         return F'<chunk{layer}:{bytes(self)!r}>'
 
     def intersect(self, other: Chunk):
-        # TODO: Is this necessary?
         other_meta = other._meta
         meta = self._meta
         for key, value in list(meta.items()):
@@ -366,8 +375,8 @@ class Chunk(bytearray):
         data = data and self or None
         copy = Chunk(
             data,
-            path=self._path,
-            view=self._view,
+            path=list(self._path),
+            view=list(self._view),
             fill_scope=self._fill_scope,
             fill_batch=self._fill_batch,
         )
@@ -399,7 +408,7 @@ class FrameUnpacker(Iterable[Chunk]):
     """
     next_chunk: Optional[Chunk]
     depth: int
-    trunk: Tuple[int, ...]
+    trunk: List[int]
     stream: Optional[BinaryIO]
     finished: bool
     framed: bool
@@ -472,7 +481,7 @@ class FrameUnpacker(Iterable[Chunk]):
         return self.trunk != self.peek
 
     @property
-    def peek(self) -> Tuple[int]:
+    def peek(self) -> List[int]:
         """
         Contains the identifier of the next frame.
         """
@@ -590,25 +599,26 @@ class Framed:
         yield buffer.getbuffer()
 
     def __iter__(self):
-        scope = max(self.unpack.depth + self.nesting, 0)
+        nesting = self.nesting
+        scope = max(self.unpack.depth + nesting, 0)
         if self.unpack.finished:
             if scope:
                 yield generate_frame_header(scope)
             return
-        if self.nesting > 0:
+        if nesting > 0:
             assert scope
             yield generate_frame_header(scope)
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
                     if not chunk.visible:
-                        yield chunk.pack(k, self.nesting - 1)
+                        yield chunk.pack(nesting, k)
                         continue
                     for result in self._generate_chunks(chunk):
-                        yield result.pack(k, self.nesting - 1)
+                        yield result.pack(nesting, k)
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
-        elif self.nesting == 0:
+        elif nesting == 0:
             assert scope
             yield generate_frame_header(scope)
             while self.unpack.nextframe():
@@ -635,11 +645,9 @@ class Framed:
                             trunk.intersect(result)
                             trunk.extend(result)
                         else:
-                            trunk.truncate(scope)
-                            yield trunk.pack()
+                            yield trunk.pack(nesting)
                             trunk = result
                 if not scope or trunk is None:
                     continue
             if trunk is not None:
-                trunk.truncate(scope)
-                yield trunk.pack()
+                yield trunk.pack(nesting)

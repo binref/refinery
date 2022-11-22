@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import collections
+from collections import defaultdict
+from typing import Iterable, Dict
 
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, Chunk
 
 
 class xfcc(Unit):
@@ -20,16 +21,19 @@ class xfcc(Unit):
     ):
         super().__init__(variable=variable, relative=relative)
         self._trunk = None
-        self._store = collections.defaultdict(int)
+        self._store: Dict[Chunk, int] = defaultdict(int)
 
     def finish(self):
-        if self.args.relative and self._store:
+        vn = self.args.variable
+        rc = self.args.relative
+        if rc and self._store:
             maximum = max(self._store.values())
-        for k, (chunk, count) in enumerate(self._store.items()):
-            if self.args.relative:
+        for index, (chunk, count) in enumerate(self._store.items()):
+            if rc:
                 count /= maximum
-            chunk._meta[self.args.variable] = count
-            chunk._path = chunk.path[:-2] + (0, k)
+            chunk.path[-2] = 0
+            chunk.path[-1] = index
+            chunk.meta[vn] = count
             yield chunk
         self._store.clear()
 
@@ -41,7 +45,7 @@ class xfcc(Unit):
         else:
             return count
 
-    def filter(self, chunks):
+    def filter(self, chunks: Iterable[Chunk]):
         it = iter(chunks)
         try:
             head = next(it)
