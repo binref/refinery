@@ -48,7 +48,7 @@ class _popcount:
             return False
         if self.field:
             if self.field is ...:
-                meta.update(chunk.meta)
+                meta.update(chunk.meta.current)
             else:
                 if self.conversion:
                     delayed = DelayedNumSeqArgument(self.conversion, seed=chunk, typecheck=False)

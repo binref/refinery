@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from .. import TestUnitBase
+from refinery.lib.loader import load_pipeline as L
 
 
 class TestPop(TestUnitBase):
@@ -9,3 +10,7 @@ class TestPop(TestUnitBase):
         pl = self.ldu('push') [ self.ldu('rex', 'XX(.)', '{1}') | self.load('oops') ] # noqa
         with self.assertRaises(Exception):
             b'TEST' | pl | None
+
+    def test_regression_pop_does_not_key_error(self):
+        pl = L('emit FOO | rex . [| push [| put k XO | pop ]| cfmt {k} ]')
+        self.assertEqual(pl(), B'XOXOXO')

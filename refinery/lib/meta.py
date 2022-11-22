@@ -443,12 +443,11 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def set_scope(self, key: str, scope: int):
         current = self.scope
+        scope = max(1, scope)
         if key not in self.current:
             raise KeyError(key)
         if scope > current:
             raise ValueError(F'Attempt to increase scope level of variable {key} to {scope}, it is currently at {self.scope}.')
-        if scope < 1:
-            raise ValueError(F'Attempted to set scope of "{key}" to {scope}, but only positive integers are allowed.')
         if scope == current:
             return
         self.rescope[key] = scope

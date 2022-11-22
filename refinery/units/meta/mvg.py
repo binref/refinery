@@ -29,13 +29,14 @@ class mvg(Unit):
         meta = metavars(data)
         nest = self.args.nesting
         if nest < 0 and not self.args.top:
-            spot = max(1, meta.scope + nest)
+            spot = meta.scope + nest
         else:
             spot = 1
         for name in self.args.names or meta.variable_names():
             try:
-                if meta.get_scope(name) > spot:
-                    meta.set_scope(name, spot)
+                if meta.get_scope(name) <= spot:
+                    continue
+                meta.set_scope(name, spot)
             except KeyError:
                 self.log_info(F'variable not defined: {name}')
         return data
