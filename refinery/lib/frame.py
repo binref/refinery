@@ -116,7 +116,6 @@ above example would not be separated by a dash.
 """
 from __future__ import annotations
 
-import copy
 import json
 import base64
 import itertools
@@ -230,27 +229,6 @@ class Chunk(bytearray):
         self._path = self._path[:scope]
         self._view = self._view[:scope]
 
-    def nest(self, origin, deeper=0):
-        """
-        Nest this chunk deeper by providing a sequence of indices inside each new layer of the
-        frame. The `refinery.lib.frame.Chunk.path` tuple is extended by these values. The
-        visibility of the `refinery.lib.frame.Chunk` at each new layer is inherited from its
-        current visibility.
-        """
-        if self._fill_scope is not None:
-            self._view += (self.visible,) * deeper + (self._fill_scope,)
-            self._fill_scope = None
-        else:
-            self._view += (self.visible,) * (deeper + 1)
-        if self._fill_batch is not None and deeper > 0:
-            padding = (0,) * (deeper - 1)
-            self._path += (origin, self._fill_batch, *padding)
-            self._fill_batch = None
-        else:
-            padding = (0,) * deeper
-            self._path += (origin, *padding)
-        return self
-
     @property
     def view(self) -> Tuple[bool]:
         """
@@ -324,12 +302,31 @@ class Chunk(bytearray):
         view = tuple(view)
         return cls(data, path, view=view, seed=meta, fill_scope=fs)
 
-    def pack(self):
+    def pack(self, nest: Optional[int] = None, deeper: int = 0):
         """
         Return the serialized representation of this chunk.
         """
-        obj = (self._path, self._view, self._meta.serialize(self.scope), self._fill_scope, self)
-        return msgpack.packb(obj)
+        view = self._view
+        path = self._path
+        fs = self._fill_scope
+        fb = self._fill_batch
+
+        if nest is not None:
+            if fs is not None:
+                view += (self.visible,) * deeper + (fs,)
+                fs = None
+            else:
+                view += (self.visible,) * (deeper + 1)
+            if fb is not None and deeper > 0:
+                padding = (0,) * (deeper - 1)
+                path += (nest, self._fill_batch, *padding)
+            else:
+                padding = (0,) * deeper
+                path += (nest, *padding)
+
+        meta = self._meta.serialize(len(path))
+        item = (path, view, meta, fs, self)
+        return msgpack.packb(item)
 
     def __repr__(self) -> str:
         layer = '/'.join('#' if not s else str(p) for p, s in zip(self._path, self._view))
@@ -384,12 +381,7 @@ class Chunk(bytearray):
         return self.copy()
 
     def __deepcopy__(self, memo):
-        dc = self.copy()
-        memo[id(self)] = dc
-        memo[id(self._meta)] = dc.meta
-        for key, value in self._meta.items():
-            dc.meta[key] = copy.deepcopy(value, memo)
-        return dc
+        raise NotImplementedError
 
 
 class FrameUnpacker(Iterable[Chunk]):
@@ -570,8 +562,9 @@ class Framed:
 
     def _generate_chunks(self, parent: Chunk):
         if not self.squeeze:
-            for item in self.action(parent):
-                chunk = item.copy().inherit(parent)
+            for chunk in self.action(parent):
+                if chunk is not parent:
+                    chunk.inherit(parent)
                 yield chunk
             return
         it = self.action(parent)
@@ -608,10 +601,10 @@ class Framed:
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
                     if not chunk.visible:
-                        yield chunk.nest(k, self.nesting - 1).pack()
+                        yield chunk.pack(k, self.nesting - 1)
                         continue
                     for result in self._generate_chunks(chunk):
-                        yield result.nest(k, self.nesting - 1).pack()
+                        yield result.pack(k, self.nesting - 1)
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
