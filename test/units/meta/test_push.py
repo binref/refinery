@@ -23,8 +23,8 @@ class TestMetaPushPop(TestUnitBase):
         self.assertEqual(pl(B'x'), B'xQTx')
 
     def test_variable_outside_modifier(self):
-        pl = L('push [| pop x | cca T | cca var:x | rev ]')
-        self.assertEqual(pl(B'x'), B'xTx')
+        pl = L('push x [| pop x | cca T | cca var:x | rev ]')
+        self.assertEqual(pl(B'a'), B'xTa')
 
     def test_push_pop_in_frame(self):
         pl = L('rex . [| push [| pop copy | swap copy ]]')
