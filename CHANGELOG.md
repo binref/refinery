@@ -1,5 +1,16 @@
 # Binary Refinery Changelog
 
+## Version 0.5.0
+This release changes the way in which meta variables are handled, they now have a scope:
+- By default, variables cease to exist when the frame ends in which they were defined.
+- Variables remain visible in child frames.
+- When a variable is re-defined in a child frame, this definition shadows the previous one: When the child frame ends, the variable is restored to the value it had in the parent frame.
+- Some units like `pop` can propagate variables to the parent scope as well.
+- The units `mvg` and `mvc` were introduced to manage scoping of variables, the unit `wm` was removed.
+
+Changes unrelated to meta variable redesign:
+- The unit `vaddr` was added to convert integer meta variables from virtual address to file offset and vice versa.
+
 ## Version 0.4.49
 - The `pkcs7sig` unit was added.
 - The `pemeta` unit now also displays the module name stored in the export directory.
