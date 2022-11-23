@@ -3,7 +3,7 @@
 import json
 import re
 
-from email.parser import BytesParser
+from email.parser import Parser
 from functools import partial
 from collections import defaultdict
 
@@ -81,11 +81,19 @@ class xtmail(PathExtractorUnit):
             path = attachment.longFilename or attachment.shortFilename
             yield UnpackResult(F'attachments/{path}', attachment.data)
 
-    def _get_parts_regular(self, data):
-        if not re.match(BR'^[\s!-~]+$', data):
-            raise ValueError('This is not a plaintext email message.')
+    @PathExtractorUnit.Requires('chardet', optional=False)
+    def _chardet():
+        import chardet
+        return chardet
 
-        msg = BytesParser().parsebytes(data)
+    def _get_parts_regular(self, data: bytes):
+        try:
+            info = self._chardet.detect(data)
+            msg = data.decode(info['encoding'])
+        except UnicodeDecodeError:
+            raise ValueError('This is not a plaintext email message.')
+        else:
+            msg = Parser().parsestr(msg)
 
         yield from self._get_headparts(msg.items())
 
@@ -96,6 +104,7 @@ class xtmail(PathExtractorUnit):
                 extension = file_extension(part.get_content_type(), 'txt')
                 path = F'body.{extension}'
             else:
+                path = path | mimewords | str
                 path = F'attachments/{path}'
             try:
                 data = part.get_payload(decode=True)
