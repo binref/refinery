@@ -6,6 +6,7 @@ import itertools
 from refinery.units import Arg, Unit
 from refinery.lib.patterns import defanged, indicators, tlds
 
+
 class defang(Unit):
     """
     Defangs all URL, domain and IPv4 address indicators in the input data by replacing the last dot
