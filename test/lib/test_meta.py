@@ -79,3 +79,7 @@ class TestMeta(TestBase):
         B'' | U('put x alpha [') | U('nop [[') | U('put x beta') | U('mvg ]') | spy | U('nop ]]') | None
         self.assertEqual(len(spy.chunks), 1)
         self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', b'beta']})
+
+    def test_regression_nulled_history(self):
+        pl = L('emit FOO [[| put b [| emit BAR ]| rex . | swap k | swap b | cfmt {}/{k} | sep / ]]')
+        self.assertEqual(pl(), B'FOO/B/FOO/A/FOO/R')

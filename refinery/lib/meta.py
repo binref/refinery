@@ -470,7 +470,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         if not scope:
             return {}
         current_scope = self.scope
-        vanishing_variables = set()
         serializable = {
             key: list(stack) for key, stack in self.history.items()
         }
@@ -481,8 +480,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         if scope < current_scope:
             for key, stack in serializable.items():
                 del stack[scope:]
-                if all(v is None for v in stack):
-                    vanishing_variables.add(key)
         for key, value in self.current.items():
             if value is None:
                 raise RuntimeError(F'Meta variable "{key}" was set to None.')
@@ -503,7 +500,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             except KeyError:
                 serializable[key] = stack = [None] * scope
             else:
-                vanishing_variables.discard(key)
                 for k, v in enumerate(reversed(stack)):
                     if v is not None:
                         last_scope = scope - k
@@ -515,6 +511,10 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             unpadded_range = min(scope, current_scope)
             if spot < unpadded_range:
                 stack[spot:unpadded_range] = itertools.repeat(None, unpadded_range - spot)
+        vanishing_variables = []
+        for key, stack in serializable.items():
+            if all(v is None for v in stack):
+                vanishing_variables.append(key)
         for key in vanishing_variables:
             del serializable[key]
         return serializable
