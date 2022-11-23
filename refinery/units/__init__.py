@@ -1370,13 +1370,10 @@ class Unit(UnitBase, abstract=True):
         return self
 
     def __str__(self):
-        with MemoryFile() as stdout:
-            return (self | stdout).getbuffer().decode(self.codec)
+        return self | str
 
     def __bytes__(self):
-        with MemoryFile() as stdout:
-            result = bytes((self | stdout).getbuffer())
-        return result
+        return self | bytes
 
     @overload
     def __or__(self, stream: Callable[[ByteString], _T]) -> _T:
@@ -1470,11 +1467,13 @@ class Unit(UnitBase, abstract=True):
             with MemoryFile(stream) as stdout:
                 return (self | stdout).getvalue()
         elif callable(stream):
-            with MemoryFile() as stdout:
+            with MemoryFile(bytearray()) as stdout:
                 self | stdout
-                out = stdout.getbuffer()
+                out: bytearray = stdout.getbuffer()
                 if isinstance(stream, type) and isinstance(out, stream):
                     return out
+                if stream is str:
+                    out = out.decode(self.codec)
                 return stream(out)
 
         if not stream.writable():
