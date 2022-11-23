@@ -58,7 +58,7 @@ class TestDefangUnit(TestUnitBase):
 
     def test_defang_defang_01(self):
         unit = self.load()
-        u = b'http://www.example.com/'
+        u = b'http://www.example.com:433/'
         v = bytes(u | unit)
         w = bytes(v | unit)
         self.assertEqual(v, w)
@@ -67,5 +67,10 @@ class TestDefangUnit(TestUnitBase):
         unit = self.load()
         u = b'http://www.example.co.uk/'
         v = bytes(u | unit)
-        w = bytes(v | unit)
-        self.assertEqual(v, w)
+        self.assertEqual(v, b'http[:]//www.example[.]co[.]uk/')
+
+    def test_defang_defang_03(self):
+        unit = self.load()
+        u = b'http://www.example.co.uk:443/'
+        v = bytes(u | unit)
+        self.assertEqual(v, b'http[:]//www.example[.]co[.]uk:443/')

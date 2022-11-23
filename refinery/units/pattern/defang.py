@@ -4,8 +4,7 @@ import re
 import itertools
 
 from refinery.units import Arg, Unit
-from refinery.lib.patterns import defanged, indicators
-
+from refinery.lib.patterns import defanged, indicators, tlds
 
 class defang(Unit):
     """
@@ -48,32 +47,44 @@ class defang(Unit):
         return data
 
     def process(self, data):
-        def replace_hostname(hostname, match=True):
+        def replace_hostname(hostname: bytes, match=True):
             if match:
                 return self._quote(replace_hostname(hostname[0], False))
             self.log_info('replace:', hostname)
-            host = hostname.rsplit(B':')[0].lower()
+            host = hostname
+            user, atsgn, host = host.rpartition(B'@')
+            host, colon, port = host.rpartition(B':')
+            host = host.lower()
+            if not colon:
+                host = port
+                port = B''
             if host in self._WHITELIST:
                 return hostname
-            host = re.split(BR'(\[\.\]|\.)', hostname)
+            host = re.split(R'(?:\[\.\]|\.)', host.decode('latin1'))
             if len(host) == 1:
-                return host[0]
-            host[-2] = B'[.]'
-            return B''.join(host)
+                return hostname
+            components = iter(reversed(host))
+            defanged_parts = [next(components)]
+            separator = '[.]'
+            for part in components:
+                defanged_parts.append(separator)
+                defanged_parts.append(part)
+                separator = '[.]' if part in tlds else '.'
+            defanged_host = ''.join(reversed(defanged_parts)).encode('latin1')
+            return user + atsgn + defanged_host + colon + port
 
         def replace_url(url):
             if not url:
                 return url
-            sep = B'://' if self.args.dot_only else B'[:]//'
+            protocol_separator = B'://' if self.args.dot_only else B'[:]//'
             self.log_info('replace:', url)
-            p, q = re.split(BR'(?:\[:\]|:)//', url)
-            q = q.split(B'/', 1)
-            q[0] = replace_hostname(q[0], False)
-            q = B'/'.join(q)
-            if self.args.url_protocol and p:
-                p = self._PROTOCOL_ESCAPES.get(p.lower(), p)
-
-            return self._quote(p + sep + q)
+            scheme, remaining_url = re.split(BR'(?:\[:\]|:)//', url)
+            hostname, slash, path = remaining_url.partition(B'/')
+            hostname = replace_hostname(hostname, False)
+            remaining_url = hostname + slash + path
+            if self.args.url_protocol and scheme:
+                scheme = self._PROTOCOL_ESCAPES.get(scheme.lower(), scheme)
+            return self._quote(scheme + protocol_separator + remaining_url)
 
         urlsplit = defanged.url.split(data)
         step = defanged.url.value.groups + 1
