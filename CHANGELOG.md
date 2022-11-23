@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.5.1 -- bugfix release
+
 ## Version 0.5.0
 This release changes the way in which meta variables are handled, they now have a scope:
 - By default, variables cease to exist when the frame ends in which they were defined.
