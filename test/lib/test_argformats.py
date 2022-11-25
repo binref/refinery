@@ -113,3 +113,8 @@ class TestArgumentFormats(TestBase):
         p = L('emit Helloooo | put s 4 [| terminate -Bs o ]')
         d = next(p)
         self.assertEqual(d, B'Hell')
+
+    def test_eat_removes_variable(self):
+        L = loader.load_pipeline
+        p = L('emit Bar [| put k Foo | cca eat:k | iff k | ccp var:k ]')
+        self.assertEqual(p(), B'')

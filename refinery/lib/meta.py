@@ -784,16 +784,13 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def pop(self, key, default=nodefault):
         try:
-            value = self.current.pop(key)
+            value = self[key]
         except KeyError:
-            try:
-                return self.tempval.pop(key)
-            except KeyError:
-                pass
             if default is self.nodefault:
                 raise
             return default
         else:
+            self.discard(key)
             return value
 
     def __getitem__(self, key):
