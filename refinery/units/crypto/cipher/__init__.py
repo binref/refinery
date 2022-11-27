@@ -68,7 +68,21 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
     def process(self, data: ByteString) -> ByteString:
         if self.key_sizes and len(self.args.key) not in self.key_sizes:
-            raise ValueError(F'the given key has an invalid length of {len(self.args.key)} bytes.')
+            import itertools
+            key_size_iter = iter(self.key_sizes)
+            key_size_options = [str(k) for k in itertools.islice(key_size_iter, 0, 5)]
+            try:
+                next(key_size_iter)
+            except StopIteration:
+                pt = '.'
+            else:
+                pt = ', ...'
+            if len(key_size_options) == 1:
+                msg = F'{self.name} requires a key size of {key_size_options[0]}'
+            else:
+                msg = R', '.join(key_size_options)
+                msg = F'possible key sizes for {self.name} are: {msg}'
+            raise ValueError(F'the given key has an invalid length of {len(self.args.key)} bytes; {msg}{pt}')
         return self.decrypt(data)
 
     def reverse(self, data: ByteString) -> ByteString:
