@@ -22,6 +22,41 @@ class LZGMethod(enum.IntEnum):
     LZG1 = 1
 
 
+class LZGCheckSum:
+    def __init__(self, reader: StructReader, size: int = 0):
+        self.reader = reader
+        self._a = 1
+        self._b = 0
+        if size:
+            self.process(size)
+
+    def __int__(self):
+        return ((self._b << 0x10) | self._a)
+
+    def process(self, size: int) -> None:
+        a = self._a
+        b = self._b
+        for c in self.reader.read_exactly(size):
+            a = (a + c) & 0xFFFF
+            b = (b + a) & 0xFFFF
+        self._a = a
+        self._b = b
+
+    def rewind(self, size: int) -> None:
+        if not size:
+            return
+        if size < 0 or self.reader.tell() < size:
+            raise ValueError
+        self.reader.seekrel(-size)
+        a = self._a
+        b = self._b
+        for c in reversed(self.reader.peek(size)):
+            b = (b - a) & 0xFFFF
+            a = (a - c) & 0xFFFF
+        self._a = a
+        self._b = b
+
+
 class LZGStream(Struct):
     _LENGTH_DECODE = list(range(2, 30))
     _LENGTH_DECODE.extend((35, 48, 72, 128))
@@ -35,21 +70,25 @@ class LZGStream(Struct):
         else:
             self.has_magic = False
         with reader.be:
-            enc = reader.u32()
             dec = reader.u32()
-            if enc - 0x100 > dec and not self.has_magic:
+            enc = reader.u32()
+            if enc > dec and not self.has_magic:
                 enc, dec = dec, enc
             self.encoded_size = enc
             self.decoded_size = dec
             self.checksum = reader.u32()
+
         if reader.remaining_bytes < self.encoded_size:
             raise ValueError(F'Header announces buffer size of {self.encoded_size}, but only {reader.remaining_bytes} remain in buffer')
+
         if reader.remaining_bytes == self.encoded_size:
             if self._checks():
                 self.method = None
                 return
             raise ValueError('Invalid checksum or truncated buffer.')
+
         method = reader.u8()
+
         try:
             self.method = LZGMethod(method)
         except ValueError:
@@ -57,17 +96,44 @@ class LZGStream(Struct):
             if self._checks():
                 raise ValueError(F'Invalid method code {method}.')
             reader.seekrel(-1)
-        else:
             self.encoded_size -= 1
-            if self.method is LZGMethod.COPY and self.encoded_size != self.decoded_size:
-                raise ValueError('Header indicates method COPY but encoded and decoded size are different.')
+
+        if self.method is LZGMethod.COPY and self.encoded_size != self.decoded_size:
+            raise ValueError('Header indicates method COPY but encoded and decoded size are different.')
         if self._checks():
             return
+
+        self._handle_invalid_checksum()
+
+    def _checks(self):
+        checker = LZGCheckSum(StructReader(self._body.peek()))
+        checker.process(self.encoded_size)
+        for tolerance in range(8):
+            if int(checker) == self.checksum:
+                self.encoded_size += tolerance
+                return True
+            checker.process(1)
+        else:
+            return False
+
+    def _find_checksum(self, data: bytearray) -> int:
+        a = 1
+        b = 0
+        t = self.checksum
+        for k, c in enumerate(data):
+            a = (a + c) & 0xFFFF
+            b = (b + a) & 0xFFFF
+            s = ((b << 0x10) | a)
+            if s == t:
+                return k
+        return -1
+
+    def _handle_invalid_checksum(self):
         offsets = {}
         for k in range(16):
-            offset = self.find_checksum(self._body.peek())
+            offset = self._find_checksum(self._body.peek())
             if offset >= 0:
-                offsets[offset] = k
+                offsets[offset] = k + 1
             self._body.seekrel(1)
         if not offsets:
             raise ValueError('Invalid checksum and no working offsets could be found.')
@@ -77,29 +143,6 @@ class LZGStream(Struct):
             raise ValueError(
                 F'Checksum failed; a valid checksum can be obtained by skipping {skip} bytes and then reading {closest}. '
                 F'According to the header, the size of the encoded data is {self.encoded_size}.')
-
-    def _checks(self):
-        return self.compute_checksum(self._body.peek(self.encoded_size)) == self.checksum
-
-    def find_checksum(self, data: bytearray) -> int:
-        a = 1
-        b = 0
-        for k, c in enumerate(data):
-            a = (a + c) & 0xFFFF
-            b = (b + a) & 0xFFFF
-            s = ((b << 0x10) | a)
-            if s == self.checksum:
-                return k
-        return -1
-
-    @staticmethod
-    def compute_checksum(data: bytearray) -> int:
-        a = 1
-        b = 0
-        for c in data:
-            a = (a + c) & 0xFFFF
-            b = (b + a) & 0xFFFF
-        return ((b << 0x10) | a)
 
     def decompress(self) -> bytearray:
         if self._body is None:
