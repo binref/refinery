@@ -201,7 +201,7 @@ class TestMetaProperties(TestUnitBase):
 
 
 class TestSimpleInvertible(TestUnitBase):
-    exceptions = ['wshenc', 'msgpack', 'recode', 'u16', 'cp1252', 'stretch', 'hexload', 'dsphp']
+    exceptions = ['wshenc', 'msgpack', 'recode', 'u16', 'cp1252', 'stretch', 'hexload', 'dsphp', 'terminate']
 
     def setUp(self):
         super().setUp()
