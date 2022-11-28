@@ -18,6 +18,7 @@ from typing import (
 from refinery.lib.crypto import (
     CipherObjectFactory,
     CipherInterface,
+    SpecifiedAtRuntime,
 )
 from refinery.lib.argformats import (
     Option,
@@ -187,14 +188,9 @@ class StandardCipherExecutable(CipherExecutable):
 
     def __new__(mcs, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
         keywords = dict(abstract=not cipher)
-        try:
+        if cipher and cipher is not SpecifiedAtRuntime:
             keywords.update(blocksize=cipher.block_size)
-        except AttributeError:
-            pass
-        try:
             keywords.update(key_sizes=cipher.key_size)
-        except AttributeError:
-            pass
         return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
 
     def __init__(cls, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
