@@ -41,3 +41,17 @@ class terminate(BlockTransformationBase):
                 break
 
         return data
+
+    def reverse(self, data: bytearray):
+        sentinel = self.args.sentinel
+        position = 0
+        while True:
+            position = data.find(sentinel, position)
+            if position < 0:
+                data.extend(sentinel)
+                break
+            if position % self.args.blocksize == 0:
+                self.log_warn('input string already contains the termination character; returning unmodified input')
+                break
+            position += 1
+        return data
