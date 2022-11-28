@@ -25,3 +25,16 @@ class TestRC5(TestUnitBase):
             ciphertext = cipher.encrypt(sample)
             self.assertEqual(ciphertext, bytes.fromhex(result))
             self.assertEqual(cipher.decrypt(ciphertext), sample)
+
+    def test_with_iv(self):
+        msg = B'\xFF' * 32
+        key = iv = B'\xFF' * 8
+        unit = self.load(key=key, iv=iv, raw=True, reverse=True)
+        out = msg | unit | bytearray
+        self.assertEqual(out, bytes.fromhex(
+            'C5 0A FD 28 73 E3 7F 10 55 63 96 41 4D 4A 03 3C'
+            '07 05 32 53 54 89 07 E9 B9 0F FF A3 86 34 1E CC'
+        ))
+        unit = self.load(key=key, iv=iv, raw=True)
+        test = out | unit | bytearray
+        self.assertEqual(test, msg)

@@ -127,5 +127,6 @@ class rc6(StandardBlockCipherUnit, cipher=SpecifiedAtRuntime):
         if word_size % 8:
             raise ValueError('Block size must be a multiple of 16.')
         self._cipher_object_factory = c = BlockCipherFactory(_R)
-        self.block_size = c.block_size
+        self.blocksize = c.block_size
+        self.key_sizes = c.key_size
         super().__init__(key, iv, padding, mode, raw)

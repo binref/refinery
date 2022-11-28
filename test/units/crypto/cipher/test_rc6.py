@@ -51,3 +51,16 @@ class TestRC6(TestUnitBase):
             ciphertext = cipher.encrypt(P)
             self.assertEqual(ciphertext, C)
             self.assertEqual(cipher.decrypt(C), P)
+
+    def test_with_iv(self):
+        msg = B'\xFF' * 32
+        key = iv = B'\xFF' * 16
+        unit = self.load(key=key, iv=iv, raw=True, reverse=True)
+        out = msg | unit | bytearray
+        self.assertEqual(out, bytes.fromhex(
+            '29 F1 03 E8 F8 7A 59 FF 30 0A B5 2E FF 99 39 45'
+            '85 8B A7 16 3E DD 5F 9B 08 F6 89 39 B2 B0 77 A4'
+        ))
+        unit = self.load(key=key, iv=iv, raw=True)
+        test = out | unit | bytearray
+        self.assertEqual(test, msg)
