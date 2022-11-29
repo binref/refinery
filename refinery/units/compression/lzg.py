@@ -34,20 +34,6 @@ class LZGCheckSum:
         self._a = a
         self._b = b
 
-    def rewind(self, size: int) -> None:
-        if not size:
-            return
-        if size < 0 or self.reader.tell() < size:
-            raise ValueError
-        self.reader.seekrel(-size)
-        a = self._a
-        b = self._b
-        for c in reversed(self.reader.peek(size)):
-            b = (b - a) & 0xFFFF
-            a = (a - c) & 0xFFFF
-        self._a = a
-        self._b = b
-
 
 class LZGStream(Struct):
     _LENGTH_DECODE = list(range(2, 30))
