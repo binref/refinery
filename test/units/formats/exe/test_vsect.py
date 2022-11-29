@@ -17,7 +17,7 @@ from . import (
 )
 
 
-class TestVirtualAddressSnip(TestUnitBase):
+class TestVirtualSections(TestUnitBase):
 
     def test_pe(self):
         unit = self.load(list=True)
@@ -101,4 +101,4 @@ class TestVirtualAddressSnip(TestUnitBase):
             '__LINKEDIT': MACHO_LINKEDIT,
         }.items():
             unit = self.load(path)
-            self.assertEqual(unit(MACHO_TEST), data)
+            self.assertEqual(unit(MACHO_TEST), data, F'Extraction failed for {path}')
