@@ -22,7 +22,11 @@ class vaddr(Unit):
         return super().__init__(names=name, base=base)
 
     def process(self, data):
-        exe = Executable.Load(data, self.args.base)
+        try:
+            exe = Executable.Load(data, self.args.base)
+        except Exception:
+            self.log_warn('unable to parse input as executable; no variable conversion was performed')
+            return data
         meta = metavars(data)
         for name in self.args.names:
             value = meta[name]
@@ -30,7 +34,11 @@ class vaddr(Unit):
         return data
 
     def reverse(self, data):
-        exe = Executable.Load(data, self.args.base)
+        try:
+            exe = Executable.Load(data, self.args.base)
+        except Exception:
+            self.log_warn('unable to parse input as executable; no variable conversion was performed')
+            return data
         meta = metavars(data)
         for name in self.args.names:
             value = meta[name]
