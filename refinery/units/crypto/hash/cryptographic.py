@@ -10,7 +10,7 @@ from refinery.units.crypto.hash import HashUnit
 
 class md4(HashUnit):
     """
-    Returns the MD5 hash of the input data.
+    Returns the MD4 hash of the input data.
     """
     def _algorithm(self, data):
         from Crypto.Hash import MD4
@@ -19,7 +19,7 @@ class md4(HashUnit):
 
 class md2(HashUnit):
     """
-    Returns the MD5 hash of the input data.
+    Returns the MD2 hash of the input data.
     """
     def _algorithm(self, data):
         from Crypto.Hash import MD2
