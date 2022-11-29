@@ -49,7 +49,7 @@ class vsnip(Unit):
             until = B'\0\0'
             addrs = (slice(a.start, a.stop, 2) for a in addrs)
 
-        exe = Executable.Load(data)
+        exe = Executable.Load(data, self.args.base)
 
         for addr in addrs:
             area = MemoryArea(addr)
