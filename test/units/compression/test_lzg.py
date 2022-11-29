@@ -24,7 +24,9 @@ class TEstLZG(TestUnitBase):
             '696E6702452E0264686464656E030C206E650330746F20706C02632067036E7702029C6F6E0308686164032C20617765736F6D031703376D03016E74'
             '02220703AB2E00'
         )
-        self.assertEqual(data | self.load() | str, KADATH1)
+        unit = self.load()
+        self.assertTrue(unit.handles(data))
+        self.assertEqual(data | unit | str, KADATH1)
 
     def test_text_02(self):
         data = bytes.fromhex(
@@ -42,7 +44,9 @@ class TEstLZG(TestUnitBase):
             '6720031D6C6573736C792064024281746F02420C7202024D6F730223C7656503246F6620656C02421D776974630318790243196F7574737072656164'
             '0203E16265636B6F0262142E00'
         )
-        self.assertEqual(data | self.load() | str, KADATH2)
+        unit = self.load()
+        self.assertTrue(unit.handles(data))
+        self.assertEqual(data | unit | str, KADATH2)
 
     def test_text_03(self):
         data = bytes.fromhex(
@@ -62,3 +66,25 @@ class TEstLZG(TestUnitBase):
         self.assertIn(b'WaitForMultipleObjects', out)
         self.assertIn(b'FindNextFileW', out)
         self.assertIn(b'NtQueryVirtualMemory', out)
+
+    def test_invalid_buffer_01(self):
+        import struct
+        from refinery.units.compression.lzg import LZGCheckSum
+        body = self.generate_random_buffer(0x1050)
+        csum = int(LZGCheckSum(body, 0x1050))
+
+        data = struct.pack('>LLLB', 0x2000, 0x1000, csum, 1) + body
+        unit = self.load()
+        with self.assertRaises(ValueError) as trace:
+            data | unit | None
+        self.assertIn('a valid checksum can be obtained', trace.exception.args[0])
+
+        data = struct.pack('>LLLB', 0x2000, 0x1100, csum, 1) + body
+        with self.assertRaises(EOFError) as trace:
+            data | unit | None
+        self.assertIn('Header announces buffer size of', trace.exception.args[0])
+
+        data = struct.pack('>LLLB', 0x2000, 0x1050, 0xBAADF00D, 1) + body
+        with self.assertRaises(EOFError) as trace:
+            data | unit | None
+        self.assertIn('Unexpected end of buffer', trace.exception.args[0])

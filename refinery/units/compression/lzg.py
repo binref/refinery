@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from typing import Union
+
 import enum
 import re
 
@@ -15,7 +17,9 @@ class LZGMethod(enum.IntEnum):
 
 
 class LZGCheckSum:
-    def __init__(self, reader: StructReader, size: int = 0):
+    def __init__(self, reader: Union[bytearray, StructReader[bytearray]], size: int = 0):
+        if not isinstance(reader, StructReader):
+            reader = StructReader(reader)
         self.reader = reader
         self._a = 1
         self._b = 0
@@ -57,7 +61,7 @@ class LZGStream(Struct):
             self.checksum = reader.u32()
 
         if reader.remaining_bytes < self.encoded_size:
-            raise ValueError(F'Header announces buffer size of {self.encoded_size}, but only {reader.remaining_bytes} remain in buffer')
+            raise EOFError(F'Header announces buffer size of {self.encoded_size}, but only {reader.remaining_bytes} remain in buffer')
 
         if reader.remaining_bytes == self.encoded_size:
             if self._checks():
