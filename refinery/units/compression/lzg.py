@@ -9,14 +9,6 @@ from refinery.units import Unit, RefineryPartialResult
 from refinery.lib.structures import MemoryFile, StructReader, Struct
 
 
-def LZG_DecodedSize(data: bytearray) -> int:
-    if len(data) < 7:
-        return 0
-    if data[:3] != B'LZG':
-        return 0
-    return int.from_bytes(data[3:7], 'big')
-
-
 class LZGMethod(enum.IntEnum):
     COPY = 0
     LZG1 = 1
