@@ -161,6 +161,12 @@ class LT(str, Enum):
     VIRTUAL = 'address'
 
 
+class ET(str, Enum):
+    ELF = 'ELF'
+    MachO = 'MachO'
+    PE = 'PE'
+
+
 class Section(NamedTuple):
     name: str
     physical: Range
@@ -210,6 +216,7 @@ class Executable(ABC):
     _data: ByteStr
     _head: Union[PEFile, ELFFile, MachO]
     _base: Optional[int]
+    _type: ET
 
     @classmethod
     def Load(self, data: ByteStr, base: Optional[int] = None) -> Executable:
@@ -226,6 +233,10 @@ class Executable(ABC):
         self._data = data
         self._head = head
         self._base = base
+
+    @property
+    def type(self):
+        return self._type
 
     def __getitem__(self, key: Union[int, slice]):
         if isinstance(key, int):
@@ -350,6 +361,7 @@ class Executable(ABC):
 class ExecutablePE(Executable):
 
     _head: PEFile
+    _type = ET.PE
 
     def image_defined_base(self) -> int:
         return self._head.OPTIONAL_HEADER.ImageBase
@@ -428,6 +440,7 @@ class ExecutablePE(Executable):
 class ExecutableELF(Executable):
 
     _head: ELFFile
+    _type = ET.ELF
 
     @lru_cache(maxsize=1)
     def image_defined_base(self) -> int:
@@ -501,6 +514,7 @@ class ExecutableELF(Executable):
 class ExecutableMachO(Executable):
 
     _head: MachO
+    _type = ET.MachO
 
     @lru_cache(maxsize=1)
     def image_defined_base(self) -> int:
