@@ -102,7 +102,10 @@ class Range(NamedTuple):
     upper: int
 
     def range(self):
-        return range(self.lower, self.upper + 1)
+        return range(self.lower, self.upper)
+
+    def slice(self):
+        return slice(self.lower, self.upper)
 
     def __len__(self):
         return self.upper - self.lower
@@ -110,15 +113,33 @@ class Range(NamedTuple):
     def __contains__(self, addr: int):
         return self.lower <= addr <= self.upper
 
+    def __str__(self):
+        return F'0x{self.lower:X}:0x{self.upper:X}'
+
+    def __repr__(self):
+        return F'<{self.__class__.__name__}:{self!s}>'
+
 
 class BoxedOffset(NamedTuple):
     box: Range
     position: int
 
+    def __str__(self):
+        return F'0x{self.position:X} in {self.box!s}'
+
+    def __repr__(self):
+        return F'<{self.__class__.__name__}:{self!s}>'
+
 
 class Location(NamedTuple):
     physical: BoxedOffset
     virtual: BoxedOffset
+
+    def __str__(self):
+        return F'V={self.virtual!s}; P={self.physical!s}'
+
+    def __repr__(self):
+        return F'<{self.__class__.__name__}:{self!s}>'
 
 
 class Arch(IntEnum):
@@ -145,6 +166,16 @@ class Section(NamedTuple):
     physical: Range
     virtual: Range
 
+    def as_segment(self, populate_sections=False) -> Segment:
+        sections = [self] if populate_sections else None
+        return Segment(self.physical, self.virtual, sections, self.name)
+
+    def __str__(self):
+        return str(self.as_segment())
+
+    def __repr__(self):
+        return F'<{self.__class__.__name__}:{self!s}>'
+
 
 class Segment(NamedTuple):
     physical: Range
@@ -156,6 +187,15 @@ class Segment(NamedTuple):
         if self.name is None:
             raise ValueError('Unable to convert nameless segment to section.')
         return Section(self.name, self.physical, self.virtual)
+
+    def __str__(self):
+        msg = F'P=[{self.physical!s}];V=[{self.virtual!s}]'
+        if self.name is not None:
+            msg = F'{self.name}:{msg}'
+        return msg
+
+    def __repr__(self):
+        return F'<{self.__class__.__name__}:{self!s}>'
 
 
 class CompartmentNotFound(LookupError):
@@ -328,11 +368,7 @@ class ExecutablePE(Executable):
 
     def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for section in self.sections():
-            yield Segment(
-                section.physical,
-                section.virtual,
-                [section] if populate_sections else None
-            )
+            yield section.as_segment(populate_sections)
 
     def arch(self) -> Arch:
         arch = self._head.FILE_HEADER.Machine
