@@ -12,7 +12,7 @@ from refinery.lib.tools import isbuffer
 class swap(Unit):
     """
     Swap the contents of an existing variable with the contents of the chunk or with another meta variable.
-    When swapping with a chunk, the variable has to contain a binary string. When swapping with a variable
+    When swapping with the chunk, the variable has to contain a binary string. When swapping with a variable
     that does not exist, the original variable is cleared, essentially renaming the variable.
     """
     def __init__(
