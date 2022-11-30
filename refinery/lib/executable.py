@@ -250,6 +250,10 @@ class Executable(ABC):
         return self._base
 
     @property
+    def data(self) -> memoryview:
+        return memoryview(self._data).toreadonly()
+
+    @property
     def pointer_size(self) -> int:
         return {
             Arch.X8632   : 32,
