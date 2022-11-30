@@ -72,7 +72,7 @@ def get_config():
         )
 
     def normalize_name(name: str, separator: str = '-'):
-        return separator.join([segment for segment in name.split('_')])
+        return separator.join([segment for segment in name.strip('_').split('_')])
 
     if __prefix__ == '!':
         console_scripts = []

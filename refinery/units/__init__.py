@@ -909,7 +909,7 @@ class Executable(ABCMeta):
 
     @property
     def name(cls) -> str:
-        return cls.__name__.replace('_', '-')
+        return cls.__name__.strip('_').replace('_', '-')
 
 
     logging.addLevelName(logging.CRITICAL, 'failure') # noqa
