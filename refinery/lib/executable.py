@@ -249,6 +249,22 @@ class Executable(ABC):
             return self.image_defined_base()
         return self._base
 
+    @property
+    def pointer_size(self) -> int:
+        return {
+            Arch.X8632   : 32,
+            Arch.X8664   : 64,
+            Arch.ARM32   : 32,
+            Arch.ARM64   : 64,
+            Arch.MIPS16  : 16,
+            Arch.MIPS32  : 32,
+            Arch.MIPS64  : 64,
+            Arch.PPC32   : 32,
+            Arch.PPC64   : 64,
+            Arch.SPARC32 : 32,
+            Arch.SPARC64 : 64,
+        }[self.arch()]
+
     def location_from_address(self, address: int) -> Location:
         return self.lookup_location(address, LT.VIRTUAL)
 
