@@ -1175,7 +1175,9 @@ class Unit(UnitBase, abstract=True):
         return LogLevel(self.logger.getEffectiveLevel())
 
     @log_level.setter
-    def log_level(self, value: LogLevel) -> None:
+    def log_level(self, value: Union[int, LogLevel]) -> None:
+        if not isinstance(value, LogLevel):
+            value = LogLevel.FromVerbosity(value)
         self.logger.setLevel(value)
 
     def log_detach(self) -> None:
@@ -1585,7 +1587,7 @@ class Unit(UnitBase, abstract=True):
         return data
 
     @classmethod
-    def log_fail(cls, *messages, clip=False) -> bool:
+    def log_fail(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.units.LogLevel.ERROR`.
         """
@@ -1595,7 +1597,7 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     @classmethod
-    def log_warn(cls, *messages, clip=False) -> bool:
+    def log_warn(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.units.LogLevel.WARN`.
         """
@@ -1605,7 +1607,7 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     @classmethod
-    def log_info(cls, *messages, clip=False) -> bool:
+    def log_info(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.units.LogLevel.INFO`.
         """
@@ -1615,7 +1617,7 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     @classmethod
-    def log_debug(cls, *messages, clip=False) -> bool:
+    def log_debug(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
         Log the pmessage if and only if the current log level is at least `refinery.units.LogLevel.DEBUG`.
         """
@@ -1640,6 +1642,7 @@ class Unit(UnitBase, abstract=True):
                 return message
             if isbuffer(message):
                 import codecs
+                message: Union[bytes, bytearray, memoryview]
                 pmsg: str = codecs.decode(message, cls.codec, 'surrogateescape')
                 if not pmsg.isprintable():
                     pmsg = message.hex().upper()
@@ -1756,7 +1759,7 @@ class Unit(UnitBase, abstract=True):
             if args.quiet:
                 unit.log_level = LogLevel.NONE
             else:
-                unit.log_level = LogLevel.FromVerbosity(args.verbose)
+                unit.log_level = args.verbose
 
             return unit
 
