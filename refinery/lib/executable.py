@@ -227,6 +227,25 @@ class Executable(ABC):
         self._head = head
         self._base = base
 
+    def __getitem__(self, key: Union[int, slice]):
+        if isinstance(key, int):
+            key = slice(key, key + 1, 1)
+        if key.start is None:
+            raise LookupError(R'Slice indices with unspecified start are not supported.')
+        if key.stop is not None and key.stop < key.start:
+            raise LookupError(R'The slice end must lie after the slice start.')
+
+        box = self.location_from_address(key.start)
+
+        if key.stop is None:
+            end = box.physical.box.upper
+        elif key.stop <= box.virtual.box.upper:
+            end = box.physical.position + (key.stop - key.start)
+        else:
+            raise LookupError(F'The end address 0x{key.stop:X} is beyond the section end 0x{box.virtual.box.upper:X}.')
+
+        return self.data[box.physical.position:end]
+
     @staticmethod
     def _ascii(string: Union[str, ByteStr]) -> str:
         if isinstance(string, str):
