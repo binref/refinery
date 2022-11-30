@@ -50,11 +50,14 @@ _MACHO_ARCHS = {
 }
 
 
-def align(alignment: int, value: int) -> int:
+def align(alignment: int, value: int, down=False) -> int:
     if alignment >= 2:
         incomplete_chunk_count = value % alignment
         if incomplete_chunk_count > 0:
-            value += alignment - incomplete_chunk_count
+            if not down:
+                value += alignment - incomplete_chunk_count
+            else:
+                value -= incomplete_chunk_count
     return value
 
 
