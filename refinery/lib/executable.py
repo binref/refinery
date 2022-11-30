@@ -152,8 +152,8 @@ class Arch(IntEnum):
     MIPS64 = auto()
     PPC32 = auto()
     PPC64 = auto()
-    SPARC = auto()
-    SPARCV9 = auto()
+    SPARC32 = auto()
+    SPARC64 = auto()
 
 
 class LT(str, Enum):
@@ -446,8 +446,8 @@ class ExecutableELF(Executable):
         arch = self._head.header['e_machine']
         try:
             return {
-                'EM_SPARC'   : Arch.SPARC,
-                'EM_SPARCV9' : Arch.SPARCV9,
+                'EM_SPARC'   : Arch.SPARC32,
+                'EM_SPARCV9' : Arch.SPARC64,
                 'EM_386'     : Arch.X8632,
                 'EM_X86_64'  : Arch.X8664,
                 'EM_MIPS'    : Arch.MIPS32,
@@ -527,7 +527,7 @@ class ExecutableMachO(Executable):
                 'X86'       : Arch.X8632,
                 'X86_64'    : Arch.X8664,
                 'ARM'       : Arch.ARM32,
-                'SPARC'     : Arch.SPARC,
+                'SPARC'     : Arch.SPARC32,
                 'POWERPC'   : Arch.PPC32,
                 'POWERPC64' : Arch.PPC64,
             }[arch]
