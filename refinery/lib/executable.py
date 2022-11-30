@@ -244,7 +244,7 @@ class Executable(ABC):
         return addr - self.image_defined_base() + self.base
 
     @property
-    def base(self):
+    def base(self) -> int:
         if self._base is None:
             return self.image_defined_base()
         return self._base
