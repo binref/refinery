@@ -37,11 +37,18 @@ def temporary_chwd(directory):
 
 class TestDump(TestUnitBase):
 
-    def test_clipboard_copy(self):
+    def test_clipboard_copy_01(self):
         copy = self.load()
         with temporary_clipboard():
-            L('emit Too much technology')[copy]()
-            self.assertEqual(pyperclip.paste(), 'Too')
+            L('emit Too Much Technology')[copy]()
+            self.assertEqual(pyperclip.paste(), 'TooMuchTechnology')
+
+    def test_clipboard_copy_02(self):
+        copy = self.load()
+        sep = self.ldu('sep', ' ')
+        with temporary_clipboard():
+            L('emit Too Much Technology')[sep | copy]()
+            self.assertEqual(pyperclip.paste(), 'Too Much Technology')
 
     def test_clipboard_copy_multiple(self):
         copy = self.load()

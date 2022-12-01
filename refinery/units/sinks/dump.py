@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import io
 import os
 import os.path
 
@@ -30,7 +31,8 @@ class dump(Unit):
     forwarded on STDOUT. The `-t` or `--tee` switch can be used to forward all inputs, under all
     circumstances, regardless of whether or not they have been processed.
 
-    If no file is specified, the first ingested input is dumped to the clipboard.
+    If no file is specified, all ingested inputs are concatenated and written to the clipboard. This
+    will only succeed when the data can successfully be encoded.
     """
 
     def __init__(
@@ -63,7 +65,7 @@ class dump(Unit):
         self._close()
 
     @property
-    def _paste(self):
+    def _clipcopy(self):
         return not self.args.files
 
     def _components(self, path):
@@ -119,6 +121,8 @@ class dump(Unit):
         self.stream.flush()
         if self.args.stream and not final:
             return
+        if self._clipcopy:
+            self._pyperclip.copy(self.stream.getvalue())
         self.stream.close()
         self.stream = None
 
@@ -127,13 +131,12 @@ class dump(Unit):
         import pyperclip
         return pyperclip
 
-    def process(self, data):
-        if not self.exhausted:
-            if self._paste:
-                import codecs
-                self._pyperclip.copy(codecs.decode(
-                    data, self.codec, errors='backslashreplace'))
-            elif not self.stream:
+    def process(self, data: bytes):
+        forward_input_data = self.args.tee
+        if self._clipcopy:
+            self.stream.write(data.decode(self.codec, errors='backslashreplace'))
+        elif not self.exhausted:
+            if not self.stream:
                 # This should happen only when the unit is called from Python code
                 # rather than via the command line.
                 try:
@@ -147,14 +150,11 @@ class dump(Unit):
                 self.stream.write(data)
                 self.log_debug(F'wrote 0x{len(data):08X} bytes')
                 self._close()
-            forward_input_data = self.args.tee
         else:
-            forward_input_data = self.args.tee or not self.isatty
+            forward_input_data = forward_input_data or not self.isatty
             if not forward_input_data:
-                meta = metavars(data)
-                size = meta['size']
+                size = metavars(data).size
                 self.log_warn(F'discarding unprocessed chunk of size {size!s}.')
-
         if forward_input_data:
             yield data
 
@@ -162,18 +162,16 @@ class dump(Unit):
         if self.exhausted:
             self._reset()
 
-        if self._paste:
-            it = iter(chunks)
-            yield next(it)
-            self.exhausted = True
-            yield from it
-            return
+        nostream = not self.args.stream
+        clipcopy = self._clipcopy
 
-        chunkmode = not self.args.stream
+        if clipcopy:
+            self.stream = io.StringIO()
+
         for index, chunk in enumerate(chunks, 0):
             if not chunk.visible:
                 continue
-            if not self.exhausted and (chunkmode or not self.stream):
+            if not clipcopy and not self.exhausted and (nostream or not self.stream):
                 try:
                     path = next(self.paths)
                 except StopIteration:
