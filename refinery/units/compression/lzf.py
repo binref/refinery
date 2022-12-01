@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import Unit, Arg
-from refinery.lib.structures import MemoryFile, StructReader
+from refinery.units import Unit, Arg, RefineryPartialResult
+from refinery.lib.structures import MemoryFile, Struct, StructReader
+
+import itertools
 
 _MAX_LIT = 1 << 5
 _MAX_OFF = 1 << 13
@@ -9,6 +11,26 @@ _MAX_REF = ((1 << 8) + (1 << 3))
 
 _HSLOG = 16
 _HSIZE = 1 << _HSLOG
+
+
+class LZFHeader(Struct):
+    MAGIC = B'ZV'
+
+    def __init__(self, reader: StructReader):
+        if reader.read(2) != self.MAGIC:
+            raise ValueError('Invalid header magic.')
+        tmp = reader.read_byte()
+        if tmp and tmp != 1:
+            raise ValueError(F'Invalid type code: {tmp}')
+        self.compressed = bool(tmp)
+        with reader.be:
+            tmp = reader.u16()
+            if self.compressed:
+                self.encoded_size = tmp
+                self.decoded_size = reader.u16()
+            else:
+                self.encoded_size = tmp
+                self.decoded_size = tmp
 
 
 class lzf(Unit):
@@ -129,14 +151,13 @@ class lzf(Unit):
         commit_literal()
         return op
 
-    def process(self, data):
-        ip = StructReader(memoryview(data))
-        op = MemoryFile()
+    def _decompress_chunk(self, data: memoryview, out: MemoryFile):
+        ip = StructReader(data)
         while not ip.eof:
             ctrl = ip.u8()
             if ctrl < 0B100000:
                 ctrl += 1
-                op.write(ip.read_exactly(ctrl))
+                out.write(ip.read_exactly(ctrl))
             else:
                 length = ctrl >> 5
                 offset = 1 + ((ctrl & 0B11111) << 8)
@@ -144,5 +165,33 @@ class lzf(Unit):
                     length += ip.u8()
                 offset += ip.u8()
                 length += 2
-                op.replay(offset, length)
-        return op.getbuffer()
+                out.replay(offset, length)
+
+    def process(self, data):
+        mem = memoryview(data)
+        out = MemoryFile()
+
+        try:
+            reader = StructReader(mem)
+            header = LZFHeader(reader)
+        except Exception:
+            self.log_info('no header detected, decompressing as raw stream')
+            self._decompress_chunk(mem, out)
+            return out.getvalue()
+
+        for k in itertools.count(1):
+            self.log_info(F'chunk: e=0x{header.encoded_size:04X} d=0x{header.decoded_size:04X}')
+            chunk = reader.read(header.encoded_size)
+            if header.compressed:
+                self._decompress_chunk(chunk, out)
+            else:
+                out.write(chunk)
+            if reader.eof:
+                break
+            try:
+                header = LZFHeader(reader)
+            except Exception as E:
+                msg = F'failed parsing next header after {k} chunks: {E!s}'
+                raise RefineryPartialResult(msg, out.getvalue())
+
+        return out.getvalue()
