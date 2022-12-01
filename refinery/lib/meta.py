@@ -153,7 +153,6 @@ class CustomStringRepresentation(abc.ABC):
     def __repr__(self): ...
 
 
-
 _PRINTABLE = (
     B'0123456789'
     B'!#$%&()*,-./:;=?@[\\]{}~'
