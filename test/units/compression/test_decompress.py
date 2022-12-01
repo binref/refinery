@@ -40,7 +40,10 @@ class TestAutoDecompressor(TestUnitBase):
             if not e.is_reversible:
                 continue
             for k, buffer in enumerate(self.buffers, 1):
-                compressed = e.reverse(buffer)
+                try:
+                    compressed = e.reverse(buffer)
+                except Exception as E:
+                    self.assertTrue(False, F'Exception while compressing buffer {k}: {E!s}')
                 failures = []
                 success = 0
                 result, = compressed | unit
