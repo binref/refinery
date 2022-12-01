@@ -37,8 +37,16 @@ class lzf(Unit):
                 q = (h ^ (h << 5))
                 return (((q >> (3 * 8 - _HSLOG)) - h * 5) & (_HSIZE - 1))
 
+        if not data:
+            return data
+
         ip = view = memoryview(data)
         op = bytearray()
+
+        if len(data) == 1:
+            op.append(0)
+            op.extend(data)
+            return op
 
         hval = FRST(ip)
         htab = [0] * _HSIZE
@@ -72,35 +80,37 @@ class lzf(Unit):
             hval = NEXT(hval, ip)
             hpos = HIDX(hval)
             ipos = DELTA(ip)
+            length = 2
             r, htab[hpos] = htab[hpos], ipos
             off = ipos - r - 1
             ref = view[r:]
 
-            if off >= _MAX_OFF or r >= ipos or ref[:3] != ip[:3]:
+            if off >= _MAX_OFF or r <= 0 or ref[:3] != ip[:3]:
                 advance_literal()
                 continue
             else:
                 commit_literal()
 
-            maxlen = min(_MAX_REF, len(data) - ipos)
+            maxlen = min(_MAX_REF, ip.nbytes - length)
 
-            try:
-                it = enumerate(zip(ref[:maxlen], ip[:maxlen]))
-                length = next(k for k, (a, b) in it if a != b)
-            except StopIteration:
-                length = maxlen
-
-            length -= 2
+            while True:
+                length += 1
+                if length >= maxlen or ref[length] != ip[length]:
+                    length -= 2
+                    break
 
             if length < 7:
                 op.append((off >> 8) + (length << 5))
             else:
                 op.append((off >> 8) + (7 << 5))
                 op.append(length - 7)
+
             op.append(off & 0xFF)
-            if ip.nbytes <= length + 2:
-                return op
             begin_literal()
+
+            if ip.nbytes <= length + 3:
+                ip = ip[length + 2:]
+                break
             if fast:
                 ip = ip[length:]
                 hval = FRST(ip)
