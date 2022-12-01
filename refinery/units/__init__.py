@@ -335,7 +335,9 @@ class Arg(Argument):
                 if key == 'choices':
                     return ', '.join(self.arg.kwargs['choices'])
                 if key == 'default':
-                    default = self.arg.kwargs['default']
+                    default: Union[bytes, int, str] = self.arg.kwargs['default']
+                    if isinstance(default, int):
+                        return default
                     if not isbuffer(default):
                         return str(default)
                     if default.isalnum():
@@ -345,8 +347,9 @@ class Arg(Argument):
                     return self.arg.kwargs.get('metavar', self.arg.destination)
 
         try:
+            help_string: str = self.kwargs['help']
             self.kwargs.update(
-                help=self.kwargs['help'].format_map(formatting()))
+                help=help_string.format_map(formatting()))
         except Exception:
             pass
 
