@@ -153,6 +153,19 @@ class CustomStringRepresentation(abc.ABC):
     def __repr__(self): ...
 
 
+
+_PRINTABLE = (
+    B'0123456789'
+    B'!#$%&()*,-./:;=?@[\\]{}~'
+    B'abcdefghijklmnopqrstuvwxyz'
+    B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+)
+
+_IS_PRINTABLE = bytearray(256)
+for p in _PRINTABLE:
+    _IS_PRINTABLE[p] = 1
+
+
 class ByteStringWrapper(bytearray, CustomStringRepresentation):
     """
     Represents a binary string and a preferred codec in case it is printable. Casting this wrapper class
@@ -160,7 +173,6 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
     errors. The `repr` case returns a hexadecimal representation of the binary data. Finally, the object
     proxies attribute access to the wrapped binary string.
     """
-
     _CODECS = {
         codecs.lookup(c).name: p
         for c, p in [('utf8', 's'), ('latin1', 'a'), ('utf-16le', 'u')]
@@ -245,23 +257,14 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         except AttributeError:
             representation = None
         else:
-            import re
-            if not re.fullmatch(r'[\x20!-~]*', representation):
+            if not representation.isprintable() or any(c in representation for c in '&<|>'):
                 representation = None
-            else:
-                if prefix != 's' or self.requires_prefix(representation):
-                    representation = F'{prefix}:{representation}'
+            elif prefix != 's' or self.requires_prefix(representation):
+                representation = F'{prefix}:{representation}'
         if representation is None:
-            printable = (
-                B'0123456789'
-                B'!#$%&()*,-./:;=?@[\\]^{}~'
-                B'abcdefghijklmnopqrstuvwxyz'
-                B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-            )
-            p = sum(1 for c in self if c in printable)
-            if p >= len(self) * 0.8:
+            if sum(_IS_PRINTABLE[c] for c in self) >= len(self) * 0.8:
                 from urllib.parse import quote_from_bytes
-                quoted = quote_from_bytes(self, printable)
+                quoted = quote_from_bytes(self, _PRINTABLE)
                 representation = F'q:{quoted}'
             else:
                 representation = F'h:{self.hex()}'
