@@ -1,5 +1,12 @@
 # Binary Refinery Changelog
 
+## Version 0.5.2
+- The `lzg` unit was added.
+- The `lzf` unit received several bugfixes and now supports the chunked format produced by the command-line `lzf` tool.
+- The `ntlm` hash unit was added (thanks to @m0rv4i for the contribution)
+- The `vmemref` and `vstack` units were added; both are still experimental and not thoroughly tested.
+- The `min` and `max` units were added to simplify the pattern `sorted [| pick 0 ]` to a single unit.
+
 ## Version 0.5.1 -- bugfix release
 
 ## Version 0.5.0
