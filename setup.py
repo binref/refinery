@@ -26,6 +26,46 @@ __topics__ = [
 ]
 
 
+class DeployCommand(setuptools.Command):
+    description = 'Tag and push new release.'
+    user_options = []
+
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+    @staticmethod
+    def main():
+        import subprocess
+        import shlex
+        import refinery
+        import os
+
+        from pathlib import Path
+
+        DEVNULL = open(os.devnull, 'wb')
+
+        def run(cmd):
+            print(F'run: {cmd}')
+            return subprocess.check_call(
+                shlex.split(cmd),
+                stdout=DEVNULL,
+                stderr=DEVNULL,
+                cwd=os.getcwd(),
+            )
+
+        root = Path(refinery.__file__).parent.parent
+        os.chdir(root)
+        run(F'git tag {refinery.__version__}')
+        run(R'git push')
+        run(R'git push --tags')
+
+    def run(self):
+        sys.exit(self.main())
+
+
 def get_config():
     sys.path.insert(0, str(pathlib.Path(__file__).parent.absolute()))
 
@@ -107,6 +147,7 @@ def get_config():
         include_package_data=True,
         entry_points={'console_scripts': console_scripts},
         package_data={'refinery': ['__init__.pkl']},
+        cmdclass={'deploy': DeployCommand},
     )
 
     return config
