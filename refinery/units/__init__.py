@@ -1515,7 +1515,7 @@ class Unit(UnitBase, abstract=True):
                     # we send. For example, this can happen when a large file is
                     # read in chunks and the pick unit is used to select only the
                     # first few of these.
-                    self.log_info(F'cannot send to next unit: {E}')
+                    self.log_debug(F'cannot send to next unit: {E}')
                 break
 
         try:
