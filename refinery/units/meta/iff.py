@@ -4,16 +4,14 @@ import operator
 from typing import Any, Callable, Optional
 
 from refinery.lib.meta import metavars
-from refinery.lib.argformats import DelayedNumSeqArgument, PythonExpression, ParserVariableMissing
+from refinery.lib.argformats import DelayedNumSeqArgument, PythonExpression
 from refinery.units.meta import Arg, ConditionalUnit
 
 
 class iff(ConditionalUnit):
     """
     Filter incoming chunks depending on whether a given Python expression evaluates to true. If no
-    expression is given, the unit filters out empty chunks. If the expression cannot be parsed, the
-    unit assumes that it is the name of a meta variable and filters out chunks where that variable
-    is defined and evaluates to true.
+    expression is given, the unit filters out empty chunks.
     """
     def __init__(
         self,
@@ -43,21 +41,26 @@ class iff(ConditionalUnit):
             (gt, operator.__gt__),
             (le, operator.__le__),
             (lt, operator.__lt__),
-            (eq, None),
+            (eq, operator.__eq__),
             (ct, operator.__contains__),
             (iN, lambda a, b: operator.__contains__(b, a)),
         ]
+
         operators = [
-            (rhs, cmp) for (rhs, cmp) in operators
+            (rhs, cmp)
+            for (rhs, cmp) in operators
             if rhs is not None
         ]
+
         rhs, cmp, lhs = None, None, '\x20'.join(expression) or None
+
         if len(operators) > 0:
             if not lhs:
                 raise ValueError('Comparison operator with empty left hand side.')
             if len(operators) > 1:
                 raise ValueError('Only one comparison operation can be specified.')
             rhs, cmp = operators[0]
+
         super().__init__(
             lhs=lhs,
             rhs=rhs,
@@ -72,21 +75,24 @@ class iff(ConditionalUnit):
         lhs: Optional[str] = self.args.lhs
         rhs: Optional[Any] = self.args.rhs
         cmp: Optional[Callable[[Any, Any], bool]] = self.args.cmp
-        try:
-            lhs = lhs and PythonExpression.evaluate(lhs, meta)
-        except ParserVariableMissing:
-            return lhs in meta
+
         if cmp is None and rhs is not None:
-            rhs = DelayedNumSeqArgument(rhs)(chunk)
-            return lhs == rhs
-        try:
-            rhs = rhs and PythonExpression.evaluate(rhs, meta)
-        except ParserVariableMissing:
-            raise
-        except Exception:
-            rhs = rhs.encode(self.codec)
+            raise ValueError('right hand side defined but no operator')
+
+        if lhs is not None:
+            if rhs is not None:
+                lhs = DelayedNumSeqArgument(lhs)(chunk)
+            else:
+                lhs = PythonExpression.evaluate(lhs, meta)
+
+        self.log_debug('lhs:', lhs)
+        self.log_debug('rhs:', rhs)
+
+        rhs = rhs and DelayedNumSeqArgument(rhs)(chunk)
+
         if lhs is None:
             return bool(chunk)
         if rhs is None:
             return bool(lhs)
+
         return cmp(lhs, rhs)
