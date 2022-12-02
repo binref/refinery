@@ -34,7 +34,9 @@ class iff(ConditionalUnit):
             help='check that the expression contains {varname}') = None,
         eq: Arg('-eq', type=str, metavar='<right-hand-side>', group='OP',
             help='check that the expression is equal to {varname}') = None,
-        negate=False, temporary=False
+        single=False,
+        negate=False,
+        backup=False,
     ):
         operators = [
             (ge, operator.__ge__),
@@ -57,11 +59,12 @@ class iff(ConditionalUnit):
                 raise ValueError('Only one comparison operation can be specified.')
             rhs, cmp = operators[0]
         super().__init__(
-            negate=negate,
-            temporary=temporary,
             lhs=lhs,
             rhs=rhs,
             cmp=cmp,
+            negate=negate,
+            backup=backup,
+            single=single,
         )
 
     def match(self, chunk):

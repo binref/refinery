@@ -10,11 +10,19 @@ class iffx(RegexUnit, ConditionalUnit):
     regular expression.
     """
     def __init__(
-        self, regex, multiline=False, ignorecase=False, negate=False, temporary=False,
+        self, regex, multiline=False, ignorecase=False, negate=False, backup=False, single=False,
         match: Arg.Switch('-m',
             help='Perform a full match rather than matching anywhere in the chunk.') = False
     ):
-        super().__init__(regex=regex, negate=negate, temporary=temporary, multiline=multiline, ignorecase=ignorecase, match=match)
+        super().__init__(
+            regex=regex,
+            negate=negate,
+            backup=backup,
+            single=single,
+            multiline=multiline,
+            ignorecase=ignorecase,
+            match=match
+        )
 
     def match(self, chunk):
         return bool(self._matcher(chunk))

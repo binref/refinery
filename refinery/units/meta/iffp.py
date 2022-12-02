@@ -19,9 +19,15 @@ class iffp(ConditionalUnit):
         self,
         *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS),
         partial: Arg.Switch('-p', help='Allow partial matches on the data.') = False,
-        negate=False, temporary=False
+        negate=False, backup=False, single=False
     ):
-        super().__init__(negate=negate, temporary=temporary, patterns=patterns, partial=partial)
+        super().__init__(
+            negate=negate,
+            backup=backup,
+            single=single,
+            patterns=patterns,
+            partial=partial
+        )
 
     def match(self, chunk):
         for name in self.args.patterns:
