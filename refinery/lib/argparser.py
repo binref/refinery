@@ -8,7 +8,7 @@ from argparse import (
     RawDescriptionHelpFormatter,
 )
 
-from typing import IO, Optional
+from typing import IO, Optional, List
 
 from refinery.lib.tools import terminalfit, get_terminal_size
 
@@ -112,7 +112,7 @@ class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
     def error(self, message):
         raise ArgparseError(self, message)
 
-    def parse_args(self, args, namespace=None):
+    def parse_args_with_nesting(self, args: List[str], namespace=None):
         self.order = []
         args = list(args)
         keywords = self._keywords
@@ -131,7 +131,7 @@ class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
                 del args[~0:]
         self.set_defaults(**self._keywords)
         try:
-            parsed = super().parse_args(args=args, namespace=namespace)
+            parsed = self.parse_args(args=args, namespace=namespace)
         except ArgumentError as e:
             self.error(str(e))
         for name in keywords:

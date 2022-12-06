@@ -1743,7 +1743,7 @@ class Unit(UnitBase, abstract=True):
         results are used to construct an instance of the unit, this object is consequently returned.
         """
         argp = cls.argparser(**keywords)
-        args = argp.parse_args(args)
+        args = argp.parse_args_with_nesting(args)
 
         try:
             unit = autoinvoke(cls, args.__dict__)
