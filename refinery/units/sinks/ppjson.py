@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 import json
 import re
+import textwrap
 
 from refinery.units import Arg, Unit
 from refinery.lib.json import flattened
+from refinery.lib.tools import get_terminal_size
 
 
 class ppjson(Unit):
@@ -25,9 +27,14 @@ class ppjson(Unit):
         if self.args.tabular:
             table = list(flattened(parsed))
             width = max(len(key) for key, _ in table)
+            tsize = get_terminal_size(80) - width - 4
             for key, value in table:
                 value = str(value).rstrip()
-                yield F'{key:<{width}} : {value}'.encode(self.codec)
+                value = textwrap.wrap(value, tsize)
+                it = iter(value)
+                yield F'{key:<{width}} : {next(it)}'.encode(self.codec)
+                for wrap in it:
+                    yield F'{"":<{width+3}}{wrap}'.encode(self.codec)
         else:
             yield json.dumps(parsed, **kwargs).encode(self.codec)
 
