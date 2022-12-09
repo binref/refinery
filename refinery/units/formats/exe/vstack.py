@@ -105,7 +105,7 @@ class vstack(Unit):
 
         state = EmuState(exe, address, tree, disassembler)
 
-        emulator.mem_map(stack_addr, stack_size * 2)
+        emulator.mem_map(stack_addr, stack_size * 3)
         emulator.reg_write({
             Arch.X8632   : uc.x86_const.UC_X86_REG_ESP,
             Arch.X8664   : uc.x86_const.UC_X86_REG_RSP,
@@ -116,12 +116,38 @@ class vstack(Unit):
             Arch.MIPS64  : uc.mips_const.UC_MIPS_REG_SP,
             Arch.SPARC32 : uc.sparc_const.UC_SPARC_REG_SP,
             Arch.SPARC64 : uc.sparc_const.UC_SPARC_REG_SP,
-        }[arch], stack_addr + stack_size)
+        }[arch], stack_addr + 2 * stack_size)
 
         if arch is Arch.X8632:
-            emulator.reg_write(uc.x86_const.UC_X86_REG_EBP, stack_addr + stack_size)
+            for reg in [
+                uc.x86_const.UC_X86_REG_EAX,
+                uc.x86_const.UC_X86_REG_EBX,
+                uc.x86_const.UC_X86_REG_ECX,
+                uc.x86_const.UC_X86_REG_EDX,
+                uc.x86_const.UC_X86_REG_ESI,
+                uc.x86_const.UC_X86_REG_EDI,
+                uc.x86_const.UC_X86_REG_EBP,
+            ]:
+                emulator.reg_write(reg, stack_addr + stack_size)
         if arch is Arch.X8664:
-            emulator.reg_write(uc.x86_const.UC_X86_REG_RBP, stack_addr + stack_size)
+            for reg in [
+                uc.x86_const.UC_X86_REG_RAX,
+                uc.x86_const.UC_X86_REG_RBX,
+                uc.x86_const.UC_X86_REG_RCX,
+                uc.x86_const.UC_X86_REG_RDX,
+                uc.x86_const.UC_X86_REG_RSI,
+                uc.x86_const.UC_X86_REG_RDI,
+                uc.x86_const.UC_X86_REG_RBP,
+                uc.x86_const.UC_X86_REG_R8,
+                uc.x86_const.UC_X86_REG_R9,
+                uc.x86_const.UC_X86_REG_R10,
+                uc.x86_const.UC_X86_REG_R11,
+                uc.x86_const.UC_X86_REG_R12,
+                uc.x86_const.UC_X86_REG_R13,
+                uc.x86_const.UC_X86_REG_R14,
+                uc.x86_const.UC_X86_REG_R15,
+            ]:
+                emulator.reg_write(reg, stack_addr + stack_size)
 
         for segment in exe.segments():
             phys = segment.physical
@@ -136,7 +162,10 @@ class vstack(Unit):
         emulator.hook_add(uc.UC_HOOK_INSN_INVALID, self._hook_insn_error, user_data=state)
         emulator.hook_add(uc.UC_HOOK_MEM_INVALID, self._hook_mem_error, user_data=state)
 
-        emulator.emu_start(address, end_of_code)
+        try:
+            emulator.emu_start(address, end_of_code)
+        except uc.UcError:
+            pass
 
         it: Iterator[Interval] = iter(tree)
         for interval in it:
@@ -153,6 +182,7 @@ class vstack(Unit):
             state.waiting = 0
             state.writes.addi(address, address + size + 1)
             state.writes.merge_overlaps()
+            self.log_info(F'memory write to 0x{address:0{state.executable.pointer_size//4}X}: {value:0{size*2}X}')
 
     def _hook_insn_error(self, emu: Uc, state: EmuState):
         self.log_debug('aborting emulation; instruction error')
