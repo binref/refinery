@@ -73,4 +73,4 @@ class xt7z(ArchiveUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        return data.startswith(B'7z\xBC\xAF\x27\x1C')
+        return B'7z\xBC\xAF\x27\x1C' in data
