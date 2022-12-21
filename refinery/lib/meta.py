@@ -429,9 +429,16 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         self['index'] = index
 
     def inherit(self, parent: LazyMetaOracle):
-        if self.history and self.history is not parent.history:
-            raise RuntimeError
-        self.history = parent.history
+        """
+        This method is called to inherit variables from a parent meta variable dictionary.
+        """
+        if not self.history:
+            self.history = parent.history
+        elif self.history is not parent.history:
+            for key in parent.current.keys():
+                if key not in self.current:
+                    self.current[key] = parent.current[key]
+                    self.history[key] = parent.history[key]
         self.scope = parent.scope
         for key in parent.keys():
             try:

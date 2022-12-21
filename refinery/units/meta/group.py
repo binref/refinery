@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import Arg, Unit
+from typing import Iterable, List
+from refinery.units import Arg, Unit, Chunk
 
 
 class group(Unit):
@@ -10,14 +11,14 @@ class group(Unit):
     def __init__(self, size: Arg.Number(help='Size of each group; must be at least 2.', bound=(2, None))):
         super().__init__(size=size)
 
-    def process(self, data):
-        members = data.temp or ()
+    def process(self, data: Chunk):
+        members: List[Chunk] = data.temp or []
         if len(members) >= self.args.size:
             raise RuntimeError(F'received {len(members) + 1} items in group')
         yield data
         yield from members
 
-    def filter(self, chunks):
+    def filter(self, chunks: Iterable[Chunk]):
         members = []
         header = None
         for chunk in chunks:
