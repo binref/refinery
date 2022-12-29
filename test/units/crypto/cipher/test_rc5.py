@@ -38,3 +38,10 @@ class TestRC5(TestUnitBase):
         unit = self.load(key=key, iv=iv, raw=True)
         test = out | unit | bytearray
         self.assertEqual(test, msg)
+
+    def test_official_test_vectors_01(self):
+        K = bytes.fromhex('000102030405060708090A0B0C0D0E0F')
+        M = bytes.fromhex('0001020304050607')
+        C = bytes.fromhex('2A0EDC0E9431FF73')
+        U = self.load(key=K, raw=True, rounds=20, word_size=32)
+        self.assertEqual(M | -U | bytearray, C)
