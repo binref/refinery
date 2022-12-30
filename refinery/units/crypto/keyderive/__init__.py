@@ -51,7 +51,7 @@ class KeyDerivation(Unit, abstract=True):
         **kw
     ):
         if hash is not None:
-            name = Arg.AsOption(hash, HASH)
+            name = Arg.AsOption(hash, HASH).value
             hash = importlib.import_module(F'Crypto.Hash.{name}')
         return super().__init__(salt=salt, size=size, iter=iter, hash=hash, **kw)
 
