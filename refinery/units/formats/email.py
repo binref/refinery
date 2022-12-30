@@ -56,7 +56,16 @@ class xtmail(PathExtractorUnit):
         msgcount = 0
 
         with NoLogging():
-            msg = self._extract_msg.Message(bytes(data))
+            class ForgivingMessage(self._extract_msg.Message):
+                """
+                If parsing the input bytes fails early, the "__open" private attribute may not
+                yet exist. This hack prevents an exception to occur in the destructor.
+                """
+                def __getattr__(self, key: str):
+                    if key.endswith('_open'):
+                        return False
+                    raise AttributeError(key)
+            msg = ForgivingMessage(bytes(data))
 
         yield from self._get_headparts(msg.header.items())
         yield from make_message('body', msg)
