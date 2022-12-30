@@ -13,11 +13,15 @@ from refinery.lib.tools import NoLogging
 from refinery.lib.structures import MemoryFile
 
 
+def isdict(object):
+    return isinstance(object, dict) or all(hasattr(object, method) for method in ['items', 'values', 'keys'])
+
+
 class xtpdf(PathExtractorUnit):
     """
     Extract objects from PDF documents.
     """
-    @PathExtractorUnit.Requires('PyPDF2>=2.7.0', optional=False)
+    @PathExtractorUnit.Requires('PyPDF2>=3.0.0', optional=False)
     def _pypdf2():
         import PyPDF2
         import PyPDF2.generic
@@ -26,7 +30,7 @@ class xtpdf(PathExtractorUnit):
     def _walk(self, blob, memo: Optional[Set[int]] = None, *path):
         while isinstance(blob, self._pypdf2.generic.IndirectObject):
             try:
-                blob = blob.getObject()
+                blob = blob.get_object()
             except Exception:
                 break
         if memo is None:
@@ -88,18 +92,20 @@ class xtpdf(PathExtractorUnit):
                     yield from self._walk(value, memo, *path, F'/{key}')
                 return
 
-        if isinstance(blob, dict):
-            for key, value in blob.items():
-                if not isinstance(key, str):
-                    continue
-                if not key.startswith('/'):
-                    key = F'/{key}'
-                yield from self._walk(value, memo, *path, key)
+        if not isdict(blob):
+            return
+
+        for key, value in blob.items():
+            if not isinstance(key, str):
+                continue
+            if not key.startswith('/'):
+                key = F'/{key}'
+            yield from self._walk(value, memo, *path, key)
 
     def unpack(self, data):
         with MemoryFile(data, read_as_bytes=True) as stream:
             with NoLogging():
-                pdf = self._pypdf2.PdfFileReader(stream)
+                pdf = self._pypdf2.PdfReader(stream)
                 catalog = pdf.trailer['/Root']
                 yield from self._walk(catalog)
 
