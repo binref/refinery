@@ -468,12 +468,28 @@ class xtpyi(ArchiveUnit):
         import xdis.load
         import xdis.magics
         import xdis.marsh
+        import xdis.op_imports
         import xdis
         A, B, C, *_ = sys.version_info
-        V = F'{A}.{B}.{C}'
-        if V not in xdis.magics.canonic_python_version:
-            xdis.magics.add_canonic_versions(V, F'{A}.{B}')
-        del A, B, C, V
+        version = F'{A}.{B}.{C}'
+        if version not in xdis.magics.canonic_python_version:
+            class opcode_dummy:
+                def __init__(self, name): self.name = name
+                def __getattr__(self, key): return opcode_dummy(F'{self.name}.{key}')
+                def __call__(self, *a, **k): return None
+                def __str__(self): return self.name
+                def __repr__(self): return self.name
+            import importlib
+            canonic = F'{A}.{B}'
+            magic = importlib.util.MAGIC_NUMBER
+            xdis.magics.add_magic_from_int(xdis.magics.magic2int(magic), version)
+            xdis.magics.by_magic.setdefault(magic, set()).add(version)
+            xdis.magics.by_version[version] = magic
+            xdis.magics.magics[canonic] = magic
+            xdis.magics.canonic_python_version[canonic] = canonic
+            xdis.magics.add_canonic_versions(version, canonic)
+            xdis.op_imports.op_imports.setdefault(canonic, opcode_dummy('dummy'))
+        del A, B, C, version
         import xdis.std
         return xdis
 
