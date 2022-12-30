@@ -64,9 +64,9 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
                 try:
                     engine.main.decompile(
-                        version,
                         code,
-                        output,
+                        bytecode_version=version,
+                        out=output,
                         timestamp=timestamp,
                         code_objects=code_objects,
                         is_pypy=is_pypy,
