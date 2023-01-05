@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.5.3 -- bugfix release
+
 ## Version 0.5.2
 - The `lzg` unit was added.
 - The `lzf` unit received several bugfixes and now supports the chunked format produced by the command-line `lzf` tool.
