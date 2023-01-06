@@ -32,7 +32,11 @@ class ppjson(Unit):
                 value = str(value).rstrip()
                 value = textwrap.wrap(value, tsize)
                 it = iter(value)
-                yield F'{key:<{width}} : {next(it)}'.encode(self.codec)
+                try:
+                    item = next(it)
+                except StopIteration:
+                    continue
+                yield F'{key:<{width}} : {item}'.encode(self.codec)
                 for wrap in it:
                     yield F'{"":<{width+3}}{wrap}'.encode(self.codec)
         else:
