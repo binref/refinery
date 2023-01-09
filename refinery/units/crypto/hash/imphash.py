@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from pefile import PE, DIRECTORY_ENTRY
-
 from refinery.units.crypto.hash import HashUnit
-
-IMAGE_DIRECTORY_ENTRY_IMPORT = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT']
+from refinery.lib import lief
 
 
 class imphash(HashUnit):
@@ -13,9 +10,6 @@ class imphash(HashUnit):
     """
 
     def _algorithm(self, data):
-        pe = PE(data=data, fast_load=True)
-        pe.parse_data_directories(directories=[IMAGE_DIRECTORY_ENTRY_IMPORT])
-        th = pe.get_imphash()
-        if not th:
-            raise ValueError('no import directory.')
+        pe = lief.load_pe(data)
+        th = lief.PE.get_imphash(pe, lief.PE.IMPHASH_MODE.PEFILE)
         return bytes.fromhex(th)
