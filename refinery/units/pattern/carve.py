@@ -35,7 +35,7 @@ class carve(PatternExtractor):
         )
         if not decode:
             decoder = NotImplemented
-        elif self.args.format is formats.string:
+        elif self.args.format in (formats.multiline_string, formats.string):
             def decoder(chunk):
                 return decoder.unesc(chunk[1:-1])
             from ..encoding.esc import esc

@@ -192,6 +192,7 @@ _pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|
 _pattern_vbastr = R'''"(?:""|[^"])*"'''
 _pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]*|[-+]?(?:[1-9][0-9]*|0))(?=\b|$)'
 _pattern_string = R'''(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*')'''
+_pattern_string_multiline = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')'''
 _pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
 _pattern_urlenc = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
 _pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2})+'''
@@ -275,6 +276,8 @@ class formats(PatternEnum):
     "Floating point number expressions"
     string = pattern(_pattern_string)
     "C syntax string literal"
+    multiline_string = pattern(_pattern_string_multiline)
+    "C syntax string literal that also allows line breaks"
     cmdstr = pattern(_pattern_cmdstr)
     "Windows command line escaped string literal"
     ps1str = pattern(_pattern_ps1str)
