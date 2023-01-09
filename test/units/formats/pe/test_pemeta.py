@@ -90,3 +90,12 @@ class TestPEMeta(TestUnitBase):
         self.assertIn('Serial', result['Signature'])
         self.assertEqual(result['Signature']['ProgramName'], 'Microsoft Windows')
         self.assertEqual(result['Signature']['Subject'], 'Microsoft Windows')
+
+    def test_all_pids_can_be_shortened(self):
+        from refinery.units.formats.pe.pemeta import RICH, ShortPID, get_rich_short_pid
+        pids = set()
+        for r in RICH['pid'].values():
+            pids.add(get_rich_short_pid(r))
+        self.assertSetEqual(pids, set(ShortPID))
+        with self.assertRaises(LookupError):
+            get_rich_short_pid('BOGUS')
