@@ -69,6 +69,60 @@ with resources.path(data, 'rich.json') as path:
         RICH = json.load(stream)
 
 
+class ShortPID(str, Enum):
+    UTC = 'STDLIB' # STDLIBC
+    RES = 'CVTRES' # Cvt/RES
+    OMF = 'CVTOMF' # Cvt/OMF
+    PGD = 'CVTPGD' # Cvt/PGD
+    LNK = 'LINKER' # Linker
+    EXP = 'EXPORT' # Exports
+    IMP = 'IMPORT' # Imports
+    OBJ = 'OBJECT' # Object
+    PHX = 'PHOENX' # Phoenix
+    ASM = 'MASM'   # MASM
+    MIL = 'MSIL'   # MSIL
+    VB6 = 'VB6OBJ' # VB6
+
+    def __str__(self):
+        width = max(len(item.value) for item in self.__class__)
+        return F'{self.value:>{width}}'
+
+
+def get_rich_short_pid(pid: str) -> ShortPID:
+    pid = pid.upper()
+    if pid.startswith('UTC'):
+        return ShortPID.UTC
+    if pid.startswith('CVTRES'):
+        return ShortPID.RES
+    if pid.startswith('CVTOMF'):
+        return ShortPID.OMF
+    if pid.startswith('CVTPGD'):
+        return ShortPID.PGD
+    if pid.startswith('LINKER'):
+        return ShortPID.LNK
+    if pid.startswith('EXPORT'):
+        return ShortPID.EXP
+    if pid.startswith('IMPORT'):
+        return ShortPID.IMP
+    if pid.startswith('IMPLIB'):
+        return ShortPID.IMP
+    if pid.startswith('ALIASOBJ'):
+        return ShortPID.OBJ
+    if pid.startswith('RESOURCE'):
+        return ShortPID.RES
+    if pid.startswith('PHX'):
+        return ShortPID.PHX
+    if pid.startswith('PHOENIX'):
+        return ShortPID.PHX
+    if pid.startswith('MASM'):
+        return ShortPID.ASM
+    if pid.startswith('ILASM'):
+        return ShortPID.MIL
+    if pid.startswith('VISUALBASIC'):
+        return ShortPID.VB6
+    raise LookupError(pid)
+
+
 def get_rich_info(vid: int) -> VersionInfo:
     pid = vid >> 0x10
     ver = vid & 0xFFFF
@@ -344,7 +398,8 @@ class pemeta(Unit):
                     continue
                 pid = info.pid.upper()
                 if self.args.tabular:
-                    rich.append(F'[{idv:08x}] {count:>0{cw}d} {pid:<{pw}} {info.ver}')
+                    short_pid = get_rich_short_pid(pid)
+                    rich.append(F'[{idv:08x}] {count:>0{cw}d} {short_pid!s} {info.ver}')
                 else:
                     rich.append({
                         'Counter': count,
