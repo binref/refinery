@@ -391,7 +391,6 @@ class pemeta(Unit):
             if self.args.tabular:
                 ii = filter(None, (get_rich_info(idv) for idv in it[0::2]))
                 cw = max(len(F'{c:d}') for c in it[1::2])
-                pw = max(len(i.pid) for i in ii)
             for idv, count in zip(it[0::2], it[1::2]):
                 info = get_rich_info(idv)
                 if not info:
