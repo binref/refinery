@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Tuple, Dict, List, Optional
+from __future__ import annotations
+from typing import List, Dict, Tuple, Callable, Optional
 
 import enum
-import pefile
 import struct
-import json
 
 from refinery.units.formats import UnpackResult, PathExtractorUnit, Arg
+
+from refinery.lib import lief
 from refinery.lib.lcid import LCID
 from refinery.lib.structures import Struct, StructReader
+from refinery.lib.types import ByteStr
 
 
 class RSRC(enum.IntEnum):
@@ -69,55 +71,49 @@ class perc(PathExtractorUnit):
     ):
         super().__init__(*paths, pretty=pretty, **kwargs)
 
-    def _get_icon_dir(self, pe: pefile.PE):
-        try:
-            group, = (e for e in pe.DIRECTORY_ENTRY_RESOURCE.entries if e.id == RSRC.ICON_GROUP.value)
-            group = group.directory.entries[0].directory.entries[0].data.struct
-            return GRPICONDIR(pe.get_data(group.OffsetToData, group.Size))
-        except Exception:
-            return None
+    def _get_icon_dir(self, pe: lief.PE.Binary):
+        for manifest_entry in pe.resources.childs:
+            if manifest_entry.id != RSRC.ICON_GROUP.value:
+                continue
+            child: lief.PE.ResourceData = manifest_entry.childs[0].childs[0]
+            return GRPICONDIR(bytearray(child.content))
 
-    def _search(self, pe: pefile.PE, directory, level=0, *parts):
-        if level >= 3:
-            self.log_warn(F'unexpected resource tree level {level + 1:d}')
-        for entry in directory.entries:
-            if entry.name:
+    def _search(self, pe: lief.PE.Binary, directory: lief.PE.ResourceDirectory, *parts):
+        if directory.depth >= 3:
+            self.log_warn(F'unexpected resource tree level {directory.depth + 1:d}')
+        for entry in directory.childs:
+            entry: lief.PE.ResourceData
+            if entry.has_name:
                 identifier = str(entry.name)
-            elif level == 0 and entry.id in iter(RSRC):
+            elif directory.depth == 0 and entry.id in iter(RSRC):
                 identifier = RSRC(entry.id)
             elif entry.id is not None:
                 identifier = entry.id
             else:
-                self.log_warn(F'resource entry has name {entry.name} and id {entry.id} at level {level + 1:d}')
+                self.log_warn(F'resource entry has name {entry.name} and id {entry.id} at level {directory.depth + 1:d}')
                 continue
-            if entry.struct.DataIsDirectory:
-                yield from self._search(pe, entry.directory, level + 1, *parts, identifier)
+            if entry.is_directory:
+                yield from self._search(pe, entry, *parts, identifier)
             else:
-                rva = entry.data.struct.OffsetToData
-                size = entry.data.struct.Size
+                def extract(_=pe, e=entry):
+                    return bytearray(e.content)
                 path = '/'.join(str(p) for p in (*parts, identifier))
-                extract = None
                 if self.args.pretty:
                     if parts[0] is RSRC.BITMAP:
-                        extract = self._handle_bitmap(pe, rva, size)
+                        extract = self._handle_bitmap(extract)
                     elif parts[0] is RSRC.ICON:
-                        extract = self._handle_icon(pe, parts, rva, size)
-                    elif parts[0] is RSRC.STRING:
-                        extract = self._handle_strings(pe, parts, rva, size)
-                if extract is None:
-                    def extract(pe=pe):
-                        return pe.get_data(rva, size)
+                        extract = self._handle_icon(pe, extract, parts)
                 yield UnpackResult(
                     path,
                     extract,
-                    offset=pe.get_offset_from_rva(rva),
-                    lcid=self._get_lcid(entry.data),
+                    lcid=self._get_lcid(entry),
+                    offset=entry.offset,
                 )
 
     def _get_lcid(self, node_data) -> Optional[str]:
         try:
-            pid = node_data.lang or 0
-            sid = node_data.sublang or 0
+            pid = node_data.id & 0x3FF
+            sid = node_data.id >> 0x0A
         except AttributeError:
             return None
         try:
@@ -127,65 +123,53 @@ class perc(PathExtractorUnit):
         lcid = pid.get(sid, 0)
         return LCID.get(lcid)
 
-    def _handle_strings(self, pe: pefile.PE, parts: Tuple[RSRC, int, int], rva: int, size: int):
-        def extract(pe=pe):
-            self.log_debug(parts)
-            base = (parts[1] - 1) << 4
-            reader = StructReader(pe.get_data(rva, size))
-            table = {}
-            index = 0
-            while not reader.eof:
-                string = reader.read_exactly(reader.u16() * 2)
-                if not string:
-                    break
-                key = F'{base + index:04X}'
-                table[key] = string.decode('utf-16le')
-                index += 1
-            return json.dumps(table, indent=4).encode(self.codec)
-        return extract
-
-    def _handle_bitmap(self, pe: pefile.PE, rva: int, size: int):
-        def extract(pe=pe):
-            bitmap = pe.get_data(rva, size)
+    def _handle_bitmap(self, extract_raw_data: Callable[[], ByteStr]) -> ByteStr:
+        def extract():
+            bitmap = extract_raw_data()
             total = (len(bitmap) + 14).to_bytes(4, 'little')
             return B'BM' + total + B'\0\0\0\0\x36\0\0\0' + bitmap
         return extract
 
-    def _handle_icon(self, pe: pefile.PE, parts: Tuple[RSRC, int, int], rva: int, size: int):
+    def _handle_icon(
+        self,
+        pe: lief.PE.Binary,
+        extract_raw_data: Callable[[], ByteStr],
+        parts: Tuple[RSRC, int, int]
+    ) -> ByteStr:
         try:
             icondir = self._get_icon_dir(pe)
             index = int(parts[1]) - 1
             info = icondir.entries[index]
-            icon = pe.get_data(rva, size)
-        except Exception:
-            return None
-        if icon.startswith(B'(\0\0\0'):
-            header = struct.pack('<HHHBBBBHHII',
-                0,
-                1,
-                1,
-                info.width,
-                info.height,
-                info.color_count,
-                0,
-                info.planes,
-                info.bit_count,
-                len(icon),
-                0x16
-            )
-            icon = header + icon
-        return icon
+        except Exception as E:
+            self.log_warn(F'unable to generate icon header: {E!s}')
+            return extract_raw_data
+
+        def extract(info=info):
+            icon = extract_raw_data()
+            if icon.startswith(B'(\0\0\0'):
+                header = struct.pack('<HHHBBBBHHII',
+                    0,
+                    1,
+                    1,
+                    info.width,
+                    info.height,
+                    info.color_count,
+                    0,
+                    info.planes,
+                    info.bit_count,
+                    len(icon),
+                    0x16
+                )
+                icon = header + icon
+            return icon
+
+        return extract
 
     def unpack(self, data):
-        pe = pefile.PE(data=data, fast_load=True)
-        pe.parse_data_directories(
-            directories=pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE'])
-        try:
-            rsrc = pe.DIRECTORY_ENTRY_RESOURCE
-        except AttributeError:
-            pass
-        else:
-            yield from self._search(pe, rsrc)
+        pe = lief.load_pe_fast(data, parse_rsrc=True)
+        if not pe.has_resources:
+            return
+        yield from self._search(pe, pe.resources)
 
     def _mktbl(ids: List[Tuple[int, int, int]]) -> Dict[int, Dict[int, int]]:
         table = {}
