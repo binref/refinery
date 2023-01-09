@@ -389,7 +389,6 @@ class pemeta(Unit):
         if rich_header:
             it = rich_header.get('values', [])
             if self.args.tabular:
-                ii = filter(None, (get_rich_info(idv) for idv in it[0::2]))
                 cw = max(len(F'{c:d}') for c in it[1::2])
             for idv, count in zip(it[0::2], it[1::2]):
                 info = get_rich_info(idv)
