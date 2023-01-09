@@ -13,22 +13,40 @@ from __future__ import annotations
 import sys
 import itertools
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import (
+    Callable,
+    cast,
+    Generator,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    ParamSpec,
+    TYPE_CHECKING,
+    Type,
+    TypeVar,
+    Union,
+)
+
 from os import devnull as DEVNULL
 from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
 from uuid import uuid4
 
+import lief
+import lief.MachO
+import lief.PE
+import lief.ELF
+
 from macholib.MachO import load_command, MachO, MachOHeader
 from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
 from elftools.elf.elffile import ELFFile
 
-from refinery.lib.structures import MemoryFile
+from refinery.lib.structures import MemoryFile, MemoryFileRO
 from refinery.lib.types import INF, ByteStr
 
 if TYPE_CHECKING:
-    from typing import Type, Callable, ParamSpec, TypeVar, Generator, Optional, Union, Iterable, List
     _T = TypeVar('_T')
     _P = ParamSpec('_P')
 
@@ -309,7 +327,7 @@ class Executable(ABC):
     _type: ET
 
     @classmethod
-    def Load(cls: Type[_T], data: ByteStr, base: Optional[int] = None) -> _T:
+    def Load(cls: Type[_T], data: ByteStr, base: Optional[int] = None, use_lief: bool = True) -> _T:
         """
         Uses the `refinery.lib.executable.exeroute` function to parse the input data with one of
         the following specializations of this class:
@@ -318,6 +336,12 @@ class Executable(ABC):
         - `refinery.lib.executable.ExecutableMachO`
         - `refinery.lib.executable.ExecutablePE`
         """
+        if use_lief:
+            with MemoryFileRO(data) as stream:
+                parsed = lief.parse(stream)
+            if parsed is None:
+                raise ValueError('LIEF was unable to parse the input.')
+            return LIEF(parsed, data, base)
         return exeroute(
             data,
             ExecutableELF,
@@ -579,6 +603,122 @@ class ExecutableCodeBlob(Executable):
     def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for s in self.sections():
             yield s.as_segment(populate_sections=populate_sections)
+
+
+class LIEF(Executable):
+
+    _head: Union[lief.MachO.Binary, lief.ELF.Binary, lief.PE.Binary]
+    _type: Union[ET.PE, ET.ELF, ET.MachO]
+
+    @property
+    def _lh(self) -> lief.Binary:
+        return self._head.abstract
+
+    @property
+    def _type(self):
+        EF = lief.Binary.FORMATS
+        HF = self._lh.format
+        if HF is EF.UNKNOWN:
+            raise AttributeError('Unknown executable type.')
+        return {EF.MACHO: ET.MachO, EF.PE: ET.PE, EF.ELF: ET.ELF}[HF]
+
+    def image_defined_base(self) -> int:
+        return self._head.imagebase
+
+    def byte_order(self) -> BO:
+        LE = lief.ENDIANNESS
+        return {
+            LE.BIG    : BO.BE,
+            LE.LITTLE : BO.LE,
+        }.get(self._lh.header.endianness, BO.LE)
+
+    def arch(self) -> Arch:
+        LA = lief.ARCHITECTURES
+        LM = lief.MODES
+        arch = self._lh.header.architecture
+        mode = self._lh.header.modes
+        if arch == LA.NONE:
+            raise ValueError('No architecture set.')
+        elif arch == LA.ARM:
+            return Arch.ARM32
+        elif arch == LA.ARM64:
+            return Arch.ARM64
+        elif arch == LA.MIPS:
+            if LM.M16 in mode:
+                return Arch.MIPS16
+            if mode & {LM.M32, LM.MIPS32, LM.MIPS32R6}:
+                return Arch.MIPS32
+            if mode & {LM.M64, LM.MIPS64, LM.MIPSGP64}:
+                return Arch.MIPS64
+        elif arch == LA.PPC:
+            if LM.M32 in mode:
+                return Arch.PPC32
+            if LM.M64 in mode:
+                return Arch.PPC64
+        elif arch == LA.SPARC:
+            if LM.M32 in mode:
+                return Arch.SPARC32
+            if LM.M64 in mode:
+                return Arch.SPARC64
+        elif arch == LA.X86:
+            if LM.M32 in mode:
+                return Arch.X32
+            if LM.M64 in mode:
+                return Arch.X64
+        raise NotImplementedError
+
+    def _convert_section(self, section: lief.Section) -> Section:
+        p_lower = section.offset
+        p_upper = p_lower + section.size
+
+        v_lower = section.virtual_address
+        if self._type == ET.PE:
+            v_lower += self.image_defined_base()
+        v_lower = self._rebase_img_to_usr(v_lower)
+        try:
+            alignment = section.alignment
+        except AttributeError:
+            v_upper = v_lower + section.size
+        else:
+            v_upper = v_lower + align(alignment, section.size)
+
+        return Section(
+            self.ascii(section.name),
+            Range(p_lower, p_upper),
+            Range(v_lower, v_upper),
+            synthetic=False,
+        )
+
+    def _sections(self) -> Generator[Section, None, None]:
+        it = cast(Iterable[lief.Section], self._lh.sections)
+        for section in it:
+            if section.size == 0:
+                continue
+            yield self._convert_section(section)
+
+    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+        if isinstance(self._head, lief.PE.Binary):
+            for section in self.sections():
+                yield section.as_segment(populate_sections)
+        else:
+            it = cast(Iterable[Union[
+                lief.ELF.Segment,
+                lief.MachO.SegmentCommand
+            ]], self._head.segments)
+            for segment in it:
+                p_lower = segment.file_offset
+                try:
+                    p_upper = p_lower + segment.file_size
+                except AttributeError:
+                    p_upper = p_lower + segment.physical_size
+                v_lower = segment.virtual_address
+                v_lower = self._rebase_usr_to_img(v_lower)
+                v_upper = v_lower + segment.virtual_size
+                if not populate_sections:
+                    sections = None
+                else:
+                    sections = [self._convert_section(section) for section in segment.sections]
+                yield Segment(Range(p_lower, p_upper), Range(v_lower, v_upper), sections)
 
 
 class ExecutablePE(Executable):
