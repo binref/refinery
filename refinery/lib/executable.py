@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NamedTuple
 from os import devnull as DEVNULL
 from abc import ABC, abstractmethod
-from enum import auto, IntEnum, Enum
+from enum import Enum
 from functools import lru_cache
 
 from macholib.MachO import MachO
@@ -142,18 +142,30 @@ class Location(NamedTuple):
         return F'<{self.__class__.__name__}:{self!s}>'
 
 
-class Arch(IntEnum):
-    X8632 = auto()
-    X8664 = auto()
-    ARM32 = auto()
-    ARM64 = auto()
-    MIPS16 = auto()
-    MIPS32 = auto()
-    MIPS64 = auto()
-    PPC32 = auto()
-    PPC64 = auto()
-    SPARC32 = auto()
-    SPARC64 = auto()
+class ArchItem(NamedTuple):
+    id: int
+    pointer_size: int
+
+
+def _arch_item(pointer_size):
+    counter = getattr(_arch_item, 'counter', 0)
+    result = ArchItem(counter, pointer_size)
+    _arch_item.counter = counter + 1
+    return result
+
+
+class Arch(ArchItem, Enum):
+    X8632 = _arch_item(32)
+    X8664 = _arch_item(64)
+    ARM32 = _arch_item(32)
+    ARM64 = _arch_item(64)
+    MIPS16 = _arch_item(16)
+    MIPS32 = _arch_item(32)
+    MIPS64 = _arch_item(64)
+    PPC32 = _arch_item(32)
+    PPC64 = _arch_item(64)
+    SPARC32 = _arch_item(32)
+    SPARC64 = _arch_item(64)
 
 
 class LT(str, Enum):
@@ -285,19 +297,7 @@ class Executable(ABC):
 
     @property
     def pointer_size(self) -> int:
-        return {
-            Arch.X8632   : 32,
-            Arch.X8664   : 64,
-            Arch.ARM32   : 32,
-            Arch.ARM64   : 64,
-            Arch.MIPS16  : 16,
-            Arch.MIPS32  : 32,
-            Arch.MIPS64  : 64,
-            Arch.PPC32   : 32,
-            Arch.PPC64   : 64,
-            Arch.SPARC32 : 32,
-            Arch.SPARC64 : 64,
-        }[self.arch()]
+        return self.arch().pointer_size
 
     def location_from_address(self, address: int) -> Location:
         return self.lookup_location(address, LT.VIRTUAL)
