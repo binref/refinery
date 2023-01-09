@@ -15,22 +15,40 @@ import sys
 import re
 import itertools
 
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from typing import (
+    Callable,
+    cast,
+    Generator,
+    ClassVar,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    ParamSpec,
+    TYPE_CHECKING,
+    Type,
+    TypeVar,
+    Union,
+)
+
 from os import devnull as DEVNULL
 from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
 from uuid import uuid4
 
-from macholib.MachO import load_command, MachO, MachOHeader
-from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
-from elftools.elf.elffile import ELFFile, SymbolTableSection
+try:
+    from refinery.lib import lief
+except ImportError:
+    from macholib.MachO import MachO, MachOHeader
+    from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
+    from elftools.elf.elffile import ELFFile, SymbolTableSection
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.types import INF, ByteStr
 
 if TYPE_CHECKING:
-    from typing import Type, Callable, ParamSpec, TypeVar, Generator, Optional, Union, Iterable, List
+    from macholib.MachO import load_command
     _T = TypeVar('_T')
     _P = ParamSpec('_P')
 
@@ -345,14 +363,9 @@ class Executable(ABC):
         - `refinery.lib.executable.ExecutableMachO`
         - `refinery.lib.executable.ExecutablePE`
         """
-        return exeroute(
-            data,
-            ExecutableELF,
-            ExecutableMachO,
-            ExecutablePE,
-            data,
-            base,
-        )
+        if (parsed := lief.load(data)) is None:
+            raise ValueError('LIEF was unable to parse the input.')
+        return LIEF(parsed, data, base)
 
     def __init__(self, head: Union[PEFile, ELFFile, MachO], data: ByteStr, base: Optional[int] = None):
         self._data = data
@@ -636,6 +649,170 @@ class ExecutableCodeBlob(Executable):
     def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for s in self.sections():
             yield s.as_segment(populate_sections=populate_sections)
+
+
+class LIEF(Executable):
+
+    _head: Union[lief.MachO.Binary, lief.MachO.FatBinary, lief.ELF.Binary, lief.PE.Binary]
+    _type: Union[ET.PE, ET.ELF, ET.MachO]
+
+    @property
+    def _lh(self) -> lief.Binary:
+        return self._first_header.abstract
+
+    @property
+    def _first_header(self) -> Union[lief.MachO.Binary, lief.ELF.Binary, lief.PE.Binary]:
+        head = self._head
+        if isinstance(self._head, lief.MachO.FatBinary):
+            head = head.at(0)
+        return head
+
+    @property
+    def _type(self):
+        EF = lief.Binary.FORMATS
+        HF = self._lh.format
+        if HF is EF.UNKNOWN:
+            raise AttributeError('Unknown executable type.')
+        return {EF.MACHO: ET.MachO, EF.PE: ET.PE, EF.ELF: ET.ELF}[HF]
+
+    def image_defined_base(self) -> int:
+        return self._lh.imagebase
+
+    def byte_order(self) -> BO:
+        LE = lief.Header.ENDIANNESS
+        return {
+            LE.BIG    : BO.BE,
+            LE.LITTLE : BO.LE,
+        }.get(self._lh.header.endianness, BO.LE)
+
+    def arch(self) -> Arch:
+        LA = lief.Header.ARCHITECTURES
+        LM = lief.Header.MODES
+        arch = self._lh.header.architecture
+        mode = self._lh.header.modes
+        if arch == LA.UNKNOWN:
+            raise ValueError('No architecture set.')
+        elif arch == LA.ARM:
+            return Arch.ARM32
+        elif arch == LA.ARM64:
+            return Arch.ARM64
+        elif arch == LA.MIPS:
+            if LM.BITS_16 == mode:
+                return Arch.MIPS16
+            if LM.BITS_32 == mode:
+                return Arch.MIPS32
+            if LM.BITS_64 == mode:
+                return Arch.MIPS64
+        elif arch == LA.PPC:
+            if LM.BITS_32 == mode:
+                return Arch.PPC32
+            if LM.BITS_64 == mode:
+                return Arch.PPC64
+        elif arch == LA.SPARC:
+            if LM.BITS_32 == mode:
+                return Arch.SPARC32
+            if LM.BITS_64 == mode:
+                return Arch.SPARC64
+        elif arch == LA.X86_64:
+            assert LM.BITS_64 == mode
+            return Arch.X64
+        elif arch == LA.X86:
+            if LM.BITS_32 == mode:
+                return Arch.X32
+            if LM.BITS_64 == mode:
+                return Arch.X64
+        raise NotImplementedError
+
+    def _symbols(self) -> Generator[Symbol, None, None]:
+        yield Symbol(self._lh.entrypoint, is_entry=True)
+        for symbol in cast(Iterable[lief.Symbol], self._lh.symbols):
+            yield Symbol(symbol.value, symbol.name, size=symbol.size)
+
+    def _convert_section(self, section: lief.Section, segment_name: Optional[str] = None) -> Section:
+        p_lower = section.offset
+        p_upper = p_lower + section.size
+
+        v_lower = section.virtual_address
+        if self._type == ET.PE:
+            v_lower += self.image_defined_base()
+        v_lower = self.rebase_img_to_usr(v_lower)
+        try:
+            alignment = section.alignment
+        except AttributeError:
+            v_upper = v_lower + section.size
+        else:
+            v_upper = v_lower + align(alignment, section.size)
+        name = self.ascii(section.name)
+        if segment_name is not None:
+            name = F'{segment_name}/{name}'
+        return Section(
+            name,
+            Range(p_lower, p_upper),
+            Range(v_lower, v_upper),
+            synthetic=False,
+        )
+
+    @property
+    def is_pe(self):
+        return isinstance(self._head, lief.PE.Binary)
+
+    @property
+    def is_elf(self):
+        return isinstance(self._head, lief.ELF.Binary)
+
+    @property
+    def is_macho(self):
+        return isinstance(self._head, (lief.MachO.Binary, lief.MachO.FatBinary))
+
+    def _sections(self) -> Generator[Section, None, None]:
+        if self.is_pe:
+            it = cast(Iterable[lief.Section], self._lh.sections)
+            for section in it:
+                if section.size == 0:
+                    continue
+                yield self._convert_section(section)
+            return
+        if self.is_elf:
+            for section in self._lh.sections:
+                if section.size > 0:
+                    yield self._convert_section(section)
+            return
+        for segment in self.segments(populate_sections=True):
+            if segment.name:
+                yield segment.as_section()
+            if self.is_pe:
+                return
+            yield from segment.sections
+
+    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+        if self.is_pe:
+            for section in self.sections():
+                yield section.as_segment(populate_sections)
+        else:
+            it = cast(Iterable[Union[
+                lief.ELF.Segment,
+                lief.MachO.SegmentCommand
+            ]], self._first_header.segments)
+            for segment in it:
+                p_lower = segment.file_offset
+                try:
+                    p_upper = p_lower + segment.file_size
+                except AttributeError:
+                    p_upper = p_lower + segment.physical_size
+                v_lower = segment.virtual_address
+                v_lower = self.rebase_usr_to_img(v_lower)
+                v_upper = v_lower + segment.virtual_size
+                try:
+                    name = segment.name
+                except AttributeError:
+                    name = None
+                else:
+                    name = self.ascii(name)
+                if not populate_sections:
+                    sections = None
+                else:
+                    sections = [self._convert_section(section, name) for section in segment.sections]
+                yield Segment(Range(p_lower, p_upper), Range(v_lower, v_upper), sections, name)
 
 
 class ExecutablePE(Executable):
