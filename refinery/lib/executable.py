@@ -16,11 +16,13 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
 
+import lief
+
 from macholib.MachO import MachO
 from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
 from elftools.elf.elffile import ELFFile
 
-from refinery.lib.structures import MemoryFile
+from refinery.lib.structures import MemoryFile, MemoryFileRO
 from refinery.lib.types import INF, ByteStr
 
 if TYPE_CHECKING:
@@ -231,7 +233,11 @@ class Executable(ABC):
     _type: ET
 
     @classmethod
-    def Load(self, data: ByteStr, base: Optional[int] = None) -> Executable:
+    def Load(self, data: ByteStr, base: Optional[int] = None, use_lief: bool = True) -> Executable:
+        if use_lief:
+            with MemoryFileRO(data) as stream:
+                parsed = lief.parse(stream)
+            return LIEF(parsed, data, base)
         return exeroute(
             data,
             ExecutableELF,
@@ -356,6 +362,101 @@ class Executable(ABC):
     @abstractmethod
     def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         ...
+
+
+class LIEF(Executable):
+
+    _head: Union[lief.MachO, lief.ELF, lief.PE]
+    _type: Union[ET.PE, ET.ELF, ET.MachO]
+
+    @property
+    def _type(self):
+        ef = lief.EXE_FORMATS
+        hf = self._head.format
+        if hf is ef.UNKNOWN:
+            raise AttributeError('Unknown executable type.')
+        return {ef.MACHO: ET.MachO, ef.PE: ET.PE, ef.ELF: ET.ELF}[hf]
+
+    def image_defined_base(self) -> int:
+        return self._head.imagebase
+
+    def arch(self) -> Arch:
+        la = lief.ARCHITECTURE
+        lm = lief.MODES
+        arch = self._head.header.architecture
+        mode = self._head.header.modes
+        if arch is la.NONE:
+            raise ValueError('No architecture set.')
+        elif arch is la.ARM:
+            return Arch.ARM32
+        elif arch is la.ARM64:
+            return Arch.ARM64
+        elif arch is la.MIPS:
+            if mode is lm.M16:
+                return Arch.MIPS16
+            if mode in (lm.M32, lm.MIPS32, lm.MIPS32R6):
+                return Arch.MIPS32
+            if mode is (lm.M64, lm.MIPS64, lm.MIPSGP64):
+                return Arch.MIPS64
+        elif arch is la.PPC:
+            if mode is lm.M32:
+                return Arch.PPC32
+            if mode is lm.M64:
+                return Arch.PPC64
+        elif arch is la.SPARC:
+            if mode is lm.M32:
+                return Arch.SPARC32
+            if mode is lm.M64:
+                return Arch.SPARC64
+        elif arch is la.X86:
+            if mode is lm.M32:
+                return Arch.X8632
+            if mode is lm.M64:
+                return Arch.X8664
+        raise NotImplementedError
+
+    def _convert_section(self, section) -> Section:
+        p_lower = section.offset
+        p_upper = p_lower + section.size
+
+        v_lower = section.virtual_address + self.image_defined_base()
+        v_lower = self._rebase_img_to_usr(v_lower)
+        try:
+            alignment = section.alignment
+        except AttributeError:
+            v_upper = v_lower + section.size
+        else:
+            v_upper = v_lower + align(alignment, section.size)
+
+        return Section(
+            self._ascii(section.name),
+            Range(p_lower, p_upper),
+            Range(v_lower, v_upper),
+        )
+
+    def sections(self) -> Generator[Section, None, None]:
+        for section in self._head.sections:
+            yield self._convert_section(section)
+
+    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+        if self._type is ET.PE:
+            for section in self.sections():
+                yield section.as_segment(populate_sections)
+        else:
+            for segment in self._head.concrete.segments:
+                p_lower = segment.file_offset
+                try:
+                    p_upper = p_lower + segment.file_size
+                except AttributeError:
+                    p_upper = p_lower + segment.physical_size
+                v_lower = segment.virtual_address
+                v_lower = self._rebase_usr_to_img(v_lower)
+                v_upper = v_lower + segment.virtual_size
+                if not populate_sections:
+                    sections = None
+                else:
+                    sections = [self._convert_section(section) for section in segment.sections]
+                yield Segment(Range(p_lower, p_upper), Range(v_lower, v_upper), sections)
 
 
 class ExecutablePE(Executable):
