@@ -43,12 +43,13 @@ def decompress_peek(buffer, size=512) -> Optional[bytes]:
 
 
 def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
+    main: xtpyi = xtpyi
     code_objects = {}
     sys_stderr = sys.stderr
     sys.stderr = open(os.devnull, 'w')
     try:
         version, timestamp, magic_int, codez, is_pypy, _, _ = \
-            xtpyi._xdis.load.load_module_from_file_object(MemoryFile(buffer), file_name, code_objects)
+            main._xdis.load.load_module_from_file_object(MemoryFile(buffer), file_name, code_objects)
     finally:
         sys.stderr.close()
         sys.stderr = sys_stderr
@@ -58,13 +59,13 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
     python = ''
     for code in codez:
         for name, engine in {
-            'decompyle3': xtpyi._decompyle3,
-            'uncompyle6': xtpyi._uncompyle6,
+            'decompyle3': main._decompyle3,
+            'uncompyle6': main._uncompyle6,
         }.items():
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
                 try:
                     engine.main.decompile(
-                        code,
+                        co=code,
                         bytecode_version=version,
                         out=output,
                         timestamp=timestamp,
@@ -80,16 +81,16 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
                     python = output.getvalue()
                     break
     if python:
-        return python.encode(xtpyi.codec)
+        return python.encode(main.codec)
     embedded = bytes(buffer | carve('printable', single=True))
     if len(buffer) - len(embedded) < 0x20:
         return embedded
     disassembly = MemoryFile()
-    with io.TextIOWrapper(disassembly, xtpyi.codec, newline='\n') as output:
+    with io.TextIOWrapper(disassembly, main.codec, newline='\n') as output:
         output.write(errors)
         output.write('# Generating Disassembly:\n\n')
         for code in codez:
-            instructions = list(xtpyi._xdis.std.Bytecode(code))
+            instructions = list(main._xdis.std.Bytecode(code))
             width_offset = max(len(str(i.offset)) for i in instructions)
             for i in instructions:
                 opname = i.opname.replace('_', '.').lower()
@@ -472,15 +473,16 @@ class xtpyi(ArchiveUnit):
         import xdis
         A, B, C, *_ = sys.version_info
         version = F'{A}.{B}.{C}'
+        canonic = F'{A}.{B}'
         if version not in xdis.magics.canonic_python_version:
             class opcode_dummy:
+                version = float(canonic)
                 def __init__(self, name): self.name = name
                 def __getattr__(self, key): return opcode_dummy(F'{self.name}.{key}')
                 def __call__(self, *a, **k): return None
                 def __str__(self): return self.name
                 def __repr__(self): return self.name
             import importlib
-            canonic = F'{A}.{B}'
             magic = importlib.util.MAGIC_NUMBER
             xdis.magics.add_magic_from_int(xdis.magics.magic2int(magic), version)
             xdis.magics.by_magic.setdefault(magic, set()).add(version)
