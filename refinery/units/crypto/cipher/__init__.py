@@ -312,15 +312,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             self.log_info('initial vector:', iv.hex())
         if self.args.mode:
             optionals['mode'] = self.args.mode.value
-        try:
-            return super()._get_cipher_instance(**optionals)
-        except TypeError:
-            if 'iv' not in optionals:
-                raise
-            del optionals['iv']
-            if self.iv:
-                self.log_info('ignoring iv for mode', self.args.mode)
-            return self._cipher_object_factory.new(key=self.args.key, **optionals)
+        return super()._get_cipher_instance(**optionals)
 
 
 class LatinCipherUnit(StreamCipherUnit, abstract=True):
