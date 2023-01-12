@@ -38,11 +38,30 @@ class HTMLNode(XMLNodeBase):
 
 class HTMLTreeParser(HTMLParser):
 
+    _SELF_CLOSING_TAGS = {
+        'area',
+        'base',
+        'br',
+        'col',
+        'embed',
+        'hr',
+        'img',
+        'input',
+        'link',
+        'meta',
+        'param',
+        'source',
+        'track',
+        'wb',
+    }
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.root = self.tos = HTMLNode(_HTML_DATA_ROOT_TAG)
 
     def handle_starttag(self, tag: str, attributes):
+        if tag in self._SELF_CLOSING_TAGS:
+            return
         node = HTMLNode(tag, self.tos, self.get_starttag_text(), attributes={
             key: value for key, value in attributes if key and value})
         children = self.tos.children
