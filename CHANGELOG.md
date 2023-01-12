@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.5.4
+- The `xthtml` unit can now extract attributes of HTML tags.
+- The `rijndael` cipher unit was added.
+
 ## Version 0.5.3 -- bugfix release
 
 ## Version 0.5.2
