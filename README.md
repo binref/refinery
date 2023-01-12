@@ -67,9 +67,14 @@ The most straightforward way to install and update refinery is via pip:
 pip install -U binary-refinery
 ```
 If you want to choose a prefix for the installed commands, you have to specify it via the environment variable `REFINERY_PREFIX`.
-For example, the following command will install refinery into the current Python environment with prefix `r.`:
-```
+For example, the following command will install refinery into the current Python environment with prefix `r.` on Linux:
+```bash
 REFINERY_PREFIX=r. pip install -U binary-refinery
+```
+On Windows, you would have to run the following commands:
+```batch
+set REFINERY_PREFIX=r.
+pip install -U binary-refinery
 ```
 Specifying the special prefix `!` will have the effect that no shell commands are created at all,
 and binary refinery will be installed only as a library.
