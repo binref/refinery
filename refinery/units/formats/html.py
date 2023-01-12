@@ -119,8 +119,13 @@ class xthtml(PathExtractorUnit):
     The unit processes an HTML document and extracts the contents of all elemnts in the DOM of the
     given tag. The main purpose is to extract scripts from HTML documents.
     """
-    def __init__(self, *paths, outer: Arg.Switch('-o', help='Include the HTML tags for an extracted element.'), **keywords):
-        super().__init__(*paths, outer=outer, **keywords)
+    def __init__(
+        self, *paths,
+        outer: Arg.Switch('-o', help='Include the HTML tags for an extracted element.'),
+        attributes: Arg.Switch('-a', help='Populate chunk metadata with HTML tag attributes.'),
+        **keywords
+    ):
+        super().__init__(*paths, outer=outer, attributes=attributes, **keywords)
 
     def unpack(self, data):
         def tree(root: HTMLNode, *path):
@@ -132,13 +137,17 @@ class xthtml(PathExtractorUnit):
                 return root.recover().encode(self.codec)
 
             tagpath = '/'.join(path)
+            meta = {}
+
+            if self.args.attributes:
+                meta.update(root.attributes)
 
             if root.root:
-                yield UnpackResult(tagpath, inner)
+                yield UnpackResult(tagpath, inner, **meta)
             elif self.args.outer:
-                yield UnpackResult(tagpath, outer)
+                yield UnpackResult(tagpath, outer, **meta)
             else:
-                yield UnpackResult(tagpath, inner)
+                yield UnpackResult(tagpath, inner, **meta)
 
             for k, node in enumerate((n for n in root.children if not n.textual)):
                 yield from tree(node, *path, F'{k}.{node.tag}')
