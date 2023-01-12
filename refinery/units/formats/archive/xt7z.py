@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats.archive import ArchiveUnit
 
+import re
+
 if TYPE_CHECKING:
     from py7zr import SevenZipFile, FileInfo
 
@@ -20,17 +22,24 @@ class xt7z(ArchiveUnit):
         import py7zr.exceptions
         return py7zr
 
-    def unpack(self, data):
+    def unpack(self, data: bytearray):
+        for match in re.finditer(re.escape(B'7z\xBC\xAF\x27\x1C'), data):
+            start = match.start()
+            if start != 0:
+                self.log_info(F'found a header at offset 0x{start:X}, trying to extract from there.')
+            try:
+                yield from self._unpack_from(data, start)
+            except self._py7zr.Bad7zFile:
+                continue
+            else:
+                break
 
+    def _unpack_from(self, data: bytearray, zp: int = 0):
         def mk7z(**keywords):
             return self._py7zr.SevenZipFile(MemoryFile(mv[zp:]), **keywords)
 
         pwd = self.args.pwd
         mv = memoryview(data)
-        zp = max(0, data.find(B'7z\xBC\xAF\x27\x1C'))
-
-        if zp > 0:
-            self.log_warn(F'found header at offset 0x{zp:X}, extracting from there.')
 
         if pwd:
             try:
