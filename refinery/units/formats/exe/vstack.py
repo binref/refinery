@@ -150,10 +150,16 @@ class vstack(Unit):
                 emulator.reg_write(reg, stack_addr + stack_size)
 
         for segment in exe.segments():
-            phys = segment.physical
-            virt = segment.virtual
-            emulator.mem_map(virt.lower, align(block_size, len(virt)))
-            emulator.mem_write(virt.lower, bytes(image[phys.slice()]))
+            pmem = segment.physical
+            vmem = segment.virtual
+            try:
+                emulator.mem_map(vmem.lower, align(block_size, len(vmem)))
+                emulator.mem_write(vmem.lower, bytes(image[pmem.slice()]))
+            except Exception as error:
+                if address in vmem:
+                    raise
+                width = exe.pointer_size // 4
+                self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
         end_of_code = exe.location_from_address(address).virtual.box.upper
 
