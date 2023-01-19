@@ -37,7 +37,7 @@ class xkey(Unit):
         else:
             step = 1
 
-        self.log_debug(F'redeived input range [{bounds.start}:{bounds.stop}:{bounds.step}], using [{start}:{stop}:{step}]')
+        self.log_debug(F'received input range [{bounds.start}:{bounds.stop}:{bounds.step}], using [{start}:{stop}:{step}]')
 
         for length in range(start, stop, step):
             _guess = [Counter(data[j::length]).most_common(1)[0] for j in range(length)]
