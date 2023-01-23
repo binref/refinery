@@ -54,7 +54,7 @@ class rex(RegexUnit, PatternExtractor):
 
     def process(self, data):
         meta = metavars(data)
-        self.log_debug('regular expression:', self.regex)
+        self.log_debug('regular expression:', getattr(self.regex, 'pattern', self.regex))
         transformations = []
         specs: List[bytes] = list(self.args.transformation)
         if not specs:
