@@ -158,7 +158,6 @@ from __future__ import annotations
 import abc
 import copy
 import inspect
-import logging
 import os
 import sys
 
@@ -201,7 +200,7 @@ from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, one, skipfirst, isbuffer
 from refinery.lib.frame import Framed, Chunk
 from refinery.lib.structures import MemoryFile
-from refinery.lib.environment import LogLevel, environment
+from refinery.lib.environment import LogLevel, Logger, environment, logger
 
 
 class RefineryPartialResult(ValueError):
@@ -914,30 +913,14 @@ class Executable(ABCMeta):
     def name(cls) -> str:
         return cls.__name__.strip('_').replace('_', '-')
 
-
-    logging.addLevelName(logging.CRITICAL, 'failure') # noqa
-    logging.addLevelName(logging.ERROR,    'failure') # noqa
-    logging.addLevelName(logging.WARNING,  'warning') # noqa
-    logging.addLevelName(logging.INFO,     'comment') # noqa
-    logging.addLevelName(logging.DEBUG,    'verbose') # noqa
-
     @property
-    def logger(cls) -> logging.Logger:
+    def logger(cls) -> Logger:
         try:
             return cls._logger
         except AttributeError:
             pass
-        cls._logger = logger = logging.getLogger(cls.name)
-        if not logger.hasHandlers():
-            stream = logging.StreamHandler()
-            stream.setFormatter(logging.Formatter(
-                '({asctime}) {levelname} in {name}: {message}',
-                style='{',
-                datefmt='%H:%M:%S'
-            ))
-            logger.addHandler(stream)
-        logger.propagate = False
-        return logger
+        cls._logger = _logger = logger(cls.name)
+        return _logger
 
 
 class DelayedArgumentProxy:
@@ -1154,7 +1137,7 @@ class Unit(UnitBase, abstract=True):
 
     @property
     def logger(self):
-        logger: logging.Logger = self.__class__.logger
+        logger: Logger = self.__class__.logger
         return logger
 
     @property
@@ -1828,7 +1811,7 @@ class Unit(UnitBase, abstract=True):
             from time import process_time
             argv.remove(cls._SECRET_DEBUG_TIMING_FLAG)
             clock = process_time()
-            cls.logger.setLevel(logging.INFO)
+            cls.logger.setLevel(LogLevel.INFO)
             cls.logger.info('starting clock: {:.4f}'.format(clock))
 
         if cls._SECRET_YAPPI_TIMING_FLAG in argv:

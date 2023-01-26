@@ -13,6 +13,9 @@ from enum import IntEnum
 from typing import Any, Optional
 
 
+Logger = logging.Logger
+
+
 class LogLevel(IntEnum):
     """
     An enumeration representing the current log level:
@@ -58,11 +61,22 @@ class LogLevel(IntEnum):
             return -1
 
 
-logging.addLevelName(logging.CRITICAL, 'failure') # noqa
-logging.addLevelName(logging.ERROR,    'failure') # noqa
-logging.addLevelName(logging.WARNING,  'warning') # noqa
-logging.addLevelName(logging.INFO,     'comment') # noqa
-logging.addLevelName(logging.DEBUG,    'verbose') # noqa
+class RefineryFormatter(logging.Formatter):
+
+    NAMES = {
+        logging.CRITICAL : 'failure',
+        logging.ERROR    : 'failure',
+        logging.WARNING  : 'warning',
+        logging.INFO     : 'comment',
+        logging.DEBUG    : 'verbose',
+    }
+
+    def __init__(self, format, **kwargs):
+        super().__init__(format, **kwargs)
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        record.custom_level_name = self.NAMES[record.levelno]
+        return super().formatMessage(record)
 
 
 def logger(name: str) -> logging.Logger:
@@ -72,10 +86,10 @@ def logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
     if not logger.hasHandlers():
         stream = logging.StreamHandler()
-        stream.setFormatter(logging.Formatter(
-            '({asctime}) {levelname} in {name}: {message}',
+        stream.setFormatter(RefineryFormatter(
+            '({asctime}) {custom_level_name} in {name}: {message}',
             style='{',
-            datefmt='%H:%M:%S'
+            datefmt='%H:%M:%S',
         ))
         logger.addHandler(stream)
     logger.propagate = False
