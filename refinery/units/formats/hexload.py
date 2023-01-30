@@ -107,6 +107,7 @@ class hexload(HexViewer):
 
     def reverse(self, data):
         metrics = self._get_metrics(len(data))
-        metrics.fit_to_width(allow_increase=True)
+        if not self.args.width:
+            metrics.fit_to_width(allow_increase=True)
         for line in self.hexdump(data, metrics):
             yield line.encode(self.codec)
