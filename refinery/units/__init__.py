@@ -169,6 +169,7 @@ from collections import OrderedDict
 from typing import (
     Dict,
     Iterable,
+    BinaryIO,
     Sequence,
     Set,
     Type,
@@ -200,7 +201,6 @@ from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, o
 from refinery.lib.frame import Framed, Chunk
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
-from refinery.lib.types import ByteStr, ByteIO
 
 
 class RefineryPartialResult(ValueError):
@@ -1095,8 +1095,6 @@ class Unit(UnitBase, abstract=True):
     optional_dependencies: Optional[Set[str]] = None
     required_dependencies: Optional[Set[str]] = None
 
-    _source: Optional[Union[ByteIO, Unit]]
-
     @staticmethod
     def Requires(distribution: str, optional: bool = True):
         class Requirement(property):
@@ -1354,7 +1352,7 @@ class Unit(UnitBase, abstract=True):
             reversed = reversed | pipeline.pop()
         return reversed
 
-    def __ror__(self, stream: Union[str, ByteIO, ByteString]) -> Unit:
+    def __ror__(self, stream: Union[str, BinaryIO, ByteString]):
         if stream is None:
             return self
         if not isstream(stream):
@@ -1408,11 +1406,7 @@ class Unit(UnitBase, abstract=True):
         ...
 
     @overload
-    def __or__(self, stream: MemoryFile) -> MemoryFile:
-        ...
-
-    @overload
-    def __or__(self, stream: ByteIO) -> ByteIO:
+    def __or__(self, stream: BinaryIO) -> BinaryIO:
         ...
 
     def __or__(self, stream):
@@ -1478,8 +1472,6 @@ class Unit(UnitBase, abstract=True):
 
         if not stream.writable():
             raise ValueError('target stream is not writable')
-
-        stream: ByteIO
 
         self._target = stream
 
@@ -1569,10 +1561,8 @@ class Unit(UnitBase, abstract=True):
 
     def __call__(self, data: Optional[Union[ByteString, Chunk]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
-            stdin: ByteIO
             with MemoryFile() as stdout:
-                pipeline = stdin | self | stdout
-                return pipeline.getvalue()
+                return (stdin | self | stdout).getvalue()
 
     @classmethod
     def labelled(cls, data: Union[Chunk, ByteString], **meta) -> Chunk:
