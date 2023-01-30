@@ -54,6 +54,7 @@ FileTypeMap = {
     'application/vnd.apple.installer+xml': 'mpkg',
     'application/vnd.hp-pcl': 'pcl',
     'application/vnd.lotus-1-2-3': '123',
+    'application/vnd.microsoft.portable-executable': 'exe',
     'application/vnd.mozilla.xul+xml': 'xul',
     'application/vnd.ms-cab-compressed': 'cab',
     'application/vnd.ms-excel': 'xls',
