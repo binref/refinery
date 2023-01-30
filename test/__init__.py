@@ -77,8 +77,4 @@ class TestBase(unittest.TestCase):
 
     def setUp(self):
         random.seed(0xBAADF00D)  # guarantee deterministic 'random' buffers
-        logging.basicConfig(
-            stream=sys.stderr,
-            level=logging.INFO,
-            format='%(message)s'
-        )
+        logging.disable(logging.CRITICAL)
