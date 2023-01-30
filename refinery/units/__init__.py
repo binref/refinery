@@ -169,7 +169,6 @@ from collections import OrderedDict
 from typing import (
     Dict,
     Iterable,
-    BinaryIO,
     Sequence,
     Set,
     Type,
@@ -201,6 +200,10 @@ from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, o
 from refinery.lib.frame import Framed, Chunk
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
+from refinery.lib.types import ByteStr
+
+
+ByteIO = MemoryFile[ByteStr]
 
 
 class RefineryPartialResult(ValueError):
@@ -1352,7 +1355,7 @@ class Unit(UnitBase, abstract=True):
             reversed = reversed | pipeline.pop()
         return reversed
 
-    def __ror__(self, stream: Union[str, BinaryIO, ByteString]):
+    def __ror__(self, stream: Union[str, ByteIO, ByteString]):
         if stream is None:
             return self
         if not isstream(stream):
@@ -1406,7 +1409,7 @@ class Unit(UnitBase, abstract=True):
         ...
 
     @overload
-    def __or__(self, stream: BinaryIO) -> BinaryIO:
+    def __or__(self, stream: ByteIO) -> ByteIO:
         ...
 
     def __or__(self, stream):
@@ -1469,6 +1472,8 @@ class Unit(UnitBase, abstract=True):
                 if stream is str:
                     out = out.decode(self.codec)
                 return stream(out)
+
+        stream: ByteIO
 
         if not stream.writable():
             raise ValueError('target stream is not writable')
@@ -1561,6 +1566,7 @@ class Unit(UnitBase, abstract=True):
 
     def __call__(self, data: Optional[Union[ByteString, Chunk]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
+            stdin: ByteIO
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
 
