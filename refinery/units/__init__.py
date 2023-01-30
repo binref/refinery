@@ -1333,6 +1333,12 @@ class Unit(UnitBase, abstract=True):
     def __pos__(self):
         return self
 
+    def __del__(self):
+        try:
+            self.nozzle.source.close()
+        except Exception:
+            pass
+
     def __neg__(self):
         pipeline = []
         cursor = self
