@@ -5,12 +5,13 @@ Exports two singletons `refinery.lib.types.INF` and `refinery.lib.types.AST`.
 Used by `refinery.units.pattern.PatternExtractorBase` as the default values
 for certain command line arguments.
 """
-from typing import Union
+from typing import Union, IO
 
 __all__ = ['INF', 'AST', 'ByteStr']
 
 
 ByteStr = Union[bytes, bytearray, memoryview]
+ByteIO = IO[ByteStr]
 
 
 class INF:

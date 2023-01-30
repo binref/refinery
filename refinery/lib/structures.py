@@ -15,10 +15,11 @@ import struct
 import weakref
 
 from refinery.lib.tools import cached_property
-from typing import List, Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
+from refinery.lib.types import ByteStr
+from typing import List, Union, IO, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
 
 
-T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
+T = TypeVar('T', bound=ByteStr)
 UnpackType = Union[int, bool, float, bytes]
 
 
@@ -53,7 +54,7 @@ class StreamDetour:
         self.stream.seek(self.cursor, io.SEEK_SET)
 
 
-class MemoryFile(Generic[T], io.IOBase):
+class MemoryFile(IO[T]):
     """
     A thin wrapper around (potentially mutable) byte sequences which gives it the
     features of a file-like object.
