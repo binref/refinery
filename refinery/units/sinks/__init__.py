@@ -97,9 +97,12 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
             if chunk == previous and not last:
                 repetitions += 1
                 continue
-            elif repetitions > 0:
-                line = F' repeats {repetitions} times '
-                line = F'{line:/^{hex_width*columns-1}}  {"":/<{columns}}'
+            elif repetitions > 1:
+                format = ' {} repetitions'
+                message = format.format(repetitions)
+                pad_r = (hex_width * columns - len(format) + 1) // 2
+                pad_l = pad_r - len(message) + len(format)
+                line = ' ' * pad_l + message + ' ' * pad_r
                 if colorize:
                     line = F'{FG.LIGHTBLACK_EX}{line}{S.RESET_ALL}'
                 if addr_width:
