@@ -75,6 +75,8 @@ class xlmdeobf(Unit):
 
     @Unit.Requires('XLMMacroDeobfuscator', optional=False)
     def _process_file():
+        from XLMMacroDeobfuscator.configs import settings
+        settings.SILENT = True
         from XLMMacroDeobfuscator.deobfuscator import process_file
         return process_file
 
