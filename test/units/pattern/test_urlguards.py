@@ -18,10 +18,8 @@ class TestUrlGuards(TestUnitBase):
         self.assertEqual(cleaned, unit(mangled))
 
     def test_proofpoint_from_docs(self):
-        """
-        Examples taken from:
-        https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/URL_Decoder_API
-        """
+        # Examples taken from:
+        # https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/URL_Decoder_API
         unit = self.load()
 
         for example in [
