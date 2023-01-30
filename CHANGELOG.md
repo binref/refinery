@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.5.5
+- Bugfix to account for changes in MacOS libmagic which lead to not correctly identifying `exe` and `dll` extensions.
+- Importing refinery no longer changes the names of log levels globally.
+
 ## Version 0.5.4
 - The `xthtml` unit can now extract attributes of HTML tags.
 - The `rijndael` cipher unit was added.
