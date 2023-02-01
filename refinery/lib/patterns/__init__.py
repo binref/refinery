@@ -204,7 +204,7 @@ _part_url_credentials = (
     R'(?::(?P<url_password>[^"\'\s\x00-\x20\x7E-\xFF]{0,256})?)?@)?'
 )
 _prefix_serrated_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20}:)?\/\/)' + _part_url_credentials
-_prefix_defanged_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20})?(?:\[:\]|:)\/\/)' + _part_url_credentials
+_prefix_defanged_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20}(?:\[:\]|:))?\/\/)' + _part_url_credentials
 _suffix_combined_url = R'(?P<url_path>[/?#](?:[#/=:;$!?&.,\w\+\%\-\*\'~@()](?![a-zA-Z]{2,20}://))*)?'
 
 _pattern_serrated_url = F'{_prefix_serrated_url}(?P<url_host>{_pattern_serrated_hostname}){_suffix_combined_url}'

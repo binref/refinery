@@ -3,6 +3,8 @@
 import re
 import itertools
 
+from urllib.parse import urlparse, urlunparse
+
 from refinery.units import Arg, Unit
 from refinery.lib.patterns import defanged, indicators, tlds
 
@@ -37,7 +39,7 @@ class defang(Unit):
     def _quote(self, word):
         return word if not self.args.quote_md else B'`%s`' % word
 
-    def reverse(self, data):
+    def reverse(self, data: bytearray):
         def refang(hostname):
             return hostname[0].replace(B'[.]', B'.')
         data = defanged.hostname.sub(refang, data)
@@ -74,18 +76,36 @@ class defang(Unit):
             defanged_host = ''.join(reversed(defanged_parts)).encode('latin1')
             return user + atsgn + defanged_host + colon + port
 
-        def replace_url(url):
+        def replace_url(url: bytes):
             if not url:
                 return url
-            protocol_separator = B'://' if self.args.dot_only else B'[:]//'
             self.log_info('replace:', url)
-            scheme, remaining_url = re.split(BR'(?:\[:\]|:)//', url)
-            hostname, slash, path = remaining_url.partition(B'/')
-            hostname = replace_hostname(hostname, False)
-            remaining_url = hostname + slash + path
-            if self.args.url_protocol and scheme:
-                scheme = self._PROTOCOL_ESCAPES.get(scheme.lower(), scheme)
-            return self._quote(scheme + protocol_separator + remaining_url)
+            url = url.replace(B'[:]//', B'://', 1)
+            prefix = B'tcp'
+            if url.startswith(B'://'):
+                scheme = 0
+            elif url.startswith(B'//'):
+                scheme = 1
+                prefix = prefix + B':'
+            else:
+                scheme = 2
+                prefix = B''
+            parsed = urlparse(prefix + url)
+            operations = {
+                name: self.process(getattr(parsed, name))
+                for name in ('path', 'params', 'query', 'fragment')
+            }
+            if self.args.url_protocol and parsed.scheme:
+                operations.update(scheme=self._PROTOCOL_ESCAPES.get(parsed.scheme.lower(), scheme))
+            if scheme < 2:
+                operations.update(scheme=B'')
+            operations.update(netloc=replace_hostname(parsed.netloc, False))
+            url = urlunparse(parsed._replace(**operations))
+            if scheme == 0:
+                url = B':' + url
+            if not self.args.dot_only:
+                url = url.replace(B'://', B'[:]//')
+            return self._quote(url)
 
         urlsplit = defanged.url.split(data)
         step = defanged.url.value.groups + 1

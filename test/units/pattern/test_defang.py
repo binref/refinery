@@ -72,5 +72,17 @@ class TestDefangUnit(TestUnitBase):
     def test_defang_defang_03(self):
         unit = self.load()
         u = b'http://www.example.co.uk:443/'
-        v = bytes(u | unit)
-        self.assertEqual(v, b'http[:]//www.example[.]co[.]uk:443/')
+        v = u | unit | str
+        self.assertEqual(v, 'http[:]//www.example[.]co[.]uk:443/')
+
+    def test_url_fragment(self):
+        unit = self.load()
+        u = b'http://alpha.beta.gamma.co.cn#foo@bar.com'
+        v = u | unit | str
+        self.assertEqual(v, 'http[:]//alpha.beta.gamma[.]co[.]cn#foo@bar[.]com')
+
+    def test_protocol_relative_url_01(self):
+        unit = self.load()
+        u = b'//alpha.beta.gamma.co.cn/path/to/script.zip?evil=domain.ru'
+        v = u | unit | str
+        self.assertEqual(v, '//alpha.beta.gamma[.]co[.]cn/path/to/script[.]zip?evil=domain[.]ru')
