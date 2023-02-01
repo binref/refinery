@@ -81,23 +81,19 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
     if columns <= 0:
         raise RuntimeError('Requested width is too small.')
 
-    def pieces(data):
-        view = memoryview(data)
-        step = columns * metrics.block_size
-        for lno, offset in enumerate(range(0, len(data), step)):
-            if metrics.line_count and lno >= metrics.line_count:
-                break
-            yield lno, view[offset:offset + step]
-
+    view = memoryview(data)
+    step = columns * metrics.block_size
     previous = None
     repetitions = 0
+    skipped = 0
 
-    for last, (lno, chunk) in lookahead(pieces(data)):
+    for last, (lno, offset) in lookahead(enumerate(range(0, len(data), step))):
+        chunk = view[offset:offset + step]
         if not metrics.expand:
             if chunk == previous and not last:
                 repetitions += 1
                 continue
-            elif repetitions > 1:
+            elif repetitions > 0:
                 format = ' {} repetitions'
                 message = format.format(repetitions)
                 pad = (hex_width * columns - len(format) + 1) // 2
@@ -108,7 +104,11 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 if addr_width:
                     line = F'{".":.>{addr_width}}{metrics.hex_addr_spacer}{line}'
                 yield line
+                skipped += repetitions - 1
                 repetitions = 0
+
+        if metrics.line_count and lno - skipped >= metrics.line_count:
+            break
 
         blocks = chunks.unpack(chunk, metrics.block_size, metrics.big_endian)
 
