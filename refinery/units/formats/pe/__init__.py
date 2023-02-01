@@ -66,8 +66,9 @@ class OverlayUnit(Unit, abstract=True):
         directories: Arg.Switch('--no-dirs', '-d',
             help='Do not include any data directories for size computation (implies --no-cert).') = True,
         memdump: Arg.Switch('-m', help='Assume that the file data was a memory-mapped PE file.') = False,
+        **other
     ):
-        super().__init__(certificate=certificate, directories=directories, memdump=memdump)
+        super().__init__(certificate=certificate, directories=directories, memdump=memdump, **other)
 
     def _get_size(self, data):
         return get_pe_size(
