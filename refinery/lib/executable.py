@@ -24,7 +24,7 @@ from refinery.lib.structures import MemoryFile
 from refinery.lib.types import INF, ByteStr
 
 if TYPE_CHECKING:
-    from typing import Callable, ParamSpec, TypeVar, Generator, Optional, Union, Iterable, List
+    from typing import Type, Callable, ParamSpec, TypeVar, Generator, Optional, Union, Iterable, List
     _T = TypeVar('_T')
     _P = ParamSpec('_P')
 
@@ -231,7 +231,7 @@ class Executable(ABC):
     _type: ET
 
     @classmethod
-    def Load(self, data: ByteStr, base: Optional[int] = None) -> Executable:
+    def Load(cls: Type[_T], data: ByteStr, base: Optional[int] = None) -> _T:
         return exeroute(
             data,
             ExecutableELF,
@@ -247,11 +247,20 @@ class Executable(ABC):
         self._base = base
 
     @property
+    def head(self):
+        return self._head
+
+    @property
     def type(self):
         return self._type
 
-    def __getitem__(self, key: Union[int, slice]):
-        if isinstance(key, int):
+    def __getitem__(self, key: Union[int, slice, Range]):
+        return self.read(key)
+
+    def read(self, key: Union[int, slice, Range]):
+        if isinstance(key, Range):
+            key = slice(key.lower, key.upper)
+        elif isinstance(key, int):
             key = slice(key, key + 1, 1)
         if key.start is None:
             raise LookupError(R'Slice indices with unspecified start are not supported.')
@@ -270,7 +279,7 @@ class Executable(ABC):
         return self.data[box.physical.position:end]
 
     @staticmethod
-    def _ascii(string: Union[str, ByteStr]) -> str:
+    def ascii(string: Union[str, ByteStr]) -> str:
         if isinstance(string, str):
             return string
         for k, b in enumerate(string):
@@ -412,7 +421,7 @@ class ExecutablePE(Executable):
             v_lower = self._rebase_img_to_usr(v_lower)
             v_upper = v_lower + section.Misc_VirtualSize
             yield Section(
-                self._ascii(section.Name),
+                self.ascii(section.Name),
                 Range(p_lower, p_upper),
                 Range(v_lower, v_upper),
             )
@@ -465,7 +474,7 @@ class ExecutableELF(Executable):
         v_upper = v_lower + align(section['sh_addralign'], section.data_size)
         p_upper = p_lower + section.data_size
         return Section(
-            self._ascii(section.name),
+            self.ascii(section.name),
             Range(p_lower, p_upper),
             Range(v_lower, v_upper),
         )
@@ -536,7 +545,7 @@ class ExecutableMachO(Executable):
             p_lower = segment.fileoff
             v_upper = v_lower + segment.vmsize
             p_upper = p_lower + segment.filesize
-            segment_name = self._ascii(segment.segname)
+            segment_name = self.ascii(segment.segname)
             if not populate_sections:
                 sections = None
             else:
@@ -557,7 +566,7 @@ class ExecutableMachO(Executable):
             yield from segment.sections
 
     def _convert_section(self, section, segment: str) -> Section:
-        name = self._ascii(section.sectname)
+        name = self.ascii(section.sectname)
         p_lower = section.offset
         v_lower = section.addr
         v_lower = self._rebase_img_to_usr(v_lower)
