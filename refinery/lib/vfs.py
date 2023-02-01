@@ -17,7 +17,8 @@ import uuid
 import threading
 import mmap
 
-from typing import ByteString, Dict, Optional
+from typing import Dict, Optional
+from refinery.lib.types import ByteStr
 from refinery.lib.structures import MemoryFile
 
 
@@ -34,9 +35,9 @@ class VirtualFile:
     name: str
     path: str
     node: int
-    data: Optional[MemoryFile]
+    data: Optional[ByteStr]
 
-    def __init__(self, fs: VirtualFileSystem, data: Optional[ByteString] = None, extension: Optional[str] = None):
+    def __init__(self, fs: VirtualFileSystem, data: Optional[ByteStr] = None, extension: Optional[str] = None):
         extension = extension and F'.{extension}' or ''
         self.uuid = uuid.uuid4()
         self.name = F'{self.uuid!s}{extension}'
@@ -131,7 +132,7 @@ class VirtualFileSystem:
         self._by_name: Dict[str, VirtualFile] = {}
         self._by_node: Dict[int, VirtualFile] = {}
 
-    def new(self, data: Optional[ByteString] = None, extension: Optional[str] = None):
+    def new(self, data: Optional[ByteStr] = None, extension: Optional[str] = None):
         return VirtualFile(self, data, extension)
 
     def install(self, file: VirtualFile):
