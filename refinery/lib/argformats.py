@@ -111,15 +111,17 @@ from pathlib import Path
 from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, reduce, lru_cache
+from typing import TYPE_CHECKING, get_type_hints
 from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
-from typing import get_type_hints
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one
 from refinery.lib.meta import is_valid_variable_name, metavars
 
-FinalType = TypeVar('FinalType')
+if TYPE_CHECKING:
+    from refinery import Unit
 
+FinalType = TypeVar('FinalType')
 DelayedType = Callable[[ByteString], FinalType]
 MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 
@@ -369,7 +371,7 @@ class DelayedArgumentDispatch:
         self.final = {}
         self.units = {}
 
-    def _get_unit(self, name: str, *args):
+    def _get_unit(self, name: str, *args) -> Unit:
         name = name.replace('-', '_')
         uhash = hash((name,) + args)
         if uhash in self.units:
