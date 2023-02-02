@@ -1213,7 +1213,13 @@ class Unit(UnitBase, abstract=True):
         elif isinstance(exception, RefineryImportMissing):
             self.log_fail(F'dependencies missing; install {exception.install}')
         else:
-            message = F'exception of type {exception.__class__.__name__}; {exception!s}'
+            try:
+                explanation = exception.args[0]
+            except (AttributeError, IndexError):
+                explanation = exception
+            if not isinstance(explanation, str):
+                explanation = exception
+            message = F'exception of type {exception.__class__.__name__}; {explanation!s}'
             if self.log_level <= LogLevel.INFO and data is not None:
                 from refinery.units.sinks.peek import peek
                 peeked = str(data | peek(lines=2, decode=True, stdout=True))
