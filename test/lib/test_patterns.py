@@ -16,6 +16,12 @@ class TestIndicators(TestBase):
     def test_ipv4_almost_too_large_ocet(self):
         self.assertTrue(re.fullmatch(str(indicators.ipv4), '13.203.240.255'))
 
+    def test_telegram_url(self):
+        self.assertTrue(re.fullmatch(str(indicators.url), 'https://t.me/binaryrefinerytest'))
+
+    def test_telegram_domain(self):
+        self.assertTrue(re.fullmatch(str(indicators.domain), 't.me'))
+
 
 class TestFormats(TestBase):
 
