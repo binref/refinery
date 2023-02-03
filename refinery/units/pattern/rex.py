@@ -64,7 +64,11 @@ class rex(RegexUnit, PatternExtractor):
                 symb: dict = match.groupdict()
                 args: list = [match.group(0), *match.groups()]
                 used = set()
+                for key, value in symb.items():
+                    if value is None:
+                        symb[key] = B''
                 item = meta.format(s, self.codec, args, symb, True, True, used)
+                used.update(key for key, value in symb.items() if not value)
                 for variable in used:
                     symb.pop(variable, None)
                 symb.update(offset=match.start())

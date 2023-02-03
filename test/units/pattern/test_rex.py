@@ -11,6 +11,10 @@ class TestRex(TestUnitBase):
         data = B'HELLO WORLD'
         self.assertEqual(B'HELO WRD', B''.join(unit.process(data)))
 
+    def test_empty_groups_in_expression(self):
+        unit = self.load(r'(?P<foo>x.*?)?bar', '{foo}')
+        self.assertSetEqual(B'bar and xbazbar' | unit | {str}, {'', 'xbaz'})
+
     def test_nested_substitution_expressions(self):
         unit = self.load(
             R'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',
