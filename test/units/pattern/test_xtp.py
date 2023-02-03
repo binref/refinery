@@ -31,7 +31,7 @@ class TestPatternExtractor(TestUnitBase):
         )
 
     def test_extraction_domain_05(self):
-        unit = self.load('domain')
+        unit = self.load('domain', filter=1)
         self.assertEqual(b'', unit(b'\xFA\xF0-b.app\x00\x00'))
 
     def test_filter_01(self):
