@@ -19,6 +19,7 @@ class iemap(Unit):
     """
     def __init__(
         self,
+        legend: Unit.Arg.Switch('-l', help='Show entropy color legend.') = False,
         background: Unit.Arg.Switch('-b', help='Generate the bar by coloring the background.') = False,
         block_char: Unit.Arg('-c', '--block-char', type=str, metavar='C',
             help='Character used for filling the bar, default is {default}') = '#',
@@ -27,7 +28,7 @@ class iemap(Unit):
             'over the heat map display of each processed chunk.'
         ))
     ):
-        super().__init__(label=' '.join(label), background=background, block_char=block_char)
+        super().__init__(label=' '.join(label), background=background, legend=legend, block_char=block_char)
 
     @Unit.Requires('colorama')
     def _colorama():
@@ -70,9 +71,14 @@ class iemap(Unit):
         _reset = colorama.Back.BLACK + colorama.Fore.WHITE + colorama.Style.RESET_ALL
 
         clrmap = fgmap if nobg else bgmap
-        header = '[{1}{0}] ['.format(_reset, ''.join(F'{bg}{k}' for k, bg in enumerate(clrmap, 1)))
-        header_length = 4 + len(clrmap)
+
+        header = '['
+        header_length = 1
         footer_length = 4 + 7
+
+        if self.args.legend:
+            header = '[{1}{0}] {2}'.format(_reset, ''.join(F'{bg}{k}' for k, bg in enumerate(clrmap, 1)), header)
+            header_length += 3 + len(clrmap)
 
         width = get_terminal_size() - header_length - footer_length
         if width < 16:
@@ -121,7 +127,7 @@ class iemap(Unit):
             if label is not None:
                 stderr.write(colorama.Fore.WHITE)
                 stderr.flush()
-            it = itertools.chain(label, itertools.cycle(filler))
+            it = itertools.chain(itertools.repeat(filler, 3), label, itertools.cycle(filler))
             for chunk_size, block_size in zip(chunk_sizes, block_sizes):
                 chunk = stream.read(chunk_size)
                 chunk_entropy = entropy(chunk)
