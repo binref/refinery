@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.5.6
+- The `pestrip` unit has been extended with the capability to strip bloated resources and sections.
+- The `xtone` unit was added to extract embedded files from OneNote documents.
+- The color legend of the `iemap` unit is now optional and can be enabled with a switch.
+
 ## Version 0.5.5
 - Bugfix to account for changes in MacOS libmagic which lead to not correctly identifying `exe` and `dll` extensions.
 - Importing refinery no longer changes the names of log levels globally.
