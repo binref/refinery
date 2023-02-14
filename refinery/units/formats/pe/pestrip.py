@@ -7,7 +7,7 @@ from refinery.units.formats.pe import OverlayUnit, Arg
 from refinery.units.formats.pe.perc import RSRC
 from refinery.lib.executable import Executable
 from refinery.lib.tools import entropy
-from refinery.lib.meta import TerseSizeInt, SizeInt
+from refinery.lib.meta import TerseSizeInt as TI, SizeInt
 
 from fnmatch import fnmatch
 from pefile import PE, Structure, SectionStructure, DIRECTORY_ENTRY
@@ -22,23 +22,28 @@ class pestrip(OverlayUnit):
     """
     Removes the overlay of a PE file and returns the stipped executable. Use `refinery.peoverlay`
     to extract the overlay. Note that the default settings strip aggressively while the settings
-    in `refinery.peoverlay` are conservative by default.
+    in `refinery.peoverlay` are conservative by default. The unit can also remove resources and
+    entire sections that exceed a certain size, or trim low-entropy excess data from them.
     """
     def __init__(
         self,
         *names: Arg(type=str),
-        certificate: Arg.Switch('--cert', '-c', help='Include digital signatures for the size computation.') = False,
-        directories: Arg.Switch('--dirs', '-d', help='Include data directories for size computation.') = False,
+        certificate: Arg.Switch('--cert', '-c',
+            help='Include digital signatures for the size computation.') = False,
+        directories: Arg.Switch('--dirs', '-d',
+            help='Include data directories for size computation.') = False,
         memdump=False,
         resources: Arg.Switch('-r', help='Strip large resources.') = False,
         sections: Arg.Switch('-s', help='Strip large sections.') = False,
         entropy: Arg('-e', metavar='E', type=float, help=(
-            'All trailing data from resources and sections with entropy lower than this value is removed. The default '
-            'value is {default}. Set this to 1 to ignore the entropy limit entirely and trim every structure as much '
-            'as possible without violating alignment. Setting this value to 0 will strip all occurrences of the last byte.'
-        )) = 0.05,
-        size_limit: Arg.Number('-l', help='Structures below this size are not stripped. The default is {default}.') = TerseSizeInt(10 * _MB),
-        aggressive: Arg.Switch('-a', help='Equivalent to -sre1: Entirely strip all large sections and resources.') = False,
+            'Trailing data from resources and sections with entropy lower than this value is '
+            'removed. The default value is {default}. Set this to 1 to ignore the entropy limit '
+            'entirely and trim every structure as much as possible without violating alignment. '
+            'Setting this value to 0 will strip all occurrences of the last byte.')) = 0.05,
+        size_limit: Arg.Number('-l',
+            help='Structures below this size are not stripped. The default is {default}.') = TI(10 * _MB),
+        aggressive: Arg.Switch('-a',
+            help='Equivalent to -sre1: Entirely strip all large sections and resources.') = False,
     ):
         if aggressive:
             sections = True
