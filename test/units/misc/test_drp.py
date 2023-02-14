@@ -3,7 +3,7 @@
 from .. import TestUnitBase
 
 
-class TestAutoXOR(TestUnitBase):
+class TestDRP(TestUnitBase):
 
     def test_english_plaintext_01(self):
         data = B"Betty Botter's bitter batter better"
