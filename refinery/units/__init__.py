@@ -339,7 +339,7 @@ class Arg(Argument):
                 if key == 'default':
                     default: Union[bytes, int, str] = self.arg.kwargs['default']
                     if isinstance(default, int):
-                        return default
+                        return repr(default)
                     if not isbuffer(default):
                         return str(default)
                     if default.isalnum():

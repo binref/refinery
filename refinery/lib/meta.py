@@ -310,8 +310,9 @@ class SizeInt(int, CustomStringRepresentation):
     common units such as kB and MB.
     """
     width = 9
+    align = True
 
-    def _s(self, align):
+    def __repr__(self):
         step = 1000.0
         unit = None
         result = self
@@ -320,17 +321,23 @@ class SizeInt(int, CustomStringRepresentation):
                 break
             result /= step
         if unit is None:
-            width = 3 if align else ''
+            width = 3 if self.align else 1
             return F'{result:{width}} BYTES'
         else:
-            width = 6 if align else ''
-            return F'{result:0{width}.3f} {unit}'
-
-    def __repr__(self):
-        return self._s(True)
+            width = 6 if self.align else 1
+            comma = 3 if self.align else 1
+            return F'{result:0{width}.{comma}f} {unit}'
 
     def __str__(self):
         return str(int(self))
+
+
+class TerseSizeInt(SizeInt):
+    """
+    Similar to `refinery.lib.meta.SizeInt`, but the representation does not pad with zeros to
+    ensure having the same width for every input.
+    """
+    align = False
 
 
 class Percentage(float, CustomStringRepresentation):
