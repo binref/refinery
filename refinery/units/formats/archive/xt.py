@@ -12,6 +12,8 @@ class xt(ArchiveUnit):
     correct extractor.
     """
     def _handlers(self):
+        from refinery.units.formats.office.xtone import xtone
+        yield xtone
         from refinery.units.formats.email import xtmail
         yield xtmail
         from refinery.units.formats.pdf import xtpdf
