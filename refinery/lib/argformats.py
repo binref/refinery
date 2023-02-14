@@ -424,6 +424,16 @@ class DelayedArgumentDispatch:
 
 
 def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
+    import re
+    match = re.fullmatch(
+        R'(?i)(?P<digits>[1-9][0-9]*|0)(?P<unit>[KMGTPE]B?)',
+        expression.strip())
+    if match is not None:
+        unit = match['unit'].upper()
+        for k, symbol in enumerate('KMGTPE', 1):
+            if unit.startswith(symbol):
+                expression = match['digits'] + (k * 3 * '0')
+                break
     parser = PythonExpression(expression, all_variables_allowed=True)
     if parser.variables:
         def evaluate(data: Chunk):
