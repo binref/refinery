@@ -28,6 +28,7 @@ class urlfix(Unit):
         parsed = urlparse(data)
         if not parsed.scheme or not parsed.netloc:
             return None
+        parsed = parsed._replace(netloc=parsed.netloc.lower())
         if keep < 2:
             parsed = parsed._replace(fragment='')
             if keep < 1:
