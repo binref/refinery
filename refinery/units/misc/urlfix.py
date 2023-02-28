@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, unquote, quote
 
 from refinery.units import Arg, Unit
 from refinery.lib.decorators import unicoded
@@ -9,8 +9,10 @@ from refinery.lib.decorators import unicoded
 
 class urlfix(Unit):
     """
-    Removes fragments, query strings, and parameters from input URLs. URLs that do not have a scheme
-    will not be recognized as valid URLs.
+    Removes fragments, query strings, and parameters from input URLs. It also correctly escapes all
+    characters in the URL path component and normalizes the network location part to lowercase. Note
+    that URLs without a scheme will not be recognized as valid URLs; chunks that do not look like a
+    URL will be swallowed and not return any output.
     """
     def __init__(
         self,
@@ -28,9 +30,11 @@ class urlfix(Unit):
         parsed = urlparse(data)
         if not parsed.scheme or not parsed.netloc:
             return None
-        parsed = parsed._replace(netloc=parsed.netloc.lower())
+        replacements = dict(
+            path=quote(unquote(parsed.path)),
+            netloc=parsed.netloc.lower())
         if keep < 2:
-            parsed = parsed._replace(fragment='')
+            replacements.update(fragment='')
             if keep < 1:
-                parsed = parsed._replace(params='', query='')
-        return urlunparse(parsed)
+                replacements.update(params='', query='')
+        return urlunparse(parsed._replace(**replacements))
