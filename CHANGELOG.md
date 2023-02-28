@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.5.7
+- The `pestrip` and `peoverlay` default settings are the same again.
+
 ## Version 0.5.6
 - The `pestrip` unit has been extended with the capability to strip bloated resources and sections.
 - The `xtone` unit was added to extract embedded files from OneNote documents.
