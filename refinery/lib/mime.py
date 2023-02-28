@@ -104,6 +104,7 @@ FileTypeMap = {
     'application/x-msdos-program': 'exe',
     'application/x-msdownload': 'exe',
     'application/x-msexcel': 'xls',
+    'application/x-msi': 'msi',
     'application/x-mspowerpoint': 'ppt',
     'application/x-navi-animation': 'ani',
     'application/x-pcl': 'pcl',
