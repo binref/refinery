@@ -376,8 +376,8 @@ class pemeta(Unit):
         try:
             export_name = pe.DIRECTORY_ENTRY_EXPORT.name
             if isinstance(export_name, bytes):
-                export_name = export_name.decode('latin1')
-            if not re.match('[\x20!-~]+', export_name):
+                export_name = export_name.decode('utf8')
+            if not export_name.isprintable():
                 export_name = None
         except Exception:
             export_name = None
