@@ -1194,11 +1194,11 @@ class Unit(UnitBase, abstract=True):
             except AttributeError:
                 return data
         if isinstance(exception, RefineryPartialResult):
-            self.log_warn(F'error, partial result returned: {exception}')
             if self.leniency >= 1:
                 return exception.partial
-            elif self.log_level < LogLevel.DETACHED:
+            if self.log_level < LogLevel.DETACHED:
                 return None
+            self.log_warn(F'error, partial result returned: {exception}')
             raise exception
         elif self.log_level >= LogLevel.DETACHED:
             raise exception
