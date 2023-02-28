@@ -21,17 +21,14 @@ _ASCII = Executable.ascii
 class pestrip(OverlayUnit):
     """
     Removes the overlay of a PE file and returns the stipped executable. Use `refinery.peoverlay`
-    to extract the overlay. Note that the default settings strip aggressively while the settings
-    in `refinery.peoverlay` are conservative by default. The unit can also remove resources and
-    entire sections that exceed a certain size, or trim low-entropy excess data from them.
+    to extract the overlay. The unit can also remove resources and entire sections that exceed a
+    certain size, or trim low-entropy excess data from them.
     """
     def __init__(
         self,
         *names: Arg(type=str),
-        certificate: Arg.Switch('--cert', '-c',
-            help='Include digital signatures for the size computation.') = False,
-        directories: Arg.Switch('--dirs', '-d',
-            help='Include data directories for size computation.') = False,
+        certificate=False,
+        directories=False,
         memdump=False,
         resources: Arg.Switch('-r', help='Strip large resources.') = False,
         sections: Arg.Switch('-s', help='Strip large sections.') = False,

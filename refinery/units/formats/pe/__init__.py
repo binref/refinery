@@ -61,10 +61,10 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
 class OverlayUnit(Unit, abstract=True):
     def __init__(
         self,
-        certificate: Arg.Switch('--no-cert', '-c',
-            help='Do not include digital signatures for the size computation.') = True,
-        directories: Arg.Switch('--no-dirs', '-d',
-            help='Do not include any data directories for size computation (implies --no-cert).') = True,
+        certificate: Arg.Switch('--cert', '-c',
+            help='Include digital signatures for the size computation.') = False,
+        directories: Arg.Switch('--dirs', '-d',
+            help='Include data directories for size computation.') = False,
         memdump: Arg.Switch('-m', help='Assume that the file data was a memory-mapped PE file.') = False,
         **other
     ):
