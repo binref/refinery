@@ -16,6 +16,8 @@ class TestDateFix(TestUnitBase):
         self.assertEqual(b'2010-03-15 06:27:50', unit(b'2010-03-15T06:27:50.000000'))
         self.assertEqual(b'2010-03-15 06:27:50', unit(b'2010-03-15 06:27:50'))
         self.assertEqual(b'2014-04-24 19:32:21', unit(b'Thu Apr 24 2014 12:32:21 GMT-0700 (PDT)'))
+        self.assertEqual(b'2023-02-28 00:00:00', unit(b'02/28/2023'))
+        self.assertEqual(b'2023-02-28 12:12:12', unit(b'02/28/2023 12:12:12'))
 
     def test_dates_dos(self):
         unit = self.load(dos=True)

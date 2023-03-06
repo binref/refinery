@@ -14,12 +14,16 @@ class datefix(Unit):
 
     _FORMATS = [
         '%B %dth %Y %H:%M:%S (UTC)',  # November 27th 2019 17:37:02 (UTC)
+        '%B %dnd %Y %H:%M:%S (UTC)',  # November 22nd 2019 17:37:02 (UTC)
+        '%B %dst %Y %H:%M:%S (UTC)',  # November 21st 2019 17:37:02 (UTC)
         '%Y-%m-%dT%H:%M:%S',          # 2010-03-15T06:27:50
         '%Y-%m-%d %H:%M:%S',          # iso (2010-03-15 06:27:50.000000)
         '%Y-%m-%d %H:%M:%SZ%f',
         '%Y-%m-%dT%H:%M:%S.%f',
         '%Y-%m-%dT%H:%M:%SZ%f',
         '%a %b %d %Y %H:%M:%S',       # Thu Apr 24 2014 12:32:21
+        '%m/%d/%Y %H:%M:%S',
+        '%m/%d/%Y',
     ]
 
     _TIMEZONE_REGEXES = [re_compile(p) for p in [
