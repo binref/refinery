@@ -53,3 +53,9 @@ class TestCarvePE(TestUnitBase):
         src = self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')
         data = src[:0x400] + src
         self.assertEqual(bytes(data | self.load()), src)
+
+    def test_pe_after_pe(self):
+        pe = self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')
+        data = pe * 3
+        out = data | self.load() | []
+        self.assertListEqual(out, [pe, pe])

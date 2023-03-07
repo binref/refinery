@@ -57,15 +57,23 @@ class carve_pe(PathExtractorUnit):
             pedata = mv[offset:offset + pesize]
             info = {}
             if self.args.fileinfo:
+                pe_meta_parser = pemeta()
                 try:
-                    info = pemeta().parse_version(pe) or {}
+                    info = pe_meta_parser.parse_version(pe) or {}
                 except Exception as error:
                     self.log_warn(F'Unable to obtain file information: {error!s}')
+                try:
+                    info.update(pe_meta_parser.parse_header(pe) or {})
+                except Exception:
+                    pass
             try:
                 path = info['OriginalFilename']
             except KeyError:
-                extension = 'exe' if pe.is_exe() else 'dll' if pe.is_dll() else 'sys'
-                path = F'carve-0x{offset:08X}.{extension}'
+                try:
+                    path = info['ExportName']
+                except KeyError:
+                    extension = 'exe' if pe.is_exe() else 'dll' if pe.is_dll() else 'sys'
+                    path = F'carve-0x{offset:08X}.{extension}'
 
             if offset > 0 or self.args.keep_root:
                 yield UnpackResult(path, pedata, offset=offset)
@@ -77,4 +85,4 @@ class carve_pe(PathExtractorUnit):
             if not offset or self.args.recursive:
                 cursor += pe.OPTIONAL_HEADER.SizeOfHeaders
             else:
-                cursor += pesize
+                cursor += pesize - 2
