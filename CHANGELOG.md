@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.5.8 -- bugfix release
+
 ## Version 0.5.7
 - The `pestrip` and `peoverlay` default settings are the same again.
 
