@@ -777,6 +777,10 @@
       "ide": "Visual Studio 2005",
       "ver": "08.00"
     },
+    "C426": {
+      "ide": "Visual Studio 2005",
+      "ver": "08.00"
+    },
     "08B4": {
       "ide": "Visual Studio 2005",
       "ver": "08.00"
@@ -829,11 +833,27 @@
       "ide": "Visual Studio 2015",
       "ver": "14.0"
     },
+    "784B": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
     "7556": {
       "ide": "Visual Studio 2015",
       "ver": "14.0"
     },
     "75BC": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7A60": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "7A64": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
+    "75B8": {
       "ide": "Visual Studio 2015",
       "ver": "14.0"
     },
@@ -1237,6 +1257,10 @@
       "ide": "Visual Studio 2015",
       "ver": "14.0"
     },
+    "74E4": {
+      "ide": "Visual Studio 2015",
+      "ver": "14.0"
+    },
     "75B5": {
       "ide": "Visual Studio 2015",
       "ver": "14.0"
@@ -1422,6 +1446,10 @@
       "ver": "14.13"
     },
     "6852": {
+      "ide": "Visual Studio 2017",
+      "ver": "14.15"
+    },
+    "699F": {
       "ide": "Visual Studio 2017",
       "ver": "14.15"
     },
@@ -1965,14 +1993,23 @@
       "ide": "Visual Studio",
       "ver": ""
     },
+    "7DD7": {
+      "ide": "VS2022 v17.5.0 build 32215"
+    },
+    "7CC6": {
+      "ide": "VS2022 v17.4.5 build 31942"
+    },
     "7CC1": {
       "ide": "VS2022 v17.4.3 build 31937"
     },
     "7CBF": {
       "ide": "VS2022 v17.4.2 build 31935"
     },
-    "7A64": {
-      "ide": "VS2022 v17.2.5 build 31332"
+    "7E43": {
+      "ide": "VS2022 v17.6.0 pre 1.0 build 32323"
+    },
+    "7DD5": {
+      "ide": "VS2022 v17.5.0 pre 4.0 build 32213"
     },
     "7D7C": {
       "ide": "VS2022 v17.5.0 pre 2.0 build 32124"
@@ -2013,9 +2050,6 @@
     "7AC0": {
       "ide": "VS2022 v17.3.0 pre 1.0 build 31424"
     },
-    "7A60": {
-      "ide": "VS2022 v17.2.0 build 31328"
-    },
     "7A5E": {
       "ide": "VS2022 v17.2.0 pre 3.0 build 31326"
     },
@@ -2049,6 +2083,9 @@
     "76C1": {
       "ide": "VS2022 v17.0.0 preview2 build 30401"
     },
+    "75C4": {
+      "ide": "VS2019 v16.11.24 build 30148"
+    },
     "75C3": {
       "ide": "VS2019 v16.11.21 build 30147"
     },
@@ -2075,9 +2112,6 @@
     },
     "75B9": {
       "ide": "VS2019 v16.11.6 build 30137"
-    },
-    "75B8": {
-      "ide": "VS2019 v16.11.5 build 30136"
     },
     "7558": {
       "ide": "VS2019 v16.10.4 build 30040"
