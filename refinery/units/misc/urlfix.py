@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import Optional
-from urllib.parse import urlparse, urlunparse, unquote, quote
+from urllib.parse import urlparse, urlunparse, parse_qsl, unquote, quote
 
 from refinery.units import Arg, Unit
 from refinery.lib.decorators import unicoded
@@ -26,13 +26,20 @@ class urlfix(Unit):
 
     @unicoded
     def process(self, data: str) -> Optional[str]:
+        def fix(string):
+            return quote(unquote(string))
         keep = self.args.keep
         parsed = urlparse(data)
         if not parsed.scheme or not parsed.netloc:
             return None
+        new_query = '&'.join(F'{key}={fix(value)}' for key, value in parse_qsl(parsed.query))
         replacements = dict(
-            path=quote(unquote(parsed.path)),
-            netloc=parsed.netloc.lower())
+            netloc=parsed.netloc.lower(),
+            params=fix(parsed.params),
+            path=fix(parsed.path),
+            query=new_query,
+            fragment=fix(parsed.fragment),
+        )
         if keep < 2:
             replacements.update(fragment='')
             if keep < 1:
