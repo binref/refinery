@@ -15,8 +15,13 @@ class resplit(RegexUnit):
         super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase, count=count)
 
     def process(self, data):
-        split = self.regex.split
-        if self.args.count:
-            from functools import partial
-            split = partial(split, maxsplit=self.args.count)
-        yield from split(data)
+        view = memoryview(data)
+        cursor = 0
+        count = self.args.count
+        for k, match in enumerate(self.regex.finditer(view), 2):
+            yield view[cursor:match.start()]
+            cursor = match.end()
+            yield from match.groups()
+            if k > count > 0:
+                break
+        yield view[cursor:]
