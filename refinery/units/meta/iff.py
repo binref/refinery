@@ -81,14 +81,14 @@ class iff(ConditionalUnit):
 
         if lhs is not None:
             if rhs is not None:
-                lhs = DelayedNumSeqArgument(lhs)(chunk)
+                lhs = DelayedNumSeqArgument(lhs, additional_types=(float, str))(chunk)
             else:
                 lhs = PythonExpression.evaluate(lhs, meta)
 
         self.log_debug('lhs:', lhs)
         self.log_debug('rhs:', rhs)
 
-        rhs = rhs and DelayedNumSeqArgument(rhs)(chunk)
+        rhs = rhs and DelayedNumSeqArgument(rhs, additional_types=(float, str))(chunk)
 
         if lhs is None:
             return bool(chunk)

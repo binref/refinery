@@ -1131,9 +1131,10 @@ class DelayedNumSeqArgument(DelayedArgument):
     attempts to evalue the input as a Python expression.
     """
 
-    def __init__(self, expression: str, reverse=False, seed=None, typecheck=True):
+    def __init__(self, expression: str, reverse=False, seed=None, typecheck=True, additional_types=None):
         super().__init__(expression, reverse, seed)
         self.typecheck = typecheck
+        self.additional_types = additional_types or []
 
     def default_handler(self, expression: str) -> Iterable[int]:
         """
@@ -1182,6 +1183,17 @@ class DelayedNumSeqArgument(DelayedArgument):
             return RepeatedInteger(value)
         if not self.typecheck:
             return value
+        if self.additional_types:
+            typecheck = self.additional_types
+            try:
+                typecheck = tuple(typecheck)
+            except Exception:
+                pass
+            try:
+                if isinstance(value, typecheck):
+                    return value
+            except Exception:
+                pass
         raise ArgumentTypeError(
             F'The value computed from {self.expression} is of type {type(value).__name__} but the unit requested an '
             R'integer or a sequence of integers.'
