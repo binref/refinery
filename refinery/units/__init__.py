@@ -1122,7 +1122,8 @@ class Unit(UnitBase, abstract=True):
                 try:
                     self.module = module = super().fget()
                 except ImportError as E:
-                    raise RefineryImportMissing(*unit.optional_dependencies) from E
+                    args = unit.optional_dependencies or (self.dependency,)
+                    raise RefineryImportMissing(*args) from E
                 except Exception as E:
                     raise AttributeError(F'module import for distribution "{distribution}" failed: {E!s}')
                 else:
