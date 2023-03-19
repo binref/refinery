@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from . import TestMetaBase
+from refinery.lib.loader import load_pipeline as L
 
 
 class TestDeduplication(TestMetaBase):
@@ -34,3 +35,7 @@ class TestDeduplication(TestMetaBase):
                 B'vulpeculae'
             ]
         )
+
+    def test_count(self):
+        pipeline = L('emit HELLO-WORLD [| push [| rex . | dedup -c | sorted count | pick :2 | pop t s ]| cfmt {t}{s} ]')
+        self.assertEqual(pipeline(), B'LO')
