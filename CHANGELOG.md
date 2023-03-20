@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.5.9 -- bugfix release
+
 ## Version 0.5.8 -- bugfix release
 
 ## Version 0.5.7
