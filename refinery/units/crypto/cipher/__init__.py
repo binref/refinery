@@ -132,22 +132,24 @@ class StreamCipherUnit(CipherUnit, abstract=True):
     decrypt = encrypt
 
 
+_PADDINGS_LIB = ['pkcs7', 'iso7816', 'x923']
+_PADDING_NONE = 'raw'
+_PADDINGS_ALL = _PADDINGS_LIB + [_PADDING_NONE]
+
+
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
         self, key, iv: Arg('-i', '--iv', help=(
             'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')) = B'',
-        padding: Arg.Choice('-p', type=str.lower, choices=['pkcs7', 'iso7816', 'x923', 'raw'],
-            nargs=1, metavar='P', help=(
+        padding: Arg.Choice('-p', type=str.lower, choices=_PADDINGS_ALL, metavar='P', help=(
             'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, all other algorithms '
             'are attempted. In most cases, the data was not correctly decrypted if none of these work.')
         ) = None,
         raw: Arg.Switch('-r', '--raw', help='Set the padding to raw; ignored when a padding is specified.') = False,
         **keywords
     ):
-        if not padding:
-            padding = ['raw'] if raw else ['pkcs7', 'iso7816', 'x923']
-        elif not isinstance(padding, list):
-            padding = [padding]
+        if not padding and raw:
+            padding = _PADDING_NONE
         iv = iv or bytes(self.blocksize)
         super().__init__(key=key, iv=iv, padding=padding, **keywords)
 
@@ -155,19 +157,30 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
     def iv(self) -> ByteString:
         return self.args.iv
 
+    def _default_padding(self) -> Optional[str]:
+        return _PADDINGS_LIB[0]
+
     def reverse(self, data: ByteString) -> ByteString:
-        from Crypto.Util.Padding import pad
-        padding = self.args.padding[0]
-        self.log_info('padding method:', padding)
-        if padding != 'raw':
-            data = pad(data, self.blocksize, padding)
+        padding = self._default_padding()
+        if padding is not None:
+            self.log_info('padding method:', padding)
+            if padding in _PADDINGS_LIB:
+                from Crypto.Util.Padding import pad
+                data = pad(data, self.blocksize, padding)
         return super().reverse(data)
 
     def process(self, data: ByteString) -> ByteString:
-        from Crypto.Util.Padding import unpad
+        padding = self._default_padding()
         result = super().process(data)
-        for p in self.args.padding:
-            if p == 'raw':
+        if padding is None:
+            return result
+
+        from Crypto.Util.Padding import unpad
+        padding = [padding, *(p for p in _PADDINGS_LIB if p != padding)]
+        self.log_debug(padding)
+
+        for p in padding:
+            if p == _PADDING_NONE:
                 return result
             try:
                 unpadded = unpad(result, self.blocksize, p.lower())
@@ -177,7 +190,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
                 self.log_info(F'unpadding worked using {p}')
                 return unpadded
         raise RefineryPartialResult(
-            'None of these paddings worked: {}'.format(', '.join(self.args.padding)),
+            'None of these paddings worked: {}'.format(', '.join(padding)),
             partial=result)
 
 
@@ -267,6 +280,14 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             segment_size=segment_size, mac_len=mac_len, assoc_len=assoc_len,
             **keywords
         )
+
+    def _default_padding(self) -> Optional[str]:
+        padding = self.args.padding
+        if padding is not None:
+            return padding
+        if self.args.mode.name in {'ECB', 'CBC', 'PCBC'}:
+            return super()._default_padding()
+        return None
 
     def _get_cipher_instance(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name
