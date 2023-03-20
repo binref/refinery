@@ -126,6 +126,7 @@ class CipherMode(ABC):
 
     encrypt_block: Callable[[memoryview], memoryview]
     decrypt_block: Callable[[memoryview], memoryview]
+    aligned: bool = True
     _identifier: ClassVar[int]
 
     @abstractmethod
@@ -152,8 +153,12 @@ class CipherMode(ABC):
             Direction.Decrypt: self.decrypt,
         }[direction]()
         next(engine)
-        for k in range(0, len(src), blocksize):
+        top, rest = divmod(len(src), blocksize)
+        top *= blocksize
+        for k in range(0, top, blocksize):
             dst[k:k + blocksize] = engine.send(src[k:k + blocksize])
+        if rest:
+            dst[-rest:] = engine.send(src[-rest:])[:rest]
         engine.close()
         return dst
 
@@ -239,6 +244,7 @@ class CFB(CipherMode):
 
     iv: BufferType
     segment_size: int
+    aligned = False
 
     def __init__(self, iv: BufferType, segment_size: Optional[int] = None):
         if segment_size is None:
@@ -297,6 +303,8 @@ class CFB(CipherMode):
 @_register_cipher_mode
 class OFB(StatefulCipherMode):
 
+    aligned = False
+
     def encrypt(self) -> Generator[memoryview, memoryview, None]:
         S = self.iv
         C = None
@@ -318,6 +326,8 @@ class CTR(CipherMode):
     initial_value: int
     little_endian: bool
     block_size: int
+
+    aligned = False
 
     @property
     def byte_order(self):
@@ -458,7 +468,7 @@ class BlockCipher(CipherInterface, ABC):
     def _apply_blockwise(self, direction: Direction, data: BufferType) -> BufferType:
         block_size = self.block_size
         mode = self.mode
-        if len(data) % block_size != 0:
+        if len(data) % block_size != 0 and mode.aligned:
             raise DataUnaligned
         dst = src = memoryview(data)
         if dst.readonly:
