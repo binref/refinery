@@ -6,10 +6,12 @@ from typing import Callable, ClassVar, Container, Generator, Optional, Type, Uni
 from abc import ABC, abstractmethod
 from enum import Enum
 
-from Crypto.Util.strxor import strxor
-
 BufferType = Union[bytearray, bytes, memoryview]
 CIPHER_MODES: Dict[str, CipherMode] = {}
+
+
+def strxor(a: bytes, b: bytes):
+    return bytes(a ^ b for a, b in zip(a, b))
 
 
 class SpecifiedAtRuntime:
