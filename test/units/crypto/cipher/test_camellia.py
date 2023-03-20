@@ -36,3 +36,21 @@ class TestCamellia(TestUnitBase):
         C = bytes.fromhex('9a cc 23 7d ff 16 d7 6c 20 ef 7c 91 9e 3a 75 09')
         u = self.load(K, raw=True)
         self.assertEqual(bytes(C | u), M)
+
+    def test_openssl_ofb(self):
+        M = b"This is a secret message.\n"
+        C = bytes.fromhex('3e1a c0f8 aa74 e546 8925 eb0a 1776 1127 36dd fea5 869c 171f 547c')
+        K = bytes.fromhex('30313233343536373839616263646566')
+        V = bytes.fromhex('30313233343536373839616263646566')
+        u = self.load(K, iv=V, mode='ofb')
+        self.assertEqual(bytes(M | -u), C)
+        self.assertEqual(bytes(C | +u), M)
+
+    def test_openssl_cfb(self):
+        M = b"This is a secret message.\n"
+        C = bytes.fromhex('3e1a c0f8 aa74 e546 8925 eb0a 1776 1127 6833 fe93 bb59 043d 8b3e')
+        K = b'0123456789abcdef'
+        V = b'0123456789abcdef'
+        u = self.load(K, iv=V, mode='cfb', segment_size=128)
+        self.assertEqual(bytes(M | -u), C)
+        self.assertEqual(bytes(C | +u), M)
