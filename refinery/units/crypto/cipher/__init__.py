@@ -206,7 +206,7 @@ class StandardCipherExecutable(CipherExecutable):
                 return
         if abstract or 'mode' not in cls._argument_specification:
             return
-        modes = extract_options(cipher)
+        modes = extract_options(cipher, 'MODE_', 'SIV', 'OPENPGP')
         if not modes:
             raise RefineryCriticalException(F'No cipher block mode constants found in {cipher!r}')
         cls._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)

@@ -1417,7 +1417,7 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
     return _Option
 
 
-def extract_options(symbols, prefix='MODE_', *exceptions):
+def extract_options(symbols, prefix: str, *exceptions: str):
     """
     A helper function to extract all numeric constants from modules that have a certain
     prefix. `refinery.units.crypto.cipher.StandardCipherUnit` uses this to extract the
