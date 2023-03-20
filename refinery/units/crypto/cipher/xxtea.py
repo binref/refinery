@@ -12,12 +12,18 @@ class xxtea(BlockCipherUnitBase):
     def __init__(self, key, padding=None, raw=False):
         ...
 
+    blocksize = 4
+    key_sizes = 16,
+
     @property
     def _key(self):
         key = self.args.key
         if len(key) != 0x10:
             raise ValueError(F'Key length of {len(key)} bytes is invalid; XXTEA only supports 16 byte keys')
         return chunks.unpack(key, 4)
+
+    def _default_padding(self):
+        return None
 
     def _unpack(self, data):
         if len(data) % 4:
