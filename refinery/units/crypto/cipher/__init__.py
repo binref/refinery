@@ -188,9 +188,13 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
             else:
                 self.log_info(F'unpadding worked using {p}')
                 return unpadded
-        raise RefineryPartialResult(
-            'None of these paddings worked: {}'.format(', '.join(padding)),
-            partial=result)
+
+        self.log_warn(
+            'decrypted data is not padded with a known method ({});'
+            ' returning raw data'.format(', '.join(padding))
+        )
+
+        return result
 
 
 class StandardCipherExecutable(CipherExecutable):
