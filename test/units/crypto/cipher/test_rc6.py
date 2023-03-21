@@ -64,3 +64,8 @@ class TestRC6(TestUnitBase):
         unit = self.load(key=key, iv=iv, raw=True)
         test = out | unit | bytearray
         self.assertEqual(test, msg)
+
+    def test_segment_size(self):
+        msg = bytes.fromhex('bf96632c806f49a72e8d1ebed7397689034b05da2be0b3f0a7')
+        unit = self.load(b'0123456789abcdef', mode='cfb', iv=b'0123456789abcdef', segment_size=128)
+        self.assertEqual(msg | unit | bytes, b'This is a secret message.')
