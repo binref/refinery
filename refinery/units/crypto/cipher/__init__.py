@@ -177,7 +177,6 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
 
         from Crypto.Util.Padding import unpad
         padding = [padding, *(p for p in _PADDINGS_LIB if p != padding)]
-        self.log_debug(padding)
 
         for p in padding:
             if p == _PADDING_NONE:
