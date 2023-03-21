@@ -116,6 +116,8 @@ class rc5(StandardBlockCipherUnit, cipher=SpecifiedAtRuntime):
     """
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,
+        segment_size: Arg.Number('-S', '--segment-size',
+            help='Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8.') = 0,
         rounds    : Arg.Number('-k', help='Number of rounds to use, the default is {default}') = 12,
         word_size : Arg.Number('-w', help='The word size in bits, {default} by default.') = 32
     ):
@@ -128,4 +130,4 @@ class rc5(StandardBlockCipherUnit, cipher=SpecifiedAtRuntime):
         self._cipher_object_factory = c = BlockCipherFactory(_R)
         self.blocksize = c.block_size
         self.key_sizes = c.key_size
-        super().__init__(key, iv, padding, mode, raw)
+        super().__init__(key, iv, padding, mode, raw, segment_size)
