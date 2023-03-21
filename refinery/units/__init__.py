@@ -1198,8 +1198,8 @@ class Unit(UnitBase, abstract=True):
             if self.leniency >= 1:
                 return exception.partial
             if self.log_level < LogLevel.DETACHED:
+                self.log_warn(F'error, partial result returned: {exception}')
                 return None
-            self.log_warn(F'error, partial result returned: {exception}')
             raise exception
         elif self.log_level >= LogLevel.DETACHED:
             raise exception
