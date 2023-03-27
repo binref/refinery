@@ -409,7 +409,8 @@ class CipherObjectFactory(ABC):
         initial_value: Optional[int] = 0,
         nonce: Optional[BufferType] = None,
         mode: Optional[str] = None,
-        segment_size: Optional[int] = None
+        segment_size: Optional[int] = None,
+        **cipher_args
     ) -> CipherInterface:
         ...
 
@@ -424,13 +425,19 @@ class BlockCipherFactory(CipherObjectFactory):
             setattr(self, F'MODE_{name}', mode._identifier)
             self._modes.append(mode)
 
-    def new(self, key, mode=None, **mode_args) -> CipherInterface:
+    def new(self, key, mode=None, **args) -> CipherInterface:
         if mode is not None:
             mode = self._modes[mode]
+        mode_arguments = {}
+        for arg in ('iv', 'counter', 'initial_value', 'nonce', 'mode', 'segment_size'):
+            try:
+                mode_arguments[arg] = args.pop(arg)
+            except KeyError:
+                pass
         if mode is CTR:
-            mode_args.update(block_size=self.cipher.block_size)
-        mode = mode(**mode_args)
-        return self.cipher(key, mode)
+            mode_arguments.update(block_size=self.cipher.block_size)
+        mode = mode(**mode_arguments)
+        return self.cipher(key, mode, **args)
 
     @property
     def block_size(self):
