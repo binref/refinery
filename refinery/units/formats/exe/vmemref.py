@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Container
 
 from refinery.units import Arg, Unit
-from refinery.lib.executable import Executable, ET
+from refinery.lib.executable import Executable, ET, CompartmentNotFound
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
 
@@ -120,4 +120,7 @@ class vmemref(Unit):
             code_addresses,
             executable.pointer_size
         ):
-            yield executable[ref:]
+            try:
+                yield executable[ref:]
+            except CompartmentNotFound:
+                self.log_info(F'memory reference could not be resolved: 0x{ref:0{executable.pointer_size//4}X}')
