@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import ByteString
-from refinery.units.crypto.cipher import BlockCipherUnitBase
+
 from refinery.lib import chunks
+from refinery.units.crypto.cipher import BlockCipherUnitBase, Arg
 
 
 class xxtea(BlockCipherUnitBase):
     """
     XXTEA encryption and decryption.
     """
-    def __init__(self, key, padding=None, raw=False):
+    def __init__(
+        self, key, padding=None, raw=False,
+        swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False
+    ):
         ...
 
     blocksize = 4
@@ -20,7 +24,7 @@ class xxtea(BlockCipherUnitBase):
         key = self.args.key
         if len(key) != 0x10:
             raise ValueError(F'Key length of {len(key)} bytes is invalid; XXTEA only supports 16 byte keys')
-        return chunks.unpack(key, 4)
+        return self._unpack(key)
 
     def _default_padding(self):
         return None
@@ -28,7 +32,7 @@ class xxtea(BlockCipherUnitBase):
     def _unpack(self, data):
         if len(data) % 4:
             raise ValueError('The input data is not aligned to a multiple of 4 bytes.')
-        return chunks.unpack(data, 4)
+        return chunks.unpack(data, 4, self.args.swap)
 
     def encrypt(self, v: ByteString) -> ByteString:
         if not v:
