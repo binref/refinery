@@ -287,7 +287,7 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [meta]: https://binref.github.io/lib/meta.html
 [license]: https://opensource.org/licenses/BSD-3-Clause
 [tests]: https://github.com/binref/refinery/actions
-[codecov]: https://codecov.io/github/binref/refinery/?branch=master
+[codecov]: https://codecov.io/gh/binref/refinery/?branch=master
 [pypi]: https://pypi.org/project/binary-refinery/
 [venv]: https://docs.python.org/3/library/venv.html
 
