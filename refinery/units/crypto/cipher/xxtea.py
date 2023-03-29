@@ -1,44 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import ByteString
+from typing import Sequence, Optional
 
-from refinery.lib import chunks
-from refinery.units.crypto.cipher import BlockCipherUnitBase, Arg
+from refinery.units.crypto.cipher.tea import TEAUnit, TEABase, tea_block_operation, Arg
+from refinery.lib.crypto import BlockCipherFactory, CipherInterface, BufferType, CipherMode
 
 
-class xxtea(BlockCipherUnitBase):
-    """
-    XXTEA encryption and decryption.
-    """
+class XXTEA(TEABase):
+
     def __init__(
-        self, key, padding=None, raw=False,
-        swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False
+        self,
+        key: BufferType,
+        mode: Optional[CipherMode],
+        big_endian: bool = False,
+        block_size: int = TEABase.block_size
     ):
-        ...
+        self.block_size = block_size
+        super().__init__(key, mode, big_endian)
 
-    blocksize = 4
-    key_sizes = 16,
-
-    @property
-    def _key(self):
-        key = self.args.key
-        if len(key) != 0x10:
-            raise ValueError(F'Key length of {len(key)} bytes is invalid; XXTEA only supports 16 byte keys')
-        return self._unpack(key)
-
-    def _default_padding(self):
-        return None
-
-    def _unpack(self, data):
-        if len(data) % 4:
-            raise ValueError('The input data is not aligned to a multiple of 4 bytes.')
-        return chunks.unpack(data, 4, self.args.swap)
-
-    def encrypt(self, v: ByteString) -> ByteString:
-        if not v:
-            return v
-        key = self._key
-        v = list(self._unpack(v))
+    @tea_block_operation
+    def block_encrypt(key: Sequence[int], v: Sequence[int]) -> Sequence[int]:
         n = len(v)
         s = 0
         r = 6 + 52 // n
@@ -51,11 +32,10 @@ class xxtea(BlockCipherUnitBase):
                 k = (p & 3) ^ e
                 x = ((z >> 5) ^ (y << 2)) + ((y >> 3) ^ (z << 4)) ^ (s ^ y) + (key[k] ^ z)
                 z = v[p] = v[p] + x & 0xFFFFFFFF
-        return chunks.pack(v, 4, self.args.swap)
+        return v
 
-    def decrypt(self, v: ByteString) -> ByteString:
-        key = self._key
-        v = self._unpack(v)
+    @tea_block_operation
+    def block_decrypt(key: Sequence[int], v: Sequence[int]) -> Sequence[int]:
         n = len(v)
         r = 6 + 52 // n
         s = r * 0x9E3779B9 & 0xFFFFFFFF
@@ -68,4 +48,34 @@ class xxtea(BlockCipherUnitBase):
                 x = ((z >> 5) ^ (y << 2)) + ((y >> 3) ^ (z << 4)) ^ (s ^ y) + (key[k] ^ z)
                 y = v[p] = v[p] - x & 0xFFFFFFFF
             s = s - 0x9E3779B9 & 0xFFFFFFFF
-        return chunks.pack(v, 4, self.args.swap)
+        return v
+
+
+class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
+    def __init__(
+        self, key, iv=b'', padding=None, mode=None, raw=False, swap=False,
+        block_size: Arg.Number('-b', help=(
+            'Cipher block size in 32-bit words. The default value {default} implies that the input '
+            'is treated as a single block, which is common behaviour of many implementations.')) = 1
+    ):
+        super().__init__(key, iv, padding, mode, raw, swap=swap, block_size=block_size)
+
+    def _prepare_block(self, data: bytes):
+        if self.args.block_size < 2:
+            blocks, remainder = divmod(len(data), 4)
+            if remainder:
+                blocks += 1
+            self.blocksize = blocks * 4
+        else:
+            self.blocksize = self.args.block_size * 4
+
+    def encrypt(self, data: bytes) -> bytes:
+        self._prepare_block(data)
+        return super().encrypt(data)
+
+    def decrypt(self, data: bytes) -> bytes:
+        self._prepare_block(data)
+        return super().decrypt(data)
+
+    def _get_cipher_instance(self, **optionals) -> CipherInterface:
+        return super()._get_cipher_instance(block_size=self.blocksize, **optionals)
