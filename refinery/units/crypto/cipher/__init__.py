@@ -157,7 +157,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         return self.args.iv or bytes(self.blocksize)
 
     def _default_padding(self) -> Optional[str]:
-        return _PADDINGS_LIB[0]
+        return self.args.padding
 
     def reverse(self, data: ByteString) -> ByteString:
         padding = self._default_padding()
@@ -280,12 +280,11 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         )
 
     def _default_padding(self) -> Optional[str]:
-        padding = self.args.padding
+        padding = super()._default_padding()
         if padding is not None:
             return padding
-        if self.args.mode.name in {'ECB', 'CBC', 'PCBC'}:
-            return super()._default_padding()
-        return None
+        elif self.args.mode.name in {'ECB', 'CBC', 'PCBC'}:
+            return _PADDINGS_LIB[0]
 
     def _get_cipher_instance(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name
