@@ -132,16 +132,16 @@ class StreamCipherUnit(CipherUnit, abstract=True):
     decrypt = encrypt
 
 
-_PADDINGS_LIB = ['pkcs7', 'iso7816', 'x923']
-_PADDING_NONE = 'raw'
-_PADDINGS_ALL = _PADDINGS_LIB + [_PADDING_NONE]
+PADDINGS_LIB = ['pkcs7', 'iso7816', 'x923']
+PADDING_NONE = 'raw'
+PADDINGS_ALL = PADDINGS_LIB + [PADDING_NONE]
 
 
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
         self, key, iv: Arg('-i', '--iv', help=(
             'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')) = None,
-        padding: Arg.Choice('-p', type=str.lower, choices=_PADDINGS_ALL, metavar='P', help=(
+        padding: Arg.Choice('-p', type=str.lower, choices=PADDINGS_ALL, metavar='P', help=(
             'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, all other algorithms '
             'are attempted. In most cases, the data was not correctly decrypted if none of these work.')
         ) = None,
@@ -149,7 +149,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         **keywords
     ):
         if not padding and raw:
-            padding = _PADDING_NONE
+            padding = PADDING_NONE
         super().__init__(key=key, iv=iv, padding=padding, **keywords)
 
     @property
@@ -163,7 +163,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         padding = self._default_padding()
         if padding is not None:
             self.log_info('padding method:', padding)
-            if padding in _PADDINGS_LIB:
+            if padding in PADDINGS_LIB:
                 from Crypto.Util.Padding import pad
                 data = pad(data, self.blocksize, padding)
         return super().reverse(data)
@@ -175,10 +175,10 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
             return result
 
         from Crypto.Util.Padding import unpad
-        padding = [padding, *(p for p in _PADDINGS_LIB if p != padding)]
+        padding = [padding, *(p for p in PADDINGS_LIB if p != padding)]
 
         for p in padding:
-            if p == _PADDING_NONE:
+            if p == PADDING_NONE:
                 return result
             try:
                 unpadded = unpad(result, self.blocksize, p.lower())
@@ -284,7 +284,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         if padding is not None:
             return padding
         elif self.args.mode.name in {'ECB', 'CBC', 'PCBC'}:
-            return _PADDINGS_LIB[0]
+            return PADDINGS_LIB[0]
 
     def _get_cipher_instance(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name
