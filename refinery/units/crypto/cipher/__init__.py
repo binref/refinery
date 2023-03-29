@@ -140,7 +140,7 @@ _PADDINGS_ALL = _PADDINGS_LIB + [_PADDING_NONE]
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
         self, key, iv: Arg('-i', '--iv', help=(
-            'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')) = B'',
+            'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')) = None,
         padding: Arg.Choice('-p', type=str.lower, choices=_PADDINGS_ALL, metavar='P', help=(
             'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, all other algorithms '
             'are attempted. In most cases, the data was not correctly decrypted if none of these work.')
@@ -150,12 +150,11 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
     ):
         if not padding and raw:
             padding = _PADDING_NONE
-        iv = iv or bytes(self.blocksize)
         super().__init__(key=key, iv=iv, padding=padding, **keywords)
 
     @property
     def iv(self) -> ByteString:
-        return self.args.iv
+        return self.args.iv or bytes(self.blocksize)
 
     def _default_padding(self) -> Optional[str]:
         return _PADDINGS_LIB[0]
