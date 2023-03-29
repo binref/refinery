@@ -51,7 +51,7 @@ class xxtea(BlockCipherUnitBase):
                 k = (p & 3) ^ e
                 x = ((z >> 5) ^ (y << 2)) + ((y >> 3) ^ (z << 4)) ^ (s ^ y) + (key[k] ^ z)
                 z = v[p] = v[p] + x & 0xFFFFFFFF
-        return chunks.pack(v, 4)
+        return chunks.pack(v, 4, self.args.swap)
 
     def decrypt(self, v: ByteString) -> ByteString:
         key = self._key
@@ -68,4 +68,4 @@ class xxtea(BlockCipherUnitBase):
                 x = ((z >> 5) ^ (y << 2)) + ((y >> 3) ^ (z << 4)) ^ (s ^ y) + (key[k] ^ z)
                 y = v[p] = v[p] - x & 0xFFFFFFFF
             s = s - 0x9E3779B9 & 0xFFFFFFFF
-        return chunks.pack(v, 4)
+        return chunks.pack(v, 4, self.args.swap)
