@@ -73,9 +73,10 @@ class TEA(TEABase):
 class TEAUnit(StandardBlockCipherUnit):
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,
-        swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False
+        swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False,
+        **more
     ):
-        super().__init__(key, iv, padding, mode, raw, swap=swap)
+        super().__init__(key, iv, padding, mode, raw, swap=swap, **more)
 
     def _get_cipher_instance(self, **optionals) -> CipherInterface:
         return super()._get_cipher_instance(big_endian=self.args.swap, **optionals)
