@@ -26,17 +26,12 @@ class deob_ps1_stringreplace(Deobfuscator):
             needle = None
 
             for match in self._SENTINEL.finditer(data):
-                for check in re.finditer(R'(?i)(-c|-i|-|\.)replace', data):
-                    if check.start() in strlit:
-                        break
-                if check.start() < match.start():
-                    break
                 k = strlit.get_container(match.start())
                 if k is None:
-                    break
+                    continue
                 offset, end = strlit.ranges[k]
                 if match.start() != end - 1:
-                    break
+                    continue
                 string = data[offset:end]
                 pf, bl1, needle, bl2, br1, insert, br2 = match.groups()
                 end = match.end()
@@ -47,10 +42,10 @@ class deob_ps1_stringreplace(Deobfuscator):
                     bl -= 1
                     br -= 1
                 if bl != 0 or br < 0:
-                    break
+                    continue
                 needle = list(string_unquote(needle))
                 if len(needle) > 1:
-                    break
+                    continue
 
                 needle = needle[0]
                 head, *body = string_unquote(insert)

