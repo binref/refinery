@@ -12,6 +12,7 @@ from .concat import deob_vba_concat
 from .constants import deob_vba_constants
 from .dummies import deob_vba_dummy_variables
 from .stringreplace import deob_vba_stringreplace
+from .stringreverse import deob_vba_stringreverse
 
 
 class deob_vba(IterativeDeobfuscator):
@@ -25,6 +26,7 @@ class deob_vba(IterativeDeobfuscator):
         deob_vba_constants,
         deob_vba_dummy_variables,
         deob_vba_stringreplace,
+        deob_vba_stringreverse,
     ]]
 
     def deobfuscate(self, data):
