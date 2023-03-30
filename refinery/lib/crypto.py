@@ -15,7 +15,7 @@ def strxor(a: bytes, b: bytes):
 
 
 def _register_cipher_mode(cls: Type[CipherMode]):
-    cls._identifier = nr = len(CIPHER_MODES)
+    cls._identifier = len(CIPHER_MODES)
     CIPHER_MODES[cls.__name__] = cls
     return cls
 
