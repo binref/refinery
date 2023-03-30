@@ -11,8 +11,8 @@ from refinery.lib.crypto import (
     BlockCipher,
     BlockCipherFactory,
     BufferType,
+    CipherInterface,
     CipherMode,
-    SpecifiedAtRuntime
 )
 
 import struct
@@ -469,7 +469,7 @@ RC = [
 class Rijndael(BlockCipher):
 
     block_size: int
-    valid_key_sizes = frozenset((16, 24, 32))
+    key_size = frozenset((16, 24, 32))
 
     _E: List[List[int]]
     _D: List[List[int]]
@@ -598,7 +598,7 @@ class Rijndael(BlockCipher):
         return out
 
 
-class rijndael(StandardBlockCipherUnit, cipher=SpecifiedAtRuntime):
+class rijndael(StandardBlockCipherUnit, cipher=BlockCipherFactory(Rijndael)):
     """
     Rijndael encryption and decryption. Note that there is also a `refinery.aes` unit which has
     much better performance because it calls into the PyCryptodome library. You would have to
@@ -606,13 +606,14 @@ class rijndael(StandardBlockCipherUnit, cipher=SpecifiedAtRuntime):
     from 16 bytes, in which case it is equivalent to AES.
     """
     def __init__(
-        self, key, iv=b'', padding=None, mode=None, raw=False,
+        self, key, iv=b'', padding=None, mode=None, raw=False, segment_size=0,
         block_size: Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 16, 24, and 32.') = 16
     ):
-        class _R(Rijndael):
-            def __init__(self, key: BufferType, mode: Optional[CipherMode]):
-                super().__init__(key, mode, block_size)
-        self._cipher_object_factory = c = BlockCipherFactory(_R)
-        self.blocksize = block_size
-        self.key_sizes = c.key_size
-        super().__init__(key, iv, padding, mode, raw)
+        return super().__init__(key, iv, padding, mode, raw, segment_size, block_size=block_size)
+
+    @property
+    def block_size(self):
+        return self.args.block_size
+
+    def _new_cipher(self, **optionals) -> CipherInterface:
+        return super()._new_cipher(block_size=self.args.block_size, **optionals)

@@ -112,7 +112,7 @@ class Camellia(BlockCipher):
     _key_data: CamelliaKey
 
     block_size = 0x10
-    valid_key_sizes = frozenset((0x10, 0x18, 0x20))
+    key_size = frozenset((0x10, 0x18, 0x20))
 
     def block_decrypt(self, block) -> BufferType:
         return self._feistel(block, True)

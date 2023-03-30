@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import List, ByteString, Optional, Iterable
 
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
-from refinery.lib.crypto import rotl32
+from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
 
 
 class LatinCipher(ABC):
@@ -114,7 +114,7 @@ class salsa(LatinCipherUnit):
         )
 
 
-class salsa20(LatinCipherStandardUnit, cipher=Salsa20):
+class salsa20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(Salsa20)):
     """
     Salsa20 encryption and decryption. This unit is functionally equivalent to `refinery.salsa`
     with 20 rounds, but it uses the PyCryptodome library C implementation rather than the pure

@@ -10,7 +10,7 @@ import array
 
 class RC2(BlockCipher):
     block_size = 8
-    valid_key_sizes = range(5, 128 + 1)
+    key_size = range(5, 128 + 1)
     _key: array.array
 
     @property

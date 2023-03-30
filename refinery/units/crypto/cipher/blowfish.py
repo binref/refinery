@@ -3,9 +3,10 @@
 from Crypto.Cipher import Blowfish
 
 from refinery.units.crypto.cipher import StandardBlockCipherUnit
+from refinery.lib.crypto import PyCryptoFactoryWrapper
 
 
-class blowfish(StandardBlockCipherUnit, cipher=Blowfish):
+class blowfish(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(Blowfish)):
     """
     Blowfish encryption and decryption.
     """

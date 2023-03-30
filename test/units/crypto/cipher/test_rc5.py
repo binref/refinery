@@ -21,7 +21,7 @@ class TestRC5(TestUnitBase):
             (0x20, 20): 'D5CB6FAB E83BF333 56263D02 E25A0BB7 D5CB6FAB E83BF333 56263D02 E25A0BB7',
             (0x40, 24): '45757C47 EC1575D0 A6CE92AD E5078A2A 45757C47 EC1575D0 A6CE92AD E5078A2A',
         }.items():
-            cipher = RC5(w, r, B'Schokoladentorte')
+            cipher = RC5(B'Schokoladentorte', None, w, r)
             ciphertext = cipher.encrypt(sample)
             self.assertEqual(ciphertext, bytes.fromhex(result))
             self.assertEqual(cipher.decrypt(ciphertext), sample)

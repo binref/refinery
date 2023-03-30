@@ -3,9 +3,10 @@
 from Crypto.Cipher import DES
 
 from refinery.units.crypto.cipher import StandardBlockCipherUnit
+from refinery.lib.crypto import PyCryptoFactoryWrapper
 
 
-class des(StandardBlockCipherUnit, cipher=DES):
+class des(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(DES)):
     """
     DES encryption and decryption.
     """

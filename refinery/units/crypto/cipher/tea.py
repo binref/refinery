@@ -23,7 +23,7 @@ def tea_block_operation(
 class TEABase(BlockCipher):
 
     block_size = 8
-    valid_key_sizes = {16}
+    key_size = {16}
     derived_key: List[int]
     big_endian: bool
 
@@ -78,8 +78,12 @@ class TEAUnit(StandardBlockCipherUnit):
     ):
         super().__init__(key, iv, padding, mode, raw, swap=swap, **more)
 
-    def _get_cipher_instance(self, **optionals) -> CipherInterface:
-        return super()._get_cipher_instance(big_endian=self.args.swap, **optionals)
+    @property
+    def block_size(self):
+        return 8
+
+    def _new_cipher(self, **optionals) -> CipherInterface:
+        return super()._new_cipher(big_endian=self.args.swap, **optionals)
 
 
 class tea(TEAUnit, cipher=BlockCipherFactory(TEA)):

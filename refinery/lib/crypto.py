@@ -14,14 +14,9 @@ def strxor(a: bytes, b: bytes):
     return bytes(a ^ b for a, b in zip(a, b))
 
 
-class SpecifiedAtRuntime:
-    pass
-
-
 def _register_cipher_mode(cls: Type[CipherMode]):
     cls._identifier = nr = len(CIPHER_MODES)
     CIPHER_MODES[cls.__name__] = cls
-    setattr(SpecifiedAtRuntime, F'MODE_{cls.__name__}', nr)
     return cls
 
 
@@ -389,6 +384,9 @@ class CTR(CipherMode):
 
 
 class CipherInterface(ABC):
+    key_size: Container[int]
+    block_size: int
+
     @abstractmethod
     def encrypt(self, M: BufferType) -> BufferType: ...
     @abstractmethod
@@ -396,9 +394,9 @@ class CipherInterface(ABC):
 
 
 class CipherObjectFactory(ABC):
-    key_size: int
-    block_size: int
     name: str
+    key_size: Optional[Container[int]] = None
+    block_size: Optional[int] = None
 
     @abstractmethod
     def new(
@@ -410,9 +408,45 @@ class CipherObjectFactory(ABC):
         nonce: Optional[BufferType] = None,
         mode: Optional[str] = None,
         segment_size: Optional[int] = None,
+        block_size: Optional[int] = None,
         **cipher_args
     ) -> CipherInterface:
         ...
+
+
+class PyCryptoFactoryWrapper(CipherObjectFactory):
+    def __init__(self, module):
+        self.module = module
+
+    def new(self, *a, **k) -> CipherInterface:
+        return self.module.new(*a, **k)
+
+    @property
+    def key_size(self):
+        try:
+            value = self.module.key_size
+        except AttributeError:
+            return None
+        if isinstance(value, int):
+            return {value}
+        return value
+
+    @property
+    def block_size(self):
+        try:
+            value = self.module.block_size
+        except AttributeError:
+            return None
+        return value
+
+    def __repr__(self):
+        return repr(self.module)
+
+    def __dir__(self):
+        return dir(self.module)
+
+    def __getattr__(self, key):
+        return getattr(self.module, key)
 
 
 class BlockCipherFactory(CipherObjectFactory):
@@ -440,26 +474,38 @@ class BlockCipherFactory(CipherObjectFactory):
         return self.cipher(key, mode, **args)
 
     @property
-    def block_size(self):
-        return self.cipher.block_size
+    def name(self):
+        return self.cipher.__name__
 
     @property
     def key_size(self):
-        return self.cipher.valid_key_sizes
+        try:
+            value = self.cipher.key_size
+        except AttributeError:
+            return None
+        if isinstance(value, property):
+            return None
+        return value
 
     @property
-    def name(self):
-        return self.cipher.__name__
+    def block_size(self):
+        try:
+            value = self.cipher.block_size
+        except AttributeError:
+            return None
+        if isinstance(value, property):
+            return None
+        return value
 
 
 class BlockCipher(CipherInterface, ABC):
     block_size: int
     key: BufferType
     mode: CipherMode
-    valid_key_sizes: Container[int]
+    key_size: Container[int]
 
     def __init__(self, key: BufferType, mode: Optional[CipherMode]):
-        if len(key) not in self.valid_key_sizes:
+        if len(key) not in self.key_size:
             raise ValueError(F'The key size {len(key)} is not supported by {self.__class__.__name__.lower()}.')
         self.key = key
         self.mode = mode or ECB()

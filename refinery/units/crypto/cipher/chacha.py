@@ -5,7 +5,7 @@ from typing import List, Iterable
 
 from refinery.units.crypto.cipher.salsa import LatinCipher
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
-from refinery.lib.crypto import rotl32
+from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
 
 
 class ChaChaCipher(LatinCipher):
@@ -33,7 +33,7 @@ class ChaChaCipher(LatinCipher):
         x[c] = x[c] + x[d] & 0xFFFFFFFF; x[b] = rotl32(x[b] ^ x[c] & 0xFFFFFFFF, 0x07) # noqa
 
 
-class chacha20(LatinCipherStandardUnit, cipher=ChaCha20):
+class chacha20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20)):
     """
     ChaCha20 and XChaCha20 encryption and decryption. For ChaCha20, the IV (nonce) must
     be 8 or 12 bytes long; for XChaCha20, choose an IV which is 24 bytes long. Invoking

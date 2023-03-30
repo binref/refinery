@@ -3,11 +3,12 @@
 from Crypto.Cipher import ARC4
 
 from refinery.units.crypto.cipher import StandardCipherUnit
+from refinery.lib.crypto import PyCryptoFactoryWrapper
 
 ARC4.key_size = range(1, 257)
 
 
-class rc4(StandardCipherUnit, cipher=ARC4):
+class rc4(StandardCipherUnit, cipher=PyCryptoFactoryWrapper(ARC4)):
     """
     RC4 encryption and decryption.
     """

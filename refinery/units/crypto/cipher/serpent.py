@@ -27,7 +27,7 @@ class Serpent(BlockCipher):
     _key_derivation: List[int]
 
     block_size = 0x10
-    valid_key_sizes = frozenset(range(4, 0x101, 4))
+    key_size = frozenset(range(4, 0x101, 4))
 
     def __init__(self, key: BufferType, mode: Optional[CipherMode], swap: bool = True):
         super().__init__(key, mode)
@@ -67,7 +67,7 @@ class serpent(StandardBlockCipherUnit, cipher=BlockCipherFactory(Serpent)):
     ):
         super().__init__(key, iv, padding, mode, raw, swap=swap)
 
-    def _get_cipher_instance(self, **optionals) -> CipherInterface:
-        instance: Serpent = super()._get_cipher_instance()
+    def _new_cipher(self, **optionals) -> CipherInterface:
+        instance: Serpent = super()._new_cipher()
         instance.swap = self.args.swap
         return instance

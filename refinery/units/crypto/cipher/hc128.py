@@ -80,7 +80,7 @@ class hc128(StreamCipherUnit):
     """
     HC-128 encryption and decryption.
     """
-    key_sizes = 32
+    key_size = {32}
 
     def keystream(self) -> Iterable[int]:
         return hc128cipher(self.args.key)

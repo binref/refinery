@@ -47,7 +47,7 @@ class TestRC6(TestUnitBase):
             P = bytes.fromhex(plaintext)
             K = bytes.fromhex(user_key)
             C = bytes.fromhex(ciphertext)
-            cipher = RC6(32, 20, K)
+            cipher = RC6(K, None, 32, 20)
             ciphertext = cipher.encrypt(P)
             self.assertEqual(ciphertext, C)
             self.assertEqual(cipher.decrypt(C), P)

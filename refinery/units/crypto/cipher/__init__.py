@@ -12,13 +12,11 @@ from typing import (
     Iterable,
     Optional,
     Sequence,
-    Tuple,
     Type,
 )
 from refinery.lib.crypto import (
     CipherObjectFactory,
     CipherInterface,
-    SpecifiedAtRuntime,
 )
 from refinery.lib.argformats import (
     Option,
@@ -34,27 +32,10 @@ from refinery.units import (
 )
 
 
-class CipherExecutable(Executable):
-    """
-    A metaclass for the abstract class `refinery.units.crypto.cipher.CipherUnit` which
-    normalizes the class variable `key_sizes` containing an iterable of all possible
-    key sizes that are acceptable for the represented cipher.
-    """
+class CipherUnit(Unit, abstract=True):
 
-    def __new__(mcs, name, bases: tuple, nmspc: dict, abstract=False, blocksize=1, key_sizes=None):
-        nmspc.setdefault('blocksize', blocksize)
-        nmspc.setdefault('key_sizes', key_sizes)
-        return super(CipherExecutable, mcs).__new__(mcs, name, bases, nmspc, abstract=abstract)
-
-    def __init__(cls, name, bases, nmspc, abstract=False, **_):
-        cls.key_sizes = (cls.key_sizes,) if isinstance(cls.key_sizes, int) else tuple(cls.key_sizes or ())
-        super(CipherExecutable, cls).__init__(name, bases, nmspc, abstract=abstract)
-
-
-class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
-
-    key_sizes: ClassVar[Sequence[int]]
-    blocksize: ClassVar[int]
+    key_size: Optional[Sequence[int]] = None
+    block_size: int
 
     def __init__(self, key: Arg(help='The encryption key.'), **keywords):
         super().__init__(key=key, **keywords)
@@ -68,9 +49,9 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        if self.key_sizes and len(self.args.key) not in self.key_sizes:
+        if self.key_size and len(self.args.key) not in self.key_size:
             import itertools
-            key_size_iter = iter(self.key_sizes)
+            key_size_iter = iter(self.key_size)
             key_size_options = [str(k) for k in itertools.islice(key_size_iter, 0, 5)]
             try:
                 next(key_size_iter)
@@ -91,6 +72,8 @@ class CipherUnit(Unit, metaclass=CipherExecutable, abstract=True):
 
 
 class StreamCipherUnit(CipherUnit, abstract=True):
+
+    block_size = 1
 
     def __init__(
         self, key,
@@ -153,8 +136,13 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         super().__init__(key=key, iv=iv, padding=padding, **keywords)
 
     @property
+    @abc.abstractmethod
+    def block_size(self) -> int:
+        raise NotImplementedError
+
+    @property
     def iv(self) -> ByteString:
-        return self.args.iv or bytes(self.blocksize)
+        return self.args.iv or bytes(self.block_size)
 
     def _default_padding(self) -> Optional[str]:
         return self.args.padding
@@ -165,7 +153,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
             self.log_info('padding method:', padding)
             if padding in PADDINGS_LIB:
                 from Crypto.Util.Padding import pad
-                data = pad(data, self.blocksize, padding)
+                data = pad(data, self.block_size, padding)
         return super().reverse(data)
 
     def process(self, data: ByteString) -> ByteString:
@@ -181,7 +169,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
             if p == PADDING_NONE:
                 return result
             try:
-                unpadded = unpad(result, self.blocksize, p.lower())
+                unpadded = unpad(result, self.block_size, p.lower())
             except Exception:
                 pass
             else:
@@ -192,36 +180,40 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
             partial=result)
 
 
-class StandardCipherExecutable(CipherExecutable):
+class StandardCipherExecutable(Executable):
 
     _available_block_cipher_modes: ClassVar[Type[Option]]
-    _cipher_object_factory: ClassVar[CipherObjectFactory]
+    _cipher_factory: ClassVar[Optional[CipherObjectFactory]]
 
     def __new__(mcs, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
-        keywords = dict(abstract=not cipher)
-        if cipher and cipher is not SpecifiedAtRuntime:
-            keywords.update(blocksize=cipher.block_size)
-            keywords.update(key_sizes=cipher.key_size)
+        keywords = dict(abstract=(cipher is None))
         return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
 
-    def __init__(cls, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
+    def __init__(_class, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
         abstract = cipher is None
-        super(StandardCipherExecutable, cls).__init__(name, bases, nmspc, abstract=abstract)
-        cls._cipher_object_factory = cipher
-        try:
-            block_size = cipher.block_size
-        except AttributeError:
-            pass
+        super(StandardCipherExecutable, _class).__init__(name, bases, nmspc, abstract=abstract)
+        _class._cipher_factory = cipher
+        if abstract:
+            return
+        b_size = cipher.block_size
+        k_size = cipher.key_size
+        if b_size is not None:
+            _class.block_size = b_size
         else:
-            if block_size <= 1:
-                return
-        if abstract or 'mode' not in cls._argument_specification:
+            b_size = getattr(_class, 'block_size', 2)
+            if not isinstance(b_size, int):
+                b_size = None
+        if k_size is not None:
+            _class.key_size = k_size
+        if b_size and b_size <= 1:
+            return
+        if 'mode' not in _class._argument_specification:
             return
         modes = extract_options(cipher, 'MODE_', 'SIV', 'OPENPGP')
         if not modes:
             raise RefineryCriticalException(F'No cipher block mode constants found in {cipher!r}')
-        cls._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
-        cls._argument_specification['mode'].merge_all(Arg(
+        _class._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
+        _class._argument_specification['mode'].merge_all(Arg(
             '-m', '--mode', type=str.upper, metavar='M', nargs=Arg.delete, choices=list(modes),
             help=(
                 'Choose cipher mode to be used. Possible values are: {}. By default, the CBC mode'
@@ -233,32 +225,53 @@ class StandardCipherExecutable(CipherExecutable):
 class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
     _available_block_cipher_modes: ClassVar[Type[Option]]
-    _cipher_object_factory: ClassVar[CipherObjectFactory]
+    _cipher_factory: ClassVar[CipherObjectFactory]
+    _cipher_interface: Optional[CipherInterface] = None
 
-    def _get_cipher_instance(self, **optionals) -> CipherInterface:
+    def _new_cipher(self, **optionals) -> CipherInterface:
         self.log_info(lambda: F'encryption key: {self.args.key.hex()}')
-        return self._cipher_object_factory.new(key=self.args.key, **optionals)
+        return self._cipher_factory.new(key=self.args.key, **optionals)
+
+    def _get_cipher(self, reset_cache=False) -> CipherInterface:
+        co = self._cipher_interface
+        if co is None or reset_cache:
+            self._cipher_interface = co = self._new_cipher()
+        return co
+
+    @property
+    def block_size(self) -> int:
+        value = self._cipher_factory.block_size
+        if value is None:
+            value = self._get_cipher().block_size
+        return value
+
+    @property
+    def key_size(self) -> Optional[Sequence[int]]:
+        value = self._cipher_factory.key_size
+        if value is None:
+            value = self._get_cipher().key_size
+        return value
 
     def encrypt(self, data: bytes) -> bytes:
-        return self._get_cipher_instance().encrypt(data)
+        cipher = self._get_cipher(True)
+        assert cipher.block_size == self.block_size
+        return cipher.encrypt(data)
 
     def decrypt(self, data: bytes) -> bytes:
-        cipher = self._get_cipher_instance()
+        cipher = self._get_cipher(True)
+        assert cipher.block_size == self.block_size
         try:
             return cipher.decrypt(data)
         except ValueError:
-            overlap = len(data) % self.blocksize
+            overlap = len(data) % self.block_size
             if not overlap:
                 raise
             data[-overlap:] = []
-            self.log_warn(F'removing {overlap} bytes from the input to make it a multiple of the {self.blocksize}-byte block size')
+            self.log_warn(F'removing {overlap} bytes from the input to make it a multiple of the {self.block_size}-byte block size')
             return cipher.decrypt(data)
 
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
-
-    blocksize: int
-    key_sizes: Tuple[int, ...]
 
     def __init__(
         self, key, iv=B'', padding=None, mode=None, raw=False,
@@ -286,13 +299,23 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         elif self.args.mode.name in {'ECB', 'CBC', 'PCBC'}:
             return PADDINGS_LIB[0]
 
-    def _get_cipher_instance(self, **optionals) -> CipherInterface:
+    @property
+    def block_size(self) -> int:
+        provider = StandardCipherUnit
+        return provider.block_size.fget(self)
+
+    @property
+    def key_size(self) -> Sequence[int]:
+        provider = StandardCipherUnit
+        return provider.key_size.fget(self)
+
+    def _new_cipher(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name
         if mode != 'ECB':
             iv = bytes(self.iv)
-            if mode == 'CTR' and len(iv) == self.blocksize:
+            if mode == 'CTR' and len(iv) == self.block_size:
                 from Crypto.Util import Counter
-                counter = Counter.new(self.blocksize * 8,
+                counter = Counter.new(self.block_size * 8,
                     initial_value=int.from_bytes(iv, 'big'))
                 optionals['counter'] = counter
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
@@ -307,9 +330,9 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
                     if al > 0:
                         optionals['assoc_len'] = al
                 bounds = {
-                    'CCM': (7, self.blocksize - 2),
-                    'OCB': (1, self.blocksize),
-                    'CTR': (1, self.blocksize),
+                    'CCM': (7, self.block_size - 2),
+                    'OCB': (1, self.block_size),
+                    'CTR': (1, self.block_size),
                 }.get(mode, None)
                 if bounds and len(iv) not in range(*bounds):
                     raise ValueError(F'Invalid nonce length, must be in {bounds} for {mode}.')
@@ -321,20 +344,21 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
                         raise ValueError(F'The given segment size {sz} is not a multiple of 8.')
                     if sz > 0:
                         optionals['segment_size'] = sz
-                if len(iv) > self.blocksize:
-                    self.log_warn(F'The IV has length {len(self.args.iv)} and will be truncated to the blocksize {self.blocksize}.')
-                    iv = iv[:self.blocksize]
-                elif len(iv) < self.blocksize:
-                    raise ValueError(F'The IV has length {len(self.args.iv)} but the block size is {self.blocksize}.')
+                if len(iv) > self.block_size:
+                    self.log_warn(F'The IV has length {len(self.args.iv)} and will be truncated to the block size {self.block_size}.')
+                    iv = iv[:self.block_size]
+                elif len(iv) < self.block_size:
+                    raise ValueError(F'The IV has length {len(self.args.iv)} but the block size is {self.block_size}.')
                 optionals['iv'] = iv
             self.log_info('initial vector:', iv.hex())
         if self.args.mode:
             optionals['mode'] = self.args.mode.value
-        return super()._get_cipher_instance(**optionals)
+        return super()._new_cipher(**optionals)
 
 
 class LatinCipherUnit(StreamCipherUnit, abstract=True):
-    key_sizes = 16, 32
+    key_size = {16, 32}
+    block_size = 1
 
     def __init__(
         self, key,
@@ -350,6 +374,6 @@ class LatinCipherStandardUnit(StandardCipherUnit):
     def __init__(self, key, nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY'):
         super().__init__(key, nonce=nonce)
 
-    def _get_cipher_instance(self, **optionals) -> Any:
+    def _new_cipher(self, **optionals) -> Any:
         self.log_info('one-time nonce:', self.args.nonce.hex())
-        return super()._get_cipher_instance(nonce=self.args.nonce)
+        return super()._new_cipher(nonce=self.args.nonce)

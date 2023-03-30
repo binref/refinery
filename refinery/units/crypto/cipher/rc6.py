@@ -12,15 +12,19 @@ from refinery.lib.crypto import (
     BlockCipher,
     BlockCipherFactory,
     CipherMode,
-    SpecifiedAtRuntime,
+    CipherInterface,
     BufferType,
 )
+
+
+_W = 32
+_R = 20
 
 
 class RC6(BlockCipher):
 
     block_size: int
-    valid_key_sizes = range(256)
+    key_size = range(256)
     _S: List[int]
     _w: int
     _r: int
@@ -28,14 +32,16 @@ class RC6(BlockCipher):
     _m: int
     _g: int
 
-    def __init__(self, w: int, r: int, key: BufferType, mode: Optional[CipherMode] = None):
-        if w < 8 or w % 8:
-            raise ValueError(F'Invalid word size: {w}')
-        self._w = w
-        self._u = w // 8
-        self._r = r
-        self._g = int(log2(w))
-        self._m = (1 << w) - 1
+    __slots__ = '_S', '_w', '_r', '_u', '_m', '_g'
+
+    def __init__(self, key: BufferType, mode: Optional[CipherMode] = None, word_size: int = _W, rounds: int = _R):
+        if word_size < 8 or word_size % 8:
+            raise ValueError(F'Invalid word size: {word_size}')
+        self._w = word_size
+        self._u = word_size // 8
+        self._r = rounds
+        self._g = int(log2(word_size))
+        self._m = (1 << word_size) - 1
         super().__init__(key, mode)
 
     @property
@@ -109,26 +115,35 @@ class RC6(BlockCipher):
         self._S = S
 
 
-class rc6(StandardBlockCipherUnit, cipher=SpecifiedAtRuntime):
+class rc6(StandardBlockCipherUnit, cipher=BlockCipherFactory(RC6)):
     """
     RC6 encryption and decryption. The parameter defaults are the RC6 parameters that were chosen
     for the AES candidacy. Only key sizes of 128, 192, and 256 bits are used for AES candidates, but
     the unit will allow any key size up to 256 bits.
     """
     def __init__(
-        self, key, iv=b'', padding=None, mode=None, raw=False,
-        segment_size: Arg.Number('-S', '--segment-size',
-            help='Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8.') = 0,
-        rounds    : Arg.Number('-k', help='Number of rounds to use, the default is {default}') = 20,
-        word_size : Arg.Number('-w', help='The word size in bits, {default} by default.') = 32
+        self, key, iv=b'', padding=None, mode=None, raw=False, segment_size=0,
+        rounds    : Arg.Number('-k', help='Number of rounds to use, the default is {default}') = _R,
+        word_size : Arg.Number('-w', help='The word size in bits, {default} by default.') = _W,
     ):
-        class _R(RC6):
-            def __init__(self, key: BufferType, mode: Optional[CipherMode] = None):
-                super().__init__(word_size, rounds, key, mode)
-            block_size = word_size // 2
-        if word_size % 8:
-            raise ValueError('Block size must be a multiple of 16.')
-        self._cipher_object_factory = c = BlockCipherFactory(_R)
-        self.blocksize = c.block_size
-        self.key_sizes = c.key_size
-        super().__init__(key, iv, padding, mode, raw, segment_size)
+        super().__init__(
+            key,
+            iv,
+            padding,
+            mode,
+            raw,
+            segment_size,
+            rounds=rounds,
+            word_size=word_size
+        )
+
+    @property
+    def block_size(self):
+        return self.args.word_size // 2
+
+    def _new_cipher(self, **optionals) -> CipherInterface:
+        return super()._new_cipher(
+            rounds=self.args.rounds,
+            word_size=self.args.word_size,
+            **optionals
+        )

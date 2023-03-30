@@ -52,6 +52,9 @@ class XXTEA(TEABase):
 
 
 class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
+
+    block_size: int = 8
+
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False, swap=False,
         block_size: Arg.Number('-b', help=(
@@ -65,9 +68,9 @@ class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
             blocks, remainder = divmod(len(data), 4)
             if remainder:
                 blocks += 1
-            self.blocksize = blocks * 4
+            self.block_size = blocks * 4
         else:
-            self.blocksize = self.args.block_size * 4
+            self.block_size = self.args.block_size * 4
 
     def encrypt(self, data: bytes) -> bytes:
         self._prepare_block(data)
@@ -77,5 +80,5 @@ class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
         self._prepare_block(data)
         return super().decrypt(data)
 
-    def _get_cipher_instance(self, **optionals) -> CipherInterface:
-        return super()._get_cipher_instance(block_size=self.blocksize, **optionals)
+    def _new_cipher(self, **optionals) -> CipherInterface:
+        return super()._new_cipher(block_size=self.block_size, **optionals)

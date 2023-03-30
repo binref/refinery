@@ -14,7 +14,7 @@ from refinery.lib.crypto import (
     BlockCipher,
     BlockCipherFactory,
     CipherMode,
-    SpecifiedAtRuntime,
+    CipherInterface,
     BufferType,
 )
 
@@ -34,23 +34,27 @@ def rc5constants(w: int):
         return odd(a * p), odd(b * p)
 
 
+_W = 32
+_R = 12
+
+
 class RC5(BlockCipher):
 
     block_size: int
-    valid_key_sizes = range(256)
+    key_size = range(256)
     _S: List[int]
     _w: int
     _r: int
     _u: int
     _m: int
 
-    def __init__(self, w: int, r: int, key: BufferType, mode: Optional[CipherMode] = None):
-        if w < 0 or w % 8:
-            raise ValueError(F'Invalid word size: {w}')
-        self._w = w
-        self._u = w // 8
-        self._r = r
-        self._m = (1 << w) - 1
+    def __init__(self, key: BufferType, mode: Optional[CipherMode] = None, word_size: int = _W, rounds: int = _R):
+        if word_size < 0 or word_size % 8:
+            raise ValueError(F'Invalid word size: {word_size}')
+        self._w = word_size
+        self._u = word_size // 8
+        self._r = rounds
+        self._m = (1 << word_size) - 1
         super().__init__(key, mode)
 
     @property
@@ -110,24 +114,33 @@ class RC5(BlockCipher):
         self._S = S
 
 
-class rc5(StandardBlockCipherUnit, cipher=SpecifiedAtRuntime):
+class rc5(StandardBlockCipherUnit, cipher=BlockCipherFactory(RC5)):
     """
     RC5 encryption and decryption.
     """
     def __init__(
-        self, key, iv=b'', padding=None, mode=None, raw=False,
-        segment_size: Arg.Number('-S', '--segment-size',
-            help='Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8.') = 0,
-        rounds    : Arg.Number('-k', help='Number of rounds to use, the default is {default}') = 12,
-        word_size : Arg.Number('-w', help='The word size in bits, {default} by default.') = 32
+        self, key, iv=b'', padding=None, mode=None, raw=False, segment_size=0,
+        rounds    : Arg.Number('-k', help='Number of rounds to use, the default is {default}') = _R,
+        word_size : Arg.Number('-w', help='The word size in bits, {default} by default.') = _W,
     ):
-        class _R(RC5):
-            def __init__(self, key: BufferType, mode: Optional[CipherMode] = None):
-                super().__init__(word_size, rounds, key, mode)
-            block_size = word_size // 4
-        if word_size % 8:
-            raise ValueError('Block size must be a multiple of 16.')
-        self._cipher_object_factory = c = BlockCipherFactory(_R)
-        self.blocksize = c.block_size
-        self.key_sizes = c.key_size
-        super().__init__(key, iv, padding, mode, raw, segment_size)
+        super().__init__(
+            key,
+            iv,
+            padding,
+            mode,
+            raw,
+            segment_size,
+            rounds=rounds,
+            word_size=word_size
+        )
+
+    @property
+    def block_size(self):
+        return self.args.word_size // 4
+
+    def _new_cipher(self, **optionals) -> CipherInterface:
+        return super()._new_cipher(
+            rounds=self.args.rounds,
+            word_size=self.args.word_size,
+            **optionals
+        )

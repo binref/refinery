@@ -89,7 +89,7 @@ class rabbit(StreamCipherUnit):
     """
     RABBIT encryption and decryption.
     """
-    key_sizes = 16
+    key_size = {16}
 
     def __init__(self, key, stateful=False, iv: Arg('-i', '--iv', help='Optional initialization vector.') = B''):
         super().__init__(key=key, iv=iv, stateful=stateful)

@@ -12,9 +12,9 @@ class TestCipherUnits(TestUnitBase):
             data = self.generate_random_buffer(buffersize)
             for name in ('aes', 'blowfish', 'cast', 'des', 'des3', 'rc2'):
                 unit = resolve(name)
-                for size in unit.key_sizes:
+                for size in unit.key_size:
                     K = self.generate_random_buffer(size)
-                    V = self.generate_random_buffer(unit.blocksize)
+                    V = self.generate_random_buffer(unit.block_size)
                     D = unit(key=K, iv=V, mode='CBC')
                     for P in ['pkcs7', 'iso7816', 'x923']:
                         E = unit(key=K, iv=V, padding=P, mode='CBC')
@@ -25,7 +25,7 @@ class TestCipherUnits(TestUnitBase):
             data = self.generate_random_buffer(buffersize)
             for name in ('rc4', 'seal', 'chacha', 'salsa', 'hc128'):
                 unit = resolve(name)
-                for size in unit.key_sizes:
+                for size in unit.key_size:
                     S = unit(key=self.generate_random_buffer(size))
                     self.assertEqual(S(S(data)), data)
 

@@ -24,4 +24,3 @@ class TestRijndael(TestUnitBase):
             '40 8E C6 25 4A 5E 8A 5C 23 67 53 91 EE 97 D0 A4 ED F8 98 ED 38 69 68 93 1C 37 A1 1C'
             '40 E0 FC 16 F2 53 FC E6')
         self.assertEqual(data | unit | str, ' /c SCHTASKS /CREATE /SC HOURLY /TN')
-
