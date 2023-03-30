@@ -240,17 +240,11 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
     @property
     def block_size(self) -> int:
-        value = self._cipher_factory.block_size
-        if value is None:
-            value = self._get_cipher().block_size
-        return value
+        return self._get_cipher().block_size
 
     @property
     def key_size(self) -> Optional[Sequence[int]]:
-        value = self._cipher_factory.key_size
-        if value is None:
-            value = self._get_cipher().key_size
-        return value
+        return self._get_cipher().key_size
 
     def encrypt(self, data: bytes) -> bytes:
         cipher = self._get_cipher(True)
