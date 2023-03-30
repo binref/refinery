@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.5.10
+- The `tea` and `xtea` units now have a `--swap` switch which allows to switch them from little endian to big endian mode.
+- The `xxtea` unit was re-worked to support being used as a proper block cipher. This is enabled by specifying the block size using the `--block-size` argument. By default, `xxtea` will continue to operate on the input as a single block: This is how XXTEA is often used in malicious samples.
+- The `rc5` and `rc6` units have been updated to support the `--segment-size` option for CFB mode.
+
 ## Version 0.5.9 -- bugfix release
 
 ## Version 0.5.8 -- bugfix release
