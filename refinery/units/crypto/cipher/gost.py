@@ -113,7 +113,7 @@ class gost(StandardBlockCipherUnit, cipher=BlockCipherFactory(GOST)):
         self, key, iv=B'', padding=None, mode=None, raw=False,
         swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False,
         sbox: Arg.Option('-x', choices=SBOX, help=(
-            'Choose an SBOX. The default is {default}, which corresponds to the R 34.12.2015 standard. '
+            'Choose an SBOX. The default is {default}, which corresponds to the R-34.12.2015 standard. '
             'The other option is CBR, which is the SBOX used by the Central Bank of Russia.'
         )) = SBOX.R34,
     ):
