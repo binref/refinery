@@ -210,8 +210,15 @@ class StandardCipherExecutable(Executable):
         if 'mode' not in _class._argument_specification:
             return
         modes = extract_options(cipher, 'MODE_', 'SIV', 'OPENPGP')
+        check = set(modes)
         if not modes:
             raise RefineryCriticalException(F'No cipher block mode constants found in {cipher!r}')
+        if not check & {'CFB'}:
+            _class._argument_specification.pop('segment_size', None)
+        if not check & {'EAX', 'GCM', 'OCB', 'CCM'}:
+            _class._argument_specification.pop('mac_len', None)
+        if not check & {'CCM'}:
+            _class._argument_specification.pop('assoc_len', None)
         _class._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
         _class._argument_specification['mode'].merge_all(Arg(
             '-m', '--mode', type=str.upper, metavar='M', nargs=Arg.delete, choices=list(modes),
