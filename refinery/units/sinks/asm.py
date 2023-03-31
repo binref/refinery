@@ -23,6 +23,9 @@ class _BasicBlock:
     users: List[Function] = field(default_factory=list)
 
 
+_ARCHES = ['x16', 'x32', 'x64', 'ppc32', 'ppc64', 'mips32', 'mips64']
+
+
 class asm(Unit):
     """
     Disassembles the input data using angr & the capstone disassembly library.
@@ -31,10 +34,7 @@ class asm(Unit):
         self,
         mode: Arg.Choice(
             help='Machine code architecture, default is {default}. Select from the following list: {choices}.',
-            choices=['x16', 'x32', 'x64', 'ppc32', 'ppc64', 'mips32', 'mips64'],
-            metavar='[x32|x64|..]',
-        ) = 'x32',
-        *,
+            choices=_ARCHES, metavar='[x32|x64|..]') = 'x32', *,
         angr: Arg.Switch('-a', help='Force use of Angr to perform a CFG computation before disassembly.') = False,
         no_address: Arg.Switch('-A', help='Disable address display.') = False,
         no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
@@ -76,7 +76,10 @@ class asm(Unit):
             if arch.name.lower() == mode:
                 return arch
         else:
-            raise ValueError(F'unknown arch: {mode}')
+            arches = {a[3].name.lower() for a in self._archinfo.arch_id_map}
+            arches = (arches & set(_ARCHES)) | {'x32', 'x64'}
+            arches = ', '.join(sorted(arches, reverse=True))
+            raise ValueError(F'unknown arch "{mode}" for angr mode; choose one of: {arches}')
 
     @property
     def _capstone_engine(self) -> Cs:
