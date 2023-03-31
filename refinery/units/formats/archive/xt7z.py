@@ -56,6 +56,8 @@ class xt7z(ArchiveUnit):
                     problem = archive.testzip()
                 except self._py7zr.PasswordRequired:
                     problem = True
+                except self._py7zr.UnsupportedCompressionMethodError as E:
+                    raise ValueError(E.message)
                 except self._py7zr.exceptions.InternalError:
                     # ignore internal errors during testzip
                     break
