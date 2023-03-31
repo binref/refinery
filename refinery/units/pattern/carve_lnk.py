@@ -31,7 +31,7 @@ class carve_lnk(Unit):
                 pos += 1
                 continue
 
-            end = pos + 2 + parsed.header.size() + parsed.string_data.size()
+            end = pos + parsed.header.size() + parsed.string_data.size()
             if parsed.has_target_id_list():
                 end += parsed.targets.size()
             if parsed.has_link_info() and not parsed.force_no_link_info():
@@ -39,9 +39,19 @@ class carve_lnk(Unit):
                     end += parsed.info.size()
             while end < len(mem):
                 extra = lnk.extra_factory.ExtraFactory(mem[end:])
-                if extra.extra_class() is None:
+                try:
+                    ec = extra.extra_class()
+                except Exception:
+                    break
+                if ec is None:
                     break
                 end += extra.item_size()
 
+            terminal_block = mem[end:end + 4]
+            if terminal_block != B'\0\0\0\0':
+                self.log_warn(F'detected LNK at offset 0x{pos:X}, but size calculation did not end on a terminal block')
+                continue
+            else:
+                end += 4
             yield self.labelled(mem[pos:end], offset=pos)
             pos = end
