@@ -744,6 +744,15 @@ class DelayedArgument(LazyEvaluation):
         except TooLazy:
             return compute_range
 
+    @handler.register('env', final=True)
+    def env(self, name: str) -> bytes:
+        """
+        The final modifier `env:name` returns the UTF8-encoded value of the environment variable
+        with the given name.
+        """
+        import os
+        return os.environ[name]
+
     @handler.register('pos')
     def pos(self, regex: ByteString, occurrence: int = 0) -> int:
         """
