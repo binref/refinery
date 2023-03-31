@@ -496,7 +496,7 @@ class Arg(Argument):
             raise AttributeError(F'The argument with these values has no destination: {self!r}')
 
     @classmethod
-    def Infer(cls, pt: inspect.Parameter):
+    def Infer(cls, pt: inspect.Parameter, module: Optional[str] = None):
         """
         This class method can be used to infer the argparse argument for a Python function
         parameter. This guess is based on the annotation, name, and default value.
@@ -533,8 +533,22 @@ class Arg(Argument):
                 return value
 
         if isinstance(annotation, str):
-            try: annotation = eval(annotation)
-            except Exception: pass
+            symbols = None
+            while symbols is not False:
+                try:
+                    annotation = eval(annotation, symbols)
+                except NameError:
+                    if symbols is not None or module is None:
+                        break
+                    try:
+                        import importlib
+                        symbols = importlib.import_module(module).__dict__
+                    except Exception:
+                        symbols = False
+                except Exception:
+                    pass
+                else:
+                    break
 
         if annotation is not pt.empty:
             if isinstance(annotation, Arg):
@@ -730,7 +744,7 @@ class Executable(ABCMeta):
 
     _argument_specification: Dict[str, Arg]
 
-    def _infer_argspec(cls, parameters: Dict[str, inspect.Parameter], args: Optional[Dict[str, Arg]] = None):
+    def _infer_argspec(cls, parameters: Dict[str, inspect.Parameter], args: Optional[Dict[str, Arg]], module: str):
 
         args: Dict[str, Arg] = ArgumentSpecification() if args is None else args
 
@@ -741,7 +755,7 @@ class Executable(ABCMeta):
 
         for name in exposed:
             try:
-                argument = Arg.Infer(parameters[name])
+                argument = Arg.Infer(parameters[name], module)
             except KeyError:
                 continue
             args.merge(argument)
@@ -810,7 +824,7 @@ class Executable(ABCMeta):
                     args[key] = value.__copy__()
                     inherited.append(key)
 
-        cls._infer_argspec(parameters, args)
+        cls._infer_argspec(parameters, args, cls.__module__)
 
         if not abstract and has_keyword:
             @wraps(cls.__init__)
