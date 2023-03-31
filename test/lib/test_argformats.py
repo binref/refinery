@@ -121,7 +121,7 @@ class TestArgumentFormats(TestBase):
 
     def test_environment_handler(self):
         import os
-        os.environ['TEST'] = 'foo'
+        os.environ['test'] = 'foo'
         L = loader.load_pipeline
         pl = L('emit env:test')
         self.assertEqual(pl(), b'foo')
