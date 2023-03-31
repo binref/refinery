@@ -118,3 +118,10 @@ class TestArgumentFormats(TestBase):
         L = loader.load_pipeline
         p = L('emit Bar [| put k Foo | cca eat:k | iff k | ccp var:k ]')
         self.assertEqual(p(), B'')
+
+    def test_environment_handler(self):
+        import os
+        os.environ['TEST'] = 'foo'
+        L = loader.load_pipeline
+        pl = L('emit env:test')
+        self.assertEqual(pl(), b'foo')
