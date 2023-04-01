@@ -200,7 +200,7 @@ from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, o
 from refinery.lib.frame import Framed, Chunk
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
-from refinery.lib.types import ByteStr
+from refinery.lib.types import ByteStr, Singleton
 
 
 ByteIO = MemoryFile[ByteStr]
@@ -721,10 +721,13 @@ def UnitFilterBoilerplate(
     return peekfilter
 
 
-def _singleton(cls): return cls()
-@_singleton # noqa
-class _NoReverseImplemented:
-    def __call__(*_): raise NotImplementedError
+class MissingFunction(metaclass=Singleton):
+    """
+    A singleton class that represents a missing function. Used internally to
+    indicate that a unit does not implement a reverse operation.
+    """
+    def __call__(*_, **__):
+        raise NotImplementedError
 
 
 class Executable(ABCMeta):
@@ -798,7 +801,7 @@ class Executable(ABCMeta):
         if not abstract and Entry not in bases:
             bases = bases + (Entry,)
             if not bases[0].is_reversible:
-                nmspc.setdefault('reverse', _NoReverseImplemented)
+                nmspc.setdefault('reverse', MissingFunction)
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
@@ -911,7 +914,7 @@ class Executable(ABCMeta):
         This property is `True` if and only if the unit has a member function named `reverse`. By convention,
         this member function implements the inverse of `refinery.units.Unit.process`.
         """
-        if cls.reverse is _NoReverseImplemented:
+        if cls.reverse is MissingFunction:
             return False
         try:
             return not cls.reverse.__isabstractmethod__

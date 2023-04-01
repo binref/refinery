@@ -21,10 +21,6 @@ from enum import IntFlag
 _T = TypeVar('_T')
 
 
-def _singleton(cls: Callable[..., _T]) -> _T:
-    return cls()
-
-
 def lookahead(iterator: Iterable[_T]) -> Generator[Tuple[bool, _T], None, None]:
     """
     Implements a new iterator from a given one which returns elements
