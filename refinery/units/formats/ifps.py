@@ -415,8 +415,8 @@ class DeclSpec:
                     calling_convention='pascal',
                 )
             else:
-                kw.update(classname=reader.read_terminated_array(1, b'|').decode('latin1'))
-                name = reader.read_terminated_array(1, b'|').decode('latin1')
+                kw.update(classname=reader.read_terminated_array(b'|').decode('latin1'))
+                name = reader.read_terminated_array(b'|').decode('latin1')
                 if name[-1] == '@':
                     kw.update(is_property=True)
                     name = name[:-1]

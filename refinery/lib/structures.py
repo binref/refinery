@@ -534,7 +534,7 @@ class StructReader(MemoryFile[T]):
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
 
-    def read_terminated_array(self, alignment: int, terminator: bytes) -> bytearray:
+    def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray:
         pos = self.tell()
         buf = self.getbuffer()
         try:
@@ -557,13 +557,13 @@ class StructReader(MemoryFile[T]):
             return bytearray(data)
 
     def read_c_string(self, encoding=None) -> Union[str, bytearray]:
-        data = self.read_terminated_array(1, B'\0')
+        data = self.read_terminated_array(B'\0')
         if encoding is not None:
             data = data.decode(encoding)
         return data
 
     def read_w_string(self, encoding=None) -> Union[str, bytearray]:
-        data = self.read_terminated_array(2, B'\0\0')
+        data = self.read_terminated_array(B'\0\0', 2)
         if encoding is not None:
             data = data.decode(encoding)
         return data
