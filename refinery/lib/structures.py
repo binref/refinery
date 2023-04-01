@@ -600,18 +600,21 @@ class StructMeta(type):
     """
     A metaclass to facilitate the behavior outlined for `refinery.lib.structures.Struct`.
     """
-    def __new__(mcls, name, bases, nmspc, **kwargs):
-        nmspc.update(kwargs)
+    def __new__(mcls, name, bases, nmspc, parser=StructReader):
         return type.__new__(mcls, name, bases, nmspc)
 
-    def __init__(cls, name, bases, nmspc, **kwargs):
+    def __init__(cls, name, bases, nmspc, parser=StructReader):
         super(StructMeta, cls).__init__(name, bases, nmspc)
         original__init__ = cls.__init__
 
         @functools.wraps(original__init__)
         def wrapped__init__(self: Struct, reader, *args, **kwargs):
-            if not isinstance(reader, StructReader):
-                reader = StructReader(reader)
+            if not isinstance(reader, parser):
+                if issubclass(parser, reader.__class__):
+                    raise ValueError(
+                        F'A reader of type {reader.__class__.__name__} was passed to {cls.__name__}, '
+                        F'but a {parser.__name__} is required.')
+                reader = parser(reader)
             start = reader.tell()
             view = memoryview(reader.getbuffer())
             original__init__(self, reader, *args, **kwargs)
