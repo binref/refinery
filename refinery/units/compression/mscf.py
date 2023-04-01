@@ -6,7 +6,7 @@ import zlib
 import enum
 
 from refinery.lib.structures import StructReader, MemoryFile
-from refinery.lib.decompression import make_huffman_decode_table, BitBufferedReader
+from refinery.lib.decompression import make_huffman_decode_table, read_huffman_symbol, BitBufferedReader
 from refinery.units import Unit
 
 
@@ -189,7 +189,7 @@ class mscf(Unit):
                     flags.collect()
                     break
                 try:
-                    sym = flags.huffman_symbol(table, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
+                    sym = read_huffman_symbol(flags, table, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
                 except EOFError:
                     self.log_debug('end of file while reading huffman symbol')
                     break

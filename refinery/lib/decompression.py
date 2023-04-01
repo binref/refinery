@@ -198,15 +198,16 @@ class BitBufferedReader:
         self._bit_buffer_size = 0
         self._bit_buffer_data = 0
 
-    def huffman_symbol(self, decode_table: List[int], table_bits: int, max_codeword_len: int):
-        self.collect(max_codeword_len)
-        entry = decode_table[self.peek(table_bits)]
+
+def read_huffman_symbol(reader: BitBufferedReader, decode_table: List[int], table_bits: int, max_codeword_len: int):
+    reader.collect(max_codeword_len)
+    entry = decode_table[reader.peek(table_bits)]
+    symbol = entry >> DECODE_TABLE_SYMBOL_SHIFT
+    length = entry & DECODE_TABLE_LENGTH_MASK
+    if max_codeword_len > table_bits and entry >= (1 << (table_bits + DECODE_TABLE_SYMBOL_SHIFT)):
+        reader.read(table_bits)
+        entry = decode_table[symbol + reader.peek(length)]
         symbol = entry >> DECODE_TABLE_SYMBOL_SHIFT
         length = entry & DECODE_TABLE_LENGTH_MASK
-        if max_codeword_len > table_bits and entry >= (1 << (table_bits + DECODE_TABLE_SYMBOL_SHIFT)):
-            self.read(table_bits)
-            entry = decode_table[symbol + self.peek(length)]
-            symbol = entry >> DECODE_TABLE_SYMBOL_SHIFT
-            length = entry & DECODE_TABLE_LENGTH_MASK
-        self.read(length)
-        return symbol
+    reader.read(length)
+    return symbol
