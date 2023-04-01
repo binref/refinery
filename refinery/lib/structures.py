@@ -528,8 +528,8 @@ class StructReader(MemoryFile[T]):
     def i32(self, peek: bool = False) -> int: return signed(self.read_integer(32, peek), 32)
     def i64(self, peek: bool = False) -> int: return signed(self.read_integer(64, peek), 64)
 
-    def f32(self, peek: bool = False) -> float: return self.read_struct('f', peek=peek)
-    def f64(self, peek: bool = False) -> float: return self.read_struct('d', peek=peek)
+    def f32(self, peek: bool = False) -> float: return self.read_struct('f', unwrap=True, peek=peek)
+    def f64(self, peek: bool = False) -> float: return self.read_struct('d', unwrap=True, peek=peek)
 
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
