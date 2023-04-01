@@ -78,3 +78,6 @@ class TestBase(unittest.TestCase):
     def setUp(self):
         random.seed(0xBAADF00D)  # guarantee deterministic 'random' buffers
         logging.disable(logging.CRITICAL)
+
+    def assertContains(self, container, member, msg=None):
+        self.assertIn(member, container, msg)
