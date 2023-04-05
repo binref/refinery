@@ -396,13 +396,14 @@ class Arg(Argument):
         *args   : str,
         help    : Union[omit, str] = omit,
         dest    : Union[omit, str] = omit,
+        nargs   : Union[omit, int, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments that contain binary data.
         """
-        return cls(*args, group=group, help=help, dest=dest, type=multibin, metavar=metavar or 'B')
+        return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=multibin, metavar=metavar or 'B')
 
     @classmethod
     def NumSeq(

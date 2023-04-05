@@ -45,17 +45,18 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, pp, regex=False, strict=False):
+    def __init__(self, pp: Union[str, re.Pattern], regex=False, fuzzy=False):
         if isinstance(pp, re.Pattern):
             self.stops = []
             self.pattern = pp
             return
         elif not regex:
-            if not strict and not set('*?/') & set(pp):
-                pp = F'*{pp}*'
             self.stops = [stop for stop in re.split(R'(.*?[/*?])', pp) if stop]
-            pp = fnmatch.translate(pp)
-        self.pattern = re.compile(pp)
+            pp, _, _ = fnmatch.translate(pp).partition(r'\Z')
+        pattern = re.compile(pp)
+        self._check = self._fuzzy = pattern.search
+        if not fuzzy:
+            self._check = pattern.fullmatch
 
     def reach(self, path):
         if not any(self.stops):
@@ -65,8 +66,11 @@ class PathPattern:
                 return True
         return False
 
-    def check(self, path):
-        return self.pattern.fullmatch(path)
+    def check(self, path, fuzzy=False):
+        if fuzzy:
+            return self._fuzzy(path)
+        else:
+            return self._check(path)
 
     def __repr__(self):
         return F'<PathPattern:{"//".join(self.stops) or "RE"}>'
@@ -74,20 +78,31 @@ class PathPattern:
 
 class PathExtractorUnit(Unit, abstract=True):
 
-    _strict_path_matching = False
     _custom_path_separator = None
 
-    def __init__(self, *paths: Arg(
-        metavar='path', nargs='*', default=(), type=pathspec, help=(
-            'Wildcard pattern for the name of the item to be extracted. Each item is returned'
-            ' as a separate output of this unit. Paths may contain wildcards. The default is '
-            'a single wildcard, which means that every item will be extracted.')),
-        list: Arg.Switch('-l', help='Return all matching paths as UTF8-encoded output chunks.') = False,
-        join_path: Arg.Switch('-j', group='PATH', help='Join path names from container with previous path names.') = False,
-        drop_path: Arg.Switch('-d', group='PATH', help='Do not modify the path variable for output chunks.') = False,
-        regex: Arg.Switch('-r', help='Use regular expressions instead of wildcard patterns.') = False,
-        path: Arg('-P', metavar='NAME',
-            help='Name of the meta variable to receive the extracted path. The default value is "{default}".') = b'path',
+    def __init__(
+        self,
+        *paths: Arg.Binary(metavar='path', nargs='*', help=(
+            'Wildcard pattern for the path of the item to be extracted. Each item is returned '
+            'as a separate output of this unit. Paths may contain wildcards; The default '
+            'argument is a single wildcard, which means that every item will be extracted. If '
+            'a given path yields no results, the unit attempts to perform a fuzzy search with '
+            'it instead. This can be disabled using the --exact switch.')),
+        list: Arg.Switch('-l',
+            help='Return all matching paths as UTF8-encoded output chunks.') = False,
+        join_path: Arg.Switch('-j', group='PATH',
+            help='Join path names from container with previous path names.') = False,
+        drop_path: Arg.Switch('-d', group='PATH',
+            help='Do not modify the path variable for output chunks.') = False,
+        fuzzy: Arg.Switch('-z', group='MATCH',
+            help='Path patterns always match on substrings rather than whole paths.') = False,
+        exact: Arg.Switch('-e', group='MATCH',
+            help='Path patterns never match on substrings.') = False,
+        regex: Arg.Switch('-r',
+            help='Use regular expressions instead of wildcard patterns.') = False,
+        path: Arg('-P', metavar='NAME', help=(
+            'Name of the meta variable to receive the extracted path. The default value is '
+            '"{default}".')) = b'path',
         **keywords
     ):
         super().__init__(
@@ -96,15 +111,35 @@ class PathExtractorUnit(Unit, abstract=True):
             join=join_path,
             drop=drop_path,
             path=path,
+            fuzzy=fuzzy,
+            exact=exact,
             regex=regex,
             **keywords
         )
 
     @property
     def _patterns(self):
-        strict = self._strict_path_matching
-        paths = self.args.paths or (['.*'] if self.args.regex else ['*'])
-        return [PathPattern(p, self.args.regex, strict) for p in paths]
+        paths = self.args.paths
+        if not paths:
+            if self.args.regex:
+                paths = ['.*']
+            else:
+                paths = [u'*']
+        else:
+            def to_string(t):
+                if isinstance(t, str):
+                    return t
+                return t.decode(self.codec)
+            paths = [to_string(p) for p in paths]
+        for path in paths:
+            self.log_debug('path:', path)
+        return [
+            PathPattern(
+                path,
+                self.args.regex,
+                self.args.fuzzy,
+            ) for path in paths
+        ]
 
     @abc.abstractmethod
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
@@ -167,21 +202,26 @@ class PathExtractorUnit(Unit, abstract=True):
                 self.log_warn(F'read chunk with duplicate path; deduplicating to {result.path}')
 
         for p in patterns:
-            for result in results:
-                path = result.path
-                if not p.check(path):
-                    continue
-                if self.args.list:
-                    yield self.labelled(path.encode(self.codec), **result.meta)
-                    continue
-                if not self.args.drop:
-                    result.meta[metavar] = path
-                try:
-                    data = result.get_data()
-                except Exception as error:
-                    if self.log_debug():
-                        raise
-                    self.log_warn(F'extraction failure for {path}: {error!s}')
-                else:
-                    self.log_debug(F'extraction success for {path}')
-                    yield self.labelled(data, **result.meta)
+            for fuzzy in (False, True):
+                done = self.args.exact
+                for result in results:
+                    path = result.path
+                    if not p.check(path, fuzzy):
+                        continue
+                    done = True
+                    if self.args.list:
+                        yield self.labelled(path.encode(self.codec), **result.meta)
+                        continue
+                    if not self.args.drop:
+                        result.meta[metavar] = path
+                    try:
+                        data = result.get_data()
+                    except Exception as error:
+                        if self.log_debug():
+                            raise
+                        self.log_warn(F'extraction failure for {path}: {error!s}')
+                    else:
+                        self.log_debug(F'extraction success for {path}')
+                        yield self.labelled(data, **result.meta)
+                if done or self.args.fuzzy:
+                    break

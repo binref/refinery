@@ -11,10 +11,20 @@ class dnmr(PathExtractorUnit):
     Extracts subfiles from .NET managed resources.
     """
     def __init__(
-        self, *paths, list=False, join_path=False, drop_path=False, path=b'name',
-        raw: Arg.Switch('-r', help='Do not deserialize the managed resource entry data.') = False
+        self, *paths, list=False, join_path=False, drop_path=False, exact=False, fuzzy=False, regex=False, path=b'name',
+        raw: Arg.Switch('-w', help='Do not deserialize the managed resource entry data.') = False
     ):
-        super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, raw=raw)
+        super().__init__(
+            *paths,
+            list=list,
+            join_path=join_path,
+            drop_path=drop_path,
+            path=path,
+            raw=raw,
+            fuzzy=fuzzy,
+            exact=exact,
+            regex=regex,
+        )
 
     def unpack(self, data):
         try:

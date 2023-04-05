@@ -10,12 +10,12 @@ class vsect(PathExtractorUnit):
     """
     def __init__(
         self, *paths,
-        enrich: Arg.Switch('-e', help=(
+        meta: Arg.Switch('-m', help=(
             'Populates the metadata variables vaddr and vsize containing the virtual address and size '
             'of each section, respectively.')) = False,
         **keywords
     ):
-        super().__init__(*paths, enrich=enrich, **keywords)
+        super().__init__(*paths, meta=meta, **keywords)
 
     def unpack(self, data):
         exe = Executable.Load(data)
@@ -26,7 +26,7 @@ class vsect(PathExtractorUnit):
             va = section.virtual.lower
             vs = len(section.virtual)
             kwargs = {'offset': start}
-            if self.args.enrich:
+            if self.args.meta:
                 if va is not None:
                     kwargs['vaddr'] = va
                 if vs is not None:

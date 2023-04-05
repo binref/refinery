@@ -8,13 +8,25 @@ from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 class ArchiveUnit(PathExtractorUnit, abstract=True):
     def __init__(
-        self, *paths, list=False, join_path=False, drop_path=False, path=b'path',
+        self, *paths, list=False, join_path=False, drop_path=False, fuzzy=False, exact=False, regex=False, path=b'path',
         date: Arg('-D', metavar='NAME',
             help='Name of the meta variable to receive the extracted file date. The default value is "{default}".') = b'date',
         pwd: Arg('-p', help='Optionally specify an extraction password.') = B'',
         **kwargs
     ):
-        super().__init__(*paths, list=list, join_path=join_path, drop_path=drop_path, path=path, pwd=pwd, date=date, **kwargs)
+        super().__init__(
+            *paths,
+            list=list,
+            join_path=join_path,
+            drop_path=drop_path,
+            fuzzy=fuzzy,
+            exact=exact,
+            regex=regex,
+            path=path,
+            pwd=pwd,
+            date=date,
+            **kwargs
+        )
 
     _COMMON_PASSWORDS = [
         'infected',

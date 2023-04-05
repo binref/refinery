@@ -33,8 +33,6 @@ class xtasar(ArchiveUnit):
     """
     Extract files from a ASAR archive.
     """
-    _strict_path_matching = True
-
     def unpack(self, data: bytearray):
         def _unpack(dir: JSONDict, *path):
             for name, listing in dir.get('files', {}).items():

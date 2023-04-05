@@ -448,7 +448,8 @@ class xtpyi(ArchiveUnit):
     Extracts and decompiles files from a Python Installer (aka PyInstaller) archive.
     """
     def __init__(
-        self, *paths, list=False, join_path=False, drop_path=False, path=b'path', date=b'date',
+        self, *paths, list=False, join_path=False, drop_path=False, fuzzy=False, exact=False, regex=False,
+        path=b'path', date=b'date',
         user_code: Arg.Switch('-u', group='FILTER', help=(
             'Extract only source code files from the root of the archive. These usually implement '
             'the actual domain logic.')) = False,
@@ -460,8 +461,16 @@ class xtpyi(ArchiveUnit):
     ):
         super().__init__(
             *paths,
-            list=list, join_path=join_path, drop_path=drop_path, path=path, date=date,
-            unmarshal=unmarshal, user_code=user_code
+            list=list,
+            join_path=join_path,
+            drop_path=drop_path,
+            fuzzy=fuzzy,
+            exact=exact,
+            regex=regex,
+            path=path,
+            date=date,
+            unmarshal=unmarshal,
+            user_code=user_code,
         )
 
     @ArchiveUnit.Requires('xdis', optional=False)
