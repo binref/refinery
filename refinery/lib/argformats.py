@@ -790,6 +790,15 @@ class DelayedArgument(LazyEvaluation):
 
         return _pos
 
+    @handler.register('rx')
+    def rx(self, str: bytes) -> bytes:
+        """
+        The handler `rx:str` returns a regular expression which matches the exact string
+        sequence given by `str`, with special regular expression control characters escaped.
+        """
+        import re
+        return re.escape(str)
+
     @handler.register('c', 'copy', final=True)
     def copy(self, region: str) -> bytes:
         """
@@ -1279,16 +1288,6 @@ class DelayedRegexpArgument(DelayedArgument):
         pattern[0::2] = [re.sub(BR'[A-Fa-f0-9?]{2}', y2r, c) for c in pattern[::2]]
         pattern[1::2] = [yara_range(b) for b in pattern[1::2]]
         return B''.join(pattern)
-
-    @handler.register('escape')
-    def escape(self, str: bytes) -> bytes:
-        """
-        The handler `escape:str` returns a regular expression which matches the exact
-        string sequence given by `str`, with special regular expression control characters
-        escaped.
-        """
-        import re
-        return re.escape(str)
 
 
 class DelayedNumberArgument(DelayedArgument):
