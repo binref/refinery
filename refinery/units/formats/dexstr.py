@@ -9,5 +9,6 @@ class dexstr(Unit):
     Extract strings from DEX (Dalvik Executable) files.
     """
     def process(self, data):
-        for string in DexFile(data).strings:
+        dex = DexFile(data)
+        for string in dex.read_strings():
             yield string.encode(self.codec)

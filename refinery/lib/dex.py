@@ -7,7 +7,7 @@ unit.
 
 Main Reference: https://source.android.com/devices/tech/dalvik/dex-format
 """
-from typing import Generator, List
+from typing import Generator
 
 import zlib
 import hashlib
@@ -50,9 +50,15 @@ class DexFile(Struct):
         self.link_offset = reader.u32()
         self.map_offset = reader.u32()
 
-        self.strings: List[str] = list(self._read_strings(reader, reader.u32(), reader.u32()))
+        self.strings_size = reader.u32()
+        self.strings_offset = reader.u32()
+        self._reader = reader
 
-    def _read_strings(self, reader: StructReader, size: int, offset: int) -> Generator[str, None, None]:
+    def read_strings(self) -> Generator[str, None, None]:
+        size = self.strings_size
+        offset = self.strings_offset
+        reader = self._reader
+
         def uleb128():
             value = 0
             more = True
@@ -74,6 +80,4 @@ class DexFile(Struct):
                     continue
                 data = reader.read_c_string()
                 string = JvClassFile.decode_utf8m(data)
-                if len(string) != size:
-                    raise RuntimeError(F'Read string of length {len(string)}, expected length {size}.')
                 yield string
