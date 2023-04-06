@@ -36,16 +36,20 @@ class iemap(Unit):
         return colorama
 
     def process(self, data):
-        colorama = self._colorama
-        colorama.init(autoreset=False, convert=True)
         from sys import stderr
+        from os import name as os_name
+        colorama = self._colorama
+        colorama.init(autoreset=False, convert=(os_name == 'nt'))
 
         nobg = not self.args.background
         meta = metavars(data)
 
         label = meta.format_str(self.args.label, self.codec, [data])
-        if label and not label.endswith(' '):
-            label += ' '
+        if label:
+            if not label.endswith(' '):
+                label = F'{label} '
+            if not label.startswith(' '):
+                label = F' {label}'
 
         bgmap = [
             colorama.Back.BLACK,
@@ -71,7 +75,6 @@ class iemap(Unit):
         _reset = colorama.Back.BLACK + colorama.Fore.WHITE + colorama.Style.RESET_ALL
 
         clrmap = fgmap if nobg else bgmap
-
         header = '['
         header_length = 1
         footer_length = 4 + 7
@@ -80,9 +83,10 @@ class iemap(Unit):
             header = '[{1}{0}] {2}'.format(_reset, ''.join(F'{bg}{k}' for k, bg in enumerate(clrmap, 1)), header)
             header_length += 3 + len(clrmap)
 
-        width = get_terminal_size() - header_length - footer_length
+        _tw = get_terminal_size()
+        width = _tw - header_length - footer_length
         if width < 16:
-            raise RuntimeError(F'computed terminal width {width} is too small for heatmap')
+            raise RuntimeError(F'computed terminal width {_tw} is too small for heatmap')
 
         def entropy_select(value, map):
             index = min(len(map) - 1, math.floor(value * len(map)))
@@ -128,11 +132,15 @@ class iemap(Unit):
                 stderr.write(colorama.Fore.WHITE)
                 stderr.flush()
             it = itertools.chain(itertools.repeat(filler, 3), label, itertools.cycle(filler))
+            cp = None
             for chunk_size, block_size in zip(chunk_sizes, block_sizes):
                 chunk = stream.read(chunk_size)
                 chunk_entropy = entropy(chunk)
-                string = entropy_select(chunk_entropy, clrmap) + ''.join(
-                    itertools.islice(it, block_size))
+                pp = entropy_select(chunk_entropy, clrmap)
+                string = ''.join(itertools.islice(it, block_size))
+                if pp != cp:
+                    string = F'{pp}{string}'
+                cp = pp
                 stderr.write(string)
                 stderr.flush()
         except BaseException:
