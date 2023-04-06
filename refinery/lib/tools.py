@@ -174,7 +174,12 @@ def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
 
 
 def entropy_fallback(data: ByteString) -> float:
-    histogram = {b: data.count(b) for b in range(0x100)}
+    if isinstance(data, memoryview):
+        def count(b):
+            return sum(1 for _b in data if _b == b)
+    else:
+        count = data.count
+    histogram = {b: count(b) for b in range(0x100)}
     S = [histogram[b] / len(data) for b in histogram]
     return 0.0 + -sum(p * log(p, 2) for p in S if p) / 8.0
 

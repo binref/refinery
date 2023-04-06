@@ -21,6 +21,14 @@ class TestEntropy(TestBase):
         data = bytes((random.randrange(0, 0x100) for _ in range(2000)))
         self.assertGreaterEqual(tools.entropy(data), 0.98)
 
+    def test_fallback_memoryview(self):
+        for data in [
+            B'FOO-BAR-BAR' * 200,
+            self.generate_random_buffer(1000)
+        ]:
+            view = memoryview(data)
+            self.assertAlmostEqual(tools.entropy(view), tools.entropy_fallback(view))
+
 
 class TestTools(TestBase):
 
