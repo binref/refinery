@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.0
+- The AutoIt decompiler unit `a3x` was added.
+- Path extractor units have been reworked to be more consistent about when and when they do not use fuzzy matching on paths. Switches have been added to control this behavior.
+
 ## Version 0.5.10
 - The `tea` and `xtea` units now have a `--swap` switch which allows to switch them from little endian to big endian mode.
 - The `xxtea` unit was re-worked to support being used as a proper block cipher. This is enabled by specifying the block size using the `--block-size` argument. By default, `xxtea` will continue to operate on the input as a single block: This is how XXTEA is often used in malicious samples.
