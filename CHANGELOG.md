@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.6.1 -- bugfix release
+
 ## Version 0.6.0
 - The AutoIt decompiler unit `a3x` was added.
 - Path extractor units have been reworked to be more consistent about when and when they do not use fuzzy matching on paths. Switches have been added to control this behavior.
