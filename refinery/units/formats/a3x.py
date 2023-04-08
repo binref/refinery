@@ -472,19 +472,19 @@ A3X_APICALLS = [
 ]
 
 A3X_OPCODES = {
-    0x00: '{k}',
-    0x01: '{a}',
-    0x05: '{i}',
-    0x10: '{q}',
-    0x20: '{d}',
-    0x30: '{s}',
-    0x31: '{s}',
-    0x32: '@{s}',
-    0x33: '${s}',
-    0x34: '{s}',
-    0x35: '.{s}',
-    0x36: '{r}',
-    0x37: '{s}',
+    0x00: R'{k}',  # KEYWORD
+    0x01: R'{a}',  # API
+    0x05: R'{i}',  # INT
+    0x10: R'{q}',  # INT64
+    0x20: R'{d}',  # DOUBLE
+    0x30: R'{s}',  # CONSTRUCT
+    0x31: R'{s}',  # COMMAND
+    0x32: '@{s}',  # MACRO
+    0x33: '${s}',  # VAR
+    0x34: R'{s}',  # FUNC
+    0x35: '.{s}',  # OBJECT
+    0x36: R'{r}',  # STRING
+    0x37: R'{s}',  # DIRECTIVE
     0x40: ',',
     0x41: '=',
     0x42: '>',
