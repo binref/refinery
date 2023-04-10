@@ -8,6 +8,11 @@ class transpose(BlockTransformationBase):
     Interprets the sequence of blocks as rows of a matrix and returns the
     blocks that correspond to the columns of this matrix.
     """
+    @BlockTransformationBase.Requires("numpy")
+    def _numpy():
+        import numpy
+        return numpy
+
     def __init__(
         self, padding: Arg(help='Optional byte sequence to use as padding for tail end.') = B'',
         blocksize=1
@@ -25,6 +30,11 @@ class transpose(BlockTransformationBase):
             data.append(rest)
             rest = B''
 
-        return self.unchunk((
-            bytes(data[j][i] for j in range(len(data)))
-            for i in range(self.args.blocksize)), raw=True)
+        try:
+            np = self._numpy
+        except ImportError:
+            bs = self.args.blocksize
+            it = (bytes(row[i] for row in data) for i in range(bs))
+            return self.unchunk(it, raw=True)
+        else:
+            return np.array(data, dtype=np.uint8).transpose().tobytes('C')
