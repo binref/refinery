@@ -272,7 +272,10 @@ class peek(HexViewer):
             yield separator()
 
     def filter(self, chunks):
-        self._colorama.init(wrap=False)
+        try:
+            self._colorama.init(wrap=False)
+        except ImportError:
+            pass
         discarded = 0
         for final, item in lookahead(chunks):
             item.temp = final
