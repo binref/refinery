@@ -1,28 +1,76 @@
+from __future__ import annotations
+
+from typing import Type, Dict, Any
+
 import importlib
+import functools
 
 from .. import refinery, TestBase, NameUnknownException
+from refinery.units import requirement, Unit, RefineryImportMissing, Entry, LogLevel
 
 __all__ = ['refinery', 'TestUnitBase', 'NameUnknownException']
 
 
-class TestUnitBase(TestBase):
+class TestUnitBaseMeta(type):
 
-    def _relative_module_path(self, path, strip_test=True):
+    def __init__(cls: TestUnitBase, name, bases, namespace: Dict[str, Any]):
+        try:
+            unit = cls.unit()
+            has_optional_imports = bool(unit.optional_dependencies)
+        except Exception:
+            has_optional_imports = False
+        if has_optional_imports:
+            assert unit
+            for name, method in namespace.items():
+                if not name.startswith('test_'):
+                    continue
+                if not callable(method):
+                    continue
+                @functools.wraps(method) # noqa
+                def wrapped_method(self: TestUnitBase, *args, __wrapped_method=method, **kwargs):
+                    r = __wrapped_method(self, *args, **kwargs)
+                    restoration = {}
+                    for name, getter in unit.__dict__.items():
+                        if isinstance(getter, requirement):
+                            def broken(*a, **k):
+                                raise RefineryImportMissing(broken.dependency)
+                            broken.dependency = getter.dependency
+                            restoration[name] = getter
+                            setattr(unit, name, property(broken))
+                    try:
+                        r = __wrapped_method(self, *args, **kwargs)
+                    except ImportError:
+                        pass
+                    finally:
+                        for name, getter in restoration.items():
+                            setattr(unit, name, getter)
+                    return r
+                setattr(cls, name, wrapped_method)
+                namespace[name] = wrapped_method
+
+        return type.__init__(cls, name, bases, namespace)
+
+
+class TestUnitBase(TestBase, metaclass=TestUnitBaseMeta):
+
+    @staticmethod
+    def _relative_module_path(path: str, strip_test=True):
         path = path.split('.')
         path = path[1:]
         if strip_test:
             path = [x[4:].lstrip('_-.') if x.startswith('test') else x for x in path]
         return '.'.join(path)
 
-    def load(self, *args, **kwargs) -> refinery.Unit:
-        name = self._relative_module_path(self.__class__.__module__)
+    @classmethod
+    def unit(cls) -> Type[refinery.Unit]:
+        name = cls._relative_module_path(cls.__module__)
         try:
             module = importlib.import_module(F'refinery.{name}')
         except ImportError:
             pass
         else:
             for object in vars(module).values():
-                if isinstance(object, type) and issubclass(object, refinery.units.Entry) and object.__module__ == name:
+                if isinstance(object, type) and issubclass(object, Entry) and object.__module__ == name:
                     return object
         try:
             basename = name.rsplit('.', 1)[-1]
@@ -32,10 +80,23 @@ class TestUnitBase(TestBase):
             for entry in get_all_entry_points():
                 if entry.__name__ == name:
                     break
-                if self._relative_module_path(entry.__module__) == name:
+                if cls._relative_module_path(entry.__module__) == name:
                     break
             else:
                 raise NameUnknownException(name)
-        unit = entry.assemble(*args, **kwargs)
-        unit.log_level = refinery.units.LogLevel.DETACHED
+        return entry
+
+    @classmethod
+    def load(cls, *args, **kwargs) -> refinery.Unit:
+        unit = cls.unit().assemble(*args, **kwargs)
+        unit.log_level = LogLevel.DETACHED
         return unit
+
+    @classmethod
+    def load_pipeline(cls, cmd: str) -> refinery.Unit:
+        from refinery.lib.loader import load_pipeline
+        unit = pl = load_pipeline(cmd)
+        while isinstance(unit, Unit):
+            unit.log_level = LogLevel.DETACHED
+            unit = unit.source
+        return pl

@@ -1104,6 +1104,10 @@ class UnitBase(metaclass=Executable, abstract=True):
         """
 
 
+class requirement(property):
+    pass
+
+
 class Unit(UnitBase, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
@@ -1118,27 +1122,32 @@ class Unit(UnitBase, abstract=True):
 
     @staticmethod
     def Requires(distribution: str, optional: bool = True):
-        class Requirement(property):
+        class Requirement(requirement):
             dependency = distribution
-            prefix = 'optional' if optional else 'required'
+            required = not optional
 
             def __init__(self, importer: Callable):
                 super().__init__(importer)
                 self.module = None
 
             def __set_name__(self, unit: Type[Unit], name: str):
-                bucket = F'{self.prefix}_dependencies'
-                dep = getattr(unit, bucket)
-                if dep is None:
-                    dep = set()
-                    setattr(unit, bucket, dep)
-                dep.add(self.dependency)
+                if self.required:
+                    bucket = unit.required_dependencies
+                else:
+                    bucket = unit.optional_dependencies
+                if bucket is None:
+                    bucket = set()
+                    if self.required:
+                        unit.required_dependencies = bucket
+                    else:
+                        unit.optional_dependencies = bucket
+                bucket.add(self.dependency)
 
             def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
                 if self.module is not None:
                     return self.module
                 try:
-                    self.module = module = super().fget()
+                    self.module = module = self.fget()
                 except ImportError as E:
                     args = unit.optional_dependencies or (self.dependency,)
                     raise RefineryImportMissing(*args) from E
