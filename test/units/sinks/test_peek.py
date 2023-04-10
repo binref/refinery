@@ -16,7 +16,7 @@ class TestPeek(TestUnitBase):
 
     def test_unicode_variable(self):
         with errbuf() as stderr:
-            pipeline = L('put u u:This!Is-A-Un1c0d3-String [| peek ]')
+            pipeline = self.load_pipeline('put u u:This!Is-A-Un1c0d3-String [| peek ]')
             pipeline()
             output = stderr.getvalue()
         self.assertIn('u:This!Is-A-Un1c0d3-String', output)
@@ -201,5 +201,5 @@ class TestPeek(TestUnitBase):
         }.items():
             with errbuf() as stderr:
                 prefix = 's:' * requires_prefix
-                L(pfmt.format(value))()
+                self.load_pipeline(pfmt.format(value))()
                 self.assertIn(F'test = {prefix}{value}', stderr.getvalue())
