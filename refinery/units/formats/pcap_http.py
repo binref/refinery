@@ -56,7 +56,7 @@ class pcap_http(Unit):
                     return self.labelled(data, url=request.url)
             return None
 
-        for stream in self.pcap.process(data):
+        for stream in data | pcap:
             try:
                 data = http_parser.process(stream)
             except Exception:
