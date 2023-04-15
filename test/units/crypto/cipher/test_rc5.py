@@ -50,3 +50,8 @@ class TestRC5(TestUnitBase):
         msg = bytes.fromhex('7ad51c93c2e36a3e26a318806b9ab8562837137fb1b4327e8d')
         unit = self.load(b'0123456789abcdef', mode='cfb', iv=b'01234567', segment_size=64)
         self.assertEqual(msg | unit | bytes, b'This is a secret message.')
+
+    def test_regression_ctr_mode(self):
+        data = B'This is a secret message.'
+        unit = self.load(mode='ctr', key=b'0123456789abcdef', iv=b'0123456')
+        self.assertEqual(data, data | -unit | unit | bytes)

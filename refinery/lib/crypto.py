@@ -463,15 +463,23 @@ class BlockCipherFactory(CipherObjectFactory):
         if mode is not None:
             mode = self._modes[mode]
         mode_arguments = {}
+        cipher = self.cipher
         for arg in ('iv', 'counter', 'initial_value', 'nonce', 'mode', 'segment_size'):
             try:
                 mode_arguments[arg] = args.pop(arg)
             except KeyError:
                 pass
         if mode is CTR:
-            mode_arguments.update(block_size=self.cipher.block_size)
+            block_size = cipher.block_size
+            if not isinstance(block_size, int):
+                # This happens for ciphers that do not have a fixed block size, i.e. the
+                # block size is truly an instance attribute and not a class property.
+                # In this case, we create a temporary cipher object and use it to obtain
+                # the true block size.
+                block_size = cipher(key, ECB, **args).block_size
+            mode_arguments.update(block_size=block_size)
         mode = mode(**mode_arguments)
-        return self.cipher(key, mode, **args)
+        return cipher(key, mode, **args)
 
     @property
     def name(self):
