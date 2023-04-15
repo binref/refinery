@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import Iterable
 from refinery.units import Arg, Unit, Chunk
 from refinery.lib.meta import metavars
 
@@ -15,7 +16,7 @@ class min_(Unit):
     ):
         super().__init__(key=key)
 
-    def filter(self, chunks):
+    def filter(self, chunks: Iterable[Chunk]):
         def get_value(chunk: Chunk):
             if key is None:
                 return chunk
@@ -24,15 +25,20 @@ class min_(Unit):
         key = self.args.key
         it = iter(chunks)
 
-        try:
-            min_chunk = next(it)
-        except StopIteration:
-            return None
+        for min_chunk in it:
+            if not min_chunk.visible:
+                yield min_chunk
+            else:
+                min_index = 0
+                min_value = get_value(min_chunk)
+                break
         else:
-            min_index = 0
-            min_value = get_value(min_chunk)
+            return
 
         for index, chunk in enumerate(chunks, 1):
+            if not chunk.visible:
+                yield chunk
+                continue
             value = get_value(chunk)
             try:
                 is_min = value < min_value

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import Iterable
 from refinery.units import Arg, Unit, Chunk
 from refinery.lib.meta import metavars
 
@@ -15,7 +16,7 @@ class max_(Unit):
     ):
         super().__init__(key=key)
 
-    def filter(self, chunks):
+    def filter(self, chunks: Iterable[Chunk]):
         def get_value(chunk: Chunk):
             if key is None:
                 return chunk
@@ -24,15 +25,20 @@ class max_(Unit):
         key = self.args.key
         it = iter(chunks)
 
-        try:
-            max_chunk = next(it)
-        except StopIteration:
-            return None
+        for max_chunk in it:
+            if not max_chunk.visible:
+                yield max_chunk
+            else:
+                max_index = 0
+                max_value = get_value(max_chunk)
+                break
         else:
-            max_index = 0
-            max_value = get_value(max_chunk)
+            return
 
         for index, chunk in enumerate(chunks, 1):
+            if not chunk.visible:
+                yield chunk
+                continue
             value = get_value(chunk)
             try:
                 is_max = value > max_value
