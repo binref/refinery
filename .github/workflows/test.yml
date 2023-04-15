@@ -58,7 +58,7 @@ jobs:
       run: |
         sudo apt-get install xclip xvfb
         python -m pip install --upgrade pip
-        python -m pip install flake8
+        python -m pip install flake8 pytest pytest-cov
         pip install .[all]
     - name: Run tests and collect coverage
       run: |
