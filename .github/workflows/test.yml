@@ -48,10 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: '2'
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Checkout
+      uses: actions/checkout@v3
+    - name: Set up Python 3.10
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
@@ -59,11 +58,11 @@ jobs:
       run: |
         sudo apt-get install xclip xvfb
         python -m pip install --upgrade pip
-        python -m pip install flake8 codecov
+        python -m pip install flake8
         pip install .[all]
-    - name: Generate code coverage
+    - name: Run tests and collect coverage
       run: |
-        XDG_SESSION_TYPE=x11 xvfb-run coverage run --source refinery run-tests.py
+        XDG_SESSION_TYPE=x11 xvfb-run pytest --cov app
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
