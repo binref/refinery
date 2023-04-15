@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.6.2 -- bugfix release
+
 ## Version 0.6.1 -- bugfix release
 
 ## Version 0.6.0
