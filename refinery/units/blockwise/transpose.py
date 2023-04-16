@@ -22,19 +22,32 @@ class transpose(BlockTransformationBase):
     def process(self, data):
         rest = self.rest(data)
         data = list(self.chunk(data, raw=True))
+        padding = self.args.padding
+        bs = self.args.blocksize
+        rs = len(rest)
 
-        if self.args.padding:
-            while len(rest) < self.args.blocksize:
-                rest += self.args.padding
-            rest = rest[:self.args.blocksize]
-            data.append(rest)
-            rest = B''
+        if rest and padding:
+            while len(rest) < bs:
+                rest += padding
+            rest = rest[:bs]
 
         try:
             np = self._numpy
         except ImportError:
-            bs = self.args.blocksize
-            it = (bytes(row[i] for row in data) for i in range(bs))
+            if rest:
+                data.append(rest)
+            it = (bytes(row[i] for row in data if len(row) > i) for i in range(bs))
             return self.unchunk(it, raw=True)
         else:
-            return np.array(data, dtype=np.uint8).transpose().tobytes('C')
+            if rest:
+                if not padding:
+                    rest += bytes(bs - rs)
+                data.append(rest)
+            a = np.array(data, dtype=np.uint8).transpose()
+            if rest and not padding:
+                b = a[:rs]
+                a = a[rs:]
+                a = np.delete(a, a.shape[1] - 1, 1)
+                return b.tobytes('C') + a.tobytes('C')
+            else:
+                return a.tobytes('C')

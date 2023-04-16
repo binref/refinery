@@ -19,6 +19,7 @@ class TestTranspose(TestUnitBase):
         )
         self.assertEqual(self.load(blocksize=2)(hw2), hw1)
         self.assertEqual(self.load(blocksize=5)(hw1), hw2)
+        self.assertEqual(self.load(blocksize=5, padding=B'X')(hw1), hw2)
 
     def test_padding(self):
         br1 = (
@@ -35,4 +36,21 @@ class TestTranspose(TestUnitBase):
             B'YEY'
         )
         unit = self.load('-B6', 'Y')
+        self.assertEqual(unit(br1), br2)
+
+    def test_without_padding(self):
+        br1 = (
+            B'BINARY'
+            B'REFINE'
+            B'RY'
+        )
+        br2 = (
+            B'BRR'
+            B'IEY'
+            B'NF'
+            B'AI'
+            B'RN'
+            B'YE'
+        )
+        unit = self.load('-B6')
         self.assertEqual(unit(br1), br2)
