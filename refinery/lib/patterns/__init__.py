@@ -348,16 +348,27 @@ class formats(PatternEnum):
 
 
 class wallets(PatternEnum):
-    LTC = pattern("[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}")
-    DASH = pattern("X[1-9A-HJ-NP-Za-km-z]{33}")
-    XMR = pattern("4[0-9AB][1-9A-HJ-NP-Za-km-z]{90,120}")
+    ADA = pattern("addr1[a-z0-9]+")
+    ATOM = pattern("cosmos[-\\w\\.]{10,}")
+    BCH = pattern("(bitcoincash:)?(q|p)[a-z0-9]{41}|(BITCOINCASH:)?(Q|P)[A-Z0-9]{41}")
     BTC = pattern("[13][a-km-zA-HJ-NP-Z1-9]{25,34}")
     BTCP = pattern("5[HJK][1-9A-Za-z][^OIl]{48}")
-    ETH = pattern("0x[a-fA-F0-9]{40}")
-    XRP = pattern("r[0-9a-zA-Z]{24,34}")
-    NEO = pattern("A[0-9a-zA-Z]{33}")
-    BCH = pattern("(bitcoincash:)?(q|p)[a-z0-9]{41}|(BITCOINCASH:)?(Q|P)[A-Z0-9]{41}")
+    DASH = pattern("X[1-9A-HJ-NP-Za-km-z]{33}")
     DOGE = pattern("D{1}[5-9A-HJ-NP-U]{1}[1-9A-HJ-NP-Za-km-z]{32}")
+    DOT = pattern("1[0-9a-zA-Z]{47}")
+    ETH = pattern("0x[a-fA-F0-9]{40}")
+    IOTA = pattern("iota[a-z0-9]{10,}")
+    LSK = pattern("[0-9]{19}L")
+    LTC = pattern("[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}")
+    NEO = pattern("N[0-9a-zA-Z]{33}")
+    ONE = pattern("(?:bnb|one)1[a-z0-9]{38}")
+    ONT = pattern("A[0-9a-zA-Z]{33}")
+    RONIN = pattern("ronin:[a-fA-F0-9]{40}")
+    TERRA = pattern("terra1[a-z0-9]{38}")
+    XEM = pattern("N[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}")
+    XLM = pattern("G[0-9A-Z]{40,60}")
+    XMR = pattern("4[0-9AB][1-9A-HJ-NP-Za-km-z]{90,120}")
+    XRP = pattern("r[0-9a-zA-Z]{24,34}")
 
 
 class indicators(PatternEnum):
