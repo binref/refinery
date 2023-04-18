@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import enum
 import string
 import json
+import re
 
 from refinery.units import Arg, Unit
 
 
-class JSONScope(enum.Enum):
-    TEXT = B'"'
-    LIST = B'['
-    DICT = B'{'
+_JSON_DELIMITER = re.compile(BR'[\[\]\{\}"]')
+
+_JSON_TOKEN_TO_TERMINATOR = {
+    B'"'[0]: B'"'[0],
+    B'['[0]: B']'[0],
+    B'{'[0]: B'}'[0],
+}
 
 
 class JSONCarver:
     _PRINTABLE_BYTES = set(bytes(string.printable, 'ascii'))
     _MAX_PARSE_DEPTH = 200
 
-    def __init__(self, data, dictonly=False):
+    def __init__(self, data: bytearray, dictonly=False):
         self.data = data
         self.dictonly = dictonly
         self.cursor = 0
@@ -26,57 +29,54 @@ class JSONCarver:
         return self
 
     def __next__(self):
+        data = self.data
         while True:
-            start = self.data.find(B'{', self.cursor)
+            start = data.find(B'{', self.cursor)
             if not self.dictonly:
-                start_list = self.data.find(B'[', self.cursor)
-                start_dict = start % len(self.data)
+                start_list = data.find(B'[', self.cursor)
+                start_dict = start % len(data)
                 if start_dict > start_list >= 0:
                     start = start_list
             if start < self.cursor:
                 raise StopIteration
             self.cursor = start + 1
-            end = self._find_json_end(start)
+            end = self.find_end(data, start)
             if end is None:
                 continue
             try:
-                if not json.loads(self.data[start:end]):
+                if not json.loads(data[start:end]):
                     continue
             except json.JSONDecodeError:
                 continue
             self.cursor = end + 1
-            return start, self.data[start:end]
+            return start, data[start:end]
 
-    def _find_json_end(self, start):
-        token = self.data[start:start + 1]
-        scope = [JSONScope(token)]
+    @classmethod
+    def find_end(cls, data: bytearray, start: int):
+        token = data[start]
+        scope = bytearray()
         cursor = start
+        scope.append(_JSON_TOKEN_TO_TERMINATOR[token])
+        printable = cls._PRINTABLE_BYTES
 
         while scope:
-            if len(scope) >= self._MAX_PARSE_DEPTH:
+            if len(scope) >= cls._MAX_PARSE_DEPTH:
                 return None
-            cursor = cursor + 1
-            if cursor >= len(self.data):
+            delim = _JSON_DELIMITER.search(data, cursor + 1)
+            if delim is None:
                 return None
-            token = self.data[cursor:cursor + 1]
-            if self.data[cursor] not in self._PRINTABLE_BYTES:
+            cursor = delim.start()
+            token = data[cursor]
+            if token not in printable:
                 return None
-            elif scope[~0] is JSONScope.TEXT:
-                if token == B'"' and self.data[cursor - 1:cursor] != B'\\':
+            if scope[~0] == token:
+                if token != B'"' or data[cursor - 1] != B'\\'[0]:
                     scope.pop()
-                continue
-            elif token == B']':
-                if scope[~0] is not JSONScope.LIST:
+            else:
+                try:
+                    scope.append(_JSON_TOKEN_TO_TERMINATOR[token])
+                except KeyError:
                     return None
-                scope.pop()
-            elif token == B'}':
-                if scope[~0] is not JSONScope.DICT:
-                    return None
-                scope.pop()
-            for t in JSONScope:
-                if token == t.value:
-                    scope.append(t)
-                    continue
 
         return cursor + 1
 
