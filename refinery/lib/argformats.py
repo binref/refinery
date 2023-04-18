@@ -1087,7 +1087,8 @@ class DelayedArgument(LazyEvaluation):
             size, remainder = divmod(arg.bit_length(), 8)
             if remainder: size += 1
             return arg.to_bytes(size, 'big')
-        return int.from_bytes(arg, 'big')
+        else:
+            return int.from_bytes(arg, 'big')
 
     @handler.register('le')
     def le(self, arg: Union[int, ByteString]) -> int:
@@ -1098,7 +1099,8 @@ class DelayedArgument(LazyEvaluation):
             size, remainder = divmod(arg.bit_length(), 8)
             if remainder: size += 1
             return arg.to_bytes(size, 'little')
-        return int.from_bytes(arg, 'little')
+        else:
+            return int.from_bytes(arg, 'little')
 
     @handler.register('reduce')
     def reduce(self, it: Iterable[int], reduction: str, seed: Optional[str] = None) -> int:
