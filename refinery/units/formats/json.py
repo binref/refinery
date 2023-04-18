@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Union
+from typing import Union, Optional
 
 import json
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult, Unit
 from refinery.lib.meta import is_valid_variable_name
+from refinery.lib.patterns import checks
 
 
 class xtjson(PathExtractorUnit):
@@ -38,6 +39,10 @@ class xtjson(PathExtractorUnit):
                     dumped = str(item)
                 return dumped.encode(self.codec)
             yield UnpackResult(path, extract, type=typename)
+
+    @classmethod
+    def handles(self, data: bytearray) -> Optional[bool]:
+        return bool(checks.json.fullmatch(data))
 
 
 class xj0(Unit):

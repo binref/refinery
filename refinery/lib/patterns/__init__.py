@@ -197,6 +197,9 @@ _pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'
 _pattern_urlenc = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
 _pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2})+'''
 
+_pattern_json = R'''[\[\{](?:"(?:[^"\\\r\n]|\\[^\r\n])*"(?:\s*[:,])?|(?:none|true|false|%s|%s|\]|\})(?:\s*,)?|[,\]\}\[\{\s]+)*[\]\}]''' % (
+    _pattern_integer, _pattern_float)
+
 _pattern_wshenc = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
 _part_url_credentials = (
@@ -264,6 +267,11 @@ __all__ = [
     'wallets',
     'defanged'
 ]
+
+
+class checks(PatternEnum):
+    json = pattern(_pattern_json)
+    "Data that consists of JSON-like tokens; cannot detect actual JSON data."
 
 
 class formats(PatternEnum):
