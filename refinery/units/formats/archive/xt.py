@@ -24,10 +24,8 @@ class xt(ArchiveUnit):
         yield xtrtf
         from refinery.units.formats.archive.xtnsis import xtnsis
         yield xtnsis
-        from refinery.units.formats.archive.xtzip import xtzip
-        yield xtzip
-        from refinery.units.formats.archive.xt7z import xt7z
-        yield xt7z
+        from refinery.units.formats.archive.xtnode import xtnode
+        yield xtnode
         from refinery.units.formats.archive.xtace import xtace
         yield xtace
         from refinery.units.formats.archive.xtcab import xtcab
@@ -40,16 +38,22 @@ class xt(ArchiveUnit):
         yield xtpyi
         from refinery.units.formats.archive.xttar import xttar
         yield xttar
-        from refinery.units.formats.office.xtdoc import xtdoc
-        yield xtdoc
         from refinery.units.formats.archive.xtiss import xtiss
         yield xtiss
+        from refinery.units.formats.archive.xtzip import xtzip
+        yield xtzip
+        from refinery.units.formats.archive.xt7z import xt7z
+        yield xt7z
+        from refinery.units.formats.office.xtdoc import xtdoc
+        yield xtdoc
+        from refinery.units.formats.json import xtjson
+        yield xtjson
         from refinery.units.formats.exe.vsect import vsect
         yield vsect
 
     def unpack(self, data):
         fallback: List[Type[ArchiveUnit]] = []
-        errors = []
+        errors = {}
         pos_args = self.args.paths
         key_args = dict(
             list=self.args.list,
@@ -73,8 +77,13 @@ class xt(ArchiveUnit):
 
             def __iter__(self):
                 handler = self.handler
-                verdict = True if self.fallback else handler.handles(data)
-                if verdict is True:
+                if self.fallback:
+                    verdict = True
+                else:
+                    verdict = handler.handles(data)
+                if verdict is False:
+                    self.unit.log_info(F'handler {handler.name} cannot handle this data')
+                elif verdict is True:
                     try:
                         unit = handler(*pos_args, **key_args)
                     except TypeError as error:
@@ -86,13 +95,13 @@ class xt(ArchiveUnit):
                         yield from unit.unpack(data)
                     except Exception as E:
                         if not self.fallback:
-                            errors.append(E)
+                            errors[handler.name] = E
                         self.unit.log_info(F'unpacking with {handler.name} failed: {E!s}')
                         return
                     else:
                         self.success = True
                         return
-                if verdict is None:
+                elif verdict is None:
                     fallback.append(handler)
 
         for handler in self._handlers():
@@ -102,7 +111,7 @@ class xt(ArchiveUnit):
             if it.success:
                 return
 
-        self.log_debug(F'fallback order: {list(fallback)}')
+        self.log_debug('fallback order:', lambda: ', '.join(h.name for h in fallback))
 
         for handler in fallback:
             it = unpacker(handler, fallback=True)
@@ -110,7 +119,8 @@ class xt(ArchiveUnit):
             if it.success:
                 return
 
-        if len(errors) == 1:
-            raise errors[0]
-
-        raise ValueError(F'Input data did not match any known archive format ({len(errors)} errors occurred).')
+        if not errors:
+            raise ValueError('input data did not match any known archive format')
+        for name, error in errors.items():
+            self.log_info(F'error when trying to unpack with {name}', error)
+        raise ValueError('failed to unpack with all known methods')
