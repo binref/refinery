@@ -37,7 +37,7 @@ from refinery.units import Unit
 import hashlib
 import hmac
 
-from Cryptodome.import Random
+from Cryptodome import Random
 from Cryptodome.Cipher import AES
 from Cryptodome.Protocol import KDF
 from Cryptodome.Util.Padding import unpad, pad
