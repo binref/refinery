@@ -221,9 +221,10 @@ class RefineryPartialResult(ValueError):
 
 
 class RefineryImportMissing(ImportError):
-    def __init__(self, *dependencies: str):
+    def __init__(self, missing: str, *dependencies: str):
         super().__init__()
         import shlex
+        self.missing = missing
         self.install = ' '.join(shlex.quote(dist) for dist in dependencies)
         self.dependencies = dependencies
 
@@ -1149,8 +1150,8 @@ class Unit(UnitBase, abstract=True):
                 try:
                     self.module = module = self.fget()
                 except ImportError as E:
-                    args = unit.optional_dependencies or (self.dependency,)
-                    raise RefineryImportMissing(*args) from E
+                    args = unit.optional_dependencies or ()
+                    raise RefineryImportMissing(self.dependency, *args) from E
                 except Exception as E:
                     raise AttributeError(F'module import for distribution "{distribution}" failed: {E!s}')
                 else:
@@ -1239,7 +1240,7 @@ class Unit(UnitBase, abstract=True):
         elif isinstance(exception, GeneratorExit):
             raise exception
         elif isinstance(exception, RefineryImportMissing):
-            self.log_fail(F'dependencies missing; install {exception.install}')
+            self.log_fail(F'dependency {exception.missing} is missing; run pip install {exception.install}')
         else:
             try:
                 explanation = exception.args[0]
