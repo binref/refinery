@@ -5,12 +5,15 @@ Exports two singletons `refinery.lib.types.INF` and `refinery.lib.types.AST`.
 Used by `refinery.units.pattern.PatternExtractorBase` as the default values
 for certain command line arguments.
 """
-from typing import Union, Tuple, Type, Dict, Any
+from typing import Union, Tuple, Type, Dict, Any, Optional, List
 
 __all__ = ['INF', 'AST', 'Singleton', 'ByteStr']
 
 
 ByteStr = Union[bytes, bytearray, memoryview]
+
+JSON = Optional[Union[str, int, float, bool, Type[None], Dict[str, 'JSON'], List['JSON']]]
+JSONDict = Dict[str, JSON]
 
 
 class Singleton(type):
