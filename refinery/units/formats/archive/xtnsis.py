@@ -1241,4 +1241,4 @@ class xtnsis(ArchiveUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        return cls._find_archive_offset(data, flawmax=1) is not None
+        return any(magic in data for magic in NSArchive.MAGICS)
