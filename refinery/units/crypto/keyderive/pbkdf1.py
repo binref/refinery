@@ -11,7 +11,7 @@ class pbkdf1(KeyDerivation):
         self.superinit(super(), **vars())
 
     def process(self, data):
-        from Crypto.Protocol.KDF import PBKDF1
+        from Cryptodome.Protocol.KDF import PBKDF1
         return multidecode(data, lambda pwd: (
             PBKDF1(pwd, self.args.salt, dkLen=self.args.size, count=self.args.iter, hashAlgo=self.hash)
         ))

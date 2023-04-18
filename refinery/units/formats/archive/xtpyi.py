@@ -22,7 +22,7 @@ from refinery.units.pattern.carve import carve
 from refinery.lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import NoLogging
 
-from Crypto.Cipher import AES
+from Cryptodome.Cipher import AES
 
 
 class Unmarshal(enum.IntEnum):

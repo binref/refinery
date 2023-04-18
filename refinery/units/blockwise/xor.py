@@ -12,7 +12,7 @@ class xor(BinaryOperation):
             return super()._fastblock(data)
         except FastBlockError as E:
             try:
-                from Crypto.Util.strxor import strxor
+                from Cryptodome.Util.strxor import strxor
             except ModuleNotFoundError:
                 raise E
             else:

@@ -10,8 +10,8 @@ from refinery.units import Arg, Unit
 from refinery.lib.json import flattened
 from refinery.units.crypto.cipher.rsa import normalize_rsa_key
 
-from Crypto.Util.asn1 import DerSequence
-from Crypto.Util import number
+from Cryptodome.Util.asn1 import DerSequence
+from Cryptodome.Util import number
 
 
 class RSAFormat(str, enum.Enum):

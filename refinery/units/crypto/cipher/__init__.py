@@ -152,7 +152,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         if padding is not None:
             self.log_info('padding method:', padding)
             if padding in PADDINGS_LIB:
-                from Crypto.Util.Padding import pad
+                from Cryptodome.Util.Padding import pad
                 data = pad(data, self.block_size, padding)
         return super().reverse(data)
 
@@ -162,7 +162,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         if padding is None:
             return result
 
-        from Crypto.Util.Padding import unpad
+        from Cryptodome.Util.Padding import unpad
         padding = [padding, *(p for p in PADDINGS_LIB if p != padding)]
 
         for p in padding:
@@ -315,7 +315,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         if mode != 'ECB':
             iv = bytes(self.iv)
             if mode == 'CTR' and len(iv) == self.block_size:
-                from Crypto.Util import Counter
+                from Cryptodome.Util import Counter
                 counter = Counter.new(self.block_size * 8,
                     initial_value=int.from_bytes(iv, 'big'))
                 optionals['counter'] = counter

@@ -3,7 +3,7 @@
 import struct
 import re
 
-from Crypto.Util.strxor import strxor
+from Cryptodome.Util.strxor import strxor
 
 from refinery.units import Unit
 from refinery.units.compression.lz import lzma

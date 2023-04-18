@@ -8,10 +8,10 @@ from refinery.lib.xml import ForgivingParse
 from base64 import b64decode, b16decode
 from contextlib import suppress
 from enum import IntEnum
-from Crypto.Random import get_random_bytes
-from Crypto.Cipher import PKCS1_OAEP
-from Crypto.PublicKey import RSA
-from Crypto.Util import number
+from Cryptodome.Random import get_random_bytes
+from Cryptodome.Cipher import PKCS1_OAEP
+from Cryptodome.PublicKey import RSA
+from Cryptodome.Util import number
 
 
 def normalize_rsa_key(key: bytes, force_public=False):

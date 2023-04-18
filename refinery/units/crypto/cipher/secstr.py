@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 import base64
 
-from Crypto.Cipher import AES
-from Crypto.Random import urandom
-from Crypto.Util.Padding import pad, unpad
+from Cryptodome.Cipher import AES
+from Cryptodome.Random import urandom
+from Cryptodome.Util.Padding import pad, unpad
 
 from refinery.units import Arg, Unit
 

@@ -11,5 +11,5 @@ class ntlm(HashUnit):
     Returns the Windows NTLM hash of the input.
     """
     def _algorithm(self, data: bytes) -> bytes:
-        from Crypto.Hash import MD4
+        from Cryptodome.Hash import MD4
         return MD4.new(data.decode(self.codec).encode('utf-16le'))

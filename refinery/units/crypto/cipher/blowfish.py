@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from Crypto.Cipher import Blowfish
+from Cryptodome.Cipher import Blowfish
 
 from refinery.units.crypto.cipher import StandardBlockCipherUnit
 from refinery.lib.crypto import PyCryptoFactoryWrapper

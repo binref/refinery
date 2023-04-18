@@ -10,5 +10,5 @@ class HKDF(KeyDerivation):
         super().__init__(size=size, salt=salt, hash=hash)
 
     def process(self, data):
-        from Crypto.Protocol.KDF import HKDF
+        from Cryptodome.Protocol.KDF import HKDF
         return HKDF(data, self.args.size, self.args.salt, self.hash)

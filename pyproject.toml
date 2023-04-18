@@ -5,7 +5,7 @@ requires = [
     "macholib",
     "msgpack>=1.0.0",
     "pefile",
-    "pycryptodome",
+    "pycryptodomex",
     "pyelftools",
     "setuptools",
     "toml",

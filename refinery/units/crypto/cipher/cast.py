@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from Crypto.Cipher import CAST
+from Cryptodome.Cipher import CAST
 
 from refinery.units.crypto.cipher import StandardBlockCipherUnit
 from refinery.lib.crypto import PyCryptoFactoryWrapper

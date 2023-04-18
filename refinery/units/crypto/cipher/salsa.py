@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import struct
 
-from Crypto.Cipher import Salsa20
+from Cryptodome.Cipher import Salsa20
 from abc import ABC, abstractmethod
 from typing import List, ByteString, Optional, Iterable
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from Crypto.Cipher import ARC2
+from Cryptodome.Cipher import ARC2
 
 from refinery.lib.crypto import PyCryptoFactoryWrapper
 from refinery.units.crypto.cipher import StandardBlockCipherUnit, CipherInterface

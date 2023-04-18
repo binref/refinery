@@ -5,8 +5,8 @@ Microsoft Crypto API structures
 """
 import enum
 
-from Crypto.PublicKey import RSA
-from Crypto.Math.Numbers import Integer
+from Cryptodome.PublicKey import RSA
+from Cryptodome.Math.Numbers import Integer
 
 from refinery.lib.structures import Struct, StructReader
 

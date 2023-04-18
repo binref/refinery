@@ -13,7 +13,7 @@ class md4(HashUnit):
     Returns the MD4 hash of the input data.
     """
     def _algorithm(self, data):
-        from Crypto.Hash import MD4
+        from Cryptodome.Hash import MD4
         return MD4.new(data)
 
 
@@ -22,7 +22,7 @@ class md2(HashUnit):
     Returns the MD2 hash of the input data.
     """
     def _algorithm(self, data):
-        from Crypto.Hash import MD2
+        from Cryptodome.Hash import MD2
         return MD2.new(data)
 
 
@@ -111,7 +111,7 @@ class ripemd160(HashUnit):
     Returns the RIPEMD-160 hash of the input data.
     """
     def _algorithm(self, data):
-        from Crypto.Hash import RIPEMD160
+        from Cryptodome.Hash import RIPEMD160
         return RIPEMD160.new(data)
 
 

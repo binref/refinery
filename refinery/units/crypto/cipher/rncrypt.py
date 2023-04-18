@@ -37,10 +37,10 @@ from refinery.units import Unit
 import hashlib
 import hmac
 
-from Crypto import Random
-from Crypto.Cipher import AES
-from Crypto.Protocol import KDF
-from Crypto.Util.Padding import unpad, pad
+from Cryptodome.import Random
+from Cryptodome.Cipher import AES
+from Cryptodome.Protocol import KDF
+from Cryptodome.Util.Padding import unpad, pad
 
 
 class rncrypt(Unit):

@@ -17,8 +17,8 @@ class DESDerive(KeyDerivation):
         super().__init__(size=size, salt=None)
 
     def process(self, password):
-        from Crypto.Cipher import DES
-        from Crypto.Util.strxor import strxor
+        from Cryptodome.Cipher import DES
+        from Cryptodome.Util.strxor import strxor
 
         key = bytearray(8)
 
