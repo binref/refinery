@@ -98,8 +98,10 @@ class base(Unit):
             defaults = _DEFAULT_ALPHABET[:base]
             if alphabet != defaults:
                 self.log_info('translating input data to a default alphabet for faster conversion')
-                data = data.translate(bytes.maketrans(alphabet, defaults))
-            result = int(data, self.args.base)
+                data_translated = data.translate(bytes.maketrans(alphabet, defaults))
+                result = int(data_translated, base)
+            else:
+                result = int(data, base)
         elif len(alphabet) == 64:
             import base64
             _b64_alphabet = _LARGER_ALPHABETS[64]

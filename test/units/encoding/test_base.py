@@ -67,3 +67,9 @@ class TestBaseUnit(TestUnitBase):
         unit = self.load(shuffled)
         data = self.generate_random_buffer(200)
         self.assertEqual(bytes(data | -b85 | map(alphabet, shuffled) | unit), data)
+
+    def test_small_alphabet(self):
+        alphabet = b'abc'
+        data = 'cbac'
+        unit = self.load(alphabet)
+        self.assertEqual(bytes(data | unit), b'A') 
