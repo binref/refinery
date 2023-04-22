@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.3
+- The `xtnode` unit was added for extracting the contents of Node.js executables created with `pkg` or `nexe`.
+- The `xtzip` unit now supports AES-encrypted archives via the `pyzipper` module.
+
 ## Version 0.6.2 -- bugfix release
 
 ## Version 0.6.1 -- bugfix release
