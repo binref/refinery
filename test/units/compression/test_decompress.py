@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import inspect
 import os.path
-import re
 
 from .. import TestUnitBase
 from . import KADATH1, KADATH2
@@ -18,7 +17,7 @@ class TestAutoDecompressor(TestUnitBase):
         path = os.path.join(root, 'refinery', 'units', '__init__.py')
         with open(path, 'rb') as stream:
             code = stream.read()
-        code = re.sub(br'(?!<\r)\n', b'\r\n', code)
+        code = code.replace(B'\r', B'')
         self.buffers = [
             B'AAFOOBAR/BAR' * 2000,
             code[:16000],
