@@ -45,7 +45,7 @@ def lookahead(iterator: Iterable[_T]) -> Generator[Tuple[bool, _T], None, None]:
 def get_terminal_size(default=0):
     """
     Returns the size of the currently attached terminal. If the environment variable
-    `REFINERY_TERMSIZE` is set to an integer value, it takes prescedence. If the width
+    `REFINERY_TERM_SIZE` is set to an integer value, it takes prescedence. If the width
     of the terminal cannot be determined of if the width is less than 8 characters,
     the function returns zero.
     """
