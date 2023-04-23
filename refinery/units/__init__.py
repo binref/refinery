@@ -340,9 +340,9 @@ class Arg(Argument):
                 if key == 'default':
                     default: Union[bytes, int, str] = self.arg.kwargs['default']
                     if isinstance(default, int):
-                        return repr(default)
+                        return default
                     if not isbuffer(default):
-                        return str(default)
+                        return default
                     if default.isalnum():
                         return default.decode('latin-1')
                     return F'H:{default.hex()}'
