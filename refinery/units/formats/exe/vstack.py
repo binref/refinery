@@ -155,6 +155,8 @@ class vstack(Unit):
             try:
                 emulator.mem_map(vmem.lower, align(block_size, len(vmem)))
                 emulator.mem_write(vmem.lower, bytes(image[pmem.slice()]))
+            except KeyboardInterrupt:
+                raise
             except Exception as error:
                 if address in vmem:
                     raise
@@ -204,29 +206,34 @@ class vstack(Unit):
         return False
 
     def _hook_code(self, emu: Uc, address: int, size: int, state: EmuState):
-        waiting = state.waiting
+        try:
+            waiting = state.waiting
 
-        if address == state.address:
-            if waiting > self.args.halt_after:
-                emu.emu_stop()
-                return False
-            state.waiting += 1
-            state.address += size
-            state.calling = False
-        else:
-            state.calling = True
+            if address == state.address:
+                if waiting > self.args.halt_after:
+                    emu.emu_stop()
+                    return False
+                state.waiting += 1
+                state.address += size
+                state.calling = False
+            else:
+                state.calling = True
 
-        def debug_message():
-            pos = state.executable.location_from_address(address).physical.position
-            end = pos + size
-            instruction = next(state.disassembler.disasm(bytes(state.executable.data[pos:end]), address, 1))
-            flags = 'C' if state.calling else ' '
-            return (
-                F'emulating [wait={waiting}] [{flags}] 0x{address:0{state.executable.pointer_size//4}X}: '
-                F'{instruction.mnemonic} {instruction.op_str}'
-            )
+            def debug_message():
+                pos = state.executable.location_from_address(address).physical.position
+                end = pos + size
+                instruction = next(state.disassembler.disasm(bytes(state.executable.data[pos:end]), address, 1))
+                flags = 'C' if state.calling else ' '
+                return (
+                    F'emulating [wait={waiting}] [{flags}] 0x{address:0{state.executable.pointer_size//4}X}: '
+                    F'{instruction.mnemonic} {instruction.op_str}'
+                )
 
-        self.log_debug(debug_message)
+            self.log_debug(debug_message)
+
+        except KeyboardInterrupt:
+            emu.emu_stop()
+            return False
 
     def _uc_arch(self, arch: Arch) -> Tuple[int, int]:
         uc = self._unicorn
