@@ -25,6 +25,14 @@ class EmuState:
     waiting: int = 0
     calling: bool = False
 
+    def disassemble(self, address: int, size: int):
+        if self.disassembler is None:
+            return None
+        pos = self.executable.location_from_address(address).physical.position
+        end = pos + size
+        return next(self.disassembler.disasm(
+            bytes(self.executable.data[pos:end]), address, 1))
+
 
 class vstack(Unit):
     """
@@ -217,12 +225,12 @@ class vstack(Unit):
                 state.address += size
                 state.calling = False
             else:
-                state.calling = True
+                instruction = state.disassemble(address, size)
+                if instruction and instruction.mnemonic == 'call':
+                    state.calling = True
 
             def debug_message():
-                pos = state.executable.location_from_address(address).physical.position
-                end = pos + size
-                instruction = next(state.disassembler.disasm(bytes(state.executable.data[pos:end]), address, 1))
+                instruction = state.disassemble(address, size)
                 flags = 'C' if state.calling else ' '
                 return (
                     F'emulating [wait={waiting}] [{flags}] 0x{address:0{state.executable.pointer_size//4}X}: '
