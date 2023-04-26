@@ -117,6 +117,7 @@ import contextlib
 import string
 import codecs
 import itertools
+import os
 
 from io import StringIO
 from urllib.parse import quote_from_bytes, unquote_to_bytes
@@ -153,16 +154,26 @@ class CustomStringRepresentation(abc.ABC):
     def __repr__(self): ...
 
 
-_PRINTABLE = (
-    B'0123456789'
-    B'!#$%&()*,-./:;=?@[\\]{}~'
+_PRINT_SAFE = (
+    B'#%(),-./:;=@[\\]{}~'
     B'abcdefghijklmnopqrstuvwxyz'
     B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-)
+    B'0123456789')
+if os.name == 'nt':
+    _PRINT_SAFE += B'!$*?'
+_IS_PRINT_SAFE = bytearray(256)
+for p in _PRINT_SAFE:
+    _IS_PRINT_SAFE[p] = 1
 
-_IS_PRINTABLE = bytearray(256)
-for p in _PRINTABLE:
-    _IS_PRINTABLE[p] = 1
+
+def is_print_safe(string: str):
+    if not string.isprintable():
+        return False
+    for letter in string:
+        code = ord(letter)
+        if code < len(_IS_PRINT_SAFE) and not _IS_PRINT_SAFE[code]:
+            return False
+    return True
 
 
 class ByteStringWrapper(bytearray, CustomStringRepresentation):
@@ -256,14 +267,14 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         except AttributeError:
             representation = None
         else:
-            if not representation.isprintable() or any(c in representation for c in '&<|>'):
+            if not is_print_safe(representation):
                 representation = None
             elif prefix != 's' or self.requires_prefix(representation):
                 representation = F'{prefix}:{representation}'
         if representation is None:
-            if sum(_IS_PRINTABLE[c] for c in self) >= len(self) * 0.8:
+            if sum(_IS_PRINT_SAFE[c] for c in self) >= len(self) * 0.8:
                 from urllib.parse import quote_from_bytes
-                quoted = quote_from_bytes(self, _PRINTABLE)
+                quoted = quote_from_bytes(self, _PRINT_SAFE)
                 representation = F'q:{quoted}'
             else:
                 representation = F'h:{self.hex()}'
