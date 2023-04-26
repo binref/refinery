@@ -114,7 +114,7 @@ class peek(HexViewer):
             elif isbuffer(value):
                 value = repr(ByteStringWrapper(value))
             elif isinstance(value, int):
-                if value in range(-99, 100):
+                if value in range(-999, 1000):
                     value = str(value)
                 elif value > 0:
                     value = F'0x{value:X}'
