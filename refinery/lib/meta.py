@@ -155,12 +155,12 @@ class CustomStringRepresentation(abc.ABC):
 
 
 _PRINT_SAFE = (
-    B'#%(),-./:;=@[\\]{}~'
+    B'#%(),-./:;=@[\\]{}~!$'
     B'abcdefghijklmnopqrstuvwxyz'
     B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     B'0123456789')
 if os.name == 'nt':
-    _PRINT_SAFE += B'!$*?'
+    _PRINT_SAFE += B'*?'
 _IS_PRINT_SAFE = bytearray(256)
 for p in _PRINT_SAFE:
     _IS_PRINT_SAFE[p] = 1
