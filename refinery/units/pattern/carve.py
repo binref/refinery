@@ -40,6 +40,9 @@ class carve(PatternExtractor):
                 return decoder.unesc(chunk[1:-1])
             from ..encoding.esc import esc
             decoder.unesc = esc()
+        elif self.args.format is formats.integer:
+            from ..encoding.base import base
+            decoder = base()
         elif self.args.format in (formats.uppercase_hex, formats.hex):
             from ..encoding.hex import hex
             decoder = hex()
