@@ -155,7 +155,7 @@ class CustomStringRepresentation(abc.ABC):
 
 
 _PRINT_SAFE = (
-    B'#%(),-./:;=@[\\]{}~!$'
+    B'#%(),-./:;=@[\\]{}~!$\x20'
     B'abcdefghijklmnopqrstuvwxyz'
     B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     B'0123456789')
