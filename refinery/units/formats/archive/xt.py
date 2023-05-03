@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import List, Type
 
 from refinery.units.formats.archive import ArchiveUnit
+from refinery.units import RefineryException
 
 
 class xt(ArchiveUnit):
@@ -122,5 +123,5 @@ class xt(ArchiveUnit):
         if not errors:
             raise ValueError('input data did not match any known archive format')
         for name, error in errors.items():
-            self.log_info(F'error when trying to unpack with {name}', error)
-        raise ValueError('failed to unpack with all known methods')
+            self.log_info(F'error when trying to unpack with {name}:', error)
+        raise RefineryException('none of the available unpackers could handle this data')
