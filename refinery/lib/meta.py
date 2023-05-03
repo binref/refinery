@@ -154,13 +154,12 @@ class CustomStringRepresentation(abc.ABC):
     def __repr__(self): ...
 
 
-_PRINT_SAFE = (
-    B'#%(),-./:;=@[\\]{}~!$\x20'
-    B'abcdefghijklmnopqrstuvwxyz'
-    B'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    B'0123456789')
+_PRINT_SAFE = set(string.printable.encode('latin1')) - set(b'|<>&\t\n\r\x0B\x0B')
 if os.name == 'nt':
-    _PRINT_SAFE += B'*?'
+    _PRINT_SAFE -= set(b'^"')
+else:
+    _PRINT_SAFE -= set(b'*?\'"')
+_PRINT_SAFE = bytes(_PRINT_SAFE)
 _IS_PRINT_SAFE = bytearray(256)
 for p in _PRINT_SAFE:
     _IS_PRINT_SAFE[p] = 1
