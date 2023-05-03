@@ -37,6 +37,8 @@ class UnpackResult:
         self.path = _br__path
         self.data = _br__data
         self.meta = _br__meta
+        for key in [key for key, value in _br__meta.items() if value is None]:
+            del _br__meta[key]
 
 
 class EndOfStringNotFound(ValueError):
