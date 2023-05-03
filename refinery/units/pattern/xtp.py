@@ -118,6 +118,7 @@ class xtp(PatternExtractor):
         'digicert.com'            : 1,
         'dublincore.org'          : 1,
         'fontawesome.com'         : 1,
+        'facebook.com'            : 4,
         'github.com'              : 3,
         'globalsign.com'          : 1,
         'globalsign.net'          : 1,
