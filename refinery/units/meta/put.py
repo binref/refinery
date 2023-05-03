@@ -8,6 +8,8 @@ from refinery.lib.argformats import numseq
 from refinery.lib.tools import isbuffer
 from refinery.lib.meta import check_variable_name
 
+_EMPTY = object()
+
 
 class put(Unit):
     """
@@ -18,13 +20,13 @@ class put(Unit):
         self,
         name : Arg(help='The name of the variable to be used.', type=str),
         value: Arg(help='The value for the variable. If no value is given, the entire current chunk is stored.',
-            type=functools.partial(numseq, typecheck=False)) = None
+            type=functools.partial(numseq, typecheck=False)) = _EMPTY
     ):
         super().__init__(name=check_variable_name(name), value=value)
 
     def process(self, data: Chunk):
         value = self.args.value
-        if value is None:
+        if value is _EMPTY:
             value = data
         if not isinstance(value, (int, float)) and not isbuffer(value):
             try:
