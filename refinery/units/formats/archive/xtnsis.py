@@ -1057,6 +1057,9 @@ class NSArchive(Struct):
         else:
             self.entry_offset_delta = len(header_data)
 
+        if not header_data:
+            raise ValueError('header data had length zero')
+
         xtnsis.log_debug(F'read header of length {len(header_data)}')
 
         self.header = NSHeader(header_data, size=self.size_of_header)
