@@ -203,6 +203,7 @@ class TestMetaProperties(TestUnitBase):
 class TestSimpleInvertible(TestUnitBase):
     exceptions = [
         'cp1252',
+        'csv',
         'dsphp',
         'hexload',
         'msgpack',
