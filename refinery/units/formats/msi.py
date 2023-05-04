@@ -2,21 +2,26 @@
 # -*- coding: utf-8 -*-
 from typing import List, Dict, NamedTuple, Union
 
+import codecs
 import collections
-import struct
-import contextlib
-import itertools
-import json
 import enum
+import json
+import re
+import struct
 
 from refinery.lib.structures import StructReader
 from refinery.units.formats.office.xtdoc import xtdoc, UnpackResult
 from refinery.lib import chunks
 from refinery.lib.types import ByteStr
 from refinery.lib.mime import FileMagicInfo
+from refinery.lib.tools import cached_property
 
 
 class MsiType(enum.IntEnum):
+    """
+    Known data types for MSI table cell entries.
+    """
+
     Long = 0x104
     Short = 0x502
     Binary = 0x900
@@ -30,6 +35,7 @@ class MsiType(enum.IntEnum):
 
 class MSITableColumnInfo(NamedTuple):
     """
+    Represents information about an MSI table column. See also:
     https://doxygen.reactos.org/db/de4/msipriv_8h.html
     """
     number: int
@@ -38,7 +44,7 @@ class MSITableColumnInfo(NamedTuple):
     @property
     def type(self) -> MsiType:
         try:
-            if self.is_index:
+            if self.is_integer:
                 return MsiType(self.attributes & 0xFFF)
             else:
                 return MsiType(self.attributes & 0xF00)
@@ -46,7 +52,7 @@ class MSITableColumnInfo(NamedTuple):
             return MsiType.Unknown
 
     @property
-    def is_index(self) -> bool:
+    def is_integer(self) -> bool:
         return self.attributes & 0x0F00 < 0x800
 
     @property
@@ -84,7 +90,8 @@ class MSIStringData:
         self.strings: List[bytes] = []
         self.provided_ref_count: List[int] = []
         self.computed_ref_count: List[int] = []
-        self.codepage, self.unknownSuspectFormatIdentifier = pool.read_struct('<HH')
+        self.codepage = pool.u16()
+        self._unknown = pool.u16()
         while not pool.eof:
             size, rc = pool.read_struct('<HH')
             string = data.read_bytes(size)
@@ -92,13 +99,30 @@ class MSIStringData:
             self.provided_ref_count.append(rc)
             self.computed_ref_count.append(0)
 
-    def ref(self, index: int, decode=True) -> Union[str, bytes]:
+    @cached_property
+    def codec(self):
+        try:
+            return codecs.lookup(F'cp{self.codepage}').name
+        except Exception:
+            xtmsi.log_info('failed looking up codec', self.codepage)
+            return 'latin1'
+
+    def __len__(self):
+        return len(self.strings)
+
+    def __iter__(self):
+        yield from range(1, len(self) + 1)
+
+    def __contains__(self, index):
+        return 0 < index <= len(self)
+
+    def ref(self, index: int, increment=True) -> Union[str, bytes]:
         assert index > 0
         index -= 1
-        self.computed_ref_count[index] += 1
+        if increment:
+            self.computed_ref_count[index] += 1
         data = self.strings[index]
-        if decode:
-            data = data.decode()
+        data = data.decode(self.codec)
         return data
 
 
@@ -179,22 +203,52 @@ class xtmsi(xtdoc):
                     elif vt is MsiType.Short:
                         if value != 0:
                             value -= 0x8000
-                    elif 0 < value <= len(strings.strings):
+                    elif value in strings:
                         value = strings.ref(value)
+                    elif not info[index].is_integer:
+                        value = ''
                     values.append(value)
+
+                entry = dict(zip(table, values))
+                einfo = {t: i for t, i in zip(table, info)}
+
                 if stream_name == '!MsiFileHash':
-                    values.append(struct.pack(
+                    entry['Hash'] = struct.pack(
                         '<IIII',
                         row[2] ^ 0x80000000,
                         row[3] ^ 0x80000000,
                         row[4] ^ 0x80000000,
                         row[5] ^ 0x80000000,
-                    ).hex())
+                    ).hex()
+
                 if stream_name == '!CustomAction':
-                    with contextlib.suppress(LookupError):
-                        values.append(self._CUSTOM_ACTION_TYPES[row[1] & 0x3F])
-                processed.append(
-                    dict(zip(itertools.chain(table, ('Comment',)), values)))
+                    code = row[1] & 0x3F
+                    try:
+                        entry['Comment'] = self._CUSTOM_ACTION_TYPES[code]
+                    except LookupError:
+                        pass
+
+                processed.append(entry)
+
+                if stream_name == '!CustomAction':
+                    if code not in {0x25, 0x26, 0x33}:
+                        continue
+                    if einfo['Target'].is_integer:
+                        continue
+                    path = entry['Action']
+                    data = entry['Target']
+                    path = F'Action/{path}'
+                    if code == 0x33:
+                        meta_chars = re.finditer(r'[\x01-\x05]', data)
+                        offset = max((m.end() for m in meta_chars), default=0)
+                        if not offset:
+                            continue
+                        data = re.sub(r'\[\\(.)\]', r'\1', data[offset:])
+                    else:
+                        extension = {0x25: 'js', 0x26: 'vbs'}.get(code)
+                        path = F'{path}.{extension}'
+                    streams[path] = UnpackResult(path, data.encode(self.codec))
+
             processed_table_data[table_name] = processed
 
         for ignored_stream in [
@@ -204,6 +258,15 @@ class xtmsi(xtdoc):
             '[5]MsiDigitalSignatureEx'
         ]:
             streams.pop(ignored_stream, None)
+
+        inconsistencies = 0
+        for k in range(len(strings)):
+            c = strings.computed_ref_count[k]
+            p = strings.provided_ref_count[k]
+            if c != p and not self.log_debug(F'string reference count computed={c} provided={p}:', strings.ref(k + 1, False)):
+                inconsistencies += 1
+        if inconsistencies:
+            self.log_info(F'found {inconsistencies} incorrect string reference counts')
 
         def fix_msi_path(path: str):
             prefix, dot, name = path.partition('.')
