@@ -1,5 +1,11 @@
 # Binary Refinery Changelog
 
+## Version 0.6.4
+- The `xtdoc` unit now demangles file names in MSI archives correctly.
+- The `xtmsi` unit was added for extracting MSI files and also stream metadata in a synthesized JSON document.
+- The `csv` unit now has a reverse operation to convert simple JSON documents back to CSV format.
+- Thanks to [@larsborn][], the `tnetmtm` unit was added for parsing MITMProxy traffic capture files.
+
 ## Version 0.6.3
 - The `xtnode` unit was added for extracting the contents of Node.js executables created with `pkg` or `nexe`.
 - The `xtzip` unit now supports AES-encrypted archives via the `pyzipper` module.
@@ -551,6 +557,7 @@ Updates build system.
 
 
 [@baderj]: https://github.com/baderj
+[@larsborn]: https://github.com/larsborn
 [XLMMacroDeobfuscator]: https://github.com/DissectMalware/XLMMacroDeobfuscator
 [javaobj-issue-29]: https://github.com/tcalmant/python-javaobj/issues/29
 [javaobj]: https://pypi.org/project/javaobj-py3/
