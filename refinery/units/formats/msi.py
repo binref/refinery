@@ -128,8 +128,13 @@ class MSIStringData:
 
 class xtmsi(xtdoc):
     """
-    Parse Microsoft Installer (MSI) files and returns the parsed information in JSON format.
+    Extract files and metadata from Microsoft Installer (MSI) archives. The synthetic file {FN} contains
+    parsed MSI table information, similar to the output of the Orca tool. Binary streams are placed in a
+    virtual folder called "Binary", and extracted scripts from custom actions are separately extracted in
+    a virtual folder named "Action".
     """
+
+    _SYNTHETIC_STREAMS_FILENAME = 'MsiTables.json'
 
     # https://learn.microsoft.com/en-us/windows/win32/msi/summary-list-of-all-custom-action-types
     _CUSTOM_ACTION_TYPES = {
@@ -275,7 +280,7 @@ class xtmsi(xtdoc):
             return path
 
         streams = {fix_msi_path(path): item for path, item in streams.items()}
-        ds = UnpackResult('MsiTables.json',
+        ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME,
                 json.dumps(processed_table_data, indent=4).encode(self.codec))
         streams[ds.path] = ds
 
@@ -288,3 +293,6 @@ class xtmsi(xtdoc):
         if not data.startswith(B'\xD0\xCF\x11\xE0'):
             return False
         return FileMagicInfo(data).extension == 'msi'
+
+
+xtmsi.__doc__ = xtmsi.__doc__.format(FN=xtmsi._SYNTHETIC_STREAMS_FILENAME)
