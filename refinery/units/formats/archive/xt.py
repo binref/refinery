@@ -85,21 +85,23 @@ class xt(ArchiveUnit):
                 else:
                     verdict = handler.handles(data)
                 if verdict is False:
-                    self.unit.log_info(F'handler {handler.name} cannot handle this data')
+                    self.unit.log_info(F'rejected: {handler.name}')
                 elif verdict is True:
+                    if not self.fallback:
+                        self.unit.log_info(F'accepted: {handler.name}')
                     try:
                         unit = handler(*pos_args, **key_args)
                     except TypeError as error:
-                        self.unit.log_debug(F'handler {handler.name} failed: {error!s}')
+                        self.unit.log_debug('handler construction failed:', error)
                         return
-                    if not self.fallback:
-                        self.unit.log_info(F'handler {handler.name} can handle this input data')
                     try:
-                        yield from unit.unpack(data)
-                    except Exception as E:
+                        for item in unit.unpack(data):
+                            item.get_data()
+                            yield item
+                    except Exception as error:
                         if not self.fallback:
-                            errors[handler.name] = E
-                        self.unit.log_info(F'unpacking with {handler.name} failed: {E!s}')
+                            errors[handler.name] = error
+                        self.unit.log_debug('handler unpacking failed:', error)
                         return
                     else:
                         self.success = True
