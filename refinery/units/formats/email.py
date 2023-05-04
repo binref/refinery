@@ -79,7 +79,6 @@ class xtmail(PathExtractorUnit):
                 yield from attachments(attachment.data)
 
         for attachment in attachments(msg):
-            self.log_debug(attachment)
             at = attachment.type
             if at is self._extract_msg.enums.AttachmentType.MSG:
                 msgcount += 1
