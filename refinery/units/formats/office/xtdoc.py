@@ -7,6 +7,19 @@ from refinery.units.formats.archive.xtzip import xtzip
 from refinery.lib.structures import MemoryFile
 
 
+def convert_msi_name(name: str):
+    def _decode(alphabet='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._!'):
+        for character in name:
+            code = ord(character)
+            if 0x3800 <= code < 0x4800:
+                yield alphabet[(code - 0x3800) & 0x3F] + alphabet[((code - 0x3800) >> 6) & 0x3F]
+            elif 0x4800 <= code <= 0x4840:
+                yield alphabet[code - 0x4800]
+            else:
+                yield character
+    return ''.join(_decode())
+
+
 class xtdoc(PathExtractorUnit):
     """
     Extract files from an OLE document such as a Microsoft Word DOCX file.
@@ -34,6 +47,7 @@ class xtdoc(PathExtractorUnit):
                 if c0 < 20:
                     item[-1] = F'[{c0:d}]{item[-1][1:]}'
                     path = '/'.join(item)
+                path = convert_msi_name(path)
                 self.log_debug('exploring:', path)
                 yield UnpackResult(path, olestream.read())
 
