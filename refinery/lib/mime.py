@@ -60,6 +60,7 @@ FileTypeMap = {
     'application/vnd.ms-excel': 'xls',
     'application/vnd.ms-fontobject': 'eot',
     'application/vnd.ms-powerpoint': 'ppt',
+    'application/vnd.ms-outlook': 'eml',
     'application/vnd.oasis.opendocument.presentation': 'odp',
     'application/vnd.oasis.opendocument.spreadsheet': 'ods',
     'application/vnd.oasis.opendocument.text': 'odt',
@@ -251,7 +252,7 @@ class FileMagicInfo:
     _GZIP_PEEK_MINIMUM = 64
     _GZIP_DC_CHUNK_LEN = 16
 
-    def __init__(self, data, default='bin'):
+    def __init__(self, data, default='bin', decompress=True):
         if not magic:
             raise NoMagicAvailable
         if not isinstance(data, bytes):
@@ -267,7 +268,7 @@ class FileMagicInfo:
             extension = 'docx'
         if extension == 'exe':
             extension = 'dll' if '(DLL)' in self.description else 'exe'
-        elif extension in ('gz', 'gzip', 'bz2'):
+        elif extension in ('gz', 'gzip', 'bz2') and decompress:
             if extension == 'bz2':
                 import bz2
                 dc = bz2.BZ2Decompressor()
