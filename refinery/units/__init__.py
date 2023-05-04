@@ -1497,15 +1497,22 @@ class Unit(UnitBase, abstract=True):
         elif isinstance(stream, dict):
             key, convert = one(stream.items())
             output: Dict[Any, List[Any]] = {}
+            deconflict = None
+            if isinstance(convert, (list, set)):
+                deconflict = type(convert)
+                convert = one(convert)
             for item in self:
                 try:
                     value = item.meta[key]
                 except KeyError:
                     value = None
-                bag = output.setdefault(value, [])
                 if convert is not ...:
                     item = convert(item)
-                bag.append(item)
+                if deconflict:
+                    bag = output.setdefault(value, deconflict())
+                    bag.append(item)
+                else:
+                    output[value] = item
             return output
         elif isinstance(stream, (bytearray, memoryview)):
             with MemoryFile(stream) as stdout:
