@@ -13,7 +13,7 @@ class TestA3X(TestUnitBase):
             b'\xDE\xFA\xCE\xD0\xDE\xFA\xCE\xD0\xDE\xFA\xCE\xD0\xDE\xFA\xCE\xD0'
         )
         for data in [taint, sample]:
-            out = data | self.load() | {'path': ...}
+            out = data | self.load() | {'path': [...]}
             self.assertEqual(len(out), 4)
             for key, value in out.items():
                 self.assertEqual(len(value), 1)

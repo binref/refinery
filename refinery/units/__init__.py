@@ -1496,7 +1496,7 @@ class Unit(UnitBase, abstract=True):
             return {converter(chunk) for chunk in self}
         elif isinstance(stream, dict):
             key, convert = one(stream.items())
-            output: Dict[Any, List[Any]] = {}
+            output: Dict[Any, Union[List[Chunk], Set[Chunk]]] = {}
             deconflict = None
             if isinstance(convert, (list, set)):
                 deconflict = type(convert)
@@ -1510,7 +1510,10 @@ class Unit(UnitBase, abstract=True):
                     item = convert(item)
                 if deconflict:
                     bag = output.setdefault(value, deconflict())
-                    bag.append(item)
+                    if isinstance(bag, list):
+                        bag.append(item)
+                    else:
+                        bag.add(item)
                 else:
                     output[value] = item
             return output
