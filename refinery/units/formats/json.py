@@ -107,4 +107,4 @@ class xjl(Unit):
         except AttributeError:
             it = doc
         for item in it:
-            yield json.dumps(item).encode(self.codec)
+            yield json.dumps(item, indent=4).encode(self.codec)
