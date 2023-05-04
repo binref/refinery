@@ -32,7 +32,8 @@ class xtmail(PathExtractorUnit):
     @PathExtractorUnit.Requires('extract-msg', optional=False)
     def _extract_msg():
         import extract_msg.message
-        return extract_msg.message
+        import extract_msg.enums
+        return extract_msg
 
     def _get_parts_outlook(self, data):
         def ensure_bytes(data):
@@ -56,7 +57,7 @@ class xtmail(PathExtractorUnit):
         msgcount = 0
 
         with NoLogging():
-            class ForgivingMessage(self._extract_msg.Message):
+            class ForgivingMessage(self._extract_msg.message.Message):
                 """
                 If parsing the input bytes fails early, the "__open" private attribute may not
                 yet exist. This hack prevents an exception to occur in the destructor.
@@ -79,12 +80,13 @@ class xtmail(PathExtractorUnit):
 
         for attachment in attachments(msg):
             self.log_debug(attachment)
-            if attachment.type == 'msg':
+            at = attachment.type
+            if at is self._extract_msg.enums.AttachmentType.MSG:
                 msgcount += 1
                 yield from make_message(F'attachments/msg_{msgcount:d}', attachment.data)
                 continue
             if not isbuffer(attachment.data):
-                self.log_warn(F'unknown attachment of type {attachment.type}, please report this!')
+                self.log_warn(F'unknown attachment of type {at}, please report this!')
                 continue
             path = attachment.longFilename or attachment.shortFilename
             yield UnpackResult(F'attachments/{path}', attachment.data)
@@ -147,6 +149,15 @@ class xtmail(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
+        markers = [
+            b'\nReceived:\x20from'
+            b'\nSubject:\x20',
+            b'\nTo:\x20',
+            b'\nBcc:\x20',
+            b'\nContent-Transfer-Encoding:\x20',
+            b'\nContent-Type:\x20',
+            b'\nReturn-Path:\x20',
+        ]
         if data.startswith(B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'):
-            return True
-        return b'\nReceived: from' in data
+            markers = [marker.decode('latin1').encode('utf-16le') for marker in markers]
+        return sum(1 for marker in markers if marker in data) >= 3
