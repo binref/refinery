@@ -45,6 +45,8 @@ class xt(ArchiveUnit):
         yield xtzip
         from refinery.units.formats.archive.xt7z import xt7z
         yield xt7z
+        from refinery.units.formats.msi import xtmsi
+        yield xtmsi
         from refinery.units.formats.office.xtdoc import xtdoc
         yield xtdoc
         from refinery.units.formats.json import xtjson
