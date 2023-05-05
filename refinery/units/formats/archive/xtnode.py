@@ -69,7 +69,7 @@ class xtnode(ArchiveUnit):
 
     def __init__(
         self, *paths, entry: Arg.Switch('-u', help='Only extract the entry point.') = False,
-        list=False, join_path=False, drop_path=False, fuzzy=False, exact=False, regex=False,
+        list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', date=b'date',
     ):
         super().__init__(*paths, entry=entry,

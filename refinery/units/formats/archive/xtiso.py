@@ -14,7 +14,7 @@ class xtiso(ArchiveUnit):
     """
     def __init__(
         self,
-        *paths, list=False, join_path=False, drop_path=False, fuzzy=False, exact=False, regex=False,
+        *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', date=b'date',
         fs: Arg.Choice('-s', metavar='TYPE', choices=_ISO_FILE_SYSTEMS, help=(
             'Specify a file system ({choices}) extension to use. The default setting {default} will automatically '

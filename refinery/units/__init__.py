@@ -385,6 +385,19 @@ class Arg(Argument):
             raise ValueError(F'Could not transform {value} into {cls.__name__}; the choices are: {choices}') from E
 
     @classmethod
+    def Counts(
+        cls,
+        *args   : str,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        group   : Optional[str] = None,
+    ):
+        """
+        A convenience method to add argparse arguments that introduce a counter.
+        """
+        return cls(*args, group=group, help=help, dest=dest, action='count')
+
+    @classmethod
     def Switch(
         cls,
         *args   : str, off=False,
@@ -633,10 +646,12 @@ class Arg(Argument):
                 self.guessed.discard(key)
                 continue
             if key in them.guessed:
-                if key in self.kwargs and key not in self.guessed:
-                    continue
-                else:
-                    self.guessed.add(key)
+                if key not in self.guessed:
+                    if key == 'type' and self.kwargs.get('action', None) != 'store':
+                        continue
+                    if key in self.kwargs:
+                        continue
+                self.guessed.add(key)
             self.kwargs[key] = value
         self.merge_args(them)
         self.group = them.group or self.group

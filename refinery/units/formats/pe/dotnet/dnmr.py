@@ -11,7 +11,7 @@ class dnmr(PathExtractorUnit):
     Extracts subfiles from .NET managed resources.
     """
     def __init__(
-        self, *paths, list=False, join_path=False, drop_path=False, exact=False, fuzzy=False, regex=False, path=b'name',
+        self, *paths, list=False, join_path=False, drop_path=False, exact=False, fuzzy=0, regex=False, path=b'name',
         raw: Arg.Switch('-w', help='Do not deserialize the managed resource entry data.') = False
     ):
         super().__init__(

@@ -448,7 +448,7 @@ class xtpyi(ArchiveUnit):
     Extracts and decompiles files from a Python Installer (aka PyInstaller) archive.
     """
     def __init__(
-        self, *paths, list=False, join_path=False, drop_path=False, fuzzy=False, exact=False, regex=False,
+        self, *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', date=b'date',
         user_code: Arg.Switch('-u', group='FILTER', help=(
             'Extract only source code files from the root of the archive. These usually implement '

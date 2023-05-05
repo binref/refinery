@@ -47,7 +47,7 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, pp: Union[str, re.Pattern], regex=False, fuzzy=False):
+    def __init__(self, pp: Union[str, re.Pattern], regex=False, fuzzy=0):
         if isinstance(pp, re.Pattern):
             self.stops = []
             self.pattern = pp
@@ -55,10 +55,10 @@ class PathPattern:
         elif not regex:
             self.stops = [stop for stop in re.split(R'(.*?[/*?])', pp) if stop]
             pp, _, _ = fnmatch.translate(pp).partition(r'\Z')
-        pattern = re.compile(pp)
-        self._check = self._fuzzy = pattern.search
-        if not fuzzy:
-            self._check = pattern.fullmatch
+        p1 = re.compile(pp)
+        p2 = re.compile(F'.*?{pp}')
+        self.matchers = [p1.fullmatch, p2.fullmatch, p1.search]
+        self.fuzzy = fuzzy
 
     def reach(self, path):
         if not any(self.stops):
@@ -68,11 +68,9 @@ class PathPattern:
                 return True
         return False
 
-    def check(self, path, fuzzy=False):
-        if fuzzy:
-            return self._fuzzy(path)
-        else:
-            return self._check(path)
+    def check(self, path, fuzzy=0):
+        fuzzy = min(max(fuzzy, self.fuzzy), 2)
+        return self.matchers[fuzzy](path)
 
     def __repr__(self):
         return F'<PathPattern:{"//".join(self.stops) or "RE"}>'
@@ -88,16 +86,17 @@ class PathExtractorUnit(Unit, abstract=True):
             'Wildcard pattern for the path of the item to be extracted. Each item is returned '
             'as a separate output of this unit. Paths may contain wildcards; The default '
             'argument is a single wildcard, which means that every item will be extracted. If '
-            'a given path yields no results, the unit attempts to perform a fuzzy search with '
-            'it instead. This can be disabled using the --exact switch.')),
+            'a given path yields no results, the unit performs increasingly fuzzy searches '
+            'with it. This can be disabled using the --exact switch.')),
         list: Arg.Switch('-l',
             help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join_path: Arg.Switch('-j', group='PATH',
             help='Join path names from container with previous path names.') = False,
         drop_path: Arg.Switch('-d', group='PATH',
             help='Do not modify the path variable for output chunks.') = False,
-        fuzzy: Arg.Switch('-z', group='MATCH',
-            help='Path patterns always match on substrings rather than whole paths.') = False,
+        fuzzy: Arg.Counts('-z', group='MATCH', help=(
+            'Specify once to add a leading wildcard to each patterns, twice to also add a '
+            'trailing wildcard.')) = 0,
         exact: Arg.Switch('-e', group='MATCH',
             help='Path patterns never match on substrings.') = False,
         regex: Arg.Switch('-r',
@@ -204,7 +203,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 self.log_warn(F'read chunk with duplicate path; deduplicating to {result.path}')
 
         for p in patterns:
-            for fuzzy in (False, True):
+            for fuzzy in range(3):
                 done = self.args.exact
                 for result in results:
                     path = result.path
