@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import List, Dict, NamedTuple, Union
+from typing import List, Dict, NamedTuple, Union, Optional
 
 import codecs
 import collections
@@ -190,7 +190,46 @@ class xtmsi(xtdoc):
         for name in table_names_given - table_names_known:
             self.log_warn(F'table name given but not known: {name}')
 
-        processed_table_data = {}
+        class ScriptItem(NamedTuple):
+            row_index: int
+            extension: Optional[str]
+
+        processed_table_data: Dict[str, List[Dict[str, str]]] = {}
+        tbl_properties: Dict[str, str] = {}
+        tbl_files: Dict[str, str] = {}
+        tbl_components: Dict[str, str] = {}
+        postprocessing: List[ScriptItem] = []
+
+        def format_string(string: str):
+            # https://learn.microsoft.com/en-us/windows/win32/msi/formatted
+            def _replace(match: re.Match[str]):
+                _replace.done = False
+                prefix, name = match.groups()
+                if not prefix:
+                    tbl = tbl_properties
+                elif prefix in '%':
+                    name = name.rstrip('%').upper()
+                    return F'%{name}%'
+                elif prefix in '!#':
+                    tbl = tbl_files
+                elif prefix in '$':
+                    tbl = tbl_components
+                else:
+                    raise ValueError
+                return tbl.get(name, '')
+            while True:
+                _replace.done = True
+                string = re.sub(R'''(?x)
+                    \[             # open square brackent
+                      (?![~\\])    # not followed by escapes
+                      ([%$!#]?)    # any of the valid prefix characters
+                      ([^[\]{}]+)  # no brackets or braces
+                    \]''', _replace, string)
+                if _replace.done:
+                    break
+            string = re.sub(r'\[\\(.)\]', r'\1', string)
+            string = string.replace('[~]', '\0')
+            return string
 
         for table_name, table in tables.items():
             stream_name = F'!{table_name}'
@@ -198,7 +237,7 @@ class xtmsi(xtdoc):
                 continue
             processed = []
             info = list(table.values())
-            for row in stream_to_rows(stream(stream_name), column_formats(table)):
+            for r, row in enumerate(stream_to_rows(stream(stream_name), column_formats(table))):
                 values = []
                 for index, value in enumerate(row):
                     vt = info[index].type
@@ -213,11 +252,15 @@ class xtmsi(xtdoc):
                     elif not info[index].is_integer:
                         value = ''
                     values.append(value)
-
+                if table_name == 'Property':
+                    tbl_properties[values[0]] = values[1]
+                if table_name == 'File':
+                    tbl_properties[values[0]] = values[2]
+                if table_name == 'Component':
+                    tbl_properties[values[0]] = F'%{values[2]}%'
                 entry = dict(zip(table, values))
                 einfo = {t: i for t, i in zip(table, info)}
-
-                if stream_name == '!MsiFileHash':
+                if table_name == 'MsiFileHash':
                     entry['Hash'] = struct.pack(
                         '<IIII',
                         row[2] ^ 0x80000000,
@@ -225,36 +268,44 @@ class xtmsi(xtdoc):
                         row[4] ^ 0x80000000,
                         row[5] ^ 0x80000000,
                     ).hex()
-
-                if stream_name == '!CustomAction':
+                if table_name == 'CustomAction':
                     code = row[1] & 0x3F
                     try:
                         entry['Comment'] = self._CUSTOM_ACTION_TYPES[code]
                     except LookupError:
                         pass
-
+                    t = einfo.get('Target')
+                    c = {0x25: 'js', 0x26: 'vbs', 0x33: None}
+                    if code in c and t and not t.is_integer:
+                        postprocessing.append(ScriptItem(r, c[code]))
                 processed.append(entry)
+            if processed:
+                processed_table_data[table_name] = processed
 
-                if stream_name == '!CustomAction':
-                    if code not in {0x25, 0x26, 0x33}:
-                        continue
-                    if einfo['Target'].is_integer:
-                        continue
-                    path = entry['Action']
-                    data = entry['Target']
-                    path = F'Action/{path}'
-                    if code == 0x33:
-                        meta_chars = re.finditer(r'[\x01-\x05]', data)
-                        offset = max((m.end() for m in meta_chars), default=0)
-                        if not offset:
-                            continue
-                        data = re.sub(r'\[\\(.)\]', r'\1', data[offset:])
-                    else:
-                        extension = {0x25: 'js', 0x26: 'vbs'}.get(code)
-                        path = F'{path}.{extension}'
-                    streams[path] = UnpackResult(path, data.encode(self.codec))
-
-            processed_table_data[table_name] = processed
+        ca = processed_table_data.get('CustomAction', None)
+        for item in postprocessing:
+            entry = ca[item.row_index]
+            try:
+                path: str = entry['Action']
+                data: str = entry['Target']
+            except KeyError:
+                continue
+            root = F'Action/{path}'
+            if item.extension:
+                path = F'{root}.{item.extension}'
+                streams[path] = UnpackResult(path, data.encode(self.codec))
+                continue
+            data = format_string(data)
+            parts = [part.partition('\x02') for part in data.split('\x01')]
+            if not all(part[1] == '\x02' for part in parts):
+                continue
+            for name, _, script in parts:
+                if not name.lower().startswith('script'):
+                    continue
+                if not script:
+                    continue
+                path = F'{root}.{name}'
+                streams[path] = UnpackResult(path, script.encode(self.codec))
 
         for ignored_stream in [
             '[5]SummaryInformation',
