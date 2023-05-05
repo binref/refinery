@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.6.5
+- Slightly improves the script extraction and formatting in `xtmsi`.
+
 ## Version 0.6.4
 - The `xtdoc` unit now demangles file names in MSI archives correctly.
 - The `xtmsi` unit was added for extracting MSI files and also stream metadata in a synthesized JSON document.
