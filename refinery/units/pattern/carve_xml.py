@@ -23,9 +23,9 @@ class XMLTag:
 
 
 class XMLCarver:
-    _MAX_TAG_SIZE = 400
+    _MAX_TAG_SIZE = 0x8000
 
-    def __init__(self, data):
+    def __init__(self, data: bytearray):
         self.data = data
         self.cursor = 0
 
@@ -46,7 +46,7 @@ class XMLCarver:
             decoded = data.decode('UTF-16LE')
             if printable(decoded): return decoded
 
-    def _seek_tag(self, start):
+    def _seek_tag(self, start: int):
         quote = None
         escaped = False
         for end in range(start + 1, min(start + self._MAX_TAG_SIZE, len(self.data))):
@@ -79,7 +79,7 @@ class XMLCarver:
             self.cursor = end
             return tag
 
-    def _find_xml_end(self, tag):
+    def _find_xml_end(self, tag: XMLTag):
         stack = 1
         while stack:
             self.cursor = self.data.find(B'<', self.cursor)
