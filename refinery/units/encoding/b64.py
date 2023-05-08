@@ -12,11 +12,6 @@ class b64(Unit):
     def __init__(self, urlsafe: Arg.Switch('-u', help='use URL-safe alphabet') = False):
         super().__init__(urlsafe=urlsafe)
 
-    @property
-    def altchars(self):
-        if self.args.urlsafe:
-            return B'-_'
-
     def reverse(self, data):
         return base64.b64encode(data, altchars=self.altchars)
 
