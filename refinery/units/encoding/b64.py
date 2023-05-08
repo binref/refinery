@@ -13,7 +13,10 @@ class b64(Unit):
         super().__init__(urlsafe=urlsafe)
 
     def reverse(self, data):
-        return base64.b64encode(data, altchars=self.altchars)
+        altchars = None
+        if self.args.urlsafe:
+            altchars = B'-_'
+        return base64.b64encode(data, altchars=altchars)
 
     def process(self, data: bytearray):
         if not data:
