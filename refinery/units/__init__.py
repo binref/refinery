@@ -1541,7 +1541,7 @@ class Unit(UnitBase, abstract=True):
                 out: bytearray = stdout.getbuffer()
                 if isinstance(stream, type) and isinstance(out, stream):
                     return out
-                if stream is str:
+                if isinstance(stream, type) and issubclass(stream, str):
                     out = out.decode(self.codec)
                 return stream(out)
 
