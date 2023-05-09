@@ -55,8 +55,8 @@ class xj0(Unit):
     def __init__(
         self,
         key: Unit.Arg.Binary(help='Optional key of a value to become the main body of the chunk.') = None,
-        raw: Unit.Arg('-r', group='META', help='Do not extract any other fields as metadata.') = False,
-        all: Unit.Arg('-a', group='META', help='Extract all other fields as metadata.') = False
+        raw: Unit.Arg.Switch('-r', group='META', help='Do not extract any other fields as metadata.') = False,
+        all: Unit.Arg.Switch('-a', group='META', help='Extract all other fields as metadata.') = False
     ):
         super().__init__(key=key, raw=raw, all=all)
 

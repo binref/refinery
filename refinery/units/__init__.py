@@ -424,7 +424,9 @@ class Arg(Argument):
         """
         Used to add argparse arguments that contain binary data.
         """
-        return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=multibin, metavar=metavar or 'B')
+        if metavar is None and any('-' in a for a in args):
+            metavar = 'B'
+        return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=multibin, metavar=metavar)
 
     @classmethod
     def NumSeq(
