@@ -250,6 +250,8 @@ class pemeta(Unit):
         if main_certificate:
             crt = main_certificate['tbs_certificate']
             serial = crt['serial_number']
+            if isinstance(serial, int):
+                serial = F'{serial:x}'
             assert bytes.fromhex(serial) in data
             subject = crt['subject']
             location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
