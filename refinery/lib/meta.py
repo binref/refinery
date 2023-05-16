@@ -125,6 +125,7 @@ from typing import Callable, Dict, Iterable, Optional, ByteString, Union, TYPE_C
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
+from refinery.lib.environment import environment
 
 
 if TYPE_CHECKING:
@@ -322,24 +323,27 @@ class SizeInt(int, CustomStringRepresentation):
     width = 9
     align = True
 
-    def __repr__(self):
-        step = 1000.0
-        unit = None
-        result = self
-        for unit in [None, 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
-            if unit and result / step <= 0.1:
-                break
-            result /= step
-        if unit is None:
-            width = 3 if self.align else 1
-            return F'{result:{width}} BYTES'
-        else:
-            width = 6 if self.align else 1
-            comma = 3 if self.align else 1
-            return F'{result:0{width}.{comma}f} {unit}'
-
     def __str__(self):
         return str(int(self))
+
+    if environment.disable_size_format.value:
+        __repr__ = __str__
+    else:
+        def __repr__(self):
+            step = 1000.0
+            unit = None
+            result = self
+            for unit in [None, 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
+                if unit and result / step <= 0.1:
+                    break
+                result /= step
+            if unit is None:
+                width = 3 if self.align else 1
+                return F'{result:{width}} BYTES'
+            else:
+                width = 6 if self.align else 1
+                comma = 3 if self.align else 1
+                return F'{result:0{width}.{comma}f} {unit}'
 
 
 class TerseSizeInt(SizeInt):
