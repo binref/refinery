@@ -348,10 +348,11 @@ class formats(PatternEnum):
 
 
 class wallets(PatternEnum):
+    # https://gist.github.com/etherx-dev/76559d9e6d916917a960e33ceea91481
     ADA = pattern("addr1[a-z0-9]+")
     ATOM = pattern("cosmos[-\\w\\.]{10,}")
     BCH = pattern("(bitcoincash:)?(q|p)[a-z0-9]{41}|(BITCOINCASH:)?(Q|P)[A-Z0-9]{41}")
-    BTC = pattern("[13][a-km-zA-HJ-NP-Z1-9]{25,34}")
+    BTC = pattern("(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{25,39})")
     BTCP = pattern("5[HJK][1-9A-Za-z][^OIl]{48}")
     DASH = pattern("X[1-9A-HJ-NP-Za-km-z]{33}")
     DOGE = pattern("D{1}[5-9A-HJ-NP-U]{1}[1-9A-HJ-NP-Za-km-z]{32}")
@@ -366,7 +367,7 @@ class wallets(PatternEnum):
     RONIN = pattern("ronin:[a-fA-F0-9]{40}")
     TERRA = pattern("terra1[a-z0-9]{38}")
     XEM = pattern("N[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}-[A-Za-z0-9]{4,7}")
-    XLM = pattern("G[0-9A-Z]{40,60}")
+    XLM = pattern("G[A-D][A-Z2-7]{54}")
     XMR = pattern("4[0-9AB][1-9A-HJ-NP-Za-km-z]{90,120}")
     XRP = pattern("r[0-9a-zA-Z]{24,34}")
 
