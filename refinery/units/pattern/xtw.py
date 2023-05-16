@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import re
+
 from refinery.units.pattern import PatternExtractor
 from refinery.units import RefineryCriticalException
 from refinery.lib.patterns import wallets
@@ -15,9 +19,10 @@ class xtw(PatternExtractor):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
 
     def process(self, data):
-        pattern = '|'.join(F'(?P<{p.name}>{p.value})' for p in wallets).encode('latin1')
+        pattern = '|'.join(FR'(?P<{p.name}>\b{p.value}\b)' for p in wallets)
+        pattern = FR'\b{pattern}\b'.encode('latin1')
 
-        def check(match):
+        def check(match: re.Match[bytes]):
             for name, value in match.groupdict().items():
                 if value is not None:
                     break
