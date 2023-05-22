@@ -187,6 +187,7 @@ _pattern_defanged_hostname = _pattern_defanged_socket + '?'
 
 _pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?=[uU]?[iI]\\d{1,2}|[LlHh]|[^a-zA-Z0-9]|$)'
 _pattern_float = R'[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?'
+_pattern_number = F'(?:(?:{_pattern_float})|(?:{_pattern_integer}))'
 _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 _pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
 _pattern_vbastr = R'''"(?:""|[^"])*"'''
@@ -282,6 +283,8 @@ class formats(PatternEnum):
     "Integer expressions"
     float = pattern(_pattern_float)
     "Floating point number expressions"
+    number = pattern(_pattern_number)
+    "Either an integer or a float"
     string = pattern(_pattern_string)
     "C syntax string literal"
     multiline_string = pattern(_pattern_string_multiline)
@@ -304,6 +307,8 @@ class formats(PatternEnum):
     "A hex-encoded buffer using URL escape sequences"
     intarray = tokenize(_pattern_integer, sep=R'\s*[;,]\s*', bound='', unique_sep=True)
     "Sequences of integers, separated by commas or semicolons"
+    numarray = tokenize(_pattern_number, sep=R'\s*[;,]\s*', bound='', unique_sep=True)
+    "Sequences of numbers, separated by commas or semicolons"
     word = alphabet(R'\\w')
     "Sequences of word characters"
     letters = alphabet(R'[a-zA-Z]')
