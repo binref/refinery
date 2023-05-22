@@ -73,3 +73,35 @@ class TestPack(TestUnitBase):
     def test_pack_with_width(self):
         pack = self.load(16, reverse=True, width=2)
         self.assertEqual(str(B'\x01\x02\x34\x07' | pack), '01\n02\n34\n07')
+
+    def test_pack_floats_double(self):
+        pack = self.load(double_floats=True)
+        data = B"""
+             3.591750823735296e+37
+            -1.7960516725035723e+106
+             9.554597939558096e-307
+             1.2580759563156136e-302
+            """
+        test = data | +pack | bytes
+        self.assertContains(test, B'cmd.exe')
+        test = test | -pack | []
+        self.assertListEqual(test, [
+            B'3.591750823735296e+37',
+            B'-1.7960516725035723e+106',
+            B'9.554597939558096e-307',
+            B'1.2580759563156136e-302',
+        ])
+
+    def test_pack_floats_single(self):
+        pack = self.load(single_floats=True)
+        data = B"""
+            1.7408250028434934e+25
+            7.8662067389579605e+34
+            """
+        test = data | +pack | bytes
+        self.assertContains(test, B'refinery')
+        test = test | -pack | []
+        self.assertListEqual(test, [
+            B'1.7408250028434934e+25',
+            B'7.8662067389579605e+34',
+        ])
