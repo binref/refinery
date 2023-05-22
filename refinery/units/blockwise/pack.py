@@ -89,7 +89,7 @@ class pack(BlockTransformationBase):
                 if width:
                     converted = converted.rjust(width, B'0')
                 if prefix:
-                    converted = F'{prefix}{converted}'
+                    converted = prefix + converted
                 yield converted
             return
 
