@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.7
+- The `pack` unit can now also pack lists of floating-point numbers.
+- The unit `chaskey` was added to support this cipher; it is used by the Donut framework.
+
 ## Version 0.6.6
 - A minor bug was fixed in `pemeta` that prevented some signatures from being parsed correctly.
 - Archive extraction utilities now escalate fuzziness in 3 stages rather than just 2.
