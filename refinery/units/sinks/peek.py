@@ -103,6 +103,8 @@ class peek(HexViewer):
         width = max((len(name) for name in meta), default=0)
         separators = iter([sep])
         if _x_peek is not None:
+            if len(_x_peek) > linewidth:
+                _x_peek = _x_peek[:linewidth - 3] + '...'
             yield from separators
             yield _x_peek
         for name in sorted(meta):
