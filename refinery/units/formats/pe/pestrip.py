@@ -6,8 +6,11 @@ from typing import Generator, Iterable, Optional
 from refinery.units.formats.pe import OverlayUnit, Arg
 from refinery.units.formats.pe.perc import RSRC
 from refinery.lib.executable import Executable
-from refinery.lib.tools import entropy
+from refinery.lib.argformats import percent
 from refinery.lib.meta import TerseSizeInt as TI, SizeInt
+
+import re
+import zlib
 
 from fnmatch import fnmatch
 from pefile import PE, Structure, SectionStructure, DIRECTORY_ENTRY
@@ -15,6 +18,7 @@ from pefile import PE, Structure, SectionStructure, DIRECTORY_ENTRY
 _KB = 1000
 _MB = _KB * _KB
 
+_STRIP = TI(10 * _MB)
 _ASCII = Executable.ascii
 
 
@@ -31,21 +35,24 @@ class pestrip(OverlayUnit):
         directories=False,
         memdump=False,
         resources: Arg.Switch('-r', help='Strip large resources.') = False,
-        sections: Arg.Switch('-s', help='Strip large sections.') = False,
-        entropy: Arg('-e', metavar='E', type=float, help=(
-            'Trailing data from resources and sections with entropy lower than this value is '
-            'removed. The default value is {default}. Set this to 1 to ignore the entropy limit '
-            'entirely and trim every structure as much as possible without violating alignment. '
-            'Setting this value to 0 will strip all occurrences of the last byte.')) = 0.05,
-        size_limit: Arg.Number('-l',
-            help='Structures below this size are not stripped. The default is {default}.') = TI(10 * _MB),
-        aggressive: Arg.Switch('-a',
-            help='Equivalent to -sre1: Entirely strip all large sections and resources.') = False,
+        sections : Arg.Switch('-s', help='Strip large sections.') = False,
+        threshold: Arg('-t', metavar='T', type=percent, help=(
+            'Trailing data from resources and sections is stripped until the compression ratio '
+            'of the remaining rises above this threshold. The default value is {default}. Set '
+            'this to 1 to ignore the limit entirely and trim every structure as much as possible '
+            'without violating alignment. Setting this value to 0 will only strip repeated '
+            'occurrences of the last byte.')) = 0.05,
+        size_limit: Arg.Number('-l', help=(
+            'Structures below this size are not stripped. Default is {default!r}.')) = _STRIP,
+        keep_limit: Arg.Switch('-k', help=(
+            'Do not strip structures to below the above size limit.')) = False,
+        aggressive: Arg.Switch('-a', help=(
+            'Equivalent to -srt1: Strip large sections and resources aggressively.')) = False,
     ):
         if aggressive:
             sections = True
             resources = True
-            entropy = 1
+            threshold = 1
 
         super().__init__(
             certificate,
@@ -54,31 +61,57 @@ class pestrip(OverlayUnit):
             sections=sections,
             resources=resources,
             size_limit=size_limit,
-            entropy=entropy,
+            keep_limit=keep_limit,
+            threshold=threshold,
             names=names,
         )
 
-    def _right_strip_low_entropy(self, pe: PE, data: memoryview, block_size=_MB) -> int:
-        threshold = self.args.entropy
+    def _right_strip_data(self, pe: PE, data: memoryview, block_size=_MB) -> int:
+        threshold = self.args.threshold
         alignment = pe.OPTIONAL_HEADER.FileAlignment
         data_overhang = len(data) % alignment
         result = data_overhang
+
         if not data:
             return 0
-        if not threshold:
-            import re
-            match = re.search(B'(?s).(?=\\x%02x+$)' % data[-1], data)
-            if match is not None:
-                result = match.start() + 1
-        elif threshold < 1:
-            for k in reversed(range(0, len(data), block_size)):
-                if entropy(data[k:k + block_size]) > threshold:
-                    result = k + block_size
-                    break
+
+        if 0 < threshold < 1:
+            def compression_ratio(offset: int):
+                ratio = len(zlib.compress(data[:offset], level=1)) / offset
+                self.log_debug(F'compressing {SizeInt(offset)!r} ratio={ratio:6.4f}')
+                return ratio
+            upper = len(data)
+            lower = result
+            if compression_ratio(upper) <= threshold:
+                while block_size < upper - lower:
+                    pivot = (lower + upper) // 2
+                    ratio = compression_ratio(pivot)
+                    if ratio > threshold:
+                        lower = pivot + 1
+                        continue
+                    upper = pivot
+                    if abs(ratio - threshold) < 1e-10:
+                        break
+            result = upper
+
+        match = re.search(B'(?s).(?=\\x%02x+$)' % data[result - 1], data[:result])
+        if match is not None:
+            cutoff = match.start() - 1
+            length = result - cutoff
+            if length > block_size:
+                self.log_debug(F'removing additional {TI(length)!r} of repeated byte 0x{data[result-1]:02X}')
+                result = cutoff
+
         result = max(result, data_overhang)
-        result += (data_overhang - result) % alignment
+
+        if self.args.keep_limit:
+            result = max(result, self.args.size_limit)
+
+        result = result + (data_overhang - result) % alignment
+
         while result > len(data):
             result -= alignment
+
         return result
 
     def _adjust_offsets(self, pe: PE, gap_offset: int, gap_size: int):
@@ -188,8 +221,8 @@ class pestrip(OverlayUnit):
             if old_size <= S and not any(fnmatch(name, p) for p in P):
                 self.log_debug(F'criteria not satisfied for section: {SizeInt(old_size)!r} {name}')
                 continue
-            new_size = self._right_strip_low_entropy(pe, memoryview(data)[offset:offset + old_size])
-            self.log_info(F'stripping section {name} from {old_size} to {new_size}')
+            new_size = self._right_strip_data(pe, memoryview(data)[offset:offset + old_size])
+            self.log_info(F'stripping section {name} from {TI(old_size)!r} to {TI(new_size)!r}')
             gap_size = old_size - new_size
             gap_offset = offset + new_size
             if gap_size <= 0:
@@ -199,7 +232,7 @@ class pestrip(OverlayUnit):
             data[gap_offset:gap_offset + gap_size] = []
         return trimmed
 
-    def _trim_resources(self, pe: PE, data: bytearray) -> int:
+    def _trim_pe_resources(self, pe: PE, data: bytearray) -> int:
         S = self.args.size_limit
         P = self.args.names
         trimmed = 0
@@ -226,10 +259,14 @@ class pestrip(OverlayUnit):
 
         pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
 
-        for name, resource in find_bloated_resources(pe, pe.DIRECTORY_ENTRY_RESOURCE):
+        try:
+            resources = pe.DIRECTORY_ENTRY_RESOURCE
+        except AttributeError:
+            return 0
+        for name, resource in find_bloated_resources(pe, resources):
             offset = pe.get_offset_from_rva(resource.OffsetToData)
             old_size = resource.Size
-            new_size = self._right_strip_low_entropy(pe, memoryview(data)[offset:offset + old_size])
+            new_size = self._right_strip_data(pe, memoryview(data)[offset:offset + old_size])
             self.log_info(F'stripping resource {name} from {old_size} to {new_size}')
             gap_size = old_size - new_size
             gap_offset = offset + new_size
@@ -264,7 +301,7 @@ class pestrip(OverlayUnit):
                 copy = True
                 view = bytearray(pe.__data__)
         if self.args.resources:
-            trimmed += self._trim_resources(pe, view)
+            trimmed += self._trim_pe_resources(pe, view)
         if self.args.sections:
             trimmed += self._trim_sections(pe, view)
         if copy:

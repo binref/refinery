@@ -241,6 +241,15 @@ class SliceAgain(LazyEvaluation):
         return sliceobj(expression, data)
 
 
+def percent(expression: str):
+    """
+    Allows specification of percentages.
+    """
+    if expression.endswith('%'):
+        return float(expression[:-1].strip()) / 100
+    return float(expression)
+
+
 def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, range=False, final=False) -> Union[slice, SliceAgain]:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
