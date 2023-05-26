@@ -69,6 +69,8 @@ class TestPeek(TestUnitBase):
         desired = inspect.cleandoc(
             """
             -----------------------------------------------------------------
+            00.720 kB; 46.57% entropy; PE32+ executable (GUI) x86-64, for ...
+            -----------------------------------------------------------------
             4D 5A 90 00 03 00 00 00 04 00 00 00 FF FF 00 00  MZ..............
             B8 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00  ........@.......
             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
@@ -82,7 +84,7 @@ class TestPeek(TestUnitBase):
             -----------------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, narrow=True, width=16, gray=True)
+        peek = self.load(narrow=True, width=16, gray=True)
         with errbuf() as stderr:
             peek(TESTBUFFER_BIN)
             out = stderr.getvalue().strip()
