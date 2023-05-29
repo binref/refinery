@@ -257,7 +257,8 @@ class pestrip(OverlayUnit):
                     continue
                 yield name, struct
 
-        pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+        RSRC_INDEX = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
+        pe.parse_data_directories(directories=[RSRC_INDEX])
 
         try:
             resources = pe.DIRECTORY_ENTRY_RESOURCE
@@ -277,6 +278,8 @@ class pestrip(OverlayUnit):
             trimmed += gap_size
             data[gap_offset:gap_offset + gap_size] = []
 
+        pe.OPTIONAL_HEADER.DATA_DIRECTORY[RSRC_INDEX].Size -= trimmed
+        self.log_debug(F'trimming size of resource data directory by {TI(trimmed)!r}')
         return trimmed
 
     def process(self, data: bytearray) -> bytearray:
