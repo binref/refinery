@@ -309,5 +309,5 @@ class pestrip(OverlayUnit):
         data = pe.write()
         end = total - trimmed
         if end < len(data):
-            self.log_warn(F'output contains {end-len(data)} trailing bytes')
+            self.log_warn(F'output contains {len(data)-end} trailing bytes')
         return data
