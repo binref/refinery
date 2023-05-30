@@ -196,11 +196,11 @@ class pestrip(OverlayUnit):
                 'PointerToRawData',
             ))
             for attribute in (
-                'CvHeaderOffset'
-                'OffsetIn2Qwords'
-                'OffsetInQwords'
-                'Offset'
-                'OffsetLow'
+                'CvHeaderOffset',
+                'OffsetIn2Qwords',
+                'OffsetInQwords',
+                'Offset',
+                'OffsetLow',
                 'OffsetHigh'
             ):
                 if not hasattr(structure, attribute):
