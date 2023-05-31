@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.6.8
+- The `pestrip` unit has received some improvements and bugfixes; it should work more reliably now against bloated sections and resources.
+- All stream cipher units have been given the `--discard` option which allows you to discard an arbitrary number of initial bytes from the keystream.
+- Call tracing has been removed from `vstack`; it never really worked in practice and would require a lot more effort to do properly.
+
 ## Version 0.6.7
 - The `pack` unit can now also pack lists of floating-point numbers.
 - The unit `chaskey` was added to support this cipher; it is used by the Donut framework.
@@ -21,9 +26,9 @@
 - The `xtnode` unit was added for extracting the contents of Node.js executables created with `pkg` or `nexe`.
 - The `xtzip` unit now supports AES-encrypted archives via the `pyzipper` module.
 
-## Version 0.6.2 -- bugfix release
+## Version 0.6.2 - bugfix release
 
-## Version 0.6.1 -- bugfix release
+## Version 0.6.1 - bugfix release
 
 ## Version 0.6.0
 - The AutoIt decompiler unit `a3x` was added.
@@ -34,9 +39,9 @@
 - The `xxtea` unit was re-worked to support being used as a proper block cipher. This is enabled by specifying the block size using the `--block-size` argument. By default, `xxtea` will continue to operate on the input as a single block: This is how XXTEA is often used in malicious samples.
 - The `rc5` and `rc6` units have been updated to support the `--segment-size` option for CFB mode.
 
-## Version 0.5.9 -- bugfix release
+## Version 0.5.9 - bugfix release
 
-## Version 0.5.8 -- bugfix release
+## Version 0.5.8 - bugfix release
 
 ## Version 0.5.7
 - The `pestrip` and `peoverlay` default settings are the same again.
@@ -54,7 +59,7 @@
 - The `xthtml` unit can now extract attributes of HTML tags.
 - The `rijndael` cipher unit was added.
 
-## Version 0.5.3 -- bugfix release
+## Version 0.5.3 - bugfix release
 
 ## Version 0.5.2
 - The `lzg` unit was added.
@@ -63,7 +68,7 @@
 - The `vmemref` and `vstack` units were added; both are still experimental and not thoroughly tested.
 - The `min` and `max` units were added to simplify the pattern `sorted [| pick 0 ]` to a single unit.
 
-## Version 0.5.1 -- bugfix release
+## Version 0.5.1 - bugfix release
 
 ## Version 0.5.0
 This release changes the way in which meta variables are handled, they now have a scope:
@@ -94,9 +99,9 @@ Changes unrelated to meta variable redesign:
 - Adds the `xtnsis` unit to the units used in `xt`.
 - The `pemeta` unit has improved RICH header data and displays RICH header counts.
 
-## Version 0.4.46 -- bugfix release
+## Version 0.4.46 - bugfix release
 
-## Version 0.4.45 -- bugfix release
+## Version 0.4.45 - bugfix release
 
 ## Version 0.4.44
 - Adds the `lzf` unit for LZF compression and decompression.
@@ -104,7 +109,7 @@ Changes unrelated to meta variable redesign:
 ## Version 0.4.43
 - Adds the `qlz` unit for QuickLZ decompression.
 
-## Version 0.4.42 -- bugfix release
+## Version 0.4.42 - bugfix release
 
 ## Version 0.4.41
 - Adds the `carve-lnk` unit to carve Windows Shortcut files.
@@ -114,7 +119,7 @@ Changes unrelated to meta variable redesign:
 - Adds the `xtnsis` unit which can extract files from NSIS archives and provide a rudimentary disassembly of the setup script.
 - Adds the `ifps` and `ifpsstr` units to disassemble and extract strings from compiled Pascal script files.
 
-## Version 0.4.40 -- bugfix release
+## Version 0.4.40 - bugfix release
 
 ## Version 0.4.39
 - Adds the `vbapc` and `vbastr` units which can extract (decompiled) VBA p-code and VBA strings from (potentially stomped) Word documents.
@@ -131,18 +136,18 @@ Fixes a critical bug in the meta variable propagation logic.
 - Adds the `jcalg` unit.
 - Adds the `byteswap` unit.
 
-## Version 0.4.36 -- bugfix release
+## Version 0.4.36 - bugfix release
 
 ## Version 0.4.35
 - Adds the `lzip` unit.
 - Reworks the `serpent` unit to work with real-world examples and adds a `--swap` option to change the block byte order to become compatible with other implementations.
 - Changes the `peek` design and fixes problems with colored output on Windows.
 
-## Version 0.4.34 -- bugfix release
+## Version 0.4.34 - bugfix release
 
-## Version 0.4.33 -- bugfix release
+## Version 0.4.33 - bugfix release
 
-## Version 0.4.32 -- bugfix release
+## Version 0.4.32 - bugfix release
 
 ## Version 0.4.31
 - The (still somewhat experimental) `xt` unit was added which attempts to extract data from known archive formats.
@@ -156,7 +161,7 @@ Fixes a critical bug in the meta variable propagation logic.
 - The `base32` unit was made more robust against invalid paddings.
 - The `peek` unit design was changed yet again and colorization was added to the hexdump preview. It can be disabled through the `-g` switch.
 
-## Version 0.4.30 -- bugfix release
+## Version 0.4.30 - bugfix release
 
 ## Version 0.4.29
 - Unit execution time has been improved significantly.
@@ -175,7 +180,7 @@ Fixes a critical bug in the meta variable propagation logic.
 ## Version 0.4.26
 Adds various convenience output options in the Python REPL and adds documentation for those.
 
-## Version 0.4.25 -- bugfix release
+## Version 0.4.25 - bugfix release
 
 ## Version 0.4.24
 - Adds the `szdd` decompression unit.
@@ -186,7 +191,7 @@ Adds various convenience output options in the Python REPL and adds documentatio
 - Adds the `isaac` cipher unit.
 - Adds the `bat` unit for deobfuscating batch scripts.
 
-## Version 0.4.23 -- bugfix release
+## Version 0.4.23 - bugfix release
 
 ## Version 0.4.22
 - Adds the `ripemd160` and `ripemd128` units.
@@ -213,9 +218,9 @@ Improves performance by replacing an import of `pkg_resources` with equivalent f
 ## Version 0.4.18
 Changes the format for the binary formatter used in `struct`, `rex`, `resub`, and `cfmt`. It now uses a reverse multibin handler instead of parsing the modifier like a command-line pipeline.
 
-## Version 0.4.17 -- bugfix release
+## Version 0.4.17 - bugfix release
 
-## Version 0.4.16 -- bugfix release
+## Version 0.4.16 - bugfix release
 
 ## Version 0.4.15 
 - Adds the `lzo` unit
@@ -233,14 +238,14 @@ Changes the format for the binary formatter used in `struct`, `rex`, `resub`, an
 - The `xtpyi` unit now extracts Python disassembly when decompilation fails.
 - The `lzma` unit now correctly decompresses output produced by PyLZMA.
 
-## Version 0.4.12 -- bugfix release
+## Version 0.4.12 - bugfix release
 
 ## Version 0.4.11
 - The `doctxt` unit was added; courtesy of [@baderj][]
 
-## Version 0.4.10 -- bugfix release
+## Version 0.4.10 - bugfix release
 
-## Version 0.4.9 -- bugfix release
+## Version 0.4.9 - bugfix release
 
 ## Version 0.4.8
 - Adds the `serpent` unit.
