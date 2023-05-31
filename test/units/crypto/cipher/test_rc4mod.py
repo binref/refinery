@@ -20,3 +20,8 @@ class TestModifiedRC4(TestUnitBase):
             '19 8B 7C 29 49 48 06 25 99 DC 97 B4 30 C4 E1 84'
         )
         self.assertIn(B'This program cannot be run in DOS mode', bytes(data | unit))
+
+    def test_discard(self):
+        goal = bytes.fromhex('DF81C217EF2D066F41891527293C7AAD')
+        data = b'1RQCmvqeSxBYnXXD'
+        self.assertEqual(data | self.load(b'C9J2oU8orRsjZ73J', discard=505) | bytes, goal)

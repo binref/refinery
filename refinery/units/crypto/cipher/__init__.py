@@ -77,10 +77,11 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
     def __init__(
         self, key,
+        discard: Arg.Number('-d', help='Discard the first {varname} bytes of the keystream, {default} by default.') = 0,
         stateful: Arg.Switch('-s', help='Do not reset the key stream while processing the chunks of one frame.') = False,
         **keywords
     ):
-        super().__init__(key=key, stateful=stateful, **keywords)
+        super().__init__(key=key, stateful=stateful, discard=discard, **keywords)
         self._keystream = None
 
     @abc.abstractmethod
@@ -94,6 +95,8 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
     def encrypt(self, data: bytearray) -> bytearray:
         it = self._keystream or self.keystream()
+        for _ in range(self.args.discard):
+            next(it)
         try:
             np = self._numpy
         except ImportError:
@@ -362,13 +365,13 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
     block_size = 1
 
     def __init__(
-        self, key,
+        self, key, stateful=False, discard=0,
         nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY',
         magic: Arg('-m', help='The magic constant; depends on the key size by default.') = B'',
         offset: Arg.Number('-x', help='Optionally specify the stream index, default is {default}.') = 0,
         rounds: Arg.Number('-r', help='The number of rounds. Has to be an even number.') = 20,
     ):
-        super().__init__(key=key, nonce=nonce, magic=magic, offset=offset, rounds=rounds)
+        super().__init__(key=key, nonce=nonce, magic=magic, offset=offset, rounds=rounds, stateful=stateful, discard=discard)
 
 
 class LatinCipherStandardUnit(StandardCipherUnit):
