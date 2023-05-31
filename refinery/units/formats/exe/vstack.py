@@ -19,19 +19,20 @@ if TYPE_CHECKING:
 @dataclass
 class EmuState:
     executable: Executable
-    address: int
     writes: IntervalTree
     disassembler: Optional[Cs] = None
     waiting: int = 0
-    calling: bool = False
 
     def disassemble(self, address: int, size: int):
         if self.disassembler is None:
             return None
-        pos = self.executable.location_from_address(address).physical.position
-        end = pos + size
-        return next(self.disassembler.disasm(
-            bytes(self.executable.data[pos:end]), address, 1))
+        try:
+            pos = self.executable.location_from_address(address).physical.position
+            end = pos + size
+            return next(self.disassembler.disasm(
+                bytes(self.executable.data[pos:end]), address, 1))
+        except Exception:
+            return None
 
 
 class vstack(Unit):
@@ -111,7 +112,7 @@ class vstack(Unit):
         else:
             disassembler = None
 
-        state = EmuState(exe, address, tree, disassembler)
+        state = EmuState(exe, tree, disassembler)
 
         emulator.mem_map(stack_addr, stack_size * 3)
         emulator.reg_write({
@@ -217,25 +218,18 @@ class vstack(Unit):
         try:
             waiting = state.waiting
 
-            if address == state.address:
-                if waiting > self.args.halt_after:
-                    emu.emu_stop()
-                    return False
-                state.waiting += 1
-                state.address += size
-                state.calling = False
-            else:
-                instruction = state.disassemble(address, size)
-                if instruction and instruction.mnemonic == 'call':
-                    state.calling = True
+            if waiting > self.args.halt_after:
+                emu.emu_stop()
+                return False
+            state.waiting += 1
 
             def debug_message():
                 instruction = state.disassemble(address, size)
-                flags = 'C' if state.calling else ' '
-                return (
-                    F'emulating [wait={waiting}] [{flags}] 0x{address:0{state.executable.pointer_size//4}X}: '
-                    F'{instruction.mnemonic} {instruction.op_str}'
-                )
+                if instruction:
+                    instruction = F'{instruction.mnemonic} {instruction.op_str}'
+                else:
+                    instruction = '<DISASSEMBLER FAILURE>'
+                return F'emulating [wait={waiting:02d}] 0x{address:0{state.executable.pointer_size//4}X}: {instruction}'
 
             self.log_debug(debug_message)
 
