@@ -195,11 +195,15 @@ class vstack(Unit):
             yield emulator.mem_read(interval.begin, size)
 
     def _hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
-        if not state.calling:
-            state.waiting = 0
-            state.writes.addi(address, address + size + 1)
-            state.writes.merge_overlaps()
-            self.log_info(F'memory write to 0x{address:0{state.executable.pointer_size//4}X}: {value:0{size*2}X}')
+        state.waiting = 0
+        state.writes.addi(address, address + size + 1)
+        state.writes.merge_overlaps()
+
+        def info():
+            mask = (1 << (size * 8)) - 1
+            data = (value & mask).to_bytes(size, state.executable.byte_order().value).hex().upper()
+            return F'memory write to 0x{address:0{state.executable.pointer_size//4}X}: {data}'
+        self.log_info(info)
 
     def _hook_insn_error(self, emu: Uc, state: EmuState):
         self.log_debug('aborting emulation; instruction error')

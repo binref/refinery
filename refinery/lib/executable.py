@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
 
-from macholib.MachO import MachO
+from macholib.MachO import load_command, MachO, MachOHeader
 from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
 from elftools.elf.elffile import ELFFile
 
@@ -177,6 +177,11 @@ class ET(str, Enum):
     ELF = 'ELF'
     MachO = 'MachO'
     PE = 'PE'
+
+
+class BO(str, Enum):
+    BE = 'big'
+    LE = 'little'
 
 
 class Section(NamedTuple):
@@ -351,6 +356,10 @@ class Executable(ABC):
             raise CompartmentNotFound(lt, location)
 
     @abstractmethod
+    def byte_order(self) -> BO:
+        ...
+
+    @abstractmethod
     def image_defined_base(self) -> int:
         ...
 
@@ -445,6 +454,9 @@ class ExecutablePE(Executable):
         except KeyError:
             raise LookupError(F'Unsupported architecture: {arch}')
 
+    def byte_order(self) -> BO:
+        return BO.LE
+
 
 class ExecutableELF(Executable):
 
@@ -519,6 +531,9 @@ class ExecutableELF(Executable):
         except KeyError:
             raise LookupError(F'Unsupported architecture: {arch}')
 
+    def byte_order(self) -> BO:
+        return BO.LE if self.head.little_endian else BO.BE
+
 
 class ExecutableMachO(Executable):
 
@@ -530,9 +545,11 @@ class ExecutableMachO(Executable):
         return min(seg.vmaddr for seg, _ in self._macho_segments() if seg.vmaddr > 0)
 
     def _macho_segments(self):
-        for header in self._head.headers:
-            for header, segment, sections in header.commands:
-                if not header.get_cmd_name().startswith('LC_SEGMENT'):
+        headers: List[MachOHeader] = self._head.headers
+        for header in headers:
+            for cmd, segment, sections in header.commands:
+                cmd: load_command
+                if not cmd.get_cmd_name().startswith('LC_SEGMENT'):
                     continue
                 if segment.filesize <= 0:
                     continue
@@ -595,3 +612,10 @@ class ExecutableMachO(Executable):
             }[arch]
         except KeyError:
             raise LookupError(F'Unsupported architecture: {arch}')
+
+    def byte_order(self) -> BO:
+        headers: List[MachOHeader] = self._head.headers
+        return {
+            '<': BO.LE,
+            '>': BO.BE,
+        }[headers[0].endian]
