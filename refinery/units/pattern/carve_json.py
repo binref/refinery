@@ -48,6 +48,8 @@ class JSONCarver:
                     continue
             except json.JSONDecodeError:
                 continue
+            except UnicodeDecodeError:
+                continue
             self.cursor = end + 1
             return start, data[start:end]
 
