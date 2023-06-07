@@ -40,14 +40,19 @@ class carve_7z(Unit):
             start = data.find(self.HEADER_SIGNATURE, cursor)
             if start < cursor:
                 break
+            self.log_debug(F'found header at offset: 0x{start:08X}')
             try:
                 mf = MemoryFileRecorder(mv[start:])
+                self.log_debug('attempting to read archive')
                 archive = self._py7zr.SevenZipFile(mf)
+                self.log_debug('attempting to test archive')
                 success = archive.test() is not False
-            except Exception:
+            except Exception as error:
+                self.log_debug('parsing archive failed:', error)
                 success = False
             if success:
+                self.log_info(F'identified archive of size 0x{mf.max_cursor:08X} at offset 0x{start:08X}')
                 cursor = start + mf.max_cursor
                 yield self.labelled(mv[start:cursor], offset=start)
             else:
-                cursor += 5
+                cursor = start + 5
