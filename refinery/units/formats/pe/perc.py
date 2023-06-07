@@ -6,6 +6,7 @@ import enum
 import pefile
 import re
 import struct
+import json
 
 from refinery.units.formats import UnpackResult, PathExtractorUnit, Arg
 from refinery.lib.structures import Struct, StructReader
@@ -105,10 +106,29 @@ class perc(PathExtractorUnit):
                         extract = self._handle_bitmap(pe, rva, size)
                     elif parts[0] is RSRC.ICON:
                         extract = self._handle_icon(pe, parts, rva, size)
+                    elif parts[0] is RSRC.STRING:
+                        extract = self._handle_strings(pe, parts, rva, size)
                 if extract is None:
                     def extract(pe=pe):
                         return pe.get_data(rva, size)
                 yield UnpackResult(path, extract, offset=pe.get_offset_from_rva(rva))
+
+    def _handle_strings(self, pe: pefile.PE, parts: Tuple[RSRC, int, int], rva: int, size: int):
+        def extract(pe=pe):
+            self.log_debug(parts)
+            base = (parts[1] - 1) << 4
+            reader = StructReader(pe.get_data(rva, size))
+            table = {}
+            index = 0
+            while not reader.eof:
+                string = reader.read_exactly(reader.u16() * 2)
+                if not string:
+                    break
+                key = F'{base+index:04X}'
+                table[key] = string.decode('utf-16le')
+                index += 1
+            return json.dumps(table, indent=4).encode(self.codec)
+        return extract
 
     def _handle_bitmap(self, pe: pefile.PE, rva: int, size: int):
         def extract(pe=pe):
