@@ -65,10 +65,6 @@ class peek(HexViewer):
 
     def process(self, data):
         colorize = not self.args.gray and not self.args.stdout
-        if os.name == 'nt' and not self.isatty:
-            # coloring stderr does not work properly in Windows when stdout is redirected:
-            # https://github.com/tartley/colorama/issues/200
-            colorize = False
         lines = self._peeklines(data, colorize)
 
         if self.args.stdout:
