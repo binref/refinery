@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import List, TYPE_CHECKING
 
 from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, Executable
 from refinery.lib.types import INF
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 if TYPE_CHECKING:
     from typing import Tuple, Optional, Iterator
@@ -20,8 +20,15 @@ if TYPE_CHECKING:
 class EmuState:
     executable: Executable
     writes: IntervalTree
+    address: int
     disassembler: Optional[Cs] = None
     waiting: int = 0
+    callstack: List[int] = field(default_factory=list)
+    retaddr: Optional[int] = None
+    stop: Optional[int] = None
+    previous_address: int = 0
+    sp_register: int = 0
+    stack_ceiling: int = 0
 
     def disassemble(self, address: int, size: int):
         if self.disassembler is None:
@@ -33,6 +40,9 @@ class EmuState:
                 bytes(self.executable.data[pos:end]), address, 1))
         except Exception:
             return None
+
+    def fmt(self, address: int) -> str:
+        return F'0x{address:0{self.executable.pointer_size//4}X}'
 
 
 class vstack(Unit):
@@ -64,21 +74,23 @@ class vstack(Unit):
 
     def __init__(
         self,
-        address: Arg.Number(metavar='address', help='Specify the (virtual) address of a stack string instruction sequence.'),
+        address: Arg.Number(metavar='start', help='Specify the (virtual) address of a stack string instruction sequence.'),
+        stop: Arg.Number(metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
-        min: Arg.Number('-n', help='Minimum size of a memory patch, default is {default}.') = 10,
+        min: Arg.Number('-n', help='Minimum size of a memory patch, default is {default}.') = 5,
         max: Arg.Number('-m', help='Maximum size of a memory patch, default is {default}.') = INF,
-        halt_after: Arg.Number('-a', help=(
-            'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 5,
+        wait: Arg.Number('-w', help=(
+            'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 10,
         stack_size: Arg.Number('-s', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-k', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
     ):
         super().__init__(
             address=address,
+            stop=stop,
             base=base,
             min=min,
             max=max,
-            halt_after=halt_after,
+            wait=wait,
             stack_size=stack_size,
             block_size=block_size,
         )
@@ -112,10 +124,7 @@ class vstack(Unit):
         else:
             disassembler = None
 
-        state = EmuState(exe, tree, disassembler)
-
-        emulator.mem_map(stack_addr, stack_size * 3)
-        emulator.reg_write({
+        sp = {
             Arch.X8632   : uc.x86_const.UC_X86_REG_ESP,
             Arch.X8664   : uc.x86_const.UC_X86_REG_RSP,
             Arch.ARM32   : uc.arm_const.UC_ARM_REG_SP,
@@ -125,7 +134,12 @@ class vstack(Unit):
             Arch.MIPS64  : uc.mips_const.UC_MIPS_REG_SP,
             Arch.SPARC32 : uc.sparc_const.UC_SPARC_REG_SP,
             Arch.SPARC64 : uc.sparc_const.UC_SPARC_REG_SP,
-        }[arch], stack_addr + 2 * stack_size)
+        }[arch]
+
+        state = EmuState(exe, tree, address, disassembler,
+            stop=self.args.stop, sp_register=sp)
+        emulator.mem_map(stack_addr, stack_size * 3)
+        emulator.reg_write(sp, stack_addr + 2 * stack_size)
 
         if arch is Arch.X8632:
             for reg in [
@@ -191,18 +205,37 @@ class vstack(Unit):
                 continue
             if size < self.args.min:
                 continue
-            self.log_info(F'memory patch at 0x{interval.begin:0{exe.pointer_size//4}X} of size {size}')
+            self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
             yield emulator.mem_read(interval.begin, size)
 
     def _hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
+        mask = (1 << (size * 8)) - 1
+        unsigned_value = value & mask
+        depth = len(state.callstack)
+
+        if unsigned_value == state.address:
+            callstack = state.callstack
+            if not callstack:
+                state.stack_ceiling = emu.reg_read(state.sp_register)
+            state.retaddr = unsigned_value
+            callstack.append(unsigned_value)
+        else:
+            state.retaddr = None
+
+        if state.stack_ceiling > 0 and address in range(state.stack_ceiling - 0x200, state.stack_ceiling):
+            return
+
         state.waiting = 0
         state.writes.addi(address, address + size + 1)
         state.writes.merge_overlaps()
 
         def info():
-            mask = (1 << (size * 8)) - 1
-            data = (value & mask).to_bytes(size, state.executable.byte_order().value).hex().upper()
-            return F'memory write to 0x{address:0{state.executable.pointer_size//4}X}: {data}'
+            data = unsigned_value.to_bytes(size, state.executable.byte_order().value).hex().upper()
+            indent = '\x20' * 4 * depth
+            return (
+                F'emulating [wait={state.waiting:02d}] {indent}{state.fmt(state.previous_address)}: '
+                F'{state.fmt(address)} <- {data}')
+
         self.log_info(info)
 
     def _hook_insn_error(self, emu: Uc, state: EmuState):
@@ -219,21 +252,45 @@ class vstack(Unit):
         return False
 
     def _hook_code(self, emu: Uc, address: int, size: int, state: EmuState):
+        if address == state.stop:
+            emu.emu_stop()
+            return False
         try:
             waiting = state.waiting
+            callstack = state.callstack
+            depth = len(callstack)
+            state.previous_address = state.address
 
-            if waiting > self.args.halt_after:
+            if address != state.address:
+                if depth and address == callstack[-1]:
+                    depth -= 1
+                    state.callstack.pop()
+                    if depth == 0:
+                        state.stack_ceiling = 0
+                state.address = address
+            elif state.retaddr is not None:
+                # The present address was moved to the stack but we did not branch.
+                # This is not quite accurate, of course: We could be calling the
+                # next instruction. However, that sort of code is usually not really
+                # a function call anyway, but rather a way to get the IP.
+                callstack.pop()
+                state.retaddr = None
+
+            if waiting > self.args.wait:
                 emu.emu_stop()
                 return False
-            state.waiting += 1
+            if not depth:
+                state.waiting += 1
+            state.address += size
 
             def debug_message():
                 instruction = state.disassemble(address, size)
+                indent = '\x20' * 4 * depth
                 if instruction:
                     instruction = F'{instruction.mnemonic} {instruction.op_str}'
                 else:
                     instruction = '<DISASSEMBLER FAILURE>'
-                return F'emulating [wait={waiting:02d}] 0x{address:0{state.executable.pointer_size//4}X}: {instruction}'
+                return F'emulating [wait={waiting:02d}] {indent}0x{address:0{state.executable.pointer_size//4}X}: {instruction}'
 
             self.log_debug(debug_message)
 
