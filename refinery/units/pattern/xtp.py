@@ -115,6 +115,7 @@ class xtp(PatternExtractor):
         'comodo.net'              : 1,
         'comodoca.com'            : 1,
         'curl.haxx.se'            : 1,
+        'curl.se'                 : 1,
         'digicert.com'            : 1,
         'dublincore.org'          : 1,
         'fontawesome.com'         : 1,
