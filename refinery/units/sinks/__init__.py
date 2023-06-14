@@ -76,7 +76,8 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
     hexformat = metrics.hex_char_format
     printable = range(0x21, 0x7F)
 
-    from colorama import Fore as FG, Style as S
+    from colorama import Fore as FG
+    color_reset = FG.RESET
 
     if columns <= 0:
         raise RuntimeError('Requested width is too small.')
@@ -100,7 +101,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 pad = pad - len(message) + len(format)
                 line = ' ' * pad + message
                 if colorize:
-                    line = F'{FG.LIGHTBLACK_EX}{line}{S.RESET_ALL}'
+                    line = F'{FG.LIGHTBLACK_EX}{line}{color_reset}'
                 if addr_width:
                     line = F'{".":.>{addr_width}}{metrics.hex_addr_spacer}{line}'
                 yield line
@@ -123,14 +124,14 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
             def byte_color(value: int):
                 if not value:
                     return FG.LIGHTBLACK_EX
-                elif value in B'\x20\t\n\r\v\f':
-                    return FG.LIGHTYELLOW_EX
+                elif value in B'\x20\t\n\r':
+                    return FG.CYAN
                 elif value not in printable:
                     return FG.LIGHTRED_EX
                 else:
-                    return S.RESET_ALL
+                    return color_reset
             with io.StringIO() as _hex, io.StringIO() as _asc:
-                current_color = S.RESET_ALL
+                current_color = color_reset
                 block_size = metrics.block_size
                 prefix = metrics.hex_char_prefix
                 remaining_hex_width = hex_width * columns - len(separator)
@@ -150,9 +151,9 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                     _hex.write(F'{b:02X}')
                     remaining_hex_width -= 2
                     _asc.write(chr(b) if b in printable else '.')
-                _hex.write(S.RESET_ALL)
+                _hex.write(color_reset)
                 _hex.write(' ' * remaining_hex_width)
-                _asc.write(S.RESET_ALL)
+                _asc.write(color_reset)
                 line = F'{_hex.getvalue()}{metrics.txt_separator}{_asc.getvalue():<{columns}}'
 
         if addr_width:
