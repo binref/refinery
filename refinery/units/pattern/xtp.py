@@ -318,10 +318,11 @@ class xtp(PatternExtractor):
                 self.log_debug(F'error parsing path "{path}": {E!s}')
                 return None
             path_likeness = sum(v for v, x in [
-                (2, path_string[:1] == '%'),
-                (1, path_string[:1] == '/'),
                 (1, path.suffix),
-                (2, path.drive),
+                (1, path_string.startswith('/')),
+                (2, path_string.startswith('%')),
+                (2, path_string.startswith('\\\\')),
+                (2, path_string[1:3] == ':\\'),
             ] if x)
             if path_likeness < min(self.args.filter, 2):
                 return None
