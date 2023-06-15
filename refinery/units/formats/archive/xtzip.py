@@ -80,10 +80,6 @@ class xtzip(ArchiveUnit):
             if info.filename:
                 if info.is_dir():
                     continue
-            try:
-                date = datetime(*info.date_time)
-            except Exception:
-                date = None
 
             # courtesy of https://stackoverflow.com/a/37773438/9130824
             filename = info.filename
@@ -95,6 +91,12 @@ class xtzip(ArchiveUnit):
                     guessed_encoding = None
                 guessed_encoding = guessed_encoding or 'cp1252'
                 filename = filename_bytes.decode(guessed_encoding, 'replace')
+
+            try:
+                date = datetime(*info.date_time)
+            except Exception as e:
+                self.log_info(F'{e!s} - unable to determine date from tuple {info.date_time} for: {filename}')
+                date = None
 
             yield self._pack(filename, date, xt)
 
