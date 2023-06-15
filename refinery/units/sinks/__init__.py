@@ -114,6 +114,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
         blocks = chunks.unpack(chunk, metrics.block_size, metrics.big_endian)
 
         if not colorize:
+            color_prefix = ''
             dump = separator.join(hexformat.format(b) for b in blocks)
             ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
             line = (
@@ -130,8 +131,8 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                     return FG.LIGHTRED_EX
                 else:
                     return color_reset
+            color_prefix = current_color = color_reset
             with io.StringIO() as _hex, io.StringIO() as _asc:
-                current_color = color_reset
                 block_size = metrics.block_size
                 prefix = metrics.hex_char_prefix
                 remaining_hex_width = hex_width * columns - len(separator)
@@ -157,7 +158,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 line = F'{_hex.getvalue()}{metrics.txt_separator}{_asc.getvalue():<{columns}}'
 
         if addr_width:
-            line = F'{lno*columns:0{addr_width}X}: {line}'
+            line = F'{color_prefix}{lno*columns:0{addr_width}X}: {line}'
 
         yield line
 
