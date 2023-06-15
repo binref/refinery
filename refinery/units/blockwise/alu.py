@@ -31,9 +31,11 @@ class alu(ArithmeticUnit):
     - the variable `A`: same as `V[0]`
     - the variable `B`: current block
     - the variable `N`: number of bytes in the input
-    - the variable `I`: current index in the input
-    - the variable `S`: an optional seed value for an internal state
+    - the variable `K`: current index in the input
+    - the variable `S`: the internal state value
     - the variable `V`: the vector of arguments
+    - the variable `I`: function that casts to a signed int in current precision
+    - the variable `U`: function that casts to unsigned int in current precision
 
     Each block of the input is replaced by the value of this expression. Additionally, it is possible to
     specify prologue and epilogue expressions which are used to update the state variable `S` before and
@@ -112,10 +114,21 @@ class alu(ArithmeticUnit):
         prologue = self.args.prologue.expression
         epilogue = self.args.epilogue.expression
         operator = self.args.operator.expression
-        context.update(N=len(data), S=seed)
+
+        def toUINT(n) -> int:
+            return int(n) & self.fmask
+
+        def toSINT(n) -> int:
+            n = toUINT(n)
+            if n >> (self.fbits - 1):
+                return -((~n + 1) & self.fmask)
+            else:
+                return n
+
+        context.update(N=len(data), S=seed, I=toSINT, U=toUINT)
 
         def operate(block, index, *args):
-            context.update(I=index, B=block, V=args)
+            context.update(K=index, B=block, V=args)
             if args:
                 context['A'] = args[0]
             context['S'] = eval(prologue, None, context)
