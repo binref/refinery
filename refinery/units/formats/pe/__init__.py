@@ -31,8 +31,12 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
         s.VirtualAddress + s.Misc_VirtualSize
         for s in pe.sections
     ), default=0) or 0
-    cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[
-        IMAGE_DIRECTORY_ENTRY_SECURITY]
+
+    try:
+        cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[IMAGE_DIRECTORY_ENTRY_SECURITY]
+    except IndexError:
+        cert_entry = None
+        certificate = False
 
     if directories:
         directories_value = max((
