@@ -255,6 +255,8 @@ class xtp(PatternExtractor):
                 indicators.domain.name,
                 indicators.subdomain.name
             }:
+                if data[pos - 1] in b'/\\' and self.args.filter >= 2:
+                    return None
                 hostparts = host.split('.')
                 if self.args.filter >= 2:
                     if not all(p.isdigit() for p in hostparts) and all(len(p) < 4 for p in hostparts):
