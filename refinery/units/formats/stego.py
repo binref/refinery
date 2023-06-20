@@ -16,7 +16,7 @@ class PIXEL_PART(IntEnum):
 class stego(Unit):
     """
     Decodes the RGBA (red/green/blue/alpha) values of the pixels of a given image file and outputs
-    these values as bytes. Each row of the image is transformed and output as and individual chunk.
+    these values as bytes. Each row of the image is transformed and output as an individual chunk.
     """
     def __init__(
         self,
