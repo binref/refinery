@@ -13,6 +13,8 @@ from .typecast import deob_ps1_typecast
 from .stringreplace import deob_ps1_stringreplace
 from .uncurly import deob_ps1_uncurly
 from .invoke import deob_ps1_invoke
+from .b64convert import deob_ps1_b64convert
+from .encodings import deob_ps1_encodings
 
 
 class deob_ps1(IterativeDeobfuscator):
@@ -24,6 +26,8 @@ class deob_ps1(IterativeDeobfuscator):
         deob_ps1_format,
         deob_ps1_typecast,
         deob_ps1_stringreplace,
+        deob_ps1_b64convert,
+        deob_ps1_encodings,
         deob_ps1_concat,
         deob_ps1_invoke,
         deob_ps1_uncurly
