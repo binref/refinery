@@ -143,13 +143,13 @@ class TestHexLoad(TestUnitBase):
 
     def test_shellcode_dump(self):
         data = (
-            R'31 F6 56 64 8B 76 30 8B 76 0C 8B 76 1C 8B 6E 08  1.Vd.v0.v..v..n.\n'
-            R'8B 36 8B 5D 3C 8B 5C 1D 78 01 EB 8B 4B 18 67 E3  .6.]<.\.x...K.g.\n'
-            R'EC 8B 7B 20 01 EF 8B 7C 8F FC 01 EF 31 C0 99 32  ..{....|....1..2\n'
-            R'17 66 C1 CA 01 AE 75 F7 66 81 FA 10 F5 E0 E2 75  .f....u.f......u\n'
-            R'CC 8B 53 24 01 EA 0F B7 14 4A 8B 7B 1C 01 EF 03  ..S$.....J.{....\n'
-            R'2C 97 68 2E 65 78 65 68 63 61 6C 63 54 87 04 24  ,.h.exehcalcT..$\n'
-            R'50 FF D5 CC                                      P...\n'
+            R'31 F6 56 64 8B 76 30 8B 76 0C 8B 76 1C 8B 6E 08  1.Vd.v0.v..v..n.' '\n'
+            R'8B 36 8B 5D 3C 8B 5C 1D 78 01 EB 8B 4B 18 67 E3  .6.]<.\.x...K.g.' '\n'
+            R'EC 8B 7B 20 01 EF 8B 7C 8F FC 01 EF 31 C0 99 32  ..{....|....1..2' '\n'
+            R'17 66 C1 CA 01 AE 75 F7 66 81 FA 10 F5 E0 E2 75  .f....u.f......u' '\n'
+            R'CC 8B 53 24 01 EA 0F B7 14 4A 8B 7B 1C 01 EF 03  ..S$.....J.{....' '\n'
+            R'2C 97 68 2E 65 78 65 68 63 61 6C 63 54 87 04 24  ,.h.exehcalcT..$' '\n'
+            R'50 FF D5 CC                                      P...'             '\n'
         ).encode('utf8')
         unit = self.load()
         self.assertEqual(unit(data), bytes.fromhex(
