@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.6.9
+- The coloring in `peek` on Windows is now applied even if `peek` is not the last unit in the pipeline. This previously caused a bug, but in recent versions the bug was not reproducible.
+- The `bitsnip` unit was added.
+- PowerShell deobfuscation was augmented by two units to decode base64.
+
 ## Version 0.6.8
 - The `pestrip` unit has received some improvements and bugfixes; it should work more reliably now against bloated sections and resources.
 - All stream cipher units have been given the `--discard` option which allows you to discard an arbitrary number of initial bytes from the keystream.
