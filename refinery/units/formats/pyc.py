@@ -4,21 +4,21 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from refinery.units import Unit
+from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.archive.xtpyi import decompile_buffer, extract_code_from_buffer
 from refinery.lib.meta import metavars
 
 
-class pyc(Unit):
+class pyc(ArchiveUnit):
     """
     Decompiles Python bytecode (PYC) files back to source code. A known limitation is that it does
     not work on recent Python versions, but anything below 3.9 should work.
     """
 
-    def process(self, data):
-        for code in extract_code_from_buffer(bytes(data), metavars(data).get('path')):
-            meta = {}
-            if code.container.co_filename:
-                meta.update(path=code.container.co_filename)
-                meta.update(date=datetime.fromtimestamp(code.timestamp).isoformat(' ', 'seconds'))
-            yield self.labelled(decompile_buffer(code), **meta)
+    def unpack(self, data):
+        input_path = metavars(data).get(self.args.path.decode(self.codec))
+        for k, code in enumerate(extract_code_from_buffer(bytes(data), input_path)):
+            path = code.container.co_filename or F'__unknown_name_{k:02d}.py'
+            date = datetime.fromtimestamp(code.timestamp)
+            data = decompile_buffer(code)
+            yield self._pack(path, date, data)
