@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from http.client import HTTPResponse
+from http.client import HTTPResponse, IncompleteRead
 
-from refinery import Unit
+from refinery.units import Unit, RefineryPartialResult
 from refinery.lib.structures import MemoryFile
 
 
@@ -21,4 +21,8 @@ class httpresponse(Unit):
             mock.seek(0)
             parser = HTTPResponse(mock)
             parser.begin()
-            return parser.read()
+            try:
+                return parser.read()
+            except IncompleteRead as incomplete:
+                msg = F'incomplete read: {len(incomplete.partial)} bytes processed, {incomplete.expected} more expected'
+                raise RefineryPartialResult(msg, incomplete.partial) from incomplete
