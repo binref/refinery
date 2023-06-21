@@ -11,15 +11,11 @@ if TYPE_CHECKING:
     from refinery.lib.frame import Chunk
 
 from refinery.units import Arg, Unit
-from refinery.lib.argformats import sliceobj
 
 
 class FrameSlicer(Unit, abstract=True):
 
-    def __init__(self, *slice: Arg(
-        type=sliceobj, nargs='*', default=[slice(None, None)],
-        help='Specify start:stop:step in Python slice syntax.'
-    ), **keywords):
+    def __init__(self, *slice: Arg.Bounds(nargs='*', default=[slice(None, None)]), **keywords):
         super().__init__(slice=list(slice), **keywords)
         for s in self.args.slice:
             if s.step and s.step < 0:

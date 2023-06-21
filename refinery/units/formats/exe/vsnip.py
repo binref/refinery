@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units import Arg, Unit
-from refinery.lib.argformats import sliceobj
 from refinery.lib.executable import Executable
 
 
@@ -28,7 +27,7 @@ class vsnip(Unit):
     """
 
     def __init__(
-        self, *addresses: Arg(type=sliceobj, metavar='start:count:align', help=(
+        self, *addresses: Arg.Bounds(metavar='start:count:align', help=(
             'Use Python slice syntax to describe an area of virtual memory to read. If a chunksize is '
             'specified, then the unit will always read a multiple of that number of bytes')),
         ascii: Arg.Switch('-a', group='END', help='Read ASCII strings; equivalent to -th:00') = False,

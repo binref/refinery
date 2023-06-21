@@ -345,7 +345,10 @@ class Arg(Argument):
                 if key == 'choices':
                     return ', '.join(self.arg.kwargs['choices'])
                 if key == 'default':
-                    default: Union[bytes, int, str] = self.arg.kwargs['default']
+                    default: Union[bytes, int, str, slice] = self.arg.kwargs['default']
+                    if isinstance(default, slice):
+                        parts = [default.start or '', default.stop or '', default.step]
+                        default = ':'.join(str(x) for x in parts if x is not None)
                     if isinstance(default, int):
                         return default
                     if not isbuffer(default):
@@ -442,6 +445,22 @@ class Arg(Argument):
         Used to add argparse arguments that contain a numeric sequence.
         """
         return cls(*args, group=group, help=help, nargs=nargs, dest=dest, type=numseq, metavar=metavar)
+
+    @classmethod
+    def Bounds(
+        cls,
+        *args   : str,
+        help    : Union[omit, str] = 'Specify start:end:step in Python slice syntax.',
+        dest    : Union[omit, str] = omit,
+        nargs   : Union[omit, int, str] = omit,
+        default : Union[omit, Any] = omit,
+        metavar : Optional[str] = 'start:end:step',
+        group   : Optional[str] = None,
+    ):
+        """
+        Used to add argparse arguments that contain a slice.
+        """
+        return cls(*args, group=group, help=help, default=default, nargs=nargs, dest=dest, type=sliceobj, metavar=metavar)
 
     @classmethod
     def Number(

@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 from collections import Counter
 from refinery import Unit, Arg
-from refinery.lib.argformats import sliceobj
 
 
 class xkey(Unit):
@@ -15,7 +14,7 @@ class xkey(Unit):
     """
     def __init__(
         self,
-        range: Arg(type=sliceobj, help='range of length values to try, the default is 1:32.') = slice(1, 32),
+        range: Arg.Bounds(help='range of length values to try in Python slice syntax, the default is {default}.') = slice(1, 32),
     ):
         super().__init__(range=range)
 
