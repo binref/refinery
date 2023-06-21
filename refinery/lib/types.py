@@ -95,3 +95,39 @@ class AST(metaclass=Singleton):
     def __ne__(self, other): return False
     def __or__(self, other): return other
     def __repr__(self): return '*'
+
+
+class bounds:
+
+    def __class_getitem__(cls, bounds):
+        return cls(bounds)
+
+    def __init__(self, bounds: slice):
+        start, stop, step = bounds.start, bounds.stop, bounds.step
+        for field in (start, stop, step):
+            if field is not None and not isinstance(field, int):
+                raise TypeError(field)
+        self.min = start or 0
+        self.max = stop
+        self.inc = step or 1
+        if self.max is None:
+            self.max = INF
+        if self.max < self.min:
+            raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')
+        if self.inc < 0:
+            raise ValueError('Negative step size not supported for range expressions.')
+
+    def __iter__(self):
+        k = self.min
+        m = self.max
+        i = self.inc
+        while k <= m:
+            yield k
+            k += i
+
+    def __contains__(self, value: int):
+        if value < self.min:
+            return False
+        if value > self.max:
+            return False
+        return (value - self.min) % self.inc == 0

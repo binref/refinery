@@ -5,7 +5,7 @@ from typing import List, TYPE_CHECKING
 
 from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, Executable
-from refinery.lib.types import INF
+from refinery.lib.types import bounds
 
 from dataclasses import dataclass, field
 
@@ -74,13 +74,16 @@ class vstack(Unit):
 
     def __init__(
         self,
-        address: Arg.Number(metavar='start', help='Specify the (virtual) address of a stack string instruction sequence.'),
+        *address: Arg.Number(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
         stop: Arg.Number(metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
-        min: Arg.Number('-n', help='Minimum size of a memory patch, default is {default}.') = 5,
-        max: Arg.Number('-m', help='Maximum size of a memory patch, default is {default}.') = INF,
+        patch_range: Arg.Bounds('-p', metavar='MIN:MAX',
+            help='Extract only patches that are in the given range, default is {default}.') = slice(5, None),
+        write_range: Arg.Bounds('-n', metavar='MIN:MAX',
+            help='Log only writes whose size is in the given range, default is {default}.') = slice(1, None),
         wait: Arg.Number('-w', help=(
             'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 10,
+        calls_wait: Arg.Switch('-c', help='Wait indefinitely when inside a function call.') = False,
         stack_size: Arg.Number('-s', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-k', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
     ):
@@ -88,10 +91,11 @@ class vstack(Unit):
             address=address,
             stop=stop,
             base=base,
-            min=min,
-            max=max,
+            patch_range=patch_range,
+            write_range=write_range,
             wait=wait,
             stack_size=stack_size,
+            calls_wait=calls_wait,
             block_size=block_size,
         )
 
@@ -111,104 +115,103 @@ class vstack(Unit):
         uc = self._unicorn
         exe = Executable.Load(data, self.args.base)
         arch = exe.arch()
-        emulator = uc.Uc(*self._uc_arch(arch))
-        tree = self._intervaltree.IntervalTree()
         block_size = self.args.block_size
         stack_size = self.args.stack_size
         stack_addr = self._find_stack_location(exe)
-        address = self.args.address
         image = memoryview(data)
+        disassembler = self._capstone.Cs(*self._cs_arch(arch))
 
-        if self.log_debug():
-            disassembler = self._capstone.Cs(*self._cs_arch(arch))
-        else:
-            disassembler = None
+        for address in self.args.address:
 
-        sp = {
-            Arch.X8632   : uc.x86_const.UC_X86_REG_ESP,
-            Arch.X8664   : uc.x86_const.UC_X86_REG_RSP,
-            Arch.ARM32   : uc.arm_const.UC_ARM_REG_SP,
-            Arch.ARM32   : uc.arm_const.UC_ARM_REG_SP,
-            Arch.MIPS16  : uc.mips_const.UC_MIPS_REG_SP,
-            Arch.MIPS32  : uc.mips_const.UC_MIPS_REG_SP,
-            Arch.MIPS64  : uc.mips_const.UC_MIPS_REG_SP,
-            Arch.SPARC32 : uc.sparc_const.UC_SPARC_REG_SP,
-            Arch.SPARC64 : uc.sparc_const.UC_SPARC_REG_SP,
-        }[arch]
+            emulator = uc.Uc(*self._uc_arch(arch))
 
-        state = EmuState(exe, tree, address, disassembler,
-            stop=self.args.stop, sp_register=sp)
-        emulator.mem_map(stack_addr, stack_size * 3)
-        emulator.reg_write(sp, stack_addr + 2 * stack_size)
+            sp = {
+                Arch.X8632   : uc.x86_const.UC_X86_REG_ESP,
+                Arch.X8664   : uc.x86_const.UC_X86_REG_RSP,
+                Arch.ARM32   : uc.arm_const.UC_ARM_REG_SP,
+                Arch.ARM32   : uc.arm_const.UC_ARM_REG_SP,
+                Arch.MIPS16  : uc.mips_const.UC_MIPS_REG_SP,
+                Arch.MIPS32  : uc.mips_const.UC_MIPS_REG_SP,
+                Arch.MIPS64  : uc.mips_const.UC_MIPS_REG_SP,
+                Arch.SPARC32 : uc.sparc_const.UC_SPARC_REG_SP,
+                Arch.SPARC64 : uc.sparc_const.UC_SPARC_REG_SP,
+            }[arch]
 
-        if arch is Arch.X8632:
-            for reg in [
-                uc.x86_const.UC_X86_REG_EAX,
-                uc.x86_const.UC_X86_REG_EBX,
-                uc.x86_const.UC_X86_REG_ECX,
-                uc.x86_const.UC_X86_REG_EDX,
-                uc.x86_const.UC_X86_REG_ESI,
-                uc.x86_const.UC_X86_REG_EDI,
-                uc.x86_const.UC_X86_REG_EBP,
-            ]:
-                emulator.reg_write(reg, stack_addr + stack_size)
-        if arch is Arch.X8664:
-            for reg in [
-                uc.x86_const.UC_X86_REG_RAX,
-                uc.x86_const.UC_X86_REG_RBX,
-                uc.x86_const.UC_X86_REG_RCX,
-                uc.x86_const.UC_X86_REG_RDX,
-                uc.x86_const.UC_X86_REG_RSI,
-                uc.x86_const.UC_X86_REG_RDI,
-                uc.x86_const.UC_X86_REG_RBP,
-                uc.x86_const.UC_X86_REG_R8,
-                uc.x86_const.UC_X86_REG_R9,
-                uc.x86_const.UC_X86_REG_R10,
-                uc.x86_const.UC_X86_REG_R11,
-                uc.x86_const.UC_X86_REG_R12,
-                uc.x86_const.UC_X86_REG_R13,
-                uc.x86_const.UC_X86_REG_R14,
-                uc.x86_const.UC_X86_REG_R15,
-            ]:
-                emulator.reg_write(reg, stack_addr + stack_size)
+            emulator.mem_map(stack_addr, stack_size * 3)
+            emulator.reg_write(sp, stack_addr + 2 * stack_size)
 
-        for segment in exe.segments():
-            pmem = segment.physical
-            vmem = segment.virtual
-            try:
-                emulator.mem_map(vmem.lower, align(block_size, len(vmem)))
-                emulator.mem_write(vmem.lower, bytes(image[pmem.slice()]))
-            except KeyboardInterrupt:
-                raise
-            except Exception as error:
-                if address in vmem:
+            if arch is Arch.X8632:
+                for reg in [
+                    uc.x86_const.UC_X86_REG_EAX,
+                    uc.x86_const.UC_X86_REG_EBX,
+                    uc.x86_const.UC_X86_REG_ECX,
+                    uc.x86_const.UC_X86_REG_EDX,
+                    uc.x86_const.UC_X86_REG_ESI,
+                    uc.x86_const.UC_X86_REG_EDI,
+                    uc.x86_const.UC_X86_REG_EBP,
+                ]:
+                    emulator.reg_write(reg, stack_addr + stack_size)
+            if arch is Arch.X8664:
+                for reg in [
+                    uc.x86_const.UC_X86_REG_RAX,
+                    uc.x86_const.UC_X86_REG_RBX,
+                    uc.x86_const.UC_X86_REG_RCX,
+                    uc.x86_const.UC_X86_REG_RDX,
+                    uc.x86_const.UC_X86_REG_RSI,
+                    uc.x86_const.UC_X86_REG_RDI,
+                    uc.x86_const.UC_X86_REG_RBP,
+                    uc.x86_const.UC_X86_REG_R8,
+                    uc.x86_const.UC_X86_REG_R9,
+                    uc.x86_const.UC_X86_REG_R10,
+                    uc.x86_const.UC_X86_REG_R11,
+                    uc.x86_const.UC_X86_REG_R12,
+                    uc.x86_const.UC_X86_REG_R13,
+                    uc.x86_const.UC_X86_REG_R14,
+                    uc.x86_const.UC_X86_REG_R15,
+                ]:
+                    emulator.reg_write(reg, stack_addr + stack_size)
+
+            for segment in exe.segments():
+                pmem = segment.physical
+                vmem = segment.virtual
+                try:
+                    emulator.mem_map(vmem.lower, align(block_size, len(vmem)))
+                    emulator.mem_write(vmem.lower, bytes(image[pmem.slice()]))
+                except KeyboardInterrupt:
                     raise
-                width = exe.pointer_size // 4
-                self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
+                except Exception as error:
+                    if address in vmem:
+                        raise
+                    width = exe.pointer_size // 4
+                    self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
-        end_of_code = exe.location_from_address(address).virtual.box.upper
+            tree = self._intervaltree.IntervalTree()
+            state = EmuState(exe, tree, address, disassembler, stop=self.args.stop, sp_register=sp)
 
-        emulator.hook_add(uc.UC_HOOK_CODE, self._hook_code, user_data=state)
-        emulator.hook_add(uc.UC_HOOK_MEM_WRITE, self._hook_mem_write, user_data=state)
-        emulator.hook_add(uc.UC_HOOK_INSN_INVALID, self._hook_insn_error, user_data=state)
-        emulator.hook_add(uc.UC_HOOK_MEM_INVALID, self._hook_mem_error, user_data=state)
+            emulator.hook_add(uc.UC_HOOK_CODE, self._hook_code, user_data=state)
+            emulator.hook_add(uc.UC_HOOK_MEM_WRITE, self._hook_mem_write, user_data=state)
+            emulator.hook_add(uc.UC_HOOK_INSN_INVALID, self._hook_insn_error, user_data=state)
+            emulator.hook_add(uc.UC_HOOK_MEM_INVALID, self._hook_mem_error, user_data=state)
 
-        try:
-            emulator.emu_start(address, end_of_code)
-        except uc.UcError:
-            pass
+            end_of_code = exe.location_from_address(address).virtual.box.upper
 
-        it: Iterator[Interval] = iter(tree)
-        for interval in it:
-            size = interval.end - interval.begin - 1
-            if size > self.args.max:
-                continue
-            if size < self.args.min:
-                continue
-            self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
-            yield emulator.mem_read(interval.begin, size)
+            try:
+                emulator.emu_start(address, end_of_code)
+            except uc.UcError:
+                pass
+
+            it: Iterator[Interval] = iter(tree)
+            for interval in it:
+                size = interval.end - interval.begin - 1
+                if size not in bounds[self.args.patch_range]:
+                    continue
+                self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
+                yield emulator.mem_read(interval.begin, size)
 
     def _hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
+        if size not in bounds[self.args.write_range]:
+            return
+
         mask = (1 << (size * 8)) - 1
         unsigned_value = value & mask
         depth = len(state.callstack)
@@ -244,6 +247,10 @@ class vstack(Unit):
         return False
 
     def _hook_mem_error(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
+        bs = self.args.block_size
+        emu.mem_map(align(bs, address, down=True), 2 * bs)
+        return True
+
         self.log_debug(
             R'aborting emulation; access error '
             F'at 0x{address:0{state.executable.pointer_size//4}X}; '
@@ -279,20 +286,19 @@ class vstack(Unit):
             if waiting > self.args.wait:
                 emu.emu_stop()
                 return False
-            if not depth:
+            if not depth or not self.args.calls_wait:
                 state.waiting += 1
             state.address += size
 
-            def debug_message():
-                instruction = state.disassemble(address, size)
-                indent = '\x20' * 4 * depth
-                if instruction:
-                    instruction = F'{instruction.mnemonic} {instruction.op_str}'
-                else:
-                    instruction = '<DISASSEMBLER FAILURE>'
-                return F'emulating [wait={waiting:02d}] {indent}0x{address:0{state.executable.pointer_size//4}X}: {instruction}'
-
-            self.log_debug(debug_message)
+            instruction = state.disassemble(address, size)
+            indent = '\x20' * 4 * depth
+            logmsg = F'emulating [wait={waiting:02d}] {indent}0x{address:0{state.executable.pointer_size//4}X}:'
+            if instruction:
+                instruction = F'{instruction.mnemonic} {instruction.op_str}'
+                self.log_debug(logmsg, instruction)
+            else:
+                self.log_debug(logmsg, 'unrecognized instruction, aborting')
+                emu.emu_stop()
 
         except KeyboardInterrupt:
             emu.emu_stop()
