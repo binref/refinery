@@ -929,7 +929,7 @@ class NSHeader(Struct):
             if k > 0:
                 script.write('\n')
             opcode = self.opcode(instruction)
-            script.write(F'0x{k:0{addr_width}X}: {opcode.name:>{name_width}} ')
+            script.write(F'0x{k:0{addr_width}X}: {opcode.name:<{name_width}} ')
             for j, arg in enumerate(instruction.arguments[:_Op_PARAMETER_COUNT.get(opcode, 6)]):
                 if j > 0:
                     script.write(', ')
