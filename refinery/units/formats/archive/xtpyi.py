@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import ByteString, Callable, Dict, List, Optional, Set, Union
+from typing import ByteString, Callable, Dict, List, Optional, Set, Union, NamedTuple, Generator
+from types import CodeType
 
 import marshal
 import enum
@@ -42,22 +43,41 @@ def decompress_peek(buffer, size=512) -> Optional[bytes]:
         return None
 
 
-def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
+class Code(NamedTuple):
+    version: float
+    timestamp: int
+    magic: int
+    container: CodeType
+    is_pypi: bool
+    code_objects: dict
+
+
+def extract_code_from_buffer(buffer: ByteString, file_name: Optional[str] = None) -> Generator[Code, None, None]:
     main: xtpyi = xtpyi
     code_objects = {}
     sys_stderr = sys.stderr
     sys.stderr = open(os.devnull, 'w')
+    file_name = file_name or '<unknown>'
     try:
-        version, timestamp, magic_int, codez, is_pypy, _, _ = \
+        version, timestamp, magic_int, codes, is_pypy, _, _ = \
             main._xdis.load.load_module_from_file_object(MemoryFile(buffer), file_name, code_objects)
     finally:
         sys.stderr.close()
         sys.stderr = sys_stderr
-    if not isinstance(codez, list):
-        codez = [codez]
+    if not isinstance(codes, list):
+        codes = [codes]
+    for code in codes:
+        yield Code(version, timestamp, magic_int, code, is_pypy, code_objects)
+
+
+def decompile_buffer(buffer: Union[Code, ByteString], file_name: Optional[str] = None) -> ByteString:
+    main: xtpyi = xtpyi
     errors = ''
     python = ''
-    for code in codez:
+    codes = [buffer]
+    if not isinstance(buffer, Code):
+        codes = list(extract_code_from_buffer(buffer, file_name))
+    for code in codes:
         for name, engine in {
             'decompyle3': main._decompyle3,
             'uncompyle6': main._uncompyle6,
@@ -65,13 +85,13 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
                 try:
                     engine.main.decompile(
-                        co=code,
-                        bytecode_version=version,
+                        co=code.container,
+                        bytecode_version=code.version,
                         out=output,
-                        timestamp=timestamp,
-                        code_objects=code_objects,
-                        is_pypy=is_pypy,
-                        magic_int=magic_int,
+                        timestamp=code.timestamp,
+                        code_objects=code.code_objects,
+                        is_pypy=code.is_pypi,
+                        magic_int=code.magic,
                     )
                 except Exception as E:
                     errors += '\n'.join(F'# {line}' for line in (
@@ -81,16 +101,24 @@ def decompile_buffer(buffer: ByteString, file_name: str) -> ByteString:
                     python = output.getvalue()
                     break
     if python:
+        # removes leading comments
+        python = python.splitlines(True)
+        python.reverse()
+        while python[-1].strip().startswith('#'):
+            python.pop()
+        python.reverse()
+        python = ''.join(python)
         return python.encode(main.codec)
-    embedded = bytes(buffer | carve('printable', single=True))
-    if len(buffer) - len(embedded) < 0x20:
-        return embedded
+    if not isinstance(buffer, Code):
+        embedded = bytes(buffer | carve('printable', single=True))
+        if len(code) - len(embedded) < 0x20:
+            return embedded
     disassembly = MemoryFile()
     with io.TextIOWrapper(disassembly, main.codec, newline='\n') as output:
         output.write(errors)
         output.write('# Generating Disassembly:\n\n')
-        for code in codez:
-            instructions = list(main._xdis.std.Bytecode(code))
+        for code in codes:
+            instructions = list(main._xdis.std.Bytecode(code.container))
             width_offset = max(len(str(i.offset)) for i in instructions)
             for i in instructions:
                 opname = i.opname.replace('_', '.').lower()

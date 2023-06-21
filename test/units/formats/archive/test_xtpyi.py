@@ -17,7 +17,6 @@ class TestPyInstallerExtractor(TestUnitBase):
         data = self.download_sample('1edcad6274bc18804a87ca7e4e8d0ae86649ec3970f25c9323de7c5370f2d8d7')
         unit = self.load('*/unittest/case.py', unmarshal=2)
         result = str(data | unit)
-        self.assertIn(R'# Embedded file name: unittest\case.py', result)
         self.assertIn(R'difflib.ndiff(pprint.pformat(seq1).splitlines(), pprint.pformat(seq2).splitlines())', result)
 
     def test_plaintext_entry_point_extraction(self):
