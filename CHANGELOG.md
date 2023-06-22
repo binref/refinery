@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.10
+- Adds the `pyc` unit to decompile Python bytecode directly.
+- Adds more options to the still quite experimental `vstack` unit.
+
 ## Version 0.6.9
 - The coloring in `peek` on Windows is now applied even if `peek` is not the last unit in the pipeline. This previously caused a bug, but in recent versions the bug was not reproducible.
 - The `bitsnip` unit was added.
