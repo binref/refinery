@@ -251,13 +251,6 @@ class vstack(Unit):
         emu.mem_map(align(bs, address, down=True), 2 * bs)
         return True
 
-        self.log_debug(
-            R'aborting emulation; access error '
-            F'at 0x{address:0{state.executable.pointer_size//4}X}; '
-            F'value={value:0{size*2}X}; code={access}')
-        emu.emu_stop()
-        return False
-
     def _hook_code(self, emu: Uc, address: int, size: int, state: EmuState):
         if address == state.stop:
             emu.emu_stop()
