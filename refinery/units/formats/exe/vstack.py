@@ -209,9 +209,6 @@ class vstack(Unit):
                 yield emulator.mem_read(interval.begin, size)
 
     def _hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
-        if size not in bounds[self.args.write_range]:
-            return
-
         mask = (1 << (size * 8)) - 1
         unsigned_value = value & mask
         depth = len(state.callstack)
@@ -229,6 +226,10 @@ class vstack(Unit):
             return
 
         state.waiting = 0
+
+        if size not in bounds[self.args.write_range]:
+            return
+
         state.writes.addi(address, address + size + 1)
         state.writes.merge_overlaps()
 
