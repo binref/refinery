@@ -123,6 +123,24 @@ def documentation(unit):
     return docs.replace('`', '')
 
 
+def begin(iterable: Iterable[_T]) -> Optional[Iterable[_T]]:
+    """
+    Iterates the first element of an iterator and returns None of this fails.
+    Otherwise, it returns a new iterable which will return the same elements
+    as the input.
+    """
+    try:
+        body = iter(iterable)
+        head = next(body)
+    except StopIteration:
+        return None
+    else:
+        def _fused():
+            yield head
+            yield from body
+        return _fused()
+
+
 def skipfirst(iterable: Iterable[_T]) -> Generator[_T, None, None]:
     """
     Returns an interable where the first element of the input iterable was

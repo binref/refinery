@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from typing import Iterable, List
 from refinery.units import Arg, Unit, Chunk
+from refinery.lib.tools import begin
 
 from collections import deque
 
@@ -15,11 +16,13 @@ class pick(Unit):
         super().__init__(slice=slice)
 
     def filter(self, chunks: Iterable[Chunk]):
+        chunks = begin(chunks)
+        if chunks is None:
+            return
         slices = deque(self.args.slice)
         discards = 0
         consumed = False
         remaining: List[Chunk] = []
-        it = iter(chunks)
 
         def discardable(s: slice):
             return s.stop and s.stop >= 0 and (s.step or 1) > 0 \
@@ -31,7 +34,7 @@ class pick(Unit):
             if not consumed:
                 if not discardable(s):
                     self.log_debug(F'consumed input into buffer after {discards} skips')
-                    for chunk in it:
+                    for chunk in chunks:
                         if not chunk.visible:
                             yield chunk
                             continue
@@ -49,7 +52,7 @@ class pick(Unit):
                 continue
             while start:
                 try:
-                    chunk = next(it)
+                    chunk = next(chunks)
                 except StopIteration:
                     stop = None
                     break
@@ -60,11 +63,11 @@ class pick(Unit):
                 else:
                     yield chunk
             if stop is None:
-                yield from it
+                yield from chunks
                 continue
             while stop:
                 try:
-                    chunk = next(it)
+                    chunk = next(chunks)
                 except StopIteration:
                     break
                 if chunk.visible:
