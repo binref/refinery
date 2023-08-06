@@ -5,6 +5,7 @@ from io import BytesIO
 from typing import Dict, List
 
 from ktool import load_image, load_macho_file, Image, MachOFileType
+from ktool.macho import build_version_command, source_version_command
 
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
@@ -19,6 +20,7 @@ class machometa(Unit):
             help='Unless enabled, all default categories will be extracted.') = True,
         header: Arg('-H', help='Parse basic data from the Mach-O header.') = False,
         linked_images: Arg('-K', help='Parse all library images linked by the Mach-O.') = False,
+        version: Arg('-V', help="Parse version information from the Mach-O load commands.") = False,
         load_commands: Arg('-D', help='Parse load commands from the Mach-O header.') = False,
         exports: Arg('-E', help='List all exported functions.') = False,
         imports: Arg('-I', help='List all imported functions.') = False,
@@ -27,6 +29,7 @@ class machometa(Unit):
         super().__init__(
             header=all or header,
             linked_images=all or linked_images,
+            version=all or version,
             load_commands=load_commands,
             imports=imports,
             exports=exports,
@@ -45,6 +48,21 @@ class machometa(Unit):
         linked_images = macho_image.linked_images
         for linked_image in linked_images:
             info.append(linked_image.serialize())
+        return info
+
+    def parse_version(self, macho_image: Image, data=None) -> Dict:
+        info = {}
+        load_commands = macho_image.macho_header.load_commands
+        for load_command in load_commands:
+            if isinstance(load_command, source_version_command):
+                info["SourceVersion"] = load_command.version
+            elif isinstance(load_command, build_version_command):
+                info["BuildVersion"] = {}
+                info["BuildVersion"]["Platform"] = load_command.platform
+                info["BuildVersion"]["MinOS"] = load_command.minos
+                info["BuildVersion"]["SDK"] = load_command.sdk
+                info["BuildVersion"]["Ntools"] = load_command.ntools
+        self.log_debug(info)
         return info
 
     def parse_load_commands(self, macho_image: Image, data=None) -> List:
@@ -83,6 +101,7 @@ class machometa(Unit):
             for switch, resolver, name in [
                 (self.args.header, self.parse_macho_header, 'Header'),
                 (self.args.linked_images, self.parse_linked_images, 'Linked Images'),
+                (self.args.version, self.parse_version, 'Version'),
                 (self.args.load_commands, self.parse_load_commands, 'Load Commands'),
                 (self.args.imports, self.parse_imports, 'Imports'),
                 (self.args.exports, self.parse_exports, 'Exports'),
