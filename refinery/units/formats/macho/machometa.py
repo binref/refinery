@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import json
+
+from contextlib import suppress
 from io import BytesIO
 from typing import Dict, List
 
 from ktool import load_image, load_macho_file, Image, MachOFileType
 from ktool.macho import build_version_command, source_version_command
+from ktool.codesign import Blob, BlobIndex, SuperBlob, swap_32
 
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
@@ -20,6 +24,7 @@ class machometa(Unit):
             help='Unless enabled, all default categories will be extracted.') = True,
         header: Arg('-H', help='Parse basic data from the Mach-O header.') = False,
         linked_images: Arg('-K', help='Parse all library images linked by the Mach-O.') = False,
+        signatures: Arg('-S', help='Parse signature and entitlement information.') = False,
         version: Arg('-V', help="Parse version information from the Mach-O load commands.") = False,
         load_commands: Arg('-D', help='Parse load commands from the Mach-O header.') = False,
         exports: Arg('-E', help='List all exported functions.') = False,
@@ -30,11 +35,108 @@ class machometa(Unit):
             header=all or header,
             linked_images=all or linked_images,
             version=all or version,
+            signatures=all or signatures,
             load_commands=load_commands,
             imports=imports,
             exports=exports,
             tabular=tabular,
         )
+
+    @classmethod
+    def parse_pkcs7_signature(cls, data: bytearray) -> dict:
+        """
+        Extracts a JSON-serializable and human readable dictionary with information about
+        time stamp and code signing certificates.
+        Shamelessly copied directly from the pemeta unit.
+        """
+        from refinery.units.formats.pkcs7 import pkcs7
+
+        try:
+            signature = data | pkcs7 | json.loads
+        except Exception as E:
+            raise ValueError(F'PKCS7 parser failed with error: {E!s}')
+
+        info = {}
+
+        def find_timestamps(entry):
+            if isinstance(entry, dict):
+                if set(entry.keys()) == {'type', 'value'}:
+                    if entry['type'] == 'signing_time':
+                        return {'Timestamp': entry['value']}
+                for value in entry.values():
+                    result = find_timestamps(value)
+                    if result is None:
+                        continue
+                    with suppress(KeyError):
+                        result.setdefault('TimestampIssuer', entry['sid']['issuer']['common_name'])
+                    return result
+            elif isinstance(entry, list):
+                for value in entry:
+                    result = find_timestamps(value)
+                    if result is None:
+                        continue
+                    return result
+
+        timestamp_info = find_timestamps(signature)
+        if timestamp_info is not None:
+            info.update(timestamp_info)
+
+        try:
+            certificates = signature['content']['certificates']
+        except KeyError:
+            return info
+
+        if len(certificates) == 1:
+            main_certificate = certificates[0]
+        else:
+            certificates_with_extended_use = []
+            main_certificate = None
+            for certificate in certificates:
+                with suppress(Exception):
+                    crt = certificate['tbs_certificate']
+                    ext = [e for e in crt['extensions'] if e['extn_id'] == 'extended_key_usage' and e['extn_value'] != ['time_stamping']]
+                    key = [e for e in crt['extensions'] if e['extn_id'] == 'key_usage']
+                    if ext:
+                        certificates_with_extended_use.append(certificate)
+                    if any('key_cert_sign' in e['extn_value'] for e in key):
+                        continue
+                    if any('code_signing' in e['extn_value'] for e in ext):
+                        main_certificate = certificate
+                        break
+            if main_certificate is None and len(certificates_with_extended_use) == 1:
+                main_certificate = certificates_with_extended_use[0]
+        if main_certificate:
+            crt = main_certificate['tbs_certificate']
+            serial = crt['serial_number']
+            if isinstance(serial, int):
+                serial = F'{serial:x}'
+            assert bytes.fromhex(serial) in data
+            subject = crt['subject']
+            location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
+            info.update(Subject=subject['common_name'])
+            if any(location):
+                info.update(SubjectLocation=', '.join(filter(None, location)))
+            for signer_info in signature['content'].get('signer_infos', ()):
+                try:
+                    if signer_info['sid']['serial_number'] != crt['serial_number']:
+                        continue
+                    for attr in signer_info['signed_attrs']:
+                        if attr['type'] == 'authenticode_info':
+                            info.update(ProgramName=attr['value']['programName'])
+                            info.update(MoreInfo=attr['value']['moreInfo'])
+                except KeyError:
+                    continue
+            try:
+                valid_from = crt['validity']['not_before']
+                valid_until = crt['validity']['not_after']
+            except KeyError:
+                pass
+            else:
+                info.update(ValidFrom=valid_from, ValidUntil=valid_until)
+            info.update(
+                Issuer=crt['issuer']['common_name'], Fingerprint=main_certificate['fingerprint'], Serial=serial)
+            return info
+        return info
 
     def parse_macho_header(self, macho_image: Image, data=None) -> Dict:
         info = {}
@@ -48,6 +150,34 @@ class machometa(Unit):
         linked_images = macho_image.linked_images
         for linked_image in linked_images:
             info.append(linked_image.serialize())
+        return info
+
+    def parse_signature(self, macho_image: Image, data=None) -> Dict:
+        info = {}
+        if macho_image.codesign_info is not None:
+            superblob: SuperBlob = macho_image.codesign_info.superblob
+
+            for blob in macho_image.codesign_info.slots:
+                blob: BlobIndex
+                # ktool does not include code for extracting Blobs of type
+                # CSSLOT_CMS_SIGNATURE, so we must do it ourselves here.
+                if blob.type == 0x10000:  # CSSLOT_CMS_SIGNATURE
+                    start = superblob.off + blob.offset
+                    blob_data = macho_image.load_struct(start, Blob)
+                    blob_data.magic = swap_32(blob_data.magic)
+                    blob_data.length = swap_32(blob_data.length)
+                    cms_signature = macho_image.get_bytes_at(start + Blob.SIZE, blob_data.length - Blob.SIZE)
+
+                    parsed_cms_signature = self.parse_pkcs7_signature(bytearray(cms_signature))
+                    info['Signature'] = parsed_cms_signature
+
+            if macho_image.codesign_info.req_dat is not None:
+                # TODO: Parse the requirements blob,
+                # which is encoded according to the code signing requirements language:
+                # https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/RequirementLang/RequirementLang.html
+                info['Requirements'] = macho_image.codesign_info.req_dat.hex()
+            if macho_image.codesign_info.entitlements is not None:
+                info['Entitlements'] = macho_image.codesign_info.entitlements
         return info
 
     def parse_version(self, macho_image: Image, data=None) -> Dict:
@@ -101,6 +231,7 @@ class machometa(Unit):
             for switch, resolver, name in [
                 (self.args.header, self.parse_macho_header, 'Header'),
                 (self.args.linked_images, self.parse_linked_images, 'Linked Images'),
+                (self.args.signatures, self.parse_signature, 'Signatures'),
                 (self.args.version, self.parse_version, 'Version'),
                 (self.args.load_commands, self.parse_load_commands, 'Load Commands'),
                 (self.args.imports, self.parse_imports, 'Imports'),
