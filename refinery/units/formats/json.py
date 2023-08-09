@@ -19,15 +19,12 @@ class xtjson(PathExtractorUnit):
     def unpack(self, data):
 
         def crawl(path, cursor):
-            if isinstance(cursor, (dict, list)) and path:
-                path = F'{path}/'
             if isinstance(cursor, dict):
                 for key, value in cursor.items():
-                    yield from crawl(F'{path}{key}', value)
+                    yield from crawl(F'{path}/{key}', value)
             elif isinstance(cursor, list):
-                width = len(F'{len(cursor)-1:d}')
                 for key, value in enumerate(cursor):
-                    yield from crawl(F'{path}#{key:0{width}d}', value)
+                    yield from crawl(F'{path}({key:d})', value)
             if path:
                 yield path, cursor, cursor.__class__.__name__
 
