@@ -103,7 +103,7 @@ def unpack(item):
             value = item.Value
         except AttributeError:
             break
-        if type(value) == property:
+        if type(value) is property:
             break
         item = value
     return item
