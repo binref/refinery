@@ -18,7 +18,6 @@ class trim(Unit):
     def process(self, data: bytearray):
         dirty = True
         synch = True
-        strip = None
         mview = memoryview(data)
         junks = self.args.junk
 
@@ -45,11 +44,13 @@ class trim(Unit):
                     if b[-1] in strips:
                         return True, b.rstrip(strips)
                     return False, b
+            else:
+                strip = None
 
         while dirty and data:
             dirty = False
 
-            if strip:
+            if strips and strip:
                 dirty, data = strip(data)
                 if dirty:
                     mview = memoryview(data)
