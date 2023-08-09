@@ -293,8 +293,9 @@ class xtp(PatternExtractor):
                         self.log_info('excluding host with underscores')
                         return None
                     if len(hostparts[-1]) > 3:
+                        prefix = '.'.join(hostparts[:-1])
                         seen_before = len(set(re.findall(
-                            R'{}(?:\.\w+)+'.format(hostparts[0]).encode('ascii'), data)))
+                            R'{}(?:\.\w+)+'.format(prefix).encode('ascii'), data)))
                         if seen_before > 2:
                             self.log_debug(value)
                             self.log_debug('excluding indicator that was already seen')
