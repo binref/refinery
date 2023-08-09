@@ -4,7 +4,6 @@ from typing import Tuple
 
 import enum
 import pefile
-import re
 import struct
 import json
 
