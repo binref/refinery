@@ -79,6 +79,6 @@ class xtnuitka(PathExtractorUnit):
             yield blob
 
         from refinery.units.formats.pe.perc import perc
-        for blob in data | perc(pretty=False):
+        for blob in data | perc:
             if blob.startswith(cls._MAGIC):
                 yield blob

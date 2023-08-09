@@ -875,16 +875,19 @@ class Executable(ABCMeta):
         cls._infer_argspec(parameters, args, cls.__module__)
 
         if not abstract and has_keyword:
-            @wraps(cls.__init__)
-            def init(self, *args, **kwargs):
-                super(cls, self).__init__(*args, **kwargs)
+            cls__init__ = cls.__init__
+
+            @wraps(cls__init__)
+            def new__init__(self, *args, **kwargs):
+                cls__init__(self, *args, **kwargs)
+
             params = [p for p in parameters.values() if p.kind != p.VAR_KEYWORD]
             if inherited:
                 pp = inspect.signature(bases[0].__init__).parameters
                 for name in inherited:
                     params.append(pp[name])
-            init.__signature__ = sig_init.replace(parameters=tuple(params))
-            cls.__init__ = init
+            new__init__.__signature__ = sig_init.replace(parameters=tuple(params))
+            cls.__init__ = new__init__
 
         try:
             initcode = cls.__init__.__code__.co_code

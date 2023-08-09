@@ -67,11 +67,7 @@ class perc(PathExtractorUnit):
         pretty: Arg.Switch('-p', help='Add missing headers to bitmap and icon resources.') = False,
         **kwargs
     ):
-        def fixpath(p: str):
-            if kwargs.get('regex', False) or not p.isidentifier():
-                return p
-            return re.compile(FR'^.*?{re.escape(p)}.*$')
-        super().__init__(*(fixpath(p) for p in paths), pretty=pretty, **kwargs)
+        super().__init__(*paths, pretty=pretty, **kwargs)
 
     def _get_icon_dir(self, pe: pefile.PE):
         try:
