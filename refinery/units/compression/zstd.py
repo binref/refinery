@@ -16,4 +16,6 @@ class zstd(Unit):
         return self._pyzstd.ZstdDecompressor().decompress(data)
 
     def reverse(self, data):
-        return self._pyzstd.ZstdCompressor().compress(data)
+        zc = self._pyzstd.ZstdCompressor()
+        zc.compress(data)
+        return zc.flush()
