@@ -285,9 +285,9 @@ class pestrip(OverlayUnit):
     def process(self, data: bytearray) -> bytearray:
         body_size = self._get_size(data)
         if body_size < len(data):
-            if isinstance(data, bytearray):
+            try:
                 data[body_size:] = []
-            else:
+            except Exception:
                 data = data[:body_size]
         if not self.args.resources and not self.args.sections:
             return data
