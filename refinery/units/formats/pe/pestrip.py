@@ -24,9 +24,13 @@ _ASCII = Executable.ascii
 
 class pestrip(OverlayUnit):
     """
-    Removes the overlay of a PE file and returns the stipped executable. Use `refinery.peoverlay`
-    to extract the overlay. The unit can also remove resources and entire sections that exceed a
-    certain size, or trim low-entropy excess data from them.
+    Removes junk or excess data from PE files and returns the stripped executable. By default, only
+    the PE overlay is considered; use the flags `-r` and `-s` to also consider resources and entire
+    sections. Any buffer is only considered for removal if it exceeds a certain size. If this
+    condition is met, a binary search is performed to determine the offset inside the buffer where
+    up to which the compression ratio is above a certain threshold; everything beyond that point is
+    then removed. By setting the threshold compression ratio to 1, each large buffer is removed
+    entirely.
     """
     def __init__(
         self,
@@ -66,14 +70,12 @@ class pestrip(OverlayUnit):
             names=names,
         )
 
-    def _right_strip_data(self, pe: PE, data: memoryview, block_size=_MB) -> int:
-        threshold = self.args.threshold
-        alignment = pe.OPTIONAL_HEADER.FileAlignment
-        data_overhang = len(data) % alignment
-        result = data_overhang
-
+    def _right_strip_data(self, data: memoryview, alignment=1, block_size=_MB) -> int:
         if not data:
             return 0
+        threshold = self.args.threshold
+        data_overhang = len(data) % alignment
+        result = data_overhang
 
         if 0 < threshold < 1:
             def compression_ratio(offset: int):
@@ -109,8 +111,10 @@ class pestrip(OverlayUnit):
 
         result = result + (data_overhang - result) % alignment
 
-        while result > len(data):
-            result -= alignment
+        if result > len(data):
+            excess = result - len(data)
+            excess = excess + (-excess % alignment)
+            result = result - excess
 
         return result
 
@@ -221,7 +225,9 @@ class pestrip(OverlayUnit):
             if old_size <= S and not any(fnmatch(name, p) for p in P):
                 self.log_debug(F'criteria not satisfied for section: {SizeInt(old_size)!r} {name}')
                 continue
-            new_size = self._right_strip_data(pe, memoryview(data)[offset:offset + old_size])
+            new_size = self._right_strip_data(
+                memoryview(data)[offset:offset + old_size],
+                pe.OPTIONAL_HEADER.FileAlignment)
             self.log_info(F'stripping section {name} from {TI(old_size)!r} to {TI(new_size)!r}')
             gap_size = old_size - new_size
             gap_offset = offset + new_size
@@ -267,7 +273,9 @@ class pestrip(OverlayUnit):
         for name, resource in find_bloated_resources(pe, resources):
             offset = pe.get_offset_from_rva(resource.OffsetToData)
             old_size = resource.Size
-            new_size = self._right_strip_data(pe, memoryview(data)[offset:offset + old_size])
+            new_size = self._right_strip_data(
+                memoryview(data)[offset:offset + old_size],
+                pe.OPTIONAL_HEADER.FileAlignment)
             self.log_info(F'stripping resource {name} from {old_size} to {new_size}')
             gap_size = old_size - new_size
             gap_offset = offset + new_size
@@ -283,8 +291,11 @@ class pestrip(OverlayUnit):
         return trimmed
 
     def process(self, data: bytearray) -> bytearray:
-        body_size = self._get_size(data)
-        if body_size < len(data):
+        overlay_offset = self._get_size(data)
+        if len(data) - overlay_offset >= self.args.size_limit:
+            view = memoryview(data)
+            overlay_length = self._right_strip_data(view[overlay_offset:])
+            body_size = overlay_offset + overlay_length
             try:
                 data[body_size:] = []
             except Exception:
