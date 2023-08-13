@@ -18,12 +18,12 @@ class TestPEStrip(TestUnitBase):
         data = self.download_sample('a50a4c0a38520a9f02cf59aa70c930b0491d4d67fe338a317b272d7802b6ecfb')
         bloated = data | self.ldu('xt') | bytearray
         self.assertGreaterEqual(len(bloated), 100_000_000)
-        stripped = bloated | self.load(aggressive=True) | bytearray
+        stripped = bloated | self.ldu('petrim') | self.load(aggressive=True) | bytearray
         self.assertLessEqual(len(stripped), 5_000_000)
         self.assertEqual(
             '173c0724027b16fd77df7dfe1c7e2186124c35b1e6e31a3ff22c7954acbe3847',
             stripped | self.ldu('sha256', text=True) | str)
-        stripped = bloated | self.load(resources=True) | bytearray
+        stripped = bloated | self.ldu('petrim') | self.load(resources=True) | bytearray
         self.assertLessEqual(len(stripped), 5_000_000)
 
     def test_resource_bloat_02(self):
