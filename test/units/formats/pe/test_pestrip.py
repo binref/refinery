@@ -30,10 +30,10 @@ class TestPEStrip(TestUnitBase):
         data = self.download_sample('49fce89423749a4b0883430a077dd71d52fca0e25acf201588d0c5d186a1d33a')
         bloated = data | self.ldu('xt') | bytearray
         self.assertGreaterEqual(len(bloated), 100_000_000)
-        stripped = bloated | self.load(aggressive=True) | bytearray
+        stripped = bloated | self.ldu('petrim') | self.load(aggressive=True) | bytearray
         self.assertLessEqual(len(stripped), 10_000_000)
         self.assertEqual(
             '42d73123eaa3aede2dbab5f7a6fe5b7f452e70741576364930fb430ef6c477a8',
             stripped | self.ldu('sha256', text=True) | str)
-        stripped = bloated | self.load(resources=True) | bytearray
+        stripped = bloated | self.ldu('petrim') | self.load(resources=True) | bytearray
         self.assertLessEqual(len(stripped), 15_000_000)
