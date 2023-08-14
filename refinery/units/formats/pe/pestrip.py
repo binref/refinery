@@ -27,10 +27,9 @@ class pestrip(OverlayUnit):
     Removes junk or excess data from PE files and returns the stripped executable. By default, only
     the PE overlay is considered; use the flags `-r` and `-s` to also consider resources and entire
     sections. Any buffer is only considered for removal if it exceeds a certain size. If this
-    condition is met, a binary search is performed to determine the offset inside the buffer where
-    up to which the compression ratio is above a certain threshold; everything beyond that point is
-    then removed. By setting the threshold compression ratio to 1, each large buffer is removed
-    entirely.
+    condition is met, a binary search is performed to determine the offset inside the buffer up to
+    which the compression ratio is above a certain threshold; everything beyond that point is then
+    removed. By setting the threshold compression ratio to 1, each large buffer is removed entirely.
     """
     def __init__(
         self,
