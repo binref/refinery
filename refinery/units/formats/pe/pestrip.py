@@ -41,9 +41,9 @@ class pestrip(OverlayUnit):
         sections : Arg.Switch('-s', help='Strip large sections.') = False,
         threshold: Arg('-t', metavar='T', type=percent, help=(
             'Trailing data from resources and sections is stripped until the compression ratio '
-            'of the remaining rises above this threshold. The default value is {default}. Set '
-            'this to 1 to ignore the limit entirely and trim every structure as much as possible '
-            'without violating alignment. Setting this value to 0 will only strip repeated '
+            'of the remaining data rises above this threshold. The default value is {default}. '
+            'Set this to 1 to ignore the limit entirely and trim every structure as much as '
+            'possible without violating alignment. Setting this value to 0 will only strip repeated '
             'occurrences of the last byte.')) = 0.05,
         size_limit: Arg.Number('-l', help=(
             'Structures below this size are not stripped. Default is {default!r}.')) = _STRIP,
