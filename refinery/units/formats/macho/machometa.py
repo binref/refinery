@@ -9,11 +9,34 @@ from typing import Dict, List
 
 from ktool import load_image, load_macho_file, Image, MachOFileType
 from ktool.macho import build_version_command, source_version_command
-from ktool.codesign import Blob, BlobIndex, SuperBlob, swap_32
+from ktool.codesign import Blob, BlobIndex, CSSLOT_CODEDIRECTORY, SuperBlob, swap_32
+from ktool.macho import Struct, uint8_t, uint32_t
 
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
 
+
+class CodeDirectoryBlob(Struct):
+    _FIELDNAMES = ["magic", "length", "version", "flags", "hashOffset", "identOffset", "nSpecialSlots", "nCodeSlots", "codeLimit", "hashSize", "hashType", "platform", "pageSize", "spare2"]
+    _SIZES = [uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, uint32_t]
+    SIZE = 44
+
+    def __init__(self, byte_order="little"):
+        super().__init__(fields=self._FIELDNAMES, sizes=self._SIZES, byte_order=byte_order)
+        self.magic = 0
+        self.length = 0
+        self.version = 0
+        self.flags = 0
+        self.hashOffset = 0
+        self.identOffset = 0
+        self.nSpecialSlots = 0
+        self.nCodeSlots = 0
+        self.codeLimit = 0
+        self.hashSize = 0
+        self.hashType = 0
+        self.platform = 0
+        self.pageSize = 0
+        self.spare2 = 0
 
 class machometa(Unit):
     """
@@ -159,8 +182,16 @@ class machometa(Unit):
 
             for blob in macho_image.codesign_info.slots:
                 blob: BlobIndex
-                # ktool does not include code for extracting Blobs of type
-                # CSSLOT_CMS_SIGNATURE, so we must do it ourselves here.
+                # ktool does not include code for extracting Blobs of types
+                # CSSLOT_CODEDIRECTORY, CSSLOT_CMS_SIGNATURE
+                # so we must do it ourselves here.
+                if blob.type == CSSLOT_CODEDIRECTORY:
+                    start = superblob.off + blob.offset
+                    codedirectory_blob = macho_image.load_struct(start, CodeDirectoryBlob)
+                    identifier_offset = swap_32(codedirectory_blob.identOffset)
+                    identifier_data = macho_image.get_cstr_at(start + identifier_offset)
+                    info['Signature Identifier'] = identifier_data
+
                 if blob.type == 0x10000:  # CSSLOT_CMS_SIGNATURE
                     start = superblob.off + blob.offset
                     blob_data = macho_image.load_struct(start, Blob)
@@ -168,8 +199,13 @@ class machometa(Unit):
                     blob_data.length = swap_32(blob_data.length)
                     cms_signature = macho_image.get_bytes_at(start + Blob.SIZE, blob_data.length - Blob.SIZE)
 
-                    parsed_cms_signature = self.parse_pkcs7_signature(bytearray(cms_signature))
-                    info['Signature'] = parsed_cms_signature
+                    # TODO: We may want to handle malformed signatures a bit better here.
+                    # In particular, we want to make sure we can still get the signature identifier field
+                    # (from CSSLOT_CODEDIRECTORY above) even if the data here in CSSLOT_CMS_SIGNATURE
+                    # cannot be parsed as a valid PKCS7 blob.
+                    if len(cms_signature) != 0:
+                        parsed_cms_signature = self.parse_pkcs7_signature(bytearray(cms_signature))
+                        info['Signature'] = parsed_cms_signature
 
             if macho_image.codesign_info.req_dat is not None:
                 # TODO: Parse the requirements blob,
