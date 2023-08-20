@@ -37,6 +37,8 @@ class CodeDirectoryBlob(Struct):
         self.platform = 0
         self.pageSize = 0
         self.spare2 = 0
+        
+CS_ADHOC = 0x0000_0002
 
 class machometa(Unit):
     """
@@ -188,6 +190,15 @@ class machometa(Unit):
                 if blob.type == CSSLOT_CODEDIRECTORY:
                     start = superblob.off + blob.offset
                     codedirectory_blob = macho_image.load_struct(start, CodeDirectoryBlob)
+
+                    # Ad-hoc signing
+                    flags = swap_32(codedirectory_blob.flags)
+                    if flags & CS_ADHOC != 0:
+                        info['Ad-Hoc Signed'] = True
+                    else:
+                        info['Ad-Hoc Signed'] = False
+
+                    # Signature identifier
                     identifier_offset = swap_32(codedirectory_blob.identOffset)
                     identifier_data = macho_image.get_cstr_at(start + identifier_offset)
                     info['Signature Identifier'] = identifier_data
