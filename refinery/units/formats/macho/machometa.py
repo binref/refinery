@@ -17,8 +17,38 @@ from refinery.units.sinks.ppjson import ppjson
 
 
 class CodeDirectoryBlob(Struct):
-    _FIELDNAMES = ["magic", "length", "version", "flags", "hashOffset", "identOffset", "nSpecialSlots", "nCodeSlots", "codeLimit", "hashSize", "hashType", "platform", "pageSize", "spare2"]
-    _SIZES = [uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, uint32_t]
+    _FIELDNAMES = [
+        "magic",
+        "length",
+        "version",
+        "flags",
+        "hashOffset",
+        "identOffset",
+        "nSpecialSlots",
+        "nCodeSlots",
+        "codeLimit",
+        "hashSize",
+        "hashType",
+        "platform",
+        "pageSize",
+        "spare2"
+    ]
+    _SIZES = [
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        uint8_t,
+        uint8_t,
+        uint8_t,
+        uint8_t,
+        uint32_t
+    ]
     SIZE = 44
 
     def __init__(self, byte_order="little"):
