@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 class EmuState:
     executable: Executable
     writes: IntervalTree
-    address: int
+    expected_address: int
     disassembler: Optional[Cs] = None
     waiting: int = 0
     callstack: List[int] = field(default_factory=list)
@@ -213,7 +213,7 @@ class vstack(Unit):
         unsigned_value = value & mask
         depth = len(state.callstack)
 
-        if unsigned_value == state.address:
+        if unsigned_value == state.expected_address:
             callstack = state.callstack
             if not callstack:
                 state.stack_ceiling = emu.reg_read(state.sp_register)
@@ -260,15 +260,16 @@ class vstack(Unit):
             waiting = state.waiting
             callstack = state.callstack
             depth = len(callstack)
-            state.previous_address = state.address
+            state.previous_address = address
 
-            if address != state.address:
+            if address != state.expected_address:
                 if depth and address == callstack[-1]:
                     depth -= 1
                     state.callstack.pop()
                     if depth == 0:
                         state.stack_ceiling = 0
-                state.address = address
+                state.expected_address = address
+                state.retaddr = None
             elif state.retaddr is not None:
                 # The present address was moved to the stack but we did not branch.
                 # This is not quite accurate, of course: We could be calling the
@@ -282,7 +283,7 @@ class vstack(Unit):
                 return False
             if not depth or not self.args.calls_wait:
                 state.waiting += 1
-            state.address += size
+            state.expected_address += size
 
             instruction = state.disassemble(address, size)
             indent = '\x20' * 4 * depth
