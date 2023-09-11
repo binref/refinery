@@ -131,3 +131,44 @@ class TestMachoMeta(TestUnitBase):
             self.assertEqual(pkcs7_signature_data['Issuer'], "Developer ID Certification Authority")
             self.assertEqual(pkcs7_signature_data['Fingerprint'], "7df5ed6d71b296ed073a5b3efbcdc4c916ba41be")
             self.assertEqual(pkcs7_signature_data['Serial'], "4b0aaf622b260469")
+
+    def test_linked_images(self):
+        data = self.download_sample('38c9b858c32fcc6b484272a182ae6e7f911dea53a486396037d8f7956d2110be')
+        unit = self.load()
+        result = json.loads(unit(data))
+
+        self.assertEqual(result['FileType'], "FAT")
+        self.assertEqual(len(result['Slices']), 2)
+
+        for slice_metadata in result['Slices']:
+            self.assertIn('Linked Images', slice_metadata)
+            expected_load_dylibs = {
+                "LOAD_WEAK_DYLIB": [
+                    "/usr/lib/swift/libswiftAppKit.dylib",
+                    "/usr/lib/swift/libswiftCloudKit.dylib",
+                    "/usr/lib/swift/libswiftCoreData.dylib",
+                    "/usr/lib/swift/libswiftCoreFoundation.dylib",
+                    "/usr/lib/swift/libswiftCoreGraphics.dylib",
+                    "/usr/lib/swift/libswiftCoreImage.dylib",
+                    "/usr/lib/swift/libswiftCoreLocation.dylib",
+                    "/usr/lib/swift/libswiftDarwin.dylib",
+                    "/usr/lib/swift/libswiftDispatch.dylib",
+                    "/usr/lib/swift/libswiftIOKit.dylib",
+                    "/usr/lib/swift/libswiftMetal.dylib",
+                    "/usr/lib/swift/libswiftObjectiveC.dylib",
+                    "/usr/lib/swift/libswiftQuartzCore.dylib",
+                    "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+                    "/usr/lib/swift/libswiftXPC.dylib"
+                ],
+                "LOAD_DYLIB": [
+                    "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+                    "/usr/lib/libobjc.A.dylib",
+                    "/usr/lib/libSystem.B.dylib",
+                    "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+                    "/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI",
+                    "/usr/lib/swift/libswiftCore.dylib",
+                    "/usr/lib/swift/libswiftFoundation.dylib",
+                    "/usr/lib/swift/libswiftos.dylib"
+                ],
+            }
+            self.assertDictEqual(slice_metadata['Linked Images'], expected_load_dylibs)
