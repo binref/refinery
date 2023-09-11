@@ -8,7 +8,7 @@ from io import BytesIO
 from typing import Dict, List
 
 from ktool import load_image, load_macho_file, Image, MachOFileType
-from ktool.macho import build_version_command, LOAD_COMMAND, source_version_command, Struct, uint8_t, uint32_t
+from ktool.macho import build_version_command, LOAD_COMMAND,  source_version_command, Struct, uint8_t, uint32_t
 from ktool.codesign import Blob, BlobIndex, CSSLOT_CODEDIRECTORY, SuperBlob, swap_32
 
 from refinery.units import Arg, Unit
@@ -66,7 +66,7 @@ class CodeDirectoryBlob(Struct):
         self.platform = 0
         self.pageSize = 0
         self.spare2 = 0
-        
+
 CS_ADHOC = 0x0000_0002
 
 class machometa(Unit):
@@ -271,14 +271,19 @@ class machometa(Unit):
         load_commands = macho_image.macho_header.load_commands
         for load_command in load_commands:
             if isinstance(load_command, source_version_command):
-                info["SourceVersion"] = load_command.version
+                if "SourceVersion" not in info:
+                    info["SourceVersion"] = load_command.version
+                else:
+                    self.log_warn("More than one load command of type source_version_command found; the MachO file is possibly malformed")
             elif isinstance(load_command, build_version_command):
-                info["BuildVersion"] = {}
-                info["BuildVersion"]["Platform"] = load_command.platform
-                info["BuildVersion"]["MinOS"] = load_command.minos
-                info["BuildVersion"]["SDK"] = load_command.sdk
-                info["BuildVersion"]["Ntools"] = load_command.ntools
-        self.log_debug(info)
+                if "BuildVersion" not in info:
+                    info["BuildVersion"] = {}
+                    info["BuildVersion"]["Platform"] = macho_image.platform.name
+                    info["BuildVersion"]["MinOS"] = f"{macho_image.minos.x}.{macho_image.minos.y}.{macho_image.minos.z}"
+                    info["BuildVersion"]["SDK"] = f"{macho_image.sdk_version.x}.{macho_image.sdk_version.y}.{macho_image.sdk_version.z}"
+                    info["BuildVersion"]["Ntools"] = load_command.ntools
+                else:
+                    self.log_warn("More than one load command of type build_version_command found; the MachO file is possibly malformed")
         return info
 
     def parse_load_commands(self, macho_image: Image, data=None) -> List:
