@@ -8,9 +8,8 @@ from io import BytesIO
 from typing import Dict, List
 
 from ktool import load_image, load_macho_file, Image, MachOFileType
-from ktool.macho import build_version_command, source_version_command
+from ktool.macho import build_version_command, LOAD_COMMAND, source_version_command, Struct, uint8_t, uint32_t
 from ktool.codesign import Blob, BlobIndex, CSSLOT_CODEDIRECTORY, SuperBlob, swap_32
-from ktool.macho import Struct, uint8_t, uint32_t
 
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
@@ -200,12 +199,13 @@ class machometa(Unit):
             info = dyld_header.serialize()
         return info
 
-    def parse_linked_images(self, macho_image: Image, data=None) -> List:
-        info = []
+    def parse_linked_images(self, macho_image: Image, data=None) -> Dict:
+        load_command_images = {}
         linked_images = macho_image.linked_images
         for linked_image in linked_images:
-            info.append(linked_image.serialize())
-        return info
+            load_command_name = LOAD_COMMAND(linked_image.cmd.cmd).name
+            load_command_images.setdefault(load_command_name, []).append(linked_image.install_name)
+        return load_command_images
 
     def parse_signature(self, macho_image: Image, data=None) -> Dict:
         info = {}
