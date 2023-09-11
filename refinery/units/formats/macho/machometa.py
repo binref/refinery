@@ -249,13 +249,12 @@ class machometa(Unit):
                     blob_data.length = swap_32(blob_data.length)
                     cms_signature = macho_image.get_bytes_at(start + Blob.SIZE, blob_data.length - Blob.SIZE)
 
-                    # TODO: We may want to handle malformed signatures a bit better here.
-                    # In particular, we want to make sure we can still get the signature identifier field
-                    # (from CSSLOT_CODEDIRECTORY above) even if the data here in CSSLOT_CMS_SIGNATURE
-                    # cannot be parsed as a valid PKCS7 blob.
                     if len(cms_signature) != 0:
-                        parsed_cms_signature = self.parse_pkcs7_signature(bytearray(cms_signature))
-                        info['Signature'] = parsed_cms_signature
+                        try:
+                            parsed_cms_signature = self.parse_pkcs7_signature(bytearray(cms_signature))
+                            info['Signature'] = parsed_cms_signature
+                        except ValueError as pkcs7_parse_error:
+                            self.log_warn(f"Could not parse the data in CSSLOT_CMS_SIGNATURE as valid PKCS7 data: {pkcs7_parse_error!s}")
 
             if macho_image.codesign_info.req_dat is not None:
                 # TODO: Parse the requirements blob,
