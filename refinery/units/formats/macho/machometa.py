@@ -194,9 +194,18 @@ class machometa(Unit):
 
     def parse_macho_header(self, macho_image: Image, data=None) -> Dict:
         info = {}
+        macho_header = macho_image.macho_header
         dyld_header = macho_image.macho_header.dyld_header
         if dyld_header is not None:
-            info = dyld_header.serialize()
+            info['type'] = dyld_header.typename()
+            info['magic'] = dyld_header.magic
+            info['cputype'] = macho_image.slice.type.name
+            info['cpusubtype'] = macho_image.slice.subtype.name
+            info['filetype'] = macho_image.macho_header.filetype.name
+            info['loadcount'] = dyld_header.loadcnt
+            info['loadsize'] = dyld_header.loadsize
+            info['flags'] = [flag.name for flag in macho_header.flags]
+            info['reserved'] = dyld_header.reserved
         return info
 
     def parse_linked_images(self, macho_image: Image, data=None) -> Dict:

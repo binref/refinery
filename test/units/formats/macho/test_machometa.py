@@ -19,13 +19,14 @@ class TestMachoMeta(TestUnitBase):
         self.assertIn('Signatures', slice_metadata)
         self.assertIn('Version', slice_metadata)
 
-        # #define CPU_TYPE_X86  ((cpu_type_t) 7)
-        # #define CPU_ARCH_ABI64 0x01000000  /* 64 bit ABI */
-        # #define CPU_TYPE_X86_64  (CPU_TYPE_X86 | CPU_ARCH_ABI64)
-        self.assertEqual(slice_metadata['Header']['cpu_type'], 0x0100_0007)
-        # #define CPU_SUBTYPE_LIB64 0x80000000 /* 64 bit libraries */
-        # #define CPU_SUBTYPE_X86_64_ALL  ((cpu_subtype_t)3)
-        self.assertEqual(slice_metadata['Header']['cpu_subtype'], 0x8000_0003)
+        self.assertEqual(slice_metadata['Header']['magic'], 0xFEED_FACF)
+        self.assertEqual(slice_metadata['Header']['cputype'], "X86_64")
+        self.assertEqual(slice_metadata['Header']['cpusubtype'], "ALL")
+        self.assertEqual(slice_metadata['Header']['filetype'], "EXECUTE")
+        self.assertEqual(slice_metadata['Header']['loadcount'], 0x15)
+        self.assertEqual(slice_metadata['Header']['loadsize'], 0x8C8)
+        self.assertListEqual(slice_metadata['Header']['flags'], ["NOUNDEFS", "DYLDLINK", "TWOLEVEL", "PIE"])
+        self.assertEqual(slice_metadata['Header']['reserved'], 0)
 
         self.assertEqual(slice_metadata["Base Name"], "")
         self.assertEqual(slice_metadata["Install Name"], "")
@@ -45,12 +46,14 @@ class TestMachoMeta(TestUnitBase):
         self.assertIn('Signatures', slice_metadata)
         self.assertIn('Version', slice_metadata)
 
-        # #define CPU_TYPE_ARM  ((cpu_type_t) 12)
-        # #define CPU_ARCH_ABI64 0x01000000  /* 64 bit ABI */
-        # #define CPU_TYPE_ARM64          (CPU_TYPE_ARM | CPU_ARCH_ABI64)
-        self.assertEqual(slice_metadata['Header']['cpu_type'], 0x0100_000C)
-        # #define CPU_SUBTYPE_ARM64_ALL           ((cpu_subtype_t) 0)
-        self.assertEqual(slice_metadata['Header']['cpu_subtype'], 0x0000_0000)
+        self.assertEqual(slice_metadata['Header']['magic'], 0xFEED_FACF)
+        self.assertEqual(slice_metadata['Header']['cputype'], "ARM64")
+        self.assertEqual(slice_metadata['Header']['cpusubtype'], "ALL")
+        self.assertEqual(slice_metadata['Header']['filetype'], "EXECUTE")
+        self.assertEqual(slice_metadata['Header']['loadcount'], 0x11)
+        self.assertEqual(slice_metadata['Header']['loadsize'], 0x6F8)
+        self.assertListEqual(slice_metadata['Header']['flags'], ["NOUNDEFS", "DYLDLINK", "TWOLEVEL", "PIE"])
+        self.assertEqual(slice_metadata['Header']['reserved'], 0)
 
         self.assertEqual(slice_metadata["Base Name"], "")
         self.assertEqual(slice_metadata["Install Name"], "")
@@ -71,20 +74,27 @@ class TestMachoMeta(TestUnitBase):
             self.assertIn('Version', slice_metadata)
 
         x86_64_slice_metadata = result['Slices'][0]
-        # #define CPU_TYPE_X86  ((cpu_type_t) 7)
-        # #define CPU_ARCH_ABI64 0x01000000  /* 64 bit ABI */
-        # #define CPU_TYPE_X86_64  (CPU_TYPE_X86 | CPU_ARCH_ABI64)
-        self.assertEqual(x86_64_slice_metadata['Header']['cpu_type'], 0x0100_0007)
-        # #define CPU_SUBTYPE_X86_64_ALL  ((cpu_subtype_t)3)
-        self.assertEqual(x86_64_slice_metadata['Header']['cpu_subtype'], 0x0000_0003)
+        self.assertEqual(x86_64_slice_metadata['Header']['type'], "mach_header_64")
+        self.assertEqual(x86_64_slice_metadata['Header']['magic'], 0xFEED_FACF)
+        self.assertEqual(x86_64_slice_metadata['Header']['cputype'], "X86_64")
+        self.assertEqual(x86_64_slice_metadata['Header']['cpusubtype'], "ALL")
+        self.assertEqual(x86_64_slice_metadata['Header']['filetype'], "EXECUTE")
+        self.assertEqual(x86_64_slice_metadata['Header']['loadcount'], 0x13)
+        self.assertEqual(x86_64_slice_metadata['Header']['loadsize'], 0x760)
+        self.assertListEqual(x86_64_slice_metadata['Header']['flags'],
+            ["NOUNDEFS", "DYLDLINK", "TWOLEVEL", "WEAK_DEFINES", "BINDS_TO_WEAK", "PIE"])
+        self.assertEqual(x86_64_slice_metadata['Header']['reserved'], 0)
 
-        arm64_metadata = result['Slices'][1]
-        # #define CPU_TYPE_ARM  ((cpu_type_t) 12)
-        # #define CPU_ARCH_ABI64 0x01000000  /* 64 bit ABI */
-        # #define CPU_TYPE_ARM64          (CPU_TYPE_ARM | CPU_ARCH_ABI64)
-        self.assertEqual(arm64_metadata['Header']['cpu_type'], 0x0100_000C)
-        # #define CPU_SUBTYPE_ARM64_ALL           ((cpu_subtype_t) 0)
-        self.assertEqual(arm64_metadata['Header']['cpu_subtype'], 0)
+        arm64_slice_metadata = result['Slices'][1]
+        self.assertEqual(arm64_slice_metadata['Header']['magic'], 0xFEED_FACF)
+        self.assertEqual(arm64_slice_metadata['Header']['cputype'], "ARM64")
+        self.assertEqual(arm64_slice_metadata['Header']['cpusubtype'], "ALL")
+        self.assertEqual(arm64_slice_metadata['Header']['filetype'], "EXECUTE")
+        self.assertEqual(arm64_slice_metadata['Header']['loadcount'], 0x13)
+        self.assertEqual(arm64_slice_metadata['Header']['loadsize'], 0x7B0)
+        self.assertListEqual(arm64_slice_metadata['Header']['flags'],
+            ["NOUNDEFS", "DYLDLINK", "TWOLEVEL", "WEAK_DEFINES", "BINDS_TO_WEAK", "PIE"])
+        self.assertEqual(arm64_slice_metadata['Header']['reserved'], 0)
 
     def test_adhoc_signature(self):
         data = self.download_sample('6c121f2b2efa6592c2c22b29218157ec9e63f385e7a1d7425857d603ddef8c59')
