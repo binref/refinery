@@ -8,7 +8,7 @@ from io import BytesIO
 from typing import Dict, List
 
 from ktool import load_image, load_macho_file, Image, MachOFileType
-from ktool.macho import build_version_command, LOAD_COMMAND,  source_version_command, Struct, uint8_t, uint32_t
+from ktool.macho import build_version_command, LOAD_COMMAND, source_version_command, Struct, uint8_t, uint32_t
 from ktool.codesign import Blob, BlobIndex, CSSLOT_CODEDIRECTORY, SuperBlob, swap_32
 
 from refinery.units import Arg, Unit
@@ -67,7 +67,9 @@ class CodeDirectoryBlob(Struct):
         self.pageSize = 0
         self.spare2 = 0
 
+
 CS_ADHOC = 0x0000_0002
+
 
 class machometa(Unit):
     """
