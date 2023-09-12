@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.6.11
+- The `machometa` unit was added thanks to [@cxiao].
+- The `pestrip` unit was extended with more features, and the unit `petrim` was introduced as a unit to simply remove overlays.
+- The `xtnuitka` unit was added to extract Nuitka archives.
+
 ## Version 0.6.10
 - Adds the `pyc` unit to decompile Python bytecode directly.
 - Adds more options to the still quite experimental `vstack` unit.
@@ -582,6 +587,7 @@ Updates build system.
 
 
 [@baderj]: https://github.com/baderj
+[@cxiao]: https://github.com/cxiao
 [@larsborn]: https://github.com/larsborn
 [XLMMacroDeobfuscator]: https://github.com/DissectMalware/XLMMacroDeobfuscator
 [javaobj-issue-29]: https://github.com/tcalmant/python-javaobj/issues/29
