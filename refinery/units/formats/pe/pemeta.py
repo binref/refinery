@@ -252,6 +252,8 @@ class pemeta(Unit):
             serial = crt['serial_number']
             if isinstance(serial, int):
                 serial = F'{serial:x}'
+            if len(serial) % 2 != 0:
+                serial = F'0{serial}'
             assert bytes.fromhex(serial) in data
             subject = crt['subject']
             location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
