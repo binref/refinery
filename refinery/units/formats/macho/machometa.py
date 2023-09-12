@@ -27,7 +27,7 @@ class machometa(Unit):
         header: Arg('-H', help='Parse basic data from the Mach-O header.') = False,
         linked_images: Arg('-K', help='Parse all library images linked by the Mach-O.') = False,
         signatures: Arg('-S', help='Parse signature and entitlement information.') = False,
-        version: Arg('-V', help="Parse version information from the Mach-O load commands.") = False,
+        version: Arg('-V', help='Parse version information from the Mach-O load commands.') = False,
         load_commands: Arg('-D', help='Parse load commands from the Mach-O header.') = False,
         exports: Arg('-E', help='List all exported functions.') = False,
         imports: Arg('-I', help='List all imported functions.') = False,
@@ -83,20 +83,20 @@ class machometa(Unit):
 
         class CodeDirectoryBlob(_km.Struct):
             _FIELDNAMES = [
-                "magic",
-                "length",
-                "version",
-                "flags",
-                "hashOffset",
-                "identOffset",
-                "nSpecialSlots",
-                "nCodeSlots",
-                "codeLimit",
-                "hashSize",
-                "hashType",
-                "platform",
-                "pageSize",
-                "spare2"
+                'magic',
+                'length',
+                'version',
+                'flags',
+                'hashOffset',
+                'identOffset',
+                'nSpecialSlots',
+                'nCodeSlots',
+                'codeLimit',
+                'hashSize',
+                'hashType',
+                'platform',
+                'pageSize',
+                'spare2'
             ]
             _SIZES = [
                 _km.uint32_t,
@@ -116,7 +116,7 @@ class machometa(Unit):
             ]
             SIZE = 44
 
-            def __init__(self, byte_order="little"):
+            def __init__(self, byte_order='little'):
                 super().__init__(fields=self._FIELDNAMES, sizes=self._SIZES, byte_order=byte_order)
                 self.magic = 0
                 self.length = 0
@@ -170,7 +170,7 @@ class machometa(Unit):
                             parsed_cms_signature = pemeta.parse_signature(bytearray(cms_signature))
                             info['Signature'] = parsed_cms_signature
                         except ValueError as pkcs7_parse_error:
-                            self.log_warn(f"Could not parse the data in CSSLOT_CMS_SIGNATURE as valid PKCS7 data: {pkcs7_parse_error!s}")
+                            self.log_warn(F'Could not parse the data in CSSLOT_CMS_SIGNATURE as valid PKCS7 data: {pkcs7_parse_error!s}')
 
             if macho_image.codesign_info.req_dat is not None:
                 # TODO: Parse the requirements blob,
@@ -190,19 +190,19 @@ class machometa(Unit):
 
         for load_command in load_commands:
             if isinstance(load_command, SVC):
-                if "SourceVersion" not in info:
-                    info["SourceVersion"] = load_command.version
+                if 'SourceVersion' not in info:
+                    info['SourceVersion'] = load_command.version
                 else:
-                    self.log_warn("More than one load command of type source_version_command found; the MachO file is possibly malformed")
+                    self.log_warn('More than one load command of type source_version_command found; the MachO file is possibly malformed')
             elif isinstance(load_command, BVC):
-                if "BuildVersion" not in info:
-                    info["BuildVersion"] = {}
-                    info["BuildVersion"]["Platform"] = macho_image.platform.name
-                    info["BuildVersion"]["MinOS"] = f"{macho_image.minos.x}.{macho_image.minos.y}.{macho_image.minos.z}"
-                    info["BuildVersion"]["SDK"] = f"{macho_image.sdk_version.x}.{macho_image.sdk_version.y}.{macho_image.sdk_version.z}"
-                    info["BuildVersion"]["Ntools"] = load_command.ntools
+                if 'BuildVersion' not in info:
+                    info['BuildVersion'] = {}
+                    info['BuildVersion']['Platform'] = macho_image.platform.name
+                    info['BuildVersion']['MinOS'] = F'{macho_image.minos.x}.{macho_image.minos.y}.{macho_image.minos.z}'
+                    info['BuildVersion']['SDK'] = F'{macho_image.sdk_version.x}.{macho_image.sdk_version.y}.{macho_image.sdk_version.z}'
+                    info['BuildVersion']['Ntools'] = load_command.ntools
                 else:
-                    self.log_warn("More than one load command of type build_version_command found; the MachO file is possibly malformed")
+                    self.log_warn('More than one load command of type build_version_command found; the MachO file is possibly malformed')
         return info
 
     def parse_load_commands(self, macho_image: Image, data=None) -> List:
