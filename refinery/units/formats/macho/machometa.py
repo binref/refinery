@@ -254,7 +254,6 @@ class machometa(Unit):
                 try:
                     info = resolver(macho_image, data)
                 except Exception as E:
-                    raise
                     self.log_info(F'failed to obtain {name}: {E!s}')
                     continue
                 if info:
