@@ -264,8 +264,8 @@ class machometa(Unit):
                 slice_result['UUID'] = uuid.hex()
             slice_result['BaseName'] = macho_image.base_name
             slice_result['InstallName'] = macho_image.install_name
+            slices.append(slice_result)
 
-            result['Slices'].append(slice_result)
-
-        if result:
+        if slices:
+            result['Slices'] = slices
             yield from ppjson(tabular=self.args.tabular)._pretty_output(result, indent=4, ensure_ascii=False)
