@@ -56,15 +56,15 @@ class machometa(Unit):
         macho_header = macho_image.macho_header
         dyld_header = macho_image.macho_header.dyld_header
         if dyld_header is not None:
-            info['type'] = dyld_header.typename()
-            info['magic'] = dyld_header.magic
-            info['cputype'] = macho_image.slice.type.name
-            info['cpusubtype'] = macho_image.slice.subtype.name
-            info['filetype'] = macho_image.macho_header.filetype.name
-            info['loadcount'] = dyld_header.loadcnt
-            info['loadsize'] = dyld_header.loadsize
-            info['flags'] = [flag.name for flag in macho_header.flags]
-            info['reserved'] = dyld_header.reserved
+            info['Type'] = dyld_header.typename()
+            info['Magic'] = dyld_header.magic
+            info['CPUType'] = macho_image.slice.type.name
+            info['CPUSubType'] = macho_image.slice.subtype.name
+            info['FileType'] = macho_image.macho_header.filetype.name
+            info['LoadCount'] = dyld_header.loadcnt
+            info['LoadSize'] = dyld_header.loadsize
+            info['Flags'] = [flag.name for flag in macho_header.flags]
+            info['Reserved'] = dyld_header.reserved
         return info
 
     def parse_linked_images(self, macho_image: Image, data=None) -> Dict:
@@ -233,7 +233,7 @@ class machometa(Unit):
         elif macho.type is ktool.MachOFileType.THIN:
             result['FileType'] = 'THIN'
 
-        result['Slices'] = []
+        slices = []
 
         for macho_slice in macho.slices:
             slice_result = {}
