@@ -1,71 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 
 import json
 
 from contextlib import suppress
 from io import BytesIO
-from typing import Dict, List
-
-from ktool import load_image, load_macho_file, Image, MachOFileType
-from ktool.macho import build_version_command, LOAD_COMMAND, source_version_command, Struct, uint8_t, uint32_t
-from ktool.codesign import Blob, BlobIndex, CSSLOT_CODEDIRECTORY, SuperBlob, swap_32
+from typing import Dict, List, TYPE_CHECKING
 
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
 
-
-class CodeDirectoryBlob(Struct):
-    _FIELDNAMES = [
-        "magic",
-        "length",
-        "version",
-        "flags",
-        "hashOffset",
-        "identOffset",
-        "nSpecialSlots",
-        "nCodeSlots",
-        "codeLimit",
-        "hashSize",
-        "hashType",
-        "platform",
-        "pageSize",
-        "spare2"
-    ]
-    _SIZES = [
-        uint32_t,
-        uint32_t,
-        uint32_t,
-        uint32_t,
-        uint32_t,
-        uint32_t,
-        uint32_t,
-        uint32_t,
-        uint32_t,
-        uint8_t,
-        uint8_t,
-        uint8_t,
-        uint8_t,
-        uint32_t
-    ]
-    SIZE = 44
-
-    def __init__(self, byte_order="little"):
-        super().__init__(fields=self._FIELDNAMES, sizes=self._SIZES, byte_order=byte_order)
-        self.magic = 0
-        self.length = 0
-        self.version = 0
-        self.flags = 0
-        self.hashOffset = 0
-        self.identOffset = 0
-        self.nSpecialSlots = 0
-        self.nCodeSlots = 0
-        self.codeLimit = 0
-        self.hashSize = 0
-        self.hashType = 0
-        self.platform = 0
-        self.pageSize = 0
-        self.spare2 = 0
+if TYPE_CHECKING:
+    from ktool import Image
+    from ktool.codesign import BlobIndex, SuperBlob
 
 
 CS_ADHOC = 0x0000_0002
@@ -97,6 +45,13 @@ class machometa(Unit):
             exports=exports,
             tabular=tabular,
         )
+
+    @Unit.Requires('k2l')
+    def _ktool():
+        import ktool
+        import ktool.macho
+        import ktool.codesign
+        return ktool
 
     @classmethod
     def parse_pkcs7_signature(cls, data: bytearray) -> dict:
@@ -213,12 +168,69 @@ class machometa(Unit):
     def parse_linked_images(self, macho_image: Image, data=None) -> Dict:
         load_command_images = {}
         linked_images = macho_image.linked_images
+        LOAD_COMMAND = self._ktool.macho.LOAD_COMMAND
         for linked_image in linked_images:
             load_command_name = LOAD_COMMAND(linked_image.cmd.cmd).name
             load_command_images.setdefault(load_command_name, []).append(linked_image.install_name)
         return load_command_images
 
     def parse_signature(self, macho_image: Image, data=None) -> Dict:
+
+        _km = self._ktool.macho
+        _kc = self._ktool.codesign
+
+        class CodeDirectoryBlob(_km.Struct):
+            _FIELDNAMES = [
+                "magic",
+                "length",
+                "version",
+                "flags",
+                "hashOffset",
+                "identOffset",
+                "nSpecialSlots",
+                "nCodeSlots",
+                "codeLimit",
+                "hashSize",
+                "hashType",
+                "platform",
+                "pageSize",
+                "spare2"
+            ]
+            _SIZES = [
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint32_t,
+                _km.uint8_t,
+                _km.uint8_t,
+                _km.uint8_t,
+                _km.uint8_t,
+                _km.uint32_t
+            ]
+            SIZE = 44
+
+            def __init__(self, byte_order="little"):
+                super().__init__(fields=self._FIELDNAMES, sizes=self._SIZES, byte_order=byte_order)
+                self.magic = 0
+                self.length = 0
+                self.version = 0
+                self.flags = 0
+                self.hashOffset = 0
+                self.identOffset = 0
+                self.nSpecialSlots = 0
+                self.nCodeSlots = 0
+                self.codeLimit = 0
+                self.hashSize = 0
+                self.hashType = 0
+                self.platform = 0
+                self.pageSize = 0
+                self.spare2 = 0
+
         info = {}
         if macho_image.codesign_info is not None:
             superblob: SuperBlob = macho_image.codesign_info.superblob
@@ -228,28 +240,28 @@ class machometa(Unit):
                 # ktool does not include code for extracting Blobs of types
                 # CSSLOT_CODEDIRECTORY, CSSLOT_CMS_SIGNATURE
                 # so we must do it ourselves here.
-                if blob.type == CSSLOT_CODEDIRECTORY:
+                if blob.type == _kc.CSSLOT_CODEDIRECTORY:
                     start = superblob.off + blob.offset
                     codedirectory_blob = macho_image.load_struct(start, CodeDirectoryBlob)
 
                     # Ad-hoc signing
-                    flags = swap_32(codedirectory_blob.flags)
+                    flags = _kc.swap_32(codedirectory_blob.flags)
                     if flags & CS_ADHOC != 0:
                         info['Ad-Hoc Signed'] = True
                     else:
                         info['Ad-Hoc Signed'] = False
 
                     # Signature identifier
-                    identifier_offset = swap_32(codedirectory_blob.identOffset)
+                    identifier_offset = _kc.swap_32(codedirectory_blob.identOffset)
                     identifier_data = macho_image.get_cstr_at(start + identifier_offset)
                     info['Signature Identifier'] = identifier_data
 
                 if blob.type == 0x10000:  # CSSLOT_CMS_SIGNATURE
                     start = superblob.off + blob.offset
-                    blob_data = macho_image.load_struct(start, Blob)
-                    blob_data.magic = swap_32(blob_data.magic)
-                    blob_data.length = swap_32(blob_data.length)
-                    cms_signature = macho_image.get_bytes_at(start + Blob.SIZE, blob_data.length - Blob.SIZE)
+                    blob_data = macho_image.load_struct(start, _kc.Blob)
+                    blob_data.magic = _kc.swap_32(blob_data.magic)
+                    blob_data.length = _kc.swap_32(blob_data.length)
+                    cms_signature = macho_image.get_bytes_at(start + _kc.Blob.SIZE, blob_data.length - _kc.Blob.SIZE)
 
                     if len(cms_signature) != 0:
                         try:
@@ -270,13 +282,17 @@ class machometa(Unit):
     def parse_version(self, macho_image: Image, data=None) -> Dict:
         info = {}
         load_commands = macho_image.macho_header.load_commands
+
+        SVC = self._ktool.macho.source_version_command
+        BVC = self._ktool.macho.build_version_command
+
         for load_command in load_commands:
-            if isinstance(load_command, source_version_command):
+            if isinstance(load_command, SVC):
                 if "SourceVersion" not in info:
                     info["SourceVersion"] = load_command.version
                 else:
                     self.log_warn("More than one load command of type source_version_command found; the MachO file is possibly malformed")
-            elif isinstance(load_command, build_version_command):
+            elif isinstance(load_command, BVC):
                 if "BuildVersion" not in info:
                     info["BuildVersion"] = {}
                     info["BuildVersion"]["Platform"] = macho_image.platform.name
@@ -308,17 +324,18 @@ class machometa(Unit):
 
     def process(self, data: bytearray):
         result = {}
-        macho = load_macho_file(fp=BytesIO(data), use_mmaped_io=False)
-        if macho.type is MachOFileType.FAT:
+        ktool = self._ktool
+        macho = ktool.load_macho_file(fp=BytesIO(data), use_mmaped_io=False)
+        if macho.type is ktool.MachOFileType.FAT:
             result['FileType'] = 'FAT'
-        elif macho.type is MachOFileType.THIN:
+        elif macho.type is ktool.MachOFileType.THIN:
             result['FileType'] = 'THIN'
 
         result['Slices'] = []
 
         for macho_slice in macho.slices:
             slice_result = {}
-            macho_image = load_image(fp=macho_slice)
+            macho_image = ktool.load_image(fp=macho_slice)
 
             for switch, resolver, name in [
                 (self.args.header, self.parse_macho_header, 'Header'),
@@ -335,6 +352,7 @@ class machometa(Unit):
                 try:
                     info = resolver(macho_image, data)
                 except Exception as E:
+                    raise
                     self.log_info(F'failed to obtain {name}: {E!s}')
                     continue
                 if info:

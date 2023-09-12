@@ -2,7 +2,6 @@
 requires = [
     "colorama",
     "defusedxml",
-    "k2l",
     "macholib",
     "msgpack>=1.0.0",
     "pefile",
