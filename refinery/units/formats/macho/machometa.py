@@ -2,13 +2,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import json
-
-from contextlib import suppress
 from io import BytesIO
 from typing import Dict, List, TYPE_CHECKING
 
 from refinery.units import Arg, Unit
+from refinery.units.formats.pe.pemeta import pemeta
 from refinery.units.sinks.ppjson import ppjson
 
 if TYPE_CHECKING:
@@ -52,102 +50,6 @@ class machometa(Unit):
         import ktool.macho
         import ktool.codesign
         return ktool
-
-    @classmethod
-    def parse_pkcs7_signature(cls, data: bytearray) -> dict:
-        """
-        Extracts a JSON-serializable and human readable dictionary with information about
-        time stamp and code signing certificates.
-        Shamelessly copied directly from the pemeta unit.
-        """
-        from refinery.units.formats.pkcs7 import pkcs7
-
-        try:
-            signature = data | pkcs7 | json.loads
-        except Exception as E:
-            raise ValueError(F'PKCS7 parser failed with error: {E!s}')
-
-        info = {}
-
-        def find_timestamps(entry):
-            if isinstance(entry, dict):
-                if set(entry.keys()) == {'type', 'value'}:
-                    if entry['type'] == 'signing_time':
-                        return {'Timestamp': entry['value']}
-                for value in entry.values():
-                    result = find_timestamps(value)
-                    if result is None:
-                        continue
-                    with suppress(KeyError):
-                        result.setdefault('TimestampIssuer', entry['sid']['issuer']['common_name'])
-                    return result
-            elif isinstance(entry, list):
-                for value in entry:
-                    result = find_timestamps(value)
-                    if result is None:
-                        continue
-                    return result
-
-        timestamp_info = find_timestamps(signature)
-        if timestamp_info is not None:
-            info.update(timestamp_info)
-
-        try:
-            certificates = signature['content']['certificates']
-        except KeyError:
-            return info
-
-        if len(certificates) == 1:
-            main_certificate = certificates[0]
-        else:
-            certificates_with_extended_use = []
-            main_certificate = None
-            for certificate in certificates:
-                with suppress(Exception):
-                    crt = certificate['tbs_certificate']
-                    ext = [e for e in crt['extensions'] if e['extn_id'] == 'extended_key_usage' and e['extn_value'] != ['time_stamping']]
-                    key = [e for e in crt['extensions'] if e['extn_id'] == 'key_usage']
-                    if ext:
-                        certificates_with_extended_use.append(certificate)
-                    if any('key_cert_sign' in e['extn_value'] for e in key):
-                        continue
-                    if any('code_signing' in e['extn_value'] for e in ext):
-                        main_certificate = certificate
-                        break
-            if main_certificate is None and len(certificates_with_extended_use) == 1:
-                main_certificate = certificates_with_extended_use[0]
-        if main_certificate:
-            crt = main_certificate['tbs_certificate']
-            serial = crt['serial_number']
-            if isinstance(serial, int):
-                serial = F'{serial:x}'
-            assert bytes.fromhex(serial) in data
-            subject = crt['subject']
-            location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
-            info.update(Subject=subject['common_name'])
-            if any(location):
-                info.update(SubjectLocation=', '.join(filter(None, location)))
-            for signer_info in signature['content'].get('signer_infos', ()):
-                try:
-                    if signer_info['sid']['serial_number'] != crt['serial_number']:
-                        continue
-                    for attr in signer_info['signed_attrs']:
-                        if attr['type'] == 'authenticode_info':
-                            info.update(ProgramName=attr['value']['programName'])
-                            info.update(MoreInfo=attr['value']['moreInfo'])
-                except KeyError:
-                    continue
-            try:
-                valid_from = crt['validity']['not_before']
-                valid_until = crt['validity']['not_after']
-            except KeyError:
-                pass
-            else:
-                info.update(ValidFrom=valid_from, ValidUntil=valid_until)
-            info.update(
-                Issuer=crt['issuer']['common_name'], Fingerprint=main_certificate['fingerprint'], Serial=serial)
-            return info
-        return info
 
     def parse_macho_header(self, macho_image: Image, data=None) -> Dict:
         info = {}
@@ -265,7 +167,7 @@ class machometa(Unit):
 
                     if len(cms_signature) != 0:
                         try:
-                            parsed_cms_signature = self.parse_pkcs7_signature(bytearray(cms_signature))
+                            parsed_cms_signature = pemeta.parse_signature(bytearray(cms_signature))
                             info['Signature'] = parsed_cms_signature
                         except ValueError as pkcs7_parse_error:
                             self.log_warn(f"Could not parse the data in CSSLOT_CMS_SIGNATURE as valid PKCS7 data: {pkcs7_parse_error!s}")
