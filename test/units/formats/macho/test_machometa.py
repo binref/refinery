@@ -15,7 +15,7 @@ class TestMachoMeta(TestUnitBase):
 
         slice_metadata = result['Slices'][0]
         self.assertIn('Header', slice_metadata)
-        self.assertIn('Linked Images', slice_metadata)
+        self.assertIn('LinkedImages', slice_metadata)
         self.assertIn('Signatures', slice_metadata)
         self.assertIn('Version', slice_metadata)
 
@@ -35,8 +35,8 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(slice_metadata['Version']['BuildVersion']['Ntools'], 1)
         self.assertEqual(slice_metadata['Version']['SourceVersion'], 0)
 
-        self.assertEqual(slice_metadata["Base Name"], "")
-        self.assertEqual(slice_metadata["Install Name"], "")
+        self.assertEqual(slice_metadata["BaseName"], "")
+        self.assertEqual(slice_metadata["InstallName"], "")
         self.assertEqual(slice_metadata["UUID"], "839216049d683075bc3f5a8628778bb8")
 
     def test_arm64_sample(self):
@@ -49,7 +49,7 @@ class TestMachoMeta(TestUnitBase):
 
         slice_metadata = result['Slices'][0]
         self.assertIn('Header', slice_metadata)
-        self.assertIn('Linked Images', slice_metadata)
+        self.assertIn('LinkedImages', slice_metadata)
         self.assertIn('Signatures', slice_metadata)
         self.assertIn('Version', slice_metadata)
 
@@ -69,8 +69,8 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(slice_metadata['Version']['BuildVersion']['Ntools'], 1)
         self.assertEqual(slice_metadata['Version']['SourceVersion'], 0)
 
-        self.assertEqual(slice_metadata["Base Name"], "")
-        self.assertEqual(slice_metadata["Install Name"], "")
+        self.assertEqual(slice_metadata["BaseName"], "")
+        self.assertEqual(slice_metadata["InstallName"], "")
         self.assertEqual(slice_metadata["UUID"], "f962f18b12a133368aa40779089c2b09")
 
     def test_universal_binary_sample(self):
@@ -83,7 +83,7 @@ class TestMachoMeta(TestUnitBase):
 
         for slice_metadata in result['Slices']:
             self.assertIn('Header', slice_metadata)
-            self.assertIn('Linked Images', slice_metadata)
+            self.assertIn('LinkedImages', slice_metadata)
             self.assertIn('Signatures', slice_metadata)
             self.assertIn('Version', slice_metadata)
 
@@ -129,8 +129,8 @@ class TestMachoMeta(TestUnitBase):
 
         slice_metadata = result['Slices'][0]
         self.assertIn('Signatures', slice_metadata)
-        self.assertEqual(slice_metadata['Signatures']['Ad-Hoc Signed'], True)
-        self.assertEqual(slice_metadata['Signatures']['Signature Identifier'], "payload2-55554944839216049d683075bc3f5a8628778bb8")
+        self.assertEqual(slice_metadata['Signatures']['AdHocSigned'], True)
+        self.assertEqual(slice_metadata['Signatures']['SignatureIdentifier'], "payload2-55554944839216049d683075bc3f5a8628778bb8")
 
     def test_pkcs7_signature(self):
         data = self.download_sample('a64fa9f1c76457ecc58402142a8728ce34ccba378c17318b3340083eeb7acc67')
@@ -142,12 +142,12 @@ class TestMachoMeta(TestUnitBase):
 
         for slice_index, slice_metadata in enumerate(result['Slices']):
             self.assertIn('Signatures', slice_metadata)
-            self.assertIn('Ad-Hoc Signed', slice_metadata['Signatures'])
-            self.assertIn('Signature Identifier', slice_metadata['Signatures'])
+            self.assertIn('AdHocSigned', slice_metadata['Signatures'])
+            self.assertIn('SignatureIdentifier', slice_metadata['Signatures'])
             self.assertIn('Signature', slice_metadata['Signatures'])
 
-            self.assertEqual(slice_metadata['Signatures']['Signature Identifier'], "libffmpeg")
-            self.assertEqual(slice_metadata['Signatures']['Ad-Hoc Signed'], False)
+            self.assertEqual(slice_metadata['Signatures']['SignatureIdentifier'], "libffmpeg")
+            self.assertEqual(slice_metadata['Signatures']['AdHocSigned'], False)
 
             pkcs7_signature_data = slice_metadata['Signatures']['Signature']
 
@@ -174,7 +174,7 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(len(result['Slices']), 2)
 
         for slice_metadata in result['Slices']:
-            self.assertIn('Linked Images', slice_metadata)
+            self.assertIn('LinkedImages', slice_metadata)
             expected_load_dylibs = {
                 "LOAD_WEAK_DYLIB": [
                     "/usr/lib/swift/libswiftAppKit.dylib",
@@ -204,4 +204,4 @@ class TestMachoMeta(TestUnitBase):
                     "/usr/lib/swift/libswiftos.dylib"
                 ],
             }
-            self.assertDictEqual(slice_metadata['Linked Images'], expected_load_dylibs)
+            self.assertDictEqual(slice_metadata['LinkedImages'], expected_load_dylibs)

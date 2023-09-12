@@ -149,14 +149,14 @@ class machometa(Unit):
                     # Ad-hoc signing
                     flags = _kc.swap_32(codedirectory_blob.flags)
                     if flags & CS_ADHOC != 0:
-                        info['Ad-Hoc Signed'] = True
+                        info['AdHocSigned'] = True
                     else:
-                        info['Ad-Hoc Signed'] = False
+                        info['AdHocSigned'] = False
 
                     # Signature identifier
                     identifier_offset = _kc.swap_32(codedirectory_blob.identOffset)
                     identifier_data = macho_image.get_cstr_at(start + identifier_offset)
-                    info['Signature Identifier'] = identifier_data
+                    info['SignatureIdentifier'] = identifier_data
 
                 if blob.type == 0x10000:  # CSSLOT_CMS_SIGNATURE
                     start = superblob.off + blob.offset
@@ -241,10 +241,10 @@ class machometa(Unit):
 
             for switch, resolver, name in [
                 (self.args.header, self.parse_macho_header, 'Header'),
-                (self.args.linked_images, self.parse_linked_images, 'Linked Images'),
+                (self.args.linked_images, self.parse_linked_images, 'LinkedImages'),
                 (self.args.signatures, self.parse_signature, 'Signatures'),
                 (self.args.version, self.parse_version, 'Version'),
-                (self.args.load_commands, self.parse_load_commands, 'Load Commands'),
+                (self.args.load_commands, self.parse_load_commands, 'LoadCommands'),
                 (self.args.imports, self.parse_imports, 'Imports'),
                 (self.args.exports, self.parse_exports, 'Exports'),
             ]:
@@ -262,8 +262,8 @@ class machometa(Unit):
             if macho_image.uuid is not None:
                 uuid: bytes = macho_image.uuid
                 slice_result['UUID'] = uuid.hex()
-            slice_result['Base Name'] = macho_image.base_name
-            slice_result['Install Name'] = macho_image.install_name
+            slice_result['BaseName'] = macho_image.base_name
+            slice_result['InstallName'] = macho_image.install_name
 
             result['Slices'].append(slice_result)
 
