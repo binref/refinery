@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.12
+- Adds the `sm4` cipher unit.
+- Adds the `blabla` cipher unit.
+
 ## Version 0.6.11
 - The `machometa` unit was added thanks to [@cxiao].
 - The `pestrip` unit was extended with more features, and the unit `petrim` was introduced as a unit to simply remove overlays.
