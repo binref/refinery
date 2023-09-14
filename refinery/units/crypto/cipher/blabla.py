@@ -26,8 +26,14 @@ class blabla(StreamCipherUnit):
 
     def keystream(self):
         r = self.args.rounds
-        n = struct.unpack('<2Q', self.args.nonce)
+        n = self.args.nonce
         k = struct.unpack('<4Q', self.args.key)
+
+        try:
+            n = struct.unpack('<2Q', n)
+        except Exception:
+            raise ValueError(F'The given nonce has invalid length of {len(n)}, it must be 16 bytes in size.')
+
         q = [
             0x6170786593810fab,  # 0x0
             0x3320646ec7398aee,  # 0x1
