@@ -18,7 +18,7 @@ class blabla(StreamCipherUnit):
 
     def __init__(
         self, key,
-        nonce: Arg(help='The 16-byte nonce. The default are 16 null bytes.') = None,
+        nonce: Arg(help='The 16-byte nonce. The default are 16 null bytes.') = bytes(16),
         rounds: Arg.Number('-r', help='The number of rounds, default is {default}.') = 10,
         discard=0, stateful=False
     ):
@@ -26,22 +26,21 @@ class blabla(StreamCipherUnit):
 
     def keystream(self):
         r = self.args.rounds
-        n = self.args.nonce or bytes(16)
-        n = struct.unpack('<2Q', n)
+        n = struct.unpack('<2Q', self.args.nonce)
         k = struct.unpack('<4Q', self.args.key)
         q = [
-            0x6170786593810fab, # 0x0
-            0x3320646ec7398aee, # 0x1
-            0x79622d3217318274, # 0x2
-            0x6b206574babadada, # 0x3
-            *k,                 # 0x4 .. 0x7
-            0x2ae36e593e46ad5f, # 0x8
-            0xb68f143029225fc9, # 0x9
-            0x8da1e08468303aa6, # 0xA
-            0xa48a209acd50a4a7, # 0xB
-            0x7fdc12f23f90778c, # 0xC
-            1,                  # 0xD
-            *n                  # 0xE .. 0xF
+            0x6170786593810fab,  # 0x0
+            0x3320646ec7398aee,  # 0x1
+            0x79622d3217318274,  # 0x2
+            0x6b206574babadada,  # 0x3
+            *k,                  # 0x4 .. 0x7
+            0x2ae36e593e46ad5f,  # 0x8
+            0xb68f143029225fc9,  # 0x9
+            0x8da1e08468303aa6,  # 0xA
+            0xa48a209acd50a4a7,  # 0xB
+            0x7fdc12f23f90778c,  # 0xC
+            1,                   # 0xD
+            *n                   # 0xE .. 0xF
         ]
         while True:
             v = [*q]
