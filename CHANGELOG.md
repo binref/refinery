@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.6.13 - bugfix release
+
 ## Version 0.6.12
 - Adds the `sm4` cipher unit.
 - Adds the `blabla` cipher unit.
