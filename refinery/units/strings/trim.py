@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import re
+
 from refinery.units import Arg, Unit
 
 
@@ -10,83 +12,30 @@ class trim(Unit):
 
     def __init__(
         self, *junk: Arg(help='Binary strings to be removed, default are all whitespace characters.'),
+        unpad: Arg.Switch('-u', help='Also trim partial occurrences of the junk string.') = False,
         left: Arg.Switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
-        right: Arg.Switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True
+        right: Arg.Switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True,
     ):
-        super().__init__(junk=junk, left=left, right=right)
+        super().__init__(junk=junk, left=left, right=right, unpad=unpad)
 
     def process(self, data: bytearray):
-        dirty = True
-        synch = True
-        mview = memoryview(data)
         junks = self.args.junk
 
         if not junks:
-            import string
-            strips = string.whitespace.encode('ascii')
+            pattern = B'\\s*'
         else:
-            strips = bytes(j[0] for j in junks if len(j) == 1)
-            junk = [j for j in junks if len(j) >= 2]
+            pattern = B'|'.join(re.escape(junk) for junk in junks)
+            pattern = B'(%s)*' % pattern
+            if self.args.unpad:
+                partial = B'|'.join(
+                    B''.join(B'\\x%02X?' % byte for byte in junk) for junk in junks)
+                pattern = B'%s(%s)' % (pattern, partial)
 
-        if strips:
-            if self.args.left and self.args.right:
-                def strip(b):
-                    if b[0] in strips or b[-1] in strips:
-                        return True, b.strip(strips)
-                    return False, b
-            elif self.args.left:
-                def strip(b):
-                    if b[0] in strips:
-                        return True, b.lstrip(strips)
-                    return False, b
-            elif self.args.right:
-                def strip(b):
-                    if b[-1] in strips:
-                        return True, b.rstrip(strips)
-                    return False, b
-            else:
-                strip = None
+        def left_and_right():
+            if self.args.left:
+                yield B'(^%s)' % pattern
+            if self.args.right:
+                yield B'(%s$)' % pattern
 
-        while dirty and data:
-            dirty = False
-
-            if strips and strip:
-                dirty, data = strip(data)
-                if dirty:
-                    mview = memoryview(data)
-                    synch = True
-
-            for junk in junks:
-
-                # For large repeated patches of junk, performance is increased significantly by
-                # performing less comparisons in Python code. The following code determines a
-                # binary representation of the number N of trimmable junk pieces by performing
-                # at most 2 log(N) comparisons. Furthermore, exactly K trimming operations are
-                # done, where K is the number of bits in the binary representation of N that are
-                # set.
-
-                if self.args.left and mview[:len(junk)] == junk:
-                    dirty = True
-                    synch = False
-                    t = junk
-                    while mview[:len(t)] == t:
-                        mview = mview[len(t):]
-                        t += t
-                    t = memoryview(t)
-                    while t:
-                        if mview[:len(t)] == t: mview = mview[len(t):]
-                        t = t[:len(t) // 2]
-
-                if self.args.right and mview[-len(junk):] == junk:
-                    dirty = True
-                    synch = False
-                    t = junk
-                    while mview[-len(t):] == t:
-                        mview = mview[:-len(t)]
-                        t += t
-                    t = memoryview(t)
-                    while t:
-                        if mview[-len(t):] == t: mview = mview[:-len(t)]
-                        t = t[:len(t) // 2]
-
-        return bytearray(mview) if not synch else data
+        pattern = B'|'.join(p for p in left_and_right())
+        return re.sub(pattern, B'', data)
