@@ -50,4 +50,6 @@ class TestTrim(TestUnitBase):
             B'6iWwDkXMSR8J8B3F8l3gxTryUvHIQrx8Sb4Rv7xPv2mX7PfFBeh+HiU/TxOd+4ovcf5V3hSbim/RP'
             B'ZPdU8n2E+DFA/JTdX2PE7wniTzNR1Ii/LUTJRpw9IP6J+9xOlP3EhZe4FN+V+P6L71p8N+KqSKpKI'
             B'mtZllIpKDFDqRlm0aG7lhyZblNdjmrOuBK1eWtmr6mE7d5aUglVHz/Pqbr8VCgd9KfqTrG9kg==')
+
         self.assertEqual(goal, fo10 | self.load(B'FlArEon', unpad=True) | bytes)
+        self.assertEqual(goal, fo10 | self.load(B'flareon', nocase=True, unpad=True) | bytes)

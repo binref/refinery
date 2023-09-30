@@ -15,8 +15,9 @@ class trim(Unit):
         unpad: Arg.Switch('-u', help='Also trim partial occurrences of the junk string.') = False,
         left: Arg.Switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
         right: Arg.Switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True,
+        nocase: Arg.Switch('-i', help='Ignore capitalization for alphabetic characters.') = False,
     ):
-        super().__init__(junk=junk, left=left, right=right, unpad=unpad)
+        super().__init__(junk=junk, left=left, right=right, unpad=unpad, nocase=nocase)
 
     def process(self, data: bytearray):
         junks = self.args.junk
@@ -38,4 +39,5 @@ class trim(Unit):
                 yield B'(%s$)' % pattern
 
         pattern = B'|'.join(p for p in left_and_right())
-        return re.sub(pattern, B'', data)
+        flags = re.IGNORECASE if self.args.nocase else 0
+        return re.sub(pattern, B'', data, flags=flags)
