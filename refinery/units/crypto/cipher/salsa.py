@@ -4,7 +4,7 @@ import struct
 
 from Cryptodome.Cipher import Salsa20
 from abc import ABC, abstractmethod
-from typing import List, ByteString, Optional, Iterable
+from typing import List, ByteString, Optional, Iterable, Tuple
 
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
 from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
@@ -16,6 +16,7 @@ class LatinCipher(ABC):
     _idx_key32: slice
     _idx_nonce: slice
     _idx_count: slice
+    _round_access_pattern: Tuple[Tuple[int, int, int, int], ...]
 
     def __init__(self, key: ByteString, nonce: ByteString, magic: Optional[ByteString] = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
@@ -68,8 +69,8 @@ class LatinCipher(ABC):
     def __iter__(self):
         while True:
             x = list(self.state)
-            for p in self.rounds * self._round_access_pattern:
-                self.quarter(x, *p)
+            for a, b, c, d in self.rounds * self._round_access_pattern:
+                self.quarter(x, a, b, c, d)
             yield from struct.pack('<16L', *(
                 (a + b) & 0xFFFFFFFF for a, b in zip(x, self.state)))
             self.count()
