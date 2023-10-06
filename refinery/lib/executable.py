@@ -177,6 +177,7 @@ class ET(str, Enum):
     ELF = 'ELF'
     MachO = 'MachO'
     PE = 'PE'
+    BLOB = 'BLOB'
 
 
 class BO(str, Enum):
@@ -374,6 +375,36 @@ class Executable(ABC):
     @abstractmethod
     def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         ...
+
+
+class ExecutableCodeBlob(Executable):
+
+    _head: Type[None] = None
+    _type = ET.BLOB
+    _byte_order: BO
+    _arch: Arch
+
+    def __init__(self, data, base=None, arch: Arch = Arch.X8632, byte_order: BO = BO.LE):
+        super().__init__(None, data, base)
+        self._byte_order = byte_order
+        self._arch = arch
+
+    def image_defined_base(self) -> int:
+        return 0
+
+    def byte_order(self) -> BO:
+        return self._byte_order
+
+    def arch(self) -> Arch:
+        return self._arch
+
+    def sections(self) -> Generator[Section, None, None]:
+        r = Range(0, len(self.data))
+        yield Section('blob', r, r)
+
+    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+        for s in self.sections():
+            yield s.as_segment(populate_sections=populate_sections)
 
 
 class ExecutablePE(Executable):

@@ -3,8 +3,10 @@
 from __future__ import annotations
 from typing import List, TYPE_CHECKING
 
+import re
+
 from refinery.units import Arg, Unit
-from refinery.lib.executable import align, Arch, Executable
+from refinery.lib.executable import align, Arch, Executable, ExecutableCodeBlob
 from refinery.lib.types import bounds
 
 from dataclasses import dataclass, field
@@ -75,8 +77,9 @@ class vstack(Unit):
     def __init__(
         self,
         *address: Arg.Number(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
-        stop: Arg.Number(metavar='stop', help='Optional: Stop when reaching this address.') = None,
+        stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
+        arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X8632,
         patch_range: Arg.Bounds('-p', metavar='MIN:MAX',
             help='Extract only patches that are in the given range, default is {default}.') = slice(5, None),
         write_range: Arg.Bounds('-n', metavar='MIN:MAX',
@@ -84,13 +87,14 @@ class vstack(Unit):
         wait: Arg.Number('-w', help=(
             'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 10,
         calls_wait: Arg.Switch('-c', help='Wait indefinitely when inside a function call.') = False,
-        stack_size: Arg.Number('-s', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
-        block_size: Arg.Number('-k', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
+        stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
+        block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
     ):
         super().__init__(
-            address=address,
+            address=address or [0],
             stop=stop,
             base=base,
+            arch=Arg.AsOption(arch, Arch),
             patch_range=patch_range,
             write_range=write_range,
             wait=wait,
@@ -113,7 +117,10 @@ class vstack(Unit):
 
     def process(self, data):
         uc = self._unicorn
-        exe = Executable.Load(data, self.args.base)
+        try:
+            exe = Executable.Load(data, self.args.base)
+        except ValueError:
+            exe = ExecutableCodeBlob(data, self.args.base, self.args.arch)
         arch = exe.arch()
         block_size = self.args.block_size
         stack_size = self.args.stack_size
@@ -234,11 +241,14 @@ class vstack(Unit):
         state.writes.merge_overlaps()
 
         def info():
-            data = unsigned_value.to_bytes(size, state.executable.byte_order().value).hex().upper()
+            data = unsigned_value.to_bytes(size, state.executable.byte_order().value)
             indent = '\x20' * 4 * depth
+            padlen = state.executable.pointer_size // 2
+            h = data.hex().upper()
+            p = re.sub('[^!-~]', '.', data.decode('latin1'))
             return (
                 F'emulating [wait={state.waiting:02d}] {indent}{state.fmt(state.previous_address)}: '
-                F'{state.fmt(address)} <- {data}')
+                F'{state.fmt(address)} <- {h:.<{padlen}} {p}')
 
         self.log_info(info)
 
