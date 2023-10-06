@@ -194,7 +194,7 @@ from argparse import (
     ZERO_OR_MORE
 )
 
-from refinery.lib.argformats import pending, manifest, multibin, numseq, number, sliceobj, VariableMissing, ParserVariableMissing
+from refinery.lib.argformats import pending, manifest, regexp, multibin, numseq, number, sliceobj, VariableMissing, ParserVariableMissing
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, one, skipfirst, isbuffer
 from refinery.lib.frame import Framed, Chunk
@@ -430,6 +430,40 @@ class Arg(Argument):
         if metavar is None and any('-' in a for a in args):
             metavar = 'B'
         return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=multibin, metavar=metavar)
+
+    @classmethod
+    def String(
+        cls,
+        *args   : str,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        nargs   : Union[omit, int, str] = omit,
+        metavar : Optional[str] = None,
+        group   : Optional[str] = None,
+    ):
+        """
+        Used to add argparse arguments that contain string data.
+        """
+        if metavar is None and any('-' in a for a in args):
+            metavar = 'STR'
+        return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=str, metavar=metavar)
+
+    @classmethod
+    def RegExp(
+        cls,
+        *args   : str,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        nargs   : Union[omit, int, str] = omit,
+        metavar : Optional[str] = None,
+        group   : Optional[str] = None,
+    ):
+        """
+        Used to add argparse arguments that contain a regular expression.
+        """
+        if metavar is None and any('-' in a for a in args):
+            metavar = 'REGEX'
+        return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=regexp, metavar=metavar)
 
     @classmethod
     def NumSeq(
