@@ -316,6 +316,7 @@ def check_variable_name(name: Optional[str], allow_derivations=False) -> None:
             error = 'reserved for a derived property.'
     if error:
         raise ValueError(F'The variable name "{name}" is invalid; it is {error}')
+    return name
 
 
 class SizeInt(int, CustomStringRepresentation):
