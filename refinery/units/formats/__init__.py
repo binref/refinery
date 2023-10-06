@@ -78,7 +78,7 @@ class PathPattern:
 
 class PathExtractorUnit(Unit, abstract=True):
 
-    _custom_path_separator = None
+    _custom_path_separator = '/'
 
     def __init__(
         self,
@@ -88,6 +88,10 @@ class PathExtractorUnit(Unit, abstract=True):
             'argument is a single wildcard, which means that every item will be extracted. If '
             'a given path yields no results, the unit performs increasingly fuzzy searches '
             'with it. This can be disabled using the --exact switch.')),
+        format: Arg('-f', type=str, help=(
+            'A format expression to be applied for computing the path of an item. This must use '
+            'metadata that is available on the item. The default format can be accessed as the '
+            'format expression "{}".')) = None,
         list: Arg.Switch('-l',
             help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join_path: Arg.Switch('-j', group='PATH',
@@ -115,6 +119,7 @@ class PathExtractorUnit(Unit, abstract=True):
             fuzzy=fuzzy,
             exact=exact,
             regex=regex,
+            format=format,
             **keywords
         )
 
@@ -150,6 +155,7 @@ class PathExtractorUnit(Unit, abstract=True):
         results: List[UnpackResult] = list(self.unpack(data))
 
         patterns = self._patterns
+        format = self.args.format
 
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
@@ -165,8 +171,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 pass
             path = root / path
             path = path.as_posix()
-            if self._custom_path_separator:
-                path = path.replace('/', self._custom_path_separator)
+            path = path.replace('/', self._custom_path_separator)
             return path
 
         if self.args.join:
@@ -176,6 +181,15 @@ class PathExtractorUnit(Unit, abstract=True):
                 pass
 
         for result in results:
+            if format is not None:
+                head, sep, tail = result.path.rpartition(self._custom_path_separator)
+                if sep and tail:
+                    try:
+                        tail = meta.format_str(format, self.codec, [result.path], result.meta)
+                    except KeyError:
+                        pass
+                    else:
+                        result.path = F'{head}{sep}{tail}'
             path = normalize(result.path)
             if not path:
                 from refinery.lib.mime import FileMagicInfo
