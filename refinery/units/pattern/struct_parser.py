@@ -5,9 +5,9 @@ import itertools
 
 from refinery.units import Arg, Unit, Chunk
 
-from refinery.lib.meta import SizeInt, metavars
+from refinery.lib.meta import SizeInt, metavars, check_variable_name
 from refinery.lib.structures import EOF, StructReader, StreamDetour
-from refinery.lib.argformats import ParserError, PythonExpression, multibin, is_valid_variable_name
+from refinery.lib.argformats import ParserError, PythonExpression, multibin
 from refinery.lib.types import INF
 
 
@@ -120,8 +120,8 @@ class struct(Unit):
                         args.extend(reader.read_struct(fixorder(prefix)))
                     if name is None:
                         continue
-                    if name and not name.isdecimal() and not is_valid_variable_name(name):
-                        raise ValueError(F'The field name "{name}" is invalid; only identifiers and indexes are allowed.')
+                    if name and not name.isdecimal():
+                        check_variable_name(name)
                     if conversion:
                         reader.byte_align(
                             PythonExpression.evaluate(conversion, meta))

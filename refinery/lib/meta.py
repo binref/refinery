@@ -292,27 +292,30 @@ def is_valid_variable_name(name: str) -> bool:
     """
     All single-letter, uppercase variable names are reserved.
     """
-    if len(name) == 1 and name.upper() == name:
-        return False
-    if not name.isidentifier():
-        return False
-    if name == 'index':
+    try:
+        check_variable_name(name, allow_derivations=True)
+    except ValueError:
         return False
     return True
 
 
-def check_variable_name(name: Optional[str]) -> Optional[str]:
+def check_variable_name(name: Optional[str], allow_derivations=False) -> None:
     """
-    All single-letter, uppercase variable names are reserved.
+    All single-letter, uppercase variable names are reserved. Additionally, derived
+    property names should not be overwritten.
     """
+    error = None
     if name is None:
         return None
-    elif is_valid_variable_name(name):
-        return name
-    raise ValueError(
-        F'The variable name {name!r} is invalid: Variable names must be identifiers. Additionally, single uppercase '
-        R'letters are reserved for internal use.'
-    )
+    elif len(name) == 1 and name.upper() == name:
+        error = 'a capitalzed single letter, which are reserved for state machines.'
+    elif not name.isidentifier():
+        error = 'not an identifier.'
+    elif not allow_derivations:
+        if name == 'index' or name in LazyMetaOracle.derivations:
+            error = 'reserved for a derived property.'
+    if error:
+        raise ValueError(F'The variable name "{name}" is invalid; it is {error}')
 
 
 class SizeInt(int, CustomStringRepresentation):
