@@ -71,12 +71,17 @@ class asm(Unit):
     @property
     def _angr_arch(self) -> Type[Arch]:
         mode = self._angr_mode
-        for archid in self._archinfo.arch_id_map:
+        info = self._archinfo
+        try:
+            amap = info.arch_id_map
+        except AttributeError:
+            amap = info.arch.arch_id_map
+        for archid in amap:
             arch: Type[Arch] = archid[3]
             if arch.name.lower() == mode:
                 return arch
         else:
-            arches = {a[3].name.lower() for a in self._archinfo.arch_id_map}
+            arches = {a[3].name.lower() for a in amap}
             arches = (arches & set(_ARCHES)) | {'x32', 'x64'}
             arches = ', '.join(sorted(arches, reverse=True))
             raise ValueError(F'unknown arch "{mode}" for angr mode; choose one of: {arches}')
