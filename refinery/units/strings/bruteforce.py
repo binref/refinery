@@ -16,7 +16,8 @@ class bruteforce(Unit):
     def __init__(
         self,
         name  : Arg.String(help='Name of the meta variable to be populated.'),
-        length: Arg.Number(help='Specifies the number of characters to brute force.', metavar='length'),
+        length: Arg.Bounds(metavar='length',
+            help='Specifies the range of characters to brute force, default is {default}.') = slice(1, None),
         format: Arg.String(help='Optional format expression for embedding the brute forced sequence.') = None,
         alphabet  : Arg.Binary('-a', group='ALPH',
             help='The alphabet from which to choose the letters. Entire byte range by default.') = None,
@@ -67,16 +68,26 @@ class bruteforce(Unit):
         raise ValueError(F'Invalid regular expression: {pattern}')
 
     def process(self, data: bytearray):
-        length = self.args.length
-        format = self.args.format
+        length: slice = self.args.length
+        format: str = self.args.format
         meta = metavars(data)
         name = self.args.name
         kwargs = {name: None}
-        if not length or length <= 0:
-            raise ValueError(F'Unable to brute force {length} characters.')
-        for string in itertools.product(self._alphabet(), repeat=length):
-            string = bytes(string)
-            if format:
-                string = meta.format_bin(format, self.codec, [string])
-            kwargs[name] = string
-            yield self.labelled(data, **kwargs)
+
+        if length.stop is None:
+            it = itertools.count(length.start or 0, length.step or 1)
+            wd = 1
+        else:
+            it = range(length.start or 0, length.stop, length.step or 1)
+            wd = len(str(length.stop))
+
+        for length in it:
+            self.log_info(F'generating {length:0{wd}} digits')
+            if not length or length <= 0:
+                raise ValueError(F'Unable to brute force {length} characters.')
+            for string in itertools.product(self._alphabet(), repeat=length):
+                string = bytes(string)
+                if format:
+                    string = meta.format_bin(format, self.codec, [string])
+                kwargs[name] = string
+                yield self.labelled(data, **kwargs)
