@@ -1296,7 +1296,6 @@ class Unit(UnitBase, abstract=True):
         return getattr(self.args, 'lenient', 0)
 
     def _exception_handler(self, exception: BaseException, data: Optional[ByteString]):
-        abort_execution = False
         if data is not None and self.leniency > 1:
             try:
                 return exception.partial
@@ -1316,7 +1315,6 @@ class Unit(UnitBase, abstract=True):
             raise exception
         elif isinstance(exception, VariableMissing):
             self.log_warn('critical error:', exception.args[0])
-            abort_execution = True
         elif isinstance(exception, GeneratorExit):
             raise exception
         elif isinstance(exception, RefineryImportMissing):
@@ -1343,8 +1341,6 @@ class Unit(UnitBase, abstract=True):
         if self.log_debug():
             import traceback
             traceback.print_exc(file=sys.stderr)
-        if abort_execution:
-            raise RefineryCriticalException(str(exception))
 
     def __next__(self) -> Chunk:
         if not self._chunks:
