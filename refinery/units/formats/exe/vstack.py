@@ -30,6 +30,7 @@ class EmuState:
     stop: Optional[int] = None
     previous_address: int = 0
     sp_register: int = 0
+    ip_register: int = 0
     stack_ceiling: int = 0
 
     def disassemble(self, address: int, size: int):
@@ -86,7 +87,8 @@ class vstack(Unit):
             help='Log only writes whose size is in the given range, default is {default}.') = slice(1, None),
         wait: Arg.Number('-w', help=(
             'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 10,
-        calls_wait: Arg.Switch('-c', help='Wait indefinitely when inside a function call.') = False,
+        calls_wait: Arg.Switch('-c', group='CALL', help='Wait indefinitely when inside a function call.') = False,
+        calls_skip: Arg.Switch('-C', group='CALL', help='Skip function calls entirely.') = False,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
     ):
@@ -100,6 +102,7 @@ class vstack(Unit):
             wait=wait,
             stack_size=stack_size,
             calls_wait=calls_wait,
+            calls_skip=calls_skip,
             block_size=block_size,
         )
 
@@ -132,16 +135,16 @@ class vstack(Unit):
 
             emulator = uc.Uc(*self._uc_arch(arch))
 
-            sp = {
-                Arch.X8632   : uc.x86_const.UC_X86_REG_ESP,
-                Arch.X8664   : uc.x86_const.UC_X86_REG_RSP,
-                Arch.ARM32   : uc.arm_const.UC_ARM_REG_SP,
-                Arch.ARM32   : uc.arm_const.UC_ARM_REG_SP,
-                Arch.MIPS16  : uc.mips_const.UC_MIPS_REG_SP,
-                Arch.MIPS32  : uc.mips_const.UC_MIPS_REG_SP,
-                Arch.MIPS64  : uc.mips_const.UC_MIPS_REG_SP,
-                Arch.SPARC32 : uc.sparc_const.UC_SPARC_REG_SP,
-                Arch.SPARC64 : uc.sparc_const.UC_SPARC_REG_SP,
+            sp, ip = {
+                Arch.X8632   : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
+                Arch.X8664   : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
+                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
+                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
+                Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+                Arch.MIPS32  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+                Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+                Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
+                Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
             }[arch]
 
             emulator.mem_map(stack_addr, stack_size * 3)
@@ -193,7 +196,8 @@ class vstack(Unit):
                     self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
             tree = self._intervaltree.IntervalTree()
-            state = EmuState(exe, tree, address, disassembler, stop=self.args.stop, sp_register=sp)
+            state = EmuState(exe, tree, address, disassembler, stop=self.args.stop,
+                sp_register=sp, ip_register=ip)
 
             emulator.hook_add(uc.UC_HOOK_CODE, self._hook_code, user_data=state)
             emulator.hook_add(uc.UC_HOOK_MEM_WRITE, self._hook_mem_write, user_data=state)
@@ -225,7 +229,9 @@ class vstack(Unit):
             if not callstack:
                 state.stack_ceiling = emu.reg_read(state.sp_register)
             state.retaddr = unsigned_value
-            callstack.append(unsigned_value)
+            if not self.args.calls_skip:
+                callstack.append(unsigned_value)
+            return
         else:
             state.retaddr = None
 
@@ -243,12 +249,12 @@ class vstack(Unit):
         def info():
             data = unsigned_value.to_bytes(size, state.executable.byte_order().value)
             indent = '\x20' * 4 * depth
-            padlen = state.executable.pointer_size // 2
+            padlen = state.executable.pointer_size // 4
             h = data.hex().upper()
             p = re.sub('[^!-~]', '.', data.decode('latin1'))
             return (
                 F'emulating [wait={state.waiting:02d}] {indent}{state.fmt(state.previous_address)}: '
-                F'{state.fmt(address)} <- {h:.<{padlen}} {p}')
+                F'{state.fmt(address)} <- {h:_<{padlen}} {p}')
 
         self.log_info(info)
 
@@ -271,22 +277,29 @@ class vstack(Unit):
             callstack = state.callstack
             depth = len(callstack)
             state.previous_address = address
+            retaddr = state.retaddr
+            state.retaddr = None
 
             if address != state.expected_address:
+                if retaddr is not None and self.args.calls_skip:
+                    ip = state.ip_register
+                    sp = state.sp_register
+                    ps = state.executable.pointer_size // 8
+                    emu.reg_write(ip, retaddr)
+                    emu.reg_write(sp, emu.reg_read(sp) + ps)
+                    return
                 if depth and address == callstack[-1]:
                     depth -= 1
                     state.callstack.pop()
                     if depth == 0:
                         state.stack_ceiling = 0
                 state.expected_address = address
-                state.retaddr = None
-            elif state.retaddr is not None:
+            elif retaddr is not None:
                 # The present address was moved to the stack but we did not branch.
                 # This is not quite accurate, of course: We could be calling the
                 # next instruction. However, that sort of code is usually not really
                 # a function call anyway, but rather a way to get the IP.
                 callstack.pop()
-                state.retaddr = None
 
             if waiting > self.args.wait:
                 emu.emu_stop()
