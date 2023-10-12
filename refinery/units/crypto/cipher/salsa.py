@@ -4,7 +4,7 @@ import struct
 
 from Cryptodome.Cipher import Salsa20
 from abc import ABC, abstractmethod
-from typing import List, ByteString, Optional, Iterable, Tuple
+from typing import List, ByteString, Union, Sequence, Optional, Iterable, Tuple
 
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
 from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
@@ -17,6 +17,25 @@ class LatinCipher(ABC):
     _idx_nonce: slice
     _idx_count: slice
     _round_access_pattern: Tuple[Tuple[int, int, int, int], ...]
+
+    @classmethod
+    def FromState(cls, state: Union[Sequence[int], ByteString]):
+        try:
+            state = struct.unpack('<16L', state)
+        except TypeError:
+            pass
+        state: List[int] = list(state)
+        if len(state) != 16:
+            raise ValueError('State must contain 16 DWORDs')
+        key = struct.pack(
+            '<8L', *state[cls._idx_key16], *state[cls._idx_key32])
+        nonce = struct.pack(
+            '<2L', *state[cls._idx_nonce])
+        magic = struct.pack(
+            '<4L', *state[cls._idx_magic])
+        count = int.from_bytes(struct.pack(
+            '<2L', *state[cls._idx_count]), 'little')
+        return cls(key, nonce, magic, counter=count)
 
     def __init__(self, key: ByteString, nonce: ByteString, magic: Optional[ByteString] = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
@@ -67,8 +86,9 @@ class LatinCipher(ABC):
         raise NotImplementedError
 
     def __iter__(self):
+        x = [0] * len(self.state)
         while True:
-            x = list(self.state)
+            x[:] = self.state
             for a, b, c, d in self.rounds * self._round_access_pattern:
                 self.quarter(x, a, b, c, d)
             yield from struct.pack('<16L', *(
@@ -103,16 +123,23 @@ class SalsaCipher(LatinCipher):
 
 class salsa(LatinCipherUnit):
     """
-    Salsa encryption and decryption. The nonce must be 8 bytes long.
+    Salsa encryption and decryption. The nonce must be 8 bytes long. When 64 bytes are provided
+    as the key, this data is interpreted as the initial state box and all other parameters are
+    ignored.
     """
     def keystream(self) -> Iterable[int]:
-        yield from SalsaCipher(
-            self.args.key,
-            self.args.nonce,
-            self.args.magic,
-            self.args.rounds,
-            self.args.offset
-        )
+        key = self.args.key
+        if len(key) == 64:
+            it = SalsaCipher.FromState(key)
+        else:
+            it = SalsaCipher(
+                key,
+                self.args.nonce,
+                self.args.magic,
+                self.args.rounds,
+                self.args.offset,
+            )
+        yield from it
 
 
 class salsa20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(Salsa20)):

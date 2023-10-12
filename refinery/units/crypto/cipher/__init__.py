@@ -361,7 +361,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
 
 class LatinCipherUnit(StreamCipherUnit, abstract=True):
-    key_size = {16, 32}
+    key_size = {16, 32, 64}
     block_size = 1
 
     def __init__(
@@ -371,7 +371,15 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
         offset: Arg.Number('-x', help='Optionally specify the stream index, default is {default}.') = 0,
         rounds: Arg.Number('-r', help='The number of rounds. Has to be an even number.') = 20,
     ):
-        super().__init__(key=key, nonce=nonce, magic=magic, offset=offset, rounds=rounds, stateful=stateful, discard=discard)
+        super().__init__(
+            key=key,
+            nonce=nonce,
+            magic=magic,
+            offset=offset,
+            rounds=rounds,
+            stateful=stateful,
+            discard=discard
+        )
 
 
 class LatinCipherStandardUnit(StandardCipherUnit):

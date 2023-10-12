@@ -46,14 +46,20 @@ class chacha20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20))
 
 class chacha(LatinCipherUnit):
     """
-    ChaCha encryption and decryption. The nonce must be 8 bytes long as currently, only
-    the original Bernstein algorithm is implemented.
+    ChaCha encryption and decryption. The nonce must be 8 bytes long as currently, only the
+    original Bernstein algorithm is implemented. When 64 bytes are provided as the key, this
+    data is interpreted as the initial state box and all other parameters are ignored.
     """
     def keystream(self) -> Iterable[int]:
-        yield from ChaChaCipher(
-            self.args.key,
-            self.args.nonce,
-            self.args.magic,
-            self.args.rounds,
-            self.args.offset
-        )
+        key = self.args.key
+        if len(key) == 64:
+            it = ChaChaCipher.FromState(key)
+        else:
+            it = ChaChaCipher(
+                key,
+                self.args.nonce,
+                self.args.magic,
+                self.args.rounds,
+                self.args.offset,
+            )
+        yield from it
