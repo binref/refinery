@@ -5,6 +5,7 @@ import itertools
 
 from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars
+from refinery.lib.tools import integers_of_slice
 
 
 class bruteforce(Unit):
@@ -68,26 +69,18 @@ class bruteforce(Unit):
         raise ValueError(F'Invalid regular expression: {pattern}')
 
     def process(self, data: bytearray):
-        length: slice = self.args.length
-        format: str = self.args.format
+        format_spec: str = self.args.format
         meta = metavars(data)
         name = self.args.name
         kwargs = {name: None}
 
-        if length.stop is None:
-            it = itertools.count(length.start or 0, length.step or 1)
-            wd = 1
-        else:
-            it = range(length.start or 0, length.stop, length.step or 1)
-            wd = len(str(length.stop))
-
-        for length in it:
-            self.log_info(F'generating {length:0{wd}} digits')
+        for length in integers_of_slice(self.args.length):
+            self.log_info(F'generating {length} digits')
             if not length or length <= 0:
                 raise ValueError(F'Unable to brute force {length} characters.')
             for string in itertools.product(self._alphabet(), repeat=length):
                 string = bytes(string)
-                if format:
-                    string = meta.format_bin(format, self.codec, [string])
+                if format_spec:
+                    string = meta.format_bin(format_spec, self.codec, [string])
                 kwargs[name] = string
                 yield self.labelled(data, **kwargs)

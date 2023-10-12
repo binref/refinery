@@ -362,3 +362,13 @@ def isodate(iso: str) -> Optional[datetime.datetime]:
             return datetime.datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S")
     except ValueError:
         return None
+
+
+def integers_of_slice(s: slice) -> Iterable[int]:
+    """
+    Returns an iterable that iterates the integers in the range given by the input slice.
+    """
+    if s.stop is None:
+        return itertools.count(s.start or 0, s.step or 1)
+    else:
+        return range(s.start or 0, s.stop, s.step or 1)
