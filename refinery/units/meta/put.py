@@ -11,6 +11,18 @@ from refinery.lib.meta import check_variable_name
 _EMPTY = object()
 
 
+def _getbasetype(thing):
+    if not isinstance(thing, type):
+        thing = type(thing)
+    mro = [c for c in thing.__mro__ if c is not object]
+    if mro:
+        thing = mro[~0]
+    try:
+        return thing.__name__
+    except AttributeError:
+        return repr(thing)
+
+
 class put(Unit):
     """
     Can be used to add a meta variable to the processed chunk. Note that meta variables
@@ -39,6 +51,6 @@ class put(Unit):
             else:
                 if not isinstance(value, list):
                     value = list(value)
-        self.log_debug(F'storing {type(value).__name__}:', value)
+        self.log_debug(F'storing {_getbasetype(value)}:', value, clip=True)
         data.meta[self.args.name] = value
         return data
