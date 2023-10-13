@@ -595,6 +595,13 @@ class pemeta(Unit):
             yield from ppjson(tabular=self.args.tabular)._pretty_output(result, indent=4, ensure_ascii=False)
 
     _LCID = {
+        0x0C00: 'Default Custom Locale Language',
+        0x1400: 'Default Custom MUI Locale Language',
+        0x007F: 'Invariant Locale Language',
+        0x0000: 'Neutral Locale Language',
+        0x0800: 'System Default Locale Language',
+        0x1000: 'Unspecified Custom Locale Language',
+        0x0400: 'User Default Locale Language',
         0x0436: 'Afrikaans-South Africa',
         0x041c: 'Albanian-Albania',
         0x045e: 'Amharic-Ethiopia',
