@@ -12,10 +12,10 @@ import uuid
 
 from pathlib import Path
 from zlib import adler32
-from typing import ByteString, Iterable, Callable, List, Union
+from typing import ByteString, Iterable, Callable, List, Union, Optional
 
 from refinery.units import Arg, Unit
-from refinery.lib.meta import metavars, ByteStringWrapper
+from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
 
 
 def pathspec(expression):
@@ -79,6 +79,7 @@ class PathPattern:
 class PathExtractorUnit(Unit, abstract=True):
 
     _custom_path_separator = '/'
+    _current_meta: Optional[LazyMetaOracle]
 
     def __init__(
         self,
@@ -123,6 +124,8 @@ class PathExtractorUnit(Unit, abstract=True):
             **keywords
         )
 
+        self._current_meta = None
+
     @property
     def _patterns(self):
         paths = self.args.paths
@@ -147,21 +150,31 @@ class PathExtractorUnit(Unit, abstract=True):
             ) for path in paths
         ]
 
+    def _format_path(self, path: str, *args, **kwargs) -> str:
+        format = self.args.format
+        meta = self._current_meta
+        if format is None or meta is None:
+            return path
+        try:
+            return meta.format_str(format, self.codec, args, kwargs)
+        except KeyError:
+            self.log_debug('missing variable error while formatting path:', path)
+        return path
+
     @abc.abstractmethod
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
+        self._current_meta = meta = metavars(data)
         results: List[UnpackResult] = list(self.unpack(data))
 
         patterns = self._patterns
-        format = self.args.format
 
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
         root = Path('.')
-        meta = metavars(data)
 
         def normalize(_path: str) -> str:
             path = Path(_path.replace('\\', '/'))
@@ -181,15 +194,6 @@ class PathExtractorUnit(Unit, abstract=True):
                 pass
 
         for result in results:
-            if format is not None:
-                head, sep, tail = result.path.rpartition(self._custom_path_separator)
-                if sep and tail:
-                    try:
-                        tail = meta.format_str(format, self.codec, [result.path], result.meta)
-                    except KeyError:
-                        pass
-                    else:
-                        result.path = F'{head}{sep}{tail}'
             path = normalize(result.path)
             if not path:
                 from refinery.lib.mime import FileMagicInfo

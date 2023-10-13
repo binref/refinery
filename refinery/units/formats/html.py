@@ -150,7 +150,8 @@ class xthtml(PathExtractorUnit):
                 yield UnpackResult(tagpath, inner, **meta)
 
             for k, node in enumerate((n for n in root.children if not n.textual)):
-                yield from tree(node, *path, F'{k}.{node.tag}')
+                item = self._format_path(F'{k}.{node.tag}', tag=node.tag, **node.attributes)
+                yield from tree(node, *path, item)
 
         parser = HTMLTreeParser()
         parser.feed(data.decode(self.codec))

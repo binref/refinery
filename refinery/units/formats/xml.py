@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing import List
 from collections import defaultdict
 
 from refinery.lib.structures import MemoryFile
@@ -25,12 +26,16 @@ class xtxml(PathExtractorUnit):
                 children_by_tag[child.tag].append(child)
             yield UnpackResult('/'.join(path), extract, **node.attributes)
             for tag, children in children_by_tag.items():
+                children: List[xml.XMLNode]
                 if len(children) == 1:
-                    yield from walk(children[0], *path, tag)
+                    child = children[0]
+                    item = self._format_path(tag, tag=child.tag, **child.attributes)
+                    yield from walk(child, *path, tag)
                     continue
                 width = len(F'{len(children):X}')
                 for k, child in enumerate(children):
-                    yield from walk(child, *path, F'{tag}[0x{k:0{width}X}]')
+                    item = self._format_path(F'{tag}[0x{k:0{width}X}]', tag=child.tag, **child.attributes)
+                    yield from walk(child, *path, item)
         root = xml.parse(data)
         name = root.tag or 'xml'
         yield from walk(root, name)
