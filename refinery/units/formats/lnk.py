@@ -4,6 +4,7 @@ from refinery.units.formats import Unit
 from refinery.units.sinks.ppjson import ppjson
 from refinery.lib.structures import MemoryFile
 from refinery.lib.json import JSONEncoderEx
+from refinery.lib.tools import NoLogging
 
 
 class lnk(Unit):
@@ -21,7 +22,8 @@ class lnk(Unit):
         super().__init__(tabular=tabular)
 
     def process(self, data):
-        parsed = self._LnkParse3.lnk_file(MemoryFile(data)).get_json()
+        with NoLogging(NoLogging.Mode.ALL):
+            parsed = self._LnkParse3.lnk_file(MemoryFile(data)).get_json()
         with JSONEncoderEx as encoder:
             pp = ppjson(tabular=self.args.tabular)
             yield from pp._pretty_output(
