@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import List, TYPE_CHECKING
+from typing import List, Dict, Any, TYPE_CHECKING
 
 import re
+import os
 
 from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, Executable, ExecutableCodeBlob
@@ -53,7 +54,9 @@ class vstack(Unit):
     The unit emulates instructions at a given address in the input executable (PE/ELF/MachO) and
     extracts data patches that are written to the stack during emulation. Emulation is halted as
     soon as a certain number of instructions has not performed any memory writes, or when an error
-    occurs.
+    occurs. By default, most registers are set to the current location in the emulated stack.
+    However, if you want to initialize certain registers differently, you can set an environment
+    variable to the desired value.
     """
 
     @Unit.Requires('intervaltree')
@@ -130,22 +133,43 @@ class vstack(Unit):
         stack_addr = self._find_stack_location(exe)
         image = memoryview(data)
         disassembler = self._capstone.Cs(*self._cs_arch(arch))
+        register_values = {}
+
+        sp, ip = {
+            Arch.X8632   : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
+            Arch.X8664   : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
+            Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
+            Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
+            Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+            Arch.MIPS32  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+            Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+            Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
+            Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
+        }[arch]
+
+        for module in [uc.x86_const, uc.arm_const, uc.mips_const, uc.sparc_const]:
+            md: Dict[str, Any] = module.__dict__
+            for name, register in md.items():
+                try:
+                    u, *_, kind, name = name.split('_')
+                except Exception:
+                    continue
+                if kind != 'REG' or u != 'UC':
+                    continue
+                for _n, value in os.environ.items():
+                    if _n.upper() != name:
+                        continue
+                    try:
+                        value = int(value, 0)
+                    except Exception:
+                        continue
+                    else:
+                        register_values[register] = value
+                        break
 
         for address in self.args.address:
 
             emulator = uc.Uc(*self._uc_arch(arch))
-
-            sp, ip = {
-                Arch.X8632   : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
-                Arch.X8664   : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
-                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
-                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
-                Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-                Arch.MIPS32  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-                Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-                Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
-                Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
-            }[arch]
 
             emulator.mem_map(stack_addr, stack_size * 3)
             emulator.reg_write(sp, stack_addr + 2 * stack_size)
@@ -180,6 +204,9 @@ class vstack(Unit):
                     uc.x86_const.UC_X86_REG_R15,
                 ]:
                     emulator.reg_write(reg, stack_addr + stack_size)
+
+            for reg, value in register_values.items():
+                emulator.reg_write(reg, value)
 
             for segment in exe.segments():
                 pmem = segment.physical
