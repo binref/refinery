@@ -136,7 +136,7 @@ class dnfields(PathExtractorUnit):
                 if fn_index is not None:
                     fn_name = tables.MemberRef[fn_index].Name
                     if fn_name != 'GetBytes':
-                        self.log_warn(F'skipping string assignment passing through call to {fn_name}')
+                        self.log_info(F'skipping string assignment passing through call to {fn_name}')
                         continue
                 k = int.from_bytes(md['token'], 'little')
                 values.add(header.meta.Streams.US[k].encode(self.codec))
