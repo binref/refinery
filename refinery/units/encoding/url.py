@@ -19,25 +19,30 @@ class url(Unit):
         super().__init__(plus=plus, hex=hex)
 
     def process(self, data):
+        if self.args.plus:
+            data = data.replace(B'+', B' ')
         data = re.sub(
             B'\\%([0-9a-fA-F]{2})',
             lambda m: bytes((int(m[1], 16),)),
             data
         )
-        if self.args.plus:
-            data = data.replace(B'+', B' ')
         return data
 
     def reverse(self, data):
-        if self.args.plus:
-            data = data.replace(B' ', B'+')
-        if not self.args.hex:
-            return re.sub(B'[^a-zA-Z0-9_.-~\\/]', lambda m: B'%%%02X' % ord(m[0]), data)
-        result = bytearray(len(data) * 3)
-        offset = 0
-        for byte in data:
-            result[offset] = B'%'[0]
-            offset += 1
-            result[offset:offset + 2] = B'%02X' % byte
-            offset += 2
-        return result
+        if self.args.hex:
+            result = bytearray(len(data) * 3)
+            offset = 0
+            for byte in data:
+                result[offset + 0] = 0x25
+                offset += 1
+                result[offset:offset + 2] = B'%02X' % byte
+                offset += 2
+            return result
+        elif self.args.plus:
+            def replace(m: re.Match[bytes]):
+                c = m[0][0]
+                return b'+' if c == 0x20 else B'%%%02X' % c
+        else:
+            def replace(m: re.Match[bytes]):
+                return B'%%%02X' % m[0][0]
+        return re.sub(B'[^a-zA-Z0-9_.-~\\/]', replace, data)
