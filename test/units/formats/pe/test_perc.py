@@ -19,11 +19,13 @@ class TestPEResourceExtractor(TestUnitBase):
             '{!2*3&^G^4;CoYD0puPd1Cft_00000E-2b@59d+q00Gkk;0gc$a@d!7vBYQl0ssI200dcD'
         ))
         unit = self.load(list=True)
-        result = unit(data).split(B'\n')
+        result = data | unit | []
         result.sort(reverse=True)
         self.assertSequenceEqual(result, [B'STRING/7/7', B'STRING/7/1033'])
 
+        self.assertSetEqual({c['lcid'] for c in result}, {b'German (Austria)', b'English (United States)'})
+
         unit = self.load('*1033')
-        result = unit(data)
+        result = data | unit | bytearray
         result = result[12:44]
         self.assertEqual(result, 'Binary Refinery!'.encode('UTF-16LE'))
