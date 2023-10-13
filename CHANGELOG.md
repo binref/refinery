@@ -1,5 +1,14 @@
 # Binary Refinery Changelog
 
+## Version 0.6.14
+- The `trim` unit can now remove padding and also perform case-insensitive trimming.
+- The `ngrams` and `bruteforce` unit were added for simple brute forcing tasks.
+- The `vstack` unit can now execute shellcode blobs. It also gained the ability to skip calls entirely, and registers can now be initialized by using shell environment variables.
+- The `salsa` and `chacha` units can now be initialized with a 64-byte "key" which represents the entire initial state matrix.
+- The `perc` unit now extracts resource languages.
+- The `yara:` handler for regular expression arguments now has the even shorter shortcut `Y:` because I use it so much.
+- A bug was fixed in the `url` unit which incorrectly decoded when using the `--plus` switch.
+
 ## Version 0.6.13 - bugfix release
 
 ## Version 0.6.12
