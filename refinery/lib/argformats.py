@@ -1265,12 +1265,13 @@ class DelayedRegexpArgument(DelayedArgument):
 
         return expression.encode('latin-1')
 
-    @handler.register('yara')
+    @handler.register('yara', 'Y')
     def yara(self, pattern: bytes) -> bytes:
         """
-        The handler `yara:pattern` converts YARA syntax wildcard hexadecimal expressions
-        into regular expressions. For example, `D?` is translated to `[\\xD0-\\xDF]`, the
-        expression `[2-6]` becomes `.{2,6}`, and `?D` becomes the following substring:
+        The handler `yara:pattern` or `Y:pattern` converts YARA syntax wildcard hexadecimal
+        expressions into standard regular expressions. For example, the string `D?` is
+        translated to `[\\xD0-\\xDF]`, the expression `[2-6]` becomes `.{2,6}`, and `?D`
+        becomes the following substring:
         ```
         [\\x0D\\x1D\\x2D\\x3D\\x4D\\x5D\\x6D\\x7D\\x8D\\x9D\\xAD\\xBD\\xCD\\xDD\\xED\\xFD]
         ```
