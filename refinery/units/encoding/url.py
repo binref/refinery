@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import re
 
+from urllib.parse import unquote_to_bytes
 from refinery.units import Arg, Unit
 
 
@@ -21,12 +22,7 @@ class url(Unit):
     def process(self, data):
         if self.args.plus:
             data = data.replace(B'+', B' ')
-        data = re.sub(
-            B'\\%([0-9a-fA-F]{2})',
-            lambda m: bytes((int(m[1], 16),)),
-            data
-        )
-        return data
+        return unquote_to_bytes(bytes(data))
 
     def reverse(self, data):
         if self.args.hex:
