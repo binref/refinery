@@ -15,6 +15,7 @@ from os import devnull as DEVNULL
 from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
+from uuid import uuid4
 
 from macholib.MachO import load_command, MachO, MachOHeader
 from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
@@ -146,26 +147,23 @@ class ArchItem(NamedTuple):
     id: int
     pointer_size: int
 
-
-def _arch_item(pointer_size):
-    counter = getattr(_arch_item, 'counter', 0)
-    result = ArchItem(counter, pointer_size)
-    _arch_item.counter = counter + 1
-    return result
+    @classmethod
+    def New(cls, pointer_size: int):
+        return cls(uuid4(), pointer_size)
 
 
 class Arch(ArchItem, Enum):
-    X8632 = _arch_item(32)
-    X8664 = _arch_item(64)
-    ARM32 = _arch_item(32)
-    ARM64 = _arch_item(64)
-    MIPS16 = _arch_item(16)
-    MIPS32 = _arch_item(32)
-    MIPS64 = _arch_item(64)
-    PPC32 = _arch_item(32)
-    PPC64 = _arch_item(64)
-    SPARC32 = _arch_item(32)
-    SPARC64 = _arch_item(64)
+    X8632 = ArchItem.New(32)
+    X8664 = ArchItem.New(64)
+    ARM32 = ArchItem.New(32)
+    ARM64 = ArchItem.New(64)
+    MIPS16 = ArchItem.New(16)
+    MIPS32 = ArchItem.New(32)
+    MIPS64 = ArchItem.New(64)
+    PPC32 = ArchItem.New(32)
+    PPC64 = ArchItem.New(64)
+    SPARC32 = ArchItem.New(32)
+    SPARC64 = ArchItem.New(64)
 
 
 class LT(str, Enum):
