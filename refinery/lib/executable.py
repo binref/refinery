@@ -10,6 +10,8 @@ The provided interface is the same for all executables. It powers the following 
 """
 from __future__ import annotations
 
+import sys
+
 from typing import TYPE_CHECKING, NamedTuple
 from os import devnull as DEVNULL
 from abc import ABC, abstractmethod
@@ -306,7 +308,10 @@ class Executable(ABC):
 
     @property
     def data(self) -> memoryview:
-        return memoryview(self._data).toreadonly()
+        view = memoryview(self._data)
+        if sys.version_info >= (3, 8):
+            view = view.toreadonly()
+        return view
 
     @property
     def pointer_size(self) -> int:
