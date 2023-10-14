@@ -153,8 +153,8 @@ class ArchItem(NamedTuple):
 
 
 class Arch(ArchItem, Enum):
-    X8632 = ArchItem.New(32)
-    X8664 = ArchItem.New(64)
+    X32 = ArchItem.New(32)
+    X64 = ArchItem.New(64)
     ARM32 = ArchItem.New(32)
     ARM64 = ArchItem.New(64)
     MIPS16 = ArchItem.New(16)
@@ -382,7 +382,7 @@ class ExecutableCodeBlob(Executable):
     _byte_order: BO
     _arch: Arch
 
-    def __init__(self, data, base=None, arch: Arch = Arch.X8632, byte_order: BO = BO.LE):
+    def __init__(self, data, base=None, arch: Arch = Arch.X32, byte_order: BO = BO.LE):
         super().__init__(None, data, base)
         self._byte_order = byte_order
         self._arch = arch
@@ -473,8 +473,8 @@ class ExecutablePE(Executable):
         arch = MACHINE_TYPE[arch]
         try:
             return {
-                'IMAGE_FILE_MACHINE_I386'   : Arch.X8632,
-                'IMAGE_FILE_MACHINE_AMD64'  : Arch.X8664,
+                'IMAGE_FILE_MACHINE_I386'   : Arch.X32,
+                'IMAGE_FILE_MACHINE_AMD64'  : Arch.X64,
                 'IMAGE_FILE_MACHINE_ARM'    : Arch.ARM32,
                 'IMAGE_FILE_MACHINE_THUMB'  : Arch.ARM32,
                 'IMAGE_FILE_MACHINE_ARMNT'  : Arch.ARM64,
@@ -550,8 +550,8 @@ class ExecutableELF(Executable):
             return {
                 'EM_SPARC'   : Arch.SPARC32,
                 'EM_SPARCV9' : Arch.SPARC64,
-                'EM_386'     : Arch.X8632,
-                'EM_X86_64'  : Arch.X8664,
+                'EM_386'     : Arch.X32,
+                'EM_X86_64'  : Arch.X64,
                 'EM_MIPS'    : Arch.MIPS32,
                 'EM_PPC'     : Arch.PPC32,
                 'EM_PPC64'   : Arch.PPC64,
@@ -632,8 +632,8 @@ class ExecutableMachO(Executable):
             arch = F'UNKNOWN(0x{cputype:X})'
         try:
             return {
-                'X86'       : Arch.X8632,
-                'X86_64'    : Arch.X8664,
+                'X86'       : Arch.X32,
+                'X86_64'    : Arch.X64,
                 'ARM'       : Arch.ARM32,
                 'SPARC'     : Arch.SPARC32,
                 'POWERPC'   : Arch.PPC32,

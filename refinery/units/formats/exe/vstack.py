@@ -84,7 +84,7 @@ class vstack(Unit):
         *address: Arg.Number(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
-        arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X8632,
+        arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
         timeout: Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.') = None,
         patch_range: Arg.Bounds('-p', metavar='MIN:MAX',
             help='Extract only patches that are in the given range, default is {default}.') = slice(5, None),
@@ -139,8 +139,8 @@ class vstack(Unit):
         register_values = {}
 
         sp, ip = {
-            Arch.X8632   : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
-            Arch.X8664   : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
+            Arch.X32   : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
+            Arch.X64   : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
             Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
             Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
             Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
@@ -177,7 +177,7 @@ class vstack(Unit):
             emulator.mem_map(stack_addr, stack_size * 3)
             emulator.reg_write(sp, stack_addr + 2 * stack_size)
 
-            if arch is Arch.X8632:
+            if arch is Arch.X32:
                 for reg in [
                     uc.x86_const.UC_X86_REG_EAX,
                     uc.x86_const.UC_X86_REG_EBX,
@@ -188,7 +188,7 @@ class vstack(Unit):
                     uc.x86_const.UC_X86_REG_EBP,
                 ]:
                     emulator.reg_write(reg, stack_addr + stack_size)
-            if arch is Arch.X8664:
+            if arch is Arch.X64:
                 for reg in [
                     uc.x86_const.UC_X86_REG_RAX,
                     uc.x86_const.UC_X86_REG_RBX,
@@ -361,8 +361,8 @@ class vstack(Unit):
     def _uc_arch(self, arch: Arch) -> Tuple[int, int]:
         uc = self._unicorn
         return {
-            Arch.X8632   : (uc.UC_ARCH_X86,   uc.UC_MODE_32),     # noqa
-            Arch.X8664   : (uc.UC_ARCH_X86,   uc.UC_MODE_64),     # noqa
+            Arch.X32   : (uc.UC_ARCH_X86,   uc.UC_MODE_32),     # noqa
+            Arch.X64   : (uc.UC_ARCH_X86,   uc.UC_MODE_64),     # noqa
             Arch.ARM32   : (uc.UC_ARCH_ARM,   uc.UC_MODE_ARM),    # noqa
             Arch.ARM64   : (uc.UC_ARCH_ARM,   uc.UC_MODE_THUMB),  # noqa
             Arch.MIPS16  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_16),     # noqa
@@ -377,8 +377,8 @@ class vstack(Unit):
     def _cs_arch(self, arch: Arch) -> Tuple[int, int]:
         cs = self._capstone
         return {
-            Arch.X8632   : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
-            Arch.X8664   : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa
+            Arch.X32   : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
+            Arch.X64   : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa
             Arch.ARM32   : (cs.CS_ARCH_ARM,   cs.CS_MODE_ARM),    # noqa
             Arch.ARM64   : (cs.CS_ARCH_ARM,   cs.CS_MODE_THUMB),  # noqa
             Arch.MIPS16  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_16),     # noqa
