@@ -71,7 +71,7 @@ class xtp(PatternExtractor):
             ), help=(
                 'Choose the pattern to extract. The unit uses {{default}} by default. Use an '
                 'asterix character to select all available patterns. The available patterns '
-                'are: {}'.format(', '.join(p.dashname for p in indicators))
+                'are: {}'.format(', '.join(p.display for p in indicators))
             )
         ),
         filter: Arg('-f', dest='filter', action='count',
@@ -86,7 +86,7 @@ class xtp(PatternExtractor):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
 
         patterns = {
-            p for name in pattern for p in indicators if fnmatch(p.dashname, name)
+            p for name in pattern for p in indicators if fnmatch(p.display, name)
         }
         # if indicators.hostname in patterns:
         #     patterns.remove(indicators.hostname)

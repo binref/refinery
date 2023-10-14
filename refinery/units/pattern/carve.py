@@ -9,7 +9,7 @@ class carve(PatternExtractor):
     Extracts patches of data in particular formats from the input.
     """
     def __init__(
-        self, format: Arg.Choice(choices=[p.dashname for p in formats], metavar='format',
+        self, format: Arg.Choice(choices=[p.display for p in formats], metavar='format',
             help='Specify one of the following formats: {choices}'),
         unique: Arg.Switch('-q', help='Yield every match only once.') = False,
         decode: Arg.Switch('-d', help='Automatically decode known patterns.') = False,

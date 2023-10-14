@@ -12,6 +12,7 @@ import os
 import sys
 import io
 import warnings
+import re
 
 from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar
 from math import log
@@ -372,3 +373,29 @@ def integers_of_slice(s: slice) -> Iterable[int]:
         return itertools.count(s.start or 0, s.step or 1)
     else:
         return range(s.start or 0, s.stop, s.step or 1)
+
+
+def normalize_word_separators(words: str, unified_separator: str, strip: bool = True):
+    """
+    For a sequence of words separated by whitespace, punctuation, slashes, dashes or underscores,
+    normalize all occurrences of one or more of these seprators to one given symbol. Leading and
+    trailing occurrences of separators are removed.
+    """
+    normalized = re.sub('[-\\s_.,;:/\\\\]+', unified_separator, words)
+    if strip:
+        normalized = normalized.strip(unified_separator)
+    return normalized
+
+
+def normalize_to_display(words: str, strip: bool = True):
+    """
+    Normalizes all separators to dashes.
+    """
+    return normalize_word_separators(words, '-', strip)
+
+
+def normalize_to_identifier(words: str, strip: bool = True):
+    """
+    Normalizes all separators to underscores.
+    """
+    return normalize_word_separators(words, '_', strip)

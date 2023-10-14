@@ -115,7 +115,7 @@ from typing import TYPE_CHECKING, get_type_hints
 from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 
 from refinery.lib.frame import Chunk
-from refinery.lib.tools import isbuffer, infinitize, one
+from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
 from refinery.lib.meta import is_valid_variable_name, metavars
 
 if TYPE_CHECKING:
@@ -381,7 +381,7 @@ class DelayedArgumentDispatch:
         self.units = {}
 
     def _get_unit(self, name: str, *args) -> Unit:
-        name = name.replace('-', '_')
+        name = normalize_to_identifier(name)
         uhash = hash((name,) + args)
         if uhash in self.units:
             return self.units[uhash]

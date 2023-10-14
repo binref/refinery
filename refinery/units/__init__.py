@@ -194,13 +194,35 @@ from argparse import (
     ZERO_OR_MORE
 )
 
-from refinery.lib.argformats import pending, manifest, regexp, multibin, numseq, number, sliceobj, VariableMissing, ParserVariableMissing
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
-from refinery.lib.tools import documentation, isstream, lookahead, autoinvoke, one, skipfirst, isbuffer
 from refinery.lib.frame import Framed, Chunk
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr, Singleton
+
+from refinery.lib.argformats import (
+    manifest,
+    multibin,
+    number,
+    numseq,
+    ParserVariableMissing,
+    pending,
+    regexp,
+    sliceobj,
+    VariableMissing,
+)
+
+from refinery.lib.tools import (
+    autoinvoke,
+    documentation,
+    isbuffer,
+    isstream,
+    lookahead,
+    normalize_to_display,
+    normalize_to_identifier,
+    one,
+    skipfirst,
+)
 
 
 ByteIO = MemoryFile[ByteStr]
@@ -312,6 +334,8 @@ class Arg(Argument):
     class delete: pass
     class omit: pass
 
+    args: List[str]
+
     def __init__(
         self, *args: str,
             action   : Union[omit, str]           = omit, # noqa
@@ -377,14 +401,14 @@ class Arg(Argument):
         if isinstance(value, str):
             try: return cls[value]
             except KeyError: pass
-            needle = value.upper().replace('-', '_')
-            for item in cls:
-                if item.name.upper() == needle:
-                    return item
+            needle = normalize_to_identifier(value).casefold()
+            for item in cls.__members__:
+                if item.casefold() == needle:
+                    return cls[item]
         try:
             return cls(value)
         except Exception as E:
-            choices = ', '.join([option.name for option in cls])
+            choices = ', '.join(normalize_to_display(m) for m in cls.__members__)
             raise ValueError(F'Could not transform {value} into {cls.__name__}; the choices are: {choices}') from E
 
     @classmethod
@@ -528,9 +552,9 @@ class Arg(Argument):
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
         """
-        cnames = [c.name.replace('_', '-') for c in choices]
+        cnames = [normalize_to_display(c).casefold() for c in choices.__members__]
         metavar = metavar or choices.__name__
-        return cls(*args, group=group, help=help, metavar=metavar, dest=dest, choices=cnames, type=str)
+        return cls(*args, group=group, help=help, metavar=metavar, dest=dest, choices=cnames, type=str.casefold)
 
     @classmethod
     def Choice(
@@ -567,7 +591,7 @@ class Arg(Argument):
         except KeyError:
             for a in self.args:
                 if a.startswith('--'):
-                    dest = a.lstrip('-').replace('-', '_')
+                    dest = normalize_to_identifier(a)
                     if dest.isidentifier():
                         return dest
             raise AttributeError(F'The argument with these values has no destination: {self!r}')
@@ -594,7 +618,7 @@ class Arg(Argument):
                 return sliceobj
             return annotation_type
 
-        name = pt.name.replace('_', '-')
+        name = normalize_to_display(pt.name, False)
         default = pt.default
         guessed_pos_args = []
         guessed_kwd_args = dict(dest=pt.name)
@@ -851,7 +875,7 @@ class Executable(ABCMeta):
                 if 'default' in known.kwargs:
                     known.kwargs.setdefault('nargs', OPTIONAL)
             elif not any(len(a) > 2 for a in known.args):
-                flagname = known.destination.replace('_', '-')
+                flagname = normalize_to_display(known.destination, False)
                 known.args.append(F'--{flagname}')
             action = known.kwargs.get('action', 'store')
             if action.startswith('store_'):
@@ -1013,7 +1037,7 @@ class Executable(ABCMeta):
 
     @property
     def name(cls) -> str:
-        return cls.__name__.strip('_').replace('_', '-')
+        return normalize_to_display(cls.__name__)
 
     @property
     def logger(cls) -> Logger:

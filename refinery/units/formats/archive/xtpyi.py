@@ -21,7 +21,7 @@ from importlib.util import MAGIC_NUMBER
 from refinery.units.formats.archive import Arg, ArchiveUnit
 from refinery.units.pattern.carve import carve
 from refinery.lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
-from refinery.lib.tools import NoLogging
+from refinery.lib.tools import NoLogging, normalize_word_separators
 
 from Cryptodome.Cipher import AES
 
@@ -121,7 +121,7 @@ def decompile_buffer(buffer: Union[Code, ByteString], file_name: Optional[str] =
             instructions = list(main._xdis.std.Bytecode(code.container))
             width_offset = max(len(str(i.offset)) for i in instructions)
             for i in instructions:
-                opname = i.opname.replace('_', '.').lower()
+                opname = normalize_word_separators(i.opname, '.').lower()
                 offset = F'{i.offset:0{width_offset}d}'
                 output.write(F'# {offset:>5} {opname:<25} {i.argrepr}\n')
         output.write('\n')

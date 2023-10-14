@@ -10,7 +10,7 @@ import re
 from typing import Optional
 
 from refinery.lib.patterns.tlds import tlds
-from refinery.lib.tools import cached_property
+from refinery.lib.tools import cached_property, normalize_to_identifier, normalize_to_display
 
 
 class pattern:
@@ -121,8 +121,8 @@ class PatternEnum(enum.Enum):
         raise AttributeError
 
     @property
-    def dashname(self):
-        return self.name.replace('_', '-')
+    def display(self):
+        return normalize_to_display(self.name)
 
 
 _TLDS = R'(?i:{possible_tld})(?!(?:{dealbreakers}))'.format(
@@ -353,7 +353,7 @@ class formats(PatternEnum):
 
     @classmethod
     def from_dashname(cls, key):
-        return getattr(cls, key.replace('-', '_'))
+        return getattr(cls, normalize_to_identifier(key))
 
 
 class wallets(PatternEnum):
@@ -422,7 +422,7 @@ class indicators(PatternEnum):
 
     @classmethod
     def from_dashname(cls, key):
-        return getattr(cls, key.replace('-', '_'))
+        return getattr(cls, normalize_to_identifier(key))
 
 
 class defanged(PatternEnum):
