@@ -81,6 +81,10 @@ class INF(metaclass=Singleton):
     def __div__(self, other): return self
     def __mod__(self, other): return self
     def __pow__(self, other): return self
+    def __iadd__(self, other): return self
+    def __isub__(self, other): return self
+    def __imul__(self, other): return self
+    def __imod__(self, other): return self
     def __abs__(self): return None
     def __repr__(self): return '∞'
     def __truediv__(self, other): return self

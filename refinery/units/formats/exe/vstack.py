@@ -8,7 +8,7 @@ import os
 
 from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, Executable, ExecutableCodeBlob
-from refinery.lib.types import bounds
+from refinery.lib.types import bounds, INF
 
 from dataclasses import dataclass, field
 
@@ -33,6 +33,7 @@ class EmuState:
     sp_register: int = 0
     ip_register: int = 0
     stack_ceiling: int = 0
+    ticks: int = INF
 
     def disassemble(self, address: int, size: int):
         if self.disassembler is None:
@@ -82,8 +83,9 @@ class vstack(Unit):
         self,
         *address: Arg.Number(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
-        base: Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
+        base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X8632,
+        timeout: Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.') = None,
         patch_range: Arg.Bounds('-p', metavar='MIN:MAX',
             help='Extract only patches that are in the given range, default is {default}.') = slice(5, None),
         write_range: Arg.Bounds('-n', metavar='MIN:MAX',
@@ -100,6 +102,7 @@ class vstack(Unit):
             stop=stop,
             base=base,
             arch=Arg.AsOption(arch, Arch),
+            timeout=timeout,
             patch_range=patch_range,
             write_range=write_range,
             wait=wait,
@@ -226,6 +229,11 @@ class vstack(Unit):
             state = EmuState(exe, tree, address, disassembler, stop=self.args.stop,
                 sp_register=sp, ip_register=ip)
 
+            timeout = self.args.timeout
+            if timeout is not None:
+                self.log_info(F'setting timeout of {timeout} steps')
+                state.ticks = timeout
+
             emulator.hook_add(uc.UC_HOOK_CODE, self._hook_code, user_data=state)
             emulator.hook_add(uc.UC_HOOK_MEM_WRITE, self._hook_mem_write, user_data=state)
             emulator.hook_add(uc.UC_HOOK_INSN_INVALID, self._hook_insn_error, user_data=state)
@@ -296,7 +304,8 @@ class vstack(Unit):
         return True
 
     def _hook_code(self, emu: Uc, address: int, size: int, state: EmuState):
-        if address == state.stop:
+        state.ticks -= 1
+        if address == state.stop or state.ticks == 0:
             emu.emu_stop()
             return False
         try:
