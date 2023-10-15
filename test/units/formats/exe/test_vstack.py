@@ -25,6 +25,6 @@ class TestVStack(TestUnitBase):
             B'     lArEonFlA     rEonFlA      rEonFlArEonFlA                   rEonFlA \n'
         )
         dc = data | self.load_pipeline('''
-            resub | trim -ui flareon | b64 | zl | vstack -p9: -ax64 [| trim h:00 | pop key | xor eat:key ]
+            resub | trim -ui flareon | b64 | zl | vstack -p9: -ax64 [| sorted -a size | trim h:00 | pop key | xor eat:key ]
         ''') | bytes
         self.assertEqual(dc, b'Patience is rewarded sooner or later - but usually later.')
