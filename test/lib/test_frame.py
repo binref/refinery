@@ -124,3 +124,32 @@ class TestFraming(TestBase):
     def test_units_can_overwrite_parent_metavars(self):
         out, = load_pipeline('emit ABCD [| rex .... | rex B ]')
         self.assertEqual(out['offset'], 1)
+
+    def test_history_saves_space(self):
+        from refinery import Unit
+        from refinery.lib.meta import LazyMetaOracle
+
+        class inspector(Unit):
+            test = self
+
+            def process(self, data):
+                meta: LazyMetaOracle = data.meta
+                stack = meta.history['x']
+                occupations = sum(1 for lnk, value in stack if not lnk and value)
+                self.test.assertLessEqual(occupations, 2)
+                self.test.assertEqual(stack[0], (False, B'X' * 1000))
+                self.test.assertEqual(stack[1], (False, B'SHORTSTRING'))
+
+        x = load_pipeline('''
+              nop               [
+            | put x rep[1000]:X  [
+            | put x SHORTSTRING   [
+            | put x rep[1000]:X    [
+            | put x SHORTSTRING     [
+            | put x rep[1000]:X      [
+            | eat x                   [
+            | inspector          ]]]]]]
+            | cfmt {x}          ]
+        ''')(B'')
+
+        self.assertEqual(x, B'X' * 1000)

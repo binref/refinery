@@ -63,22 +63,26 @@ class TestMeta(TestBase):
         spy.chunks.clear()
         B'' | U('put x alpha [') | U('nop [[') | U('put x alpha') | spy | U('nop ]]]') | None
         self.assertEqual(len(spy.chunks), 1)
-        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', None, None]})
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [
+            (False, b'alpha'), (True, 0), (True, 0)]})
 
         spy.chunks.clear()
         B'' | U('put x alpha [') | U('nop [[') | U('put x alpha') | U('mvg ]') | spy | U('nop ]]') | None
         self.assertEqual(len(spy.chunks), 1)
-        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', None]})
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [
+            (False, b'alpha'), (True, 0)]})
 
         spy.chunks.clear()
         B'' | U('put x alpha [') | U('nop [[') | U('put x beta') | spy | U('nop ]]]') | None
         self.assertEqual(len(spy.chunks), 1)
-        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', None, b'beta']})
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [
+            (False, b'alpha'), (True, 0), (False, b'beta')]})
 
         spy.chunks.clear()
         B'' | U('put x alpha [') | U('nop [[') | U('put x beta') | U('mvg ]') | spy | U('nop ]]') | None
         self.assertEqual(len(spy.chunks), 1)
-        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [b'alpha', b'beta']})
+        self.assertDictEqual(spy.chunks[0].meta.history, {'x': [
+            (False, b'alpha'), (False, b'beta')]})
 
     def test_regression_nulled_history(self):
         pl = L('emit FOO [[| put b [| emit BAR ]| rex . | swap k | swap b | cfmt {}/{k} | sep / ]]')

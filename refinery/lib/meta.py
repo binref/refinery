@@ -121,7 +121,7 @@ import os
 
 from io import StringIO
 from urllib.parse import quote_from_bytes, unquote_to_bytes
-from typing import Callable, Dict, Iterable, Optional, ByteString, Union, TYPE_CHECKING
+from typing import Callable, Dict, List, Tuple, Any, Iterable, Optional, ByteString, Union, TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
@@ -413,7 +413,11 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     chunk: ByteString
     cache: Dict[str, Union[str, int, float]]
 
-    def __init__(self, chunk: ByteString, scope: Optional[int] = 1, seed: Optional[Dict[str, list]] = None):
+    history: Dict[str, List[Tuple[bool, Any]]]
+    current: Dict[str, Any]
+    updated: Dict[str, bool]
+
+    def __init__(self, chunk: ByteString, scope: Optional[int] = 1, seed: Optional[Dict[str, List[Tuple[bool, Any]]]] = None):
         self.ghost = False
         self.chunk = chunk
         self.cache = {}
@@ -428,11 +432,15 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     raise TypeError(R'Incorrect type in variable scope history.')
                 if len(stack) != scope:
                     raise ValueError(F'History item had length {len(stack)}, but scope was specified as {scope}.')
-                for value in reversed(stack):
+                for k, v in enumerate(stack):
+                    stack[k] = tuple(v)
+                for is_link, value in reversed(stack):
+                    while is_link:
+                        is_link, value = stack[value]
                     if value is not None:
                         self.current[key] = self.autowrap(key, value)
                         self.updated[key] = False
-                        break
+                    break
                 else:
                     raise ValueError(R'History item was all None.')
             self.history = seed
@@ -469,7 +477,11 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             try:
                 derivation = self.derivations[key]
             except KeyError:
-                pass
+                try:
+                    self.updated.setdefault(key, False)
+                    self.current.setdefault(key, parent.current[key])
+                except KeyError:
+                    pass
             else:
                 if derivation.costly and len(self.chunk) >= 0x1000:
                     continue
@@ -493,24 +505,29 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             stack = self.history[key]
         except KeyError:
             return scope
-        for k, v in enumerate(reversed(stack)):
-            if v is not None:
-                if v == value:
-                    return scope - k
-                break
+        for k, (is_link, v) in enumerate(reversed(stack)):
+            while is_link:
+                is_link, v = stack[v]
+            if v == value:
+                continue
+            return scope - k + 1
         return scope
 
-    def serialize(self, scope: int):
+    def serialize(self, scope: int) -> Dict[str, List[Tuple[bool, Any]]]:
         if not scope:
             return {}
         current_scope = self.scope
-        serializable = {
-            key: list(stack) for key, stack in self.history.items()
-        }
+        if current_scope == 0:
+            padding = [(True, 0)] * (scope - 1)
+            return {key: [(False, value)] + padding for key, value in self.current.items()}
+        serializable = {key: list(stack) for key, stack in self.history.items()}
         if scope > current_scope:
             padding = scope - current_scope
             for key, stack in serializable.items():
-                stack.extend(itertools.repeat(None, padding))
+                stack.extend(itertools.repeat((True, (current_scope - 1)), padding))
+        for key, stack in serializable.items():
+            if key not in self.current:
+                stack[~0] = (False, None)
         if scope < current_scope:
             for key, stack in serializable.items():
                 del stack[scope:]
@@ -521,33 +538,36 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 spot = self.rescope[key]
             except KeyError:
                 spot = current_scope
+            finally:
+                link = None
             if spot == current_scope and not self.updated[key]:
                 continue
             if spot > scope:
                 continue
             if spot < 0:
                 raise RuntimeError('computed a negative spot for variable placement')
-            last_scope = None
-            last_value = None
             try:
                 stack = serializable[key]
             except KeyError:
-                serializable[key] = stack = [None] * scope
+                serializable[key] = stack = [(False, None)] * scope
             else:
-                for k, v in enumerate(reversed(stack)):
-                    if v is not None:
-                        last_scope = scope - k
-                        last_value = v
+                for k, (is_link, v) in enumerate(stack):
+                    if k >= spot:
                         break
-            if value == last_value:
-                spot = max(scope, last_scope)
-            stack[spot - 1] = value
-            unpadded_range = min(scope, current_scope)
-            if spot < unpadded_range:
-                stack[spot:unpadded_range] = itertools.repeat(None, unpadded_range - spot)
+                    while is_link:
+                        k, is_link, v = v, *stack[v]
+                    if v == value:
+                        link = k
+                        break
+            if link is not None:
+                stack[spot - 1] = (True, link)
+            else:
+                stack[spot - 1] = (False, value)
+            for k in range(spot, scope):
+                stack[k] = (True, spot - 1)
         vanishing_variables = []
         for key, stack in serializable.items():
-            if all(v is None for v in stack):
+            if all(v is None for lnk, v in stack if not lnk):
                 vanishing_variables.append(key)
         for key in vanishing_variables:
             del serializable[key]
@@ -799,12 +819,12 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         self.current[key] = new
         try:
             stack = self.history[key]
+            lnk, old = stack[-1]
         except KeyError:
             self.updated[key] = True
         else:
-            for old in reversed(stack):
-                if old is not None:
-                    break
+            while lnk:
+                lnk, old = stack[old]
             self.updated[key] = (old != new)
 
     class nodefault:
@@ -848,13 +868,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 del self.tempval[key]
             except KeyError:
                 pass
-        try:
-            stack = self.history[key]
-        except KeyError:
-            pass
-        else:
-            if stack:
-                stack[-1] = None
 
     __delitem__ = discard
 
