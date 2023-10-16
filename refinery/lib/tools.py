@@ -399,3 +399,18 @@ def normalize_to_identifier(words: str, strip: bool = True):
     Normalizes all separators to underscores.
     """
     return normalize_word_separators(words, '_', strip)
+
+
+def typename(thing):
+    """
+    Determines the name of the type of an object.
+    """
+    if not isinstance(thing, type):
+        thing = type(thing)
+    mro = [c for c in thing.__mro__ if c is not object]
+    if mro:
+        thing = mro[~0]
+    try:
+        return thing.__name__
+    except AttributeError:
+        return repr(thing)

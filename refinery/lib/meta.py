@@ -124,7 +124,7 @@ from urllib.parse import quote_from_bytes, unquote_to_bytes
 from typing import Callable, Dict, List, Tuple, Any, Iterable, Optional, ByteString, Union, TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import isbuffer, entropy, index_of_coincidence
+from refinery.lib.tools import isbuffer, entropy, typename, index_of_coincidence
 from refinery.lib.environment import environment
 
 
@@ -429,7 +429,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         if seed is not None:
             for key, stack in seed.items():
                 if not isinstance(stack, list):
-                    raise TypeError(R'Incorrect type in variable scope history.')
+                    raise TypeError(F'Encountered history item of type {typename(stack)}, this should be a list.')
                 if len(stack) != scope:
                     raise ValueError(F'History item had length {len(stack)}, but scope was specified as {scope}.')
                 for k, v in enumerate(stack):
