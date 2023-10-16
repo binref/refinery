@@ -91,12 +91,3 @@ class TestUnitBase(TestBase, metaclass=TestUnitBaseMeta):
         unit = cls.unit().assemble(*args, **kwargs)
         unit.log_level = LogLevel.DETACHED
         return unit
-
-    @classmethod
-    def load_pipeline(cls, cmd: str) -> refinery.Unit:
-        from refinery.lib.loader import load_pipeline
-        unit = pl = load_pipeline(cmd)
-        while isinstance(unit, Unit):
-            unit.log_level = LogLevel.DETACHED
-            unit = unit.source
-        return pl

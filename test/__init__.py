@@ -4,7 +4,6 @@ import os
 import random
 import refinery
 import string
-import sys
 import unittest
 import urllib.request
 
@@ -81,3 +80,13 @@ class TestBase(unittest.TestCase):
 
     def assertContains(self, container, member, msg=None):
         self.assertIn(member, container, msg)
+
+    @classmethod
+    def load_pipeline(cls, cmd: str) -> refinery.Unit:
+        from refinery.units import Unit, LogLevel
+        from refinery.lib.loader import load_pipeline
+        unit = pl = load_pipeline(cmd)
+        while isinstance(unit, Unit):
+            unit.log_level = LogLevel.DETACHED
+            unit = unit.source
+        return pl
