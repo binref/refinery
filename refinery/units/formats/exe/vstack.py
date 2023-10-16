@@ -72,7 +72,10 @@ class vstack(Unit):
         import unicorn.arm64_const
         import unicorn.mips_const
         import unicorn.sparc_const
-        import unicorn.ppc_const
+        try:
+            import unicorn.ppc_const
+        except ImportError:
+            pass
         return unicorn
 
     @Unit.Requires('capstone')
@@ -139,19 +142,24 @@ class vstack(Unit):
         disassembler = self._capstone.Cs(*self._cs_arch(arch, exe.byte_order()))
         register_values = {}
 
-        sp, ip = {
-            Arch.X32     : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
-            Arch.X64     : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
-            Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
-            Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
-            Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-            Arch.MIPS32  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-            Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-            Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
-            Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
-            Arch.PPC32   : ( uc.ppc_const.UC_PPC_REG_1       , uc.ppc_const.UC_PPC_REG_PC     ), # noqa
-            Arch.PPC64   : ( uc.ppc_const.UC_PPC_REG_1       , uc.ppc_const.UC_PPC_REG_PC     ), # noqa
-        }[arch]
+        if arch in (Arch.PPC32, Arch.PPC64):
+            try:
+                sp = uc.ppc_const.UC_PPC_REG_1
+                ip = uc.ppc_const.UC_PPC_REG_PC
+            except AttributeError:
+                raise RuntimeError('The installed unicorn version does not support the PPC architecture.')
+        else:
+            sp, ip = {
+                Arch.X32     : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
+                Arch.X64     : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
+                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
+                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
+                Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+                Arch.MIPS32  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+                Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
+                Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
+                Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
+            }
 
         for module in [uc.x86_const, uc.arm_const, uc.mips_const, uc.sparc_const]:
             md: Dict[str, Any] = module.__dict__
