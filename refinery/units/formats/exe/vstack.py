@@ -7,7 +7,7 @@ import re
 import os
 
 from refinery.units import Arg, Unit
-from refinery.lib.executable import align, Arch, Executable, ExecutableCodeBlob
+from refinery.lib.executable import align, Arch, BO, Executable, ExecutableCodeBlob
 from refinery.lib.types import bounds, INF
 
 from dataclasses import dataclass, field
@@ -33,7 +33,7 @@ class EmuState:
     sp_register: int = 0
     ip_register: int = 0
     stack_ceiling: int = 0
-    ticks: int = INF
+    ticks: int = field(default_factory=lambda: INF)
 
     def disassemble(self, address: int, size: int):
         if self.disassembler is None:
@@ -72,6 +72,7 @@ class vstack(Unit):
         import unicorn.arm64_const
         import unicorn.mips_const
         import unicorn.sparc_const
+        import unicorn.ppc_const
         return unicorn
 
     @Unit.Requires('capstone')
@@ -135,12 +136,12 @@ class vstack(Unit):
         stack_size = self.args.stack_size
         stack_addr = self._find_stack_location(exe)
         image = memoryview(data)
-        disassembler = self._capstone.Cs(*self._cs_arch(arch))
+        disassembler = self._capstone.Cs(*self._cs_arch(arch, exe.byte_order()))
         register_values = {}
 
         sp, ip = {
-            Arch.X32   : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
-            Arch.X64   : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
+            Arch.X32     : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
+            Arch.X64     : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
             Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
             Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
             Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
@@ -148,6 +149,8 @@ class vstack(Unit):
             Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
             Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
             Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
+            Arch.PPC32   : ( uc.ppc_const.UC_PPC_REG_1       , uc.ppc_const.UC_PPC_REG_PC     ), # noqa
+            Arch.PPC64   : ( uc.ppc_const.UC_PPC_REG_1       , uc.ppc_const.UC_PPC_REG_PC     ), # noqa
         }[arch]
 
         for module in [uc.x86_const, uc.arm_const, uc.mips_const, uc.sparc_const]:
@@ -172,7 +175,7 @@ class vstack(Unit):
 
         for address in self.args.address:
 
-            emulator = uc.Uc(*self._uc_arch(arch))
+            emulator = uc.Uc(*self._uc_arch(arch, exe.byte_order()))
 
             emulator.mem_map(stack_addr, stack_size * 3)
             emulator.reg_write(sp, stack_addr + 2 * stack_size)
@@ -358,11 +361,11 @@ class vstack(Unit):
             emu.emu_stop()
             return False
 
-    def _uc_arch(self, arch: Arch) -> Tuple[int, int]:
+    def _uc_arch(self, arch: Arch, bo: Optional[BO] = None) -> Tuple[int, int]:
         uc = self._unicorn
-        return {
-            Arch.X32   : (uc.UC_ARCH_X86,   uc.UC_MODE_32),     # noqa
-            Arch.X64   : (uc.UC_ARCH_X86,   uc.UC_MODE_64),     # noqa
+        arch, mode = {
+            Arch.X32     : (uc.UC_ARCH_X86,   uc.UC_MODE_32),     # noqa
+            Arch.X64     : (uc.UC_ARCH_X86,   uc.UC_MODE_64),     # noqa
             Arch.ARM32   : (uc.UC_ARCH_ARM,   uc.UC_MODE_ARM),    # noqa
             Arch.ARM64   : (uc.UC_ARCH_ARM,   uc.UC_MODE_THUMB),  # noqa
             Arch.MIPS16  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_16),     # noqa
@@ -373,12 +376,18 @@ class vstack(Unit):
             Arch.SPARC32 : (uc.UC_ARCH_SPARC, uc.UC_MODE_32),     # noqa
             Arch.SPARC64 : (uc.UC_ARCH_SPARC, uc.UC_MODE_V9),     # noqa
         }[arch]
+        if bo is not None:
+            mode |= {
+                BO.BE: uc.UC_MODE_BIG_ENDIAN,
+                BO.LE: uc.UC_MODE_LITTLE_ENDIAN,
+            }[bo]
+        return arch, mode
 
-    def _cs_arch(self, arch: Arch) -> Tuple[int, int]:
+    def _cs_arch(self, arch: Arch, bo: Optional[BO] = None) -> Tuple[int, int]:
         cs = self._capstone
-        return {
-            Arch.X32   : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
-            Arch.X64   : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa
+        arch, mode = {
+            Arch.X32     : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
+            Arch.X64     : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa
             Arch.ARM32   : (cs.CS_ARCH_ARM,   cs.CS_MODE_ARM),    # noqa
             Arch.ARM64   : (cs.CS_ARCH_ARM,   cs.CS_MODE_THUMB),  # noqa
             Arch.MIPS16  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_16),     # noqa
@@ -389,3 +398,9 @@ class vstack(Unit):
             Arch.SPARC32 : (cs.CS_ARCH_SPARC, cs.CS_MODE_32),     # noqa
             Arch.SPARC64 : (cs.CS_ARCH_SPARC, cs.CS_MODE_V9),     # noqa
         }[arch]
+        if bo is not None:
+            mode |= {
+                BO.BE: cs.CS_MODE_BIG_ENDIAN,
+                BO.LE: cs.CS_MODE_LITTLE_ENDIAN,
+            }[bo]
+        return arch, mode
