@@ -473,7 +473,7 @@ class NSHeader(Struct):
                     pass
                 else:
                     return F'${variable}'
-            return F'<ERROR:VARIABLE[{index}]>'
+            return F'$var{index}'
 
     def _string_code_language(self, index: int) -> str:
         return F'$LSTR_{index:04X}'
@@ -571,14 +571,20 @@ class NSHeader(Struct):
                 string.write(chr(letter))
                 continue
             if code.special:
-                var1 = next(chars)
+                try:
+                    var1 = next(chars)
+                except StopIteration:
+                    break
                 if var1 == 0:
                     break
                 if code is NSCharCode.SKIP:
                     letter = var1
                 else:
                     if not self.unicode:
-                        var2 = next(chars)
+                        try:
+                            var2 = next(chars)
+                        except StopIteration:
+                            break
                         if var2 == 0:
                             break
                         vars = var1, var2
