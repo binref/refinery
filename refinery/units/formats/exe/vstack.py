@@ -159,7 +159,7 @@ class vstack(Unit):
                 Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
                 Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
                 Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
-            }
+            }[arch]
 
         for module in [uc.x86_const, uc.arm_const, uc.mips_const, uc.sparc_const]:
             md: Dict[str, Any] = module.__dict__
