@@ -22,7 +22,7 @@ class ngrams(Unit):
                 break
             deduplicator = set()
             view = memoryview(data)
-            for index in range(len(data) - n):
+            for index in range(len(data) - n + 1):
                 block = bytes(view[index:index + n])
                 if block in deduplicator:
                     continue
