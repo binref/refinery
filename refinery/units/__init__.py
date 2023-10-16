@@ -1806,12 +1806,9 @@ class Unit(UnitBase, abstract=True):
                 return pprint.pformat(message)
         message = ' '.join(transform(msg) for msg in messages)
         if clip:
-            from textwrap import shorten
             from refinery.lib.tools import get_terminal_size
-            message = shorten(
-                message,
-                get_terminal_size(75) - len(cls.name) - 14,
-            )
+            length = get_terminal_size(75) - len(cls.name) - 27
+            message = message[:length] + "..."
         return message
 
     @classmethod
