@@ -17,11 +17,16 @@ class bruteforce(Unit):
     def __init__(
         self,
         name  : Arg.String(help='Name of the meta variable to be populated.'),
-        length: Arg.Bounds(metavar='length',
-            help='Specifies the range of characters to brute force, default is {default}.') = slice(1, None),
-        format: Arg.String(help='Optional format expression for embedding the brute forced sequence.') = None,
-        alphabet  : Arg.Binary('-a', group='ALPH',
-            help='The alphabet from which to choose the letters. Entire byte range by default.') = None,
+        length: Arg.Bounds(metavar='length', help=(
+            'Specifies the range of characters to brute force, default is {default}.'
+        )) = slice(1, None),
+        format: Arg.String(help=(
+            'Optional format expression for the output string. The format sequence "{0}" is the '
+            'current brute force string, the sequence "{1}" represents the input data.'
+        )) = None,
+        alphabet  : Arg.Binary('-a', group='ALPH', help=(
+            'The alphabet from which to choose the letters. Entire byte range by default.'
+        )) = None,
         pattern   : Arg.RegExp('-r', group='ALPH',
             help='Provide a regular expression pattern to define the alphabet.') = None,
         printable : Arg.Switch('-p', group='ALPH',
@@ -81,6 +86,6 @@ class bruteforce(Unit):
             for string in itertools.product(self._alphabet(), repeat=length):
                 string = bytes(string)
                 if format_spec:
-                    string = meta.format_bin(format_spec, self.codec, [string])
+                    string = meta.format_bin(format_spec, self.codec, [string, data])
                 kwargs[name] = string
                 yield self.labelled(data, **kwargs)
