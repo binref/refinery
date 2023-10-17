@@ -13,7 +13,8 @@
                 top_ancestor=not show_inherited_members)
     return '<a title="{}" href="{}">{}</a>'.format(d.refname, url, name)
 
-  is_toplevel = module.name == 'refinery'
+  is_toplevel = module.name in ('refinery', 'refinery.shell')
+  is_shelldoc = module.name == 'refinery.shell'
   CLASSES = 'Units' if is_toplevel else 'Classes'
 
   def to_html(text):
@@ -214,7 +215,7 @@
           % endfor
           </dl>
       % endif
-      % if smethods:
+      % if smethods and not is_shelldoc:
           <h3>Static methods</h3>
           <dl>
           % for f in smethods:
@@ -231,7 +232,7 @@
           % endfor
           </dl>
       % endif
-      % if methods:
+      % if methods and not is_shelldoc:
           <h3>Methods</h3>
           <dl>
           % for f in methods:

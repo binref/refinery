@@ -134,6 +134,8 @@ class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
             parsed = self.parse_args(args=args, namespace=namespace)
         except ArgumentError as e:
             self.error(str(e))
+        except Exception:
+            self.error(F'Failed to parse arguments: {args!r}')
         for name in keywords:
             param = getattr(parsed, name, None)
             if param != keywords[name]:
