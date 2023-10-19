@@ -70,7 +70,7 @@ class DotNetSingleFileBundle:
         bundle_sig_offset = self.data.find(self._bundle_signature, 0)
         if bundle_sig_offset < 0:
             # Didn't find the single file app signature
-            raise IndexError("Can't find valid Bundle Manifest offset. Is this a .NET Bundle?")
+            raise ValueError("Can't find valid Bundle Manifest offset. Is this a .NET Bundle?")
         return int.from_bytes(self.data[bundle_sig_offset-8:bundle_sig_offset], "little")
 
     def _parse_bundle_manifest(self):
