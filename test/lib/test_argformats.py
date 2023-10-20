@@ -3,7 +3,6 @@
 from argparse import ArgumentTypeError
 
 from refinery.lib import argformats
-from refinery.lib import loader
 
 from .. import TestBase
 
@@ -117,7 +116,8 @@ class TestArgumentFormats(TestBase):
     def test_eat_removes_variable(self):
         L = self.load_pipeline
         p = L('emit Bar [| put k Foo | cca eat:k | iff k | ccp var:k ]')
-        self.assertEqual(p(), B'')
+        with self.assertRaises(ArgumentTypeError):
+            p()
 
     def test_environment_handler(self):
         import os
