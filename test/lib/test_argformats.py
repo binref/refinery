@@ -42,7 +42,7 @@ class TestArgumentFormats(TestBase):
             self.assertEqual(result, k ** 2, F'Failed for {k}.')
 
     def test_msvc(self):
-        pl = loader.load_pipeline('emit rep[32]:H:00 [| put s 0xF23CA2 | xor -B2 accu[s]:@msvc ]')
+        pl = self.load_pipeline('emit rep[32]:H:00 [| put s 0xF23CA2 | xor -B2 accu[s]:@msvc ]')
         self.assertEqual(pl(),
             bytes.fromhex('500BC53065647A48899EE4D7F07166A7643AB3EC9F4343A64DF5C45B4CC4D9B2'))
 
@@ -92,36 +92,41 @@ class TestArgumentFormats(TestBase):
             b'\x11\x01\x00\x5D')
 
     def test_slice_objects_with_handlers(self):
-        L = loader.load_pipeline
+        L = self.load_pipeline
         p = L('emit h:01000000 | put a [| snip le:var:a ]')
         self.assertEqual(p(), B'\0')
 
     def test_slice_objects_with_handlers_eat_regression(self):
-        L = loader.load_pipeline
+        L = self.load_pipeline
         p = L('emit h:01000000 | put a [| snip le:eat:a ]')
         d = next(p)
         self.assertNotIn('a', d.meta)
 
     def test_variable_arg_regression_1(self):
-        L = loader.load_pipeline
+        L = self.load_pipeline
         p = L('emit Helloooo | put s 4 [| terminate rep[var:s]:o ]')
         d = next(p)
         self.assertEqual(d, B'Hell')
 
     def test_variable_arg_regression_2(self):
-        L = loader.load_pipeline
+        L = self.load_pipeline
         p = L('emit Helloooo | put s 4 [| terminate -Bs o ]')
         d = next(p)
         self.assertEqual(d, B'Hell')
 
     def test_eat_removes_variable(self):
-        L = loader.load_pipeline
+        L = self.load_pipeline
         p = L('emit Bar [| put k Foo | cca eat:k | iff k | ccp var:k ]')
         self.assertEqual(p(), B'')
 
     def test_environment_handler(self):
         import os
         os.environ['test'] = 'foo'
-        L = loader.load_pipeline
+        L = self.load_pipeline
         pl = L('emit env:test')
         self.assertEqual(pl(), b'foo')
+
+    def test_pos_01(self):
+        L = self.load_pipeline
+        pl = L('emit "Hello World" [| put k pos:or | cfmt {k} ]')
+        self.assertEqual(pl(), b'7')
