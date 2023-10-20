@@ -7,6 +7,8 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    env:
+      MALSHARE_API: ${{ secrets.MALSHARE_API }}
     strategy:
       fail-fast: false
       matrix:
