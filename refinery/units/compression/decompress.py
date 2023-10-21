@@ -18,6 +18,7 @@ from .szdd   import szdd   # noqa
 from .zl     import zl     # noqa
 from .qlz    import qlz    # noqa
 from .lzf    import lzf    # noqa
+from .lzw    import lzw    # noqa
 
 
 class decompress(Unit):
@@ -59,7 +60,7 @@ class decompress(Unit):
         )
         self.engines: List[Unit] = [
             engine.assemble() for engine in [
-                szdd, zl, lzma, aplib, qlz, lzf, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1]
+                szdd, zl, lzma, aplib, qlz, lzf, lzw, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1]
         ]
         for engine in self.engines:
             engine.log_detach()
