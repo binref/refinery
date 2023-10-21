@@ -11,16 +11,10 @@ from refinery.lib.structures import MemoryFile, StructReader
 
 
 class LZW(IntEnum):
-    BITS = 0x10
-    BLKMODE = 0x80
-    RESERVED = 0x60
-    MAXBITS = 0x1F
     INIT_BITS = 9
+    BITS = 0x10
     CLEAR = 0x100
     FIRST = 0x101
-    INBUF_ALLOC = 0x8000
-    INBUF_EXTRA = 64
-    DIST_BUFSIZE = 0x8000
     WSIZE = 0x8000
 
 
