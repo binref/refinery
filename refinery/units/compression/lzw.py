@@ -20,8 +20,6 @@ class LZW(IntEnum):
     FIRST = 0x101
     INBUF_ALLOC = 0x8000
     INBUF_EXTRA = 64
-    OUTBUF_ALLOC = 16384
-    OUTBUF_EXTRA = 2048
     DIST_BUFSIZE = 0x8000
     WSIZE = 0x8000
 
@@ -54,9 +52,7 @@ class lzw(Unit):
         maxmaxcode = 1 << maxbits
 
         ibuf = bytearray(LZW.INBUF_ALLOC + LZW.INBUF_EXTRA)
-        obuf = bytearray(LZW.OUTBUF_ALLOC + LZW.OUTBUF_EXTRA)
         ibytes = 0
-        obytes = 0
         stack = bytearray(LZW.DIST_BUFSIZE)
         tab_suffix = bytearray(LZW.WSIZE * 2)
         tab_prefix = array('H', itertools.repeat(0, 1 << LZW.BITS))
@@ -68,7 +64,6 @@ class lzw(Unit):
         finchar = +0
         posbits = 0
         rsize = 0
-        outpos = 0
         insize = 0
 
         free_entry = LZW.FIRST if block_mode else 0x100
@@ -119,8 +114,7 @@ class lzw(Unit):
                         raise ValueError('corrupt input.')
                     oldcode = code
                     finchar = oldcode
-                    obuf[outpos] = finchar
-                    outpos += 1
+                    out.write_byte(finchar)
                     continue
 
                 if code == LZW.CLEAR and block_mode:
@@ -138,9 +132,6 @@ class lzw(Unit):
 
                 if code >= free_entry:
                     if code > free_entry:
-                        if outpos > 0:
-                            out.write(memoryview(obuf)[:outpos])
-                            obytes += outpos
                         raise RefineryPartialResult('corrupt input.', out.getbuffer())
                     stackp -= 1
                     stack[stackp] = finchar
@@ -154,27 +145,7 @@ class lzw(Unit):
                 finchar = tab_suffix[code]
                 stackp -= 1
                 stack[stackp] = finchar
-                i = LZW.DIST_BUFSIZE - stackp
-
-                if outpos + i >= LZW.OUTBUF_ALLOC:
-                    while True:
-                        if (i > LZW.OUTBUF_ALLOC - outpos):
-                            i = LZW.OUTBUF_ALLOC - outpos
-                        if i > 0:
-                            obuf[outpos:outpos + i] = stack[stackp:stackp + i]
-                            outpos += i
-                        if outpos >= LZW.OUTBUF_ALLOC:
-                            out.write(memoryview(obuf)[:outpos])
-                            obytes += outpos
-                            outpos = 0
-                        stackp += i
-                        i = LZW.DIST_BUFSIZE - stackp
-                        if i <= 0:
-                            break
-                else:
-                    obuf[outpos:outpos + i] = stack[stackp:stackp + i]
-                    outpos += i
-
+                out.write(stack[stackp:])
                 code = free_entry
 
                 if code < maxmaxcode:
@@ -183,10 +154,6 @@ class lzw(Unit):
                     free_entry = code + 1
 
                 oldcode = incode
-
-        if outpos > 0:
-            out.write(memoryview(obuf)[:outpos])
-            obytes += outpos
 
         return out.getvalue()
 
