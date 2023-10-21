@@ -31,9 +31,9 @@ class lzw(Unit):
 
     _MAGIC = B'\x1F\x9D'
 
-    def process(self, compressed: bytearray):
+    def process(self, data: bytearray):
         out = MemoryFile()
-        inf = StructReader(compressed)
+        inf = StructReader(memoryview(data))
 
         if inf.peek(2) != self._MAGIC:
             self.log_info('No LZW signature found, assuming raw stream.')
@@ -51,8 +51,8 @@ class lzw(Unit):
 
         maxmaxcode = 1 << maxbits
 
-        ibuf = bytearray(LZW.INBUF_ALLOC + LZW.INBUF_EXTRA)
-        ibytes = 0
+        ibuf = inf.read()
+
         stack = bytearray(LZW.DIST_BUFSIZE)
         tab_suffix = bytearray(LZW.WSIZE * 2)
         tab_prefix = array('H', itertools.repeat(0, 1 << LZW.BITS))
@@ -62,32 +62,20 @@ class lzw(Unit):
         bitmask = (1 << n_bits) - 1
         oldcode = ~0
         finchar = +0
-        posbits = 0
-        rsize = 0
-        insize = 0
+        posbits = +0
 
         free_entry = LZW.FIRST if block_mode else 0x100
         tab_suffix[:0x100] = range(0x100)
         resetbuf = True
 
-        while rsize > 0 or resetbuf:
+        while resetbuf:
             resetbuf = False
 
-            o = posbits >> 3
-            e = insize - o
-            for i in range(e):
-                ibuf[i] = ibuf[i + o]
-            insize = e
+            ibuf = ibuf[posbits >> 3:]
+            insize = len(ibuf)
             posbits = 0
 
             if insize < LZW.INBUF_EXTRA:
-                _buf = inf.read(LZW.INBUF_ALLOC)
-                rsize = len(_buf)
-                ibuf[insize:insize + rsize] = _buf
-                insize += rsize
-                ibytes += rsize
-
-            if rsize == 0:
                 inbits = (insize - insize % n_bits) << 3
             else:
                 inbits = (insize << 3) - (n_bits - 1)
@@ -104,9 +92,8 @@ class lzw(Unit):
                     resetbuf = True
                     break
 
-                # input(inbuf,posbits,code,n_bits,bitmask);
-                p = memoryview(ibuf)[posbits >> 3:]
-                code = ((p[0] | p[1] << 8 | p[2] << 16) >> (posbits & 7)) & bitmask
+                p = ibuf[posbits >> 3:]
+                code = int.from_bytes(p[:3], 'little') >> (posbits & 7) & bitmask
                 posbits += n_bits
 
                 if oldcode == -1:
