@@ -53,7 +53,6 @@ class lzw(Unit):
 
         ibuf = inf.read()
 
-        stack = bytearray(LZW.DIST_BUFSIZE)
         tab_suffix = bytearray(LZW.WSIZE * 2)
         tab_prefix = array('H', itertools.repeat(0, 1 << LZW.BITS))
 
@@ -82,7 +81,9 @@ class lzw(Unit):
 
             while inbits > posbits:
                 if free_entry > maxcode:
-                    posbits = ((posbits - 1) + ((n_bits << 3) - (posbits - 1 + (n_bits << 3)) % (n_bits << 3)))
+                    n = n_bits << 3
+                    p = posbits - 1
+                    posbits = p + (n - (p + n) % n)
                     n_bits += 1
                     if (n_bits == maxbits):
                         maxcode = maxmaxcode
@@ -107,7 +108,9 @@ class lzw(Unit):
                 if code == LZW.CLEAR and block_mode:
                     tab_prefix[:0x100] = array('H', itertools.repeat(0, 0x100))
                     free_entry = LZW.FIRST - 1
-                    posbits = ((posbits - 1) + ((n_bits << 3) - (posbits - 1 + (n_bits << 3)) % (n_bits << 3)))
+                    n = n_bits << 3
+                    p = posbits - 1
+                    posbits = p + (n - (p + n) % n)
                     n_bits = LZW.INIT_BITS
                     maxcode = (1 << n_bits) - 1
                     bitmask = (1 << n_bits) - 1
@@ -115,24 +118,21 @@ class lzw(Unit):
                     break
 
                 incode = code
-                stackp = LZW.DIST_BUFSIZE
+                stack = bytearray()
 
                 if code >= free_entry:
                     if code > free_entry:
                         raise RefineryPartialResult('corrupt input.', out.getbuffer())
-                    stackp -= 1
-                    stack[stackp] = finchar
+                    stack.append(finchar)
                     code = oldcode
-
                 while code >= 256:
-                    stackp -= 1
-                    stack[stackp] = tab_suffix[code]
+                    stack.append(tab_suffix[code])
                     code = tab_prefix[code]
 
                 finchar = tab_suffix[code]
-                stackp -= 1
-                stack[stackp] = finchar
-                out.write(stack[stackp:])
+                stack.append(finchar)
+                stack.reverse()
+                out.write(stack)
                 code = free_entry
 
                 if code < maxmaxcode:
