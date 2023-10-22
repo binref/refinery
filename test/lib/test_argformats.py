@@ -132,6 +132,6 @@ class TestArgumentFormats(TestBase):
         self.assertEqual(pl(), b'7')
 
     def test_accu_zero_feed(self):
-        t = argformats.multibin('take[:32]:accu[0xBA2,1,16]:A*0x5A7F+0x3079#(4*A)>>16')
+        t = argformats.multibin('take[:32]:accu[0xBA2,0,16]:A*0x5A7F+0x3079#(4*A)>>16')
         self.assertEqual(t, bytes.fromhex(
-            '0303010001030303030201030102000300020203020200030002020302020003'))
+            '0003030100010303030302010301020003000202030202000300020203020200'))

@@ -1069,7 +1069,7 @@ class DelayedArgument(LazyEvaluation):
                 return update(meta, A=A)
             meta = dict(metavars(data))
             A = seed and seed(meta) or 0
-            F = feed and feed(meta, A=A) or A
+            F = feed(meta, A=A) if feed else A
             S = skip
             while True:
                 if not S:
