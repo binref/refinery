@@ -24,6 +24,10 @@ This is a refinery-focused write-up of how to solve FlareOn9.
 
 A refinery pipeline that can extract the C2 IP addresses from Qakbot samples.
 
+### [Volume 7 — Unpacking a DCRat Sample][0x07]
+
+Another showcase of writing custom units for very specific tasks, in this case reproducing the logic of a .NET packer.
+
 
 [0x01]: tbr-files.v0x01.netwalker.dropper.ipynb
 [0x02]: tbr-files.v0x02.amadey.loader.ipynb
@@ -31,3 +35,4 @@ A refinery pipeline that can extract the C2 IP addresses from Qakbot samples.
 [0x04]: tbr-files.v0x04.run.length.encoding.ipynb
 [0x05]: tbr-files.v0x05.flare.on.9.ipynb
 [0x06]: tbr-files.v0x06.Qakbot.Decoder.ipynb
+[0x07]: tbr-files.v0x07.DCRat.ipynb
