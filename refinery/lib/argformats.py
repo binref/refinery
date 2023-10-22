@@ -889,15 +889,13 @@ class DelayedArgument(LazyEvaluation):
     def btoi(self, binary: ByteString, size=None) -> Iterable[int]:
         """
         The modifier `btoi[size=0]:data` uses `refinery.lib.chunks.unpack` to convert a sequence
-        of bytes into a sequence of integers by unpacking them. The `expression` parameter is parsed
-        with `refinery.lib.argformats.multibin` yielding this byte string. The optional parameter
-        `size` has to be an integer expression whose absolute value gives the size of each encoded
-        number in bytes. Its default value is `0`, which corresponds to choosing the size
-        automatically in the following manner: If the length of the buffer is uneven, the value `1`
-        is chosen. If the length modulo `4` is nonzero, the value `2` is chosen. If the length is
-        divisible by `4`, then `4` is chosen. To unpack as big endian as opposed to the default
-        little endian, a negative `size` has to be specified. The absolute value of `size` will be
-        used.
+        of bytes into a sequence of integers by unpacking them. The optional parameter `size` has
+        to be an integer expression whose absolute value gives the size of each encoded number in
+        bytes. Its default value is `0`, which corresponds to choosing the size automatically in
+        the following manner: If the length of the buffer is uneven, the value 1 is chosen. If the
+        length modulo 4 is nonzero, the value 2 is chosen. If the length is divisible by 4, then 4
+        is chosen. To unpack as big endian as opposed to the default little endian, a negative
+        value for `size` has to be specified. The absolute value of `size` will be used.
         """
         from refinery.lib import chunks
         size = int(size, 0) if size else 0
