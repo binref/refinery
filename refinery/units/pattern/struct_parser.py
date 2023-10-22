@@ -73,15 +73,19 @@ class struct(Unit):
         until: Arg('-u', metavar='E', type=str, help=(
             'An expression evaluated on each chunk in multi mode. New chunks will be parsed '
             'only if the result is nonzero.')) = None,
+        more : Arg.Switch('-M', help=(
+            'After parsing the struct, emit one chunk that contains the data that was left '
+            'over in the buffer. If no data was left over, this chunk will be empty.')) = False
     ):
         outputs = outputs or [F'{{{_SHARP}}}']
-        super().__init__(spec=spec, outputs=outputs, until=until, count=count, multi=multi)
+        super().__init__(spec=spec, outputs=outputs, until=until, count=count, multi=multi, more=more)
 
     def process(self, data: Chunk):
         formatter = string.Formatter()
         until = self.args.until
         until = until and PythonExpression(until, all_variables_allowed=True)
         reader = StructReader(memoryview(data))
+        checkpoint = 0
         mainspec = self.args.spec
         byteorder = mainspec[:1]
         if byteorder in '<@=!>':
@@ -111,6 +115,7 @@ class struct(Unit):
             args = []
             last = None
             checkpoint = reader.tell()
+            self.log_info(F'starting new read at: 0x{checkpoint:08X}')
 
             try:
                 for prefix, name, spec, conversion in formatter.parse(mainspec):
@@ -123,8 +128,11 @@ class struct(Unit):
                     if name and not name.isdecimal():
                         check_variable_name(name)
                     if conversion:
-                        reader.byte_align(
-                            PythonExpression.evaluate(conversion, meta))
+                        _aa = reader.tell()
+                        reader.byte_align(PythonExpression.evaluate(conversion, meta))
+                        _ab = reader.tell()
+                        if _aa != _ab:
+                            self.log_info(F'aligned from 0x{_aa:X} to 0x{_ab:X}')
                     spec, _, pipeline = spec.partition(':')
                     if spec:
                         spec = meta.format_str(spec, self.codec, args)
@@ -146,7 +154,7 @@ class struct(Unit):
                     else:
                         value = reader.read_struct(fixorder(spec))
                         if not value:
-                            self.log_warn(F'field {name} was empty, ignoring.')
+                            self.log_debug(F'field {name} was empty, ignoring.')
                             continue
                         if len(value) > 1:
                             self.log_info(F'parsing field {name} produced {len(value)} items reading a tuple')
@@ -196,6 +204,15 @@ class struct(Unit):
                     yield chunk
 
             except EOF:
-                leftover = repr(SizeInt(len(reader) - checkpoint)).strip()
-                self.log_info(F'discarding {leftover} left in buffer')
                 break
+
+        leftover = len(reader) - checkpoint
+
+        if not leftover:
+            return
+        elif self.args.more:
+            reader.seekset(checkpoint)
+            yield reader.read()
+        else:
+            leftover = repr(SizeInt(leftover)).strip()
+            self.log_info(F'discarding {leftover} left in buffer')
