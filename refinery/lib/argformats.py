@@ -1079,7 +1079,7 @@ class DelayedArgument(LazyEvaluation):
                 A = accumulate(A)
                 if mask:
                     A &= mask
-                F = feed and feed(meta, A=A) or A
+                F = feed(meta, A=A) if feed else A
         try:
             update(A=seed())
         except ParserVariableMissing:
