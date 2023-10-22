@@ -331,12 +331,6 @@ class StructReader(MemoryFile[T]):
         finally:
             self.bigendian = False
 
-    def readinto(self, b) -> int:
-        size = super().readinto(b)
-        if size != len(b):
-            raise EOF
-        return size
-
     @cached_property
     def byteorder_format(self) -> str:
         return '>' if self.bigendian else '<'
