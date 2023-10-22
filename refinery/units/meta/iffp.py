@@ -9,21 +9,20 @@ _PATTERNS.update({p.name: p.value for p in formats})
 _PATTERNS.update({p.name: p.value for p in indicators})
 
 
-class iffp(ConditionalUnit):
+class iffp(ConditionalUnit, extend_docs=True):
     """
-    Filter incoming chunks depending on whether it matches any of a given set of patterns. The available
-    patterns are the following: {}.
+    Filter incoming chunks depending on whether it matches any of a given set of patterns. The
+    available patterns are the following: {}.
     """
 
     def __init__(
         self,
         *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS),
         partial: Arg.Switch('-p', help='Allow partial matches on the data.') = False,
-        negate=False, backup=False, single=False
+        negate=False, single=False
     ):
         super().__init__(
             negate=negate,
-            backup=backup,
             single=single,
             patterns=patterns,
             partial=partial

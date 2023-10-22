@@ -3,7 +3,7 @@
 from refinery.units.meta import Arg, ConditionalUnit
 
 
-class iffs(ConditionalUnit):
+class iffs(ConditionalUnit, extend_docs=True):
     """
     Filter incoming chunks depending on whether they contain a given binary substring.
     """
@@ -11,13 +11,11 @@ class iffs(ConditionalUnit):
         self,
         needle: Arg(help='the string to search for'),
         negate=False,
-        backup=False,
         single=False,
     ):
         super().__init__(
             needle=needle,
             negate=negate,
-            backup=backup,
             single=single,
         )
 

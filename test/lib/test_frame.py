@@ -118,7 +118,7 @@ class TestFraming(TestBase):
         self.assertEqual(ergo['test'], B'test-data')
 
     def test_bug_conditional_units_generate_empty_chunks(self):
-        pipeline = load_pipeline('emit A | rex .. [| iff -u 1 | cfmt boom ]]')
+        pipeline = load_pipeline('emit A | rex .. [| iff 1 [| cfmt boom ]]]')
         self.assertEqual(pipeline(), B'')
 
     def test_units_can_overwrite_parent_metavars(self):

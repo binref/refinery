@@ -4,20 +4,19 @@ from refinery.units.pattern import Arg, RegexUnit
 from refinery.units.meta import ConditionalUnit
 
 
-class iffx(RegexUnit, ConditionalUnit):
+class iffx(RegexUnit, ConditionalUnit, extend_docs=True):
     """
     Filter incoming chunks by discarding those that do not match the given
     regular expression.
     """
     def __init__(
-        self, regex, multiline=False, ignorecase=False, negate=False, backup=False, single=False,
+        self, regex, multiline=False, ignorecase=False, negate=False, single=False,
         match: Arg.Switch('-m',
             help='Perform a full match rather than matching anywhere in the chunk.') = False
     ):
         super().__init__(
             regex=regex,
             negate=negate,
-            backup=backup,
             single=single,
             multiline=multiline,
             ignorecase=ignorecase,

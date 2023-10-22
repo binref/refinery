@@ -885,7 +885,7 @@ class Executable(ABCMeta):
                 known.kwargs.setdefault('type', multibin)
         return args
 
-    def __new__(mcs, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False):
+    def __new__(mcs, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, extend_docs=False):
         def decorate(**decorations):
             for method, decorator in decorations.items():
                 try:
@@ -908,7 +908,7 @@ class Executable(ABCMeta):
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
-    def __init__(cls, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False):
+    def __init__(cls, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, extend_docs=False):
         super(Executable, cls).__init__(name, bases, nmspc)
         cls._argument_specification = args = ArgumentSpecification()
 
@@ -923,6 +923,11 @@ class Executable(ABCMeta):
             for key, value in base._argument_specification.items():
                 if key in parameters:
                     args[key] = value.__copy__()
+
+        if extend_docs and bases:
+            base_doc = bases[~0].__doc__.rstrip().lstrip('\n')
+            if base_doc:
+                cls.__doc__ = F'{cls.__doc__}\n{base_doc}'
 
         if not abstract and bases and has_keyword:
             for key, value in bases[0]._argument_specification.items():

@@ -8,7 +8,7 @@ from refinery.lib.argformats import DelayedNumSeqArgument, PythonExpression
 from refinery.units.meta import Arg, ConditionalUnit
 
 
-class iff(ConditionalUnit):
+class iff(ConditionalUnit, extend_docs=True):
     """
     Filter incoming chunks depending on whether a given Python expression evaluates to true. If no
     expression is given, the unit filters out empty chunks.
@@ -34,7 +34,6 @@ class iff(ConditionalUnit):
             help='check that the expression is equal to {varname}') = None,
         single=False,
         negate=False,
-        backup=False,
     ):
         operators = [
             (ge, operator.__ge__),
@@ -66,7 +65,6 @@ class iff(ConditionalUnit):
             rhs=rhs,
             cmp=cmp,
             negate=negate,
-            backup=backup,
             single=single,
         )
 
