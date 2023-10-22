@@ -16,6 +16,7 @@ class LZW(IntEnum):
     CLEAR = 0x100
     FIRST = 0x101
     WSIZE = 0x8000
+    EXTRA = 0x40
 
 
 class lzw(Unit):
@@ -68,7 +69,7 @@ class lzw(Unit):
             insize = len(ibuf)
             posbits = 0
 
-            if insize < LZW.INBUF_EXTRA:
+            if insize < LZW.EXTRA:
                 inbits = (insize - insize % n_bits) << 3
             else:
                 inbits = (insize << 3) - (n_bits - 1)
