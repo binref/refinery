@@ -34,3 +34,8 @@ class TestSnip(TestUnitBase):
             L('put k eval:var:k') | L('snip k:k+1')
         ]
         self.assertEqual(pipeline(B'#17#4#5_#8-#13#4#17.#24!'), B'REFINERY')
+
+    def test_length_argument(self):
+        data = b"FOOBARFOOBAZBAZ"
+        unit = self.load('3:3', '9:', length=True, squeeze=True)
+        self.assertEqual(data | unit | bytes, B'BARBAZBAZ')

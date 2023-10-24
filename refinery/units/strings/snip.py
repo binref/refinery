@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from copy import copy
 
 from refinery.units import Arg, Unit
@@ -18,16 +20,25 @@ class snip(Unit):
     def __init__(
         self,
         slices: Arg(help='Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
-        remove: Arg.Switch('-r', help='Remove the slices from the input rather than selecting them.') = False
+        length: Arg.Switch('-l',
+            help='Interpret the end of a slice as a length rather than as an offset.') = False,
+        remove: Arg.Switch('-r',
+            help='Remove the slices from the input rather than selecting them.') = False,
     ):
-        super().__init__(slices=slices, remove=remove)
+        super().__init__(slices=slices, length=length, remove=remove)
 
     def process(self, data: bytearray):
+        slices: list[slice] = list(self.args.slices)
+        if self.args.length:
+            for k, s in enumerate(slices):
+                if s.stop is None:
+                    continue
+                slices[k] = slice(s.start, (s.start or 0) + s.stop, s.step)
         if self.args.remove:
-            for last, bounds in lookahead(self.args.slices):
+            for last, bounds in lookahead(slices):
                 chunk = data if last else copy(data)
                 del chunk[bounds]
                 yield chunk
         else:
-            for bounds in self.args.slices:
+            for bounds in slices:
                 yield data[bounds]
