@@ -101,6 +101,8 @@ class vstack(Unit):
         calls_skip: Arg.Switch('-C', group='CALL', help='Skip function calls entirely.') = False,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
+        log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
+        log_other_addresses: Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.') = False,
     ):
         super().__init__(
             address=address or [0],
@@ -115,6 +117,8 @@ class vstack(Unit):
             calls_wait=calls_wait,
             calls_skip=calls_skip,
             block_size=block_size,
+            log_stack_addresses=log_stack_addresses,
+            log_other_addresses=log_other_addresses,
         )
 
     def _find_stack_location(self, exe: Executable):
@@ -287,9 +291,10 @@ class vstack(Unit):
             return
 
         if unsigned_value in state.stack:
-            return
-        for section in state.executable.sections():
-            if unsigned_value in section.virtual:
+            if not self.args.log_stack_addresses:
+                return
+        if not self.args.log_other_addresses:
+            if any(unsigned_value in s.virtual for s in state.executable.sections()):
                 return
 
         state.waiting = 0
