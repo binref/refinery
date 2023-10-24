@@ -273,7 +273,10 @@ class vstack(Unit):
         depth = len(state.callstack)
 
         if unsigned_value in state.stack:
-            return                
+            return
+        for section in state.executable.sections():
+            if unsigned_value in section.virtual:
+                return
 
         if unsigned_value == state.expected_address:
             callstack = state.callstack
