@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Dict
 
 import hashlib
 import logging
@@ -15,6 +15,8 @@ __all__ = ['refinery', 'TestBase', 'NameUnknownException']
 
 
 class SampleStore:
+    cache: Dict[str, bytes]
+
     def __init__(self):
         self.cache = {}
 
@@ -41,8 +43,8 @@ class SampleStore:
         return result
 
     def get(self, sha256hash: str, key: Optional[str] = None):
-        for sha256hash, value in self.cache.items():
-            if sha256hash.casefold() == sha256hash.casefold():
+        for cached, value in self.cache.items():
+            if cached.casefold() == sha256hash.casefold():
                 return value
         else:
             return self.download(sha256hash, key)
