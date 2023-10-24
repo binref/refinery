@@ -7,15 +7,13 @@ from itertools import cycle
 from typing import Iterable
 
 from refinery.units.crypto.cipher import StreamCipherUnit
-
-__all__ = 'hc128',
-
-
-def rx(x, k): return (x >> k) ^ (x << (0x20 - k)) & 0xFFFFFFFF
-def lx(x, k): return (x << k) ^ (x >> (0x20 - k)) & 0xFFFFFFFF
+from refinery.lib.crypto import (
+    rotl32 as lx,
+    rotr32 as rx,
+)
 
 
-class hc128cipher:
+class HC128:
 
     def __init__(self, key):
         W = [0] * 0x500
@@ -83,4 +81,4 @@ class hc128(StreamCipherUnit):
     key_size = {32}
 
     def keystream(self) -> Iterable[int]:
-        return hc128cipher(self.args.key)
+        return HC128(self.args.key)
