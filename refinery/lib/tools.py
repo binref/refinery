@@ -66,7 +66,7 @@ def get_terminal_size(default=0):
     return default if width < 2 else width - 1
 
 
-def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
+def terminalfit(text: str, delta: int = 0, width: int = 0, parsep: str = '\n\n', **kw) -> str:
     """
     Reformats text to fit the given width while not mangling bullet point lists.
     """
@@ -110,7 +110,7 @@ def terminalfit(text: str, delta: int = 0, width: int = 0, **kw) -> str:
                     continue
             yield '\n'.join(textwrap.wrap(p, width, **kw))
 
-    return '\n\n'.join(fitted(text.split('\n\n')))
+    return parsep.join(fitted(text.split('\n\n')))
 
 
 def documentation(unit):
