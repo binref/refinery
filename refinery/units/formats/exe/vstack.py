@@ -25,6 +25,7 @@ class EmuState:
     writes: IntervalTree
     expected_address: int
     stack: Range
+    blob: bool
     disassembler: Optional[Cs] = None
     waiting: int = 0
     callstack: List[int] = field(default_factory=list)
@@ -135,10 +136,12 @@ class vstack(Unit):
 
     def process(self, data):
         uc = self._unicorn
+        blob = False
         try:
             exe = Executable.Load(data, self.args.base)
         except ValueError:
             exe = ExecutableCodeBlob(data, self.args.base, self.args.arch)
+            blob = True
         arch = exe.arch()
         block_size = self.args.block_size
         stack_size = self.args.stack_size
@@ -243,7 +246,7 @@ class vstack(Unit):
                     self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
             tree = self._intervaltree.IntervalTree()
-            state = EmuState(exe, tree, address, stack, disassembler, stop=self.args.stop,
+            state = EmuState(exe, tree, address, stack, blob, disassembler, stop=self.args.stop,
                 sp_register=sp, ip_register=ip)
 
             timeout = self.args.timeout
@@ -290,10 +293,10 @@ class vstack(Unit):
         if state.callstack_ceiling > 0 and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling):
             return
 
-        if unsigned_value in state.stack:
-            if not self.args.log_stack_addresses:
+        if not self.args.log_stack_addresses:
+            if unsigned_value in state.stack:
                 return
-        if not self.args.log_other_addresses:
+        if not self.args.log_other_addresses and not state.blob:
             if any(unsigned_value in s.virtual for s in state.executable.sections()):
                 return
 
