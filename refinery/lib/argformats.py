@@ -886,19 +886,26 @@ class DelayedArgument(LazyEvaluation):
         return LazyPythonExpression(expression)
 
     @handler.register('btoi')
-    def btoi(self, binary: ByteString, size=None) -> Iterable[int]:
+    def btoi(self, binary: ByteString, size=None, step=None) -> Iterable[int]:
         """
-        The modifier `btoi[size=0]:data` uses `refinery.lib.chunks.unpack` to convert a sequence
-        of bytes into a sequence of integers by unpacking them. The optional parameter `size` has
-        to be an integer expression whose absolute value gives the size of each encoded number in
-        bytes. Its default value is `0`, which corresponds to choosing the size automatically in
-        the following manner: If the length of the buffer is uneven, the value 1 is chosen. If the
-        length modulo 4 is nonzero, the value 2 is chosen. If the length is divisible by 4, then 4
-        is chosen. To unpack as big endian as opposed to the default little endian, a negative
-        value for `size` has to be specified. The absolute value of `size` will be used.
+        The modifier `btoi[size=0,step=0]:data` uses `refinery.lib.chunks.unpack` to convert a
+        sequence of bytes into a sequence of integers.
+
+        The optional parameter `size` has to be an integer expression whose absolute value gives
+        the size of each encoded number in bytes. Its default value is `0`, which corresponds to
+        choosing the size automatically in the following manner: If the length of the buffer is
+        uneven, the value 1 is chosen. If the length modulo 4 is nonzero, the value 2 is chosen. If
+        the length is divisible by 4, then 4 is chosen. To unpack as big endian as opposed to the
+        default little endian, a negative value for `size` has to be specified. The absolute value
+        of `size` will be used.
+
+        By default, integers are parsed from the input buffer at offsets that are integer multiples
+        of the block size. The optional parameter `step` can be used to override this behavior. For
+        example, `btoi[2,1]` can be used to read 16-bit values at each byte offset.
         """
         from refinery.lib import chunks
         size = int(size, 0) if size else 0
+        step = int(step, 0) if step else 0
         bigE = size < 0
         size = abs(size)
         if not size:
@@ -909,7 +916,7 @@ class DelayedArgument(LazyEvaluation):
                 size = 2
             else:
                 size = 4
-        return list(chunks.unpack(binary, size, bigE))
+        return list(chunks.unpack(binary, size, bigE, step))
 
     @handler.register('itob')
     def itob(self, integers: Iterable[int], size=None) -> ByteString:
@@ -1122,8 +1129,11 @@ class DelayedArgument(LazyEvaluation):
         reduction = PythonExpression(reduction, all_variables_allowed=True)
 
         def finalize(data: Optional[Chunk] = None):
+            def _reduction(S, B):
+                v = reduction(args, S=S, B=B)
+                return v
             args = dict(metavars(data))
-            return reduce(lambda S, B: reduction(args, S=S, B=B), it, seed and seed(args) or 0)
+            return reduce(_reduction, it, seed and seed(args) or 0)
 
         try:
             return finalize()

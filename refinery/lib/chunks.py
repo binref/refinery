@@ -16,13 +16,22 @@ _TYPE_CODES = {
 }
 
 
-def unpack(data: bytes, blocksize: int, bigendian: bool = False) -> Iterable[int]:
+def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0) -> Iterable[int]:
     """
     Returns an iterable of integers which have been unpacked from the given `data`
     buffer as chunks of `blocksize` many bytes.
     """
+    if not step:
+        step = blocksize
     if blocksize == 1:
-        return data
+        if step == blocksize:
+            return data
+        return memoryview(data)[::step]
+    if step != blocksize:
+        view = memoryview(data)
+        bo = 'big' if bigendian else 'little'
+        it = range(0, len(view) - blocksize + 1, step)
+        return (int.from_bytes(view[k:k + blocksize], bo) for k in it)
     overlap = len(data) % blocksize
     if overlap != 0:
         data = memoryview(data)[:-overlap]
