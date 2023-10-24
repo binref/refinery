@@ -76,7 +76,10 @@ def _virtual_fs_stat(name):
     ))
 
 
-def _virtual_fs_open(name: str, mode='r', *args, **kwargs):
+def _virtual_fs_open(name: Union[int, str], mode='r', *args, **kwargs):
+    if isinstance(name, int):
+        return _open(name, mode, *args, **kwargs)
+
     path = os.path.abspath(name)
     directory = os.path.abspath(os.path.dirname(path))
 
