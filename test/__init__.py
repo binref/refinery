@@ -48,8 +48,8 @@ class SampleStore:
             return result
 
     def get(self, sha256hash: str, key: Optional[str] = None):
-        for key, value in self.cache.items():
-            if key.casefold() == sha256hash.casefold():
+        for sha256hash, value in self.cache.items():
+            if sha256hash.casefold() == sha256hash.casefold():
                 return value
         else:
             return self.download(sha256hash, key)
