@@ -457,7 +457,9 @@ class ExecutablePE(Executable):
     def sections(self) -> Generator[Section, None, None]:
         sections: Iterable[SectionStructure] = iter(self._head.sections)
         ib = self.image_defined_base()
+        exeblob = True
         for section in sections:
+            exeblob = False
             p_lower = section.PointerToRawData
             p_upper = p_lower + section.SizeOfRawData
             v_lower = section.VirtualAddress + ib
@@ -468,6 +470,11 @@ class ExecutablePE(Executable):
                 Range(p_lower, p_upper),
                 Range(v_lower, v_upper),
             )
+        if exeblob:
+            size = len(self._data)
+            v_lower = self.image_defined_base()
+            v_upper = v_lower + size
+            yield Section('.CODE', Range(0, size), Range(v_lower, v_upper))
 
     def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for section in self.sections():
