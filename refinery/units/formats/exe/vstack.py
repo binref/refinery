@@ -7,7 +7,7 @@ import re
 import os
 
 from refinery.units import Arg, Unit
-from refinery.lib.executable import align, Arch, BO, Executable, ExecutableCodeBlob
+from refinery.lib.executable import align, Arch, BO, Executable, Range, ExecutableCodeBlob
 from refinery.lib.types import bounds, INF
 
 from dataclasses import dataclass, field
@@ -24,6 +24,7 @@ class EmuState:
     executable: Executable
     writes: IntervalTree
     expected_address: int
+    stack: Range
     disassembler: Optional[Cs] = None
     waiting: int = 0
     callstack: List[int] = field(default_factory=list)
@@ -32,7 +33,7 @@ class EmuState:
     previous_address: int = 0
     sp_register: int = 0
     ip_register: int = 0
-    stack_ceiling: int = 0
+    callstack_ceiling: int = 0
     ticks: int = field(default_factory=lambda: INF)
 
     def disassemble(self, address: int, size: int):
@@ -184,9 +185,10 @@ class vstack(Unit):
         for address in self.args.address:
 
             emulator = uc.Uc(*self._uc_arch(arch, exe.byte_order()))
+            stack = Range(stack_addr, stack_addr + 3 * stack_size)
 
-            emulator.mem_map(stack_addr, stack_size * 3)
-            emulator.reg_write(sp, stack_addr + 2 * stack_size)
+            emulator.mem_map(stack.lower, len(stack))
+            emulator.reg_write(sp, stack.lower + 2 * len(stack) // 3)
 
             if arch is Arch.X32:
                 for reg in [
@@ -237,7 +239,7 @@ class vstack(Unit):
                     self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
             tree = self._intervaltree.IntervalTree()
-            state = EmuState(exe, tree, address, disassembler, stop=self.args.stop,
+            state = EmuState(exe, tree, address, stack, disassembler, stop=self.args.stop,
                 sp_register=sp, ip_register=ip)
 
             timeout = self.args.timeout
@@ -270,10 +272,13 @@ class vstack(Unit):
         unsigned_value = value & mask
         depth = len(state.callstack)
 
+        if unsigned_value in state.stack:
+            return                
+
         if unsigned_value == state.expected_address:
             callstack = state.callstack
             if not callstack:
-                state.stack_ceiling = emu.reg_read(state.sp_register)
+                state.callstack_ceiling = emu.reg_read(state.sp_register)
             state.retaddr = unsigned_value
             if not self.args.calls_skip:
                 callstack.append(unsigned_value)
@@ -281,7 +286,7 @@ class vstack(Unit):
         else:
             state.retaddr = None
 
-        if state.stack_ceiling > 0 and address in range(state.stack_ceiling - 0x200, state.stack_ceiling):
+        if state.callstack_ceiling > 0 and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling):
             return
 
         state.waiting = 0
@@ -339,7 +344,7 @@ class vstack(Unit):
                     depth -= 1
                     state.callstack.pop()
                     if depth == 0:
-                        state.stack_ceiling = 0
+                        state.callstack_ceiling = 0
                 state.expected_address = address
             elif retaddr is not None:
                 # The present address was moved to the stack but we did not branch.
