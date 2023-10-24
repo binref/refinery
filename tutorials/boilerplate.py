@@ -137,8 +137,8 @@ def show(line: str):
     return Image(filename=line.strip())
 
 
-def store_sample(hash: str, name: Optional[str] = None):
-    store.download(hash)
+def store_sample(hash: str, name: Optional[str] = None, key: Optional[str] = None):
+    store.download(hash, key=key)
     if name is None:
         name = hash
     store.cache[name] = store.cache.pop(hash)

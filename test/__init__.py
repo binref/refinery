@@ -1,3 +1,5 @@
+from typing import Optional
+
 import hashlib
 import logging
 import os
@@ -14,13 +16,15 @@ class SampleStore:
     def __init__(self):
         self.cache = {}
 
-    def download(self, sha256hash: str):
+    def download(self, sha256hash: str, key: Optional[str] = None):
+        key = key or 'REFINERYTESTDATA'
+        key = key.encode('latin1')
         sha256hash = sha256hash.lower()
         req = urllib.request.Request(
             F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true')
         try:
             with urllib.request.urlopen(req) as response:
-                decryptor = refinery.aes(mode='CBC', key=B'REFINERYTESTDATA')
+                decryptor = refinery.aes(mode='CBC', key=key)
                 result = decryptor(response.read())
                 if not result or hashlib.sha256(result).hexdigest().lower() != sha256hash:
                     raise ValueError
@@ -30,9 +34,9 @@ class SampleStore:
             self.cache[sha256hash] = result
             return result
         try:
-            key = os.environ['MALSHARE_API']
+            api = os.environ['MALSHARE_API']
             req = urllib.request.Request(
-                F'https://malshare.com/api.php?api_key={key}&action=getfile&hash={sha256hash}')
+                F'https://malshare.com/api.php?api_key={api}&action=getfile&hash={sha256hash}')
             with urllib.request.urlopen(req) as response:
                 result = response.read()
         except Exception:
@@ -41,12 +45,15 @@ class SampleStore:
             self.cache[sha256hash] = result
             return result
 
-    def __getitem__(self, sha256hash: str):
+    def get(self, sha256hash: str, key: Optional[str] = None):
         for key, value in self.cache.items():
             if key.casefold() == sha256hash.casefold():
                 return value
         else:
-            return self.download(sha256hash)
+            return self.download(sha256hash, key)
+
+    def __getitem__(self, sha256hash: str):
+        return self.get(sha256hash)
 
 
 class NameUnknownException(Exception):
@@ -71,8 +78,8 @@ class TestBase(unittest.TestCase):
         return ''.join(string.printable[
             random.randrange(0, len(string.printable))] for _ in range(size)).encode('UTF8')
 
-    def download_sample(self, sha256hash):
-        return self._STORE[sha256hash]
+    def download_sample(self, sha256hash, key=None):
+        return self._STORE.get(sha256hash, key)
 
     def setUp(self):
         random.seed(0xBAADF00D)  # guarantee deterministic 'random' buffers
