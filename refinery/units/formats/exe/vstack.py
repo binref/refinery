@@ -272,12 +272,6 @@ class vstack(Unit):
         unsigned_value = value & mask
         depth = len(state.callstack)
 
-        if unsigned_value in state.stack:
-            return
-        for section in state.executable.sections():
-            if unsigned_value in section.virtual:
-                return
-
         if unsigned_value == state.expected_address:
             callstack = state.callstack
             if not callstack:
@@ -291,6 +285,12 @@ class vstack(Unit):
 
         if state.callstack_ceiling > 0 and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling):
             return
+
+        if unsigned_value in state.stack:
+            return
+        for section in state.executable.sections():
+            if unsigned_value in section.virtual:
+                return
 
         state.waiting = 0
 
