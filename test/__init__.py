@@ -9,6 +9,8 @@ import string
 import unittest
 import urllib.request
 
+from refinery.units.crypto.cipher.aes import aes
+
 __all__ = ['refinery', 'TestBase', 'NameUnknownException']
 
 
@@ -24,13 +26,13 @@ class SampleStore:
             F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true')
         try:
             with urllib.request.urlopen(req) as response:
-                decryptor = refinery.aes(mode='CBC', key=key)
-                result = decryptor(response.read())
-                if not result or hashlib.sha256(result).hexdigest().lower() != sha256hash:
-                    raise ValueError
+                encoded_sample = response.read()
         except Exception:
             pass
         else:
+            result = encoded_sample | aes(mode='CBC', key=key) | bytearray
+            if not result or hashlib.sha256(result).hexdigest().lower() != sha256hash:
+                raise ValueError('sample did not decode correctly')
             self.cache[sha256hash] = result
             return result
         try:
