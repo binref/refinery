@@ -28,24 +28,17 @@ class SampleStore:
             with urllib.request.urlopen(req) as response:
                 encoded_sample = response.read()
         except Exception:
-            pass
-        else:
-            result = encoded_sample | aes(mode='CBC', key=key) | bytearray
-            if not result or hashlib.sha256(result).hexdigest().lower() != sha256hash:
-                raise ValueError('sample did not decode correctly')
-            self.cache[sha256hash] = result
-            return result
-        try:
             api = os.environ['MALSHARE_API']
             req = urllib.request.Request(
                 F'https://malshare.com/api.php?api_key={api}&action=getfile&hash={sha256hash}')
             with urllib.request.urlopen(req) as response:
                 result = response.read()
-        except Exception:
-            raise LookupError
         else:
-            self.cache[sha256hash] = result
-            return result
+            result = encoded_sample | aes(mode='CBC', key=key) | bytearray
+            if not result or hashlib.sha256(result).hexdigest().lower() != sha256hash:
+                raise ValueError('sample did not decode correctly')
+        self.cache[sha256hash] = result
+        return result
 
     def get(self, sha256hash: str, key: Optional[str] = None):
         for sha256hash, value in self.cache.items():
