@@ -14,8 +14,10 @@ import pathlib
 
 import refinery
 
-from typing import Dict, Generator, Type
+from typing import Dict, Generator, Type, TypeVar
 from typing import TYPE_CHECKING
+
+_T = TypeVar('_T')
 
 if TYPE_CHECKING:
     from refinery.units import Executable, Unit
@@ -75,9 +77,15 @@ def get_entry_point(name: str) -> Executable:
         return getattr(refinery, name)
     except AttributeError:
         pass
-    for sc in refinery.Unit.__subclasses__():
+
+    def get_subclasses(cls: Type[_T]) -> Generator[Type[_T], None, None]:
+        for sc in cls.__subclasses__():
+            yield sc
+            yield from get_subclasses(sc)
+    for sc in get_subclasses(refinery.Unit):
         if sc.name == name:
             return sc
+
     try:
         return get_entry_point_map()[name]
     except KeyError:
