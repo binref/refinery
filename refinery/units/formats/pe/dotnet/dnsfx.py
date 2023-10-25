@@ -122,8 +122,7 @@ class DotNetSingleFileBundle:
 
 class dnsfx(PathExtractorUnit):
     """
-    Extract .NET single file application
-    https://github.com/Droppers/SingleFileExtractor/tree/main
+    Extracts files from .NET single file applications.
     """
 
     def unpack(self, data):
