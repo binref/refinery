@@ -91,6 +91,7 @@ class vstack(Unit):
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
+        meta_registers: Arg.Switch('-r', help='Consume register initialization values from the chunk\'s metadata.') = False,
         timeout: Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.') = None,
         patch_range: Arg.Bounds('-p', metavar='MIN:MAX',
             help='Extract only patches that are in the given range, default is {default}.') = slice(5, None),
@@ -110,6 +111,7 @@ class vstack(Unit):
             stop=stop,
             base=base,
             arch=Arg.AsOption(arch, Arch),
+            meta_registers=meta_registers,
             timeout=timeout,
             patch_range=patch_range,
             write_range=write_range,
@@ -169,23 +171,22 @@ class vstack(Unit):
                 Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
             }[arch]
 
-        for module in [uc.x86_const, uc.arm_const, uc.mips_const, uc.sparc_const]:
-            md: Dict[str, Any] = module.__dict__
-            for name, register in md.items():
-                try:
-                    u, *_, kind, name = name.split('_')
-                except Exception:
-                    continue
-                if kind != 'REG' or u != 'UC':
-                    continue
-                for _n, value in os.environ.items():
-                    if _n.upper() != name:
-                        continue
+        if self.args.meta_registers:
+            from refinery.lib.meta import metavars
+            meta = metavars(data)
+            for module in [uc.x86_const, uc.arm_const, uc.mips_const, uc.sparc_const]:
+                md: Dict[str, Any] = module.__dict__
+                for name, register in md.items():
                     try:
-                        value = int(value, 0)
+                        u, *_, kind, name = name.split('_')
                     except Exception:
                         continue
-                    else:
+                    if kind != 'REG' or u != 'UC':
+                        continue
+                    for var, value in list(meta.items()):
+                        if var.upper() != name:
+                            continue
+                        meta.discard(var)
                         register_values[register] = value
                         break
 
