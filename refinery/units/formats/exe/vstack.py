@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import List, Dict, Any, TYPE_CHECKING
 
 import re
-import os
 
 from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, BO, Executable, Range, ExecutableCodeBlob
