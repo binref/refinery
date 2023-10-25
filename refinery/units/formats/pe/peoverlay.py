@@ -11,7 +11,9 @@ class peoverlay(OverlayUnit):
     """
     def process(self, data: bytearray) -> bytearray:
         size = self._get_size(data)
-        if isinstance(data, bytearray):
+        try:
             data[:size] = []
+        except Exception:
+            return data[size:]
+        else:
             return data
-        return data[size:]
