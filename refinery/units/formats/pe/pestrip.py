@@ -9,7 +9,6 @@ from refinery.lib.executable import Executable
 from refinery.lib.argformats import percent
 from refinery.lib.meta import TerseSizeInt as TI, SizeInt
 
-import re
 import zlib
 
 from fnmatch import fnmatch
@@ -94,14 +93,11 @@ class pestrip(OverlayUnit):
                     if abs(ratio - threshold) < 1e-10:
                         break
             result = upper
+        else:
+            result = len(data)
 
-        match = re.search(B'(?s).(?=\\x%02x+$)' % data[result - 1], data[:result])
-        if match is not None:
-            cutoff = match.start() - 1
-            length = result - cutoff
-            if length > block_size:
-                self.log_debug(F'removing additional {TI(length)!r} of repeated byte 0x{data[result-1]:02X}')
-                result = cutoff
+        while result > 1 and data[result - 2] == data[result - 1]:
+            result -= 1
 
         result = max(result, data_overhang)
 
