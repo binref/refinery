@@ -30,14 +30,17 @@ class ArchiveUnit(PathExtractorUnit, abstract=True):
 
     _COMMON_PASSWORDS = [
         'infected',
+        'virus',
+        'malware',
+        'dangerous',
+        'flare',
+        '1234',
+        '123',
         'Infected',
         'infected!',
         'INFECTED',
         'notinfected',
-        'virus',
         'unzip-me',
-        'malware',
-        'dangerous',
         'password',
     ]
 
