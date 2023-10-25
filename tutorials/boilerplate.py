@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import Optional, Union
+from pathlib import Path
 
 import builtins
 import contextlib
+import fnmatch
 import hashlib
 import io
-import os
-import sys
-import re
 import logging
-import stat
-import fnmatch
+import os
+import re
 import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+
 
 os.environ['REFINERY_TERM_SIZE'] = '120'
 
@@ -53,6 +58,7 @@ store = SampleStore()
 _open = builtins.open
 _stat = os.stat
 _root = os.path.abspath(os.getcwd())
+_popen = subprocess.Popen
 
 
 def _virtual_fs_stat(name):
@@ -102,10 +108,36 @@ def _virtual_fs_open(name: Union[int, str], mode='r', *args, **kwargs):
     return VFS()
 
 
+def _virtual_fs_popen(*args, **kwargs):
+    root = Path(tempfile.mkdtemp('binref'))
+    for name, data in store.cache.items():
+        path = root / name
+        os.makedirs(path.parent, exist_ok=True)
+        with open(root / name, 'wb') as stream:
+            stream.write(data)
+    kwargs.update(cwd=root)
+    process = _popen(*args, **kwargs)
+    _poll = process.poll
+    def poll(*args, **kwargs):
+        returncode = _poll(*args, **kwargs)
+        if returncode is not None:
+            for path in root.glob('**/*'):
+                if not path.is_file():
+                    continue
+                with open(path, 'rb') as stream:
+                    store.cache[path.relative_to(root).as_posix()] = stream.read()
+            shutil.rmtree(root)
+        return returncode
+    process.poll = poll
+    return process
+
+
+subprocess.Popen = _virtual_fs_popen
 builtins.open = _virtual_fs_open
 os.stat = _virtual_fs_stat
 io.open = _virtual_fs_open
 sys.stderr = sys.stdout
+
 
 
 @register_cell_magic
@@ -119,7 +151,10 @@ def emit(line: str, cell=None):
 
 @register_line_magic
 def ls(line: str = ''):
+    patterns = shlex.split(line)
     for name, data in store.cache.items():
+        if patterns and not any(fnmatch.fnmatch(name, p) for p in patterns):
+            continue
         print(F'{SizeInt(len(data))!r}', hashlib.sha256(data).hexdigest().lower(), name)
 
 
