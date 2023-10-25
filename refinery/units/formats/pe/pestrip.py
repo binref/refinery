@@ -3,7 +3,7 @@
 from refinery.units.formats.pe import OverlayUnit
 
 
-class petrim(OverlayUnit):
+class pestrip(OverlayUnit):
     """
     Removes the overlay of a PE file and returns the main executable. Use `refinery.peoverlay` to
     extract the overlay.
