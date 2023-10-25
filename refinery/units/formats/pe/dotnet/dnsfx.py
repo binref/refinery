@@ -14,9 +14,9 @@ from refinery.lib.dotnet.types import (
 
 
 class dnsfx(PathExtractorUnit):
-    '''
+    """
     Extracts files from .NET single file applications.
-    '''
+    """
     _SIGNATURE = bytes([
         # 32 bytes represent the bundle signature: SHA-256 for '.net core bundle'
         0x8b, 0x12, 0x02, 0xb9, 0x6a, 0x61, 0x20, 0x38,
