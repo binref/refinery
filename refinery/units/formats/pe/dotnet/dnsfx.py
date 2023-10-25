@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import zlib
+
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.dotnet.types import (
     Box,
@@ -17,20 +18,20 @@ class BundleFileEntry():
     def __init__(self, data, offset, size, compressed_size, ftype, rel_path):
         self.Name = rel_path
         self.Data = self.get_data(self.reader(data), offset, size, compressed_size, ftype)
-    
+
     def get_data(self, reader, offset, size, compressed_size, ftype):
         reader.seek(offset)
 
         if compressed_size:
             compressed_data = reader.read(compressed_size)
             return self._decompress(compressed_data)
-            
+
         else:
             return reader.read(size)
-    
+
     def reader(self, data):
         return StreamReader(data)
-    
+
     def _decompress(self, data):
         if data[0] == 0x78 or data[0:2] == B'\x1F\x8B':
             mode_candidates = [15 | 0x20, -15, 0]
@@ -43,6 +44,7 @@ class BundleFileEntry():
             except zlib.error:
                 pass
         raise ValueError('could not detect any zlib stream.')
+
 
 class DotNetSingleFileBundle:
     """
@@ -71,7 +73,7 @@ class DotNetSingleFileBundle:
         if bundle_sig_offset < 0:
             # Didn't find the single file app signature
             raise ValueError("Can't find valid Bundle Manifest offset. Is this a .NET Bundle?")
-        return int.from_bytes(self.data[bundle_sig_offset-8:bundle_sig_offset], "little")
+        return int.from_bytes(self.data[bundle_sig_offset - 8:bundle_sig_offset], "little")
 
     def _parse_bundle_manifest(self):
         def parse(reader):
@@ -117,11 +119,12 @@ class DotNetSingleFileBundle:
     def reader(self, data):
         return StreamReader(data)
 
+
 class dnsfx(PathExtractorUnit):
     """
     Extract .NET single file application
     https://github.com/Droppers/SingleFileExtractor/tree/main
-    """        
+    """
 
     def unpack(self, data):
         bundle = DotNetSingleFileBundle(data)
