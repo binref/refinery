@@ -38,18 +38,19 @@ def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, director
         cert_entry = None
         certificate = False
 
+    if certificate:
+        # The certificate overlay is given as a file offset
+        # rather than a virtual address.
+        cert_value = cert_entry.VirtualAddress + cert_entry.Size
+    else:
+        cert_value = 0
+
     if directories:
         directories_value = max((
             pe.get_offset_from_rva(d.VirtualAddress) + d.Size
             for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
             if d.name != 'IMAGE_DIRECTORY_ENTRY_SECURITY'
         ), default=0)
-        if certificate:
-            # The certificate overlay is given as a file offset
-            # rather than a virtual address.
-            cert_value = cert_entry.VirtualAddress + cert_entry.Size
-        else:
-            cert_value = 0
         directories_value = max(directories_value, cert_value)
     else:
         directories_value = 0
