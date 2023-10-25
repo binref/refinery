@@ -153,7 +153,7 @@ class pestrip(OverlayUnit):
                 new_value = old_value - gap_size
                 if new_value < 0:
                     raise RuntimeError(F'adjusting attribute {attribute} of {structure.name} would result in negative value: {new_value}')
-                self.log_info(F'adjusting field in {structure.name}: {attribute}')
+                self.log_debug(F'adjusting field in {structure.name}: {attribute}')
                 setattr(structure, attribute, new_value)
 
         it: Iterable[Structure] = iter(pe.__structures__)
@@ -282,7 +282,7 @@ class pestrip(OverlayUnit):
             data[gap_offset:gap_offset + gap_size] = []
 
         pe.OPTIONAL_HEADER.DATA_DIRECTORY[RSRC_INDEX].Size -= trimmed
-        self.log_debug(F'trimming size of resource data directory by {TI(trimmed)!r}')
+        self.log_info(F'trimming size of resource data directory by {TI(trimmed)!r}')
         return trimmed
 
     def process(self, data: bytearray) -> bytearray:
