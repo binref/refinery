@@ -10,8 +10,9 @@ import os
 import logging
 
 from enum import IntEnum
-from typing import Any, Optional
+from typing import Optional, TypeVar, Generic
 
+_T = TypeVar('_T')
 
 Logger = logging.Logger
 
@@ -96,21 +97,19 @@ def logger(name: str) -> logging.Logger:
     return logger
 
 
-class EnvironmentVariableSetting:
+class EnvironmentVariableSetting(Generic[_T]):
     key: str
-    value: Any
+    value: Optional[_T]
 
     def __init__(self, name: str):
         self.key = F'REFINERY_{name}'
         self.value = self.read()
 
-    def read(self):
+    def read(self) -> _T:
         return None
 
 
-class EVBool(EnvironmentVariableSetting):
-    value: bool
-
+class EVBool(EnvironmentVariableSetting[bool]):
     def read(self):
         value = os.environ.get(self.key, None)
         if value is None:
@@ -124,19 +123,15 @@ class EVBool(EnvironmentVariableSetting):
         return value not in {'no', 'off', 'false'}
 
 
-class EVInt(EnvironmentVariableSetting):
-    value: int
-
-    def read(self) -> int:
+class EVInt(EnvironmentVariableSetting[int]):
+    def read(self):
         try:
             return int(os.environ[self.key], 0)
         except (KeyError, ValueError):
             return 0
 
 
-class EVLog(EnvironmentVariableSetting):
-    value: Optional[LogLevel]
-
+class EVLog(EnvironmentVariableSetting[Optional[LogLevel]]):
     def read(self):
         try:
             loglevel = os.environ[self.key]
