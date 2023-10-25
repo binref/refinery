@@ -1,5 +1,17 @@
 # Binary Refinery Changelog
 
+## Version 0.6.15
+- The `vstack` unit has received further improvements. CPU register initialization now works via meta variables instead of shell environment variables, more options have been added, and new heuristics: Values written to the stack that represent addresses into any mapped segment are now ignored by default.
+- This release adds the "shell like" interface; by importing units from `refinery.shell`, they can be instantiated in Python by using string arguments that are interpreted as if the corresponding unit was being assembled from a shell command line.
+- The `lzw` decompression unit was added.
+- the `xtmagtape` unit was added to extract files from SIMH tape files. But why, you ask? It may forever remain a mystery.
+- The `hc256` cipher unit was added.
+- The `--more` option was added to the `struct` unit to give access to unparsed rest data.
+- The `--length` option was added to the `snip` unit as a qualit of life feature.
+- The `btoi` handler can now receive a second argument that allows reading interlaced integers from a byte stream.
+- Thanks to [@alphillips-lab], the `dnsfx` unit was added for extracting .NET file bundles.
+- The `pestrip` unit was renamed to `pedebloat` and `petrim` was renamed back to `pestrip`.
+
 ## Version 0.6.14
 - The `trim` unit can now remove padding and also perform case-insensitive trimming.
 - The `ngrams` and `bruteforce` unit were added for simple brute forcing tasks.
@@ -602,6 +614,7 @@ Updates build system.
 
 
 [@baderj]: https://github.com/baderj
+[@alphillips-lab] https://github.com/alphillips-lab
 [@cxiao]: https://github.com/cxiao
 [@larsborn]: https://github.com/larsborn
 [XLMMacroDeobfuscator]: https://github.com/DissectMalware/XLMMacroDeobfuscator
