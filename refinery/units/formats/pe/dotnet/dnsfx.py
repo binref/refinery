@@ -60,7 +60,7 @@ class DotNetSingleFileBundle:
         except IndexError:
             if not data: raise
 
-    _bundle_signature = bytes([
+    _SIGNATURE = bytes([
         # 32 bytes represent the bundle signature: SHA-256 for ".net core bundle"
         0x8b, 0x12, 0x02, 0xb9, 0x6a, 0x61, 0x20, 0x38,
         0x72, 0x7b, 0x93, 0x02, 0x14, 0xd7, 0xa0, 0x32,
@@ -69,7 +69,7 @@ class DotNetSingleFileBundle:
     ])
 
     def _find_bundle_manifest_offset(self) -> int:
-        bundle_sig_offset = self.data.find(self._bundle_signature, 0)
+        bundle_sig_offset = self.data.find(self._SIGNATURE, 0)
         if bundle_sig_offset < 0:
             # Didn't find the single file app signature
             raise ValueError("Can't find valid Bundle Manifest offset. Is this a .NET Bundle?")
