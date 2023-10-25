@@ -25,7 +25,7 @@ class BrokenLink(Exception):
     pass
 
 
-class pestrip(OverlayUnit):
+class pedebloat(OverlayUnit):
     """
     Removes junk or excess data from PE files and returns the stripped executable. By default, only
     the PE overlay is considered; use the flags `-r` and `-s` to also consider resources and entire
