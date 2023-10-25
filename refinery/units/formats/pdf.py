@@ -6,7 +6,7 @@ from typing import Optional, Set, TYPE_CHECKING, cast
 from itertools import islice
 
 if TYPE_CHECKING:
-    from PyPDF2.generic import EncodedStreamObject
+    from pypdf.generic import EncodedStreamObject
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.tools import NoLogging
@@ -21,11 +21,11 @@ class xtpdf(PathExtractorUnit):
     """
     Extract objects from PDF documents.
     """
-    @PathExtractorUnit.Requires('PyPDF2>=3.0.0', optional=False)
+    @PathExtractorUnit.Requires('pypdf>=3.1.0', optional=False)
     def _pypdf2():
-        import PyPDF2
-        import PyPDF2.generic
-        return PyPDF2
+        import pypdf
+        import pypdf.generic
+        return pypdf
 
     def _walk(self, blob, memo: Optional[Set[int]] = None, *path):
         while isinstance(blob, self._pypdf2.generic.IndirectObject):
