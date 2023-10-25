@@ -25,6 +25,8 @@ class xt(ArchiveUnit):
         yield xtasar
         from refinery.units.formats.office.xtrtf import xtrtf
         yield xtrtf
+        from refinery.units.formats.pe.dotnet.dnsfx import dnsfx
+        yield dnsfx
         from refinery.units.formats.archive.xtnsis import xtnsis
         yield xtnsis
         from refinery.units.formats.archive.xtnode import xtnode
