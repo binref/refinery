@@ -15,4 +15,5 @@ class petrim(OverlayUnit):
             data[size:] = []
         except Exception:
             data = data[:size]
-        return data
+        else:
+            return data
