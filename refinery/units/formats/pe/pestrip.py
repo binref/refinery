@@ -21,6 +21,10 @@ _STRIP = TI(10 * _MB)
 _ASCII = Executable.ascii
 
 
+class BrokenLink(Exception):
+    pass
+
+
 class pestrip(OverlayUnit):
     """
     Removes junk or excess data from PE files and returns the stripped executable. By default, only
@@ -38,6 +42,8 @@ class pestrip(OverlayUnit):
         memdump=False,
         resources: Arg.Switch('-r', help='Strip large resources.') = False,
         sections : Arg.Switch('-s', help='Strip large sections.') = False,
+        trim_text: Arg.Switch('-X', help='Lift the exception on .TEXT section for stripping.') = False,
+        trim_rsrc: Arg.Switch('-Y', help='Lift the exception on .RSRC section for stripping.') = False,
         threshold: Arg('-t', metavar='T', type=percent, help=(
             'Trailing data from resources and sections is stripped until the compression ratio '
             'of the remaining data rises above this threshold. The default value is {default}. '
@@ -65,6 +71,8 @@ class pestrip(OverlayUnit):
             size_limit=size_limit,
             keep_limit=keep_limit,
             threshold=threshold,
+            trim_rsrc=trim_rsrc,
+            trim_text=trim_text,
             names=names,
         )
 
@@ -93,8 +101,10 @@ class pestrip(OverlayUnit):
                     if abs(ratio - threshold) < 1e-10:
                         break
             result = upper
-        else:
+        elif threshold == 0:
             result = len(data)
+        elif threshold == 1:
+            result = 0
 
         while result > 1 and data[result - 2] == data[result - 1]:
             result -= 1
@@ -137,63 +147,71 @@ class pestrip(OverlayUnit):
 
         def adjust_attributes_of_structure(
             structure: Structure,
-            threshold: int,
-            lbound: Optional[int],
-            ubound: Optional[int],
+            gap_offset: int,
+            valid_values_lower_bound: Optional[int],
+            valid_values_upper_bound: Optional[int],
             attributes: Iterable[str]
         ):
             for attribute in attributes:
                 old_value = getattr(structure, attribute, 0)
-                if old_value <= threshold:
+                if old_value <= gap_offset:
                     continue
-                if lbound is not None and old_value < lbound:
+                if valid_values_lower_bound is not None and old_value < valid_values_lower_bound:
                     continue
-                if ubound is not None and old_value > ubound:
+                if valid_values_upper_bound is not None and old_value > valid_values_upper_bound:
                     continue
                 new_value = old_value - gap_size
-                if new_value < 0:
-                    raise RuntimeError(F'adjusting attribute {attribute} of {structure.name} would result in negative value: {new_value}')
+                if new_value < gap_offset:
+                    raise BrokenLink(F'attribute {attribute} points into removed region')
                 self.log_debug(F'adjusting field in {structure.name}: {attribute}')
                 setattr(structure, attribute, new_value)
 
         it: Iterable[Structure] = iter(pe.__structures__)
+        remove = []
 
-        for structure in it:
+        for index, structure in enumerate(it):
             old_offset = structure.get_file_offset()
             new_offset = old_offset - gap_offset
 
             if old_offset > gap_offset:
+                if old_offset < gap_offset + gap_size:
+                    self.log_debug(F'removing structure {structure.name}; starts inside removed region')
+                    remove.append(index)
+                    continue
                 if isinstance(structure, SectionStructure) and new_offset % alignment != 0:
                     raise RuntimeError(
-                        F'section {_ASCII(structure.Name)} would be moved to offset 0x{new_offset:X}, '
+                        F'structure {structure.name} would be moved to offset 0x{new_offset:X}, '
                         F'violating section alignment value 0x{alignment:X}.')
-                if old_offset < gap_offset + gap_size:
-                    raise RuntimeError(
-                        F'structure starts inside removed region: {structure}')
                 structure.set_file_offset(new_offset)
 
-            adjust_attributes_of_structure(structure, rva_offset, rva_lbound, rva_ubound, (
-                'OffsetToData',
-                'AddressOfData',
-                'VirtualAddress',
-                'AddressOfNames',
-                'AddressOfNameOrdinals',
-                'AddressOfFunctions',
-                'AddressOfEntryPoint',
-                'AddressOfRawData',
-                'BaseOfCode',
-                'BaseOfData',
-            ))
-            adjust_attributes_of_structure(structure, tva_offset, tva_lbound, tva_ubound, (
-                'StartAddressOfRawData',
-                'EndAddressOfRawData',
-                'AddressOfIndex',
-                'AddressOfCallBacks',
-            ))
-            adjust_attributes_of_structure(structure, gap_offset, None, None, (
-                'OffsetModuleName',
-                'PointerToRawData',
-            ))
+            try:
+                adjust_attributes_of_structure(structure, rva_offset, rva_lbound, rva_ubound, (
+                    'OffsetToData',
+                    'AddressOfData',
+                    'VirtualAddress',
+                    'AddressOfNames',
+                    'AddressOfNameOrdinals',
+                    'AddressOfFunctions',
+                    'AddressOfEntryPoint',
+                    'AddressOfRawData',
+                    'BaseOfCode',
+                    'BaseOfData',
+                ))
+                adjust_attributes_of_structure(structure, tva_offset, tva_lbound, tva_ubound, (
+                    'StartAddressOfRawData',
+                    'EndAddressOfRawData',
+                    'AddressOfIndex',
+                    'AddressOfCallBacks',
+                ))
+                adjust_attributes_of_structure(structure, gap_offset, None, None, (
+                    'OffsetModuleName',
+                    'PointerToRawData',
+                ))
+            except BrokenLink as error:
+                self.log_debug(F'removing structure {structure.name}; {error!s}')
+                remove.append(index)
+                continue
+
             for attribute in (
                 'CvHeaderOffset',
                 'OffsetIn2Qwords',
@@ -206,6 +224,10 @@ class pestrip(OverlayUnit):
                     continue
                 self.log_warn(F'potential offset in structure {structure.name} ignored: {attribute}')
 
+        while remove:
+            index = remove.pop()
+            pe.__structures__[index:index + 1] = []
+
         section.SizeOfRawData = new_section_size
 
     def _trim_sections(self, pe: PE, data: bytearray) -> int:
@@ -216,6 +238,12 @@ class pestrip(OverlayUnit):
             section: SectionStructure
             offset = section.PointerToRawData
             name = _ASCII(section.Name)
+            if not self.args.trim_text and name.lower() in ('.text', '.code'):
+                self.log_info(F'skipping code section {name}')
+                continue
+            if not self.args.trim_rsrc and name.lower() == '.rsrc':
+                self.log_info(F'skipping rsrc section {name}')
+                continue
             old_size = section.SizeOfRawData
             if old_size <= S and not any(fnmatch(name, p) for p in P):
                 self.log_debug(F'criteria not satisfied for section: {SizeInt(old_size)!r} {name}')
