@@ -26,15 +26,17 @@ class xtxml(PathExtractorUnit):
                 children_by_tag[child.tag].append(child)
             yield UnpackResult('/'.join(path), extract, **node.attributes)
             for tag, children in children_by_tag.items():
+                def attrs(child: xml.XMLNode):
+                    return {name.rpartition(':')[-1]: value
+                        for name, value in child.attributes.items()}
                 children: List[xml.XMLNode]
                 if len(children) == 1:
                     child = children[0]
-                    item = self._format_path(tag, tag=child.tag, **child.attributes)
-                    yield from walk(child, *path, tag)
+                    item = self._format_path(tag, tag=child.tag, **attrs(child))
+                    yield from walk(child, *path, item)
                     continue
-                width = len(F'{len(children):X}')
                 for k, child in enumerate(children):
-                    item = self._format_path(F'{tag}[0x{k:0{width}X}]', tag=child.tag, **child.attributes)
+                    item = self._format_path(F'{tag}({k})', tag=child.tag, **attrs(child))
                     yield from walk(child, *path, item)
         root = xml.parse(data)
         name = root.tag or 'xml'
