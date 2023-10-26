@@ -79,7 +79,6 @@ class PathPattern:
 class PathExtractorUnit(Unit, abstract=True):
 
     _custom_path_separator = '/'
-    _current_meta: Optional[LazyMetaOracle]
 
     def __init__(
         self,
@@ -89,10 +88,6 @@ class PathExtractorUnit(Unit, abstract=True):
             'argument is a single wildcard, which means that every item will be extracted. If '
             'a given path yields no results, the unit performs increasingly fuzzy searches '
             'with it. This can be disabled using the --exact switch.')),
-        format: Arg('-f', type=str, help=(
-            'A format expression to be applied for computing the path of an item. This must use '
-            'metadata that is available on the item. The default format can be accessed as the '
-            'format expression "{}".')) = None,
         list: Arg.Switch('-l',
             help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join_path: Arg.Switch('-j', group='PATH',
@@ -120,11 +115,8 @@ class PathExtractorUnit(Unit, abstract=True):
             fuzzy=fuzzy,
             exact=exact,
             regex=regex,
-            format=format,
             **keywords
         )
-
-        self._current_meta = None
 
     @property
     def _patterns(self):
@@ -150,23 +142,12 @@ class PathExtractorUnit(Unit, abstract=True):
             ) for path in paths
         ]
 
-    def _format_path(self, path: str, *args, **kwargs) -> str:
-        format = self.args.format
-        meta = self._current_meta
-        if format is None or meta is None:
-            return path
-        try:
-            return meta.format_str(format, self.codec, args, kwargs)
-        except KeyError:
-            self.log_debug('missing variable error while formatting path:', path)
-        return path
-
     @abc.abstractmethod
     def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
         raise NotImplementedError
 
     def process(self, data: ByteString) -> ByteString:
-        self._current_meta = meta = metavars(data)
+        meta = metavars(data)
         results: List[UnpackResult] = list(self.unpack(data))
 
         patterns = self._patterns
