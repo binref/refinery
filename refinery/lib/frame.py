@@ -345,7 +345,7 @@ class Chunk(bytearray):
         return msgpack.packb(item)
 
     def __repr__(self) -> str:
-        layer = '/'.join('#' if not s else str(p) for p, s in zip(self._path, self._view))
+        layer = '/'.join(str(p) if s else F'!{p}' for p, s in zip(self._path, self._view))
         layer = layer and '/' + layer
         return F'<chunk{layer}:{bytes(self)!r}>'
 
@@ -647,7 +647,7 @@ class Framed:
                     for result in results:
                         if trunk is None:
                             trunk = result
-                        elif result.path[scope:] == trunk.path[scope:]:
+                        elif result.path == trunk.path:
                             trunk.intersect(result)
                             trunk.extend(result)
                         else:
