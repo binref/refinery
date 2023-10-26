@@ -96,19 +96,15 @@ class ef(Unit):
     def process(self, data):
         meta = metavars(data)
         meta.ghost = True
-
-        if (os.name == 'nt' or self.args.wild) and not self.args.tame:
-            paths = self._glob
-        else:
-            def paths(mask):
-                yield Path(mask)
+        wild = (os.name == 'nt' or self.args.wild) and not self.args.tame
+        paths = self._glob if wild else lambda mask: Path(mask)
 
         for mask in self.args.filenames:
             mask = meta.format_str(mask, self.codec, [data])
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
             for path in paths(mask):
-                if not path.is_file():
+                if wild and not path.is_file():
                     continue
                 if self.args.meta:
                     stat = path.stat()
