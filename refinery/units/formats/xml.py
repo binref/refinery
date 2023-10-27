@@ -6,7 +6,7 @@ from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import metavars
 from refinery.lib import xml
 from refinery.units.sinks.ppxml import ppxml
-from refinery.units.formats import Arg, XMLToPathExtractorUnit, UnpackResult
+from refinery.units.formats import XMLToPathExtractorUnit, UnpackResult
 
 
 class xtxml(XMLToPathExtractorUnit):
@@ -35,7 +35,7 @@ class xtxml(XMLToPathExtractorUnit):
                     yield from walk(child, *parts, path(child))
                     continue
                 tag_run_count[child.tag] += 1
-                index = tag_run_count[child.tag]               
+                index = tag_run_count[child.tag]
                 yield from walk(child, *parts, path(child, index))
 
         yield from walk(root, path(root))

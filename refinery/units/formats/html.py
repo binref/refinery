@@ -178,7 +178,7 @@ class xthtml(XMLToPathExtractorUnit):
                     yield from tree(child, *parts, path(child))
                     continue
                 tag_run_count[child.tag] += 1
-                index = tag_run_count[child.tag]               
+                index = tag_run_count[child.tag]
                 yield from tree(child, *parts, path(child, index))
 
         yield from tree(root, path(root))
