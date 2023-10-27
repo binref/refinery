@@ -32,16 +32,16 @@ class TestHTMLExtractor(TestUnitBase):
             listing,
             '\n'.join((
                 'html',
-                'html/0.head',
-                'html/0.head/0.title',
-                'html/0.head/1.script',
-                'html/0.head/2.woober',
-                'html/1.body',
-                'html/1.body/0.p',
-                'html/1.body/1.p',
-                'html/1.body/2.p',
-                'html/1.body/3.div',
-                'html/1.body/3.div/0.div',
+                'html/head',
+                'html/head/title',
+                'html/head/script',
+                'html/head/woober',
+                'html/body',
+                'html/body/p(1)',
+                'html/body/p(2)',
+                'html/body/p(3)',
+                'html/body/div',
+                'html/body/div/div',
             ))
         )
 
@@ -52,7 +52,7 @@ class TestHTMLExtractor(TestUnitBase):
         )
 
     def test_extraction_outer(self):
-        result = str(self._TEST_DOCUMENT | self.load('*.head', outer=True))
+        result = str(self._TEST_DOCUMENT | self.load('head', outer=True))
         self.assertEqual(
             result,
             '\n'.join((

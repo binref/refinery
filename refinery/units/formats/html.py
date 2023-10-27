@@ -8,6 +8,7 @@ from refinery.units.formats import XMLToPathExtractorUnit, UnpackResult, Arg
 
 import io
 
+from collections import Counter
 from html.parser import HTMLParser
 
 _HTML_DATA_ROOT_TAG = 'html'
@@ -142,7 +143,7 @@ class xthtml(XMLToPathExtractorUnit):
         while len(root.children) == 1 and root.children[0].tag == root.tag:
             root, = root.children
 
-        def tree(root: HTMLNode, *path):
+        def tree(root: HTMLNode, *parts: str):
 
             def outer(root: HTMLNode = root):
                 return root.recover(inner=False).encode(self.codec)
@@ -150,7 +151,7 @@ class xthtml(XMLToPathExtractorUnit):
             def inner(root: HTMLNode = root):
                 return root.recover().encode(self.codec)
 
-            tagpath = '/'.join(path)
+            tagpath = '/'.join(parts)
             meta = {}
 
             if self.args.attributes:
@@ -163,9 +164,22 @@ class xthtml(XMLToPathExtractorUnit):
             else:
                 yield UnpackResult(tagpath, inner, **meta)
 
-            for k, node in enumerate((n for n in root.children if not n.textual)):
-                item = path(node, k)
-                yield from tree(node, *path, item)
+            tag_pre_count = Counter()
+            tag_run_count = Counter()
+            for child in root.children:
+                if child.textual:
+                    continue
+                tag_pre_count[child.tag] += 1
+
+            for child in root.children:
+                if child.textual:
+                    continue
+                if tag_pre_count[child.tag] == 1:
+                    yield from tree(child, *parts, path(child))
+                    continue
+                tag_run_count[child.tag] += 1
+                index = tag_run_count[child.tag]               
+                yield from tree(child, *parts, path(child, index))
 
         yield from tree(root, path(root))
 
