@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from zlib import adler32
 from collections import Counter
-from typing import ByteString, Iterable, Callable, Dict, List, Union, Optional
+from typing import ByteString, Iterable, Callable, List, Union, Optional
 
 from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
@@ -233,7 +233,7 @@ class PathExtractorUnit(Unit, abstract=True):
 
 class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
     def __init__(
-        self, *paths, 
+        self, *paths,
         format: Arg('-f', type=str, metavar='F', help=(
             'A format expression to be applied for computing the path of an item. This must use '
             'metadata that is available on the item. The current tag can be accessed as {0}. If '
@@ -258,7 +258,7 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
 
     @staticmethod
     def _normalize_val(attr: str):
-        _bad = '[/\\$&%#:\.]'
+        _bad = '[/\\$&%#:.]'
         attr = attr.replace('[', '(')
         attr = attr.replace(']', ')')
         attr = re.sub(F'\\s*{_bad}+\\s+', ' ', attr)
@@ -281,9 +281,7 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         def walk(node: XMLNodeBase):
             total = 1
             for key, val in node.attributes.items():
-                val = self._normalize_val(val)
-                key = self._normalize_key(key)
-                if re.fullmatch(R'[-\s\w+,.;@(){}]{1,64}', val):
+                if re.fullmatch(R'[-\s\w+,.;@(){}]{1,64}', self._normalize_val(val)):
                     path_attributes[key] += 1
             for child in node.children:
                 total += walk(child)
@@ -304,17 +302,24 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         node_format = self.args.format
 
         def path_builder(node: XMLNodeBase, index: Optional[int] = None) -> str:
-            attrs = { nkey(key): nval(val) for key, val in node.attributes.items()}
+            attrs = node.attributes
             if node_format and meta:
                 try:
-                    return meta.format_str(node_format, self.codec, node.tag, **attrs)
+                    return meta.format_str(
+                        node_format,
+                        self.codec,
+                        node.tag, **{
+                            nkey(key): nval(val)
+                            for key, val in attrs.items()
+                        }
+                    )
                 except KeyError:
                     pass
             if path_attribute is not None and path_attribute in attrs:
-                return attrs[path_attribute]
+                return self._normalize_val(attrs[path_attribute])
             out = node.tag
             if index is not None:
                 out = F'{out}({index})'
             return nval(out)
-        
+
         return path_builder
