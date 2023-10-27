@@ -47,7 +47,7 @@ class TestHTMLExtractor(TestUnitBase):
 
     def test_extraction(self):
         self.assertEqual(
-            str(self._TEST_DOCUMENT | self.load('0.p')),
+            str(self._TEST_DOCUMENT | self.load('p(1)')),
             'Paragraph 1 &#62; &#x3E;'
         )
 
