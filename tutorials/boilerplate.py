@@ -12,18 +12,18 @@ import logging
 import os
 import re
 import shlex
-import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import getpass
 
 
 os.environ['REFINERY_TERM_SIZE'] = '120'
 
 from refinery.lib.meta import SizeInt
 from refinery.lib.loader import load_pipeline
-from refinery.units import Executable
+from refinery.units import Executable, Unit
 from test import SampleStore
 
 logging.disable(logging.CRITICAL)
@@ -109,26 +109,32 @@ def _virtual_fs_open(name: Union[int, str], mode='r', *args, **kwargs):
 
 
 def _virtual_fs_popen(*args, **kwargs):
-    root = Path(tempfile.mkdtemp('binref'))
-    for name, data in store.cache.items():
-        path = root / name
-        os.makedirs(path.parent, exist_ok=True)
-        with open(root / name, 'wb') as stream:
-            stream.write(data)
-    kwargs.update(cwd=root)
-    process = _popen(*args, **kwargs)
-    _poll = process.poll
-    def poll(*args, **kwargs):
-        returncode = _poll(*args, **kwargs)
-        if returncode is not None:
-            for path in root.glob('**/*'):
+    with tempfile.TemporaryDirectory('.binref') as root:
+        root = Path(root)
+        for name, data in store.cache.items():
+            path = root / name
+            os.makedirs(path.parent, exist_ok=True)
+            with open(root / name, 'wb') as stream:
+                stream.write(data)
+        kwargs.update(cwd=root)
+        process = _popen(*args, **kwargs)
+        process.wait()
+
+        for path in root.glob('**/*'):
+            try:
                 if not path.is_file():
                     continue
                 with open(path, 'rb') as stream:
-                    store.cache[path.relative_to(root).as_posix()] = stream.read()
-            shutil.rmtree(root)
-        return returncode
-    process.poll = poll
+                    name = path.relative_to(root).as_posix()
+                    store.cache[name] = stream.read()
+            except Exception:
+                pass
+
+    out = process.stdout.read()
+    out = out.splitlines(True)
+    out = [line for line in out if not getpass.getuser().encode() in line]
+    process.stdout = io.BytesIO(b''.join(out))
+
     return process
 
 
@@ -139,7 +145,6 @@ io.open = _virtual_fs_open
 sys.stderr = sys.stdout
 
 
-
 @register_cell_magic
 def emit(line: str, cell=None):
     if cell is not None:
@@ -147,6 +152,30 @@ def emit(line: str, cell=None):
         line = re.sub(R'(?<=\[|\])\x20*\|', '|', line)
     load_pipeline.cache_clear()
     load_pipeline(F'emit {line}') | FakeTTY()
+
+
+class _vef(Unit):
+    def __init__(self, *mask):
+        pass
+    def process(self, data):
+        for mask_ in self.args.mask:
+            mask = mask_.decode(self.codec)
+            for name, data in store.cache.items():
+                if not fnmatch.fnmatch(name, mask):
+                    continue
+                yield self.labelled(data, path=name)
+
+
+@register_cell_magic
+def ef(line: str, cell=None):
+    if cell is not None:
+        line = line + re.sub(R'[\r\n]+\s*', '\x20', cell)
+        line = re.sub(R'(?<=\[|\])\x20*\|', '|', line)
+    load_pipeline.cache_clear()
+    mask, _, rest = line.partition('|')
+    mask = shlex.split(mask)
+    vef = _vef.assemble(*mask) 
+    vef | load_pipeline(rest) | FakeTTY()
 
 
 @register_line_magic
