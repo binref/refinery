@@ -271,8 +271,11 @@ class vstack(Unit):
                 size = interval.end - interval.begin - 1
                 if size not in bounds[self.args.patch_range]:
                     continue
+                patch = emulator.mem_read(interval.begin, size)
+                if not any(patch):
+                    continue
                 self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
-                yield emulator.mem_read(interval.begin, size)
+                yield patch
 
     def _hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
         mask = (1 << (size * 8)) - 1
