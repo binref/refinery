@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.16
+- The path formatting feature has been isolated in the `xthtml` and `xtxml` units.
+- The `vstack` unit no longer extracts byte patches that consist exclusively of zero bytes because these were common false positives.
+
 ## Version 0.6.15
 - The `vstack` unit has received further improvements. CPU register initialization now works via meta variables instead of shell environment variables, more options have been added, and new heuristics: Values written to the stack that represent addresses into any mapped segment are now ignored by default.
 - This release adds the "shell like" interface; by importing units from `refinery.shell`, they can be instantiated in Python by using string arguments that are interpreted as if the corresponding unit was being assembled from a shell command line.
