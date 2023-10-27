@@ -3,6 +3,8 @@
 """
 A package containing several sub-packages for various data formats.
 """
+from __future__ import annotations
+
 import abc
 import collections
 import fnmatch
@@ -12,10 +14,12 @@ import uuid
 
 from pathlib import Path
 from zlib import adler32
-from typing import ByteString, Iterable, Callable, List, Union, Optional
+from collections import Counter
+from typing import ByteString, Iterable, Callable, Dict, List, Union, Optional
 
 from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
+from refinery.lib.xml import XMLNodeBase
 
 
 def pathspec(expression):
@@ -225,3 +229,92 @@ class PathExtractorUnit(Unit, abstract=True):
                         yield self.labelled(data, **result.meta)
                 if done or self.args.fuzzy:
                     break
+
+
+class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
+    def __init__(
+        self, *paths, 
+        format: Arg('-f', type=str, metavar='F', help=(
+            'A format expression to be applied for computing the path of an item. This must use '
+            'metadata that is available on the item. The current tag can be accessed as {0}. If '
+            'no format is specified, the unit attempts to derive a good attribute from the XML '
+            'tree to use for generating paths.'
+        )) = None,
+        list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
+        path=b'path', **keywords
+    ):
+        super().__init__(
+            *paths,
+            format=format,
+            list=list,
+            path=path,
+            join_path=join_path,
+            drop_path=drop_path,
+            fuzzy=fuzzy,
+            exact=exact,
+            regex=regex,
+            **keywords
+        )
+
+    @staticmethod
+    def _normalize_val(attr: str):
+        _bad = '[/\\$&%#:\.]'
+        attr = attr.replace('[', '(')
+        attr = attr.replace(']', ')')
+        attr = re.sub(F'\\s*{_bad}+\\s+', ' ', attr)
+        attr = re.sub(F'\\s*{_bad}+\\s*', '.', attr)
+        return attr.strip()
+
+    @staticmethod
+    def _normalize_key(attribute: str):
+        _, _, a = attribute.rpartition(':')
+        return a
+
+    def _make_path_builder(
+        self,
+        meta: LazyMetaOracle,
+        root: XMLNodeBase
+    ) -> Callable[[XMLNodeBase, Optional[int]], str]:
+
+        path_attributes = Counter()
+
+        def walk(node: XMLNodeBase):
+            total = 1
+            for key, val in node.attributes.items():
+                val = self._normalize_val(val)
+                key = self._normalize_key(key)
+                if re.fullmatch(R'[-\s\w+,.;@(){}]{1,64}', val):
+                    path_attributes[key] += 1
+            for child in node.children:
+                total += walk(child)
+            return total
+
+        total = walk(root)
+
+        if not path_attributes:
+            path_attribute = None
+            count = 0
+        else:
+            path_attribute, count = path_attributes.most_common(1)[0]
+            if 3 * count <= 2 * total:
+                path_attribute = None
+
+        nkey = self._normalize_key
+        nval = self._normalize_val
+        node_format = self.args.format
+
+        def path_builder(node: XMLNodeBase, index: Optional[int] = None) -> str:
+            attrs = { nkey(key): nval(val) for key, val in node.attributes.items()}
+            if node_format and meta:
+                try:
+                    return meta.format_str(node_format, self.codec, node.tag, **attrs)
+                except KeyError:
+                    pass
+            if path_attribute is not None and path_attribute in attrs:
+                return attrs[path_attribute]
+            out = node.tag
+            if index is not None:
+                out = F'{out}({index})'
+            return nval(out)
+        
+        return path_builder

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from refinery.lib.xml import XMLNodeBase
-from refinery.units.formats import PathExtractorUnit, UnpackResult, Arg
+from refinery.lib.meta import metavars
+from refinery.units.formats import XMLToPathExtractorUnit, UnpackResult, Arg
 
 import io
 
@@ -114,7 +115,7 @@ class HTMLTreeParser(HTMLParser):
         self.tos.children.append(HTMLNode(None, self.tos, data))
 
 
-class xthtml(PathExtractorUnit):
+class xthtml(XMLToPathExtractorUnit):
     """
     The unit processes an HTML document and extracts the contents of all elemnts in the DOM of the
     given tag. The main purpose is to extract scripts from HTML documents.
@@ -128,6 +129,19 @@ class xthtml(PathExtractorUnit):
         super().__init__(*paths, outer=outer, attributes=attributes, **keywords)
 
     def unpack(self, data):
+        html = HTMLTreeParser()
+        html.feed(data.decode(self.codec))
+        root = html.tos
+        meta = metavars(data)
+        path = self._make_path_builder(meta, root)
+
+        while root.parent:
+            self.log_info(F'tag was not closed: {root.tag}')
+            root = root.parent
+
+        while len(root.children) == 1 and root.children[0].tag == root.tag:
+            root, = root.children
+
         def tree(root: HTMLNode, *path):
 
             def outer(root: HTMLNode = root):
@@ -150,20 +164,10 @@ class xthtml(PathExtractorUnit):
                 yield UnpackResult(tagpath, inner, **meta)
 
             for k, node in enumerate((n for n in root.children if not n.textual)):
-                item = self._format_path(F'{k}.{node.tag}', tag=node.tag, **node.attributes)
+                item = path(node, k)
                 yield from tree(node, *path, item)
 
-        parser = HTMLTreeParser()
-        parser.feed(data.decode(self.codec))
-        root = parser.tos
-        while root.parent:
-            self.log_info(F'tag was not closed: {root.tag}')
-            root = root.parent
-
-        while len(root.children) == 1 and root.children[0].tag == root.tag:
-            root, = root.children
-
-        yield from tree(root, root.tag)
+        yield from tree(root, path(root))
 
     @classmethod
     def handles(self, data: bytearray):
