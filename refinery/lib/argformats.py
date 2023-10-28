@@ -1209,8 +1209,6 @@ class DelayedNumSeqArgument(DelayedArgument):
                         F'The first item {top!r} of the iterable computed from {self.expression} was not an integer.')
                 return rewind()
             else:
-                if not all(isinstance(t, int) for t in value):
-                    raise ArgumentTypeError(F'Not all elements of {value!r}, computed from {self.expression}, are integers.')
                 return value
         if isinstance(value, float):
             tmp = int(value)
