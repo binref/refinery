@@ -47,10 +47,11 @@ class ConditionalUnit(Unit, abstract=True):
         negate: bool = self.args.negate
         nested: bool = self.args.nesting > 0
         for chunk in chunks:
-            if chunk.visible and self.match(chunk) is negate:
+            skipped = chunk.visible and self.match(chunk) is negate
+            if skipped:
                 if not nested:
                     continue
                 chunk.set_next_scope(False)
             yield chunk
-            if single:
+            if single and not skipped:
                 break

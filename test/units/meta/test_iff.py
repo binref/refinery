@@ -32,3 +32,7 @@ class TestIfExpr(TestUnitBase):
     def test_filter_empty_chunks(self):
         pl = load_pipeline('emit AAA==FCC [| resplit = | b64 | iff | emit . ]')
         self.assertEqual(pl(), B'..')
+
+    def test_single(self):
+        pl = load_pipeline('emit A B C D [| put x | iff -s x -eq C [| scope ]]')
+        self.assertEqual(pl(), B'ABC')
