@@ -710,7 +710,7 @@ class DelayedArgument(LazyEvaluation):
                 bounds = sliceobj(region, data, range=True)
             if bounds.step:
                 raise ValueError('Step size is not supported for file slices.')
-            with path.open('rb') as stream:
+            with open(path, 'rb') as stream:
                 stream.seek(bounds.start or 0)
                 return stream.read(bounds.stop)
         try:
