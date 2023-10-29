@@ -153,6 +153,7 @@ class EVLog(EnvironmentVariableSetting[Optional[LogLevel]]):
 class environment:
     verbosity = EVLog('VERBOSITY')
     term_size = EVInt('TERM_SIZE')
+    colorless = EVBool('COLORLESS')
     disable_size_format = EVBool('DISABLE_SIZE_FORMAT')
     silence_ps1_warning = EVBool('SILENCE_PS1_WARNING')
     disable_ps1_bandaid = EVBool('DISABLE_PS1_BANDAID')

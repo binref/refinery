@@ -11,6 +11,7 @@ from refinery.units.sinks import Arg, HexViewer
 from refinery.lib.meta import ByteStringWrapper, metavars, CustomStringRepresentation, SizeInt
 from refinery.lib.types import INF
 from refinery.lib.tools import get_terminal_size, isbuffer, lookahead
+from refinery.lib.environment import environment
 
 
 class peek(HexViewer):
@@ -40,6 +41,8 @@ class peek(HexViewer):
             raise ValueError('The decode and esc options are exclusive.')
         if brief:
             narrow = True
+        if environment.colorless.value:
+            gray = True
         lines = 1 if brief else INF if all else lines
         super(peek, self).__init__(
             brief=brief,
