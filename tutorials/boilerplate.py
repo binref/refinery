@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import Optional, Union
-from pathlib import Path
 
 import builtins
-import contextlib
-import fnmatch
-import hashlib
 import io
-import logging
 import os
-import re
-import shlex
 import stat
 import subprocess
 import sys
-import tempfile
+
+import fnmatch
+import hashlib
+import logging
+import re
+import shlex
 import getpass
 
 
 os.environ['REFINERY_TERM_SIZE'] = '120'
+os.environ['REFINERY_COLORLESS'] = '1'
 
 from refinery.lib.meta import SizeInt
 from refinery.lib.loader import load_pipeline
@@ -40,7 +39,6 @@ else:
     def register_cell_magic(f): # noqa
         return magic.register_line_cell_magic(magic.no_var_expand(f))
 
-
 class FakeTTY:
     def __getattr__(self, k):
         return getattr(sys.stdout, k)
@@ -49,8 +47,10 @@ class FakeTTY:
         return True
 
     def write(self, b: Union[str, bytes]):
-        with contextlib.suppress(AttributeError):
+        try:
             b = b.decode('utf8')
+        except AttributeError:
+            pass
         sys.stdout.write(b)
 
 
@@ -109,8 +109,10 @@ def _virtual_fs_open(name: Union[int, str], mode='r', *args, **kwargs):
 
 
 def _virtual_fs_popen(*args, **kwargs):
+    import tempfile
+    import pathlib
     with tempfile.TemporaryDirectory('.binref') as root:
-        root = Path(root)
+        root = pathlib.Path(root)
         for name, data in store.cache.items():
             path = root / name
             os.makedirs(path.parent, exist_ok=True)
