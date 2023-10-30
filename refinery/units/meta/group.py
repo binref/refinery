@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Iterable, List
 from refinery.units import Arg, Unit, Chunk
+
+from itertools import islice
 
 
 class group(Unit):
@@ -12,27 +13,17 @@ class group(Unit):
         super().__init__(size=size)
 
     def process(self, data: Chunk):
-        members: List[Chunk] = data.temp or []
-        if len(members) >= self.args.size:
-            raise RuntimeError(F'received {len(members) + 1} items in group')
+        if not data.temp:
+            return
         yield data
-        yield from members
+        yield from islice(data.temp, 0, self.args.size - 1)
 
-    def filter(self, chunks: Iterable[Chunk]):
-        members = []
-        header = None
-        for chunk in chunks:
-            if not chunk.visible:
-                yield chunk
-                continue
-            if len(members) > self.args.size - 2:
-                yield header
-                header = None
-            if header is None:
-                chunk.temp = members
-                header = chunk
-                members.clear()
-            else:
-                members.append(chunk)
-        if header is not None:
-            yield header
+    def filter(self, chunks):
+        it = iter(chunks)
+        while True:
+            try:
+                head = next(it)
+            except StopIteration:
+                return
+            head.temp = it
+            yield head
