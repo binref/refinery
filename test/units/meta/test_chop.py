@@ -26,6 +26,10 @@ class TestChop(TestUnitBase):
         unit = self.load(3)
         self.assertEqual(unit(B'ABCDEFGH'), B'ABC\nDEF\nGH')
 
+    def test_chopped_chunks_fuse_again(self):
+        pl = self.load_pipeline('emit FOOBARBAZ [| chop 3 [| chop 1 [| nop ]]| sep , ]')
+        self.assertEqual(pl(), B'FOOBARBAZ')
+
     def test_chop_into(self):
         unit = self.load('--into', 10)
         for size in (11, 15, 20, 34, 200, 2011):

@@ -636,6 +636,7 @@ class Framed:
                         yield result.pack()
         else:
             trunk = None
+            check = scope + 1
             if scope:
                 yield generate_frame_header(scope)
             while self.unpack.nextframe():
@@ -647,7 +648,7 @@ class Framed:
                     for result in results:
                         if trunk is None:
                             trunk = result
-                        elif result.path == trunk.path:
+                        elif result.path[:check] == trunk.path[:check]:
                             trunk.intersect(result)
                             trunk.extend(result)
                         else:
