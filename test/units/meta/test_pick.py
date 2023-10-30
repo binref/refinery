@@ -132,6 +132,10 @@ class TestPick(TestMetaBase):
         pl = load_pipeline('emit FOO [| push | rex . | pick :1 | iff size -eq 1 | pop o | ccp var:o ]')
         self.assertEqual(pl(), B'FFOO')
 
+    def test_squeezing_as_expected(self):
+        pl = load_pipeline('emit range:0x30:0x3A | chop 1 [| pick 3:5 1 7: []| sep , ]')
+        self.assertEqual(pl(), B'34,1,789')
+
     def test_regression_arg_not_populated(self):
         src = self.download_sample('302c0d553c9e7f2561864d79022b780a53ec0a5927e8962d883b88dde249d044')
 

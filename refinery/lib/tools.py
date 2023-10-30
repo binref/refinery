@@ -124,11 +124,11 @@ def documentation(unit):
     return docs.replace('`', '')
 
 
-def begin(iterable: Iterable[_T]) -> Optional[Iterable[_T]]:
+def begin(iterable: Iterable[_T]) -> Optional[Tuple[_T, Iterable[_T]]]:
     """
     Iterates the first element of an iterator and returns None of this fails.
-    Otherwise, it returns a new iterable which will return the same elements
-    as the input.
+    Otherwise, it returns both the first element and a new iterable which will
+    return the same elements as the input.
     """
     try:
         body = iter(iterable)
@@ -139,7 +139,7 @@ def begin(iterable: Iterable[_T]) -> Optional[Iterable[_T]]:
         def _fused():
             yield head
             yield from body
-        return _fused()
+        return head, _fused()
 
 
 def skipfirst(iterable: Iterable[_T]) -> Generator[_T, None, None]:
