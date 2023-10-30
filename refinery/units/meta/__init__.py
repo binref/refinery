@@ -45,7 +45,7 @@ class ConditionalUnit(Unit, abstract=True):
     def filter(self, chunks: Iterable[Chunk]):
         single: bool = self.args.single
         negate: bool = self.args.negate
-        nested: bool = self.args.nesting > 0
+        nested: bool = self.args.nesting > 0 or self.args.squeeze
         for chunk in chunks:
             skipped = chunk.visible and self.match(chunk) is negate
             if skipped:

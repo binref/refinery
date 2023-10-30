@@ -36,3 +36,7 @@ class TestIfExpr(TestUnitBase):
     def test_single(self):
         pl = load_pipeline('emit A B C D [| put x | iff -s x -eq C [| scope ]]')
         self.assertEqual(pl(), B'ABC')
+
+    def test_squeezing(self):
+        pl = load_pipeline('emit A B C D [| put x | iff -s x -eq C []]')
+        self.assertEqual(pl(), B'ABC')
