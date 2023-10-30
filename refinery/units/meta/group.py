@@ -22,7 +22,7 @@ class group(Unit):
         it = iter(chunks)
         while True:
             try:
-                head = next(it)
+                head: Chunk = next(it)
             except StopIteration:
                 return
             head.temp = it
