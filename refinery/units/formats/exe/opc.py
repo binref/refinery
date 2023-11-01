@@ -68,6 +68,8 @@ class opc(Unit):
         nvar = self.args.nvar
         avar = self.args.avar
         ovar = self.args.ovar
+        if isinstance(until, str):
+            until = until.lower()
         for insn in self._capstone_engine.disasm(data, 0, count):
             kwargs = {
                 avar: insn.address,
@@ -91,5 +93,5 @@ class opc(Unit):
             yield self.labelled(insn.bytes, **kwargs)
             if until is None:
                 continue
-            if until in ops or until in insn.mnemonic:
+            if until in ops.lower() or until in insn.mnemonic.lower():
                 break
