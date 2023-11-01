@@ -101,9 +101,9 @@ class vstack(Unit):
             help='Log only writes whose size is in the given range, default is {default}.') = slice(1, None),
         wait: Arg.Number('-w', help=(
             'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 10,
-        calls_wait: Arg.Switch('-c', group='CALL',
+        wait_calls: Arg.Switch('-c', group='CALL',
             help='Wait indefinitely when inside a function call.') = False,
-        calls_skip: Arg.Counts('-C', group='CALL',
+        skip_calls: Arg.Counts('-C', group='CALL',
             help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
@@ -122,8 +122,8 @@ class vstack(Unit):
             write_range=write_range,
             wait=wait,
             stack_size=stack_size,
-            calls_wait=calls_wait,
-            calls_skip=calls_skip,
+            wait_calls=wait_calls,
+            skip_calls=skip_calls,
             block_size=block_size,
             log_stack_addresses=log_stack_addresses,
             log_other_addresses=log_other_addresses,
@@ -338,7 +338,7 @@ class vstack(Unit):
             if not callstack:
                 state.callstack_ceiling = emu.reg_read(state.sp_register)
             state.retaddr = unsigned_value
-            if not self.args.calls_skip:
+            if not self.args.skip_calls:
                 callstack.append(state.retaddr)
             return
         else:
@@ -410,8 +410,8 @@ class vstack(Unit):
             state.retaddr = None
 
             if address != state.expected_address:
-                if retaddr is not None and self.args.calls_skip:
-                    if self.args.calls_skip > 1:
+                if retaddr is not None and self.args.skip_calls:
+                    if self.args.skip_calls > 1:
                         stack_size = self.args.stack_size
                         block_size = self.args.block_size
                         rv = state.rv_register
@@ -419,7 +419,6 @@ class vstack(Unit):
                         state.allocations.append(Range(alloc_addr, alloc_addr + stack_size))
                         emu.mem_map(alloc_addr, stack_size)
                         emu.reg_write(rv, alloc_addr)
-                        self.log_debug('
                     ip = state.ip_register
                     sp = state.sp_register
                     ps = state.executable.pointer_size // 8
@@ -442,7 +441,7 @@ class vstack(Unit):
             if waiting > self.args.wait:
                 emu.emu_stop()
                 return False
-            if not depth or not self.args.calls_wait:
+            if not depth or not self.args.wait_calls:
                 state.waiting += 1
             state.expected_address += size
 
