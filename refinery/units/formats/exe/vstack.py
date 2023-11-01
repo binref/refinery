@@ -109,6 +109,7 @@ class vstack(Unit):
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
         log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
         log_other_addresses: Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.') = False,
+        log_zero_overwrites: Arg.Switch('-Z', help='Log writes of zeros to memory that contained nonzero values.') = False,
     ):
         super().__init__(
             address=address or [0],
@@ -126,6 +127,7 @@ class vstack(Unit):
             block_size=block_size,
             log_stack_addresses=log_stack_addresses,
             log_other_addresses=log_other_addresses,
+            log_zero_overwrites=log_zero_overwrites,
         )
 
     def _find_stack_location(self, exe: Executable):
@@ -353,12 +355,21 @@ class vstack(Unit):
                 return
 
         state.waiting = 0
+        skipped = False
 
         if size not in bounds[self.args.write_range]:
             return
 
-        state.writes.addi(address, address + size + 1)
-        state.writes.merge_overlaps()
+        if (
+            unsigned_value == 0
+            and state.writes.at(address) is not None
+            and self.args.log_zero_overwrites is False
+            and any(emu.mem_read(address, size))
+        ):
+            skipped = True
+        else:
+            state.writes.addi(address, address + size + 1)
+            state.writes.merge_overlaps()
 
         def info():
             data = unsigned_value.to_bytes(size, state.executable.byte_order().value)
@@ -366,9 +377,12 @@ class vstack(Unit):
             padlen = state.executable.pointer_size // 4
             h = data.hex().upper()
             p = re.sub('[^!-~]', '.', data.decode('latin1'))
-            return (
+            msg = (
                 F'emulating [wait={state.waiting:02d}] {indent}{state.fmt(state.previous_address)}: '
                 F'{state.fmt(address)} <- {h:_<{padlen}} {p}')
+            if skipped:
+                msg = F'{msg} (skipped)'
+            return msg
 
         self.log_info(info)
 
@@ -405,6 +419,7 @@ class vstack(Unit):
                         state.allocations.append(Range(alloc_addr, alloc_addr + stack_size))
                         emu.mem_map(alloc_addr, stack_size)
                         emu.reg_write(rv, alloc_addr)
+                        self.log_debug('
                     ip = state.ip_register
                     sp = state.sp_register
                     ps = state.executable.pointer_size // 8
