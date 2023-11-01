@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.6.17
+- Adds the `opc` unit and removes the Angr option from `asm`.
+
 ## Version 0.6.16
 - The path formatting feature has been isolated in the `xthtml` and `xtxml` units.
 - The `vstack` unit no longer extracts byte patches that consist exclusively of zero bytes because these were common false positives.
