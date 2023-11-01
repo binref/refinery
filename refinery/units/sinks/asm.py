@@ -45,18 +45,8 @@ class asm(opc):
 
         max_data_bytes_count = max(len(c) for c in insns)
 
-        padding = addr_width + memo_width + args_width + 8
+        padding = addr_width + memo_width + args_width + 10
         metrics_opc = HexDumpMetrics(max_data_bytes_count, padding=padding)
-        full_width = metrics_opc.hexdump_width + metrics_opc.padding
-
-        metrics_hex = HexDumpMetrics(padding=addr_width + 1)
-        metrics_hex.txt_separator += '; '
-        metrics_hex.hex_char_prefix = '0x'
-        metrics_hex.hex_char_spacer = ','
-        metrics_hex.fit_to_width(full_width, allow_increase=True)
-        gap = full_width - addr_width - 3 - metrics_hex.hexdump_width
-        metrics_hex.txt_separator = gap * ' ' + metrics_hex.txt_separator
-        self.log_debug(F'full width of dump: {metrics_hex.hexdump_width}')
 
         for insn in insns:
             hd = one(hexdump(insn, metrics_opc))
