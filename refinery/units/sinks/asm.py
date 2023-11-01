@@ -8,8 +8,8 @@ from refinery.lib.tools import one
 class asm(opc):
     """
     Disassembles the input data using capstone and produces a human-readable disassembly listing.
-    It internally uses the `refinery.opc` unit for this, which is an alternative option if you
-    are looking for more programmatic disassembly.
+    It internally uses the `refinery.opc` unit for this, which is an alternative option if you are
+    looking for more programmatic disassembly.
     """
     def __init__(
         self, mode='x32', *,
@@ -25,7 +25,7 @@ class asm(opc):
             no_hexdump=no_hexdump,
         )
 
-    def process(self, data):        
+    def process(self, data):
         insns = list(super().process(data))
         if not insns:
             return
