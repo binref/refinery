@@ -22,6 +22,8 @@ class opc(Unit):
         mode: Arg.Choice(
             help='Machine code architecture, default is {default}. Select from the following list: {choices}.',
             choices=_ARCHES, metavar='[x32|x64|..]') = 'x32', *,
+        count: Arg.Number('-c', help='Maximum number of bytes to disassemble, infinite by default.') = None,
+        until: Arg.String('-u', help='Disassemble until the given string appears among the disassembly.') = None,
         nvar: Arg.String('-n', help=(
             'Variable to receive the disassembled mnemonic. Default is "{default}".')) = 'name',
         avar: Arg.String('-a', help=(
@@ -32,7 +34,14 @@ class opc(Unit):
             'and so on.')) = 'arg',
         **more
     ):
-        super().__init__(mode=mode, nvar=nvar, avar=avar, ovar=ovar, **more)
+        super().__init__(
+            mode=mode,
+            count=count,
+            until=until,
+            nvar=nvar,
+            avar=avar,
+            ovar=ovar,
+            **more)
 
     @Unit.Requires('capstone', optional=False)
     def _capstone():
@@ -54,11 +63,16 @@ class opc(Unit):
         }.get(self.args.mode.lower()))
 
     def process(self, data):
+        count = self.args.count or 0
+        until = self.args.until
         nvar = self.args.nvar
         avar = self.args.avar
         ovar = self.args.ovar
-        for insn in self._capstone_engine.disasm(data, 0):
-            kwargs = {}
+        for insn in self._capstone_engine.disasm(data, 0, count):
+            kwargs = {
+                avar: insn.address,
+                nvar: insn.mnemonic,
+            }
             try:
                 ops = insn.op_str
                 operands = [op.strip() for op in ops.split(',')]
@@ -74,6 +88,8 @@ class opc(Unit):
                 except Exception:
                     pass
                 kwargs[F'{ovar}{k}'] = op
-            kwargs[nvar] = insn.mnemonic
-            kwargs[avar] = insn.address
             yield self.labelled(insn.bytes, **kwargs)
+            if until is None:
+                continue
+            if until in ops or until in insn.mnemonic:
+                break

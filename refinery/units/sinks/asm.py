@@ -45,7 +45,7 @@ class asm(opc):
 
         max_data_bytes_count = max(len(c) for c in insns)
 
-        padding = addr_width + memo_width + args_width + 2 + 1 + 4
+        padding = addr_width + memo_width + args_width + 8
         metrics_opc = HexDumpMetrics(max_data_bytes_count, padding=padding)
         full_width = metrics_opc.hexdump_width + metrics_opc.padding
 
@@ -63,7 +63,7 @@ class asm(opc):
             name = insn.meta.pop('_name')
             args = insn.meta.pop('_args')
             addr = insn.meta.pop('_addr')
-            msg = F'  {name:<{memo_width}} {args:<{args_width}}'
+            msg = F' {name:<{memo_width}}  {args:<{args_width}}'
             if not no_hexdump:
                 msg = F'{msg}  ; {hd}'
             if not no_address:
