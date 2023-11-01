@@ -12,7 +12,7 @@ class asm(opc):
     looking for more programmatic disassembly.
     """
     def __init__(
-        self, mode='x32', *,
+        self, mode='x32', *, count=None, until=None,
         no_address: Arg.Switch('-A', help='Disable address display.') = False,
         no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
     ):
@@ -21,6 +21,8 @@ class asm(opc):
             nvar='_name',
             avar='_addr',
             ovar='_arg',
+            count=count,
+            until=until,
             no_address=no_address,
             no_hexdump=no_hexdump,
         )
