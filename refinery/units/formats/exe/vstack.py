@@ -8,6 +8,7 @@ import re
 from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, BO, Executable, Range, ExecutableCodeBlob
 from refinery.lib.types import bounds, INF
+from refinery.lib.meta import SizeInt
 
 from dataclasses import dataclass, field
 
@@ -33,7 +34,9 @@ class EmuState:
     previous_address: int = 0
     sp_register: int = 0
     ip_register: int = 0
+    rv_register: int = 0
     callstack_ceiling: int = 0
+    allocations: List[Range] = field(default_factory=list)
     ticks: int = field(default_factory=lambda: INF)
 
     def disassemble(self, address: int, size: int):
@@ -98,8 +101,10 @@ class vstack(Unit):
             help='Log only writes whose size is in the given range, default is {default}.') = slice(1, None),
         wait: Arg.Number('-w', help=(
             'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 10,
-        calls_wait: Arg.Switch('-c', group='CALL', help='Wait indefinitely when inside a function call.') = False,
-        calls_skip: Arg.Switch('-C', group='CALL', help='Skip function calls entirely.') = False,
+        calls_wait: Arg.Switch('-c', group='CALL',
+            help='Wait indefinitely when inside a function call.') = False,
+        calls_skip: Arg.Counts('-C', group='CALL',
+            help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
         log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
@@ -147,6 +152,7 @@ class vstack(Unit):
         block_size = self.args.block_size
         stack_size = self.args.stack_size
         stack_addr = self._find_stack_location(exe)
+        self.log_info(F'mapping {SizeInt(stack_size)!r} of stack at 0x{stack_addr:X}')
         image = memoryview(data)
         disassembler = self._capstone.Cs(*self._cs_arch(arch, exe.byte_order()))
         register_values = {}
@@ -154,20 +160,57 @@ class vstack(Unit):
         if arch in (Arch.PPC32, Arch.PPC64):
             try:
                 sp = uc.ppc_const.UC_PPC_REG_1
+                rv = uc.ppc_const.UC_PPC_REG_3
                 ip = uc.ppc_const.UC_PPC_REG_PC
             except AttributeError:
                 raise RuntimeError('The installed unicorn version does not support the PPC architecture.')
         else:
-            sp, ip = {
-                Arch.X32     : ( uc.x86_const.UC_X86_REG_ESP     , uc.x86_const.UC_X86_REG_EIP    ), # noqa
-                Arch.X64     : ( uc.x86_const.UC_X86_REG_RSP     , uc.x86_const.UC_X86_REG_RIP    ), # noqa
-                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
-                Arch.ARM32   : ( uc.arm_const.UC_ARM_REG_SP      , uc.arm_const.UC_ARM_REG_IP     ), # noqa
-                Arch.MIPS16  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-                Arch.MIPS32  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-                Arch.MIPS64  : ( uc.mips_const.UC_MIPS_REG_SP    , uc.mips_const.UC_MIPS_REG_PC   ), # noqa
-                Arch.SPARC32 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
-                Arch.SPARC64 : ( uc.sparc_const.UC_SPARC_REG_SP  , uc.sparc_const.UC_SPARC_REG_PC ), # noqa
+            sp, ip, rv = {
+                Arch.X32     : (
+                    uc.x86_const.UC_X86_REG_ESP,
+                    uc.x86_const.UC_X86_REG_EIP,
+                    uc.x86_const.UC_X86_REG_EAX,
+                ),
+                Arch.X64     : (
+                    uc.x86_const.UC_X86_REG_RSP,
+                    uc.x86_const.UC_X86_REG_RIP,
+                    uc.x86_const.UC_X86_REG_RAX,
+                ),
+                Arch.ARM32   : (
+                    uc.arm_const.UC_ARM_REG_SP,
+                    uc.arm_const.UC_ARM_REG_IP,
+                    uc.arm_const.UC_ARM_REG_R0,
+                ),
+                Arch.ARM64   : (
+                    uc.arm_const.UC_ARM_REG_SP,
+                    uc.arm_const.UC_ARM_REG_IP,
+                    uc.arm_const.UC_ARM_REG_R0,
+                ),
+                Arch.MIPS16  : (
+                    uc.mips_const.UC_MIPS_REG_SP,
+                    uc.mips_const.UC_MIPS_REG_PC,
+                    uc.mips_const.UC_MIPS_REG_0,
+                ),
+                Arch.MIPS32  : (
+                    uc.mips_const.UC_MIPS_REG_SP,
+                    uc.mips_const.UC_MIPS_REG_PC,
+                    uc.mips_const.UC_MIPS_REG_V0,
+                ),
+                Arch.MIPS64  : (
+                    uc.mips_const.UC_MIPS_REG_SP,
+                    uc.mips_const.UC_MIPS_REG_PC,
+                    uc.mips_const.UC_MIPS_REG_V0,
+                ),
+                Arch.SPARC32 : (
+                    uc.sparc_const.UC_SPARC_REG_SP,
+                    uc.sparc_const.UC_SPARC_REG_PC,
+                    uc.sparc_const.UC_SPARC_REG_O0,
+                ),
+                Arch.SPARC64 : (
+                    uc.sparc_const.UC_SPARC_REG_SP,
+                    uc.sparc_const.UC_SPARC_REG_PC,
+                    uc.sparc_const.UC_SPARC_REG_O0,
+                ),
             }[arch]
 
         if self.args.meta_registers:
@@ -246,8 +289,14 @@ class vstack(Unit):
                     self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
             tree = self._intervaltree.IntervalTree()
-            state = EmuState(exe, tree, address, stack, blob, disassembler, stop=self.args.stop,
-                sp_register=sp, ip_register=ip)
+            state = EmuState(
+                exe, tree, address, stack, blob, disassembler,
+                stop=self.args.stop,
+                sp_register=sp,
+                ip_register=ip,
+                rv_register=rv,
+                allocations=[stack],
+            )
 
             timeout = self.args.timeout
             if timeout is not None:
@@ -288,7 +337,7 @@ class vstack(Unit):
                 state.callstack_ceiling = emu.reg_read(state.sp_register)
             state.retaddr = unsigned_value
             if not self.args.calls_skip:
-                callstack.append(unsigned_value)
+                callstack.append(state.retaddr)
             return
         else:
             state.retaddr = None
@@ -348,6 +397,14 @@ class vstack(Unit):
 
             if address != state.expected_address:
                 if retaddr is not None and self.args.calls_skip:
+                    if self.args.calls_skip > 1:
+                        stack_size = self.args.stack_size
+                        block_size = self.args.block_size
+                        rv = state.rv_register
+                        alloc_addr = align(block_size, state.allocations[-1].upper)
+                        state.allocations.append(Range(alloc_addr, alloc_addr + stack_size))
+                        emu.mem_map(alloc_addr, stack_size)
+                        emu.reg_write(rv, alloc_addr)
                     ip = state.ip_register
                     sp = state.sp_register
                     ps = state.executable.pointer_size // 8
