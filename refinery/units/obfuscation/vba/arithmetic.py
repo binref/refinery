@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
 import re
 
 from refinery.units.obfuscation import Deobfuscator, StringLiterals
 from refinery.lib.deobfuscation import cautious_eval
 from refinery.lib.patterns import formats
+
+
+def _cautious_vba_eval(e: str):
+    return cautious_eval(e.replace('^', '**'))
 
 
 class deob_vba_arithmetic(Deobfuscator):
@@ -32,29 +37,39 @@ class deob_vba_arithmetic(Deobfuscator):
                 return expression
             expression = re.sub(str(formats.vbaint), vba_int_eval, expression)
             brackets = 0
+            positions = []
             ok = True
-            tail = rest = ''
+            head = tail = rest = ''
             for end, character in enumerate(expression):
                 if character == '(':
                     brackets += 1
+                    positions.append(end)
                     continue
                 if character == ')':
                     brackets -= 1
                     if brackets < 0:
                         expression, tail = expression[:end], expression[end:]
                         break
+                    else:
+                        positions.pop()
                     if brackets == 0 and expression[0] == '(':
                         expression, rest = expression[:end + 1], expression[end + 1:]
                         break
-            if expression.isdigit() or brackets > 0:
+            if expression.isdigit():
                 return match[0]
+            if brackets > 0:
+                pos = positions[~0] + 1
+                head = expression[:pos]
+                expression = expression[pos:]
             try:
-                result = str(cautious_eval(expression + rest)) + self.deobfuscate(tail)
+                result = str(_cautious_vba_eval(expression + rest))
             except Exception:
                 ok = False
+            else:
+                rest = ''
             if not ok and rest:
                 try:
-                    result = str(cautious_eval(expression)) + self.deobfuscate(tail)
+                    result = str(_cautious_vba_eval(expression))
                 except Exception:
                     expression += rest
                 else:
@@ -65,7 +80,9 @@ class deob_vba_arithmetic(Deobfuscator):
             else:
                 if expression.startswith('(') and expression.endswith(')'):
                     result = F'({result})'
-            return result + rest
+            if tail:
+                tail = self.deobfuscate(tail)
+            return F'{head}{result}{rest}{tail}'
 
         pattern = re.compile(R'(?:{i}|{f}|[-+(])(?:[^\S\r\n]{{0,20}}(?:{i}|{f}|[-%|&~<>()+/*^]))+'.format(
             i=str(formats.vbaint), f=str(formats.float)))
