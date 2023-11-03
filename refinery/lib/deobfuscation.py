@@ -40,7 +40,7 @@ _ALLOWED_NODE_TYPES = frozenset({
 })
 
 
-def cautious_eval(definition: str, size_limit: Optional[int] = None) -> Any:
+def cautious_eval(definition: str, size_limit: Optional[int] = None, walker: Optional[ast.NodeTransformer] = None) -> Any:
     """
     Very, very, very, very, very carefully evaluate a Python expression.
     """
@@ -56,9 +56,13 @@ def cautious_eval(definition: str, size_limit: Optional[int] = None) -> Any:
         raise Abort('Unknown characters in expression')
     try:
         expression = ast.parse(definition)
-        nodes = ast.walk(expression)
     except Exception:
         raise Abort('Python AST parser failed')
+
+    if walker is not None:
+        expression = ast.fix_missing_locations(walker.visit(expression))
+
+    nodes = ast.walk(expression)
 
     try:
         assert type(next(nodes)) == ast.Module
