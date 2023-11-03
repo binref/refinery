@@ -18,9 +18,13 @@ class deob_vba_char_function(Deobfuscator):
                 c = chr(int(match[1]))
             except ValueError:
                 return match[0]
+            if c == '"':
+                return '""""'
+            if c == '\\':
+                return '"\\"'
             c = repr(c)[1:-1]
             if len(c) > 1:
                 return match[0]
             return '"{}"'.format(c)
 
-        return re.sub(R'(?i)\bchr\((\d+)\)', evaluate_char_function, data)
+        return re.sub(R'(?i)\bchrw?\s*\(\s*(\d+)\s*\)', evaluate_char_function, data)
