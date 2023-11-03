@@ -31,6 +31,7 @@ _ALLOWED_NODE_TYPES = frozenset({
     ast.NotEq,
     ast.Num,
     ast.Or,
+    ast.Pow,
     ast.RShift,
     ast.Sub,
     ast.UAdd,
