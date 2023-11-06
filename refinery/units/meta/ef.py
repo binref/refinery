@@ -97,7 +97,7 @@ class ef(Unit):
         meta = metavars(data)
         meta.ghost = True
         wild = (os.name == 'nt' or self.args.wild) and not self.args.tame
-        paths = self._glob if wild else lambda mask: Path(mask)
+        paths = self._glob if wild else lambda mask: [Path(mask)]
 
         for mask in self.args.filenames:
             mask = meta.format_str(mask, self.codec, [data])
