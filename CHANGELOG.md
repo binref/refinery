@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.6.18 - bugfix release
+
 ## Version 0.6.17
 - Adds the `opc` unit and removes the Angr option from `asm`.
 
