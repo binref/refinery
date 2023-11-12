@@ -28,6 +28,10 @@ A refinery pipeline that can extract the C2 IP addresses from Qakbot samples.
 
 Another showcase of writing custom units for very specific tasks, in this case reproducing the logic of a .NET packer.
 
+### [Volume 8 — FlareOn 10][0x08]
+
+This is a refinery-focused write-up of how to solve FlareOn10.
+
 
 [0x01]: tbr-files.v0x01.netwalker.dropper.ipynb
 [0x02]: tbr-files.v0x02.amadey.loader.ipynb
@@ -36,3 +40,4 @@ Another showcase of writing custom units for very specific tasks, in this case r
 [0x05]: tbr-files.v0x05.flare.on.9.ipynb
 [0x06]: tbr-files.v0x06.Qakbot.Decoder.ipynb
 [0x07]: tbr-files.v0x07.DCRat.ipynb
+[0x08]: tbr-files.v0x08.flare.on.10.ipynb
