@@ -721,7 +721,7 @@ class DelayedArgument(LazyEvaluation):
             return read()
         except FileNotFoundError:
             raise ArgumentTypeError(F'File not found: {pattern}')
-        except ParserVariableMissing:
+        except Exception:
             return read
 
     @handler.register('range', final=True)
