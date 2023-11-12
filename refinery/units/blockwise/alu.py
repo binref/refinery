@@ -36,6 +36,9 @@ class alu(ArithmeticUnit):
     - the variable `V`: the vector of arguments
     - the variable `I`: function that casts to a signed int in current precision
     - the variable `U`: function that casts to unsigned int in current precision
+    - the variable `R`: function that rotates right
+    - the variable `L`: function that rotates left
+    - the variable `X`: function that negates the bits of the input
 
     Each block of the input is replaced by the value of this expression. Additionally, it is possible to
     specify prologue and epilogue expressions which are used to update the state variable `S` before and
@@ -53,7 +56,7 @@ class alu(ArithmeticUnit):
             if default is None:
                 raise ValueError('No definition given')
             definition = default
-        return PythonExpression(definition, *'IBASNV', all_variables_allowed=True)
+        return PythonExpression(definition, *'IBASNVRLX', all_variables_allowed=True)
 
     def __init__(
         self, operator: Arg(type=str, help='A Python expression defining the operation.'), *argument,
@@ -114,18 +117,24 @@ class alu(ArithmeticUnit):
         prologue = self.args.prologue.expression
         epilogue = self.args.epilogue.expression
         operator = self.args.operator.expression
+        fbits = self.fbits
+        fmask = self.fmask
 
-        def toUINT(n) -> int:
-            return int(n) & self.fmask
+        def U(n) -> int:
+            return int(n) & fmask
 
-        def toSINT(n) -> int:
-            n = toUINT(n)
-            if n >> (self.fbits - 1):
-                return -((~n + 1) & self.fmask)
+        def I(n) -> int:
+            n = U(n)
+            if n >> (fbits - 1):
+                return -((~n + 1) & fmask)
             else:
                 return n
 
-        context.update(N=len(data), S=seed, I=toSINT, U=toUINT)
+        def R(n, k): return (n >> k) | (n << (fbits - k)) & fmask
+        def L(n, k): return (n << k) | (n >> (fbits - k)) & fmask
+        def X(n): return n ^ fmask
+
+        context.update(N=len(data), S=seed, I=I, U=U, R=R, L=L, X=X)
 
         def operate(block, index, *args):
             context.update(K=index, B=block, V=args)
