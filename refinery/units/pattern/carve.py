@@ -55,6 +55,9 @@ class carve(PatternExtractor):
         elif self.args.format in (formats.b64, formats.b64any, formats.b64space):
             from ..encoding.b64 import b64
             decoder = b64()
+        elif self.args.format is formats.b85:
+            from ..encoding.b85 import b85
+            decoder = b85()
         elif self.args.format is formats.b64url:
             from ..encoding.b64 import b64
             decoder = b64(urlsafe=True)
