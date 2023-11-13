@@ -120,21 +120,34 @@ class alu(ArithmeticUnit):
         fbits = self.fbits
         fmask = self.fmask
 
-        def U(n) -> int:
+        def cast_unsigned(n) -> int:
             return int(n) & fmask
 
-        def I(n) -> int:
-            n = U(n)
+        def cast_signed(n) -> int:
+            n = cast_unsigned(n)
             if n >> (fbits - 1):
                 return -((~n + 1) & fmask)
             else:
                 return n
 
-        def R(n, k): return (n >> k) | (n << (fbits - k)) & fmask
-        def L(n, k): return (n << k) | (n >> (fbits - k)) & fmask
-        def X(n): return n ^ fmask
+        def rotate_right(n, k):
+            return (n >> k) | (n << (fbits - k)) & fmask
 
-        context.update(N=len(data), S=seed, I=I, U=U, R=R, L=L, X=X)
+        def rotate_left(n, k):
+            return (n << k) | (n >> (fbits - k)) & fmask
+
+        def negate_bits(n):
+            return n ^ fmask
+
+        context.update(
+            N=len(data),
+            S=seed,
+            I=cast_signed,
+            U=cast_unsigned,
+            R=rotate_right,
+            L=rotate_left,
+            X=negate_bits
+        )
 
         def operate(block, index, *args):
             context.update(K=index, B=block, V=args)
