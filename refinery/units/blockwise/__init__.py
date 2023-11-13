@@ -56,10 +56,10 @@ class BlockTransformationBase(Unit, abstract=True):
 
     @cached_property
     def fmask(self):
-        try:
-            return (1 << self.fbits) - 1
-        except AttributeError:
+        fbits = self.fbits
+        if fbits is INF:
             return NoMask
+        return (1 << fbits) - 1
 
     def rest(self, data):
         if self.bytestream:
