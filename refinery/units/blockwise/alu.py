@@ -124,7 +124,7 @@ class alu(ArithmeticUnit):
             return int(n) & fmask
 
         def cast_signed(n) -> int:
-            n = cast_unsigned(n)
+            n = int(n) & fmask
             if n >> (fbits - 1):
                 return -((~n + 1) & fmask)
             else:

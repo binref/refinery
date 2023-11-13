@@ -89,6 +89,7 @@ class INF(metaclass=Singleton):
     def __repr__(self): return '∞'
     def __truediv__(self, other): return self
     def __floordiv__(self, other): return self
+    def __rrshift__(self, other): return 0
 
 
 class AST(metaclass=Singleton):

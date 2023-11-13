@@ -6,21 +6,20 @@ algorithms can be found in `refinery.units.crypto.cipher`.
 """
 import abc
 import itertools
-import operator
 
 from refinery.units import Arg, Unit
 from refinery.lib.argformats import numseq
 from refinery.lib import chunks
 from refinery.lib.tools import infinitize, cached_property
 from refinery.lib.inline import iterspread
+from refinery.lib.types import Singleton, INF
 
 
 class FastBlockError(ImportError):
     pass
 
 
-@operator.methodcaller('__call__')
-class NoMask:
+class NoMask(metaclass=Singleton):
     def __rand__(self, other):
         return other
 
@@ -52,7 +51,7 @@ class BlockTransformationBase(Unit, abstract=True):
     def fbits(self):
         size = self.args.precision
         if not size:
-            raise AttributeError('arbitrary precision state has no bit size.')
+            return INF
         return 8 * size
 
     @cached_property
