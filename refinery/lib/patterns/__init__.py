@@ -331,6 +331,8 @@ class formats(PatternEnum):
     "Both URL-safe and normal Base64 alphabets."
     b64space = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
     "Base64 encoded strings, separated by whitespace"
+    b85space = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]')
+    "Base85 encoded string, separated by whitespace"
     b64url = alphabet(R'[-\w]{4}', postfix=R'(?:[-\w]{2,3}={0,3})?')
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]{2}')

@@ -19,6 +19,6 @@ class b85(Unit):
         return base64.b85decode(data)
 
     @classmethod
-    def handles(self, data: bytearray) -> bool | None:
+    def handles(self, data: bytearray):
         from refinery.lib.patterns import formats
-        formats.b8
+        return formats.b85space.fullmatch(data)
