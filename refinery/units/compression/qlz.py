@@ -38,7 +38,8 @@ class qlz(Unit):
             return int.from_bytes(destination[hashvalue + 1:hashvalue + 4], byteorder='little')
 
         codeword = 1
-        destination = bytearray()
+        destination = bytearray(size)
+        dst = 0
         hashtable = [0] * _HASH_VALUES
         hashvalue = -1
         last_matchstart = size - _UNCONDITIONAL_MATCHLEN - _UNCOMPRESSED_END - 1
@@ -50,7 +51,7 @@ class qlz(Unit):
             if codeword == 1:
                 codeword = int.from_bytes(source[:4], byteorder='little')
                 source = source[4:]
-                if len(destination) <= last_matchstart:
+                if dst <= last_matchstart:
                     c = 3 if clvl == 1 else 4
                     fetch = int.from_bytes(source[:c], byteorder='little')
             if codeword & 1:
@@ -85,14 +86,15 @@ class qlz(Unit):
                         delta = fetch >> 15
                         matchlen = ((fetch >> 7) & 255) + 3
                         source = source[4:]
-                    offset = (len(destination) - delta) & 0xFFFFFFFF
+                    offset = (dst - delta) & 0xFFFFFFFF
 
                 for i in range(offset, offset + matchlen):
-                    destination.append(destination[i])
+                    destination[dst] = destination[i]
+                    dst += 1
 
                 if clvl == 1:
                     fetch = fetchhash()
-                    while hashvalue < len(destination) - matchlen:
+                    while hashvalue < dst - matchlen:
                         hashvalue += 1
                         hash = ((fetch >> 12) ^ fetch) & _HASH_MASK
                         hashtable[hash] = hashvalue
@@ -100,14 +102,15 @@ class qlz(Unit):
                     fetch = int.from_bytes(source[:3], byteorder='little')
                 else:
                     fetch = int.from_bytes(source[:4], byteorder='little')
-                hashvalue = len(destination) - 1
+                hashvalue = dst - 1
             else:
-                if len(destination) <= last_matchstart:
-                    destination.append(source[0])
+                if dst <= last_matchstart:
+                    destination[dst] = source[0]
+                    dst += 1
                     source = source[1:]
                     codeword = codeword >> 1
                     if clvl == 1:
-                        while hashvalue < len(destination) - 3:
+                        while hashvalue < dst - 3:
                             fetch2 = fetchhash()
                             hashvalue += 1
                             hash = ((fetch2 >> 12) ^ fetch2) & _HASH_MASK
@@ -118,11 +121,12 @@ class qlz(Unit):
                         fetch |= source[2] << 16
                         fetch |= source[3] << 24
                 else:
-                    while len(destination) <= size - 1:
+                    while dst <= size - 1:
                         if codeword == 1:
                             source = source[4:]
                             codeword = 0x80000000
-                        destination.append(source[0])
+                        destination[dst] = source[0]
+                        dst += 1
                         source = source[1:]
                         codeword = codeword >> 1
                     break
