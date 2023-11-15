@@ -42,3 +42,8 @@ class TestQLZ(TestUnitBase):
             'E85C2EB0DE82F90241EF586AF7CA4F0E'
         )
         self.assertEqual(data | unit | bytes, goal)
+
+    def test_regression_out_of_bounds(self):
+        data = self.download_sample('b124b9180a61ff302ff29acf212a2d31df4ac747b0d2f03b8be47e2e97d2f52a')
+        goal = '77c7d9094f6fc139d8c00d1746de66c73c7376215cbfadcb1bd1ca66f4b978be'
+        self.assertEqual(data | self.load() | self.ldu('sha256', text=True) | str, goal)
