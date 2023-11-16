@@ -4,10 +4,13 @@ from ... import TestUnitBase
 from typing import NamedTuple, List
 
 
-class TestCase(NamedTuple):
-    key: bytes
-    plain: bytes
-    cipher: bytes
+class TestCase:
+    __slots__ = 'key', 'plain', 'cipher'
+
+    def __init__(self, key: bytes, plain: bytes, cipher: bytes):
+        self.key = key
+        self.plain = plain
+        self.cipher = cipher
 
 
 H = bytes.fromhex
