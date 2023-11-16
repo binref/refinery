@@ -373,10 +373,12 @@ class CTR(CipherMode):
             S[-len(self.suffix):] = self.suffix
         C = None
         E = self.encrypt_block
-        mask = (1 << (self.counter_len * 8)) - 1
+        order = self.byte_order
+        csize = self.counter_len
+        mask = (1 << (csize * 8)) - 1
         while True:
             M = yield C
-            S[J] = K.to_bytes(self.counter_len, self.byte_order)
+            S[J] = K.to_bytes(csize, order)
             K = K + 1 & mask
             C = strxor(E(S), M)
 
