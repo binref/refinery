@@ -280,7 +280,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
     def __init__(
         self, key, iv=B'', padding=None, mode=None, raw=False,
         segment_size: Arg.Number('-S', '--segment-size',
-            help='Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8.') = 128,
+            help='Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8.') = 0,
         mac_len: Arg.Number('-M', '--mac-len', bound=(4, 16),
             help='Only for EAX, GCM, OCB, and CCM: Length of the authentication tag, in bytes.') = 0,
         assoc_len: Arg.Number('-A', '--assoc-len',
