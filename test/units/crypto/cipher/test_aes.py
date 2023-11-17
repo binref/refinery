@@ -22,6 +22,18 @@ class TestAES(TestUnitBase):
         test = self.generate_random_buffer(200)
         self.assertEqual(cipher.process(cipher.reverse(test)), test)
 
+    def test_cyberchef_cfb(self):
+        data = B'hello world! this is my plaintext.'
+        goal = bytes.fromhex('3357121ebb5a29468bd861467596ce3d6f99e251cc2d9f0a598032ae386d0ab995b3')
+        unit = self.load(key=(b'\x42' * 16), iv=(b'\x24' * 16), mode='cfb')
+        self.assertEqual(data | -unit | bytes, goal)
+
+    def test_cyberchef_ctr(self):
+        data = B'hello world! this is my plaintext.'
+        goal = bytes.fromhex('3357121ebb5a29468bd861467596ce3d046163d218d0bae9a9d5532a8d4e19f5bf9a')
+        unit = self.load(key=(b'\x42' * 16), iv=(b'\x24' * 16), mode='ctr')
+        self.assertEqual(data | -unit | bytes, goal)
+
     def test_gcm(self):
         K = self.generate_random_buffer(16)
         V = self.generate_random_buffer(12)
