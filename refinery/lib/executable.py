@@ -122,6 +122,14 @@ class Range(NamedTuple):
     def __repr__(self):
         return F'<{self.__class__.__name__}:{self!s}>'
 
+    def __sub__(self, them: Range) -> List[Range]:
+        pieces = []
+        if self.lower < them.lower:
+            pieces.append(Range(self.lower, min(them.lower, self.upper)))
+        if them.upper < self.upper:
+            pieces.append(Range(max(self.lower, them.upper), self.upper))
+        return pieces
+
 
 class BoxedOffset(NamedTuple):
     box: Range
@@ -457,24 +465,34 @@ class ExecutablePE(Executable):
     def sections(self) -> Generator[Section, None, None]:
         sections: Iterable[SectionStructure] = iter(self._head.sections)
         ib = self.image_defined_base()
-        exeblob = True
+        missing = [Range(0, len(self._data))]
+        offsets = {}
         for section in sections:
-            exeblob = False
             p_lower = section.PointerToRawData
             p_upper = p_lower + section.SizeOfRawData
             v_lower = section.VirtualAddress + ib
             v_lower = self._rebase_img_to_usr(v_lower)
             v_upper = v_lower + section.Misc_VirtualSize
-            yield Section(
-                self.ascii(section.Name),
-                Range(p_lower, p_upper),
-                Range(v_lower, v_upper),
-            )
-        if exeblob:
-            size = len(self._data)
-            v_lower = self.image_defined_base()
-            v_upper = v_lower + size
-            yield Section('.CODE', Range(0, size), Range(v_lower, v_upper))
+            p = Range(p_lower, p_upper)
+            v = Range(v_lower, v_upper)
+            missing = [piece for patch in missing for piece in patch - p]
+            offsets[p_lower] = v_lower
+            yield Section(self.ascii(section.Name), p, v)
+        if not missing:
+            return
+        offsets.setdefault(0, ib)
+        for gap in missing:
+            p_floor = min((k for k in offsets if k <= gap.lower), key=lambda p: p - gap.lower)
+            v_floor = offsets[p_floor]
+            v_lower = v_floor + (gap.lower - p_floor)
+            v_upper = v_lower + len(gap)
+            if gap.lower == 0:
+                name = R'synthesized/.header'
+            elif gap.upper == len(self._data):
+                name = R'synthesized/.overlay'
+            else:
+                name = F'synthesized/.gap-{gap.lower:08X}-{gap.upper:08X}'
+            yield Section(name, gap, Range(v_lower, v_upper))
 
     def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for section in self.sections():
