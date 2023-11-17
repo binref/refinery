@@ -98,12 +98,7 @@ class xtmail(PathExtractorUnit):
     def _get_parts_regular(self, data: bytes):
         try:
             info = self._chardet.detect(data)
-        except ImportError:
-            code = 'utf8'
-        else:
-            code = info['encoding']
-        try:
-            msg = data.decode(code)
+            msg = data.decode(info['encoding'])
         except UnicodeDecodeError:
             raise ValueError('This is not a plaintext email message.')
         else:
