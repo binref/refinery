@@ -1219,15 +1219,6 @@ class requirement(property):
     pass
 
 
-class all:
-    class formats:
-        class java: ...
-        class php: ...
-        class office: ...
-    
-
-
-
 class Unit(UnitBase, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
