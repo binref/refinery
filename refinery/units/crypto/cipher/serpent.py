@@ -65,7 +65,7 @@ class serpent(StandardBlockCipherUnit, cipher=BlockCipherFactory(Serpent)):
         self, key, iv=b'', padding=None, mode=None, raw=False,
         swap: Arg.Switch('-s', help='Read the bytes in each block in reverse order.') = False
     ):
-        super().__init__(key, iv, padding, mode, raw, swap=swap)
+        super().__init__(key, iv, padding=padding, mode=mode, raw=raw, swap=swap)
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         instance: Serpent = super()._new_cipher()

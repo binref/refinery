@@ -115,10 +115,10 @@ class gost(StandardBlockCipherUnit, cipher=BlockCipherFactory(GOST)):
         sbox: Arg.Option('-x', choices=SBOX, help=(
             'Choose an SBOX. The default is {default}, which corresponds to the R-34.12.2015 standard. '
             'The other option is CBR, which is the SBOX used by the Central Bank of Russia.'
-        )) = SBOX.R34,
+        )) = SBOX.R34, **more
     ):
         sbox = Arg.AsOption(sbox, SBOX)
-        super().__init__(key, iv, padding, mode, raw, 0, swap=swap, sbox=sbox)
+        super().__init__(key, iv, padding=padding, mode=mode, raw=raw, swap=swap, sbox=sbox, **more)
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         return super()._new_cipher(

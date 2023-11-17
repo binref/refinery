@@ -110,9 +110,9 @@ class chaskey(StandardBlockCipherUnit, cipher=BlockCipherFactory(Chaskey)):
         self, key, iv=b'', padding=None, mode=None, raw=False,
         rounds: Arg.Number('-k', help='Number of rounds to use, the default is {default}') = _R,
         swap: Arg.Switch('-s', help='Use big endian byte order for all blocks.') = False,
-
+        **more
     ):
-        super().__init__(key, iv, padding, mode, raw, rounds=rounds, swap=swap)
+        super().__init__(key, iv, padding=padding, mode=mode, raw=raw, rounds=rounds, swap=swap, **more)
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         return super()._new_cipher(

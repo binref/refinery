@@ -76,7 +76,7 @@ class TEAUnit(StandardBlockCipherUnit):
         swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False,
         **more
     ):
-        super().__init__(key, iv, padding, mode, raw, swap=swap, **more)
+        super().__init__(key, iv, padding=padding, mode=mode, raw=raw, swap=swap, **more)
 
     @property
     def block_size(self):
