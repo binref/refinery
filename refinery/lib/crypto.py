@@ -472,8 +472,8 @@ class BlockCipherFactory(CipherObjectFactory):
             except KeyError:
                 pass
         if mode is CTR:
-            block_size = cipher.block_size
-            if not isinstance(block_size, int):
+            block_size = self.block_size
+            if block_size is None:
                 # This happens for ciphers that do not have a fixed block size, i.e. the
                 # block size is truly an instance attribute and not a class property.
                 # In this case, we create a temporary cipher object and use it to obtain
@@ -503,7 +503,7 @@ class BlockCipherFactory(CipherObjectFactory):
             value = self.cipher.block_size
         except AttributeError:
             return None
-        if isinstance(value, property):
+        if not isinstance(value, int):
             return None
         return value
 
