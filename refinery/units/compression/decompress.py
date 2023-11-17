@@ -94,7 +94,8 @@ class decompress(Unit):
             buffer = bytearray(1 + len(data))
             buffer[1:] = data
 
-        best: Optional[Decompression] = None
+        best_only_success: Optional[Decompression] = None
+        best_with_failure: Optional[Decompression] = None
 
         def decompress(engine: Unit, cutoff: int = 0, prefix: Optional[int] = None):
             ingest = data[cutoff:]
@@ -114,7 +115,7 @@ class decompress(Unit):
                 result = None
             return Decompression(engine, result, cutoff, prefix, failed)
 
-        def update(new: Decompression, discard_if_too_good=False) -> Decompression:
+        def update(new: Decompression, best: Optional[Decompression] = None, discard_if_too_good=False) -> Decompression:
             ratio = new.ratio
             if ratio > self.args.max_ratio:
                 return best
@@ -129,9 +130,10 @@ class decompress(Unit):
                         return best
                     if new.failed:
                         return best
+                status = 'partial' if new.failed else 'success'
                 self.log_info(lambda: (
                     F'obtained {ratio:.2f} compression ratio with: prefix={prefix}, '
-                    F'cutoff={new.cutoff}, engine={new.engine.name}'))
+                    F'cutoff={new.cutoff}, [{status}] engine={new.engine.name}'))
                 return new
             else:
                 return best
@@ -140,15 +142,25 @@ class decompress(Unit):
             self.log_debug(F'attempting engine: {engine.name}')
             careful = isinstance(engine, lznt1)
             for t in range(self.args.tolerance):
-                if best and careful and t > 0:
+                if best_only_success and careful and t > 0:
                     break
-                best = update(decompress(engine, t), careful)
-            if self.args.prepend and best and not careful:
+                dc = decompress(engine, t)
+                if not dc.failed:
+                    best_only_success = update(dc, best_only_success, careful)
+                else:
+                    best_with_failure = update(dc, best_with_failure, careful)
+            if self.args.prepend and not careful:
                 for p in range(0x100):
-                    best = update(decompress(engine, 0, p), careful)
+                    dc = decompress(engine, 0, p)
+                    if not dc.failed:
+                        best_only_success = update(dc, best_only_success, careful)
+                    else:
+                        best_with_failure = update(dc, best_with_failure, careful)
 
-        if best is None:
-            self.log_warn('no compression engine worked, returning original data.')
-            return data
-        else:
-            return self.labelled(best.result, method=best.method)
+        if best_only_success is not None:
+            return self.labelled(best_only_success.result, method=best_only_success.method)
+        if best_with_failure is not None:
+            self.log_info('the only decompression with result returned only a partial result.')
+            return self.labelled(best_with_failure.result, method=best_with_failure.method)
+        self.log_warn('no compression engine worked, returning original data.')
+        return data
