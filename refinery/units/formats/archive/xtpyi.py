@@ -501,7 +501,7 @@ class xtpyi(ArchiveUnit):
             user_code=user_code,
         )
 
-    @ArchiveUnit.Requires('xdis', 'arc', 'py')
+    @ArchiveUnit.Requires('xdis', 'arc', 'python')
     def _xdis():
         import xdis.load
         import xdis.magics
@@ -532,13 +532,13 @@ class xtpyi(ArchiveUnit):
         import xdis.std
         return xdis
 
-    @ArchiveUnit.Requires('uncompyle6', 'arc', 'py')
+    @ArchiveUnit.Requires('uncompyle6', 'arc', 'python')
     def _uncompyle6():
         import uncompyle6
         import uncompyle6.main
         return uncompyle6
 
-    @ArchiveUnit.Requires('decompyle3', 'arc', 'py')
+    @ArchiveUnit.Requires('decompyle3', 'arc', 'python')
     def _decompyle3():
         import decompyle3
         import decompyle3.main
