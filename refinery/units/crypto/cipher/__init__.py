@@ -328,13 +328,14 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         mode = self.args.mode.name
         if mode != 'ECB':
             iv = bytes(self.iv)
-            if mode == 'CTR' and len(iv) == self.block_size:
+            if mode == 'CTR':
                 from Cryptodome.Util import Counter
+                little_endian = self.args.little_endian
+                order = 'little' if little_endian else 'big'
                 counter = Counter.new(
                     self.block_size * 8,
-                    initial_value=int.from_bytes(iv, 'big'),
-                    little_endian=self.args.little_endian
-                )
+                    initial_value=int.from_bytes(iv, order),
+                    little_endian=little_endian)
                 optionals['counter'] = counter
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
                 if mode in ('CCM', 'EAX', 'GCM', 'OCB'):

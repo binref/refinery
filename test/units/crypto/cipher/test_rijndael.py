@@ -28,8 +28,8 @@ class TestRijndael(TestUnitBase):
 
     def test_le_ctr(self):
         data = B'hello world! this is my plaintext.'
-        goal = bytes.fromhex('3357121ebb5a29468bd861467596ce3da59bdee42dcc0614dea955368d8a5dc0cad4')
-        unit = self.load(key=(b'\x42' * 16), iv=(b'\x24' * 16), mode='ctr', little_endian=True)
+        goal = bytes.fromhex('5a0b2cf06580897914906b84b53516ead23490ed2cca329054f94ae548a42e6c9475')
+        unit = self.load(key=b'1234567812345678', iv=b'12345678', mode='ctr', little_endian=True)
         self.assertEqual(data | -unit | bytes, goal)
 
     def test_real_world_block_size_32(self):
