@@ -21,7 +21,7 @@ class xtpdf(PathExtractorUnit):
     """
     Extract objects from PDF documents.
     """
-    @PathExtractorUnit.Requires('pypdf>=3.1.0', 'formats', 'pdf', 'default')
+    @PathExtractorUnit.Requires('pypdf>=3.1.0', 'formats', 'default')
     def _pypdf2():
         import pypdf
         import pypdf.generic
