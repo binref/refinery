@@ -36,12 +36,12 @@ class TestAutoDecompressor(TestUnitBase):
     def test_mangled_buffers(self):
         from refinery.units.compression.decompress import decompress
         unit = decompress()
-        for e in unit.engines:
-            if not e.is_reversible:
+        for engine in unit.engines:
+            if not engine.is_reversible:
                 continue
             for k, buffer in enumerate(self.buffers, 1):
                 try:
-                    compressed = next(buffer | -e)
+                    compressed = next(buffer | -engine)
                 except Exception as E:
                     self.assertTrue(False, F'Exception while compressing buffer {k}: {E!s}')
                     continue
@@ -50,7 +50,7 @@ class TestAutoDecompressor(TestUnitBase):
                 result = next(compressed | unit)
                 method = result.meta.get("method", "uncompressed")
                 self.assertEqual(result, buffer,
-                    msg=F'Failed for {e.name}, reported as {method} for buffer #{k}')
+                    msg=F'Failed for {engine.name}, reported as {method} for buffer #{k}')
                 for m, sample in enumerate(self._mangle(compressed), 1):
                     result, = sample | unit
                     if buffer not in result:
@@ -59,4 +59,4 @@ class TestAutoDecompressor(TestUnitBase):
                         success += 1
                         if success >= 2: break
                 self.assertGreaterEqual(success, 1,
-                    msg=F'Failed for {e.name}, buffer {k} failed for these manglings: {failures}.')
+                    msg=F'Failed for {engine.name}, buffer {k} failed for these manglings: {failures}.')
