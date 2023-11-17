@@ -96,7 +96,11 @@ class qlz(Unit):
                         hashvalue += 1
                         hash = ((fetch >> 12) ^ fetch) & _HASH_MASK
                         hashtable[hash] = hashvalue
-                        fetch = fetch >> 8 & 0xFFFF | destination[hashvalue + 3] << 16
+                        fetch = fetch >> 8 & 0xFFFF
+                        try:
+                            fetch |= destination[hashvalue + 3] << 16
+                        except IndexError:
+                            pass
                     fetch = int.from_bytes(source[:3], byteorder='little')
                 else:
                     fetch = int.from_bytes(source[:4], byteorder='little')
