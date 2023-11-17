@@ -90,7 +90,7 @@ class xtmail(PathExtractorUnit):
             path = attachment.longFilename or attachment.shortFilename
             yield UnpackResult(F'attachments/{path}', attachment.data)
 
-    @PathExtractorUnit.Requires('chardet')
+    @PathExtractorUnit.Requires('chardet', 'default')
     def _chardet():
         import chardet
         return chardet
@@ -98,7 +98,12 @@ class xtmail(PathExtractorUnit):
     def _get_parts_regular(self, data: bytes):
         try:
             info = self._chardet.detect(data)
-            msg = data.decode(info['encoding'])
+        except ImportError:
+            code = 'utf8'
+        else:
+            code = info['encoding']
+        try:
+            msg = data.decode(code)
         except UnicodeDecodeError:
             raise ValueError('This is not a plaintext email message.')
         else:

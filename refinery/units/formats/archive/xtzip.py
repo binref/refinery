@@ -15,7 +15,7 @@ class xtzip(ArchiveUnit):
     """
     Extract files from a Zip archive.
     """
-    @ArchiveUnit.Requires('chardet')
+    @ArchiveUnit.Requires('chardet', 'default')
     def _chardet():
         import chardet
         return chardet
