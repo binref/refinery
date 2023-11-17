@@ -34,6 +34,12 @@ class TestAES(TestUnitBase):
         unit = self.load(key=(b'\x42' * 16), iv=(b'\x24' * 16), mode='ctr')
         self.assertEqual(data | -unit | bytes, goal)
 
+    def test_le_ctr(self):
+        data = B'hello world! this is my plaintext.'
+        goal = bytes.fromhex('3357121ebb5a29468bd861467596ce3da59bdee42dcc0614dea955368d8a5dc0cad4')
+        unit = self.load(key=(b'\x42' * 16), iv=(b'\x24' * 16), mode='ctr', little_endian=True)
+        self.assertEqual(data | -unit | bytes, goal)
+
     def test_gcm(self):
         K = self.generate_random_buffer(16)
         V = self.generate_random_buffer(12)

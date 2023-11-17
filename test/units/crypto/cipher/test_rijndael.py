@@ -26,6 +26,12 @@ class TestRijndael(TestUnitBase):
                         data | -u1 | bytes,
                         data | -u2 | bytes)
 
+    def test_le_ctr(self):
+        data = B'hello world! this is my plaintext.'
+        goal = bytes.fromhex('3357121ebb5a29468bd861467596ce3da59bdee42dcc0614dea955368d8a5dc0cad4')
+        unit = self.load(key=(b'\x42' * 16), iv=(b'\x24' * 16), mode='ctr', little_endian=True)
+        self.assertEqual(data | -unit | bytes, goal)
+
     def test_real_world_block_size_32(self):
         unit = self.load(
             key=bytes.fromhex('2e5f9489983c96aa2165a3fb6a6d55f0e7397c6488da72ff213452b2c7edccb6'),

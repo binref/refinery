@@ -278,7 +278,10 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
     def __init__(
-        self, key, iv=B'', padding=None, mode=None, raw=False,
+        self, key, iv=B'', *,
+        padding=None, mode=None, raw=False,
+        little_endian: Arg.Switch('-e', '--little-endian',
+            help='Only for CTR: Use a little endian counter instead of the default big endian.') = False,
         segment_size: Arg.Number('-S', '--segment-size', help=(
             'Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8. The default of {default} means '
             'that the block size will be used as the segment size.')) = 0,
@@ -292,8 +295,15 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         if iv and mode.name == 'ECB':
             raise ValueError('No initialization vector can be specified for ECB mode.')
         super().__init__(
-            key=key, iv=iv, padding=padding, mode=mode, raw=raw,
-            segment_size=segment_size, mac_len=mac_len, assoc_len=assoc_len,
+            key=key,
+            iv=iv,
+            padding=padding,
+            mode=mode,
+            raw=raw,
+            segment_size=segment_size,
+            mac_len=mac_len,
+            assoc_len=assoc_len,
+            little_endian=little_endian,
             **keywords
         )
 
@@ -320,8 +330,11 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             iv = bytes(self.iv)
             if mode == 'CTR' and len(iv) == self.block_size:
                 from Cryptodome.Util import Counter
-                counter = Counter.new(self.block_size * 8,
-                    initial_value=int.from_bytes(iv, 'big'))
+                counter = Counter.new(
+                    self.block_size * 8,
+                    initial_value=int.from_bytes(iv, 'big'),
+                    little_endian=self.args.little_endian
+                )
                 optionals['counter'] = counter
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
                 if mode in ('CCM', 'EAX', 'GCM', 'OCB'):

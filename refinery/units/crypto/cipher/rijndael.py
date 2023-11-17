@@ -606,10 +606,11 @@ class rijndael(StandardBlockCipherUnit, cipher=BlockCipherFactory(Rijndael)):
     from 16 bytes, in which case it is equivalent to AES.
     """
     def __init__(
-        self, key, iv=b'', padding=None, mode=None, raw=False, segment_size=0,
-        block_size: Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 16, 24, and 32.') = 16
+        self, key, iv=b'',
+        block_size: Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 16, 24, and 32.') = 16,
+        **more
     ):
-        return super().__init__(key, iv, padding, mode, raw, segment_size, block_size=block_size)
+        return super().__init__(key, iv, block_size=block_size, **more)
 
     @property
     def block_size(self):
