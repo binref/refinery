@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import Unit
+from refinery.units import Unit, RefineryPartialResult
 from refinery.lib.meta import SizeInt
 
 
@@ -130,4 +130,8 @@ class qlz(Unit):
                         source = source[1:]
                         codeword = codeword >> 1
                     break
+        if len(destination) != size:
+            raise RefineryPartialResult(
+                F'Header indicates decompressed size 0x{size:X}, but 0x{len(destination):X} bytes '
+                F'were decompressed.', destination)
         return destination
