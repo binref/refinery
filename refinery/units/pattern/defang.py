@@ -81,6 +81,7 @@ class defang(Unit):
                 return url
             self.log_info('replace:', url)
             url = url.replace(B'[:]//', B'://', 1)
+            url = url.replace(B'[.]', B'.')
             prefix = B'tcp'
             if url.startswith(B'://'):
                 scheme = 0
