@@ -1485,7 +1485,7 @@ class Unit(UnitBase, abstract=True):
         except Exception:
             pass
 
-    def __neg__(self):
+    def __neg__(self) -> Unit:
         pipeline = []
         cursor = self
         while isinstance(cursor, Unit):
@@ -1550,7 +1550,7 @@ class Unit(UnitBase, abstract=True):
         ...
 
     @overload
-    def __or__(self, stream: Type[...]) -> bytearray:
+    def __or__(self, stream: Type[bytearray]) -> bytearray:
         ...
 
     @overload
