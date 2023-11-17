@@ -11,6 +11,7 @@ The provided interface is the same for all executables. It powers the following 
 from __future__ import annotations
 
 import sys
+import itertools
 
 from typing import TYPE_CHECKING, NamedTuple
 from os import devnull as DEVNULL
@@ -197,6 +198,7 @@ class Section(NamedTuple):
     name: str
     physical: Range
     virtual: Range
+    synthetic: bool
 
     def as_segment(self, populate_sections=False) -> Segment:
         sections = [self] if populate_sections else None
@@ -218,7 +220,7 @@ class Segment(NamedTuple):
     def as_section(self) -> Section:
         if self.name is None:
             raise ValueError('Unable to convert nameless segment to section.')
-        return Section(self.name, self.physical, self.virtual)
+        return Section(self.name, self.physical, self.virtual, False)
 
     def __str__(self):
         msg = F'P=[{self.physical!s}];V=[{self.virtual!s}]'
@@ -353,16 +355,18 @@ class Executable(ABC):
         return Range(lower, upper)
 
     def lookup_location(self, location: int, lt: LT) -> Location:
-        for segment in self.segments():
-            if lt is LT.PHYSICAL and location in segment.physical:
+        for part in itertools.chain(self.sections(), self.segments()):
+            phys = part.physical
+            virt = part.virtual
+            if lt is LT.PHYSICAL and location in phys:
                 return Location(
-                    BoxedOffset(segment.physical, location),
-                    BoxedOffset(segment.virtual, segment.virtual.lower + location - segment.physical.lower)
+                    BoxedOffset(phys, location),
+                    BoxedOffset(virt, virt.lower + location - phys.lower)
                 )
-            if lt is LT.VIRTUAL and location in segment.virtual:
+            if lt is LT.VIRTUAL and location in virt:
                 return Location(
-                    BoxedOffset(segment.physical, segment.physical.lower + location - segment.virtual.lower),
-                    BoxedOffset(segment.virtual, location)
+                    BoxedOffset(phys, phys.lower + location - virt.lower),
+                    BoxedOffset(virt, location)
                 )
         else:
             raise CompartmentNotFound(lt, location)
@@ -380,12 +384,41 @@ class Executable(ABC):
         ...
 
     @abstractmethod
-    def sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section, None, None]:
         ...
 
     @abstractmethod
-    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         ...
+
+    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+        yield from self._segments(populate_sections=populate_sections)
+
+    def sections(self) -> Generator[Section, None, None]:
+        ib = self.image_defined_base()
+        missing = [Range(0, len(self._data))]
+        offsets = {}
+        for section in self._sections():
+            missing = [piece for patch in missing for piece in patch - section.physical]
+            offsets[section.physical.lower] = section.virtual.lower
+            yield section
+        if not missing:
+            return
+        offsets.setdefault(0, ib)
+        for gap in missing:
+            p_floor = min((k for k in offsets if k <= gap.lower), key=lambda p: p - gap.lower)
+            v_floor = offsets[p_floor]
+            v_lower = v_floor + (gap.lower - p_floor)
+            v_upper = v_lower + len(gap)
+            if gap.lower == 0:
+                name = R'synthesized/.header'
+            elif gap.upper == len(self._data):
+                name = R'synthesized/.overlay'
+            elif any(self._data[gap.slice()]):
+                name = F'synthesized/.gap-{gap.lower:08X}-{gap.upper:08X}'
+            else:
+                name = F'synthesized/.zeros-{gap.lower:08X}'
+            yield Section(name, gap, Range(v_lower, v_upper), True)
 
 
 class ExecutableCodeBlob(Executable):
@@ -409,11 +442,11 @@ class ExecutableCodeBlob(Executable):
     def arch(self) -> Arch:
         return self._arch
 
-    def sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section, None, None]:
         r = Range(0, len(self.data))
-        yield Section('blob', r, r)
+        yield Section('blob', r, r, False)
 
-    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for s in self.sections():
             yield s.as_segment(populate_sections=populate_sections)
 
@@ -462,11 +495,9 @@ class ExecutablePE(Executable):
             memdump_value
         )
 
-    def sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section, None, None]:
         sections: Iterable[SectionStructure] = iter(self._head.sections)
         ib = self.image_defined_base()
-        missing = [Range(0, len(self._data))]
-        offsets = {}
         for section in sections:
             p_lower = section.PointerToRawData
             p_upper = p_lower + section.SizeOfRawData
@@ -475,26 +506,9 @@ class ExecutablePE(Executable):
             v_upper = v_lower + section.Misc_VirtualSize
             p = Range(p_lower, p_upper)
             v = Range(v_lower, v_upper)
-            missing = [piece for patch in missing for piece in patch - p]
-            offsets[p_lower] = v_lower
-            yield Section(self.ascii(section.Name), p, v)
-        if not missing:
-            return
-        offsets.setdefault(0, ib)
-        for gap in missing:
-            p_floor = min((k for k in offsets if k <= gap.lower), key=lambda p: p - gap.lower)
-            v_floor = offsets[p_floor]
-            v_lower = v_floor + (gap.lower - p_floor)
-            v_upper = v_lower + len(gap)
-            if gap.lower == 0:
-                name = R'synthesized/.header'
-            elif gap.upper == len(self._data):
-                name = R'synthesized/.overlay'
-            else:
-                name = F'synthesized/.gap-{gap.lower:08X}-{gap.upper:08X}'
-            yield Section(name, gap, Range(v_lower, v_upper))
+            yield Section(self.ascii(section.Name), p, v, False)
 
-    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for section in self.sections():
             yield section.as_segment(populate_sections)
 
@@ -544,19 +558,15 @@ class ExecutableELF(Executable):
         v_lower = self._rebase_img_to_usr(v_lower)
         v_upper = v_lower + align(section['sh_addralign'], section.data_size)
         p_upper = p_lower + section.data_size
-        return Section(
-            self.ascii(section.name),
-            Range(p_lower, p_upper),
-            Range(v_lower, v_upper),
-        )
+        return Section(self.ascii(section.name), Range(p_lower, p_upper), Range(v_lower, v_upper), False)
 
-    def sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section, None, None]:
         for section in self._head.iter_sections():
             if section.is_null():
                 continue
             yield self._convert_section(section)
 
-    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for segment in self._head.iter_segments():
             header = segment.header
             p_lower = header.p_offset
@@ -614,7 +624,7 @@ class ExecutableMachO(Executable):
                     continue
                 yield segment, sections
 
-    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for segment, sections in self._macho_segments():
             v_lower = segment.vmaddr
             v_lower = self._rebase_img_to_usr(v_lower)
@@ -636,7 +646,7 @@ class ExecutableMachO(Executable):
                 segment_name
             )
 
-    def sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section, None, None]:
         for segment in self.segments(populate_sections=True):
             yield segment.as_section()
             yield from segment.sections
@@ -648,11 +658,7 @@ class ExecutableMachO(Executable):
         v_lower = self._rebase_img_to_usr(v_lower)
         p_upper = p_lower + section.size
         v_upper = v_lower + align(section.align, section.size)
-        return Section(
-            F'{segment}/{name}',
-            Range(p_lower, p_upper),
-            Range(v_lower, v_upper),
-        )
+        return Section(F'{segment}/{name}', Range(p_lower, p_upper), Range(v_lower, v_upper), False)
 
     def arch(self) -> Arch:
         cputype = self._head.headers[0].header.cputype
