@@ -84,7 +84,7 @@ def get_config():
                     all_optional.update(deps)
             if executable.required_dependencies:
                 all_required.update(executable.required_dependencies)
-        if requirements:
+        if requirements is not None:
             requirements.extend(all_required)
         return {k: list(v) for k, v in extras.items()}
 

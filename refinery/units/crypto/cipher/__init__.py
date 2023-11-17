@@ -88,7 +88,7 @@ class StreamCipherUnit(CipherUnit, abstract=True):
     def keystream(self) -> Iterable[int]:
         raise NotImplementedError
 
-    @Unit.Requires('numpy')
+    @Unit.Requires('numpy', 'speed', 'default')
     def _numpy():
         import numpy
         return numpy

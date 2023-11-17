@@ -1241,11 +1241,11 @@ class Unit(UnitBase, abstract=True):
     optional_dependencies: Optional[Dict[str, Set[str]]] = None
 
     @staticmethod
-    def Requires(distribution: str, *buckets: str):
+    def Requires(distribution: str, *_buckets: str):
 
         class Requirement(requirement):
             dependency: ClassVar[str] = distribution
-            required: ClassVar[bool] = not buckets
+            required: ClassVar[bool] = not _buckets
 
             def __init__(self, importer: Callable):
                 super().__init__(importer)
@@ -1261,7 +1261,7 @@ class Unit(UnitBase, abstract=True):
                     optmap = unit.optional_dependencies
                     if optmap is None:
                         unit.optional_dependencies = optmap = {}
-                    buckets = [optmap.setdefault(name, set()) for name in buckets]
+                    buckets = [optmap.setdefault(name, set()) for name in _buckets]
                 for bucket in buckets:
                     bucket.add(self.dependency)
 

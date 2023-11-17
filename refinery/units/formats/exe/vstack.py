@@ -64,12 +64,12 @@ class vstack(Unit):
     variable to the desired value.
     """
 
-    @Unit.Requires('intervaltree')
+    @Unit.Requires('intervaltree', 'default')
     def _intervaltree():
         import intervaltree
         return intervaltree
 
-    @Unit.Requires('unicorn')
+    @Unit.Requires('unicorn', 'default')
     def _unicorn():
         import unicorn
         import unicorn.x86_const
@@ -82,7 +82,7 @@ class vstack(Unit):
             pass
         return unicorn
 
-    @Unit.Requires('capstone')
+    @Unit.Requires('capstone', 'default')
     def _capstone():
         import capstone
         return capstone

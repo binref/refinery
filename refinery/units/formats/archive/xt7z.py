@@ -16,7 +16,7 @@ class xt7z(ArchiveUnit):
     """
     Extract files from a 7zip archive.
     """
-    @ArchiveUnit.Requires('py7zr', 'arc')
+    @ArchiveUnit.Requires('py7zr', 'arc', 'default')
     def _py7zr():
         import py7zr
         import py7zr.exceptions

@@ -20,7 +20,7 @@ class xtzip(ArchiveUnit):
         import chardet
         return chardet
 
-    @ArchiveUnit.Requires('pyzipper', 'arc')
+    @ArchiveUnit.Requires('pyzipper', 'arc', 'default')
     def _pyzipper():
         import pyzipper
         return pyzipper

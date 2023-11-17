@@ -26,7 +26,7 @@ class carve_7z(Unit):
     """
     Extracts anything from the input data that looks like a 7zip archive file.
     """
-    @Unit.Requires('py7zr')
+    @Unit.Requires('py7zr', 'arc', 'default')
     def _py7zr():
         import py7zr
         return py7zr

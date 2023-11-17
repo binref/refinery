@@ -13,7 +13,7 @@ class lnk(Unit):
     unit is a thin wrapper around the LnkParse3 library.
     """
 
-    @Unit.Requires('LnkParse3', 'formats')
+    @Unit.Requires('LnkParse3', 'formats', 'default')
     def _LnkParse3():
         import LnkParse3
         return LnkParse3

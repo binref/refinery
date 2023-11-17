@@ -139,7 +139,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             tmp = tmp.astype(block.dtype)
         block[:] = tmp
 
-    @Unit.Requires('numpy')
+    @Unit.Requires('numpy', 'speed', 'default')
     def _numpy():
         import numpy
         return numpy
