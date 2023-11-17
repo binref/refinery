@@ -1842,7 +1842,10 @@ class Unit(UnitBase, abstract=True):
             gp = argument.group
             if gp not in groups:
                 groups[gp] = argp.add_mutually_exclusive_group()
-            groups[gp].add_argument @ argument
+            try:
+                groups[gp].add_argument @ argument
+            except Exception:
+                raise RefineryCriticalException(F'Failed to queue argument: {argument!s}')
 
         return argp
 
