@@ -106,7 +106,7 @@ These libraries are not installed by default to keep the installation time for r
 The corresponding units will tell you what to do when their dependency is missing:
 ```
 $ emit data.pcap | pcap [| peek ]
-(13:37:00) failure in pcap: dependencies missing; install 'pypcapkit[scapy]'
+(13:37:00) failure in pcap: dependency pypcapkit[scapy]<0.16.0 is missing; run pip install 'pypcapkit[scapy]<0.16.0'
 ```
 You can then install these missing dependencies manually.
 If you do not want to be bothered by missing dependencies and don't mind a long refinery installation, you can install the package as follows:
@@ -114,6 +114,19 @@ If you do not want to be bothered by missing dependencies and don't mind a long 
 pip install -U binary-refinery[all]
 ```
 which will install _all_ dependencies on top of the required ones.
+More precisely, there are the following extra categories available:
+
+| Name          | Included Dependencies                                             |
+|---------------|-------------------------------------------------------------------|
+| `all`         | all dependencies for all refinery units                           |
+| `arc`         | all archiving-related dependencies (i.e. 7zip support)            |
+| `default`     | recommended selection of reasonable dependencies, author's choice |
+| `display`     | the packages `colorama` and `jsbeautifier`                        |
+| `formats`     | all dependencies related to parsing of various file formats       |
+| `office`      | subset of `formats`; all office-related parsing dependencies      |
+| `python`      | packages related to Python decompilation                          |
+
+You can specify any combination of these to the installation to have some control over trading dependencies for capabilities.
 
 ## Bleeding Edge
 
