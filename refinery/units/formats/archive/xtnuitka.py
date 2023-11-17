@@ -14,7 +14,7 @@ class xtnuitka(PathExtractorUnit):
     """
     _MAGIC = B'KA'
 
-    @PathExtractorUnit.Requires('pyzstd', optional=True)
+    @PathExtractorUnit.Requires('pyzstd', 'arc')
     def _pyzstd():
         import pyzstd
         return pyzstd

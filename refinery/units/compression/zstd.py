@@ -7,7 +7,7 @@ class zstd(Unit):
     """
     ZStandard (ZSTD) compression and decompression.
     """
-    @Unit.Requires('pyzstd', optional=True)
+    @Unit.Requires('pyzstd', 'compression', 'all')
     def _pyzstd():
         import pyzstd
         return pyzstd

@@ -75,16 +75,18 @@ def get_config():
     def get_setup_extras(requirements: Optional[List] = None):
         all_optional: Set[str] = set()
         all_required: Set[str] = set()
-        extras: Dict[str, List[str]] = {'all': all_optional}
+        extras: Dict[str, Set[str]] = {'all': all_optional}
         for executable in refinery._cache.cache.values():
             if executable.optional_dependencies:
-                all_optional.update(executable.optional_dependencies)
-                extras[executable.name] = list(executable.optional_dependencies)
+                for key, deps in executable.optional_dependencies.items():
+                    bucket = extras.setdefault(key, set())
+                    bucket.update(deps)
+                    all_optional.update(deps)
             if executable.required_dependencies:
                 all_required.update(executable.required_dependencies)
         if requirements:
             requirements.extend(all_required)
-        return extras
+        return {k: list(v) for k, v in extras.items()}
 
     def get_setup_readme(filename: Optional[str] = None):
         if filename is None:

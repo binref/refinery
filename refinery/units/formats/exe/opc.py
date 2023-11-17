@@ -43,7 +43,7 @@ class opc(Unit):
             ovar=ovar,
             **more)
 
-    @Unit.Requires('capstone', optional=False)
+    @Unit.Requires('capstone')
     def _capstone():
         import capstone
         return capstone

@@ -177,6 +177,7 @@ from typing import (
     List,
     Optional,
     Callable,
+    ClassVar,
     Tuple,
     Any,
     ByteString,
@@ -1218,6 +1219,15 @@ class requirement(property):
     pass
 
 
+class all:
+    class formats:
+        class java: ...
+        class php: ...
+        class office: ...
+    
+
+
+
 class Unit(UnitBase, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
@@ -1227,14 +1237,15 @@ class Unit(UnitBase, abstract=True):
     """
     Arg = Arg
 
-    optional_dependencies: Optional[Set[str]] = None
     required_dependencies: Optional[Set[str]] = None
+    optional_dependencies: Optional[Dict[str, Set[str]]] = None
 
     @staticmethod
-    def Requires(distribution: str, optional: bool = True):
+    def Requires(distribution: str, *buckets: str):
+
         class Requirement(requirement):
-            dependency = distribution
-            required = not optional
+            dependency: ClassVar[str] = distribution
+            required: ClassVar[bool] = not buckets
 
             def __init__(self, importer: Callable):
                 super().__init__(importer)
@@ -1243,15 +1254,16 @@ class Unit(UnitBase, abstract=True):
             def __set_name__(self, unit: Type[Unit], name: str):
                 if self.required:
                     bucket = unit.required_dependencies
+                    if bucket is None:
+                        unit.required_dependencies = bucket = set()
+                    buckets = [bucket]
                 else:
-                    bucket = unit.optional_dependencies
-                if bucket is None:
-                    bucket = set()
-                    if self.required:
-                        unit.required_dependencies = bucket
-                    else:
-                        unit.optional_dependencies = bucket
-                bucket.add(self.dependency)
+                    optmap = unit.optional_dependencies
+                    if optmap is None:
+                        unit.optional_dependencies = optmap = {}
+                    buckets = [optmap.setdefault(name, set()) for name in buckets]
+                for bucket in buckets:
+                    bucket.add(self.dependency)
 
             def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
                 if self.module is not None:
@@ -1259,7 +1271,10 @@ class Unit(UnitBase, abstract=True):
                 try:
                     self.module = module = self.fget()
                 except ImportError as E:
-                    args = unit.optional_dependencies or ()
+                    deps = unit.optional_dependencies or {}
+                    args = set()
+                    for v in deps.values():
+                        args.update(v)                   
                     raise RefineryImportMissing(self.dependency, *args) from E
                 except Exception as E:
                     raise AttributeError(F'module import for distribution "{distribution}" failed: {E!s}')

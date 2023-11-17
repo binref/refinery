@@ -11,7 +11,7 @@ class transpose(Unit):
     empty entries in some positions. Optionally, a padding sequence can be provided to pad
     all rows to the same length.
     """
-    @Unit.Requires("numpy")
+    @Unit.Requires('numpy')
     def _numpy():
         import numpy
         return numpy

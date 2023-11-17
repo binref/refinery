@@ -28,7 +28,7 @@ class tnetmtm(Unit):
     ):
         ...
 
-    @Unit.Requires('mitmproxy')
+    @Unit.Requires('mitmproxy', 'all')
     def _tnetstring():
         from mitmproxy.io import tnetstring
         return tnetstring

@@ -44,7 +44,7 @@ class machometa(Unit):
             tabular=tabular,
         )
 
-    @Unit.Requires('k2l')
+    @Unit.Requires('k2l', 'all')
     def _ktool():
         import ktool
         import ktool.macho

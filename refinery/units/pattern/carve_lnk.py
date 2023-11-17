@@ -9,7 +9,7 @@ class carve_lnk(Unit):
     Extracts anything from the input data that looks like a Windows shortcut (i.e. an LNK file)
     """
 
-    @Unit.Requires('LnkParse3', optional=False)
+    @Unit.Requires('LnkParse3', 'formats')
     def _LnkParse3():
         import LnkParse3
         import LnkParse3.extra_factory

@@ -25,7 +25,7 @@ class xtdoc(PathExtractorUnit):
     Extract files from an OLE document such as a Microsoft Word DOCX file.
     """
 
-    @PathExtractorUnit.Requires('olefile', optional=False)
+    @PathExtractorUnit.Requires('olefile', 'formats', 'office')
     def _olefile():
         import olefile
         return olefile

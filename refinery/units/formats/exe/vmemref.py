@@ -24,7 +24,7 @@ class vmemref(Unit):
     at the given offset.
     """
 
-    @Unit.Requires('angr')
+    @Unit.Requires('angr', 'all')
     def _angr():
         import angr
         import angr.project

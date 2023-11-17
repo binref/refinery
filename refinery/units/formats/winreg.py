@@ -32,7 +32,7 @@ class winreg(PathExtractorUnit):
     """
     Extract values from a Windows registry hive or from a registry export (.reg file).
     """
-    @PathExtractorUnit.Requires('python-registry', optional=False)
+    @PathExtractorUnit.Requires('python-registry', 'formats')
     def _registry():
         import Registry
         import Registry.Registry

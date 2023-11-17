@@ -73,7 +73,7 @@ class xlmdeobf(Unit):
         extract_only = sort_formulas or extract_only
         self.superinit(super(), **vars())
 
-    @Unit.Requires('XLMMacroDeobfuscator', optional=False)
+    @Unit.Requires('XLMMacroDeobfuscator', 'formats', 'office')
     def _process_file():
         from XLMMacroDeobfuscator.configs import settings
         settings.SILENT = True

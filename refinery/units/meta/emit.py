@@ -16,7 +16,7 @@ class emit(Unit):
     ))):
         super().__init__(data=data)
 
-    @Unit.Requires('pyperclip', optional=False)
+    @Unit.Requires('pyperclip')
     def _pyperclip():
         import pyperclip
         return pyperclip

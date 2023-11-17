@@ -145,17 +145,17 @@ class xlxtr(Unit):
             references = [SheetReference('*')]
         super().__init__(references=references)
 
-    @Unit.Requires('xlrd2', optional=False)
+    @Unit.Requires('xlrd2', 'formats', 'office')
     def _xlrd():
         import xlrd2
         return xlrd2
 
-    @Unit.Requires('openpyxl', optional=False)
+    @Unit.Requires('openpyxl', 'formats', 'office')
     def _openpyxl():
         import openpyxl
         return openpyxl
 
-    @Unit.Requires('pyxlsb2', optional=False)
+    @Unit.Requires('pyxlsb2', 'formats', 'office')
     def _pyxlsb2():
         import pyxlsb2
         return pyxlsb2

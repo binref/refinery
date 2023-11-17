@@ -9,7 +9,7 @@ class vbastr(Unit):
     """
     Extract VBA macro form strings from Office documents.
     """
-    @Unit.Requires('oletools')
+    @Unit.Requires('oletools', 'formats', 'office')
     def _olevba():
         from oletools import olevba
         return olevba

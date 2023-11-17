@@ -9,7 +9,7 @@ class xtcab(ArchiveUnit):
     """
     Extract files from CAB (cabinet) archives.
     """
-    @ArchiveUnit.Requires('cabarchive', optional=False)
+    @ArchiveUnit.Requires('cabarchive', 'arc')
     def _cabarchive():
         import cabarchive
         return cabarchive

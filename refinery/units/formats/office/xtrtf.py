@@ -11,7 +11,7 @@ class xtrtf(PathExtractorUnit):
     """
     Extract embedded objects in RTF documents.
     """
-    @PathExtractorUnit.Requires('oletools')
+    @PathExtractorUnit.Requires('oletools', 'formats', 'office')
     def _oletools():
         import oletools
         import oletools.rtfobj

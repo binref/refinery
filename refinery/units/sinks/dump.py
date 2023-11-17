@@ -126,7 +126,7 @@ class dump(Unit):
         self.stream.close()
         self.stream = None
 
-    @Unit.Requires('pyperclip', optional=False)
+    @Unit.Requires('pyperclip')
     def _pyperclip():
         import pyperclip
         return pyperclip
