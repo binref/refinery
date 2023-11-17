@@ -21,7 +21,7 @@ class TestAutoDecompressor(TestUnitBase):
         self.buffers = [
             B'AAFOOBAR/BAR' * 2000,
             code[:16000],
-            self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916'),
+            bytes(self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')),
             KADATH1.encode('utf8'),
             KADATH2.encode('utf8'),
         ]
@@ -34,18 +34,20 @@ class TestAutoDecompressor(TestUnitBase):
         yield B'\x01\x00' + data
 
     def test_mangled_buffers(self):
-        unit = self.load()
+        from refinery.units.compression.decompress import decompress
+        unit = decompress()
         for e in unit.engines:
             if not e.is_reversible:
                 continue
             for k, buffer in enumerate(self.buffers, 1):
                 try:
-                    compressed = e.reverse(buffer)
+                    compressed = next(buffer | -e)
                 except Exception as E:
                     self.assertTrue(False, F'Exception while compressing buffer {k}: {E!s}')
+                    continue
                 failures = []
                 success = 0
-                result, = compressed | unit
+                result = next(compressed | unit)
                 method = result.meta.get("method", "uncompressed")
                 self.assertEqual(result, buffer,
                     msg=F'Failed for {e.name}, reported as {method} for buffer #{k}')

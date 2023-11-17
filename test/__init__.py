@@ -21,6 +21,10 @@ class SampleStore:
         self.cache = {}
 
     def download(self, sha256hash: str, key: Optional[str] = None):
+        def tobytearray(r):
+            if isinstance(r, bytearray):
+                return r
+            return bytearray(r)
         key = key or 'REFINERYTESTDATA'
         key = key.encode('latin1')
         sha256hash = sha256hash.lower()
@@ -28,13 +32,13 @@ class SampleStore:
             F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true')
         try:
             with urllib.request.urlopen(req) as response:
-                encoded_sample = response.read()
+                encoded_sample = tobytearray(response.read())
         except Exception:
             api = os.environ['MALSHARE_API']
             req = urllib.request.Request(
                 F'https://malshare.com/api.php?api_key={api}&action=getfile&hash={sha256hash}')
             with urllib.request.urlopen(req) as response:
-                result = response.read()
+                result = tobytearray(response.read())
         else:
             result = encoded_sample | aes(mode='CBC', key=key) | bytearray
             if not result or hashlib.sha256(result).hexdigest().lower() != sha256hash:
