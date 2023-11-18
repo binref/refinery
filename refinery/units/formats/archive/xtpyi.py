@@ -89,7 +89,7 @@ def decompile_buffer(buffer: Union[Code, ByteString], file_name: Optional[str] =
             else:
                 engines['decompyle3'] = dc
         if not engines:
-            errors += F'# (all missing, install one of the above to enable decompilation)'
+            errors += '# (all missing, install one of the above to enable decompilation)'
         for name, engine in engines.items():
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
                 try:
