@@ -43,6 +43,8 @@ class doctxt(Unit):
             self.log_debug(F'trying to extract as {filetype}')
             try:
                 result = extractor(data)
+            except ImportError:
+                raise
             except Exception as error:
                 self.log_info(F'failed extractring as {filetype}: {error!s}')
             else:

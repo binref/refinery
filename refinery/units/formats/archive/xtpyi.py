@@ -190,8 +190,11 @@ class PYZ(Struct):
         if signature != self.MagicSignature:
             raise ValueError('invalid magic')
         magic = bytes(reader.read(4))
-        with contextlib.suppress(KeyError):
-            version = xtpyi._xdis.magics.versions[magic]
+        with contextlib.suppress(KeyError, AttributeError):
+            xdis = xtpyi._xdis
+            if isinstance(xdis, property):
+                xdis = xdis.fget()
+            version = xdis.magics.versions[magic]
         vtuple = version2tuple(version)
         padding_size = 4
         if vtuple >= (3, 3):
@@ -211,17 +214,20 @@ class PYZ(Struct):
             toc = marshal.loads(toc_data)
         except Exception as error:
             if MAGIC_NUMBER != self.magic[:4]:
-                _ord = xtpyi._xdis.marsh.Ord
-                xtpyi._xdis.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
+                xdis = xtpyi._xdis
+                if isinstance(xdis, property):
+                    xdis = xdis.fget()
+                _ord = xdis.marsh.Ord
+                xdis.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
                 try:
-                    toc = xtpyi._xdis.marsh.load(
+                    toc = xdis.marsh.load(
                         MemoryFile(self.data), self.version)
                 except Exception:
                     pass
                 else:
                     error = None
                 finally:
-                    xtpyi._xdis.marsh.Ord = _ord
+                    xdis.marsh.Ord = _ord
             if error is not None:
                 raise error
 
