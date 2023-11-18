@@ -1265,7 +1265,7 @@ class Unit(UnitBase, abstract=True):
                     deps = unit.optional_dependencies or {}
                     args = set()
                     for v in deps.values():
-                        args.update(v)                   
+                        args.update(v)
                     raise RefineryImportMissing(self.dependency, *args) from E
                 except Exception as E:
                     raise AttributeError(F'module import for distribution "{distribution}" failed: {E!s}')
