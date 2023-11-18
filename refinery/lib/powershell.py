@@ -21,6 +21,7 @@ class TH32CS(enum.IntEnum):
     SNAPMODULE  = 0x8 # noqa
     SNAPPROCESS = 0x2 # noqa
 
+
 class NotWindows(RuntimeError):
     pass
 
@@ -60,24 +61,28 @@ def get_parent_processes():
         k32 = ctypes.windll.kernel32
     except AttributeError:
         raise NotWindows
+
     entry = PROCESSENTRY32()
     entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
     snap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPPROCESS, 0)
+
+    def FullPath():
+        path = entry.szExeFile
+        procsnap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPMODULE, entry.th32ProcessID)
+        if procsnap:
+            mod = MODULEENTRY32()
+            mod.dwSize = ctypes.sizeof(MODULEENTRY32)
+            if k32.Module32First(procsnap, ctypes.byref(mod)):
+                path = mod.szExePath
+            k32.CloseHandle(procsnap)
+        return path
+
+    def NextProcess():
+        return k32.Process32Next(snap, ctypes.byref(entry))
+
     if not snap:
         raise RuntimeError('could not create snapshot')
     try:
-        def FullPath():
-            path = entry.szExeFile
-            procsnap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPMODULE, entry.th32ProcessID)
-            if procsnap:
-                mod = MODULEENTRY32()
-                mod.dwSize = ctypes.sizeof(MODULEENTRY32)
-                if k32.Module32First(procsnap, ctypes.byref(mod)):
-                    path = mod.szExePath
-                k32.CloseHandle(procsnap)
-            return path
-        def NextProcess():
-            return k32.Process32Next(snap, ctypes.byref(entry))
         if not k32.Process32First(snap, ctypes.byref(entry)):
             raise RuntimeError('could not iterate processes')
         processes = {
@@ -108,7 +113,7 @@ def shell_supports_binref() -> bool:
                     version = tuple(map(int, version.split('.')))
                 except Exception:
                     continue
-                if version[:2] >= (7,4):
+                if version[:2] >= (7, 4):
                     return True
             if path.stem == 'cmd':
                 return True
