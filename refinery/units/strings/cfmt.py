@@ -9,16 +9,16 @@ from refinery.lib.meta import metavars
 
 class cfmt(Unit):
     """
-    Transform a given chunk by applying a format string operation. The positional format
-    string placeholder `{}` will be replaced by the incoming data, named placeholders have
-    to be present as meta variables in the current chunk. For example, the following
-    pipeline can be used to print all files in a given directory with their corresponding
-    SHA-256 hash:
+    Stands for "Convert to ForMaT": Transform a given chunk by applying a format string operation.
+    The positional format string placeholder `{}` will be replaced by the incoming data, named
+    placeholders have to exist as meta variables in the current chunk. For example, the following
+    pipeline can be used to print all files in a given directory with their corresponding SHA-256
+    hash:
 
         ef ** [| sha256 -t | cfmt {} {path} ]]
 
-    By default, format string arguments are simply joined along a space character to form
-    a single format string.
+    By default, format string arguments are simply joined along a space character to form a single
+    format string.
     """
 
     def __init__(
