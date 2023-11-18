@@ -47,6 +47,8 @@ class carve_7z(Unit):
                 archive = self._py7zr.SevenZipFile(mf)
                 self.log_debug('attempting to test archive')
                 success = archive.test() is not False
+            except ImportError:
+                raise
             except Exception as error:
                 self.log_debug('parsing archive failed:', error)
                 success = False
