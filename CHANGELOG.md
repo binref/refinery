@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.6.20
+- Includes the preliminary fix for the PowerShell problem. PowerShell versions 7.4 and beyond support native to native pipelines.
+
 ## Version 0.6.19
 - The `b85` unit is now resilient against white space.
 - The `vsect` unit can now extract "synthesized" sections. This also affects `vsnip`; it can now also extract data from, e.g., the header of an executable based on virtual addresses.
