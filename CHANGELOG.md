@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.6.19
+- The `b85` unit is now resilient against white space.
+- The `vsect` unit can now extract "synthesized" sections. This also affects `vsnip`; it can now also extract data from, e.g., the header of an executable based on virtual addresses.
+- The possible extras for the `binary-refinery` Python package have been expanded and the default install has been slimmed even further to avoid having to install too many dependencies for just the core utilities.
+
 ## Version 0.6.18 - bugfix release
 
 ## Version 0.6.17
