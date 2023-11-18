@@ -13,7 +13,7 @@ class ppjscript(Unit):
     ):
         return super().__init__(indent=indent)
 
-    @Unit.Requires('jsbeautifier', 'display')
+    @Unit.Requires('jsbeautifier', 'display', 'extended')
     def _jsb():
         import jsbeautifier
         import jsbeautifier.unpackers.javascriptobfuscator

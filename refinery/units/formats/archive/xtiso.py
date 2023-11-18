@@ -35,7 +35,7 @@ class xtiso(ArchiveUnit):
             fs=fs
         )
 
-    @ArchiveUnit.Requires('pycdlib', 'arc', 'default')
+    @ArchiveUnit.Requires('pycdlib', 'arc', 'default', 'extended')
     def _pycdlib():
         import pycdlib
         import pycdlib.dates

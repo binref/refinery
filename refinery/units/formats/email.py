@@ -29,7 +29,7 @@ class xtmail(PathExtractorUnit):
         yield UnpackResult('headers.json',
             lambda jsn=jh: json.dumps(jsn, indent=4).encode(self.codec))
 
-    @PathExtractorUnit.Requires('extract-msg<=0.41.0', 'formats', 'office', 'default')
+    @PathExtractorUnit.Requires('extract-msg<=0.41.0', 'formats', 'office', 'default', 'extended')
     def _extract_msg():
         import extract_msg.message
         import extract_msg.enums
@@ -90,7 +90,7 @@ class xtmail(PathExtractorUnit):
             path = attachment.longFilename or attachment.shortFilename
             yield UnpackResult(F'attachments/{path}', attachment.data)
 
-    @PathExtractorUnit.Requires('chardet', 'default')
+    @PathExtractorUnit.Requires('chardet', 'default', 'extended')
     def _chardet():
         import chardet
         return chardet

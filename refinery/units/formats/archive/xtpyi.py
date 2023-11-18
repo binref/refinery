@@ -78,10 +78,19 @@ def decompile_buffer(buffer: Union[Code, ByteString], file_name: Optional[str] =
     if not isinstance(buffer, Code):
         codes = list(extract_code_from_buffer(buffer, file_name))
     for code in codes:
-        for name, engine in {
-            'decompyle3': main._decompyle3,
-            'uncompyle6': main._uncompyle6,
-        }.items():
+        engines = {}
+        for e in ['decompyle3', 'uncompyle6']:
+            try:
+                dc = getattr(main, F'_{e}')
+                if isinstance(dc, property):
+                    dc = dc.fget()
+            except ImportError:
+                errors += F'# The decompiler {dc} is not installed.\n'
+            else:
+                engines['decompyle3'] = dc
+        if not engines:
+            errors += F'# (all missing, install one of the above to enable decompilation)'
+        for name, engine in engines.items():
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
                 try:
                     engine.main.decompile(
@@ -507,7 +516,7 @@ class xtpyi(ArchiveUnit):
             user_code=user_code,
         )
 
-    @ArchiveUnit.Requires('xdis', 'arc', 'python')
+    @ArchiveUnit.Requires('xdis', 'arc', 'python', 'extended')
     def _xdis():
         import xdis.load
         import xdis.magics
@@ -538,7 +547,7 @@ class xtpyi(ArchiveUnit):
         import xdis.std
         return xdis
 
-    @ArchiveUnit.Requires('uncompyle6', 'arc', 'python')
+    @ArchiveUnit.Requires('uncompyle6', 'arc', 'python', 'extended')
     def _uncompyle6():
         import uncompyle6
         import uncompyle6.main

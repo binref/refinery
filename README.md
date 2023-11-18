@@ -122,6 +122,7 @@ More precisely, there are the following extra categories available:
 | `arc`         | all archiving-related dependencies (i.e. 7zip support)            |
 | `default`     | recommended selection of reasonable dependencies, author's choice |
 | `display`     | the packages `colorama` and `jsbeautifier`                        |
+| `extended`    | an extended selection, excluding only the most heavyweight ones   |
 | `formats`     | all dependencies related to parsing of various file formats       |
 | `office`      | subset of `formats`; all office-related parsing dependencies      |
 | `python`      | packages related to Python decompilation                          |

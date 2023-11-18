@@ -61,7 +61,7 @@ class peek(HexViewer):
             stdout=stdout,
         )
 
-    @HexViewer.Requires('colorama', 'display', 'default')
+    @HexViewer.Requires('colorama', 'display', 'default', 'extended')
     def _colorama():
         import colorama
         return colorama

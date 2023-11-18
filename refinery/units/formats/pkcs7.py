@@ -13,7 +13,7 @@ class pkcs7(Unit):
     """
     Converts PKCS7 encoded data to a JSON representation.
     """
-    @Unit.Requires('asn1crypto', 'default')
+    @Unit.Requires('asn1crypto', 'default', 'extended')
     def _asn1crypto():
         import asn1crypto
         import asn1crypto.cms

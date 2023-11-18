@@ -17,7 +17,7 @@ class vbapc(Unit):
     def __init__(self, raw: Unit.Arg.Switch('-r', help='Return disassembled p-code, do not try to decompile.') = False):
         super().__init__(raw=raw)
 
-    @Unit.Requires('oletools', 'formats', 'office')
+    @Unit.Requires('oletools', 'formats', 'office', 'extended')
     def _pcodedmp():
         import pcodedmp.pcodedmp
         return pcodedmp.pcodedmp
