@@ -6,8 +6,8 @@ from refinery.lib.dotnet.deserialize import BinaryFormatterParser
 
 class dnds(JSONEncoderUnit):
     """
-    Expects data that has been formatted with the .NET class `BinaryFormatter`.
-    The output is a representation of the deserialized data in JSON format.
+    Stands for "DotNet DeSerialize": Expects data that has been serialized using the .NET class
+    "BinaryFormatter". The output is a representation of the deserialized data in JSON format.
     """
 
     def __init__(

@@ -5,8 +5,9 @@ from refinery.units import Arg, Unit
 
 class ccp(Unit):
     """
-    This unit concatenates the input data with its argument by prepending the latter to
-    the former. See also `refinery.cca` for the unit that appends instead.
+    Short for ConCatPrepend: This unit concatenates the input data with its argument by
+    prepending the latter to the former. See also `refinery.cca` for the unit that appends
+    instead.
     """
 
     def __init__(self, data: Arg(help='Binary string to be prepended to the input.')):

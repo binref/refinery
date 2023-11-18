@@ -10,10 +10,10 @@ from refinery.units import Chunk
 
 class rex(RegexUnit, PatternExtractor):
     """
-    A binary grep which can apply a transformation to each match. Each match is an individual output.
-    Besides the syntax `{k}` to insert the `k`-th match group, the unit supports processing the
-    contents of match groups with arbitrary refinery units. To do so, use the following F-string-like
-    syntax:
+    Short for Regular Expression eXtractor: A binary grep which can apply a transformation to each
+    match. Each match is an individual output. Besides the syntax `{k}` to insert the `k`-th match
+    group, the unit supports processing the contents of match groups with arbitrary refinery units.
+    To do so, use the following F-string-like syntax:
 
         {match-group:pipeline}
 
