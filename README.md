@@ -88,13 +88,12 @@ pip install -U git+git://github.com/binref/refinery.git
 
 The following is a summary of how well various shell environments are currently supported:
 
-| State           | Shell        | Comment                                                                                |
-|:----------------|--------------|----------------------------------------------------------------------------------------|
-| 🔵 Good         | `cmd`        |                                                                                        |
-| 🔵 Good         | `bash`       |                                                                                        |
-| 🔵 Good         | `sh`         |                                                                                        |
-| 🟡 Minor Issues | `zsh`        | [discussion](https://github.com/binref/refinery/discussions/18) / [script](shells/zsh) |
-| 🔴 Terrible     | `powershell` | [discussion](https://github.com/binref/refinery/issues/5)                              |
+| State           | Shell        | Comment                                                          |
+|:----------------|--------------|------------------------------------------------------------------|
+| 🔵 Good         | `bash`       | Used occasionally by the author.                                 |
+| 🔵 Good         | `cmd`        | Used extensively by the author.                                  |
+| 🟡 Reasonable   | `powershell` | It [just works if the PowerShell version is at least 7.4.][psh1] |
+| 🟠 Minor Issues | `zsh`        | Following a [discussion][zsh1], there is a [fix][zsh2].          |
 
 If you are using a different shell and have some feedback to share, please [let me know](https://github.com/binref/refinery/discussions)!
 
@@ -116,16 +115,16 @@ pip install -U binary-refinery[all]
 which will install _all_ dependencies on top of the required ones.
 More precisely, there are the following extra categories available:
 
-| Name          | Included Dependencies                                             |
-|---------------|-------------------------------------------------------------------|
-| `all`         | all dependencies for all refinery units                           |
-| `arc`         | all archiving-related dependencies (i.e. 7zip support)            |
-| `default`     | recommended selection of reasonable dependencies, author's choice |
-| `display`     | the packages `colorama` and `jsbeautifier`                        |
-| `extended`    | an extended selection, excluding only the most heavyweight ones   |
-| `formats`     | all dependencies related to parsing of various file formats       |
-| `office`      | subset of `formats`; all office-related parsing dependencies      |
-| `python`      | packages related to Python decompilation                          |
+| Name       | Included Dependencies                                             |
+|------------|-------------------------------------------------------------------|
+| `all`      | all dependencies for all refinery units                           |
+| `arc`      | all archiving-related dependencies (i.e. 7zip support)            |
+| `default`  | recommended selection of reasonable dependencies, author's choice |
+| `display`  | the packages `colorama` and `jsbeautifier`                        |
+| `extended` | an extended selection, excluding only the most heavyweight ones   |
+| `formats`  | all dependencies related to parsing of various file formats       |
+| `office`   | subset of `formats`; all office-related parsing dependencies      |
+| `python`   | packages related to Python decompilation                          |
 
 You can specify any combination of these to the installation to have some control over trading dependencies for capabilities.
 
@@ -304,6 +303,10 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [codecov]: https://codecov.io/gh/binref/refinery/?branch=master
 [pypi]: https://pypi.org/project/binary-refinery/
 [venv]: https://docs.python.org/3/library/venv.html
+
+[zsh1]: https://github.com/binref/refinery/discussions/18
+[zsh2]: shells/zsh
+[psh1]: https://github.com/binref/refinery/issues/5
 
 [dump]: https://binref.github.io/#refinery.dump
 [emit]: https://binref.github.io/#refinery.emit
