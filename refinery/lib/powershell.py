@@ -4,15 +4,22 @@
 Windows-specific module to determine whether the current Python process is running in a PowerShell process.
 """
 from __future__ import annotations
+
 from typing import TextIO
+from pathlib import Path
 
 import ctypes
 import os
+import enum
 
 from refinery.lib.environment import environment
 
 _PS1_MAGIC = B'[BRPS1]:'
 
+
+class TH32CS(enum.IntEnum):
+    SNAPMODULE  = 0x8 # noqa
+    SNAPPROCESS = 0x2 # noqa
 
 class NotWindows(RuntimeError):
     pass
@@ -33,6 +40,21 @@ class PROCESSENTRY32(ctypes.Structure):
     ]
 
 
+class MODULEENTRY32(ctypes.Structure):
+    _fields_ = [
+        ('dwSize',              ctypes.c_uint32),                 # noqa
+        ('th32ModuleID',        ctypes.c_uint32),                 # noqa
+        ('th32ProcessID',       ctypes.c_uint32),                 # noqa
+        ('GlblcntUsage',        ctypes.c_uint32),                 # noqa
+        ('ProccntUsage',        ctypes.c_uint32),                 # noqa
+        ('modBaseAddr',         ctypes.POINTER(ctypes.c_uint8)),  # noqa
+        ('modBaseSize',         ctypes.c_uint32),                 # noqa
+        ('hModule',             ctypes.POINTER(ctypes.c_ulong)),  # noqa
+        ('szModule',            ctypes.c_char * 256),             # noqa
+        ('szExePath',           ctypes.c_char * 260),             # noqa
+    ]
+
+
 def get_parent_processes():
     try:
         k32 = ctypes.windll.kernel32
@@ -40,10 +62,20 @@ def get_parent_processes():
         raise NotWindows
     entry = PROCESSENTRY32()
     entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
-    snap = k32.CreateToolhelp32Snapshot(2, 0)
+    snap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPPROCESS, 0)
     if not snap:
         raise RuntimeError('could not create snapshot')
     try:
+        def FullPath():
+            path = entry.szExeFile
+            procsnap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPMODULE, entry.th32ProcessID)
+            if procsnap:
+                mod = MODULEENTRY32()
+                mod.dwSize = ctypes.sizeof(MODULEENTRY32)
+                if k32.Module32First(procsnap, ctypes.byref(mod)):
+                    path = mod.szExePath
+                k32.CloseHandle(procsnap)
+            return path
         def NextProcess():
             return k32.Process32Next(snap, ctypes.byref(entry))
         if not k32.Process32First(snap, ctypes.byref(entry)):
@@ -51,7 +83,7 @@ def get_parent_processes():
         processes = {
             entry.th32ProcessID: (
                 entry.th32ParentProcessID,
-                bytes(entry.szExeFile).decode('latin1')
+                bytes(FullPath()).decode('latin1')
             ) for _ in iter(NextProcess, 0)
         }
     finally:
@@ -62,22 +94,31 @@ def get_parent_processes():
         yield path
 
 
-def is_powershell_process() -> bool:
+def shell_supports_binref() -> bool:
     if os.name != 'nt':
-        return False
+        return True
     try:
-        for process in get_parent_processes():
-            name, _ = os.path.splitext(process)
-            name = name.lower()
-            if name == 'cmd':
+        for path in get_parent_processes():
+            path = Path(path.lower())
+            for part in path.parts:
+                if not part.startswith('microsoft.powershell'):
+                    continue
+                try:
+                    version = part.split('_')[1]
+                    version = tuple(map(int, version.split('.')))
+                except Exception:
+                    continue
+                if version[:2] >= (7,4):
+                    return True
+            if path.stem == 'cmd':
+                return True
+            if path.stem == 'powershell':
                 return False
-            if name == 'powershell':
-                return True
-            if name == 'pwsh':
-                return True
+            if path.stem == 'pwsh':
+                return False
     except NotWindows:
         pass
-    return False
+    return True
 
 
 class Ps1Wrapper:
@@ -162,7 +203,7 @@ class PS1InputWrapper(Ps1Wrapper):
 
 
 def bandaid(codec) -> bool:
-    if not is_powershell_process():
+    if shell_supports_binref():
         return False
 
     import io
