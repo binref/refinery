@@ -105,7 +105,7 @@ These libraries are not installed by default to keep the installation time for r
 The corresponding units will tell you what to do when their dependency is missing:
 ```
 $ emit data.pcap | pcap [| peek ]
-(13:37:00) failure in pcap: dependency pypcapkit[scapy]<0.16.0 is missing; run pip install 'pypcapkit[scapy]<0.16.0'
+(13:37:00) failure in pcap: dependency pypcapkit[scapy] is missing; run pip install 'pypcapkit[scapy]'
 ```
 You can then install these missing dependencies manually.
 If you do not want to be bothered by missing dependencies and don't mind a long refinery installation, you can install the package as follows:
