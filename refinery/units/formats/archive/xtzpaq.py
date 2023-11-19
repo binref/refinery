@@ -1348,7 +1348,7 @@ class xtzpaq(ArchiveUnit):
                 # check csize at first non-d block
                 if csize and type in 'chi':
                     if csize != offset:
-                        raise RuntimeError(F'{csize=} does not point to {offset=}')
+                        raise RuntimeError(F'csize={csize} does not point to offset={offset}')
                     csize = 0
 
                 # get csize from c block
@@ -1359,7 +1359,7 @@ class xtzpaq(ArchiveUnit):
                         raise RuntimeError("c block too small")
                     csize = seg.u64()
                     offset = src.tell() + 1
-                    self.log_debug(F'{csize=} at {offset=}')
+                    self.log_debug(F'csize={csize} at offset={offset}')
                     if csize >> 63:
                         self.log_warn('incomplete transaction at end of archive')
                         done = True
