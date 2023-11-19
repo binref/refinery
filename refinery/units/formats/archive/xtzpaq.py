@@ -99,9 +99,9 @@ class ZPAQL:
 
     def run(self, input: int):
         assert self.cend > 6
-        assert self.hbegin >= self.cend+128
+        assert self.hbegin >= self.cend + 128
         assert self.hend >= self.hbegin
-        assert self.hend < len(self.header)-130
+        assert self.hend < len(self.header) - 130
         assert len(self.m) > 0
         assert len(self.h) > 0
         assert self.header[0] + 256 * self.header[1] == self.cend + self.hend - self.hbegin - 2
@@ -156,7 +156,7 @@ class ZPAQL:
         assert hsize == self.header[0] + 256 * self.header[1]
         assert hsize == cend - 2 + hend - hbegin
         return cend + hend - hbegin
-        
+
     def clear(self):
         self.cend = 0
         self.hbegin = 0
@@ -278,7 +278,7 @@ class StateTable:
     def cminit(self, state: int):
         assert 0 <= state <= 256
         ns = self.ns
-        a = (ns[state*4+3] * 2 + 1) << 22
+        a = (ns[state * 4 + 3] * 2 + 1) << 22
         b = ns[state * 4 + 2] + ns[state * 4 + 3] + 1
         return a // b
 
@@ -454,7 +454,7 @@ class Predictor:
             elif ct is CompType.MIX:
                 if cp[1] > 32:
                     raise ValueError('max size for MIX is 32')
-                if cp[2] >=i:
+                if cp[2] >= i:
                     raise ValueError('MIX j >= i')
                 if cp[3] < 1 or cp[3] > i - cp[2]:
                     raise ValueError('MIX m not in 1..i-j')
@@ -513,8 +513,8 @@ class Predictor:
                 cr.cxt = cr.ht[cr.c + (self.hmap4 & 15)]
                 p[i] = self.stretch(cr.cm[cr.cxt] >> 8)
             elif ct is CompType.MATCH:
-                assert len(cr.cm) == 1<< cp[1]
-                assert len(cr.ht) == 1<< cp[2]
+                assert len(cr.cm) == 1 << cp[1]
+                assert len(cr.ht) == 1 << cp[2]
                 assert cr.a <= 255
                 assert cr.c in {0, 1}
                 assert cr.cxt < 8
@@ -555,11 +555,10 @@ class Predictor:
                 pq = min(max(0, p[cp[2]] + 992), 1983)
                 wt = pq & 63
                 pq >>= 6
-                assert 0 <= pq <=30
+                assert 0 <= pq <= 30
                 cr.cxt += pq
                 p[i] = self.stretch((
-                    (cr.cm[cr.cxt+0] >> 10) * (64 - wt) + 
-                    (cr.cm[cr.cxt+1] >> 10) * wt) >>13);
+                    (cr.cm[cr.cxt + 0] >> 10) * (64 - wt) + (cr.cm[cr.cxt + 1] >> 10) * wt) >> 13)
                 cr.cxt += wt >> 5
             else:
                 raise ValueError('component predict not implemented')
@@ -870,7 +869,7 @@ class Decompressor:
         COMMENT = 2
         DATA = 3
         SEGEND = 4
-    
+
     state: State
     first_seg: bool
 
@@ -880,7 +879,7 @@ class Decompressor:
         self.pp = PostProcessor()
         self.state = Decompressor.State.BLOCK
         self.first_seg = True
-    
+
     def set_input(self, data) -> StructReader:
         self.dec.src = ip = StructReader(data)
         return ip
@@ -983,7 +982,6 @@ class Decompressor:
         self.state = Decompressor.State.FILENAME
         return checksum
 
-            
 
 class xtzpaq(ArchiveUnit):
     """
@@ -995,8 +993,8 @@ class xtzpaq(ArchiveUnit):
     def __init__(
         self, *paths,
         index: Arg.Switch('-i', help='Archive is an index (no d-blocks).') = False,
-        **more    
-    ):               
+        **more
+    ):
         for _code, _size in {
             _TCU32: 4,
             _TCI32: 4,
@@ -1231,8 +1229,10 @@ class xtzpaq(ArchiveUnit):
             0xED: 'f = (a > m[c])',
             0xEE: 'f = (a > h[d])',
             0xEF: 'f = (a > fetch())',
-            0xFF: 'pc = hbegin + header[pc] + 256 * header[pc + 1]\n'
-                    'if pc >= hend: raise RuntimeError',
+            0xFF: (
+                'pc = hbegin + header[pc] + 256 * header[pc + 1]\n'
+                'if pc >= hend: raise RuntimeError'
+            )
         })
         for key, value in _ZPAQ_CPU_SPEC.items():
             if value is _ZPAQ_CPU_HALT:
@@ -1266,12 +1266,13 @@ class xtzpaq(ArchiveUnit):
                 if self.date > 0:
                     return mkdate(self.date)
 
-        key = self.args.pwd
+        # TODO: implement password-protected archives
+        # key = self.args.pwd
         index = self.args.index
-        bsize: Dict[int, int]= {}  # frag ID -> d block compressed size
-        dt: Dict[str, DT] = {}     # filename -> date, attr, frags
-        frag: List[bytes] = []     # ID -> hash[20] size[4] data
-        csize = 0                  # expected offset of next non d block
+        bsize: Dict[int, int] = {}  # frag ID -> d block compressed size
+        dt: Dict[str, DT] = {}      # filename -> date, attr, frags
+        frag: List[bytes] = []      # ID -> hash[20] size[4] data
+        csize = 0                   # expected offset of next non d block
         streaming = False
         journaling = False
 
@@ -1288,7 +1289,7 @@ class xtzpaq(ArchiveUnit):
                 comment = dc.read_comment()
                 jsize = 0
                 if len(comment) >= 4 and comment[-4:] == "jDC\x01":
-                    num = re.search('^\d+', comment)
+                    num = re.search('^\\d+', comment)
                     if not num:
                         raise RuntimeError('missing size in comment')
                     jsize = int(num[0])
@@ -1302,7 +1303,7 @@ class xtzpaq(ArchiveUnit):
                         raise RuntimeError('streaming block in index')
                     streaming = True
                     dc.set_output(dst)
-                    
+
                 # Test journaling filename. The format must be
                 # jDC[YYYYMMDDHHMMSS][t][NNNNNNNNNN]
                 # where YYYYMMDDHHMMSS is the date, t is the type {c,d,h,i}, and
@@ -1364,7 +1365,7 @@ class xtzpaq(ArchiveUnit):
                         self.log_warn('incomplete transaction at end of archive')
                         done = True
                     elif index and csize != 0:
-                        raise RuntimeError('nonzero csize in index')               
+                        raise RuntimeError('nonzero csize in index')
                     # Set csize to expected offset of first non d block
                     # assuming 1 more byte for unread end of block marker.
                     csize += offset
@@ -1417,6 +1418,7 @@ class xtzpaq(ArchiveUnit):
                     if seglen % 24 != 4:
                         raise RuntimeError('bad h block size')
                     b = seg.u32()
+                    self.log_debug(F'[{id}..{id+len//24}[ {b}')
                     fragsum = 0 # uncompressed size of all frags
                     for i in range(seglen // 24):
                         fd = seg.read(24)
@@ -1465,7 +1467,7 @@ class xtzpaq(ArchiveUnit):
         if not journaling:
             yield self._pack('unpacked', dst.getvalue())
             return
-    
+
         for name, f in dt.items():
             if not f.date:
                 continue
