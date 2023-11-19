@@ -70,14 +70,23 @@ class MemoryFile(Generic[T], io.IOBase):
         END = io.SEEK_END
         SET = io.SEEK_SET
 
-    def __init__(self, data: Optional[T] = None, read_as_bytes=False, fileno: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        data: Optional[T] = None,
+        read_as_bytes=False,
+        fileno: Optional[int] = None,
+        size_limit: Optional[int] = None,
+    ) -> None:
         if data is None:
             data = bytearray()
+        elif size_limit is not None and len(data) > size_limit:
+            raise ValueError('Initial data exceeds size limit')
         self._data = data
         self._cursor = 0
         self._closed = False
         self._fileno = fileno
         self.read_as_bytes = read_as_bytes
+        self._size_limit = size_limit
 
     def close(self) -> None:
         self._closed = True
@@ -239,22 +248,28 @@ class MemoryFile(Generic[T], io.IOBase):
         del self._data[self._cursor:]
 
     def write_byte(self, byte: int) -> None:
+        limit = self._size_limit
+        cc = self._cursor
+        nc = cc + 1
+        if limit and nc > limit:
+            raise EOF(bytes((byte,)))
         try:
-            cursor = self._cursor
-            if cursor < len(self._data):
-                self._data[cursor] = byte
+            if cc < len(self._data):
+                self._data[cc] = byte
             else:
                 self._data.append(byte)
         except Exception as T:
             raise OSError(str(T)) from T
         else:
-            self._cursor += 1
+            self._cursor = nc
 
     def write(self, data: Iterable[int]) -> int:
         out = self._data
         end = len(out)
         beginning = self._cursor
-        if beginning == end:
+        limit = self._size_limit
+
+        if limit is None and beginning == end:
             out[end:] = data
             self._cursor = end = len(out)
             return end - beginning
@@ -270,8 +285,22 @@ class MemoryFile(Generic[T], io.IOBase):
                 cursor += 1
                 self._cursor = cursor
                 return cursor - beginning
-            out[end:] = it
+            if limit is None:
+                out[end:] = it
+            else:
+                out[end:limit] = itertools.islice(it, 0, limit - end)
+                try:
+                    b = next(it)
+                except StopIteration:
+                    self._cursor = limit
+                    return limit - beginning
+                else:
+                    rest = bytearray((b,))
+                    rest[1:] = it
+                    raise EOF(rest)
         else:
+            if limit and size + beginning > limit:
+                raise EOF(data)
             self._cursor += size
             try:
                 self._data[beginning:self._cursor] = data
@@ -331,11 +360,11 @@ class StructReader(MemoryFile[T]):
         finally:
             self.bigendian = False
 
-    @cached_property
+    @property
     def byteorder_format(self) -> str:
         return '>' if self.bigendian else '<'
 
-    @cached_property
+    @property
     def byteorder_name(self) -> str:
         return 'big' if self.bigendian else 'little'
 
