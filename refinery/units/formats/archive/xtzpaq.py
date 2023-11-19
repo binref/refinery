@@ -25,8 +25,8 @@ from refinery.units.formats.archive import ArchiveUnit, Arg
 from refinery.lib.structures import MemoryFile, StructReader
 
 
-_TCU32 = 'L'
-_TCI32 = 'l'
+_TCU32 = 'I'
+_TCI32 = 'i'
 _TCU16 = 'H'
 _TCI16 = 'h'
 
