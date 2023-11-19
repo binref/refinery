@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import List, Type
+from typing import List, Optional, Type
 
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units import RefineryException
@@ -12,7 +12,19 @@ class xt(ArchiveUnit):
     Extract files from archives. The unit tries to identify the archive format and use the
     correct extractor.
     """
-    def _handlers(self):
+    @classmethod
+    def handles(cls, data: bytearray) -> Optional[bool]:
+        out = False
+        for engine in cls._handlers():
+            engine_verdict = engine.handles(data)
+            if engine_verdict is True:
+                return True
+            if engine_verdict is None:
+                out = None
+        return out
+
+    @staticmethod
+    def _handlers():
         from refinery.units.formats.office.xtone import xtone
         yield xtone
         from refinery.units.formats.archive.xtgz import xtgz
@@ -25,6 +37,8 @@ class xt(ArchiveUnit):
         yield xtasar
         from refinery.units.formats.office.xtrtf import xtrtf
         yield xtrtf
+        from refinery.units.formats.archive.xtzpaq import xtzpaq
+        yield xtzpaq
         from refinery.units.formats.pe.dotnet.dnsfx import dnsfx
         yield dnsfx
         from refinery.units.formats.archive.xtnsis import xtnsis
