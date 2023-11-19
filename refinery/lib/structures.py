@@ -14,7 +14,6 @@ import re
 import struct
 import weakref
 
-from refinery.lib.tools import cached_property
 from typing import List, Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
 
 
