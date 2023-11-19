@@ -1418,7 +1418,7 @@ class xtzpaq(ArchiveUnit):
                     if seglen % 24 != 4:
                         raise RuntimeError('bad h block size')
                     b = seg.u32()
-                    self.log_debug(F'[{id}..{id+len//24}[ {b}')
+                    self.log_debug(F'[{frag_id}..{frag_id+seglen//24}[ {b}')
                     fragsum = 0 # uncompressed size of all frags
                     for i in range(seglen // 24):
                         fd = seg.read(24)
