@@ -25,3 +25,11 @@ class TestMetaEat(TestUnitBase):
     def test_respects_scope(self):
         pl = L('emit foo [| put baz bar [| eat baz ]| eat baz ]')
         self.assertEqual(pl(), B'bar')
+
+    def test_array(self):
+        pl = L('emit foo [| put k btoi[1]:test | eat k | cfmt {k}{} ]')
+        self.assertEqual(pl(), B'{k}test')
+
+    def test_integer(self):
+        pl = L('emit foo [| put k 10 | eat k | cfmt {k}{} ]')
+        self.assertEqual(pl(), B'{k}10')

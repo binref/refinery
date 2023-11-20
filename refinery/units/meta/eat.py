@@ -24,12 +24,12 @@ class eat(Unit):
         meta = metavars(data)
         data = meta.pop(name)
         type = data.__class__.__name__
+        if isinstance(data, int):
+            self.log_info(F'variable {name} is an integer, converting to string.')
+            data = str(data).encode(self.codec)
         if isinstance(data, str):
             self.log_info(F'variable {name} is a string, encoding as {self.codec}')
             data = data.encode(self.codec)
-        elif isinstance(data, int):
-            self.log_warn(invalid_type())
-            data = None
         elif not isbuffer(data):
             try:
                 wrapped = bytearray(data)
