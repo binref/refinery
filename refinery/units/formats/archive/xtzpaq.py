@@ -31,7 +31,12 @@ _TCU16 = 'H'
 _TCI16 = 'h'
 
 _ZPAQ_CPU_HALT = object()
+_ZPAQ_CPU_DEFS = {}
 _ZPAQ_CPU_SPEC = {}
+
+
+def _i32(x: int):
+    return -(~(x - 1) & 0xFFFFFFFF) if x & 0x80000000 else x
 
 
 def _resize(a: array, c: int, b: int = 0):
@@ -126,7 +131,7 @@ class ZPAQL:
             self.header[cend] = type
             cend += 1
             size = CompSize[type]
-            for _ in range(size):
+            for _ in range(1, size):
                 self.header[cend] = in2.u8()
                 cend += 1
         end_byte = in2.u8()
@@ -231,7 +236,12 @@ class ZPAQL:
             return code
 
         cpu = dict(self.__dict__)
+        dbg = xtzpaq.log_debug()
+        tab = '\x20\x20'
         cpu.update(fetch=fetch, div=div, mod=mod, out=out)
+
+        if dbg:
+            xtzpaq.log_debug('starting new vm execution:')
 
         while True:
             try:
@@ -241,6 +251,11 @@ class ZPAQL:
                 raise RuntimeError
             if ins is _ZPAQ_CPU_HALT:
                 break
+            if dbg:
+                flag = 'F' if cpu['f'] else '\x20'
+                xtzpaq.log_debug(
+                    F'{tab}{opc:02X} [{flag} a={cpu["a"]:08x} b={cpu["b"]:08x} c={cpu["c"]:08x} d={cpu["d"]:08x}]'
+                    F'{tab}{_ZPAQ_CPU_DEFS[opc]}')
             try:
                 exec(ins, {}, cpu)
             except Exception as error:
@@ -291,11 +306,12 @@ class StateTable:
         return 1 + int(n1 > 0 and n0 + n1 <= 17)
 
     def discount(self, n0: int):
-        return min(max(n0, 7), 0)
+        return (n0 >= 1) + (n0 >= 2) + (n0 >= 3) + (n0 >= 4) + (n0 >= 5) + (n0 >= 7) + (n0 >= 8)
 
     def next_state(self, n0: int, n1: int, y: int):
         if n0 < n1:
-            return self.next_state(n1, n0, 1 - y)
+            n1, n0 = self.next_state(n1, n0, 1 - y)
+            return n0, n1
         if y:
             n1 += 1
             n0 = self.discount(n0)
@@ -312,32 +328,31 @@ class StateTable:
 
     def __init__(self):
         N = 50
-        NN = N * N
-        t = bytearray(NN * 2)
+        t = [[bytearray(N) for _ in range(N)] for _ in range(2)]
         state = 0
         for i in range(N):
-            for n1 in range(i):
+            for n1 in range(i + 1):
                 n0 = i - n1
                 n = self.num_states(n0, n1)
                 assert 0 <= n <= 2
                 if not n:
                     continue
-                t[n1 * N + n0 + 0 * NN] = state
-                t[n1 * N + n0 + 1 * NN] = state + n - 1
+                t[0][n0][n1] = state
+                t[1][n0][n1] = state + n - 1
                 state += n
         self.ns = bytearray(1024)
         for n0 in range(N):
             for n1 in range(N):
                 for y in range(self.num_states(n0, n1)):
                     assert 0 <= y <= 1
-                    s = t[n1 * N + n0 + y * NN]
+                    s = t[y][n0][n1]
                     assert 0 <= s <= 256
                     s0, s1 = self.next_state(n0, n1, 0)
                     assert 0 <= s0 <= N and 0 <= s1 <= N
-                    self.ns[s * 4 + 0] = t[s1 * N + s0]
+                    self.ns[s * 4 + 0] = t[0][s0][s1]
                     s0, s1 = self.next_state(n0, n1, 1)
                     assert 0 <= s0 <= N and 0 <= s1 <= N
-                    self.ns[s * 4 + 1] = t[s1 * N + s0 + NN]
+                    self.ns[s * 4 + 1] = t[1][s0][s1]
                     self.ns[s * 4 + 2] = n0
                     self.ns[s * 4 + 3] = n1
 
@@ -362,6 +377,7 @@ class Predictor:
         self.c8 = 1
         self.hmap4 = 1
         self.z = z
+        self.st = StateTable()
         self.dt2k = array(_TCI32)
         self.dt = array(_TCI32)
         self.squasht = array(_TCU16)
@@ -472,8 +488,9 @@ class Predictor:
                 _resize(cr.ht, 64, cp[1])
                 _resize(cr.cm, 512)
                 for j in range(256):
+                    clamped = self.clamp512k(self.stretch(self.st.cminit(j) >> 8) * 1024)
                     cr.cm[j * 2 + 0] = 1 << 15
-                    cr.cm[j * 2 + 1] = self.clamp512k(self.stretch(self.st.cminit(j) >> 8) * 1024)
+                    cr.cm[j * 2 + 1] = clamped
             elif ct is CompType.SSE:
                 if cp[1] > 32:
                     raise ValueError('max size for SSE is 32')
@@ -542,14 +559,15 @@ class Predictor:
                 w = cr.cxt
                 p[i] = 0
                 for j in range(m):
-                    p[i] += (cr.cm[w + j] >> 8) * p[cp[2] + j]
+                    p[i] += (_i32(cr.cm[w + j]) >> 8) * p[cp[2] + j]
                 p[i] = self.clamp2k(p[i] >> 8)
             elif ct is CompType.ISSE:
                 if self.c8 == 1 or (self.c8 & 0xF0) == 16:
                     cr.c = self.find(cr.ht, cp[1] + 2, h[i] + 16 * self.c8)
                 cr.cxt = cr.ht[cr.c + (self.hmap4 & 15)]
-                w = cr.cxt * 2
-                p[i] = self.clamp2k((cr.cm[w] * p[cp[2]] + cr.cm[w + 1] * 64) >> 16)
+                wt0 = _i32(cr.cm[cr.cxt * 2 + 0])
+                wt1 = _i32(cr.cm[cr.cxt * 2 + 1])
+                p[i] = self.clamp2k((wt0 * p[cp[2]] + wt1 * 64) >> 16)
             elif ct is CompType.SSE:
                 cr.cxt = (h[i] + self.c8) * 32
                 pq = min(max(0, p[cp[2]] + 992), 1983)
@@ -562,8 +580,8 @@ class Predictor:
                 cr.cxt += wt >> 5
             else:
                 raise ValueError('component predict not implemented')
-        cs = CompSize[cp[0]]
-        cp = cp[cs:]
+            cs = CompSize[cp[0]]
+            cp = cp[cs:]
         assert CompType(cp[0]) is CompType.NONE
         return self.squash(p[n - 1])
 
@@ -584,7 +602,7 @@ class Predictor:
             elif ct is CompType.CM:
                 self.train(cr, y)
             elif ct is CompType.ICM:
-                k = cr.c + self.hmap4 & 15
+                k = cr.c + (self.hmap4 & 15)
                 cr.ht[k] = self.st.next(cr.ht[k], y)
                 pn = cr.cm[cr.cxt]
                 pn += (y * 32767 - (pn >> 8)) >> 2
@@ -598,20 +616,21 @@ class Predictor:
                 assert cr.limit < len(cr.ht)
                 if cr.c != y:
                     cr.a = 0  # mismatch?
-                cr.ht[cr.limit] += cr.ht[cr.limit] + y
+                cr.ht[cr.limit] = (cr.ht[cr.limit] << 1) + y & 0xFF
                 cr.cxt += 1
                 if cr.cxt == 8:
                     cr.cxt = 0
                     cr.limit += 1
                     cr.limit &= (1 << cp[2]) - 1
+                    hi = h[i] % len(cr.cm)
                     if cr.a != 0:
                         cr.a += int(cr.a < 255)
                     else:  # look for a match
-                        cr.b = cr.limit - cr.cm[h[i]]
+                        cr.b = cr.limit - cr.cm[hi]
                         if cr.b & (len(cr.ht) - 1):
                             while cr.a < 255 and cr.ht[cr.limit - cr.a - 1] == cr.ht[cr.limit - cr.a - cr.b - 1]:
                                 cr.a += 1
-                    cr.cm[h[i]] = cr.limit
+                    cr.cm[hi] = cr.limit
             elif ct is CompType.AVG:
                 pass
             elif ct is CompType.MIX2:
@@ -629,13 +648,13 @@ class Predictor:
                 err = (y * 32767 - self.squash(p[i])) * cp[4] >> 4
                 w = cr.cxt
                 for j in range(m):
-                    cr.cm[w + j] = self.clamp512k(cr.cm[w + j] + ((err * p[cp[2] + j] + (1 << 12)) >> 13))
+                    cr.cm[w + j] = self.clamp512k(_i32(cr.cm[w + j]) + ((err * p[cp[2] + j] + (1 << 12)) >> 13))
             elif ct is CompType.ISSE:
                 assert cr.cxt == cr.ht[cr.c + (self.hmap4 & 15)]
                 err = y * 32767 - self.squash(p[i])
                 w = cr.cxt * 2
-                cr.cm[w + 0] = self.clamp512k(cr.cm[w + 0] + ((err * p[cp[2]] + (1 << 12)) >> 13))
-                cr.cm[w + 1] = self.clamp512k(cr.cm[w + 1] + ((err + 16) >> 5))
+                cr.cm[w + 0] = self.clamp512k(_i32(cr.cm[w + 0]) + ((err * p[cp[2]] + (1 << 12)) >> 13))
+                cr.cm[w + 1] = self.clamp512k(_i32(cr.cm[w + 1]) + ((err + 16) >> 5))
                 cr.ht[cr.c + (self.hmap4 & 15)] = self.st.next(cr.cxt, y)
             elif ct is CompType.SSE:
                 self.train(cr, y)
@@ -648,7 +667,7 @@ class Predictor:
 
         self.c8 *= 2
         self.c8 += y
-        if self.c8 > 256:
+        if self.c8 >= 256:
             self.z.run(self.c8 - 256)
             self.hmap4 = 1
             self.c8 = 1
@@ -683,7 +702,7 @@ class Predictor:
         return min(max(x, -2048), 2047)
 
     def clamp512k(self, x: int):
-        return min(max(x, -(1 << 19)), (1 << 19) - 1)
+        return min(max(x, -(1 << 19)), (1 << 19) - 1) & 0xFFFFFFFF
 
     def find(self, ht: array, sizebits: int, cxt: int):
         assert len(ht) == 16 << sizebits
@@ -747,13 +766,17 @@ class Decoder:
         if rv:
             self.high = mid
         else:
-            self.low = mid + 1
+            self.low = mid + 1 & 0xFFFFFFFF
         while (self.high ^ self.low) < 0x1000000:
-            self.high = self.high << 8 | 255
-            self.low <<= 8
-            self.low += int(self.low == 0)
+            self.high <<= 8
+            self.high |= 0xFF
+            self.high &= 0xFFFFFFFF
+            self.low = (self.low << 8) & 0xFFFFFFFF
+            if self.low == 0:
+                self.low = 1
             self.curr <<= 8
             self.curr |= self.src.read_byte()
+            self.curr &= 0xFFFFFFFF
         return int(rv)
 
     def decompress(self) -> Optional[int]:
@@ -1014,230 +1037,230 @@ class xtzpaq(ArchiveUnit):
         # using the original ZPAQ archiver is not faster than running this unit. I am not even kidding.
         if _ZPAQ_CPU_SPEC:
             return
-        _ZPAQ_CPU_SPEC.update({
-            0x01: 'a+=1',
-            0x02: 'a-=1',
-            0x03: 'a = ~a',
-            0x04: 'a = 0',
-            0x07: 'a = r[fetch()]',
-            0x08: 'b, a = a, b',
-            0x09: 'b += 1',
-            0x0A: 'b -= 1',
-            0x0B: 'b = ~b',
-            0x0C: 'b = 0',
-            0x0F: 'b = r[fetch()]',
-            0x10: 'c, a = a, c',
-            0x11: 'c += 1',
-            0x12: 'c -= 1',
-            0x13: 'c = ~c',
-            0x14: 'c = 0',
-            0x17: 'c = r[fetch()]',
-            0x18: 'd, a = a, d',
-            0x19: 'd += 1',
-            0x1A: 'd -= 1',
-            0x1B: 'd = ~d',
-            0x1C: 'd = 0',
-            0x1F: 'd = r[fetch()]',
-            0x20: 'm[b], a = a, m[b]',
-            0x21: 'm[b] += 1',
-            0x22: 'm[b] -= 1',
-            0x23: 'm[b] = ~m[b] & 0xFF',
-            0x24: 'm[b] = 0',
-            0x27: 'pc += ((header[pc] + 128) & 255) - 127 if f else 1',
-            0x28: 'm[c], a = a, m[c]',
-            0x29: 'm[c] += 1',
-            0x2A: 'm[c] -= 1',
-            0x2B: 'm[c] = ~m[c] & 0xFF',
-            0x2C: 'm[c] = 0 & 0xFF',
-            0x2F: 'pc += 1 if f else ((header[pc] + 128) & 255) - 127',
-            0x30: 'h[d], a = a, h[d]',
-            0x31: 'h[d] += 1',
-            0x32: 'h[d] -= 1',
-            0x33: 'h[d] = ~h[d]',
-            0x34: 'h[d] = 0',
-            0x37: 'r[fetch()] = a',
+        _ZPAQ_CPU_DEFS.update({
+            0x01: r'a += 1',
+            0x02: r'a -= 1',
+            0x03: r'a = ~a',
+            0x04: r'a = 0',
+            0x07: r'a = r[fetch() % len(r)]',
+            0x08: r'b, a = a, b',
+            0x09: r'b += 1',
+            0x0A: r'b -= 1',
+            0x0B: r'b = ~b',
+            0x0C: r'b = 0',
+            0x0F: r'b = r[fetch() % len(r)]',
+            0x10: r'c, a = a, c',
+            0x11: r'c += 1',
+            0x12: r'c -= 1',
+            0x13: r'c = ~c',
+            0x14: r'c = 0',
+            0x17: r'c = r[fetch() % len(r)]',
+            0x18: r'd, a = a, d',
+            0x19: r'd += 1',
+            0x1A: r'd -= 1',
+            0x1B: r'd = ~d',
+            0x1C: r'd = 0',
+            0x1F: r'd = r[fetch() % len(r)]',
+            0x20: r'm[b % len(m)], a = a, m[b % len(m)]',
+            0x21: r'm[b % len(m)] += 1',
+            0x22: r'm[b % len(m)] -= 1',
+            0x23: r'm[b % len(m)] = ~m[b % len(m)] & 0xFF',
+            0x24: r'm[b % len(m)] = 0',
+            0x27: r'pc += ((header[pc] + 128) & 255) - 127 if f else 1',
+            0x28: r'm[c % len(m)], a = a, m[c % len(m)]',
+            0x29: r'm[c % len(m)] += 1',
+            0x2A: r'm[c % len(m)] -= 1',
+            0x2B: r'm[c % len(m)] = ~m[c % len(m)] & 0xFF',
+            0x2C: r'm[c % len(m)] = 0 & 0xFF',
+            0x2F: r'pc += 1 if f else ((header[pc] + 128) & 255) - 127',
+            0x30: r'h[d % len(h)], a = a, h[d % len(h)]',
+            0x31: r'h[d % len(h)] += 1',
+            0x32: r'h[d % len(h)] -= 1',
+            0x33: r'h[d % len(h)] = ~h[d % len(h)]',
+            0x34: r'h[d % len(h)] = 0',
+            0x37: r'r[fetch() % len(r)] = a',
             0x38: _ZPAQ_CPU_HALT,
-            0x39: 'out(a & 255)',
-            0x3B: 'a = (a + m[b] + 512) * 773',
-            0x3C: 'h[d] = (h[d] + a + 512) * 773',
-            0x3F: 'pc += ((header[pc] + 128) & 255) - 127',
-            0x40: 'pass',
-            0x41: 'a = b',
-            0x42: 'a = c',
-            0x43: 'a = d',
-            0x44: 'a = m[b]',
-            0x45: 'a = m[c]',
-            0x46: 'a = h[d]',
-            0x47: 'a = fetch()',
-            0x48: 'b = a',
-            0x49: 'pass',
-            0x4A: 'b = c',
-            0x4B: 'b = d',
-            0x4C: 'b = m[b]',
-            0x4D: 'b = m[c]',
-            0x4E: 'b = h[d]',
-            0x4F: 'b = fetch()',
-            0x50: 'c = a',
-            0x51: 'c = b',
-            0x52: 'pass',
-            0x53: 'c = d',
-            0x54: 'c = m[b]',
-            0x55: 'c = m[c]',
-            0x56: 'c = h[d]',
-            0x57: 'c = fetch()',
-            0x58: 'd = a',
-            0x59: 'd = b',
-            0x5A: 'd = c',
-            0x5B: 'pass',
-            0x5C: 'd = m[b]',
-            0x5D: 'd = m[c]',
-            0x5E: 'd = h[d]',
-            0x5F: 'd = fetch()',
-            0x60: 'm[b] = a & 0xFF',
-            0x61: 'm[b] = b & 0xFF',
-            0x62: 'm[b] = c & 0xFF',
-            0x63: 'm[b] = d & 0xFF',
-            0x64: 'pass',
-            0x65: 'm[b] = m[c]',
-            0x66: 'm[b] = h[d] & 0xFF',
-            0x67: 'm[b] = fetch()',
-            0x68: 'm[c] = a & 0xFF',
-            0x69: 'm[c] = b & 0xFF',
-            0x6A: 'm[c] = c & 0xFF',
-            0x6B: 'm[c] = d & 0xFF',
-            0x6C: 'm[c] = m[b]',
-            0x6D: 'pass',
-            0x6E: 'm[c] = h[d] & 0xFF',
-            0x6F: 'm[c] = fetch()',
-            0x70: 'h[d] = a',
-            0x71: 'h[d] = b',
-            0x72: 'h[d] = c',
-            0x73: 'h[d] = d',
-            0x74: 'h[d] = m[b]',
-            0x75: 'h[d] = m[c]',
-            0x76: 'pass',
-            0x77: 'h[d] = fetch()',
-            0x80: 'a += a',
-            0x81: 'a += b',
-            0x82: 'a += c',
-            0x83: 'a += d',
-            0x84: 'a += m[b]',
-            0x85: 'a += m[c]',
-            0x86: 'a += h[d]',
-            0x87: 'a += fetch()',
-            0x88: 'a -= a',
-            0x89: 'a -= b',
-            0x8A: 'a -= c',
-            0x8B: 'a -= d',
-            0x8C: 'a -= m[b]',
-            0x8D: 'a -= m[c]',
-            0x8E: 'a -= h[d]',
-            0x8F: 'a -= fetch()',
-            0x90: 'a *= a',
-            0x91: 'a *= b',
-            0x92: 'a *= c',
-            0x93: 'a *= d',
-            0x94: 'a *= m[b]',
-            0x95: 'a *= m[c]',
-            0x96: 'a *= h[d]',
-            0x97: 'a *= fetch()',
-            0x98: 'div(a)',
-            0x99: 'div(b)',
-            0x9A: 'div(c)',
-            0x9B: 'div(d)',
-            0x9C: 'div(m[b])',
-            0x9D: 'div(m[c])',
-            0x9E: 'div(h[d])',
-            0x9F: 'div(fetch())',
-            0xA0: 'mod(a)',
-            0xA1: 'mod(b)',
-            0xA2: 'mod(c)',
-            0xA3: 'mod(d)',
-            0xA4: 'mod(m[b])',
-            0xA5: 'mod(m[c])',
-            0xA6: 'mod(h[d])',
-            0xA7: 'mod(fetch())',
-            0xA8: 'a &= a',
-            0xA9: 'a &= b',
-            0xAA: 'a &= c',
-            0xAB: 'a &= d',
-            0xAC: 'a &= m[b]',
-            0xAD: 'a &= m[c]',
-            0xAE: 'a &= h[d]',
-            0xAF: 'a &= fetch()',
-            0xB0: 'a &= ~a',
-            0xB1: 'a &= ~b',
-            0xB2: 'a &= ~c',
-            0xB3: 'a &= ~d',
-            0xB4: 'a &= ~m[b]',
-            0xB5: 'a &= ~m[c]',
-            0xB6: 'a &= ~h[d]',
-            0xB7: 'a &= ~fetch()',
-            0xB8: 'a |= a',
-            0xB9: 'a |= b',
-            0xBA: 'a |= c',
-            0xBB: 'a |= d',
-            0xBC: 'a |= m[b]',
-            0xBD: 'a |= m[c]',
-            0xBE: 'a |= h[d]',
-            0xBF: 'a |= fetch()',
-            0xC0: 'a ^= a',
-            0xC1: 'a ^= b',
-            0xC2: 'a ^= c',
-            0xC3: 'a ^= d',
-            0xC4: 'a ^= m[b]',
-            0xC5: 'a ^= m[c]',
-            0xC6: 'a ^= h[d]',
-            0xC7: 'a ^= fetch()',
-            0xC8: 'a <<= (a & 31)',
-            0xC9: 'a <<= (b & 31)',
-            0xCA: 'a <<= (c & 31)',
-            0xCB: 'a <<= (d & 31)',
-            0xCC: 'a <<= (m[b] & 31)',
-            0xCD: 'a <<= (m[c] & 31)',
-            0xCE: 'a <<= (h[d] & 31)',
-            0xCF: 'a <<= (fetch() & 31)',
-            0xD0: 'a >>= (a & 31)',
-            0xD1: 'a >>= (b & 31)',
-            0xD2: 'a >>= (c & 31)',
-            0xD3: 'a >>= (d & 31)',
-            0xD4: 'a >>= (m[b] & 31)',
-            0xD5: 'a >>= (m[c] & 31)',
-            0xD6: 'a >>= (h[d] & 31)',
-            0xD7: 'a >>= (fetch() & 31)',
-            0xD8: 'f = (a == a)',
-            0xD9: 'f = (a == b)',
-            0xDA: 'f = (a == c)',
-            0xDB: 'f = (a == d)',
-            0xDC: 'f = (a == m[b])',
-            0xDD: 'f = (a == m[c])',
-            0xDE: 'f = (a == h[d])',
-            0xDF: 'f = (a == fetch())',
-            0xE0: 'f = (a < a)',
-            0xE1: 'f = (a < b)',
-            0xE2: 'f = (a < c)',
-            0xE3: 'f = (a < d)',
-            0xE4: 'f = (a < m[b])',
-            0xE5: 'f = (a < m[c])',
-            0xE6: 'f = (a < h[d])',
-            0xE7: 'f = (a < fetch())',
-            0xE8: 'f = (a > a)',
-            0xE9: 'f = (a > b)',
-            0xEA: 'f = (a > c)',
-            0xEB: 'f = (a > d)',
-            0xEC: 'f = (a > m[b])',
-            0xED: 'f = (a > m[c])',
-            0xEE: 'f = (a > h[d])',
-            0xEF: 'f = (a > fetch())',
+            0x39: r'out(a & 255)',
+            0x3B: r'a = (a + m[b % len(m)] + 512) * 773',
+            0x3C: r'h[d % len(h)] = (h[d % len(h)] + a + 512) * 773',
+            0x3F: r'pc += ((header[pc] + 128) & 255) - 127',
+            0x40: r'pass',
+            0x41: r'a = b',
+            0x42: r'a = c',
+            0x43: r'a = d',
+            0x44: r'a = m[b % len(m)]',
+            0x45: r'a = m[c % len(m)]',
+            0x46: r'a = h[d % len(h)]',
+            0x47: r'a = fetch()',
+            0x48: r'b = a',
+            0x49: r'pass',
+            0x4A: r'b = c',
+            0x4B: r'b = d',
+            0x4C: r'b = m[b % len(m)]',
+            0x4D: r'b = m[c % len(m)]',
+            0x4E: r'b = h[d % len(h)]',
+            0x4F: r'b = fetch()',
+            0x50: r'c = a',
+            0x51: r'c = b',
+            0x52: r'pass',
+            0x53: r'c = d',
+            0x54: r'c = m[b % len(m)]',
+            0x55: r'c = m[c % len(m)]',
+            0x56: r'c = h[d % len(h)]',
+            0x57: r'c = fetch()',
+            0x58: r'd = a',
+            0x59: r'd = b',
+            0x5A: r'd = c',
+            0x5B: r'pass',
+            0x5C: r'd = m[b % len(m)]',
+            0x5D: r'd = m[c % len(m)]',
+            0x5E: r'd = h[d % len(h)]',
+            0x5F: r'd = fetch()',
+            0x60: r'm[b % len(m)] = a & 0xFF',
+            0x61: r'm[b % len(m)] = b & 0xFF',
+            0x62: r'm[b % len(m)] = c & 0xFF',
+            0x63: r'm[b % len(m)] = d & 0xFF',
+            0x64: r'pass',
+            0x65: r'm[b % len(m)] = m[c % len(m)]',
+            0x66: r'm[b % len(m)] = h[d % len(h)] & 0xFF',
+            0x67: r'm[b % len(m)] = fetch()',
+            0x68: r'm[c % len(m)] = a & 0xFF',
+            0x69: r'm[c % len(m)] = b & 0xFF',
+            0x6A: r'm[c % len(m)] = c & 0xFF',
+            0x6B: r'm[c % len(m)] = d & 0xFF',
+            0x6C: r'm[c % len(m)] = m[b % len(m)]',
+            0x6D: r'pass',
+            0x6E: r'm[c % len(m)] = h[d % len(h)] & 0xFF',
+            0x6F: r'm[c % len(m)] = fetch()',
+            0x70: r'h[d % len(h)] = a',
+            0x71: r'h[d % len(h)] = b',
+            0x72: r'h[d % len(h)] = c',
+            0x73: r'h[d % len(h)] = d',
+            0x74: r'h[d % len(h)] = m[b % len(m)]',
+            0x75: r'h[d % len(h)] = m[c % len(m)]',
+            0x76: r'pass',
+            0x77: r'h[d % len(h)] = fetch()',
+            0x80: r'a += a',
+            0x81: r'a += b',
+            0x82: r'a += c',
+            0x83: r'a += d',
+            0x84: r'a += m[b % len(m)]',
+            0x85: r'a += m[c % len(m)]',
+            0x86: r'a += h[d % len(h)]',
+            0x87: r'a += fetch()',
+            0x88: r'a -= a',
+            0x89: r'a -= b',
+            0x8A: r'a -= c',
+            0x8B: r'a -= d',
+            0x8C: r'a -= m[b % len(m)]',
+            0x8D: r'a -= m[c % len(m)]',
+            0x8E: r'a -= h[d % len(h)]',
+            0x8F: r'a -= fetch()',
+            0x90: r'a *= a',
+            0x91: r'a *= b',
+            0x92: r'a *= c',
+            0x93: r'a *= d',
+            0x94: r'a *= m[b % len(m)]',
+            0x95: r'a *= m[c % len(m)]',
+            0x96: r'a *= h[d % len(h)]',
+            0x97: r'a *= fetch()',
+            0x98: r'div(a)',
+            0x99: r'div(b)',
+            0x9A: r'div(c)',
+            0x9B: r'div(d)',
+            0x9C: r'div(m[b % len(m)])',
+            0x9D: r'div(m[c % len(m)])',
+            0x9E: r'div(h[d % len(h)])',
+            0x9F: r'div(fetch())',
+            0xA0: r'mod(a)',
+            0xA1: r'mod(b)',
+            0xA2: r'mod(c)',
+            0xA3: r'mod(d)',
+            0xA4: r'mod(m[b % len(m)])',
+            0xA5: r'mod(m[c % len(m)])',
+            0xA6: r'mod(h[d % len(h)])',
+            0xA7: r'mod(fetch())',
+            0xA8: r'a &= a',
+            0xA9: r'a &= b',
+            0xAA: r'a &= c',
+            0xAB: r'a &= d',
+            0xAC: r'a &= m[b % len(m)]',
+            0xAD: r'a &= m[c % len(m)]',
+            0xAE: r'a &= h[d % len(h)]',
+            0xAF: r'a &= fetch()',
+            0xB0: r'a &= ~a',
+            0xB1: r'a &= ~b',
+            0xB2: r'a &= ~c',
+            0xB3: r'a &= ~d',
+            0xB4: r'a &= ~m[b % len(m)]',
+            0xB5: r'a &= ~m[c % len(m)]',
+            0xB6: r'a &= ~h[d % len(h)]',
+            0xB7: r'a &= ~fetch()',
+            0xB8: r'a |= a',
+            0xB9: r'a |= b',
+            0xBA: r'a |= c',
+            0xBB: r'a |= d',
+            0xBC: r'a |= m[b % len(m)]',
+            0xBD: r'a |= m[c % len(m)]',
+            0xBE: r'a |= h[d % len(h)]',
+            0xBF: r'a |= fetch()',
+            0xC0: r'a ^= a',
+            0xC1: r'a ^= b',
+            0xC2: r'a ^= c',
+            0xC3: r'a ^= d',
+            0xC4: r'a ^= m[b % len(m)]',
+            0xC5: r'a ^= m[c % len(m)]',
+            0xC6: r'a ^= h[d % len(h)]',
+            0xC7: r'a ^= fetch()',
+            0xC8: r'a <<= (a & 31)',
+            0xC9: r'a <<= (b & 31)',
+            0xCA: r'a <<= (c & 31)',
+            0xCB: r'a <<= (d & 31)',
+            0xCC: r'a <<= (m[b % len(m)] & 31)',
+            0xCD: r'a <<= (m[c % len(m)] & 31)',
+            0xCE: r'a <<= (h[d % len(h)] & 31)',
+            0xCF: r'a <<= (fetch() & 31)',
+            0xD0: r'a >>= (a & 31)',
+            0xD1: r'a >>= (b & 31)',
+            0xD2: r'a >>= (c & 31)',
+            0xD3: r'a >>= (d & 31)',
+            0xD4: r'a >>= (m[b % len(m)] & 31)',
+            0xD5: r'a >>= (m[c % len(m)] & 31)',
+            0xD6: r'a >>= (h[d % len(h)] & 31)',
+            0xD7: r'a >>= (fetch() & 31)',
+            0xD8: r'f = (a == a)',
+            0xD9: r'f = (a == b)',
+            0xDA: r'f = (a == c)',
+            0xDB: r'f = (a == d)',
+            0xDC: r'f = (a == m[b % len(m)])',
+            0xDD: r'f = (a == m[c % len(m)])',
+            0xDE: r'f = (a == h[d % len(h)])',
+            0xDF: r'f = (a == fetch())',
+            0xE0: r'f = (a < a)',
+            0xE1: r'f = (a < b)',
+            0xE2: r'f = (a < c)',
+            0xE3: r'f = (a < d)',
+            0xE4: r'f = (a < m[b % len(m)])',
+            0xE5: r'f = (a < m[c % len(m)])',
+            0xE6: r'f = (a < h[d % len(h)])',
+            0xE7: r'f = (a < fetch())',
+            0xE8: r'f = (a > a)',
+            0xE9: r'f = (a > b)',
+            0xEA: r'f = (a > c)',
+            0xEB: r'f = (a > d)',
+            0xEC: r'f = (a > m[b % len(m)])',
+            0xED: r'f = (a > m[c % len(m)])',
+            0xEE: r'f = (a > h[d % len(h)])',
+            0xEF: r'f = (a > fetch())',
             0xFF: (
                 'pc = hbegin + header[pc] + 256 * header[pc + 1]\n'
                 'if pc >= hend: raise RuntimeError'
             )
         })
-        for key, value in _ZPAQ_CPU_SPEC.items():
-            if value is _ZPAQ_CPU_HALT:
-                continue
-            _ZPAQ_CPU_SPEC[key] = compile(value, '<inline>', 'exec', 0, 2)
+        for key, value in _ZPAQ_CPU_DEFS.items():
+            if value is not _ZPAQ_CPU_HALT:
+                value = compile(value, F'<OPCODE:{key:02X}>', 'exec', 0, 2)
+            _ZPAQ_CPU_SPEC[key] = value
 
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
