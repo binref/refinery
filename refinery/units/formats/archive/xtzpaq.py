@@ -252,16 +252,14 @@ class ZPAQL:
             if ins is _ZPAQ_CPU_HALT:
                 break
             if dbg:
-                flag = 'F' if cpu['f'] else '\x20'
+                a, b, c, d, f = cpu['a'], cpu['b'], cpu['c'], cpu['d'], cpu['f']
                 xtzpaq.log_debug(
-                    F'{tab}{opc:02X} [{flag} a={cpu["a"]:08x} b={cpu["b"]:08x} c={cpu["c"]:08x} d={cpu["d"]:08x}]'
+                    F'{tab}{opc:02X} [a={a:08x} b={b:08x} c={c:08x} d={d:08x} f={int(f)}]'
                     F'{tab}{_ZPAQ_CPU_DEFS[opc]}')
             try:
                 exec(ins, {}, cpu)
-            except Exception as error:
-                raise error
-            for k in 'abcd':
-                cpu[k] &= 0xFFFFFFFF
+            except Exception as E:
+                raise E
 
         self.__dict__.update((k, cpu[k]) for k in self.__dict__.keys() & cpu.keys())
 
@@ -1038,27 +1036,27 @@ class xtzpaq(ArchiveUnit):
         if _ZPAQ_CPU_SPEC:
             return
         _ZPAQ_CPU_DEFS.update({
-            0x01: r'a += 1',
-            0x02: r'a -= 1',
-            0x03: r'a = ~a',
+            0x01: r'a = a + 1 & 0xFFFFFFFF',
+            0x02: r'a = a - 1 & 0xFFFFFFFF',
+            0x03: r'a = ~a & 0xFFFFFFFF',
             0x04: r'a = 0',
             0x07: r'a = r[fetch() % len(r)]',
             0x08: r'b, a = a, b',
-            0x09: r'b += 1',
-            0x0A: r'b -= 1',
-            0x0B: r'b = ~b',
+            0x09: r'b = b + 1 & 0xFFFFFFFF',
+            0x0A: r'b = b - 1 & 0xFFFFFFFF',
+            0x0B: r'b = ~b & 0xFFFFFFFF',
             0x0C: r'b = 0',
             0x0F: r'b = r[fetch() % len(r)]',
             0x10: r'c, a = a, c',
-            0x11: r'c += 1',
-            0x12: r'c -= 1',
-            0x13: r'c = ~c',
+            0x11: r'c = c + 1 & 0xFFFFFFFF',
+            0x12: r'c = c - 1 & 0xFFFFFFFF',
+            0x13: r'c = ~c & 0xFFFFFFFF',
             0x14: r'c = 0',
             0x17: r'c = r[fetch() % len(r)]',
             0x18: r'd, a = a, d',
-            0x19: r'd += 1',
-            0x1A: r'd -= 1',
-            0x1B: r'd = ~d',
+            0x19: r'd = d + 1 & 0xFFFFFFFF',
+            0x1A: r'd = d - 1 & 0xFFFFFFFF',
+            0x1B: r'd = ~d & 0xFFFFFFFF',
             0x1C: r'd = 0',
             0x1F: r'd = r[fetch() % len(r)]',
             0x20: r'm[b % len(m)], a = a, m[b % len(m)]',
@@ -1081,7 +1079,7 @@ class xtzpaq(ArchiveUnit):
             0x37: r'r[fetch() % len(r)] = a',
             0x38: _ZPAQ_CPU_HALT,
             0x39: r'out(a & 255)',
-            0x3B: r'a = (a + m[b % len(m)] + 512) * 773',
+            0x3B: r'a = ((a + m[b % len(m)] + 512) * 773) & 0xFFFFFFFF',
             0x3C: r'h[d % len(h)] = (h[d % len(h)] + a + 512) * 773',
             0x3F: r'pc += ((header[pc] + 128) & 255) - 127',
             0x40: r'pass',
@@ -1140,30 +1138,30 @@ class xtzpaq(ArchiveUnit):
             0x75: r'h[d % len(h)] = m[c % len(m)]',
             0x76: r'pass',
             0x77: r'h[d % len(h)] = fetch()',
-            0x80: r'a += a',
-            0x81: r'a += b',
-            0x82: r'a += c',
-            0x83: r'a += d',
-            0x84: r'a += m[b % len(m)]',
-            0x85: r'a += m[c % len(m)]',
-            0x86: r'a += h[d % len(h)]',
-            0x87: r'a += fetch()',
+            0x80: r'a = a + a & 0xFFFFFFFF',
+            0x81: r'a = a + b & 0xFFFFFFFF',
+            0x82: r'a = a + c & 0xFFFFFFFF',
+            0x83: r'a = a + d & 0xFFFFFFFF',
+            0x84: r'a = a + m[b % len(m)] & 0xFFFFFFFF',
+            0x85: r'a = a + m[c % len(m)] & 0xFFFFFFFF',
+            0x86: r'a = a + h[d % len(h)] & 0xFFFFFFFF',
+            0x87: r'a = a + fetch() & 0xFFFFFFFF',
             0x88: r'a -= a',
-            0x89: r'a -= b',
-            0x8A: r'a -= c',
-            0x8B: r'a -= d',
-            0x8C: r'a -= m[b % len(m)]',
-            0x8D: r'a -= m[c % len(m)]',
-            0x8E: r'a -= h[d % len(h)]',
-            0x8F: r'a -= fetch()',
-            0x90: r'a *= a',
-            0x91: r'a *= b',
-            0x92: r'a *= c',
-            0x93: r'a *= d',
-            0x94: r'a *= m[b % len(m)]',
-            0x95: r'a *= m[c % len(m)]',
-            0x96: r'a *= h[d % len(h)]',
-            0x97: r'a *= fetch()',
+            0x89: r'a = a - b & 0xFFFFFFFF',
+            0x8A: r'a = a - c & 0xFFFFFFFF',
+            0x8B: r'a = a - d & 0xFFFFFFFF',
+            0x8C: r'a = a - m[b % len(m)] & 0xFFFFFFFF',
+            0x8D: r'a = a - m[c % len(m)] & 0xFFFFFFFF',
+            0x8E: r'a = a - h[d % len(h)] & 0xFFFFFFFF',
+            0x8F: r'a = a - fetch() & 0xFFFFFFFF',
+            0x90: r'a = a * a & 0xFFFFFFFF',
+            0x91: r'a = a * b & 0xFFFFFFFF',
+            0x92: r'a = a * c & 0xFFFFFFFF',
+            0x93: r'a = a * d & 0xFFFFFFFF',
+            0x94: r'a = a * m[b % len(m)] & 0xFFFFFFFF',
+            0x95: r'a = a * m[c % len(m)] & 0xFFFFFFFF',
+            0x96: r'a = a * h[d % len(h)] & 0xFFFFFFFF',
+            0x97: r'a = a * fetch() & 0xFFFFFFFF',
             0x98: r'div(a)',
             0x99: r'div(b)',
             0x9A: r'div(c)',
@@ -1257,10 +1255,16 @@ class xtzpaq(ArchiveUnit):
                 'if pc >= hend: raise RuntimeError'
             )
         })
-        for key, value in _ZPAQ_CPU_DEFS.items():
+        for key in list(_ZPAQ_CPU_DEFS):
+            value = _ZPAQ_CPU_DEFS[key]
             if value is not _ZPAQ_CPU_HALT:
                 value = compile(value, F'<OPCODE:{key:02X}>', 'exec', 0, 2)
             _ZPAQ_CPU_SPEC[key] = value
+            if self.log_debug():
+                import re
+                value = re.sub(r' % len\(.\)\]', ']', value)
+                value = re.sub(r' & 0xFFFFFFFF$', '', value)
+                _ZPAQ_CPU_DEFS[key] = value
 
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
