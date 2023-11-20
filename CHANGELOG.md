@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.6.21
+- Adds the `xtzpaq` unit to unpack ZPAQ archives.
+
 ## Version 0.6.20
 - Includes the preliminary fix for the PowerShell problem. PowerShell versions 7.4 and beyond support native to native pipelines.
 
