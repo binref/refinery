@@ -7,6 +7,7 @@
 # ---------------------------------------------------------------------------------------------/
 from __future__ import annotations
 from typing import Optional, Dict, List, TYPE_CHECKING
+from types import CodeType
 
 if TYPE_CHECKING:
     from hashlib import _Hash
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 import hashlib
 import itertools
 import re
+import io
 
 from refinery.units.formats.archive import ArchiveUnit, Arg
 from refinery.lib.structures import MemoryFile, StructReader
@@ -30,9 +32,9 @@ _TCI32 = 'i'
 _TCU16 = 'H'
 _TCI16 = 'h'
 
-_ZPAQ_CPU_HALT = object()
-_ZPAQ_CPU_DEFS = {}
-_ZPAQ_CPU_SPEC = {}
+
+class _HaltExecution(Exception):
+    pass    
 
 
 def _i32(x: int):
@@ -87,6 +89,9 @@ class ZPAQL:
 
     sha1: Optional[_Hash]
 
+    _cpu_defs: Dict[int, str]
+    _cpu_spec: Dict[int, CodeType]
+
     def __init__(self):
         self.h = array(_TCU32)
         self.r = array(_TCU32)
@@ -95,6 +100,228 @@ class ZPAQL:
         self.output = None
         self.header = bytearray()
         self.clear()
+
+        self._cpu_spec = {}
+        self._cpu_defs = {
+            0x01: 'a = a + 1 & 0xFFFFFFFF',
+            0x02: 'a = a - 1 & 0xFFFFFFFF',
+            0x03: 'a = ~a & 0xFFFFFFFF',
+            0x04: 'a = 0',
+            0x07: 'a = r[{} % len(r)]',
+            0x08: 'b, a = a, b',
+            0x09: 'b = b + 1 & 0xFFFFFFFF',
+            0x0A: 'b = b - 1 & 0xFFFFFFFF',
+            0x0B: 'b = ~b & 0xFFFFFFFF',
+            0x0C: 'b = 0',
+            0x0F: 'b = r[{} % len(r)]',
+            0x10: 'c, a = a, c',
+            0x11: 'c = c + 1 & 0xFFFFFFFF',
+            0x12: 'c = c - 1 & 0xFFFFFFFF',
+            0x13: 'c = ~c & 0xFFFFFFFF',
+            0x14: 'c = 0',
+            0x17: 'c = r[{} % len(r)]',
+            0x18: 'd, a = a, d',
+            0x19: 'd = d + 1 & 0xFFFFFFFF',
+            0x1A: 'd = d - 1 & 0xFFFFFFFF',
+            0x1B: 'd = ~d & 0xFFFFFFFF',
+            0x1C: 'd = 0',
+            0x1F: 'd = r[{} % len(r)]',
+            0x20: 'm[b % len(m)], a = a, m[b % len(m)]',
+            0x21: 'm[b % len(m)] += 1',
+            0x22: 'm[b % len(m)] -= 1',
+            0x23: 'm[b % len(m)] = ~m[b % len(m)] & 0xFF',
+            0x24: 'm[b % len(m)] = 0',
+            0x27: 'pc += ((header[pc] + 128) & 255) - 127 if f else 1',
+            0x28: 'm[c % len(m)], a = a, m[c % len(m)]',
+            0x29: 'm[c % len(m)] += 1',
+            0x2A: 'm[c % len(m)] -= 1',
+            0x2B: 'm[c % len(m)] = ~m[c % len(m)] & 0xFF',
+            0x2C: 'm[c % len(m)] = 0 & 0xFF',
+            0x2F: 'pc += 1 if f else ((header[pc] + 128) & 255) - 127',
+            0x30: 'h[d % len(h)], a = a, h[d % len(h)]',
+            0x31: 'h[d % len(h)] += 1',
+            0x32: 'h[d % len(h)] -= 1',
+            0x33: 'h[d % len(h)] = ~h[d % len(h)]',
+            0x34: 'h[d % len(h)] = 0',
+            0x37: 'r[{} % len(r)] = a',
+            0x38: 'raise halt(pc)',
+            0x39: 'out(a & 255)',
+            0x3B: 'a = ((a + m[b % len(m)] + 512) * 773) & 0xFFFFFFFF',
+            0x3C: 'h[d % len(h)] = (h[d % len(h)] + a + 512) * 773 & 0xFFFFFFFF',
+            0x3F: 'pc += ((header[pc] + 128) & 255) - 127',
+            0x40: '',
+            0x41: 'a = b',
+            0x42: 'a = c',
+            0x43: 'a = d',
+            0x44: 'a = m[b % len(m)]',
+            0x45: 'a = m[c % len(m)]',
+            0x46: 'a = h[d % len(h)]',
+            0x47: 'a = {}',
+            0x48: 'b = a',
+            0x49: '',
+            0x4A: 'b = c',
+            0x4B: 'b = d',
+            0x4C: 'b = m[b % len(m)]',
+            0x4D: 'b = m[c % len(m)]',
+            0x4E: 'b = h[d % len(h)]',
+            0x4F: 'b = {}',
+            0x50: 'c = a',
+            0x51: 'c = b',
+            0x52: '',
+            0x53: 'c = d',
+            0x54: 'c = m[b % len(m)]',
+            0x55: 'c = m[c % len(m)]',
+            0x56: 'c = h[d % len(h)]',
+            0x57: 'c = {}',
+            0x58: 'd = a',
+            0x59: 'd = b',
+            0x5A: 'd = c',
+            0x5B: '',
+            0x5C: 'd = m[b % len(m)]',
+            0x5D: 'd = m[c % len(m)]',
+            0x5E: 'd = h[d % len(h)]',
+            0x5F: 'd = {}',
+            0x60: 'm[b % len(m)] = a & 0xFF',
+            0x61: 'm[b % len(m)] = b & 0xFF',
+            0x62: 'm[b % len(m)] = c & 0xFF',
+            0x63: 'm[b % len(m)] = d & 0xFF',
+            0x64: '',
+            0x65: 'm[b % len(m)] = m[c % len(m)]',
+            0x66: 'm[b % len(m)] = h[d % len(h)] & 0xFF',
+            0x67: 'm[b % len(m)] = {}',
+            0x68: 'm[c % len(m)] = a & 0xFF',
+            0x69: 'm[c % len(m)] = b & 0xFF',
+            0x6A: 'm[c % len(m)] = c & 0xFF',
+            0x6B: 'm[c % len(m)] = d & 0xFF',
+            0x6C: 'm[c % len(m)] = m[b % len(m)]',
+            0x6D: '',
+            0x6E: 'm[c % len(m)] = h[d % len(h)] & 0xFF',
+            0x6F: 'm[c % len(m)] = {}',
+            0x70: 'h[d % len(h)] = a',
+            0x71: 'h[d % len(h)] = b',
+            0x72: 'h[d % len(h)] = c',
+            0x73: 'h[d % len(h)] = d',
+            0x74: 'h[d % len(h)] = m[b % len(m)]',
+            0x75: 'h[d % len(h)] = m[c % len(m)]',
+            0x76: '',
+            0x77: 'h[d % len(h)] = {}',
+            0x80: 'a = a + a & 0xFFFFFFFF',
+            0x81: 'a = a + b & 0xFFFFFFFF',
+            0x82: 'a = a + c & 0xFFFFFFFF',
+            0x83: 'a = a + d & 0xFFFFFFFF',
+            0x84: 'a = a + m[b % len(m)] & 0xFFFFFFFF',
+            0x85: 'a = a + m[c % len(m)] & 0xFFFFFFFF',
+            0x86: 'a = a + h[d % len(h)] & 0xFFFFFFFF',
+            0x87: 'a = a + {} & 0xFFFFFFFF',
+            0x88: 'a = 0',
+            0x89: 'a = a - b & 0xFFFFFFFF',
+            0x8A: 'a = a - c & 0xFFFFFFFF',
+            0x8B: 'a = a - d & 0xFFFFFFFF',
+            0x8C: 'a = a - m[b % len(m)] & 0xFFFFFFFF',
+            0x8D: 'a = a - m[c % len(m)] & 0xFFFFFFFF',
+            0x8E: 'a = a - h[d % len(h)] & 0xFFFFFFFF',
+            0x8F: 'a = a - {} & 0xFFFFFFFF',
+            0x90: 'a = a * a & 0xFFFFFFFF',
+            0x91: 'a = a * b & 0xFFFFFFFF',
+            0x92: 'a = a * c & 0xFFFFFFFF',
+            0x93: 'a = a * d & 0xFFFFFFFF',
+            0x94: 'a = a * m[b % len(m)] & 0xFFFFFFFF',
+            0x95: 'a = a * m[c % len(m)] & 0xFFFFFFFF',
+            0x96: 'a = a * h[d % len(h)] & 0xFFFFFFFF',
+            0x97: 'a = a * {} & 0xFFFFFFFF',
+            0x98: 'a = a//a if a else 0',
+            0x99: 'a = a//b if b else 0',
+            0x9A: 'a = a//c if c else 0',
+            0x9B: 'a = a//d if d else 0',
+            0x9C: 't = m[b % len(m)]\na = a//t if t else 0',
+            0x9D: 't = m[c % len(m)]\na = a//t if t else 0',
+            0x9E: 't = h[d % len(h)]\na = a//t if t else 0',
+            0x9F: 't = {}           \na = a//t if t else 0',
+            0xA0: 'a = a % a if a else 0',
+            0xA1: 'a = a % b if b else 0',
+            0xA2: 'a = a % c if c else 0',
+            0xA3: 'a = a % d if d else 0',
+            0xA4: 't = m[b % len(m)]\na = a % t if t else 0',
+            0xA5: 't = m[c % len(m)]\na = a % t if t else 0',
+            0xA6: 't = h[d % len(h)]\na = a % t if t else 0',
+            0xA7: 't = {}           \na = a % t if t else 0',
+            0xA8: 'a &= a',
+            0xA9: 'a &= b',
+            0xAA: 'a &= c',
+            0xAB: 'a &= d',
+            0xAC: 'a &= m[b % len(m)]',
+            0xAD: 'a &= m[c % len(m)]',
+            0xAE: 'a &= h[d % len(h)]',
+            0xAF: 'a &= {}',
+            0xB0: 'a &= ~a',
+            0xB1: 'a &= ~b',
+            0xB2: 'a &= ~c',
+            0xB3: 'a &= ~d',
+            0xB4: 'a &= ~m[b % len(m)]',
+            0xB5: 'a &= ~m[c % len(m)]',
+            0xB6: 'a &= ~h[d % len(h)]',
+            0xB7: 'a &= ~{}',
+            0xB8: 'a |= a',
+            0xB9: 'a |= b',
+            0xBA: 'a |= c',
+            0xBB: 'a |= d',
+            0xBC: 'a |= m[b % len(m)]',
+            0xBD: 'a |= m[c % len(m)]',
+            0xBE: 'a |= h[d % len(h)]',
+            0xBF: 'a |= {}',
+            0xC0: 'a ^= a',
+            0xC1: 'a ^= b',
+            0xC2: 'a ^= c',
+            0xC3: 'a ^= d',
+            0xC4: 'a ^= m[b % len(m)]',
+            0xC5: 'a ^= m[c % len(m)]',
+            0xC6: 'a ^= h[d % len(h)]',
+            0xC7: 'a ^= {}',
+            0xC8: 'a = (a << (a & 31)) & 0xFFFFFFFF',
+            0xC9: 'a = (a << (b & 31)) & 0xFFFFFFFF',
+            0xCA: 'a = (a << (c & 31)) & 0xFFFFFFFF',
+            0xCB: 'a = (a << (d & 31)) & 0xFFFFFFFF',
+            0xCC: 'a = (a << (m[b % len(m)] & 31)) & 0xFFFFFFFF',
+            0xCD: 'a = (a << (m[c % len(m)] & 31)) & 0xFFFFFFFF',
+            0xCE: 'a = (a << (h[d % len(h)] & 31)) & 0xFFFFFFFF',
+            0xCF: 'a = (a << ({} & 31)) & 0xFFFFFFFF',
+            0xD0: 'a >>= (a & 31)',
+            0xD1: 'a >>= (b & 31)',
+            0xD2: 'a >>= (c & 31)',
+            0xD3: 'a >>= (d & 31)',
+            0xD4: 'a >>= (m[b % len(m)] & 31)',
+            0xD5: 'a >>= (m[c % len(m)] & 31)',
+            0xD6: 'a >>= (h[d % len(h)] & 31)',
+            0xD7: 'a >>= ({} & 31)',
+            0xD8: 'f = (a == a)',
+            0xD9: 'f = (a == b)',
+            0xDA: 'f = (a == c)',
+            0xDB: 'f = (a == d)',
+            0xDC: 'f = (a == m[b % len(m)])',
+            0xDD: 'f = (a == m[c % len(m)])',
+            0xDE: 'f = (a == h[d % len(h)])',
+            0xDF: 'f = (a == {})',
+            0xE0: 'f = (a < a)',
+            0xE1: 'f = (a < b)',
+            0xE2: 'f = (a < c)',
+            0xE3: 'f = (a < d)',
+            0xE4: 'f = (a < m[b % len(m)])',
+            0xE5: 'f = (a < m[c % len(m)])',
+            0xE6: 'f = (a < h[d % len(h)])',
+            0xE7: 'f = (a < {})',
+            0xE8: 'f = (a > a)',
+            0xE9: 'f = (a > b)',
+            0xEA: 'f = (a > c)',
+            0xEB: 'f = (a > d)',
+            0xEC: 'f = (a > m[b % len(m)])',
+            0xED: 'f = (a > m[c % len(m)])',
+            0xEE: 'f = (a > h[d % len(h)])',
+            0xEF: 'f = (a > {})',
+            0xFF: (
+                'pc = hbegin + header[pc] + 256 * header[pc + 1]\n'
+                'if pc >= hend: raise RuntimeError'
+            )
+        }
 
     def inith(self):
         self.init(self.header[2], self.header[3])
@@ -210,18 +437,6 @@ class ZPAQL:
 
     def execute_loop(self):
 
-        def div(x):
-            if not x:
-                cpu['a'] = 0
-            else:
-                cpu['a'] //= x
-
-        def mod(x):
-            if not x:
-                cpu['a'] = 0
-            else:
-                cpu['a'] %= x
-
         def out(c: int):
             c &= 0xFF
             if self.output is not None:
@@ -229,35 +444,39 @@ class ZPAQL:
             if self.sha1 is not None:
                 self.sha1.update(bytes((c,)))
 
-        def fetch():
-            pc = cpu['pc']
-            code = self.header[pc]
-            cpu['pc'] = pc + 1
-            return code
-
         cpu = dict(self.__dict__)
-        dbg = xtzpaq.log_debug()
-        tab = '\x20\x20'
-        cpu.update(fetch=fetch, div=div, mod=mod, out=out)
-
-        if dbg:
-            xtzpaq.log_debug('starting new vm execution:')
+        cpu.update(out=out, halt=_HaltExecution)
 
         while True:
+            pc = cpu['pc']
             try:
-                opc = fetch()
-                ins = _ZPAQ_CPU_SPEC[opc]
+                code = self._cpu_spec[pc]
             except KeyError:
-                raise RuntimeError
-            if ins is _ZPAQ_CPU_HALT:
-                break
-            if dbg:
-                a, b, c, d, f = cpu['a'], cpu['b'], cpu['c'], cpu['d'], cpu['f']
-                xtzpaq.log_debug(
-                    F'{tab}{opc:02X} [a={a:08x} b={b:08x} c={c:08x} d={d:08x} f={int(f)}]'
-                    F'{tab}{_ZPAQ_CPU_DEFS[opc]}')
+                with io.StringIO() as writer:
+                    start = pc
+                    done = False
+                    xtzpaq.log_info(F'precompiling block B{start:08X}')
+                    while not done:
+                        opcode = self.header[pc]
+                        try:
+                            line = self._cpu_defs[opcode]
+                        except KeyError:
+                            raise RuntimeError(F'invalid opcode: 0x{opcode:02X}')
+                        pc += 1
+                        if '{}' in line:
+                            line = line.format(self.header[pc])
+                            pc += 1
+                        if 'pc' in line:
+                            done = True
+                            writer.write(F'pc = {pc}\n')
+                        writer.write(F'{line}\n')
+                    code = writer.getvalue()
+                self._cpu_spec[start] = code = compile(
+                    code, F'<BB:{start:08X}>', 'exec', optimize=2)
             try:
-                exec(ins, {}, cpu)
+                exec(code, {}, cpu)
+            except _HaltExecution:
+                break
             except Exception as E:
                 raise E
 
@@ -1030,241 +1249,6 @@ class xtzpaq(ArchiveUnit):
                 F'reports a size of {_item_size}.')
 
         super().__init__(*paths, index=index, **more)
-
-        # Everything about this is awful, but it is "fast" in the sense that searching, downloading, and
-        # using the original ZPAQ archiver is not faster than running this unit. I am not even kidding.
-        if _ZPAQ_CPU_SPEC:
-            return
-        _ZPAQ_CPU_DEFS.update({
-            0x01: r'a = a + 1 & 0xFFFFFFFF',
-            0x02: r'a = a - 1 & 0xFFFFFFFF',
-            0x03: r'a = ~a & 0xFFFFFFFF',
-            0x04: r'a = 0',
-            0x07: r'a = r[fetch() % len(r)]',
-            0x08: r'b, a = a, b',
-            0x09: r'b = b + 1 & 0xFFFFFFFF',
-            0x0A: r'b = b - 1 & 0xFFFFFFFF',
-            0x0B: r'b = ~b & 0xFFFFFFFF',
-            0x0C: r'b = 0',
-            0x0F: r'b = r[fetch() % len(r)]',
-            0x10: r'c, a = a, c',
-            0x11: r'c = c + 1 & 0xFFFFFFFF',
-            0x12: r'c = c - 1 & 0xFFFFFFFF',
-            0x13: r'c = ~c & 0xFFFFFFFF',
-            0x14: r'c = 0',
-            0x17: r'c = r[fetch() % len(r)]',
-            0x18: r'd, a = a, d',
-            0x19: r'd = d + 1 & 0xFFFFFFFF',
-            0x1A: r'd = d - 1 & 0xFFFFFFFF',
-            0x1B: r'd = ~d & 0xFFFFFFFF',
-            0x1C: r'd = 0',
-            0x1F: r'd = r[fetch() % len(r)]',
-            0x20: r'm[b % len(m)], a = a, m[b % len(m)]',
-            0x21: r'm[b % len(m)] += 1',
-            0x22: r'm[b % len(m)] -= 1',
-            0x23: r'm[b % len(m)] = ~m[b % len(m)] & 0xFF',
-            0x24: r'm[b % len(m)] = 0',
-            0x27: r'pc += ((header[pc] + 128) & 255) - 127 if f else 1',
-            0x28: r'm[c % len(m)], a = a, m[c % len(m)]',
-            0x29: r'm[c % len(m)] += 1',
-            0x2A: r'm[c % len(m)] -= 1',
-            0x2B: r'm[c % len(m)] = ~m[c % len(m)] & 0xFF',
-            0x2C: r'm[c % len(m)] = 0 & 0xFF',
-            0x2F: r'pc += 1 if f else ((header[pc] + 128) & 255) - 127',
-            0x30: r'h[d % len(h)], a = a, h[d % len(h)]',
-            0x31: r'h[d % len(h)] += 1',
-            0x32: r'h[d % len(h)] -= 1',
-            0x33: r'h[d % len(h)] = ~h[d % len(h)]',
-            0x34: r'h[d % len(h)] = 0',
-            0x37: r'r[fetch() % len(r)] = a',
-            0x38: _ZPAQ_CPU_HALT,
-            0x39: r'out(a & 255)',
-            0x3B: r'a = ((a + m[b % len(m)] + 512) * 773) & 0xFFFFFFFF',
-            0x3C: r'h[d % len(h)] = (h[d % len(h)] + a + 512) * 773',
-            0x3F: r'pc += ((header[pc] + 128) & 255) - 127',
-            0x40: r'pass',
-            0x41: r'a = b',
-            0x42: r'a = c',
-            0x43: r'a = d',
-            0x44: r'a = m[b % len(m)]',
-            0x45: r'a = m[c % len(m)]',
-            0x46: r'a = h[d % len(h)]',
-            0x47: r'a = fetch()',
-            0x48: r'b = a',
-            0x49: r'pass',
-            0x4A: r'b = c',
-            0x4B: r'b = d',
-            0x4C: r'b = m[b % len(m)]',
-            0x4D: r'b = m[c % len(m)]',
-            0x4E: r'b = h[d % len(h)]',
-            0x4F: r'b = fetch()',
-            0x50: r'c = a',
-            0x51: r'c = b',
-            0x52: r'pass',
-            0x53: r'c = d',
-            0x54: r'c = m[b % len(m)]',
-            0x55: r'c = m[c % len(m)]',
-            0x56: r'c = h[d % len(h)]',
-            0x57: r'c = fetch()',
-            0x58: r'd = a',
-            0x59: r'd = b',
-            0x5A: r'd = c',
-            0x5B: r'pass',
-            0x5C: r'd = m[b % len(m)]',
-            0x5D: r'd = m[c % len(m)]',
-            0x5E: r'd = h[d % len(h)]',
-            0x5F: r'd = fetch()',
-            0x60: r'm[b % len(m)] = a & 0xFF',
-            0x61: r'm[b % len(m)] = b & 0xFF',
-            0x62: r'm[b % len(m)] = c & 0xFF',
-            0x63: r'm[b % len(m)] = d & 0xFF',
-            0x64: r'pass',
-            0x65: r'm[b % len(m)] = m[c % len(m)]',
-            0x66: r'm[b % len(m)] = h[d % len(h)] & 0xFF',
-            0x67: r'm[b % len(m)] = fetch()',
-            0x68: r'm[c % len(m)] = a & 0xFF',
-            0x69: r'm[c % len(m)] = b & 0xFF',
-            0x6A: r'm[c % len(m)] = c & 0xFF',
-            0x6B: r'm[c % len(m)] = d & 0xFF',
-            0x6C: r'm[c % len(m)] = m[b % len(m)]',
-            0x6D: r'pass',
-            0x6E: r'm[c % len(m)] = h[d % len(h)] & 0xFF',
-            0x6F: r'm[c % len(m)] = fetch()',
-            0x70: r'h[d % len(h)] = a',
-            0x71: r'h[d % len(h)] = b',
-            0x72: r'h[d % len(h)] = c',
-            0x73: r'h[d % len(h)] = d',
-            0x74: r'h[d % len(h)] = m[b % len(m)]',
-            0x75: r'h[d % len(h)] = m[c % len(m)]',
-            0x76: r'pass',
-            0x77: r'h[d % len(h)] = fetch()',
-            0x80: r'a = a + a & 0xFFFFFFFF',
-            0x81: r'a = a + b & 0xFFFFFFFF',
-            0x82: r'a = a + c & 0xFFFFFFFF',
-            0x83: r'a = a + d & 0xFFFFFFFF',
-            0x84: r'a = a + m[b % len(m)] & 0xFFFFFFFF',
-            0x85: r'a = a + m[c % len(m)] & 0xFFFFFFFF',
-            0x86: r'a = a + h[d % len(h)] & 0xFFFFFFFF',
-            0x87: r'a = a + fetch() & 0xFFFFFFFF',
-            0x88: r'a -= a',
-            0x89: r'a = a - b & 0xFFFFFFFF',
-            0x8A: r'a = a - c & 0xFFFFFFFF',
-            0x8B: r'a = a - d & 0xFFFFFFFF',
-            0x8C: r'a = a - m[b % len(m)] & 0xFFFFFFFF',
-            0x8D: r'a = a - m[c % len(m)] & 0xFFFFFFFF',
-            0x8E: r'a = a - h[d % len(h)] & 0xFFFFFFFF',
-            0x8F: r'a = a - fetch() & 0xFFFFFFFF',
-            0x90: r'a = a * a & 0xFFFFFFFF',
-            0x91: r'a = a * b & 0xFFFFFFFF',
-            0x92: r'a = a * c & 0xFFFFFFFF',
-            0x93: r'a = a * d & 0xFFFFFFFF',
-            0x94: r'a = a * m[b % len(m)] & 0xFFFFFFFF',
-            0x95: r'a = a * m[c % len(m)] & 0xFFFFFFFF',
-            0x96: r'a = a * h[d % len(h)] & 0xFFFFFFFF',
-            0x97: r'a = a * fetch() & 0xFFFFFFFF',
-            0x98: r'div(a)',
-            0x99: r'div(b)',
-            0x9A: r'div(c)',
-            0x9B: r'div(d)',
-            0x9C: r'div(m[b % len(m)])',
-            0x9D: r'div(m[c % len(m)])',
-            0x9E: r'div(h[d % len(h)])',
-            0x9F: r'div(fetch())',
-            0xA0: r'mod(a)',
-            0xA1: r'mod(b)',
-            0xA2: r'mod(c)',
-            0xA3: r'mod(d)',
-            0xA4: r'mod(m[b % len(m)])',
-            0xA5: r'mod(m[c % len(m)])',
-            0xA6: r'mod(h[d % len(h)])',
-            0xA7: r'mod(fetch())',
-            0xA8: r'a &= a',
-            0xA9: r'a &= b',
-            0xAA: r'a &= c',
-            0xAB: r'a &= d',
-            0xAC: r'a &= m[b % len(m)]',
-            0xAD: r'a &= m[c % len(m)]',
-            0xAE: r'a &= h[d % len(h)]',
-            0xAF: r'a &= fetch()',
-            0xB0: r'a &= ~a',
-            0xB1: r'a &= ~b',
-            0xB2: r'a &= ~c',
-            0xB3: r'a &= ~d',
-            0xB4: r'a &= ~m[b % len(m)]',
-            0xB5: r'a &= ~m[c % len(m)]',
-            0xB6: r'a &= ~h[d % len(h)]',
-            0xB7: r'a &= ~fetch()',
-            0xB8: r'a |= a',
-            0xB9: r'a |= b',
-            0xBA: r'a |= c',
-            0xBB: r'a |= d',
-            0xBC: r'a |= m[b % len(m)]',
-            0xBD: r'a |= m[c % len(m)]',
-            0xBE: r'a |= h[d % len(h)]',
-            0xBF: r'a |= fetch()',
-            0xC0: r'a ^= a',
-            0xC1: r'a ^= b',
-            0xC2: r'a ^= c',
-            0xC3: r'a ^= d',
-            0xC4: r'a ^= m[b % len(m)]',
-            0xC5: r'a ^= m[c % len(m)]',
-            0xC6: r'a ^= h[d % len(h)]',
-            0xC7: r'a ^= fetch()',
-            0xC8: r'a <<= (a & 31)',
-            0xC9: r'a <<= (b & 31)',
-            0xCA: r'a <<= (c & 31)',
-            0xCB: r'a <<= (d & 31)',
-            0xCC: r'a <<= (m[b % len(m)] & 31)',
-            0xCD: r'a <<= (m[c % len(m)] & 31)',
-            0xCE: r'a <<= (h[d % len(h)] & 31)',
-            0xCF: r'a <<= (fetch() & 31)',
-            0xD0: r'a >>= (a & 31)',
-            0xD1: r'a >>= (b & 31)',
-            0xD2: r'a >>= (c & 31)',
-            0xD3: r'a >>= (d & 31)',
-            0xD4: r'a >>= (m[b % len(m)] & 31)',
-            0xD5: r'a >>= (m[c % len(m)] & 31)',
-            0xD6: r'a >>= (h[d % len(h)] & 31)',
-            0xD7: r'a >>= (fetch() & 31)',
-            0xD8: r'f = (a == a)',
-            0xD9: r'f = (a == b)',
-            0xDA: r'f = (a == c)',
-            0xDB: r'f = (a == d)',
-            0xDC: r'f = (a == m[b % len(m)])',
-            0xDD: r'f = (a == m[c % len(m)])',
-            0xDE: r'f = (a == h[d % len(h)])',
-            0xDF: r'f = (a == fetch())',
-            0xE0: r'f = (a < a)',
-            0xE1: r'f = (a < b)',
-            0xE2: r'f = (a < c)',
-            0xE3: r'f = (a < d)',
-            0xE4: r'f = (a < m[b % len(m)])',
-            0xE5: r'f = (a < m[c % len(m)])',
-            0xE6: r'f = (a < h[d % len(h)])',
-            0xE7: r'f = (a < fetch())',
-            0xE8: r'f = (a > a)',
-            0xE9: r'f = (a > b)',
-            0xEA: r'f = (a > c)',
-            0xEB: r'f = (a > d)',
-            0xEC: r'f = (a > m[b % len(m)])',
-            0xED: r'f = (a > m[c % len(m)])',
-            0xEE: r'f = (a > h[d % len(h)])',
-            0xEF: r'f = (a > fetch())',
-            0xFF: (
-                'pc = hbegin + header[pc] + 256 * header[pc + 1]\n'
-                'if pc >= hend: raise RuntimeError'
-            )
-        })
-        for key in list(_ZPAQ_CPU_DEFS):
-            value = _ZPAQ_CPU_DEFS[key]
-            if value is not _ZPAQ_CPU_HALT:
-                value = compile(value, F'<OPCODE:{key:02X}>', 'exec', 0, 2)
-            _ZPAQ_CPU_SPEC[key] = value
-            if self.log_debug():
-                import re
-                value = re.sub(r' % len\(.\)\]', ']', value)
-                value = re.sub(r' & 0xFFFFFFFF$', '', value)
-                _ZPAQ_CPU_DEFS[key] = value
 
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
