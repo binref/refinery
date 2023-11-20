@@ -34,7 +34,7 @@ _TCI16 = 'h'
 
 
 class _HaltExecution(Exception):
-    pass    
+    pass
 
 
 def _i32(x: int):
