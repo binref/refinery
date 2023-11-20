@@ -1303,7 +1303,6 @@ class xtzpaq(ArchiveUnit):
         streaming = False
         journaling = False
 
-        dst = MemoryFile()
         done = False
         dc = Decompressor()
         src = dc.set_input(archive)
@@ -1313,6 +1312,7 @@ class xtzpaq(ArchiveUnit):
                 filename = dc.read_filename()
                 if filename is None:
                     break
+                self.log_info('reading file', filename)
                 comment = dc.read_comment()
                 jsize = 0
                 if len(comment) >= 4 and comment[-4:] == "jDC\x01":
@@ -1323,13 +1323,14 @@ class xtzpaq(ArchiveUnit):
                     if streaming:
                         raise RuntimeError('journaling block after streaming one')
                     journaling = True
+                    self.log_info('archive type is journaling')
                 else:
                     if journaling:
                         raise RuntimeError('streaming block after journaling one')
                     if index:
                         raise RuntimeError('streaming block in index')
                     streaming = True
-                    dc.set_output(dst)
+                    self.log_info('archive type is streaming')
 
                 # Test journaling filename. The format must be
                 # jDC[YYYYMMDDHHMMSS][t][NNNNNNNNNN]
@@ -1338,14 +1339,15 @@ class xtzpaq(ArchiveUnit):
                 # They must be in ascending lexicographical order.
 
                 frag_id = 0
+                block_type = None
 
                 if journaling:
                     if len(filename) != 28:
                         raise RuntimeError('filename size not 28')
                     if filename[:3] != 'jDC':
                         raise RuntimeError('filename not jDC')
-                    type = filename[17]
-                    if type not in 'cdhi':
+                    block_type = filename[17]
+                    if block_type not in 'cdhi':
                         raise RuntimeError('type not c,d,h,i')
                     try:
                         mkdate(filename[3:17])
@@ -1356,9 +1358,7 @@ class xtzpaq(ArchiveUnit):
                         raise RuntimeError('fragment ID out of range')
 
                 seg = MemoryFile(size_limit=jsize)
-
-                if journaling:
-                    dc.set_output(seg)
+                dc.set_output(seg)
                 sha1 = hashlib.sha1()
                 dc.set_hasher(sha1)
                 dc.decompress_data()
@@ -1371,10 +1371,9 @@ class xtzpaq(ArchiveUnit):
                     self.log_debug('no checksum')
                 elif checksum != sha1.digest():
                     raise RuntimeError('SHA1 mismatch')
-                filename = ""
 
                 # check csize at first non-d block
-                if csize and type in 'chi':
+                if csize and block_type in 'chi':
                     if csize != offset:
                         raise RuntimeError(F'csize={csize} does not point to offset={offset}')
                     csize = 0
@@ -1382,7 +1381,7 @@ class xtzpaq(ArchiveUnit):
                 # get csize from c block
                 seglen = len(seg)
                 seg = StructReader(seg.getbuffer())
-                if type == 'c':
+                if block_type == 'c':
                     if seglen < 8:
                         raise RuntimeError("c block too small")
                     csize = seg.u64()
@@ -1397,7 +1396,7 @@ class xtzpaq(ArchiveUnit):
                     # assuming 1 more byte for unread end of block marker.
                     csize += offset
 
-                if type == 'd':
+                if block_type == 'd':
                     if index:
                         raise RuntimeError('d block in index')
                     bsize[frag_id] = src.tell() + 1 - offset  # compressed size
@@ -1441,7 +1440,7 @@ class xtzpaq(ArchiveUnit):
                 # and each size corresonds to a fragment in that block. The list
                 # must match the list in the d block if present.
 
-                if type == 'h':
+                if block_type == 'h':
                     if seglen % 24 != 4:
                         raise RuntimeError('bad h block size')
                     b = seg.u32()
@@ -1466,7 +1465,7 @@ class xtzpaq(ArchiveUnit):
                 #   0    filename                                  (to delete)
                 # Date is 64 bits in YYYYMMDDHHMMSS format.
 
-                if type == 'i':
+                if block_type == 'i':
                     while not seg.eof:
                         f = DT(seg.u64())
                         f.name = seg.read_c_string('utf8')
@@ -1487,12 +1486,14 @@ class xtzpaq(ArchiveUnit):
                                     raise LookupError('missing frag data')
                         dt[f.name] = f
 
+                if streaming:
+                    yield self._pack(filename, None, seg.getvalue())
+
             offset = src.tell()
 
         self.log_debug(F'{offset} bytes of archive tested')
 
         if not journaling:
-            yield self._pack('unpacked', dst.getvalue())
             return
 
         for name, f in dt.items():
