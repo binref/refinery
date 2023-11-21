@@ -84,6 +84,7 @@ class decompress(Unit):
 
             @property
             def unmodified(self):
+                return self.cutoff == 0
                 return self.prefix is None and self.cutoff == 0
 
             @property
@@ -124,7 +125,7 @@ class decompress(Unit):
             prefix = new.prefix
             if prefix is not None:
                 prefix = F'0x{prefix:02X}'
-            r = 1 if new.unmodified and best and not best.unmodified else 0.9
+            r = 1 if new.unmodified and best and not best.unmodified else 0.95
             if not best:
                 q = 0
             else:
@@ -137,7 +138,7 @@ class decompress(Unit):
                         return best
                 status = 'partial' if new.failed else 'success'
                 self.log_info(lambda: (
-                    F'obtained {ratio:.2f} compression ratio with: prefix={prefix}, '
+                    F'obtained {ratio*100:2.5f}% compression ratio with: prefix={prefix}, '
                     F'cutoff={new.cutoff}, [{status}] engine={new.engine.name}'))
                 return new
             else:

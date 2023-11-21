@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import inspect
 import os.path
+import time
 
 from .. import TestUnitBase
 from . import KADATH1, KADATH2
@@ -26,10 +27,12 @@ class TestAutoDecompressor(TestUnitBase):
             KADATH2.encode('utf8'),
         ]
 
-    def _mangle(self, data):
-        yield self.generate_random_buffer(1) + data
-        yield self.generate_random_buffer(2) + data
-        yield data[1:]
+    def _mangle(self, data: bytes, engine: str):
+        yield data
+        yield B'\xF4' + data
+        if engine in ('aplib', 'lzf'):
+            return
+        yield B'\x01\x40' + data
         yield B'\x00\x00\xFE\xCD' + data
         yield B'\x01\x00' + data
 
@@ -45,18 +48,12 @@ class TestAutoDecompressor(TestUnitBase):
                 except Exception as E:
                     self.assertTrue(False, F'Exception while compressing buffer {k}: {E!s}')
                     continue
-                failures = []
-                success = 0
-                result = next(compressed | unit)
-                method = result.meta.get("method", "uncompressed")
-                self.assertEqual(result, buffer,
-                    msg=F'Failed for {engine.name}, reported as {method} for buffer #{k}')
-                for m, sample in enumerate(self._mangle(compressed), 1):
-                    result, = sample | unit
-                    if buffer not in result:
-                        failures.append(m)
-                    else:
-                        success += 1
-                        if success >= 2: break
-                self.assertGreaterEqual(success, 1,
-                    msg=F'Failed for {engine.name}, buffer {k} failed for these manglings: {failures}.')
+                for m, sample in enumerate(self._mangle(compressed, engine.name), 1):
+                    start = time.process_time()
+                    result = next(sample | unit)
+                    delta = time.process_time() - start
+                    self.assertLessEqual(delta, 20, F'buffer {engine.name}({k}.{m}) took {delta} seconds')
+                    method = result.meta.get("method", "uncompressed")
+                    self.assertEqual(method, engine.name, F'buffer {engine.name}({k}.{m}) incorrectly identified as {method}')
+                    _assert = self.assertEqual if m == 1 else self.assertIn
+                    _assert(buffer, result, msg=F'buffer {engine.name}({k}.{m}) did not decompress')
