@@ -121,10 +121,15 @@ class decompress(Unit):
                 return best
             if ratio < self.args.min_ratio:
                 return best
-            prefix = new.prefix and hex(new.prefix)
+            prefix = new.prefix
+            if prefix is not None:
+                prefix = F'0x{prefix:02X}'
             r = 1 if new.unmodified and best and not best.unmodified else 0.9
-            q = best and ratio / best.ratio
-            if not best or q < r:
+            if not best:
+                q = 0
+            else:
+                q = ratio / best.ratio
+            if q < r:
                 if best and discard_if_too_good:
                     if q < 0.5:
                         return best
