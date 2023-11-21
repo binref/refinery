@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units import Unit
+from refinery.lib.tools import NoLogging
 from contextlib import suppress
 
 
@@ -30,22 +31,22 @@ class carve_lnk(Unit):
             except Exception:
                 pos += 1
                 continue
-
             end = pos + parsed.header.size() + parsed.string_data.size()
             if parsed.has_target_id_list():
                 end += parsed.targets.size()
             if parsed.has_link_info() and not parsed.force_no_link_info():
                 with suppress(AttributeError):
                     end += parsed.info.size()
-            while end < len(mem):
-                extra = lnk.extra_factory.ExtraFactory(mem[end:])
-                try:
-                    ec = extra.extra_class()
-                except Exception:
-                    break
-                if ec is None:
-                    break
-                end += extra.item_size()
+            with NoLogging():
+                while end < len(mem):
+                    extra = lnk.extra_factory.ExtraFactory(mem[end:])
+                    try:
+                        ec = extra.extra_class()
+                    except Exception:
+                        break
+                    if ec is None:
+                        break
+                    end += extra.item_size()
 
             terminal_block = mem[end:end + 4]
             if terminal_block != B'\0\0\0\0':
