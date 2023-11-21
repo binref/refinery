@@ -32,5 +32,8 @@ class TestStegoUnit(TestUnitBase):
             'E002000000DCECECB4E2E2F5222299A7A7D9D9D9020202EAFDFDB4DFDFD8FEFE8A567CCFC3DE9AB90000000049454E'
             '44AE426082'
         )
-        stego = self.load('RGB')
+        stego = self.load('RGB', split=True)
         self.assertListEqual(expected_rows, list(image | stego))
+
+        stego = self.load('RGB', split=False)
+        self.assertEqual(b''.join(expected_rows), next(image | stego))
