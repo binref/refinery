@@ -166,8 +166,8 @@ class peek(HexViewer):
                     decoded[k] = line[:width]
                 else:
                     c = self._colorama
-                    l = line[:width - 1]
-                    decoded[k] = F'{l}{c.Fore.LIGHTRED_EX}…{c.Style.RESET_ALL}'
+                    d = line[:width - 1]
+                    decoded[k] = F'{d}{c.Fore.LIGHTRED_EX}…{c.Style.RESET_ALL}'
             return decoded[:abs(linecount)]
         for paragraph in decoded:
             if not remaining:
