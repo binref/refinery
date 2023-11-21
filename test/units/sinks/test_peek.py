@@ -153,7 +153,7 @@ class TestPeek(TestUnitBase):
             --------------------------------------------------------------------------------
             """
         )
-        peek = self.load(bare=True, decode=True, width=80, gray=True)
+        peek = self.load(bare=True, decode=2, width=80, gray=True)
         with errbuf() as stderr:
             peek(TESTBUFFER_TXT)
             out = stderr.getvalue().strip()
