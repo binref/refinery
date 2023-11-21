@@ -16,25 +16,25 @@ from refinery.lib.environment import environment
 
 class peek(HexViewer):
     """
-    The unit extracts preview information of the input data and displays it on
-    the standard error stream. If the standard output of this unit is connected
-    by a pipe, the incoming data is forwarded. However, if the unit outputs to
-    a terminal, the data is discarded instead.
+    The unit extracts preview information of the input data and displays it on the standard error stream. If the standard
+    output of this unit is connected by a pipe, the incoming data is forwarded. However, if the unit outputs to a terminal,
+    the data is discarded instead.
     """
 
     def __init__(
         self,
-        lines  : Arg('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
-        all    : Arg('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
-        brief  : Arg('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
-        decode : Arg('-d', group='MODE', help='Attempt to decode and display printable data.') = False,
-        escape : Arg('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
-        bare   : Arg('-r', group='META', help='Only peek the data itself, do not show a metadata preview.') = False,
-        meta   : Arg('-m', group='META', action='count', help=(
+        lines  : Arg.Number('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
+        all    : Arg.Switch('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
+        brief  : Arg.Switch('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
+        decode : Arg.Counts('-d', group='MODE', help=(
+            'Attempt to decode and display printable data. Specify twice to enable line wrapping.')) = 0,
+        escape : Arg.Switch('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
+        bare   : Arg.Switch('-r', group='META', help='Only peek the data itself, do not show a metadata preview.') = False,
+        meta   : Arg.Counts('-m', group='META', help=(
             'Show more auto-derivable metadata. Specify multiple times to populate more variables.')) = 0,
-        gray   : Arg('-g', help='Do not colorize the output.') = False,
-        index  : Arg('-i', help='Display the index of each chunk within the current frame.') = False,
-        stdout : Arg('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
+        gray   : Arg.Switch('-g', help='Do not colorize the output.') = False,
+        index  : Arg.Switch('-i', help='Display the index of each chunk within the current frame.') = False,
+        stdout : Arg.Switch('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if decode and escape:
@@ -132,6 +132,7 @@ class peek(HexViewer):
     def _trydecode(self, data, codec: Optional[str], width: int, linecount: int) -> str:
         remaining = linecount
         result = []
+        wrap = self.args.decode > 1
         if codec is None:
             from refinery.units.encoding.esc import esc
             decoded = data[:abs(width * linecount)]
@@ -156,7 +157,19 @@ class peek(HexViewer):
         if ratio < 0.8:
             self.log_info(F'data contains {ratio * 100:.2f}% printable characters, this is too low.')
             return None
-        for paragraph in decoded.splitlines(False):
+        decoded = decoded.splitlines(False)
+        if not wrap:
+            for k, line in enumerate(decoded):
+                if len(line) <= width:
+                    continue
+                if self.args.gray:
+                    decoded[k] = line[:width]
+                else:
+                    c = self._colorama
+                    l = line[:width - 1]
+                    decoded[k] = F'{l}{c.Fore.LIGHTRED_EX}…{c.Style.RESET_ALL}'
+            return decoded[:abs(linecount)]
+        for paragraph in decoded:
             if not remaining:
                 break
             wrapped = [
@@ -211,7 +224,7 @@ class peek(HexViewer):
         if self.args.lines and data:
             if self.args.escape:
                 lines = self._trydecode(data, None, txtsize, metrics.line_count)
-            if self.args.decode:
+            if self.args.decode > 0:
                 for codec in ('utf8', 'utf-16le', 'utf-16', 'utf-16be'):
                     lines = self._trydecode(data, codec, txtsize, metrics.line_count)
                     if lines:
