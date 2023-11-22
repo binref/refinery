@@ -89,7 +89,7 @@ pip install -U git+git://github.com/binref/refinery.git
 The following is a summary of how well various shell environments are currently supported:
 
 | Shell      | Platform | State           | Comment                                                          |
-|------------|----------|:----------------|------------------------------------------------------------------|
+|:-----------|:---------|:----------------|:-----------------------------------------------------------------|
 | Bash       | Posix    | 🔵 Good         | Used occasionally by the author.                                 |
 | CMD        | Windows  | 🔵 Good         | Used extensively by the author.                                  |
 | PowerShell | Windows  | 🟡 Reasonable   | It [just works if the PowerShell version is at least 7.4.][psh1] |

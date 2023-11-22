@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.22
+- The `peek` unit in `--decode` mode now truncates long lines by default. Specifying the option twice has the same effect as the previous default, which is to wrap lines.
+- The `stego` unit has been modified to generate a single output by default and provides a switch to generate individual rows or columns.
+
 ## Version 0.6.21
 - Adds the `xtzpaq` unit to unpack ZPAQ archives.
 
