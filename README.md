@@ -88,12 +88,12 @@ pip install -U git+git://github.com/binref/refinery.git
 
 The following is a summary of how well various shell environments are currently supported:
 
-| State           | Shell        | Comment                                                          |
-|:----------------|--------------|------------------------------------------------------------------|
-| 🔵 Good         | `bash`       | Used occasionally by the author.                                 |
-| 🔵 Good         | `cmd`        | Used extensively by the author.                                  |
-| 🟡 Reasonable   | `powershell` | It [just works if the PowerShell version is at least 7.4.][psh1] |
-| 🟠 Minor Issues | `zsh`        | Following a [discussion][zsh1], there is a [fix][zsh2].          |
+| Shell      | Platform | State           | Comment                                                          |
+|------------|----------|:----------------|------------------------------------------------------------------|
+| Bash       | Posix    | 🔵 Good         | Used occasionally by the author.                                 |
+| CMD        | Windows  | 🔵 Good         | Used extensively by the author.                                  |
+| PowerShell | Windows  | 🟡 Reasonable   | It [just works if the PowerShell version is at least 7.4.][psh1] |
+| Zsh        | Posix    | 🟠 Minor Issues | Following a [discussion][zsh1], there is a [fix][zsh2].          |
 
 If you are using a different shell and have some feedback to share, please [let me know](https://github.com/binref/refinery/discussions)!
 
