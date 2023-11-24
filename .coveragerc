@@ -1,0 +1,6 @@
+[report]
+exclude_also =
+    if TYPE_CHECKING:
+    except ImportError
+    except KeyboardInterrupt
+    class __pdoc__

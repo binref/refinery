@@ -71,7 +71,7 @@ jobs:
         pip install .[all]
     - name: Run tests and collect coverage
       run: |
-        XDG_SESSION_TYPE=x11 xvfb-run pytest --cov refinery test/
+        XDG_SESSION_TYPE=x11 xvfb-run pytest --cov-config=.coveragerc --cov refinery test/
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
