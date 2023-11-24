@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Dict
 
 import re
 import json
@@ -154,7 +154,7 @@ class xtnode(ArchiveUnit):
 
         reader = JSONReader(prelude[mapping.end() - 1:])
 
-        files = reader.read_json()
+        files: Dict[str, dict] = reader.read_json()
 
         if files is None:
             raise ValueError('failed to read file list')
@@ -165,14 +165,14 @@ class xtnode(ArchiveUnit):
         # _unknown1 = reader.skip_comma().read_json()
         # _unknown2 = reader.skip_comma().read_terminated_array(B')').strip()
 
-        root = Path()
+        root = next(iter(files))
         view = memoryview(payload)
 
-        for part in Path(next(iter(files))).parts:
-            more = root / part
-            if not all(Path(path).is_relative_to(more) for path in files):
+        for k in range(len(root) + 1):
+            test = root[:k]
+            if not all(path.startswith(test) for path in files):
+                root = test
                 break
-            root = more
 
         self.log_debug(F'detected root directory {root}')
 
