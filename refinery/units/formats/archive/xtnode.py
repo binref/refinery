@@ -6,8 +6,6 @@ from typing import Iterable, Optional, Dict
 import re
 import json
 
-from pathlib import Path
-
 from refinery.units.formats.archive import Arg, ArchiveUnit, UnpackResult
 from refinery.units.encoding.esc import esc
 from refinery.lib.structures import EOF, StructReader
