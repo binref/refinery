@@ -341,3 +341,11 @@ class TestScoping(TestUnitBase):
     def test_push_can_overwrite_shadowed_variable_outside_scope(self):
         pl = PL('emit F [| put x XX [| push OO | pop x ]| cca var:x ]')
         self.assertEqual(pl(), B'FOO')
+
+    def test_cache_reload(self):
+        import refinery
+        from refinery.units.encoding.hex import hex
+        with refinery.__unit_loader__:
+            self.assertFalse(refinery.__unit_loader__.reloading)
+            refinery.__unit_loader__.reload()
+        self.assertIs(refinery.hex, hex)
