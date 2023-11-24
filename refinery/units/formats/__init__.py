@@ -12,7 +12,6 @@ import os
 import re
 import uuid
 
-from pathlib import Path
 from zlib import adler32
 from collections import Counter
 from typing import ByteString, Iterable, Callable, List, Union, Optional
