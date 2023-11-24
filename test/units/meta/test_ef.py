@@ -21,7 +21,7 @@ class TestFileReader(TestUnitBase):
         self.assertIn(B'bananapalooza', lines[9])
 
     def test_read_myself(self):
-        data = self.load(os.path.join(self.root, '**', 'test_ef.py'), wild=True)()
+        data = self.load(os.path.join(self.root, '**', 't??t_ef.py'), wild=True)()
         self.assertEqual(data.count(B'bananapalooza'), 3)
 
     def test_count_lines(self):
