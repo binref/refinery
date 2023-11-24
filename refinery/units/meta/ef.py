@@ -88,10 +88,20 @@ class ef(Unit):
     def _glob(self, pattern: str) -> Iterable[Path]:
         if pattern.endswith('**'):
             pattern += '/*'
-        root = Path(next(iter(re.split(R'[\?\*\[\]]', pattern, maxsplit=1)))).parent
-        glob = str(Path(pattern).relative_to(root))
-        for match in root.glob(glob):
-            yield match
+        wildcard = re.search(R'[\[\?\*]', pattern)
+        if wildcard is None:
+            yield Path(pattern)
+        else:
+            k = wildcard.start()
+            base, pattern = pattern[:k], pattern[k:]
+            root = Path(base)
+            last = root.parts[-1]
+            if base.endswith(last):
+                # /base/something.*
+                pattern = F'{last}{pattern}'
+                root = root.parent
+            for match in root.glob(pattern):
+                yield match
 
     def process(self, data):
         meta = metavars(data)

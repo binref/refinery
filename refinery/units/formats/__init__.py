@@ -159,16 +159,12 @@ class PathExtractorUnit(Unit, abstract=True):
         metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
-        root = Path('.')
+        root = ''
 
         def normalize(_path: str) -> str:
-            path = Path(_path.replace('\\', '/'))
-            try:
-                path = path.relative_to('/')
-            except ValueError:
-                pass
-            path = root / path
-            path = path.as_posix()
+            path = _path.replace('\\', '/').lstrip('/')
+            if root:
+                path = F'{root}/{path}'
             path = path.replace('/', self._custom_path_separator)
             return path
 
