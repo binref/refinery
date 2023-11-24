@@ -168,7 +168,7 @@ class xtnode(ArchiveUnit):
         view = memoryview(payload)
 
         for k in range(len(root) + 1):
-            test = root[:k]
+            test = root[:k].rstrip('/').rstrip('\\')
             if not all(path.startswith(test) for path in files):
                 root = test[:-1]
                 skip = k - 1
