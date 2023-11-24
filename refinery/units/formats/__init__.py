@@ -162,10 +162,17 @@ class PathExtractorUnit(Unit, abstract=True):
         root = ''
 
         def normalize(_path: str) -> str:
-            path = _path.replace('\\', '/').lstrip('/')
-            if root:
-                path = F'{root}/{path}'
-            path = path.replace('/', self._custom_path_separator)
+            parts = re.split(r'[\\/]', F'{root}/{_path}')
+            while True:
+                for k, part in enumerate(parts):
+                    if not part.strip('.'):
+                        break
+                else:
+                    break
+                size = len(part)
+                j = max(k - size, 0)
+                del parts[j:k + 1]
+            path = self._custom_path_separator.join(parts)
             return path
 
         if self.args.join:
