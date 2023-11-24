@@ -1009,18 +1009,6 @@ class Executable(ABCMeta):
         return cls().__ror__(other)
 
     @property
-    def is_multiplex(cls) -> bool:
-        """
-        This proprety is `True` if and only if the unit's `process` or `reverse` method is a generator, i.e.
-        when the unit can generate multiple outputs.
-        """
-        if inspect.isgeneratorfunction(inspect.unwrap(cls.process)):
-            return True
-        if not cls.is_reversible:
-            return False
-        return inspect.isgeneratorfunction(inspect.unwrap(cls.reverse))
-
-    @property
     def is_reversible(cls) -> bool:
         """
         This property is `True` if and only if the unit has a member function named `reverse`. By convention,
