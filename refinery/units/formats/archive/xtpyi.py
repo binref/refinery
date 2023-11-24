@@ -332,7 +332,7 @@ class PiTOCEntry(Struct):
         try:
             self.type = PiType(entry_type)
         except ValueError:
-            xtpyi.logger.error(F'unknown type {entry_type!r} in field {name}')
+            xtpyi.log_warn(F'unknown type {entry_type!r} in field {name}')
             self.type = PiType.UNKNOWN
         self.name = name
 
