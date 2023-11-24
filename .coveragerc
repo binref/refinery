@@ -3,4 +3,8 @@ exclude_also =
     if TYPE_CHECKING:
     except ImportError
     except KeyboardInterrupt
+    except ArgparseError
+    except Exception
     class __pdoc__
+    raise NotImplementedError
+    yappi
