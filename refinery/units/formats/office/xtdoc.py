@@ -55,4 +55,9 @@ class xtdoc(PathExtractorUnit):
     def handles(self, data: bytearray) -> Optional[bool]:
         if data.startswith(B'\xD0\xCF\x11\xE0'):
             return True
-        return xtzip.handles(data)
+        if xtzip.handles(data):
+            return sum(1 for marker in [
+                B'[Content_Types].xml',
+                B'word/document.xml',
+                B'docProps/core.xml',
+            ] if marker in data) >= 2
