@@ -166,41 +166,33 @@ class xtnode(ArchiveUnit):
         # _unknown2 = reader.skip_comma().read_terminated_array(B')').strip()
 
         root = next(iter(files))
+        skip = 0
         view = memoryview(payload)
 
         for k in range(len(root) + 1):
             test = root[:k]
             if not all(path.startswith(test) for path in files):
-                root = test
+                root = test[:-1]
+                skip = k - 1
                 break
 
-        self.log_debug(F'detected root directory {root}')
-
-        try:
-            entry = Path(entry).relative_to(root)
-        except Exception:
-            entry = None
-            self.log_info(F'entry point not relative to root directory: {entry}')
-        else:
-            self.log_info(F'entry point is {entry}')
+        entry = entry[skip:]
+        self.log_info(F'detected root directory {root}, entry point is {entry}')
 
         for src, dst in links.items():
-            src_path = Path(src)
-            dst_path = Path(dst)
             new_files = {}
-            self.log_info('link src:', lambda: str(src_path.relative_to(root)))
-            self.log_info('link dst:', lambda: str(dst_path.relative_to(root)))
-            for p, location in files.items():
-                path = Path(p)
-                if not path.is_relative_to(src_path):
+            self.log_info('link src:', src[skip:])
+            self.log_info('link dst:', dst[skip:])
+            for path, location in files.items():
+                if not path.startswith(src):
                     continue
-                new_path = dst_path / path.relative_to(src_path)
+                new_path = dst + path[len(src):]
                 new_files[new_path] = location
-                self.log_debug('synthesizing linked file:', lambda: str(new_path.relative_to(root)))
+                self.log_debug('synthesizing linked file:', new_path)
             files.update(new_files)
 
-        for p, location in files.items():
-            path = Path(p).relative_to(root)
+        for path, location in files.items():
+            path = path[skip:]
             if entry and self.args.entry and path != entry:
                 continue
             data = None
@@ -213,7 +205,7 @@ class xtnode(ArchiveUnit):
                 if kind in '01':
                     data = view[offset:stop]
             if data is not None:
-                yield UnpackResult(str(path), data)
+                yield UnpackResult(path, data)
 
     @classmethod
     def _is_nexe(cls, data: ByteStr) -> bool:
