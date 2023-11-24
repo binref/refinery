@@ -15,7 +15,7 @@ class xt(ArchiveUnit):
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
         out = False
-        for engine in cls._handlers():
+        for engine in cls.handlers():
             engine_verdict = engine.handles(data)
             if engine_verdict is True:
                 return True
@@ -24,7 +24,10 @@ class xt(ArchiveUnit):
         return out
 
     @staticmethod
-    def _handlers():
+    def handlers():
+        """
+        Returns all archive handlers supported by the unit.
+        """
         from refinery.units.formats.office.xtone import xtone
         yield xtone
         from refinery.units.formats.archive.xtgz import xtgz
@@ -129,7 +132,7 @@ class xt(ArchiveUnit):
                 elif verdict is None:
                     fallback.append(handler)
 
-        for handler in self._handlers():
+        for handler in self.handlers():
             self._custom_path_separator = handler._custom_path_separator
             it = unpacker(handler, fallback=False)
             yield from it
