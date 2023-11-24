@@ -2,9 +2,14 @@
 # -*- coding: utf-8 -*-
 import inspect
 import logging
+import tempfile
 import os
 
+from pathlib import Path
+
 from .. import TestUnitBase
+from ..compression import KADATH1, KADATH2
+from ..sinks.test_dump import temporary_chwd
 
 
 # The magic word is bananapalooza
@@ -15,6 +20,38 @@ class TestFileReader(TestUnitBase):
         self.root = os.path.abspath(inspect.stack()[0][1])
         for _ in range(4):
             self.root = os.path.dirname(self.root)
+
+    def test_single_asterix(self):
+        with tempfile.TemporaryDirectory() as root:
+            with temporary_chwd(root):
+                with open('kadath1.txt', 'w') as fd:
+                    fd.write(KADATH1)
+                with open('kadath2.txt', 'w') as fd:
+                    fd.write(KADATH2)
+                unit = self.load('*', wild=True)
+                data = None | unit | {str}
+        self.assertSetEqual(data, {KADATH1, KADATH2})
+
+    def test_subdirectories(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            dir1 = root / 'k1'
+            os.makedirs(dir1)
+            dir2 = root / 'k2'
+            os.makedirs(dir2)
+            with temporary_chwd(root):
+                with (dir1 / 'kadath1.txt').open('w') as fd:
+                    fd.write(KADATH1)
+                with (dir2 / 'kadath2.txt').open('w') as fd:
+                    fd.write(KADATH2)
+                out1 = None | self.load('k*/kadath1.txt', wild=True) | {str}
+                out2 = None | self.load('k1/kadath?.txt', wild=True) | {str}
+                out3 = None | self.load('k?/kadath[12].txt', wild=True) | {str}
+                out4 = None | self.load('**/*.txt', wild=True) | {str}
+        self.assertSetEqual(out1, {KADATH1})
+        self.assertSetEqual(out2, {KADATH1})
+        self.assertSetEqual(out3, {KADATH1, KADATH2})
+        self.assertSetEqual(out4, {KADATH1, KADATH2})
 
     def test_read_myself_linewise(self):
         lines = list(self.load(os.path.join(self.root, '**', 'test_ef.py'), wild=True, linewise=True).process(None))

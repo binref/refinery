@@ -95,11 +95,12 @@ class ef(Unit):
             k = wildcard.start()
             base, pattern = pattern[:k], pattern[k:]
             root = Path(base)
-            last = root.parts[-1]
-            if base.endswith(last):
-                # /base/something.*
-                pattern = F'{last}{pattern}'
-                root = root.parent
+            if root.parts:
+                last = root.parts[-1]
+                if base.endswith(last):
+                    # /base/something.*
+                    pattern = F'{last}{pattern}'
+                    root = root.parent
             for match in root.glob(pattern):
                 yield match
 
