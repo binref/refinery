@@ -44,22 +44,26 @@ class TestFileReader(TestUnitBase):
                     fd.write(KADATH1)
                 with (dir2 / 'kadath2.txt').open('w') as fd:
                     fd.write(KADATH2)
+                with (dir2 / 'lwrtest.txt').open('w') as fd:
+                    fd.write('foo\n')
+                    fd.write('bar\n')
+                    fd.write('baz\n')
+                    fd.write('barf\n')
                 out1 = None | self.load('k*/kadath1.txt', wild=True) | {str}
                 out2 = None | self.load('k1/kadath?.txt', wild=True) | {str}
                 out3 = None | self.load('k?/kadath[12].txt', wild=True) | {str}
-                out4 = None | self.load('**/*.txt', wild=True) | {str}
+                out4 = None | self.load('**/k*.txt', wild=True) | {str}
+                out5 = None | self.load('k?/lwr*', wild=True, linewise=True) | [str]
         self.assertSetEqual(out1, {KADATH1})
         self.assertSetEqual(out2, {KADATH1})
         self.assertSetEqual(out3, {KADATH1, KADATH2})
         self.assertSetEqual(out4, {KADATH1, KADATH2})
-
-    def test_read_myself_linewise(self):
-        lines = list(self.load(os.path.join(self.root, '**', 'test_ef.py'), wild=True, linewise=True).process(None))
-        self.assertIn(B'bananapalooza', lines[9])
+        self.assertEqual(len(out5), 4)
+        self.assertIn('bar', out5[1])
 
     def test_read_myself(self):
         data = self.load(os.path.join(self.root, '**', 't??t_ef.py'), wild=True)()
-        self.assertEqual(data.count(B'bananapalooza'), 3)
+        self.assertEqual(data.count(B'bananapalooza'), 2)
 
     def test_count_lines(self):
         loc = 0
