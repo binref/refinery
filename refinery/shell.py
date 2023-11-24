@@ -13,9 +13,10 @@ This especially gives easier access to the powerful `refinery.lib.meta` variable
 multibin format expressions, see `refinery.lib.argformats`.
 """
 from functools import wraps
-from refinery import _cache, Unit
+from refinery import __unit_loader__, Unit
 
-__all__ = sorted(_cache.units, key=lambda x: x.lower())
+with __unit_loader__:
+    __all__ = sorted(__unit_loader__.units, key=lambda x: x.lower())
 
 
 class __pdoc2__:
@@ -24,7 +25,8 @@ class __pdoc2__:
 
 
 def __getattr__(name):
-    unit: Unit = _cache.resolve(name)
+    with __unit_loader__:
+        unit: Unit = __unit_loader__.resolve(name)
 
     if unit is None:
         raise AttributeError(name)
