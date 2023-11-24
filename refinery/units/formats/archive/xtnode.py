@@ -66,6 +66,7 @@ class xtnode(ArchiveUnit):
     _PKG_PAYLOAD_S = B'PAYLOAD_SIZE'
     _PKG_PRELUDE_P = B'PRELUDE_POSITION'
     _PKG_PRELUDE_S = B'PRELUDE_SIZE'
+    _PKG_COMMON_JS = B'sourceMappingURL=common.js.map'
 
     def __init__(
         self, *paths, entry: Arg.Switch('-u', help='Only extract the entry point.') = False,
@@ -143,25 +144,26 @@ class xtnode(ArchiveUnit):
 
         payload = _extract_data(self._PKG_PAYLOAD_P, self._PKG_PAYLOAD_S)
         if not payload:
-            return
+            raise ValueError('unable to extract payload')
         prelude = _extract_data(self._PKG_PRELUDE_P, self._PKG_PRELUDE_S)
         if not prelude:
-            return
-        mapping = re.search(BR'sourceMappingURL=common\.js\.map\s*\},\s*\{', prelude)
+            raise ValueError('unable to extract prelude')
+        mapping = re.search(re.escape(self._PKG_COMMON_JS) + BR'\s*\},\s*\{', prelude)
         if not mapping:
-            return
+            raise ValueError('unable to find common.js mapping')
 
         reader = JSONReader(prelude[mapping.end() - 1:])
 
         files = reader.read_json()
+
+        if files is None:
+            raise ValueError('failed to read file list')
+
         entry = reader.skip_comma().read_string()
         links = reader.skip_comma().read_json()
 
         # _unknown1 = reader.skip_comma().read_json()
         # _unknown2 = reader.skip_comma().read_terminated_array(B')').strip()
-
-        if not files:
-            return
 
         root = Path()
         view = memoryview(payload)
@@ -226,6 +228,8 @@ class xtnode(ArchiveUnit):
         if cls._PKG_PRELUDE_P not in data:
             return False
         if cls._PKG_PRELUDE_S not in data:
+            return False
+        if cls._PKG_COMMON_JS not in data:
             return False
         return True
 
