@@ -1962,6 +1962,7 @@ class Unit(UnitBase, abstract=True):
         self.log_detach()
 
     _SECRET_DEBUG_TIMING_FLAG = '--debug-timing'
+    _SECRET_DEBUG_TRACES_FLAG = '--debug-traces'
     _SECRET_YAPPI_TIMING_FLAG = '--yappi-timing'
 
     @classmethod
@@ -1985,6 +1986,11 @@ class Unit(UnitBase, abstract=True):
         argv = argv if argv is not None else sys.argv[1:]
         clock = None
         yappi = None
+        trace = False
+
+        if cls._SECRET_DEBUG_TRACES_FLAG in argv:
+            trace = True
+            argv.remove(cls._SECRET_DEBUG_TRACES_FLAG)
 
         if cls._SECRET_DEBUG_TIMING_FLAG in argv:
             from time import process_time
@@ -2012,10 +2018,12 @@ class Unit(UnitBase, abstract=True):
                 ap.parser.error_commandline(str(ap))
                 return
             except Exception as msg:
-                import traceback
-                cls.logger.critical(cls._output('initialization failed:', msg))
-                for line in traceback.format_exc().splitlines(keepends=False):
-                    cls.logger.critical(cls._output(line))
+                if not trace:
+                    cls.logger.critical(cls._output('initialization failed:', msg))
+                else:
+                    from traceback import format_exc
+                    for line in format_exc().splitlines(keepends=False):
+                        cls.logger.critical(cls._output(line))
                 return
 
             if ps1:
