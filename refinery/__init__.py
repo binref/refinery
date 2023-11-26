@@ -169,14 +169,14 @@ class __pdoc__(dict):
                         bt = getattr(unit.mro()[1], method, None)
                         if at and at is not bt:
                             self[F'{name}.{method}'] = False
-            hlp = get_help_string(unit, width=97)
-            hlp = hlp.replace('\x60', '')
-            hlp = self._strip_globals(hlp).strip()
-            hlp = (
-                F'This unit is implemented in `{unit.__module__}` and has the following '
-                F'commandline Interface:\n```text\n{hlp}\n```'
-            )
-            self[name] = hlp
+                hlp = get_help_string(unit, width=97)
+                hlp = hlp.replace('\x60', '')
+                hlp = self._strip_globals(hlp).strip()
+                hlp = (
+                    F'This unit is implemented in `{unit.__module__}` and has the following '
+                    F'commandline Interface:\n```text\n{hlp}\n```'
+                )
+                self[name] = hlp
         self._loaded = True
 
     def items(self):
