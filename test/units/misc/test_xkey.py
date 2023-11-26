@@ -22,3 +22,8 @@ class TestXKey(TestUnitBase):
             encrypted, = data | self.ldu('add', arg, blocksize=4)
             recovered, = encrypted | self.load(':80:4')
             self.assertEqual(recovered, key, F'failure for length={length}')
+
+    def test_early_abort(self):
+        data = self.download_sample('ccd495bae43f026e05f00ebc74f989d5657e010854ce4d8870e7b9371b0222b9')
+        test = data | self.load_pipeline('carve -dlt2 intarray [| xkey ]') | bytes
+        self.assertEqual(test, B'\x47\xB0')

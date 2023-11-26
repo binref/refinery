@@ -38,13 +38,22 @@ class xkey(Unit):
 
         self.log_debug(F'received input range [{bounds.start}:{bounds.stop}:{bounds.step}], using [{start}:{stop}:{step}]')
 
-        for length in range(start, stop, step):
-            _guess = [Counter(data[j::length]).most_common(1)[0] for j in range(length)]
-            _score = sum(count for _, count in _guess)
+        for _count in range(start, stop, step):
+            _guess = [Counter(data[j::_count]).most_common(1)[0] for j in range(_count)]
+            _score = sum(letter_count for _, letter_count in _guess) / n
+
+            # This scaling accounts for the smaller probability of larger keys. The scaling power is arbitrary and has
+            # been chosen as 5 based on in-the-wild examples. For illustration, consider that a key of length equal to
+            # the input can be chosen such that the input is annihilated entirely, so that would always yield the best
+            # score. However, we are looking for an annihilating sequence of relatively small length.
+            _score = _score * ((n - _count) / (n - 1)) ** 5
+
+            logmsg = F'got score {_score*100:5.2f}% for length {_count}'
             if _score > score:
-                self.log_info(F'got score {_score*100/n:5.2f}% for length {length}')
+                self.log_info(logmsg)
                 score = _score
-                guess = (value for value, _ in _guess)
-                guess = bytearray(guess)
+                guess = bytearray(value for value, _ in _guess)
+            else:
+                self.log_debug(logmsg)
 
         return guess
