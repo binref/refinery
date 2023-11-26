@@ -7,7 +7,7 @@ class TestTrim(TestUnitBase):
 
     def test_left_and_right(self):
         trim = self.load()
-        self.assertEqual(trim(b'   abc   '), b'abc')
+        self.assertEqual(trim(b'\n\r\n\r   abc   '), b'abc')
 
     def test_left(self):
         trim = self.load('-l')

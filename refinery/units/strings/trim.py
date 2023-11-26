@@ -27,7 +27,6 @@ class trim(Unit):
             for junk in junks:
                 temp = junk
                 size = len(junk)
-                done = True
                 if right and self.args.unpad:
                     for k in range(size):
                         n = size - k
