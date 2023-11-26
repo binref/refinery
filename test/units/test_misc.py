@@ -201,9 +201,12 @@ class TestMetaProperties(TestUnitBase):
 
     def test_pdoc(self):
         import refinery
-        refinery.__pdoc__._load()
-        self.assertIn('hex', refinery.__pdoc__)
-        self.assertIn('b64', refinery.__pdoc__)
+        pd = refinery.__pdoc__
+        pd._load()
+        self.assertIn('hex', pd)
+        self.assertIn('b64', pd)
+        self.assertIn('--verbose', pd['hex'])
+        self.assertIn('--devnull', pd['hex'])
 
 
 class TestSimpleInvertible(TestUnitBase):
