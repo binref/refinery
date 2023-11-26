@@ -184,7 +184,7 @@ class TestMetaProperties(TestUnitBase):
         with self.assertRaises(Exception):
             unit(B'y')
 
-    def test_pdoc(self):
+    def test_loader_imports(self):
         from refinery.lib import loader
         from refinery import aes
         from refinery import rex
@@ -198,6 +198,12 @@ class TestMetaProperties(TestUnitBase):
         self.assertIs(aes, loader.get_entry_point('aes'))
         self.assertIs(b64, loader.get_entry_point('b64'))
         self.assertIs(rex, loader.get_entry_point('rex'))
+
+    def test_pdoc(self):
+        import refinery
+        refinery.__pdoc__._load()
+        self.assertIn('hex', refinery.__pdoc__)
+        self.assertIn('b64', refinery.__pdoc__)
 
 
 class TestSimpleInvertible(TestUnitBase):
