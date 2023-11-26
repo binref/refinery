@@ -7,10 +7,10 @@ from refinery import Unit, Arg
 class xkey(Unit):
     """
     The unit expects encrypted input which was encrypted byte-wise with a polyalphabetic key, and
-    which also has one letter that occurs with overwhelming frequency. This is often the case for
-    the zero byte in binary formats such as PE files, and the space character in text files. Based
-    on this assumption, the unit computes the most likely key. This can be useful to decrypt PE
-    and uncompressed text files that were encrypted byte-wise using a short key.
+    where the plaintext also has one letter that occurs with overwhelming frequency. This is often
+    the case for the zero byte in binary formats such as PE files, and the space character in text
+    files. Based on this assumption, the unit computes the most likely key. This can be useful to
+    decrypt PE and uncompressed text files that were encrypted byte-wise using a short key.
     """
     def __init__(
         self,
