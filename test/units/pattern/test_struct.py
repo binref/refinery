@@ -60,3 +60,8 @@ class TestStructUnit(TestUnitBase):
     def test_auto_batch(self):
         pl = L(R'emit ABCDEF | struct -m {k:B}{:1}{:1} {2} {3} [[| pop a | cfmt {a}{k} ]]')
         self.assertEqual(pl(), B'B65E68')
+
+    def test_use_variables_in_output(self):
+        data = self.download_sample('4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5')
+        test = data | self.load_pipeline('vsect .bss | struct {n:L}{k:n}{c:} {c:rc4[var:k]:snip[::2]}') | bytes
+        self.assertIn(B'165.22.5'B'.66', test)

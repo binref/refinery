@@ -654,8 +654,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         - `refinery.lib.meta.LazyMetaOracle.format_str`
         - `refinery.lib.meta.LazyMetaOracle.format_bin`
         """
-        from refinery.lib.argformats import multibin, ParserError, PythonExpression
-        # prevents circular import
+        # prevents circular import:
+        from refinery.lib.argformats import (
+            multibin, ParserError, PythonExpression, pending, Chunk)
 
         symb = symb or {}
 
@@ -753,6 +754,8 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     if modifier:
                         expression = self.format(modifier, codec, args, symb, True, False, used)
                         output = multibin(expression.decode(codec), reverse=True, seed=value)
+                        if pending(output):
+                            output = output(Chunk(value, meta=self))
                     elif isbuffer(value):
                         output = value
                     elif not isinstance(value, int):
