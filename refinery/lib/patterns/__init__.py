@@ -259,7 +259,7 @@ _pattern_hexline = make_hexline_pattern(1)
 
 _pattern_pem = (
     R'-----BEGIN(?:\s[A-Z0-9]+)+-----{n}'
-    R'(?:{b}{{40,100}}{n})+{b}{{1,100}}={{0,3}}{n}'
+    R'(?:{b}{{40,100}}{n})*{b}{{1,100}}={{0,3}}{n}'
     R'-----END(?:\s[A-Z0-9]+)+-----'
 ).format(n=R'(?:\r\n|\n\r|\n)', b=R'[0-9a-zA-Z\+\/]')
 
