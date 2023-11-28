@@ -31,10 +31,10 @@ class Sosemanuk:
         logb = bytearray(0x100)
         x = 1
         for i in range(0xFF):
-           expb[i] = x
-           x <<= 1
-           if x > 0xFF:
-              x ^= 0x1A9
+            expb[i] = x
+            x <<= 1
+            if x > 0xFF:
+                x ^= 0x1A9
         expb[0xFF] = 0
         assert set(expb) == set(range(0x100))
         for i in range(0x100):
@@ -2215,7 +2215,6 @@ class Sosemanuk:
     def __iter__(self):
         while True:
             yield from self.generate_block()
-
 
 
 class sosemanuk(StreamCipherUnit):
