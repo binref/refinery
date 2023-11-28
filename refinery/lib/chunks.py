@@ -11,9 +11,7 @@ from typing import Iterable
 
 
 _BIG_ENDIAN = sys.byteorder == 'big'
-_TYPE_CODES = {
-    array.array(t).itemsize: t for t in array.typecodes if t.isupper()
-}
+_TYPE_CODES = {array.array(t).itemsize: t for t in 'BHILQ'}
 
 
 def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0) -> Iterable[int]:
