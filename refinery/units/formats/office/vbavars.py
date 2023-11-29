@@ -42,16 +42,31 @@ class vbavars(PathExtractorUnit):
             parser = self._olevba.VBA_Parser('.', data=bytes(value), relaxed=True)
         except self._olevba.FileOpenError:
             raise ValueError('Input data not recognized by VBA parser')
-        for (path, stream, vars) in parser.extract_form_strings_extended():
-            if not vars:
-                continue
-            name = _txt(vars['name'])
-            for ext, key in {
-                'cap': 'caption',
-                'tip': 'control_tip_text',
-                'val': 'value',
-            }.items():
-                value = _bin(vars.get(key))
-                if not value:
+        try:
+            for path, name, vars in parser.extract_form_strings_extended():
+                if not vars:
                     continue
-                yield UnpackResult(F'{path!s}/{stream!s}/{name}.{ext}', value)
+                name = _txt(vars['name'])
+                for ext, key in {
+                    'cap': 'caption',
+                    'tip': 'control_tip_text',
+                    'val': 'value',
+                }.items():
+                    value = _bin(vars.get(key))
+                    if not value:
+                        continue
+                    yield UnpackResult(F'{path!s}/{name!s}/{name}.{ext}', value)
+        except self._olevba.oleform.OleFormParsingError as error:
+            from collections import Counter
+            self.log_debug(str(error))
+            self.log_info('extended form extraction failed with error; falling back to simple method')
+            form_strings = list(parser.extract_form_strings())
+            name_counter = Counter(name for _, name, _ in form_strings)
+            dedup = Counter()
+            for path, name, string in form_strings:
+                if string is None:
+                    continue
+                if name_counter[name] > 1:
+                    dedup[name] += 1
+                    name = F'{name!s}.v{dedup[name]}'
+                yield UnpackResult(F'{path!s}/{name!s}.val', _bin(string))
