@@ -37,9 +37,9 @@ class TestHTMLExtractor(TestUnitBase):
                 'html/head/script',
                 'html/head/woober',
                 'html/body',
-                'html/body/p(1)',
-                'html/body/p(2)',
-                'html/body/p(3)',
+                'html/body/p/1',
+                'html/body/p/2',
+                'html/body/p/3',
                 'html/body/div',
                 'html/body/div/div',
             ))
@@ -47,7 +47,7 @@ class TestHTMLExtractor(TestUnitBase):
 
     def test_extraction(self):
         self.assertEqual(
-            str(self._TEST_DOCUMENT | self.load('p(1)')),
+            str(self._TEST_DOCUMENT | self.load('p/1')),
             'Paragraph 1 &#62; &#x3E;'
         )
 

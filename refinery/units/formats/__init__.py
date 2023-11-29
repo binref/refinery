@@ -319,9 +319,9 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
                     pass
             if path_attribute is not None and path_attribute in attrs:
                 return self._normalize_val(attrs[path_attribute])
-            out = node.tag
+            out = nval(node.tag)
             if index is not None:
-                out = F'{out}({index})'
-            return nval(out)
+                out = F'{out}/{index}'
+            return out
 
         return path_builder

@@ -24,7 +24,7 @@ class xtjson(PathExtractorUnit):
                     yield from crawl(F'{path}/{key}', value)
             elif isinstance(cursor, list):
                 for key, value in enumerate(cursor):
-                    yield from crawl(F'{path}({key:d})', value)
+                    yield from crawl(F'{path}/{key:d}', value)
             if path:
                 yield path, cursor, cursor.__class__.__name__
 
