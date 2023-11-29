@@ -1,5 +1,10 @@
 # Binary Refinery Changelog
 
+## Version 0.6.24
+- The paths extracted by `xthtml`, `xtxml` and `xtjson` now avoid the use of parentheses to work better on Bash.
+- Adds the `sosemanuk` cipher unit.
+- Improves the capabilities of the `vbastr` unit.
+
 ## Version 0.6.23 - bugfix release
 
 ## Version 0.6.22
