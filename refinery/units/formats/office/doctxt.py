@@ -19,7 +19,7 @@ from refinery.units.formats.archive.xtzip import xtzip
 
 class doctxt(Unit):
     """
-    Extract text from Word Documents
+    Extracts the text body from Word documents.
     """
 
     @Unit.Requires('olefile', 'formats', 'office', 'extended')
