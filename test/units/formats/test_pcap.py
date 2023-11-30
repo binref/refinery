@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import hashlib
-from refinery.lib.loader import load_pipeline
 
 from .. import TestUnitBase
 
