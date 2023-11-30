@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.6.25
+- Fixes bugs that caused errors in Python 3.12 environments.
+
 ## Version 0.6.24
 - The paths extracted by `xthtml`, `xtxml` and `xtjson` now avoid the use of parentheses to work better on Bash.
 - Adds the `sosemanuk` cipher unit.
