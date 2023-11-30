@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import builtins
 import os
+import os.path
 import io
 import stat
 import uuid
@@ -147,6 +148,15 @@ class VirtualFileSystem:
     def acquire(self):
         self._VFS_LOCK.acquire()
 
+        def hook_isfile(path):
+            try:
+                with self._lock:
+                    self._by_name[os.path.basename(path)]
+            except BaseException:
+                return self._isfile(path)
+            else:
+                return True
+
         def hook_open(file, *args, **kwargs):
             try:
                 with self._lock:
@@ -178,13 +188,16 @@ class VirtualFileSystem:
         self._os_stat = os.stat
         self._mmap_mmap = mmap.mmap
         self._io_open = io.open
+        self._isfile = os.path.isfile
         builtins.open = hook_open
         io.open = hook_open
         os.stat = hook_stat
         mmap.mmap = hook_mmap
+        os.path.isfile = hook_isfile
         return self
 
     def release(self):
+        os.path.isfile = self._isfile
         builtins.open = self._builtins_open
         os.stat = self._os_stat
         mmap.mmap = self._mmap_mmap
