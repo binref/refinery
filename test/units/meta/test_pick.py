@@ -169,5 +169,3 @@ class TestPick(TestMetaBase):
 
         self.assertEqual(sha256(out[b'\\msoev.exe']).hexdigest(),
             '06cea3a5ef9641bea4704e9f6d2ed13286f9e5ec7ab43f8067f15b5a41053d33')
-
-        return 0
