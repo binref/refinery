@@ -9,6 +9,7 @@ from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, BO, Executable, Range, ExecutableCodeBlob
 from refinery.lib.types import bounds, INF
 from refinery.lib.meta import SizeInt
+from refinery.lib.tools import NoLogging
 
 from dataclasses import dataclass, field
 
@@ -71,7 +72,8 @@ class vstack(Unit):
 
     @Unit.Requires('unicorn', 'default', 'extended')
     def _unicorn():
-        import unicorn
+        with NoLogging():
+            import unicorn
         import unicorn.x86_const
         import unicorn.arm64_const
         import unicorn.mips_const
