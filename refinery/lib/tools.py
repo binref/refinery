@@ -420,7 +420,7 @@ def date_from_timestamp(ts: int):
     """
     Convert a UTC timestamp to a datetime object.
     """
-    if sys.version_info > (3, 11):
+    if sys.version_info >= (3, 12):
         return datetime.datetime.fromtimestamp(ts, datetime.UTC)
     else:
         return datetime.datetime.utcfromtimestamp(ts)
