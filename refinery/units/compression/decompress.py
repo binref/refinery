@@ -138,7 +138,7 @@ class decompress(Unit):
                         return best
                 status = 'partial' if new.failed else 'success'
                 self.log_info(lambda: (
-                    F'obtained {ratio*100:2.5f}% compression ratio with: prefix={prefix}, '
+                    F'obtained {ratio * 100:2.5f}% compression ratio with: prefix={prefix}, '
                     F'cutoff={new.cutoff}, [{status}] engine={new.engine.name}'))
                 return new
             else:

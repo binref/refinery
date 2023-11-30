@@ -110,7 +110,7 @@ class doctxt(Unit):
         with self._olefile.OleFileIO(stream) as ole:
             doc = ole.openstream('WordDocument').read()
             with StructReader(doc) as reader:
-                table_name = F'{(doc[11]>>1)&1}Table'
+                table_name = F'{(doc[11] >> 1) & 1}Table'
                 reader.seek(0x1A2)
                 offset = reader.u32()
                 length = reader.u32()

@@ -249,8 +249,8 @@ class CFB(CipherMode):
         segment_size = segment_size // 8
         if len(iv) % segment_size != 0:
             raise NotImplementedError(
-                F'the block size {len(iv)*8} is not an even multiple of the segment '
-                F'size {segment_size*8}; this is currently not supported.')
+                F'the block size {len(iv) * 8} is not an even multiple of the segment '
+                F'size {segment_size * 8}; this is currently not supported.')
         self.segment_size = segment_size
         self.iv = iv
 

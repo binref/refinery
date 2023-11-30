@@ -80,4 +80,4 @@ class rsakey(Unit):
             for key, value in table:
                 value = F'0x{value}' if isinstance(value, str) else str(value)
                 value = '\n'.join(F'{L}' for L in textwrap.wrap(value, 80))
-                yield F'-- {key+" ":-<77}\n{value!s}'.encode(self.codec)
+                yield F'-- {key + " ":-<77}\n{value!s}'.encode(self.codec)

@@ -121,7 +121,7 @@ def flattened(data: dict, prefix='', separator='.') -> List[Tuple[str, Union[int
                 new_prefix = key if not prefix else F'{prefix}{separator}{key}'
                 yield from flatten(value, new_prefix)
         elif isinstance(cursor, list):
-            width = len(F'{len(cursor)-1:X}')
+            width = len(F'{len(cursor) - 1:X}')
             for key, value in enumerate(cursor):
                 yield from flatten(value, F'{prefix}[0x{key:0{width}X}]')
         else:

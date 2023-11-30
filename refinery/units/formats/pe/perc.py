@@ -138,7 +138,7 @@ class perc(PathExtractorUnit):
                 string = reader.read_exactly(reader.u16() * 2)
                 if not string:
                     break
-                key = F'{base+index:04X}'
+                key = F'{base + index:04X}'
                 table[key] = string.decode('utf-16le')
                 index += 1
             return json.dumps(table, indent=4).encode(self.codec)

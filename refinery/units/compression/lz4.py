@@ -32,7 +32,7 @@ class lz4(Unit):
                 return False
             consumed = reader.tell() - entry
             if consumed > ubound:
-                raise ValueError(F'upper bound {ubound} exceeded by {consumed-ubound} in LZ4 block')
+                raise ValueError(F'upper bound {ubound} exceeded by {consumed - ubound} in LZ4 block')
             return consumed == ubound
 
         while not reader.eof:
@@ -142,5 +142,5 @@ class lz4(Unit):
                 self.log_warn(F'the given checksum {chk:08X} did not match the computed checksum {xxh:08X}')
         if not reader.eof:
             pos = reader.tell()
-            self.log_warn(F'found {len(data)-pos} additional bytes starting at position 0x{pos:X} after compressed data')
+            self.log_warn(F'found {len(data) - pos} additional bytes starting at position 0x{pos:X} after compressed data')
         return output.getbuffer()

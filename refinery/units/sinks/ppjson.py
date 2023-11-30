@@ -38,7 +38,7 @@ class ppjson(Unit):
                     continue
                 yield F'{key:<{width}} : {item}'.encode(self.codec)
                 for wrap in it:
-                    yield F'{"":<{width+3}}{wrap}'.encode(self.codec)
+                    yield F'{"":<{width + 3}}{wrap}'.encode(self.codec)
         else:
             yield json.dumps(parsed, **kwargs).encode(self.codec)
 

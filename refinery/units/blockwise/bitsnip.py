@@ -62,7 +62,7 @@ class bitsnip(BlockTransformationBase):
         length, remainder = divmod(bitsnip_size, 8)
 
         if remainder != 0:
-            self.log_info(F'discarding {bitsnip_size%8} bits')
+            self.log_info(F'discarding {bitsnip_size % 8} bits')
             if bigendian:
                 bitsnip_data >>= remainder
             else:

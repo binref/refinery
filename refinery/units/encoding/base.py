@@ -92,7 +92,7 @@ class base(Unit):
                 if b in check:
                     data[index] = b
                     index += 1
-            self.log_info(F'stripped {len(data)-index} invalid digits from input data')
+            self.log_info(F'stripped {len(data) - index} invalid digits from input data')
             del data[index:]
         if len(alphabet) <= len(_DEFAULT_ALPHABET):
             defaults = _DEFAULT_ALPHABET[:base]

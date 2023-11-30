@@ -48,7 +48,7 @@ class jvdasm(PathExtractorUnit):
                             if key is None:
                                 continue
                             raw = self._hex(op.raw[olen + k * ow: olen + k * ow + ow], ' ')
-                            jmps.append(F'{tt}{raw!s:<{opcw+15}} {key:#010x} => {jmp:#010x}')
+                            jmps.append(F'{tt}{raw!s:<{opcw + 15}} {key:#010x} => {jmp:#010x}')
                         args = '\n'.join((args, *jmps))
                     opch = self._hex(op.raw[:olen], ' ')
                     if len(opch) > 14:

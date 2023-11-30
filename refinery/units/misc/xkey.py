@@ -48,7 +48,7 @@ class xkey(Unit):
             # score. However, we are looking for an annihilating sequence of relatively small length.
             _score = _score * ((n - _count) / (n - 1)) ** 5
 
-            logmsg = F'got score {_score*100:5.2f}% for length {_count}'
+            logmsg = F'got score {_score * 100:5.2f}% for length {_count}'
             if _score > score:
                 self.log_info(logmsg)
                 score = _score

@@ -171,7 +171,7 @@ class xtmsi(xtdoc):
             row_size = struct.calcsize(F'<{row_format}')
             row_count = int(len(data) / row_size)
             reader = StructReader(data)
-            columns = [reader.read_struct(F'<{sc*row_count}') for sc in row_format]
+            columns = [reader.read_struct(F'<{sc * row_count}') for sc in row_format]
             for i in range(row_count):
                 yield [c[i] for c in columns]
 

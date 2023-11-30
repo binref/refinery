@@ -51,7 +51,7 @@ class EmuState:
             return None
 
     def fmt(self, address: int) -> str:
-        return F'0x{address:0{self.executable.pointer_size//4}X}'
+        return F'0x{address:0{self.executable.pointer_size // 4}X}'
 
 
 class vstack(Unit):
@@ -447,7 +447,7 @@ class vstack(Unit):
 
             instruction = state.disassemble(address, size)
             indent = '\x20' * 4 * depth
-            logmsg = F'emulating [wait={waiting:02d}] {indent}0x{address:0{state.executable.pointer_size//4}X}:'
+            logmsg = F'emulating [wait={waiting:02d}] {indent}0x{address:0{state.executable.pointer_size // 4}X}:'
             if instruction:
                 instruction = F'{instruction.mnemonic} {instruction.op_str}'
                 self.log_debug(logmsg, instruction)

@@ -28,7 +28,7 @@ class HexDumpMetrics:
 
     @property
     def hex_char_format(self):
-        return F'{self.hex_char_prefix}{{:0{2*self.block_size}X}}'
+        return F'{self.hex_char_prefix}{{:0{2 * self.block_size}X}}'
 
     @property
     def hex_column_width(self):
@@ -118,7 +118,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
             dump = separator.join(hexformat.format(b) for b in blocks)
             ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
             line = (
-                F'{dump:<{hex_width*columns-len(separator)}}'
+                F'{dump:<{hex_width * columns - len(separator)}}'
                 F'{metrics.txt_separator}{ascii_preview:<{columns}}'
             )
         else:
@@ -158,7 +158,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 line = F'{_hex.getvalue()}{metrics.txt_separator}{_asc.getvalue():<{columns}}'
 
         if addr_width:
-            line = F'{color_prefix}{lno*columns:0{addr_width}X}: {line}'
+            line = F'{color_prefix}{lno * columns:0{addr_width}X}: {line}'
 
         yield line
 

@@ -461,7 +461,7 @@ class NSHeader(Struct):
             varcount -= 2
         if index < 20:
             if index >= 10:
-                return F'$R{index-10}'
+                return F'$R{index - 10}'
             return F'$V{index}'
         else:
             if index < varcount:

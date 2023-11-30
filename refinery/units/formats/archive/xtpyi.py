@@ -296,7 +296,7 @@ class PYZ(Struct):
 
         if key:
             if failures >= 6:
-                xtpyi.logger.warning(F'pyz decompression failed for {failures-5} additional items')
+                xtpyi.logger.warning(F'pyz decompression failed for {failures - 5} additional items')
             return True
         elif failures > 0.7 * attempts:
             self.entries.clear()
@@ -571,7 +571,7 @@ class xtpyi(ArchiveUnit):
             width = max(len(F'{p:X}') for p in positions)
             for position in positions:
                 self.log_info(F'magic signature found at offset 0x{position:0{width}X}')
-            self.log_warn(F'found {len(positions)-1} potential PyInstaller epilogue markers; using last one.')
+            self.log_warn(F'found {len(positions) - 1} potential PyInstaller epilogue markers; using last one.')
         archive = PyInstallerArchiveEpilogue(view, positions[-1], mode)
         for name, file in archive.files.items():
             if self.args.user_code:

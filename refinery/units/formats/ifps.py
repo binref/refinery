@@ -246,7 +246,7 @@ class TArray(_TypeBase):
     type: TGeneric
 
     def display(self, indent=0):
-        display = F'{_TAB*indent}{self.type!s}'
+        display = F'{_TAB * indent}{self.type!s}'
         return F'{display}[]'
 
     def simple(self, nested=False):
@@ -261,7 +261,7 @@ class TTuple(_TypeBase):
     offset: Optional[int] = None
 
     def display(self, indent=0):
-        display = F'{_TAB*indent}{self.type!s}'
+        display = F'{_TAB * indent}{self.type!s}'
         return F'{display}[{self.size}]'
 
     def simple(self, nested=False):
@@ -293,7 +293,7 @@ class TRecord(_TypeBase):
                 output.write('\n')
                 output.write(member.display(indent + 1))
             if self.members:
-                output.write(F'\n{indent*_TAB}')
+                output.write(F'\n{_TAB * indent}')
         output.write('}')
         return output.getvalue()
 
@@ -554,7 +554,7 @@ class Instruction:
             Op.JumpPop1,
             Op.JumpPop2,
         )
-        return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self._oprep(fuse,jmp)}'
+        return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self._oprep(fuse, jmp)}'
 
 
 class IFPSFile(Struct):
@@ -793,7 +793,7 @@ class IFPSFile(Struct):
                 arg()
             elif code is Op.Pop:
                 if stackdepth < 1:
-                    raise RuntimeError(F'Stack grew negative at instruction {len(disassembly)+1}.')
+                    raise RuntimeError(F'Stack grew negative at instruction {len(disassembly) + 1}.')
                 stackdepth -= 1
             elif code in (Op.Jump, Op.JumpFlag):
                 target = reader.i32()

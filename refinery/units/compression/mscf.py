@@ -169,7 +169,7 @@ class mscf(Unit):
             if reader.remaining_bytes < XPRESS_NUM_SYMBOLS // 2:
                 raise IndexError(
                     F'There are only {reader.remaining_bytes} bytes reamining in the input buffer,'
-                    F' but at least {XPRESS_NUM_SYMBOLS//2} are required to read a Huffman table.')
+                    F' but at least {XPRESS_NUM_SYMBOLS // 2} are required to read a Huffman table.')
 
             table = bytearray(reader.read_integer(4) for _ in range(XPRESS_NUM_SYMBOLS))
             table = make_huffman_decode_table(table, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)

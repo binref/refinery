@@ -510,14 +510,14 @@ class JvOpCode(Struct):
             elif self.code == opc.lookupswitch:
                 reader.byte_align(blocksize=4)
                 default, npairs = reader.read_struct('LL')
-                pairs = reader.read_struct(F'{npairs*2}L')
+                pairs = reader.read_struct(F'{npairs * 2}L')
                 self.table = dict(zip(*([iter(pairs)] * 2)))
                 self.table[None] = default
             elif self.code == opc.tableswitch:
                 reader.byte_align(blocksize=4)
                 default, low, high = reader.read_struct('LLL')
                 assert low <= high
-                offsets = reader.read_struct(F'{high-low+1}L')
+                offsets = reader.read_struct(F'{high - low + 1}L')
                 self.table = {k + low: offset for k, offset in enumerate(offsets)}
                 self.table[None] = default
             elif self.code == opc.wide:

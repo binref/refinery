@@ -123,7 +123,7 @@ class peek(HexViewer):
                     value = F'-0x{-value:X}'
             elif isinstance(value, float):
                 value = F'{value:.4f}'
-            metavar = F'{name:>{width+2}} = {value!s}'
+            metavar = F'{name:>{width + 2}} = {value!s}'
             if len(metavar) > linewidth:
                 metavar = metavar[:linewidth - 3] + '...'
             yield from separators

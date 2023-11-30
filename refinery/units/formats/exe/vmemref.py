@@ -123,4 +123,4 @@ class vmemref(Unit):
             try:
                 yield executable[ref:]
             except CompartmentNotFound:
-                self.log_info(F'memory reference could not be resolved: 0x{ref:0{executable.pointer_size//4}X}')
+                self.log_info(F'memory reference could not be resolved: 0x{ref:0{executable.pointer_size // 4}X}')
