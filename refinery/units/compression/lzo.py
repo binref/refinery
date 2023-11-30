@@ -3,10 +3,10 @@
 from enum import IntEnum, IntFlag
 from typing import ByteString, Generator, Optional
 from zlib import adler32, crc32
-from datetime import datetime
 
 from refinery.units import Unit
 from refinery.lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
+from refinery.lib.tools import date_from_timestamp
 
 
 class LZOError(Exception):
@@ -272,7 +272,7 @@ class lzo(Unit):
             return self.labelled(
                 output.getbuffer(),
                 path=lzo.name,
-                date=datetime.utcfromtimestamp(lzo.mtime)
+                date=date_from_timestamp(lzo.mtime)
             )
 
     @classmethod

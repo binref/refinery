@@ -414,3 +414,13 @@ def typename(thing):
         return thing.__name__
     except AttributeError:
         return repr(thing)
+
+
+def date_from_timestamp(ts: int):
+    """
+    Convert a UTC timestamp to a datetime object.
+    """
+    if sys.version_info > (3, 11):
+        return datetime.datetime.fromtimestamp(ts, datetime.UTC)
+    else:
+        return datetime.datetime.utcfromtimestamp(ts)

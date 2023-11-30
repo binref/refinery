@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Optional, List, Dict, Iterable, Generator, Set
-from datetime import datetime
 from enum import Enum
 
 import io
@@ -12,6 +11,7 @@ import struct
 from refinery.lib.structures import Struct, StructReader, MemoryFile
 from refinery.lib.crypto import rotl32
 from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.lib.tools import date_from_timestamp
 
 
 A3X_KEYWORDS = [
@@ -706,7 +706,7 @@ class A3xReader(StructReader[memoryview]):
         H = self.u32()
         L = self.u32()
         T = (H << 32) | L
-        return datetime.utcfromtimestamp((T - 116444736000000000) / 10000000)
+        return date_from_timestamp((T - 116444736000000000) / 10000000)
 
     def read_length_prefixed_string(self):
         length = self.i32()

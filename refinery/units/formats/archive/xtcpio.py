@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from contextlib import suppress
-from datetime import datetime
 
 from refinery.lib.structures import EOF, Struct, StructReader
+from refinery.lib.tools import date_from_timestamp
 from refinery.units.formats.archive import ArchiveUnit
 
 
@@ -20,7 +20,7 @@ class CPIOEntry(Struct):
         self.gid = readint(4)
         self.nlinks = readint(4)
         mtime = readint(4)
-        self.mtime = datetime.utcfromtimestamp(mtime)
+        self.mtime = date_from_timestamp(mtime)
         self.size = readint(4)
         self.dev = readint(4), readint(4)
         self.rdev = readint(4), readint(4)

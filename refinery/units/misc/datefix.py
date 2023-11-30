@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from refinery.units import Arg, Unit
 from refinery.lib.decorators import linewise
+from refinery.lib.tools import date_from_timestamp
 
 
 class datefix(Unit):
@@ -100,7 +101,7 @@ class datefix(Unit):
             if self.args.dos:
                 return self._format(self.dostime(time_stamp))
             else:
-                return self._format(datetime.utcfromtimestamp(time_stamp))
+                return self._format(date_from_timestamp(time_stamp))
 
         data, time_delta = self._extract_timezone(data)
 
