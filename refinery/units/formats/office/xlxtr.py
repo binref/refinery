@@ -235,7 +235,8 @@ class xlxtr(Unit):
                     yield from self._get_value(k, name, sheet.cell_value, row, col)
 
     def _process_openpyxl(self, data):
-        workbook = self._openpyxl.load_workbook(MemoryFile(data), read_only=True)
+        with NoLogging():
+            workbook = self._openpyxl.load_workbook(MemoryFile(data), read_only=True)
         for ref in self.args.references:
             ref: SheetReference
             for k, name in enumerate(workbook.sheetnames):
