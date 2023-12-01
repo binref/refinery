@@ -109,6 +109,7 @@ class vstack(Unit):
             help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
+        log_writes_in_calls: Arg.Switch('-W', help='Log writes of values that occur in functions calls.') = False,
         log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
         log_other_addresses: Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.') = False,
         log_zero_overwrites: Arg.Switch('-Z', help='Log writes of zeros to memory that contained nonzero values.') = False,
@@ -127,6 +128,7 @@ class vstack(Unit):
             wait_calls=wait_calls,
             skip_calls=skip_calls,
             block_size=block_size,
+            log_writes_in_calls=log_writes_in_calls,
             log_stack_addresses=log_stack_addresses,
             log_other_addresses=log_other_addresses,
             log_zero_overwrites=log_zero_overwrites,
@@ -308,7 +310,7 @@ class vstack(Unit):
                 state.ticks = timeout
 
             emulator.hook_add(uc.UC_HOOK_CODE, self._hook_code, user_data=state)
-            emulator.hook_add(uc.UC_HOOK_MEM_WRITE, self._hook_mem_write, user_data=state)
+            emulator.hook_add(uc.UC_HOOK_MEM_WRITE, self._hook_mem_write, user_data=state, )
             emulator.hook_add(uc.UC_HOOK_INSN_INVALID, self._hook_insn_error, user_data=state)
             emulator.hook_add(uc.UC_HOOK_MEM_INVALID, self._hook_mem_error, user_data=state)
 
@@ -331,62 +333,72 @@ class vstack(Unit):
                 yield patch
 
     def _hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
-        mask = (1 << (size * 8)) - 1
-        unsigned_value = value & mask
-        depth = len(state.callstack)
+        try:
+            mask = (1 << (size * 8)) - 1
+            unsigned_value = value & mask
+            depth = len(state.callstack)
 
-        if unsigned_value == state.expected_address:
-            callstack = state.callstack
-            if not callstack:
-                state.callstack_ceiling = emu.reg_read(state.sp_register)
-            state.retaddr = unsigned_value
-            if not self.args.skip_calls:
-                callstack.append(state.retaddr)
-            return
-        else:
-            state.retaddr = None
-
-        if state.callstack_ceiling > 0 and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling):
-            return
-
-        if not self.args.log_stack_addresses:
-            if unsigned_value in state.stack:
+            if unsigned_value == state.expected_address:
+                callstack = state.callstack
+                state.retaddr = unsigned_value
+                if not self.args.skip_calls:
+                    if not callstack:
+                        state.callstack_ceiling = emu.reg_read(state.sp_register)
+                    callstack.append(unsigned_value)
                 return
-        if not self.args.log_other_addresses and not state.blob:
-            if any(unsigned_value in s.virtual for s in state.executable.sections()):
-                return
+            else:
+                state.retaddr = None
 
-        state.waiting = 0
-        skipped = False
+            skipped = False
+            waiting = state.waiting
 
-        if size not in bounds[self.args.write_range]:
-            return
+            if size not in bounds[self.args.write_range]:
+                skipped = 'size excluded'
+            elif (
+                state.callstack_ceiling > 0
+                and not self.args.log_writes_in_calls
+                and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling)
+            ):
+                skipped = 'inside call'
+            elif not self.args.log_stack_addresses and unsigned_value in state.stack:
+                skipped = 'stack address'
+            elif not self.args.log_other_addresses and not state.blob:
+                for s in state.executable.sections():
+                    if unsigned_value in s.virtual:
+                        skipped = F'write to section {s.name}'
+                        break
+            if (
+                not skipped 
+                and unsigned_value == 0
+                and state.writes.at(address) is not None
+                and self.args.log_zero_overwrites is False
+                and any(emu.mem_read(address, size))
+            ):
+                skipped = 'zero overwrite'
 
-        if (
-            unsigned_value == 0
-            and state.writes.at(address) is not None
-            and self.args.log_zero_overwrites is False
-            and any(emu.mem_read(address, size))
-        ):
-            skipped = True
-        else:
-            state.writes.addi(address, address + size + 1)
-            state.writes.merge_overlaps()
+            if not skipped:
+                state.writes.addi(address, address + size + 1)
+                state.writes.merge_overlaps()
+                state.waiting = 0
 
-        def info():
-            data = unsigned_value.to_bytes(size, state.executable.byte_order().value)
-            indent = '\x20' * 4 * depth
-            padlen = state.executable.pointer_size // 4
-            h = data.hex().upper()
-            p = re.sub('[^!-~]', '.', data.decode('latin1'))
-            msg = (
-                F'emulating [wait={state.waiting:02d}] {indent}{state.fmt(state.previous_address)}: '
-                F'{state.fmt(address)} <- {h:_<{padlen}} {p}')
-            if skipped:
-                msg = F'{msg} (skipped)'
-            return msg
+            def info():
+                data = unsigned_value.to_bytes(size, state.executable.byte_order().value)
+                indent = '\x20' * 4 * depth
+                padlen = state.executable.pointer_size // 4
+                h = data.hex().upper()
+                p = re.sub('[^!-~]', '.', data.decode('latin1'))
+                msg = (
+                    F'emulating [wait={waiting:02d}] {indent}{state.fmt(state.previous_address)}: '
+                    F'{state.fmt(address)} <- {h:_<{padlen}} {p:_<{padlen // 2}}')
+                if skipped:
+                    msg = F'{msg} {skipped}'
+                return msg
 
-        self.log_info(info)
+            self.log_info(info)
+
+        except KeyboardInterrupt:
+            emu.emu_stop()
+            return False
 
     def _hook_insn_error(self, emu: Uc, state: EmuState):
         self.log_debug('aborting emulation; instruction error')
@@ -395,15 +407,25 @@ class vstack(Unit):
 
     def _hook_mem_error(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
         bs = self.args.block_size
-        emu.mem_map(align(bs, address, down=True), 2 * bs)
-        return True
+        try:
+            emu.mem_map(align(bs, address, down=True), 2 * bs)
+        except Exception:
+            indent = '\x20' * 4 * len(state.callstack)
+            a = state.expected_address
+            w = state.executable.pointer_size // 4
+            self.log_info(
+                F'emulating [wait={state.waiting:02d}] '
+                F'{indent}0x{a:0{w}X}: unable to map memory')
+            return False
+        else:
+            return True
 
     def _hook_code(self, emu: Uc, address: int, size: int, state: EmuState):
-        state.ticks -= 1
-        if address == state.stop or state.ticks == 0:
-            emu.emu_stop()
-            return False
         try:
+            state.ticks -= 1
+            if address == state.stop or state.ticks == 0:
+                emu.emu_stop()
+                return False
             waiting = state.waiting
             callstack = state.callstack
             depth = len(callstack)
