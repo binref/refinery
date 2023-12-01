@@ -28,3 +28,12 @@ class TestVStack(TestUnitBase):
             resub | trim -ui flareon | b64 | zl | vstack -p9: -ax64 [| sorted -a size | trim h:00 | pop key | xor eat:key ]
         ''') | bytes
         self.assertEqual(dc, b'Patience is rewarded sooner or later - but usually later.')
+
+    def test_stringcrypt_01(self):
+        data = self.download_sample('e7a198902409517fc723d40b79c27b1776509d63c461b8f5daf5bb664f9e0589')
+        test = data | self.load_pipeline(
+            'put b [| rex Y:488D4C[2]E8[4]488BC8E8 | eat b | vaddr offset | vstack -w40 var:offset | xtp | defang ]') | {str}
+        self.assertSetEqual(test, {
+            'https[:]//discord[.]com/channels/1145547606802563172/1154889021567279115/1154889238077263952',
+            'https[:]//raw.githubusercontent[.]com/ToXicVibezz/Galaxy/main/Galaxy.dll',
+        })
