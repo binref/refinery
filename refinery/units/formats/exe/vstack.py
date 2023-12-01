@@ -343,7 +343,6 @@ class vstack(Unit):
         try:
             mask = (1 << (size * 8)) - 1
             unsigned_value = value & mask
-            depth = len(state.callstack)
 
             if unsigned_value == state.expected_address:
                 callstack = state.callstack
