@@ -39,6 +39,7 @@ class EmuState:
     callstack_ceiling: int = 0
     allocations: List[Range] = field(default_factory=list)
     ticks: int = field(default_factory=lambda: INF)
+    max_wait: int = 0
 
     def disassemble(self, address: int, size: int):
         if self.disassembler is None:
@@ -50,6 +51,11 @@ class EmuState:
                 bytes(self.executable.data[pos:end]), address, 1))
         except Exception:
             return None
+
+    def log(self, msg: str) -> str:
+        _width = len(str(self.max_wait))
+        _depth = len(self.callstack)
+        return F'[wait={self.waiting:0{_width}d}] [call={_depth}] {self.fmt(self.previous_address)}: {msg}'
 
     def fmt(self, address: int) -> str:
         return F'0x{address:0{self.executable.pointer_size // 4}X}'
@@ -302,6 +308,7 @@ class vstack(Unit):
                 ip_register=ip,
                 rv_register=rv,
                 allocations=[stack],
+                max_wait=self.args.wait
             )
 
             timeout = self.args.timeout
@@ -350,7 +357,6 @@ class vstack(Unit):
                 state.retaddr = None
 
             skipped = False
-            waiting = state.waiting
 
             if size not in bounds[self.args.write_range]:
                 skipped = 'size excluded'
@@ -383,13 +389,11 @@ class vstack(Unit):
 
             def info():
                 data = unsigned_value.to_bytes(size, state.executable.byte_order().value)
-                indent = '\x20' * 4 * depth
-                padlen = state.executable.pointer_size // 4
+                ph = state.executable.pointer_size // 4
+                pt = state.executable.pointer_size // 8
                 h = data.hex().upper()
-                p = re.sub('[^!-~]', '.', data.decode('latin1'))
-                msg = (
-                    F'emulating [wait={waiting:02d}] {indent}{state.fmt(state.previous_address)}: '
-                    F'{state.fmt(address)} <- {h:_<{padlen}} {p:_<{padlen // 2}}')
+                t = re.sub('[^!-~]', '.', data.decode('latin1'))
+                msg = state.log(F'{state.fmt(address)} <- {h:_<{ph}} {t:_<{pt}}')
                 if skipped:
                     msg = F'{msg} {skipped}'
                 return msg
@@ -410,12 +414,7 @@ class vstack(Unit):
         try:
             emu.mem_map(align(bs, address, down=True), 2 * bs)
         except Exception:
-            indent = '\x20' * 4 * len(state.callstack)
-            a = state.expected_address
-            w = state.executable.pointer_size // 4
-            self.log_info(
-                F'emulating [wait={state.waiting:02d}] '
-                F'{indent}0x{a:0{w}X}: unable to map memory')
+            self.log_info(state.log('unable to map memory'))
             return False
         else:
             return True
@@ -470,13 +469,11 @@ class vstack(Unit):
             state.expected_address += size
 
             instruction = state.disassemble(address, size)
-            indent = '\x20' * 4 * depth
-            logmsg = F'emulating [wait={waiting:02d}] {indent}0x{address:0{state.executable.pointer_size // 4}X}:'
             if instruction:
                 instruction = F'{instruction.mnemonic} {instruction.op_str}'
-                self.log_debug(logmsg, instruction)
+                self.log_debug(state.log(instruction))
             else:
-                self.log_debug(logmsg, 'unrecognized instruction, aborting')
+                self.log_debug(state.log('unrecognized instruction, aborting'))
                 emu.emu_stop()
 
         except KeyboardInterrupt:
