@@ -414,7 +414,7 @@ class vstack(Unit):
         try:
             emu.mem_map(align(bs, address, down=True), 2 * bs)
         except Exception:
-            self.log_info(state.log('unable to map memory'))
+            self.log_info(state.log(F'{state.fmt(address)} :: MEMORY ERROR'))
             return False
         else:
             return True
