@@ -368,7 +368,7 @@ class vstack(Unit):
                         skipped = F'write to section {s.name}'
                         break
             if (
-                not skipped 
+                not skipped
                 and unsigned_value == 0
                 and state.writes.at(address) is not None
                 and self.args.log_zero_overwrites is False
