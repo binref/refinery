@@ -30,9 +30,9 @@ def _F2(x: int) -> int:
 
 
 class HC256(Iterator[int]):
-    p: array.ArrayType
-    q: array.ArrayType
-    c: int
+    _p: array.ArrayType
+    _q: array.ArrayType
+    _c: int
 
     def __init__(self, key: bytes, iv: bytes):
         if len(key) != 0x20:
@@ -54,27 +54,26 @@ class HC256(Iterator[int]):
             a = _F2(w[k - 0x2])
             b = _F1(w[k - 0xF])
             w[k] = a + w[k - 7] + b + w[k - 16] + k & 0xFFFFFFFF
-        self.p = w[0x200:0x600]
-        self.q = w[0x600:0xA00]
-        self.c = 0
+        self._p = w[0x200:0x600]
+        self._q = w[0x600:0xA00]
+        self._c = 0
         for _ in range(0x1000):
-            x = next(self)
-            x = x
+            next(self)
 
     def __next__(self) -> int:
-        k = self.c & 0x3FF
+        k = self._c & 0x3FF
         a = k - 0x3 & 0x3FF
         b = k - 0xA & 0x3FF
         c = k - 0xC & 0x3FF
         d = k + 0x1 & 0x3FF
-        p = self.p
-        q = self.q
-        if self.c >= 0x400:
+        p = self._p
+        q = self._q
+        if self._c >= 0x400:
             p, q = q, p
         prot = rotr32(p[a], 10) ^ rotr32(p[d], 23)
         qpos = (p[a] ^ p[d]) & 0x3FF
         p[k] = p[k] + p[b] + prot + q[qpos] & 0xFFFFFFFF
-        self.c = (self.c + 1) & 0x7FF
+        self._c = (self._c + 1) & 0x7FF
         return _H(q, p[c]) ^ p[k]
 
 
@@ -94,7 +93,4 @@ class hc256(StreamCipherUnit):
 
     def keystream(self) -> Iterable[int]:
         for num in HC256(self.args.key, self.args.iv):
-            yield num >> 0x00 & 0xFF
-            yield num >> 0x08 & 0xFF
-            yield num >> 0x10 & 0xFF
-            yield num >> 0x18 & 0xFF
+            yield from num.to_bytes(4, 'little')
