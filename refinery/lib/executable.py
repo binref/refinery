@@ -115,7 +115,7 @@ class Range(NamedTuple):
         return self.upper - self.lower
 
     def __contains__(self, addr: int):
-        return self.lower <= addr <= self.upper
+        return self.lower <= addr < self.upper
 
     def __str__(self):
         return F'0x{self.lower:X}:0x{self.upper:X}'
