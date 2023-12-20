@@ -27,4 +27,4 @@ class ngrams(Unit):
                 if block in deduplicator:
                     continue
                 deduplicator.add(block)
-                yield block
+                yield self.labelled(block, offset=index)
