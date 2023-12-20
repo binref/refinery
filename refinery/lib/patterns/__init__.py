@@ -421,6 +421,10 @@ class indicators(PatternEnum):
     "Monero addresses"
     path = pattern(_pattern_any_path)
     "Windows and Linux path names"
+    winpath = pattern(_pattern_win_path)
+    "Windows path names"
+    nixpath = pattern(_pattern_nix_path)
+    "Posix path names"
     environment_variable = pattern(_pattern_win_env_variable)
     "Windows environment variables, i.e. something like `%APPDATA%`"
 
