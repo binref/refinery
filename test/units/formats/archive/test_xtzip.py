@@ -21,6 +21,7 @@ class TestZipFileExtractor(TestUnitBase):
         )
         put = self.ldu('put', 'p', 'refined')
         xtzip = self.load(pwd='var:p')
+        print(str(data | put[xtzip]))
         self.assertEqual(str(data | put[xtzip]), 'foobar.')
 
     def test_empty_filename(self):
@@ -36,3 +37,26 @@ class TestZipFileExtractor(TestUnitBase):
         unit = self.load()
         result, = data | unit
         self.assertEqual(result[:12], b'\x06\x02\0\0\0\xA4\0\0RSA1')
+
+    def test_double_loaded_zip(self):
+        data = bytes.fromhex(
+            '50 4B 03 04 0A 00 00 00 00 00 20 6D 95 57 93 BD CF 63 0A 00 00 00 0A 00 00 00 0D 00'
+            '1C 00 74 65 73 74 66 69 6C 65 31 2E 74 78 74 55 54 09 00 03 5B 32 84 65 5E 32 84 65'
+            '75 78 0B 00 01 04 F5 01 00 00 04 14 00 00 00 74 65 73 74 66 69 6C 65 31 0A 50 4B 01'
+            '02 1E 03 0A 00 00 00 00 00 20 6D 95 57 93 BD CF 63 0A 00 00 00 0A 00 00 00 0D 00 18'
+            '00 00 00 00 00 01 00 00 00 A4 81 00 00 00 00 74 65 73 74 66 69 6C 65 31 2E 74 78 74'
+            '55 54 05 00 03 5B 32 84 65 75 78 0B 00 01 04 F5 01 00 00 04 14 00 00 00 50 4B 05 06'
+            '00 00 00 00 01 00 01 00 53 00 00 00 51 00 00 00 00 00 50 4B 03 04 0A 00 00 00 00 00'
+            '20 6D 95 57 50 EE E2 48 0A 00 00 00 0A 00 00 00 0D 00 1C 00 74 65 73 74 66 69 6C 65'
+            '32 2E 74 78 74 55 54 09 00 03 5B 32 84 65 5E 32 84 65 75 78 0B 00 01 04 F5 01 00 00'
+            '04 14 00 00 00 74 65 73 74 66 69 6C 65 32 0A 50 4B 01 02 1E 03 0A 00 00 00 00 00 20'
+            '6D 95 57 50 EE E2 48 0A 00 00 00 0A 00 00 00 0D 00 18 00 00 00 00 00 01 00 00 00 A4'
+            '81 00 00 00 00 74 65 73 74 66 69 6C 65 32 2E 74 78 74 55 54 05 00 03 5B 32 84 65 75'
+            '78 0B 00 01 04 F5 01 00 00 04 14 00 00 00 50 4B 05 06 00 00 00 00 01 00 01 00 53 00'
+            '00 00 51 00 00 00 00 00'
+        )
+
+        unit = self.load("-l")
+        result = str(data | unit)
+
+        self.assertEqual(result, "testfile1.txt\ntestfile2.txt")

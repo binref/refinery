@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.structures import MemoryFile
+from refinery.lib.structures import MemoryFile, DoubleLoadedZipFile
 from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
@@ -33,9 +33,16 @@ class xtzip(ArchiveUnit):
             self.log_debug(F'carved a zip file from 0x{offset:X}')
 
         from zipfile import ZipFile, ZipInfo
+        import re
 
         password = bytes(self.args.pwd)
-        archive = ZipFile(MemoryFile(data))
+
+        eocd_header_count = len(re.findall(ZipEndOfCentralDirectory.SIGNATURE, data))
+
+        if eocd_header_count > 1:
+            archive = ZipFile(DoubleLoadedZipFile(data))
+        else:
+            archive = ZipFile(MemoryFile(data))
 
         if password:
             archive.setpassword(password)

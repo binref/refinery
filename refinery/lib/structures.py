@@ -704,3 +704,85 @@ class PerInstanceAttribute(Generic[AttrType]):
                 raise AttributeError from K
             self.__get[pid] = self.resolve(parent, seed)
         return self.__get[pid]
+
+
+class DoubleLoadedZipFile(MemoryFile[T]):
+    """
+    A Class to handle ZIP files with multiple end of central directories, also called double-loaded zip.
+    The Reader combines the other EOCDs and append the result to the bytestream.
+    With the correct EOCD every ZIP reader can than handle the archive.
+
+    These technique is used by malware to bypass antivirus protection.
+    """
+    def __init__(self, data: Optional[T]) -> None:
+        super().__init__(self.__append_new_central_directory(data))
+
+    def __append_new_central_directory(self, data: Optional[T]):
+        import re
+
+        content_list = []
+
+        # First we need to find all files in the archive and calculate the offset.
+        for content_header in re.finditer(b'PK\x03\x04', data):
+            content_offset = content_header.start()
+            filename_size = struct.unpack('<H', data[content_offset + 26: content_offset + 28])[0]
+            filename = data[content_offset + 30:content_offset + 30 + filename_size]
+            content_list.append((filename, content_offset))
+
+        new_central_directory = bytearray()
+        new_central_directory_entries = 0
+        new_central_directory_size = 0
+        new_central_directory_offset = len(data)
+
+        # Then we get every central directory entry and copy it to the new eocd.
+        # Just the pointer to the file is changed. Everything else is copied from the original eocd,
+        # for example the timestamps.
+        for header in re.finditer(b'PK\x05\x06', data):
+            offset = header.start()
+            dir_entries = struct.unpack('<H', data[offset+10:offset+12])[0]
+            dir_size = struct.unpack('<I', data[offset+12:offset+16])[0]
+
+            central_dir_entry = offset-dir_size
+            cur_dir_index = 0
+
+            while cur_dir_index < dir_entries:
+                filename_size = struct.unpack('<H', data[central_dir_entry+28: central_dir_entry+30])[0]
+                filename = data[central_dir_entry+46: central_dir_entry+46+filename_size]
+
+                # get the file offset
+                file_offset = [item[1] for item in content_list if item[0] == filename][0]
+
+                extra_field_length = struct.unpack('<H', data[central_dir_entry+30: central_dir_entry+32])[0]
+                cur_dir_size = 46 + filename_size + extra_field_length
+
+                new_entry = (
+                    data[central_dir_entry:central_dir_entry+42]
+                    + struct.pack('<I', file_offset)
+                    + data[central_dir_entry+46:central_dir_entry+cur_dir_size]
+                )
+                new_central_directory += new_entry
+                new_central_directory_entries += 1
+                new_central_directory_size += cur_dir_size
+
+                central_dir_entry += cur_dir_size
+                cur_dir_index += 1
+
+        new_central_directory += self.__create_end_of_central_directory(
+            new_central_directory_entries,
+            new_central_directory_size,
+            new_central_directory_offset
+        )
+
+        return data + new_central_directory
+
+    @staticmethod
+    def __create_end_of_central_directory(entries, dir_size, dir_offset):
+        entries = struct.pack('<H', entries)
+        return (
+            b'PK\x05\x06'
+            + b'\x00\x00' + b'\x00\x00'
+            + entries + entries
+            + struct.pack('<I', dir_size)
+            + struct.pack('<I', dir_offset)
+            + b'\x00\x00'
+        )
