@@ -21,7 +21,6 @@ class TestZipFileExtractor(TestUnitBase):
         )
         put = self.ldu('put', 'p', 'refined')
         xtzip = self.load(pwd='var:p')
-        print(str(data | put[xtzip]))
         self.assertEqual(str(data | put[xtzip]), 'foobar.')
 
     def test_empty_filename(self):
