@@ -856,7 +856,7 @@ class a3x(PathExtractorUnit):
                         cursor += len(A3xRecord.MAGIC)
                     continue
                 if script.truncated:
-                    _a = 'broken'
+                    _a = 'truncated'
                     truncated.update(script.body)
                 else:
                     script_count += 1
