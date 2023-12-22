@@ -306,7 +306,11 @@ class xtp(PatternExtractor):
             while value[ix] not in self._ALPHABETIC:
                 ix += 1
             return None if at - ix < 3 else value[ix:]
-        elif name == indicators.path.name:
+        elif name in (
+            indicators.path.name,
+            indicators.winpath.name,
+            indicators.nixpath.name,
+        ):
             if len(value) < 8:
                 return None
             if len(value) > 16 and len(re.findall(RB'\\x\d\d', value)) > len(value) // 10:
