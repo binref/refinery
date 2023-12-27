@@ -130,7 +130,7 @@ class PathExtractorUnit(Unit, abstract=True):
             else:
                 paths = [u'*']
         else:
-            def to_string(t):
+            def to_string(t: Union[str, bytes]) -> str:
                 if isinstance(t, str):
                     return t
                 return t.decode(self.codec)
