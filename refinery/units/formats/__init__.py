@@ -85,7 +85,7 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        *paths: Arg.Binary(metavar='path', nargs='*', help=(
+        *paths: Arg.String(metavar='path', nargs='*', help=(
             'Wildcard pattern for the path of the item to be extracted. Each item is returned '
             'as a separate output of this unit. Paths may contain wildcards; The default '
             'argument is a single wildcard, which means that every item will be extracted. If '
