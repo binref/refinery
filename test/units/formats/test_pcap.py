@@ -11,7 +11,7 @@ class TestPCAP(TestUnitBase):
         data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
         pipeline = self.load_pipeline('pcap-http [| pick 4 ]')
         chunk = next(data | pipeline)
-        self.assertEqual(chunk['url'], B'http://www.tao168188'B'.com:1046/mh.exe')
+        self.assertEqual(chunk['url'], B'http://www.tao168188'B'.com/mh.exe')
         self.assertEqual(
             hashlib.sha256(chunk).hexdigest(),
             '9972394d4d8d51abf15bfaf6c1ddfe9c8bf85ae0b9b0a561adfd9b4844c520b9'

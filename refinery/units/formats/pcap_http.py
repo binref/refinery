@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf - 8 -* -
 from typing import List, NamedTuple
-from contextlib import suppress
 
 from refinery.units import Unit
 from refinery.units.formats.httpresponse import httpresponse
@@ -16,9 +15,13 @@ class _HTTP_Request(NamedTuple):
     dst: str
 
 
+class _HTTPParseError(ValueError):
+    pass
+
+
 def _parse_http_request(stream: bytearray):
-    src: bytes = stream['src']
-    host, _, port = src.partition(B':')
+    dst: bytes = stream['dst']
+    host, _, port = dst.partition(B':')
     lines = stream.splitlines(False)
     headers = iter(lines)
     path, _ = next(headers).rsplit(maxsplit=1)
@@ -28,7 +31,9 @@ def _parse_http_request(stream: bytearray):
         if not colon:
             continue
         if name.lower() == B'host':
-            host = value.strip()
+            host, _, p = value.strip().partition(B':')
+            if p and p != port:
+                raise _HTTPParseError(F'http header suggests port {p}, but connection was to port {port}')
     if int(port) != 80:
         host = B':'.join((host, port))
     return _HTTP_Request(
@@ -60,9 +65,13 @@ class pcap_http(Unit):
             try:
                 data = http_parser.process(stream)
             except Exception:
-                with suppress(Exception):
+                try:
                     rq = _parse_http_request(stream)
                     requests.append(rq)
+                except _HTTPParseError as E:
+                    self.log_info(F'error parsing http request: {E!s}')
+                except Exception:
+                    pass
                 continue
             if not data:
                 continue
