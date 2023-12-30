@@ -17,11 +17,7 @@ class ZipEndOfCentralDirectory(Struct):
         self.entries_in_directory = reader.u16()
         self.directory_size = reader.u32()
         self.directory_offset = reader.u32()
-        try:
-            cl = reader.u32()
-            self.comment = cl and reader.read(cl) or None
-        except EOFError:
-            self.comment = None
+        self.comment_length = reader.u16()
 
 
 class ZipCentralDirectory(Struct):
@@ -79,8 +75,8 @@ class carve_zip(Unit):
             except ValueError:
                 self.log_debug('computed location of central directory is invalid')
                 end = end - len(ZipEndOfCentralDirectory.SIGNATURE)
-            else:
-                start = central_directory.header_offset + shift
-                zip = mem[start:end + len(end_marker)]
-                yield self.labelled(zip, offset=start)
-                end = start
+                continue
+            start = central_directory.header_offset + shift
+            zip = mem[start:end + len(end_marker)]
+            yield self.labelled(zip, offset=start)
+            end = start

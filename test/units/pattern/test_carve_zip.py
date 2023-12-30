@@ -64,3 +64,11 @@ class TestCarveZIP(TestUnitBase):
         data += B'PK\x03\x04' * 12
         result = list(data | self.load())
         self.assertEqual(len(result), 2)
+
+    def test_double_loaded_zip(self):
+        data = self.download_sample('e90b970c5e5ddf821d6f9f4d7d710d6dc01d59b517e8fb39da726803dc52b5ad')
+        test = data | self.load_pipeline('carve-zip [| xtzip | put h var:sha256 | cfmt {path} ]') | {'h': str}
+        self.assertDictEqual(test, {
+            '91d539af85599fda3fb2fb023866b72d64adc2bb95f6153e655cc844564de02e': 'SHIPPING_MX00034900_PL_INV_pdf.exe',
+            'f556ea7ba9387215b58eb077cdb2f56c27c5f8fd85493cb49ad3ba204abeb6b9': 'order.jpg',
+        })
