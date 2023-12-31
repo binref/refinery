@@ -337,19 +337,25 @@ class NoLogging:
             sys.stdout.close()
             sys.stdout = self._stdout
 
+class NotOne(LookupError):
+    def __init__(self, empty: bool):
+        how = 'none' if empty else 'more'
+        super().__init__(F'Expected a single item, but the iterator was {how}')
+        self.empty = empty
+
 
 def one(iterable: Iterable[_T]) -> _T:
     it = iter(iterable)
     try:
         top = next(it)
     except StopIteration:
-        raise LookupError
+        raise NotOne(True)
     try:
         next(it)
     except StopIteration:
         return top
     else:
-        raise LookupError
+        raise NotOne(False)
 
 
 def isodate(iso: str) -> Optional[datetime.datetime]:
