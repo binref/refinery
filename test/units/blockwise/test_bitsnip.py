@@ -36,3 +36,8 @@ class TestBitSnip(TestUnitBase):
         ))
         self.assertEqual(
             data | self.load() | bytes, (0b10011001).to_bytes(1, 'little'))
+
+    def test_snip_padding(self):
+        data = bytes.fromhex('BAAD')
+        test = data | self.load('4::8', ':4:8') | bytes
+        self.assertEqual(test, bytes((0xB, 0xA, 0xA, 0xD)))
