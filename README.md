@@ -146,7 +146,7 @@ To run it, you have to specify the path of a virtual environment as the first co
 which will cause the script to run itself again using the interpreter of that environment.
 If you are certain that you want to run [run-pdoc3.py](run-pdoc3.py),
 there is a command line switch to force the script to run with the current default Python interpreter.
-The script installs the [pdoc3 package][pdoc3] and uses it to generate a HTML documentation for the `refinery` package.
+The script installs the [pdoc3 package][pdoc3] and uses it to generate an HTML documentation for the `refinery` package.
 The documentation can then be found in the subdirectory `html` directly next to this readme file.
 
 The [tutorials](tutorials) are Jupyter notebooks which you can simply run and execute if your virtual environment has [Jupyter installed][jupyter].
@@ -273,7 +273,7 @@ emit ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394 \
 
 ### AES Encryption
 
-Assume that `data` is a file which was encrypted with 256 bit AES in CBC mode.
+Assume that `data` is a file which was encrypted with 256-bit AES in CBC mode.
 The key was derived from the secret passphrase `swordfish` using the PBKDF2 key derivation routine using the salt `s4lty`.
 The IV is prefixed to the buffer as the first 16 bytes.
 It can be decrypted with the following pipeline:

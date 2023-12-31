@@ -102,9 +102,9 @@ class Operations:
         self.indentlevel = 0
         # boolean indicating if indentation level should be increased after the current command
         self.indentincrease_future = False
-        # boolean indicating to print all stack, like in one liner cases
+        # boolean indicating to print all stack, like in one-liner cases
         self.has_bos = False
-        # boolean indicating if we are on a onelineif. In this case, closing should not be treated the same as other if blocks
+        # boolean indicating if we are on an onelineif. In this case, closing should not be treated the same as other if blocks
         self.onelineif = False
         self.ops = {
             'Imp'                   : self.imp,
@@ -1564,7 +1564,7 @@ class Operations:
 
     def else_(self):
         """
-        command used for a "else" in a if oneliner
+        command used for an "else" in an if oneliner
         example: If X < 4 Then MsgBox "hi" Else MsgBox "ho"
         gives:
              # Ld X
@@ -2581,7 +2581,7 @@ class Operations:
             
     def memredimas(self, *args):
         """
-        command used when a redim is defined on a property of an object with a As in the end
+        command used when a redim is defined on a property of an object with an As in the end
         example: ReDim myobj.mytab(50) As Double
         gives:
              # OptionBase
@@ -2640,7 +2640,7 @@ class Operations:
             
     def memredimaswith(self, *args):
         """
-        command used when a redim is defined on a property of an object with a As in the end, within a with block
+        command used when a redim is defined on a property of an object with an As in the end, within a with block
         example: With myobj ... ReDim .mytab(70) As Integer ... End With 
         gives:
              # OptionBase
@@ -2720,7 +2720,7 @@ class Operations:
             
     def midb(self):
         """
-        command used when Mid funtion is used to set a sub string part, e.g as an instruction
+        command used when Mid funtion is used to set a sub string part, e.g. as an instruction
         example: MidB(MyString, 5, 3) = "fox"
         gives:
              # LitStr 0x0003 "fox"
@@ -2884,7 +2884,7 @@ class Operations:
     def paramomitted(self):
         """
         command used when a parameter is left blank in a function call
-        example: MsgBox Msg, , "Deferred Error Test"
+        example: MsgBox Msg, "Deferred Error Test"
         gives:
              # Ld Msg
              # ParamOmitted
@@ -3246,7 +3246,7 @@ class Operations:
         
     def redimas(self, *args):
         """
-        command used when a redim is defined with a As in the end
+        command used when a redim is defined with an As in the end
         example: ReDim mytab(50) As Double
         gives:
              # OptionBase
@@ -3849,7 +3849,7 @@ class Parser:
             inputLine = inputLine.strip()
 
             if 'VBA/' in inputLine and inputLine.endswith('bytes'): # here we have a new stream in the document
-                if laststream is None: #eg first occurence
+                if laststream is None: # e.g. first occurence
                     laststream = inputLine
                 else:
                     if opelinesblock == []:

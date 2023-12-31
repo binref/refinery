@@ -47,7 +47,7 @@ def get_terminal_size(default=0):
     """
     Returns the size of the currently attached terminal. If the environment variable
     `REFINERY_TERM_SIZE` is set to an integer value, it takes prescedence. If the width
-    of the terminal cannot be determined of if the width is less than 8 characters,
+    of the terminal cannot be determined or if the width is less than 8 characters,
     the function returns zero.
     """
     from refinery.lib.environment import environment
@@ -385,7 +385,7 @@ def integers_of_slice(s: slice) -> Iterable[int]:
 def normalize_word_separators(words: str, unified_separator: str, strip: bool = True):
     """
     For a sequence of words separated by whitespace, punctuation, slashes, dashes or underscores,
-    normalize all occurrences of one or more of these seprators to one given symbol. Leading and
+    normalize all occurrences of one or more of these separators to one given symbol. Leading and
     trailing occurrences of separators are removed.
     """
     normalized = re.sub('[-\\s_.,;:/\\\\]+', unified_separator, words)

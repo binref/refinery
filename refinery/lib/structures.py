@@ -376,7 +376,7 @@ class StructReader(MemoryFile[T]):
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
-        an exception of type `refinery.lib.structures.EOF` when less data is available in the stream than
+        an exception of type `refinery.lib.structures.EOF` when fewer data is available in the stream than
         requested via the `size` parameter. The remaining data can be extracted from the exception.
         Use `refinery.lib.structures.StructReader.read_bytes` to read bytes from the stream when it is
         not byte-aligned.

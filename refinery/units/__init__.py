@@ -150,7 +150,7 @@ is always possible to use a literal ellipsis (`...`).
 You can connect pipelines to `bytearray` and (writable) `memoryview` instances.
 In this case, the output will be appended to the end of this buffer. Finally, if
 you connect a pipeline to `None`, this will execute the unit but discard all
-output. This is useful for using units with side-effects, like `refinery.peek`,
+output. This is useful for using units with side effects, like `refinery.peek`,
 in a REPL.
 """
 from __future__ import annotations
