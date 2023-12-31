@@ -43,7 +43,7 @@ class subfiles(Unit):
             'rtf'  : carve_rtf(),
         }
 
-        covered = set()
+        covered = []
 
         for extension, unit in carvers.items():
             self.log_info(F'carving {extension} files')
@@ -55,5 +55,5 @@ class subfiles(Unit):
                 if any(start > left and end < right for left, right in covered):
                     continue
                 if not self.args.recursive:
-                    covered.add((start, end))
+                    covered.append((start, end))
                 yield chunk
