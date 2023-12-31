@@ -221,14 +221,14 @@ class PathExtractorUnit(Unit, abstract=True):
                     if not self.args.drop:
                         result.meta[metavar] = path
                     try:
-                        data = result.get_data()
+                        chunk = result.get_data()
                     except Exception as error:
                         if self.log_debug():
                             raise
                         self.log_warn(F'extraction failure for {path}: {error!s}')
                     else:
                         self.log_debug(F'extraction success for {path}')
-                        yield self.labelled(data, **result.meta)
+                        yield self.labelled(chunk, **result.meta)
                 if done or self.args.fuzzy:
                     break
 
