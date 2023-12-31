@@ -188,7 +188,7 @@ class pemeta(Unit):
     @classmethod
     def parse_signature(cls, data: bytearray) -> dict:
         """
-        Extracts a JSON-serializable and human readable dictionary with information about
+        Extracts a JSON-serializable and human-readable dictionary with information about
         time stamp and code signing certificates that are attached to the input PE file.
         """
         from refinery.units.formats.pkcs7 import pkcs7
@@ -284,7 +284,7 @@ class pemeta(Unit):
 
     def parse_version(self, pe: PE, data=None) -> dict:
         """
-        Extracts a JSON-serializable and human readable dictionary with information about
+        Extracts a JSON-serializable and human-readable dictionary with information about
         the version resource of an input PE file, if available.
         """
         pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
@@ -498,7 +498,7 @@ class pemeta(Unit):
 
     def parse_dotnet(self, pe: PE, data):
         """
-        Extracts a JSON-serializable and human readable dictionary with information about
+        Extracts a JSON-serializable and human-readable dictionary with information about
         the .NET metadata of an input PE file.
         """
         header = DotNetHeader(data, pe=pe)

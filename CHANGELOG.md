@@ -146,7 +146,7 @@
 - The color legend of the `iemap` unit is now optional and can be enabled with a switch.
 
 ## Version 0.5.5
-- Bugfix to account for changes in MacOS libmagic which lead to not correctly identifying `exe` and `dll` extensions.
+- Bugfix to account for changes in macOS libmagic which lead to not correctly identifying `exe` and `dll` extensions.
 - Importing refinery no longer changes the names of log levels globally.
 
 ## Version 0.5.4
@@ -624,7 +624,7 @@ Updates build system.
 - The `pemeta` unit was added.
 - The `carve-json` unit was added.
 - The `peslice` and `elfslice` units were given a unified interface.
-- The `b85` for base 85 encoding an decoding was added.
+- The `b85` for base 85 encoding a decoding was added.
 
 ## Version 0.1.3
 - Fixes a bug in the .NET header parser where the tables were sometimes parsed in the wrong order.
@@ -658,7 +658,7 @@ Updates build system.
 - The unit `jsonfmt` has been renamed to `ppjson` (for **p**retty-**p**rint **json**).
 - The unit `ppxml` (**p**retty-**p**rint **xml**) was added.
 - The unit `carve-pe` (carve PE files) was added.
-- The unit `winreg` (read windows registry hives) was added, also adding a dependency on the [python-registry][] package (also [on GitHub][python-registry-gh]).
+- The unit `winreg` (read Windows registry hives) was added, also adding a dependency on the [python-registry][] package (also [on GitHub][python-registry-gh]).
 - .NET managed resource extraction was improved, although it is still not perfect.
 - The unit `sorted` now only sorts the chunks of the input stream that are in scope.
 - The unit `dedup` can no longer sort the input stream because `sorted` can do this.

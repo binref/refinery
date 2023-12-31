@@ -5,7 +5,7 @@ from refinery.units import Unit
 
 class hex(Unit):
     """
-    Hex-decodes and encodes binary data. Non hex characters are removed from
+    Hex-decodes and encodes binary data. Non-hex characters are removed from
     the input. For decoding, any odd trailing hex digits are stripped as two
     hex digits are required to represent a byte.
     """

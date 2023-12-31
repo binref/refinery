@@ -4556,7 +4556,7 @@ class TestSerpent(TestUnitBase):
 
     def test_real_world_malware(self):
         """
-        This is an block taken from a real-world malicious payload that was encrypted with Serpent;
+        This is a block taken from a real-world malicious payload that was encrypted with Serpent;
         The default byte order for the binary-refinery implementation was chosen to match it.
         """
         key = bytes.fromhex('0394d550fb286dda')

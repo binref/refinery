@@ -317,7 +317,7 @@ def check_variable_name(name: Optional[str], allow_derivations=False) -> None:
 
 class SizeInt(int, CustomStringRepresentation):
     """
-    The string representation of this int class is a a human-readable expression of size, using
+    The string representation of this int class is a human-readable expression of size, using
     common units such as kB and MB.
     """
     width = 9
@@ -356,7 +356,7 @@ class TerseSizeInt(SizeInt):
 
 class Percentage(float, CustomStringRepresentation):
     """
-    The string representation of this floating point class is a a human-readable expression of a
+    The string representation of this floating point class is a human-readable expression of a
     percentage. The string representation is a common decimal with 4 digits precision, but casting
     the object using `repr` will yield a percentage.
     """

@@ -11,7 +11,7 @@ class MurMurHash(HashUnit, abstract=True):
 
 class mmh32(MurMurHash):
     """
-    Returns the 32bit Murmur Hashof the input data.
+    Returns the 32bit Murmur Hash of the input data.
     """
     def _algorithm(self, data: bytes) -> bytes:
         return mmh32digest(data, self.args.seed)

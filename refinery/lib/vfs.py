@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Certain libraries insist to read data from a file on disk which has to be specified by passing
+Certain libraries insist on reading data from a file on disk which has to be specified by passing
 a file path, and sometimes they will not accept a stream object or any other way to input data to
 them. This module implements a **virtual file system** which allows us to pass in-memory data to
 these libraries without having to actually write anything to disk. It works by hooking the

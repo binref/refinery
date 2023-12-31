@@ -7,7 +7,7 @@ from refinery.lib.meta import metavars
 class mvg(Unit):
     """
     Short for "Make Variable Global": This unit can move meta variables into the scope of the
-    parent frame. If used at the end of a frame, the variables will be moved the the scope of the
+    parent frame. If used at the end of a frame, the variables will be moved the scope of the
     frame that the pipeline will return to. Otherwise and if the --top switch is being used,
     variables will be moved to scope 0, i.e. to the topmost frame in the current tree.
 

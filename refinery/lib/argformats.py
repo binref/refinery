@@ -229,7 +229,7 @@ class PythonExpression:
 class SliceAgain(LazyEvaluation):
     """
     Raised by `refinery.lib.argformats.sliceobj` to indicate that meta variables
-    are required to compue this slice.
+    are required to compute this slice.
     """
     def __init__(self, expr: Union[DelayedBinaryArgument, str]):
         self.expr = expr
