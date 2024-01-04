@@ -25,13 +25,11 @@ class xtzip(ArchiveUnit):
         import pyzipper
         return pyzipper
 
-    def unpack(self, data: bytearray):
-        if not data.startswith(B'PK'):
-            self.log_info('input file is not a zip file, attempting to carve one')
-            data = next(data | carve_zip)
-            offset = data['offset']
-            self.log_debug(F'carved a zip file from 0x{offset:X}')
+    @classmethod
+    def _carver(cls):
+        return carve_zip
 
+    def unpack(self, data: bytearray):
         from zipfile import ZipFile, ZipInfo
 
         password = bytes(self.args.pwd)

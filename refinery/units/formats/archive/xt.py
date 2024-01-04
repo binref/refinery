@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import List, Optional, Type
 
-from refinery.units.formats.archive import ArchiveUnit
+from refinery.units.formats.archive import ArchiveUnit, CouldUnpackWhenLenient
 from refinery.units import RefineryException
 
 
@@ -87,6 +87,8 @@ class xt(ArchiveUnit):
             date=self.args.date,
             join_path=self.args.join,
             drop_path=self.args.drop,
+            lenient=self.args.lenient,
+            quiet=self.args.quiet
         )
         if self.args.pwd:
             key_args.update(pwd=self.args.pwd)
@@ -124,11 +126,12 @@ class xt(ArchiveUnit):
                     except Exception as error:
                         if not self.fallback:
                             errors[handler.name] = error
-                        self.unit.log_debug('handler unpacking failed:', error)
-                        return
+                        if isinstance(error, CouldUnpackWhenLenient):
+                            self.unit.log_warn(error)
+                        else:
+                            self.unit.log_debug('handler unpacking failed:', error)
                     else:
                         self.success = True
-                        return
                 elif verdict is None:
                     fallback.append(handler)
 
