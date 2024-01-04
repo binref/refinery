@@ -337,6 +337,7 @@ class NoLogging:
             sys.stdout.close()
             sys.stdout = self._stdout
 
+
 class NotOne(LookupError):
     def __init__(self, empty: bool):
         how = 'none' if empty else 'more'
