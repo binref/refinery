@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from typing import ByteString, Callable, Optional, Union, Type, Self
 
 
-class CouldUnpackWhenLenient(Exception):
+class MultipleArchives(Exception):
     pass
 
 
@@ -46,7 +46,7 @@ class ArchiveExecutable(Executable):
                 text = (
                     F'The input contains {some} archives. Use the {carver.name} unit to extract them individually '
                     R'or set the --lenient/-L option to fuse the archives.')
-                raise CouldUnpackWhenLenient(text)
+                raise MultipleArchives(text)
             else:
                 archives = [arc1, arc2]
                 archives.extend(carved)
