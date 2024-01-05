@@ -72,3 +72,5 @@ class TestCarveZIP(TestUnitBase):
             '91d539af85599fda3fb2fb023866b72d64adc2bb95f6153e655cc844564de02e': 'SHIPPING_MX00034900_PL_INV_pdf.exe',
             'f556ea7ba9387215b58eb077cdb2f56c27c5f8fd85493cb49ad3ba204abeb6b9': 'order.jpg',
         })
+        test = data | self.load_pipeline('carve-zip [| xtzip | cfmt {path} ]') | [str]
+        self.assertListEqual(test, ['order.jpg', 'SHIPPING_MX00034900_PL_INV_pdf.exe'])

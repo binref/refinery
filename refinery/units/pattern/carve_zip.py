@@ -54,6 +54,7 @@ class carve_zip(Unit):
     def process(self, data: bytearray):
         end = len(data)
         mem = memoryview(data)
+        rev = []
         while True:
             end = data.rfind(ZipEndOfCentralDirectory.SIGNATURE, 0, end)
             if end < 0:
@@ -77,6 +78,8 @@ class carve_zip(Unit):
                 end = end - len(ZipEndOfCentralDirectory.SIGNATURE)
                 continue
             start = central_directory.header_offset + shift
+            rev.append((start, end + len(end_marker)))
+            end = start
+        for start, end in reversed(rev):
             zip = mem[start:end + len(end_marker)]
             yield self.labelled(zip, offset=start)
-            end = start
