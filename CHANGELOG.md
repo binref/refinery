@@ -1,5 +1,8 @@
 # Binary Refinery Changelog
 
+## Version 0.6.26
+- Thanks to [@EricFaehrmann][], `xtzip` (and `xt`) now support doubly-loaded ZIP archives.
+
 ## Version 0.6.25
 - Fixes bugs that caused errors in Python 3.12 environments.
 
@@ -650,6 +653,7 @@ Updates build system.
 [@baderj]: https://github.com/baderj
 [@alphillips-lab] https://github.com/alphillips-lab
 [@cxiao]: https://github.com/cxiao
+[@EricFaehrmann]: https://github.com/EricFaehrmann
 [@larsborn]: https://github.com/larsborn
 [XLMMacroDeobfuscator]: https://github.com/DissectMalware/XLMMacroDeobfuscator
 [javaobj-issue-29]: https://github.com/tcalmant/python-javaobj/issues/29
