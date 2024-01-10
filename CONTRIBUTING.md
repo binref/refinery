@@ -17,10 +17,24 @@ The following is a brief overview of the development process of the toolkit:
   - These changes are committed and the commit is tagged with the new version number.
   - As a result, [a GitHub action](.github/workflows/publish.yml) is triggered to publish the new version to [pypi].
 
+## What to Contribute
+
+Bugfixes and suggested performance improvements are always welcome.
+For contributions that extend the feature set, i.e. most likely by contributing a novel unit,
+please make sure the following conditions are satisfied:
+
+- There is a conceivable requirement for this unit in the context of binary analysis and malware triage. 
+  A user story is very welcome so the maintainer can more easily understand the relevant use cases.
+- The unit is not replaceable by a reasonable pipeline of existing refinery units.
+  Clearly, it is very debatable at which point a substitute pipeline is beyond reason;
+  this might require discussion.
+
 ## How to Contribute
 
 If you would like to contribute to the development, here are a few things that you can do to make the PR go through more smoothly:
 
+- Before writing a lot of code, it is recommended to open an issue first:
+  The maintainer is opinionated and might reject your code or ideas for any number of reasons.
 - For contributions of new units, please only submit one single unit per pull request.
 - For other contributions, use your loaf.
 - Write a test. If you would like to test against a larger file,
