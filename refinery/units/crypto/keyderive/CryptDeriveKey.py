@@ -8,7 +8,7 @@ from refinery.units import RefineryPartialResult
 from refinery.units.crypto.keyderive import KeyDerivation, HASH
 
 
-class CryptDeriveKey(KeyDerivation):
+class mscdk(KeyDerivation):
     """
     An implementation of the CryptDeriveKey routine available from the Win32 API.
     """

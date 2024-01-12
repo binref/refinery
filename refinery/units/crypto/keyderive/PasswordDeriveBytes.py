@@ -3,7 +3,7 @@
 from refinery.units.crypto.keyderive import KeyDerivation
 
 
-class PasswordDeriveBytes(KeyDerivation):
+class mspdb(KeyDerivation):
     """
     An implementation of the PasswordDeriveBytes routine available from the .NET
     standard library. According to documentation, it is an extension of PBKDF1.
