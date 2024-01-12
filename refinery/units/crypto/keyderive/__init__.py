@@ -51,9 +51,11 @@ class KeyDerivation(Unit, abstract=True):
         **kw
     ):
         if hash is not None:
-            name = Arg.AsOption(hash, HASH).value
-            hash = importlib.import_module(F'Cryptodome.Hash.{name}')
+            hash = Arg.AsOption(hash, HASH)
         return super().__init__(salt=salt, size=size, iter=iter, hash=hash, **kw)
 
     @property
-    def hash(self): return self.args.hash
+    def hash(self):
+        name = self.args.hash.value
+        hash = importlib.import_module(F'Cryptodome.Hash.{name}')
+        return hash
