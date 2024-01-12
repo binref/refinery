@@ -5,6 +5,8 @@ Implements key derivation routines. These are mostly meant to be used as
 modifiers for multibin expressions that can be passed as key arguments to
 modules in `refinery.units.crypto.cipher`.
 """
+from __future__ import annotations
+
 import importlib
 
 from refinery.units import Arg, Unit
@@ -12,7 +14,22 @@ from refinery.lib.argformats import number
 from refinery.lib.types import ByteStr
 
 from enum import Enum
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    class _Hash(Protocol):
+        def update(self, data: ByteStr):
+            ...
+        def digest(self) -> ByteStr:
+            ...
+        def hexdigest(self) -> str:
+            ...
+
+    class _HashModule(Protocol):
+        def new(self, data=None) -> _Hash:
+            ...
 
 
 __all__ = ['Arg', 'HASH', 'KeyDerivation']
@@ -55,7 +72,7 @@ class KeyDerivation(Unit, abstract=True):
         return super().__init__(salt=salt, size=size, iter=iter, hash=hash, **kw)
 
     @property
-    def hash(self):
+    def hash(self) -> _HashModule:
         name = self.args.hash.value
         hash = importlib.import_module(F'Cryptodome.Hash.{name}')
         return hash
