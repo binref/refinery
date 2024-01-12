@@ -7,11 +7,11 @@ from refinery.units.crypto.keyderive import Arg, KeyDerivation
 __all__ = ['DESDerive']
 
 
-class DESDerive(KeyDerivation):
+class deskd(KeyDerivation):
     """
-    Implements the same functionality as `DES_string_to_key` in OpenSSL. It
-    converts a string to an 8 byte DES key with odd byte parity, per FIPS
-    specification. This is not a modern key derivation function.
+    Stands for "DES Key Derivation". It implements the same functionality as `DES_string_to_key` in OpenSSL. It
+    converts a string to an 8 byte DES key with odd byte parity, per FIPS specification. This is not a modern
+    key derivation function.
     """
     def __init__(self, size: Arg(help='The number of bytes to generate, default is the maximum of 8.') = 8):
         super().__init__(size=size, salt=None)
@@ -42,6 +42,6 @@ class DESDerive(KeyDerivation):
             des_set_odd_parity(key)
 
         if self.args.size > 8:
-            raise RefineryPartialResult('DESDerive can provide at most 8 bytes.', partial=key)
+            raise RefineryPartialResult('can provide at most 8 bytes.', partial=key)
 
         return key[:self.args.size]
