@@ -4,8 +4,6 @@ from refinery.units import RefineryPartialResult
 from refinery.lib.crypto import des_set_odd_parity
 from refinery.units.crypto.keyderive import Arg, KeyDerivation
 
-__all__ = ['DESDerive']
-
 
 class deskd(KeyDerivation):
     """
