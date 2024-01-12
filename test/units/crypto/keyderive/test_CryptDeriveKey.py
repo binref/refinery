@@ -6,7 +6,9 @@ from ... import TestUnitBase
 class TestCryptDeriveKey(TestUnitBase):
 
     def test_SHA2(self):
-        from refinery.lib.argformats import multibin
-        self.assertEqual(
-            multibin('take[:32]:sha256:PASSWORD'),
-            multibin('CryptDeriveKey[32,SHA256]:PASSWORD'))
+        from hashlib import sha256
+        data = B'PASSWORD'
+        unit = self.load(32, 'SHA256')
+        test = data | unit | bytes
+        goal = sha256(data).digest()[:32]
+        self.assertEqual(test, goal)
