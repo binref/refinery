@@ -44,7 +44,7 @@ class machometa(Unit):
             tabular=tabular,
         )
 
-    @Unit.Requires('k2l', 'all')
+    @Unit.Requires('k2l>=2.0', 'all')
     def _ktool():
         import ktool
         import ktool.macho
@@ -56,7 +56,7 @@ class machometa(Unit):
         macho_header = macho_image.macho_header
         dyld_header = macho_image.macho_header.dyld_header
         if dyld_header is not None:
-            info['Type'] = dyld_header.typename()
+            info['Type'] = dyld_header.type_name
             info['Magic'] = dyld_header.magic
             info['CPUType'] = macho_image.slice.type.name
             info['CPUSubType'] = macho_image.slice.subtype.name
@@ -82,42 +82,25 @@ class machometa(Unit):
         _kc = self._ktool.codesign
 
         class CodeDirectoryBlob(_km.Struct):
-            _FIELDNAMES = [
-                'magic',
-                'length',
-                'version',
-                'flags',
-                'hashOffset',
-                'identOffset',
-                'nSpecialSlots',
-                'nCodeSlots',
-                'codeLimit',
-                'hashSize',
-                'hashType',
-                'platform',
-                'pageSize',
-                'spare2'
-            ]
-            _SIZES = [
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint32_t,
-                _km.uint8_t,
-                _km.uint8_t,
-                _km.uint8_t,
-                _km.uint8_t,
-                _km.uint32_t
-            ]
-            SIZE = 44
+            FIELDS = {
+                'magic': _km.uint32_t,
+                'length': _km.uint32_t,
+                'version': _km.uint32_t,
+                'flags': _km.uint32_t,
+                'hashOffset': _km.uint32_t,
+                'identOffset': _km.uint32_t,
+                'nSpecialSlots': _km.uint32_t,
+                'nCodeSlots': _km.uint32_t,
+                'codeLimit': _km.uint32_t,
+                'hashSize': _km.uint8_t,
+                'hashType': _km.uint8_t,
+                'platform': _km.uint8_t,
+                'pageSize': _km.uint8_t,
+                'spare2': _km.uint32_t
+            }
 
             def __init__(self, byte_order='little'):
-                super().__init__(fields=self._FIELDNAMES, sizes=self._SIZES, byte_order=byte_order)
+                super().__init__(byte_order=byte_order)
                 self.magic = 0
                 self.length = 0
                 self.version = 0
@@ -144,7 +127,7 @@ class machometa(Unit):
                 # so we must do it ourselves here.
                 if blob.type == _kc.CSSLOT_CODEDIRECTORY:
                     start = superblob.off + blob.offset
-                    codedirectory_blob = macho_image.load_struct(start, CodeDirectoryBlob)
+                    codedirectory_blob = macho_image.read_struct(start, CodeDirectoryBlob)
 
                     # Ad-hoc signing
                     flags = _kc.swap_32(codedirectory_blob.flags)
@@ -155,15 +138,15 @@ class machometa(Unit):
 
                     # Signature identifier
                     identifier_offset = _kc.swap_32(codedirectory_blob.identOffset)
-                    identifier_data = macho_image.get_cstr_at(start + identifier_offset)
+                    identifier_data = macho_image.read_cstr(start + identifier_offset)
                     info['SignatureIdentifier'] = identifier_data
 
                 if blob.type == 0x10000:  # CSSLOT_CMS_SIGNATURE
                     start = superblob.off + blob.offset
-                    blob_data = macho_image.load_struct(start, _kc.Blob)
+                    blob_data = macho_image.read_struct(start, _kc.Blob)
                     blob_data.magic = _kc.swap_32(blob_data.magic)
                     blob_data.length = _kc.swap_32(blob_data.length)
-                    cms_signature = macho_image.get_bytes_at(start + _kc.Blob.SIZE, blob_data.length - _kc.Blob.SIZE)
+                    cms_signature = macho_image.read_bytearray(start + _kc.Blob.SIZE, blob_data.length - _kc.Blob.SIZE)
 
                     if len(cms_signature) != 0:
                         try:
