@@ -273,12 +273,7 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             elif prefix != 's' or self.requires_prefix(representation):
                 representation = F'{prefix}:{representation}'
         if representation is None:
-            if sum(_IS_PRINT_SAFE[c] for c in self) > len(self) * 0.6:
-                from urllib.parse import quote_from_bytes
-                quoted = quote_from_bytes(self, _PRINT_SAFE)
-                representation = F'q:{quoted}'
-            else:
-                representation = F'h:{self.hex()}'
+            representation = F'h:{self.hex()}'
         self._representation = representation
         return representation
 
