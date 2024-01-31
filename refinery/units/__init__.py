@@ -413,6 +413,10 @@ class Arg(Argument):
             raise ValueError(F'Could not transform {value} into {cls.__name__}; the choices are: {choices}') from E
 
     @classmethod
+    def Delete(cls):
+        return cls(nargs=cls.delete)
+
+    @classmethod
     def Counts(
         cls,
         *args   : str,
