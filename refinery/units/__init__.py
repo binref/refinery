@@ -243,7 +243,7 @@ class RefineryPartialResult(ValueError):
         return self.message
 
 
-class RefineryImportMissing(ImportError):
+class RefineryImportMissing(ModuleNotFoundError):
     def __init__(self, missing: str, *dependencies: str):
         super().__init__()
         import shlex
