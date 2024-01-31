@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.blockwise import BinaryOperation
+from refinery.units.blockwise import BinaryOperationWithAutoBlockAdjustment
 
 
-class add(BinaryOperation):
+class add(BinaryOperationWithAutoBlockAdjustment):
     """
     Add the given argument to each block.
     """

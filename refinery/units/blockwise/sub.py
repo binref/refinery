@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.blockwise import BinaryOperation
+from refinery.units.blockwise import BinaryOperationWithAutoBlockAdjustment
 
 
-class sub(BinaryOperation):
+class sub(BinaryOperationWithAutoBlockAdjustment):
     """
     Subtract the given argument from each block.
     """

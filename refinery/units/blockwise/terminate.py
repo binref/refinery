@@ -15,14 +15,14 @@ class terminate(BlockTransformationBase):
     def __init__(
         self,
         sentinel: Arg(help='sentinel value to look for; default is {default}') = B'\0',
-        blocksize=1, bigendian=False
+        blocksize=None, bigendian=False
     ):
         super().__init__(blocksize=blocksize, bigendian=bigendian, sentinel=sentinel)
 
     def process(self, data: bytearray):
         sentinel = self.args.sentinel
         position = 0
-        blocksize = self.args.blocksize
+        blocksize = self.blocksize
 
         self.log_info('blocksize:', blocksize)
         self.log_debug('separator:', sentinel)
@@ -50,7 +50,7 @@ class terminate(BlockTransformationBase):
             if position < 0:
                 data.extend(sentinel)
                 break
-            if position % self.args.blocksize == 0:
+            if position % self.blocksize == 0:
                 self.log_warn('input string already contains the termination character; returning unmodified input')
                 break
             position += 1

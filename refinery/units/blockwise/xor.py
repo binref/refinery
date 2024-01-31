@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.blockwise import BinaryOperation, FastBlockError
+from refinery.units.blockwise import BinaryOperationWithAutoBlockAdjustment, FastBlockError
 
 
-class xor(BinaryOperation):
+class xor(BinaryOperationWithAutoBlockAdjustment):
     """
     Form the exclusive or of the input data with the given argument.
     """
+    @staticmethod
+    def operate(a, b): return a ^ b
+    @staticmethod
+    def inplace(a, b): a ^= b
+
     def _fastblock(self, data):
         try:
             return super()._fastblock(data)
@@ -16,12 +21,10 @@ class xor(BinaryOperation):
             except ModuleNotFoundError:
                 raise E
             else:
-                from itertools import islice, cycle
-                take = len(data) // self.args.blocksize + 1
-                argb = self.unchunk(islice(cycle(x & self.fmask for x in self.args.argument[0]), take))
-                return strxor(data, argb[:len(data)])
-
-    @staticmethod
-    def operate(a, b): return a ^ b
-    @staticmethod
-    def inplace(a, b): a ^= b
+                from itertools import islice
+                size = len(data)
+                arg0 = self._normalize_argument(*self._auto_adjust_by_argument(self.args.argument[0]))
+                take = len(data) // self.blocksize + 1
+                argb = self.unchunk(islice(arg0, take))
+                del argb[size:]
+                return strxor(data, argb)

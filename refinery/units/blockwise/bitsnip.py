@@ -21,7 +21,7 @@ class bitsnip(BlockTransformationBase):
             'bits. If size is omitted, it defaults to (stop-start). If no slice is specified, '
             'it defaults to 0, which corresponds to 0:1:1, i.e. extracting the lowest bit.')
         ) = [slice(0, 1)],
-        bigendian=False, blocksize=1
+        bigendian=False, blocksize=None
     ):
         super().__init__(slices=slices, bigendian=bigendian, blocksize=blocksize)
 
@@ -29,7 +29,7 @@ class bitsnip(BlockTransformationBase):
         bitsnip_data = 0
         bitsnip_size = 0
         slices: List[Tuple[int, int, int]] = []
-        maxbits = 8 * self.args.blocksize
+        maxbits = 8 * self.blocksize
         args: Iterable[slice] = iter(self.args.slices)
         bigendian: bool = self.args.bigendian
 
@@ -41,7 +41,7 @@ class bitsnip(BlockTransformationBase):
             if stop is None:
                 stop = maxbits
             elif stop > maxbits:
-                raise ValueError(F'the selection {start}:{stop} is out of bounds for the block size {self.args.blocksize}')
+                raise ValueError(F'the selection {start}:{stop} is out of bounds for the block size {self.blocksize}')
             if start >= stop:
                 continue
             size = stop - start

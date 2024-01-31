@@ -36,7 +36,7 @@ class pack(BlockTransformationBase):
         width  : Arg.Number('-w', help='Pad numbers with the specified amount of leading zeros.') = 0,
         single_floats: Arg.Switch('-f', group='FLT', help='Pack single-precision floating-point numbers. Implies -B4.') = False,
         double_floats: Arg.Switch('-d', group='FLT', help='Pack double-precision floating-point numbers. Implies -B8.') = False,
-        bigendian=False, blocksize=1
+        bigendian=False, blocksize=None
     ):
         if single_floats and double_floats:
             raise ValueError('The floats and doubles option are mutually exclusive.')
@@ -55,7 +55,8 @@ class pack(BlockTransformationBase):
             width=width,
             bigendian=bigendian,
             blocksize=blocksize,
-            fmode=fmode
+            fmode=fmode,
+            _truncate=2,
         )
 
     @property
@@ -84,7 +85,7 @@ class pack(BlockTransformationBase):
                 little_endian=not self.args.bigendian,
                 strip_padding=True,
             )
-            for n in self.chunk(data, raw=True):
+            for n in self.chunk_into_bytes(data):
                 converted = converter.reverse(n)
                 if width:
                     converted = converted.rjust(width, B'0')
