@@ -8,6 +8,7 @@ from __future__ import annotations
 from abc import ABCMeta
 from io import BytesIO
 from typing import Any, ByteString, Iterable, List, Dict, Optional
+from collections import deque
 
 
 class NodeMeta(ABCMeta):
@@ -59,9 +60,12 @@ class Node(metaclass=NodeMeta):
             return stream.getvalue()
 
     def fixlinks(self):
-        for child in self.children.values():
-            child.fixlinks()
-            child.link = self
+        queue = deque([self])
+        while queue:
+            node = queue.pop()
+            for child in node.children.values():
+                queue.appendleft(child)
+                child.link = node
 
     def __repr__(self) -> str:
         label = bytes(self.label).decode('utf8', errors='backslashreplace')

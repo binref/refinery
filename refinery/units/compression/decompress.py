@@ -76,6 +76,16 @@ class decompress(Unit):
             prefix: Optional[int] = None
             failed: bool = False
 
+            def __str__(self):
+                status = 'partial' if self.failed else 'success'
+                prefix = self.prefix
+                if prefix is not None:
+                    prefix = F'0x{prefix:02X}'
+                return F'prefix={prefix}, cutoff=0x{self.cutoff:02X}, [{status}] engine={self.engine.name}'
+
+            def __len__(self):
+                return len(self.result)
+
             @property
             def ratio(self):
                 if not self.result:
@@ -100,7 +110,7 @@ class decompress(Unit):
 
         def decompress(engine: Unit, cutoff: int = 0, prefix: Optional[int] = None):
             ingest = data[cutoff:]
-            failed = False
+            failed = True
             if prefix is not None:
                 buffer[0] = prefix
                 ingest = buffer
@@ -110,10 +120,10 @@ class decompress(Unit):
                 result = engine.process(ingest)
             except RefineryPartialResult as pr:
                 result = pr.partial
-                failed = True
-            except Exception as error:
-                self.log_debug(F'error from {engine.name}: {error!s}')
+            except Exception:
                 result = None
+            else:
+                failed = False
             return Decompression(engine, result, cutoff, prefix, failed)
 
         def update(new: Decompression, best: Optional[Decompression] = None, discard_if_too_good=False) -> Decompression:
@@ -126,7 +136,7 @@ class decompress(Unit):
             if prefix is not None:
                 prefix = F'0x{prefix:02X}'
             r = 1 if new.unmodified and best and not best.unmodified else 0.95
-            if not best:
+            if not best or len(new) < len(best):
                 q = 0
             else:
                 q = ratio / best.ratio
@@ -136,17 +146,15 @@ class decompress(Unit):
                         return best
                     if new.failed:
                         return best
-                status = 'partial' if new.failed else 'success'
-                self.log_info(lambda: (
-                    F'obtained {ratio * 100:2.5f}% compression ratio with: prefix={prefix}, '
-                    F'cutoff={new.cutoff}, [{status}] engine={new.engine.name}'))
+                self.log_info(lambda: F'obtained {ratio * 100:07.4f}% compression ratio [q={q:07.4f}] with: {new!s}')
                 return new
             else:
+                self.log_debug(F'obtained {ratio * 100:07.4f}% compression ratio [q={q:07.4f}] with: {new!s}')
                 return best
 
         for engine in self.engines:
             self.log_debug(F'attempting engine: {engine.name}')
-            careful = isinstance(engine, lznt1)
+            careful = isinstance(engine, (lznt1, lzf, lzjb))
             for t in range(self.args.tolerance):
                 if best_only_success and careful and t > 0:
                     break
@@ -155,7 +163,7 @@ class decompress(Unit):
                     best_only_success = update(dc, best_only_success, careful)
                 else:
                     best_with_failure = update(dc, best_with_failure, careful)
-            if self.args.prepend and not careful:
+            if self.args.prepend and not best_only_success:
                 for p in range(0x100):
                     dc = decompress(engine, 0, p)
                     if not dc.failed:
