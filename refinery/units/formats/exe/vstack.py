@@ -369,7 +369,7 @@ class vstack(Unit):
                 skipped = 'stack address'
             elif not self.args.log_other_addresses and not state.blob:
                 for s in state.executable.sections():
-                    if unsigned_value in s.virtual:
+                    if address in s.virtual:
                         skipped = F'write to section {s.name}'
                         break
             if (
@@ -394,7 +394,7 @@ class vstack(Unit):
                 t = re.sub('[^!-~]', '.', data.decode('latin1'))
                 msg = state.log(F'{state.fmt(address)} <- {h:_<{ph}} {t:_<{pt}}')
                 if skipped:
-                    msg = F'{msg} {skipped}'
+                    msg = F'{msg} (ignored: {skipped})'
                 return msg
 
             self.log_info(info)
