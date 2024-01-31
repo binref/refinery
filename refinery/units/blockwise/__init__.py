@@ -192,7 +192,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                 out = block & self.fmask
                 if warnings and out != block:
                     warnings -= 1
-                    self.log_warn(F'reduced argument to 0x{out:0{self.fbits//4}X}; original value was 0x{block:X}')
+                    self.log_warn(F'reduced argument to 0x{out:0{self.fbits // 4}X}; original value was 0x{block:X}')
                     if not warnings:
                         self.log_warn('additional warnings are suppressed')
                 yield out
