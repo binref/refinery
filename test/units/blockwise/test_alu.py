@@ -3,7 +3,23 @@
 from .. import TestUnitBase
 
 
+class TestALUInput(TestUnitBase):
+
+    def test_invalid_expression(self):
+        self.assertRaises(Exception, self.load, '"§$%$$$§$§$$$UU')
+        self.assertRaises(Exception, self.load, '(B + 9')
+
+    def test_not_an_expression(self):
+        self.assertRaises(Exception, self.load, 'def foo(x):\n    return 29')
+
+
 class TestALU(TestUnitBase):
+
+    def test_eval_bug_01(self):
+        data = bytes(range(251, 256))
+        wish = bytes(((B + 5) % 255 for B in data))
+        result = next(data | self.load('-P0', '(B+5)%255'))
+        self.assertEqual(result, wish)
 
     def test_index_starts_at_zero(self):
         unit = self.load("B+K")

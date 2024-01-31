@@ -30,13 +30,14 @@ class TestUnitBaseMeta(type):
                 def wrapped_method(self: TestUnitBase, *args, __wrapped_method=method, **kwargs):
                     r = __wrapped_method(self, *args, **kwargs)
                     restoration = {}
-                    for name, getter in unit.__dict__.items():
-                        if isinstance(getter, requirement):
-                            def broken(*a, **k):
-                                raise RefineryImportMissing(broken.dependency)
-                            broken.dependency = getter.dependency
-                            restoration[name] = getter
-                            setattr(unit, name, property(broken))
+                    for base in unit.mro():
+                        for name, getter in base.__dict__.items():
+                            if isinstance(getter, requirement):
+                                def broken(*a, **k):
+                                    raise RefineryImportMissing(broken.dependency)
+                                broken.dependency = getter.dependency
+                                restoration[name] = getter
+                                setattr(unit, name, property(broken))
                     try:
                         r = __wrapped_method(self, *args, **kwargs)
                     except ImportError:

@@ -3,7 +3,7 @@
 from ... import TestUnitBase
 
 
-class TestPEStrip(TestUnitBase):
+class TestPEDebloat(TestUnitBase):
 
     def test_section_bloat(self):
         data = self.download_sample('31c353e37946bf459b2a724fbbf2308caf82c96ae48ffcfa798ce5b117f5a8ba')

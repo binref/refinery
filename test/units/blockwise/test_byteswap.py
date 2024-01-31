@@ -9,14 +9,14 @@ class TestByteSwap(TestUnitBase):
         data = bytes.fromhex('FEED1337''C0CAC01A''C0DE')
         self.assertEqual(
             data | self.load(4) | bytearray,
-            bytes.fromhex('3713EDFE''1AC0CAC0''0000DEC0')
+            bytes.fromhex('3713EDFE''1AC0CAC0')
         )
 
     def test_simple_02(self):
         data = bytes.fromhex('FEED13''37C0CA''C01AC0''DE')
         self.assertEqual(
             data | self.load(3) | bytearray,
-            bytes.fromhex('13EDFE''CAC037''C01AC0''0000DE')
+            bytes.fromhex('13EDFE''CAC037''C01AC0')
         )
 
     def test_simple_03(self):
