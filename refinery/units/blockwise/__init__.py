@@ -74,11 +74,7 @@ class BlockTransformationBase(Unit, abstract=True):
 
     @property
     def blocksize(self):
-        try:
-            blocksize = self._blocksize
-        except AttributeError:
-            blocksize = None
-        return blocksize or self.args.blocksize or 1
+        return self.args.blocksize or 1
 
     @property
     def precision(self):
@@ -291,8 +287,6 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         else:
             self.log_debug('successfully used numpy to process data in ecb mode')
             return result
-        finally:
-            self._blocksize = None
         try:
             arguments = [
                 self._normalize_argument(*self._argument_parse_hook(a))
@@ -314,8 +308,6 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             self.log_warn(R'falling back all the way to failsafe method')
             self._arg = arguments
             return super().process(data)
-        finally:
-            self._blocksize = None
 
     def process_block(self, block):
         return self.operate(block, *(next(a) for a in self._arg)) & self.fmask
@@ -356,3 +348,17 @@ class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
             else:
                 it &= self.fmask
         return it, masked
+
+    @property
+    def blocksize(self):
+        try:
+            blocksize = self._blocksize
+        except AttributeError:
+            blocksize = None
+        return blocksize or super().blocksize
+
+    def process(self, data):
+        try:
+            return super().process(data)
+        finally:
+            self._blocksize = None
