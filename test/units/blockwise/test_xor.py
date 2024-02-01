@@ -15,6 +15,10 @@ class TestXOR(TestUnitBase):
         self.assertEqual(bytes(5) | self.load('0xAABBCC') | bytes, B'\xCC\xBB\xAA\xCC\xBB')
         self.assertEqual(bytes(5) | self.load('0x00BBCC') | bytes, B'\xCC\xBB\xCC\xBB\xCC')
 
+    def test_auto_block_02(self):
+        self.assertEqual(bytes(5) | self.load('0xAABBCC', blocksize=2) | bytes, B'\xCC\xBB\xCC\xBB\xCC')
+        self.assertEqual(bytes(5) | self.load('0x00BBCC', blocksize=1) | bytes, B'\xCC\xCC\xCC\xCC\xCC')
+
     def test_auto_block_resets(self):
         pl = self.load_pipeline('emit rep[5]:H:00 | rep 2 [| xor e:[0xAABBCC,0xBBCC][index] ]')
         self.assertEqual(pl(), (
