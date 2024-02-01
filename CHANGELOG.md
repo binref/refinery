@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.27
+- The key derivation units `DESDerive`, `CryptDeriveKey`, and `PasswordDeriveBytes` have been renamed to `deskd`, `mscdk`, and `mspdb`, respectively, in order to match the common refinery unit naming convention of using indecipherable and consonant-heavy abbreviations.
+- When passing integer arguments to the units `xor`, `add`, and `sub`, the block size is now automatically adjusted to the smallest size that will contain the given argument.
+
 ## Version 0.6.26
 - Thanks to [@EricFaehrmann][], `xtzip` (and `xt`) now support doubly-loaded ZIP archives.
 
