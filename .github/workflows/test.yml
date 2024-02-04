@@ -4,6 +4,9 @@ on:
   push:
     branches: [ master ]
     tags-ignore: '**'
+  pull_request_target:
+    types: [opened, synchronize]
+    branches: [ master ]
 
 jobs:
   test:
@@ -13,19 +16,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.7.16', '3.7', '3.12']
+        python-version: ['3.7', '3.12']
         os: [windows-latest, macos-latest, ubuntu-latest]
-        exclude:
-          - os: windows-latest
-            python-version: '3.7.16'
-          - os: ubuntu-latest
-            python-version: '3.7.16'
-          - os: macos-latest
-            python-version: '3.7'
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Linux-specific dependencies
@@ -58,11 +54,11 @@ jobs:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
+      uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.12'
     - name: Install dependencies
       run: |
         sudo apt-get install xclip xvfb
@@ -73,7 +69,7 @@ jobs:
       run: |
         XDG_SESSION_TYPE=x11 xvfb-run pytest --cov-config=.coveragerc --cov refinery test/
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         verbose: true
