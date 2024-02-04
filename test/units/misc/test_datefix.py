@@ -7,6 +7,7 @@ class TestDateFix(TestUnitBase):
 
     def test_dates(self):
         unit = self.load()
+        self.assertEqual(b'2016-03-15 04:35:35', unit(b'0x56e79117'))
         self.assertEqual(b'2016-03-15 04:35:35', unit(b'1458016535'))
         self.assertEqual(b'2016-03-15 04:35:35', unit(b'1458016535000'))
         self.assertEqual(b'2010-03-15 06:27:50', unit(b'2010-03-15T06:27:50'))
