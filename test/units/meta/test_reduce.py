@@ -21,10 +21,12 @@ class TestReduce(TestUnitBase):
     def test_just_parameter(self):
         chunk = next(self.load_pipeline(
             'emit rep[9]:h:01 | chop 1 ['
-            '| reduce add var:t -j 3 | pick 0 0: | pop a:le'
-            '| reduce add var:t -j 3 | pick 0 0: | pop b:le'
-            '| reduce add var:t | put c le:c:: ]'))
+            '| put x index'
+            '| reduce add var:t -j 2 | pick 0 0: | pop a:le'
+            '| reduce add var:t -j 2 | pick 0 0: | pop b:le'
+            '| reduce add var:x | put c le:c:: ]'))
         self.assertEqual(chunk['a'], 3)
         self.assertEqual(chunk['b'], 5)
-        self.assertEqual(chunk['c'], 9)
+        self.assertEqual(chunk['c'], 31)
         self.assertEqual(chunk['t'], b'\x01')
+        self.assertEqual(chunk['x'], 0)
