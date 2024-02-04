@@ -86,6 +86,12 @@ class datefix(Unit):
         if data.endswith('Z'):
             data = data[:-1]
 
+        if data.startswith('0x'):
+            try:
+                data = str(int(data, 16))
+            except Exception:
+                pass
+
         # parses timestamps and dates without much format
         if data.isdigit():
             time_stamp = int(data)
