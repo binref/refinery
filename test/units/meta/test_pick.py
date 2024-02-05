@@ -151,7 +151,7 @@ class TestPick(TestMetaBase):
             '   put i index',
             '   carve -d string [',
             '      pick 9+i*13 6+i*13',
-            '      queue var:p',
+            '      qb var:p',
             '      pop x n',
             '      ccp var:x ]]',
         ]))
