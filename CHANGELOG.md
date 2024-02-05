@@ -1,5 +1,9 @@
 # Binary Refinery Changelog
 
+## Version 0.6.28
+- The `reduce` signature was changed; it is no longer possible to specify an initialization value, instead the first chunk in the frame is always used. Additionally, there is now an option to consume only a limited number of chunks.
+- The `queue` unit has been removed in favor of two units `qf` (queue front) and `qb` (queue back) to queue chunks into the current frame.
+
 ## Version 0.6.27
 - The key derivation units `DESDerive`, `CryptDeriveKey`, and `PasswordDeriveBytes` have been renamed to `deskd`, `mscdk`, and `mspdb`, respectively, in order to match the common refinery unit naming convention of using indecipherable and consonant-heavy abbreviations.
 - When passing integer arguments to the units `xor`, `add`, and `sub`, the block size is now automatically adjusted to the smallest size that will contain the given argument.
