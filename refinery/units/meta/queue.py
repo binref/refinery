@@ -21,19 +21,23 @@ class QueueUnit(Unit, abstract=True):
 
     def _queue(self, chunks: Iterable[Chunk], front: bool) -> Generator[Chunk, None, None]:
         it = iter(chunks)
+
+        try:
+            head = next(it)
+        except StopIteration as SI:
+            raise RuntimeError('unexpected empty frame: cannot determine depth') from SI
+
         def queue():
             data = self.args.data or [B'']
             for bin in data:
                 chunk = head.copy(meta=False, data=False)
                 chunk[:] = bin
                 yield chunk
+
         def frame():
             yield head
             yield from it
-        try:
-            head = next(it)
-        except StopIteration as SI:
-            raise RuntimeError('unexpected empty frame: cannot determine depth') from SI
+
         a, b = frame(), queue()
         if front:
             a, b = b, a
