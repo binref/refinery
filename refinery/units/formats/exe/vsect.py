@@ -23,7 +23,7 @@ class vsect(PathExtractorUnit):
     def unpack(self, data):
         exe = Executable.Load(data)
         mv = memoryview(data)
-        for section in exe.sections():
+        for k, section in enumerate(exe.sections()):
             if section.synthetic and not self.args.synthetic:
                 continue
             start = section.physical.lower
@@ -36,4 +36,9 @@ class vsect(PathExtractorUnit):
                     kwargs['vaddr'] = va
                 if vs is not None:
                     kwargs['vsize'] = vs
-            yield UnpackResult(section.name, mv[start:end], **kwargs)
+            name = section.name
+            if not name:
+                addr = F'{section.virtual.lower:0{exe.pointer_size // 4}X}'
+                self.log_warn(F'section {k} had no name, synthesizing name from virtual address 0x{addr}')
+                name = F'.{addr}'
+            yield UnpackResult(name, mv[start:end], **kwargs)
