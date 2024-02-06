@@ -10,7 +10,6 @@ import collections
 import fnmatch
 import os
 import re
-import uuid
 
 from zlib import adler32
 from collections import Counter
@@ -159,6 +158,14 @@ class PathExtractorUnit(Unit, abstract=True):
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
         root = ''
+        uuid = 0
+
+        def _uuid():
+            nonlocal uuid
+            crc = meta['crc32'].decode('ascii').upper()
+            uid = uuid
+            uuid += 1
+            return F'_{crc}.{uid:04X}'
 
         def normalize(_path: str) -> str:
             parts = re.split(r'[\\/]', F'{root}/{_path}')
@@ -184,9 +191,10 @@ class PathExtractorUnit(Unit, abstract=True):
             path = normalize(result.path)
             if not path:
                 from refinery.lib.mime import FileMagicInfo
+                path = _uuid()
                 ext = FileMagicInfo(result.get_data()).extension
-                name = uuid.uuid4()
-                path = F'{name}.{ext}'
+                if ext != 'bin':
+                    path = F'{path}.{ext}'
                 self.log_warn(F'read chunk with empty path; using generated name {path}')
             result.path = path
             occurrences[path] += 1
@@ -202,7 +210,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 base, extension = os.path.splitext(path)
                 width = len(str(occurrences[path]))
                 if any(F'{base}.v{c:0{width}d}{extension}' in occurrences for c in range(occurrences[path])):
-                    result.path = F'{base}.{uuid.uuid4()}{extension}'
+                    result.path = F'{base}.{_uuid()}{extension}'
                 else:
                     result.path = F'{base}.v{counter:0{width}d}{extension}'
                 self.log_warn(F'read chunk with duplicate path; deduplicating to {result.path}')
