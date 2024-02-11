@@ -15,7 +15,7 @@ from zlib import adler32
 from collections import Counter
 from typing import ByteString, Iterable, Callable, List, Union, Optional
 
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
 from refinery.lib.xml import XMLNodeBase
 
@@ -160,6 +160,15 @@ class PathExtractorUnit(Unit, abstract=True):
         root = ''
         uuid = 0
 
+        def get_data(result: UnpackResult):
+            try:
+                data = result.get_data()
+            except RefineryPartialResult as error:
+                if not self.args.lenient:
+                    raise
+                result.data = data = error.partial
+            return data
+
         def _uuid():
             nonlocal uuid
             crc = meta['crc32'].decode('ascii').upper()
@@ -192,7 +201,7 @@ class PathExtractorUnit(Unit, abstract=True):
             if not path:
                 from refinery.lib.mime import FileMagicInfo
                 path = _uuid()
-                ext = FileMagicInfo(result.get_data()).extension
+                ext = FileMagicInfo(get_data(result)).extension
                 if ext != 'bin':
                     path = F'{path}.{ext}'
                 self.log_warn(F'read chunk with empty path; using generated name {path}')
@@ -202,7 +211,7 @@ class PathExtractorUnit(Unit, abstract=True):
         for result in results:
             path = result.path
             if occurrences[path] > 1:
-                checksum = adler32(result.get_data())
+                checksum = adler32(get_data(result))
                 if checksum in checksums[path]:
                     continue
                 checksums[path].add(checksum)
@@ -229,7 +238,7 @@ class PathExtractorUnit(Unit, abstract=True):
                     if not self.args.drop:
                         result.meta[metavar] = path
                     try:
-                        chunk = result.get_data()
+                        chunk = get_data(result)
                     except Exception as error:
                         if self.log_debug():
                             raise

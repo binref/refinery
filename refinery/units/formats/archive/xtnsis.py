@@ -16,6 +16,7 @@ import zlib
 
 from datetime import datetime
 
+from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.lib.structures import MemoryFile, Struct, StructReader, StreamDetour
 
@@ -890,7 +891,7 @@ class NSHeader(Struct):
                     time = datetime.fromtimestamp((arg[4] << 32) | arg[3])
                 except Exception:
                     time = None
-                item = NSItem(arg[2], time)
+                item = NSItem(arg[2], mtime=time)
                 setpath(arg[1])
                 items.append(item)
                 if not self._is_var_str(arg[1], 10):
@@ -915,6 +916,8 @@ class NSHeader(Struct):
                         item = items[-1]
                         item.attributes = arg[1]
             elif cmd is Op.WRITEUNINSTALLER:
+                if arg[4] or arg[5] or arg[0] <= 1 or arg[3] <= 1:
+                    continue
                 if not self._is_good_string(arg[0]):
                     continue
                 if self._bad_cmd in range(Op.WRITEUNINSTALLER):
@@ -963,6 +966,7 @@ class NSArchive(Struct):
         offset: int
         data: bytearray
         compressed_size: int
+        decompression_failed: bool = False
 
     def __init__(self, reader: StructReader[bytearray]):
         self.flags = NSHeaderFlags(reader.u32())
@@ -1049,13 +1053,11 @@ class NSArchive(Struct):
 
         if header_data is None:
             it = self._decompress_items(reader)
-            try:
-                header_entry = next(it)
-            except zlib.error as ZLERR:
+            header_entry = next(it)
+            if header_entry.decompression_failed:
                 raise NotImplementedError(
                     'This archive seems to use an NSIS-specific deflate '
-                    'algorithm which has not been implemented yet.'
-                ) from ZLERR
+                    'algorithm which has not been implemented yet.')
             if self.solid:
                 self._solid_iter = it
             self.entry_offset_delta = header_entry.compressed_size
@@ -1079,23 +1081,25 @@ class NSArchive(Struct):
     def offset_items(self):
         return self.offset_archive + self.entry_offset_delta
 
-    def _extract_item_data(self, item: NSItem):
+    def _extract_item(self, item: NSItem) -> Entry:
         if self.solid:
             while True:
                 try:
-                    data = self.entries[item.offset]
+                    entry = self.entries[item.offset]
                 except KeyError:
                     try:
                         entry = next(self._solid_iter)
                     except StopIteration:
                         raise LookupError(F'No data for item {item!s} could not be found.')
-                    self.entries[entry.offset - self.entry_offset_delta] = entry.data
-                else:
-                    return data
+                    self.entries[entry.offset - self.entry_offset_delta] = entry
         else:
             self.reader.seek(self.offset_items + item.offset)
             dc = self._decompress_items(self.reader)
-            return next(dc).data
+            entry = next(dc)
+        if entry.decompression_failed:
+            raise RefineryPartialResult('decompression failed; lenient mode will extract uncompressed item', entry.data)
+        else:
+            return entry
 
     class LengthPrefixed(Iterable[Entry]):
         def __init__(self, src: BinaryIO):
@@ -1125,9 +1129,13 @@ class NSArchive(Struct):
             inflated = bool(size & 0x80000000)
             size &= 0x7FFFFFFF
             data = self.src.read(size)
+            decompression_failed = False
             if inflated:
-                data = zlib.decompress(data, -15)
-            return NSArchive.Entry(offset, data, size + 4)
+                try:
+                    data = zlib.decompress(data, -15)
+                except zlib.error:
+                    decompression_failed = True
+            return NSArchive.Entry(offset, data, size + 4, decompression_failed)
 
     def _decompress_items(self, reader: StructReader[bytearray]) -> Iterator[NSArchive.Entry]:
         if self.method is NSMethod.Deflate:
@@ -1245,7 +1253,7 @@ class xtnsis(ArchiveUnit):
         self.log_info(', '.join(info()))
 
         for item in arc.header.items:
-            yield self._pack(item.path, item.mtime, lambda i=item: arc._extract_item_data(i))
+            yield self._pack(item.path, item.mtime, lambda i=item: arc._extract_item(i).data)
         yield self._pack('setup.nsis', None, arc.script.encode(self.codec))
 
     @classmethod
