@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.6.29 - bugfix release
+
 ## Version 0.6.28
 - The `reduce` signature was changed; it is no longer possible to specify an initialization value, instead the first chunk in the frame is always used. Additionally, there is now an option to consume only a limited number of chunks.
 - The `queue` unit has been removed in favor of two units `qf` (queue front) and `qb` (queue back) to queue chunks into the current frame.
