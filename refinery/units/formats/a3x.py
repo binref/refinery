@@ -65,8 +65,8 @@ A3X_KEYWORDS = [
 A3X_APICALLS = [
     'Abs',
     'Acos',
-    'Adlibregister',
-    'Adlibunregister',
+    'AdlibRegister',
+    'AdlibUnRegister',
     'Asc',
     'AscW',
     'ASin',
