@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     _T = TypeVar('_T')
 
 
-class FastBlockError(ImportError):
+class FastBlockError(Exception):
     pass
 
 
@@ -219,7 +219,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         """
         try:
             numpy = self._numpy
-        except ModuleNotFoundError as IE:
+        except ImportError as IE:
             raise FastBlockError from IE
 
         order = self._byte_order_symbol
@@ -280,12 +280,12 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         try:
             self.log_debug('attempting to process input using numpy method')
             result = self._fastblock(data)
-        except ImportError:
+        except FastBlockError:
             pass
         except Exception as error:
-            self.log_warn(F'falling back to default method after numpy failed with error: {error}')
+            self.log_warn('falling back to default method after fast block failed with error:', error)
         else:
-            self.log_debug('successfully used numpy to process data in ecb mode')
+            self.log_debug('fast block method successful')
             return result
         try:
             arguments = [

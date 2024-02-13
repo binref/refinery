@@ -23,7 +23,7 @@ class xor(BinaryOperationWithAutoBlockAdjustment):
             else:
                 from itertools import islice
                 size = len(data)
-                arg0 = self._normalize_argument(*self._auto_adjust_by_argument(self.args.argument[0]))
+                arg0 = self._normalize_argument(*self._argument_parse_hook(self.args.argument[0]))
                 take = len(data) // self.blocksize + 1
                 argb = self.unchunk(islice(arg0, take))
                 del argb[size:]

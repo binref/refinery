@@ -5,6 +5,12 @@ from .. import TestUnitBase
 
 class TestXOR(TestUnitBase):
 
+    def test_simple_xor(self):
+        a = bytearray(300)
+        b = self.generate_random_buffer(150)
+        c = a | self.load(b) | bytes
+        self.assertEqual(c, 2 * b)
+
     def test_accu_reduction(self):
         xor1 = self.ldu('xor', 'accu[12]:(A*7+23)')
         xor2 = self.ldu('xor', 'accu[12]:(A*7+23)&0xFF')
