@@ -17,6 +17,8 @@ class qr(Unit):
     @Unit.Requires('qrcode[pil]', 'formats')
     def _qrcode():
         import qrcode
+        import qrcode.util
+        import qrcode.constants
         return qrcode
 
     @Unit.Requires('pyzbar', 'formats')
@@ -31,7 +33,19 @@ class qr(Unit):
         return Image
 
     def reverse(self, data: bytearray):
-        img: PilImage = self._qrcode.make(data)
+        _util = self._qrcode.util
+        _data = self._qrcode.util.QRData(data)
+        _mode = {
+            _util.MODE_KANJI     : 'kanji',
+            _util.MODE_8BIT_BYTE : 'byte',
+            _util.MODE_ALPHA_NUM : 'alphanumeric',
+            _util.MODE_NUMBER    : 'numeric',
+        }[_data.mode]
+        self.log_info(F'encoding data in {_mode} mode')
+        try:
+            img: PilImage = self._qrcode.make(_data)
+        except ValueError:
+            raise ValueError('input data size exceeds QR code limits')
         with MemoryFile() as stream:
             img.save(stream)
             return stream.getbuffer()
