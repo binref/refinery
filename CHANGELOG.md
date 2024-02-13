@@ -1,5 +1,7 @@
 # Binary Refinery Changelog
 
+## Version 0.6.30 - bugfix release
+
 ## Version 0.6.29 - bugfix release
 
 ## Version 0.6.28
