@@ -4,90 +4,90 @@
 Windows-specific module to obtain data in different complex formats from the clipboard.
 Primarily, this can retrieve image data from the clipboard.
 """
-import ctypes
-import ctypes.wintypes as w
+import os
+import enum
 
-from ctypes import sizeof
-from enum import IntEnum
+if os.name == 'nt':
+    import ctypes
+    import ctypes.wintypes as w
 
-u32 = ctypes.WinDLL('user32')
-k32 = ctypes.WinDLL('kernel32')
+    from ctypes import sizeof
 
-IsClipboardFormatAvailable = u32.IsClipboardFormatAvailable
-IsClipboardFormatAvailable.argtypes = w.UINT,
-IsClipboardFormatAvailable.restype = w.BOOL
-GlobalAlloc = k32.GlobalAlloc
-GlobalAlloc.argtypes = w.UINT, w.UINT
-GlobalAlloc.restype = w.HGLOBAL
-GlobalFree = k32.GlobalFree
-GlobalFree.argtypes = w.HGLOBAL,
-GlobalFree.restype = w.HGLOBAL
-GlobalSize = k32.GlobalSize
-GlobalSize.argtypes = w.HGLOBAL,
-GlobalSize.restype = w.UINT
-SetClipboardData = u32.SetClipboardData
-SetClipboardData.argtypes = w.UINT, w.HANDLE
-SetClipboardData.restype = w.HANDLE
-EmptyClipboard = u32.EmptyClipboard
-OpenClipboard = u32.OpenClipboard
-OpenClipboard.argtypes = w.HWND,
-OpenClipboard.restype = w.BOOL
-GetClipboardData = u32.GetClipboardData
-GetClipboardData.argtypes = w.UINT,
-GetClipboardData.restype = w.HANDLE
-GlobalLock = k32.GlobalLock
-GlobalLock.argtypes = w.HGLOBAL,
-GlobalLock.restype = w.LPVOID
-GlobalUnlock = k32.GlobalUnlock
-GlobalUnlock.argtypes = w.HGLOBAL,
-GlobalUnlock.restype = w.BOOL
-CloseClipboard = u32.CloseClipboard
-CloseClipboard.argtypes = None
-CloseClipboard.restype = w.BOOL
+    u32 = ctypes.WinDLL('user32')
+    k32 = ctypes.WinDLL('kernel32')
 
+    IsClipboardFormatAvailable = u32.IsClipboardFormatAvailable
+    IsClipboardFormatAvailable.argtypes = w.UINT,
+    IsClipboardFormatAvailable.restype = w.BOOL
+    GlobalAlloc = k32.GlobalAlloc
+    GlobalAlloc.argtypes = w.UINT, w.UINT
+    GlobalAlloc.restype = w.HGLOBAL
+    GlobalFree = k32.GlobalFree
+    GlobalFree.argtypes = w.HGLOBAL,
+    GlobalFree.restype = w.HGLOBAL
+    GlobalSize = k32.GlobalSize
+    GlobalSize.argtypes = w.HGLOBAL,
+    GlobalSize.restype = w.UINT
+    SetClipboardData = u32.SetClipboardData
+    SetClipboardData.argtypes = w.UINT, w.HANDLE
+    SetClipboardData.restype = w.HANDLE
+    EmptyClipboard = u32.EmptyClipboard
+    OpenClipboard = u32.OpenClipboard
+    OpenClipboard.argtypes = w.HWND,
+    OpenClipboard.restype = w.BOOL
+    GetClipboardData = u32.GetClipboardData
+    GetClipboardData.argtypes = w.UINT,
+    GetClipboardData.restype = w.HANDLE
+    GlobalLock = k32.GlobalLock
+    GlobalLock.argtypes = w.HGLOBAL,
+    GlobalLock.restype = w.LPVOID
+    GlobalUnlock = k32.GlobalUnlock
+    GlobalUnlock.argtypes = w.HGLOBAL,
+    GlobalUnlock.restype = w.BOOL
+    CloseClipboard = u32.CloseClipboard
+    CloseClipboard.argtypes = None
+    CloseClipboard.restype = w.BOOL
 
-class FieldsFromTypeHints(type(ctypes.Structure)):
+    class FieldsFromTypeHints(type(ctypes.Structure)):
 
-    def __new__(cls, name, bases, namespace):
-        from typing import get_type_hints
+        def __new__(cls, name, bases, namespace):
+            from typing import get_type_hints
 
-        class AnnotationDummy:
-            __annotations__ = namespace.get('__annotations__', {})
+            class AnnotationDummy:
+                __annotations__ = namespace.get('__annotations__', {})
 
-        annotations = get_type_hints(AnnotationDummy)
-        namespace['_fields_'] = list(annotations.items())
-        namespace['_pack_'] = 1
+            annotations = get_type_hints(AnnotationDummy)
+            namespace['_fields_'] = list(annotations.items())
+            namespace['_pack_'] = 1
 
-        return type(ctypes.Structure).__new__(cls, name, bases, namespace)
+            return type(ctypes.Structure).__new__(cls, name, bases, namespace)
 
+    class BITMAPINFOHEADER(ctypes.Structure, metaclass=FieldsFromTypeHints):
+        biSize          : w.DWORD
+        biWidth         : w.LONG
+        biHeight        : w.LONG
+        biPlanes        : w.WORD
+        biBitCount      : w.WORD
+        biCompression   : w.DWORD
+        biSizeImage     : w.DWORD
+        biXPelsPerMeter : w.LONG
+        biYPelsPerMeter : w.LONG
+        biClrUsed       : w.DWORD
+        biClrImportant  : w.DWORD
 
-class BITMAPINFOHEADER(ctypes.Structure, metaclass=FieldsFromTypeHints):
-    biSize          : w.DWORD
-    biWidth         : w.LONG
-    biHeight        : w.LONG
-    biPlanes        : w.WORD
-    biBitCount      : w.WORD
-    biCompression   : w.DWORD
-    biSizeImage     : w.DWORD
-    biXPelsPerMeter : w.LONG
-    biYPelsPerMeter : w.LONG
-    biClrUsed       : w.DWORD
-    biClrImportant  : w.DWORD
-
-
-class BITMAPFILEHEADER(ctypes.Structure, metaclass=FieldsFromTypeHints):
-    bfType          : w.WORD
-    bfSize          : w.DWORD
-    bfReserved1     : w.WORD
-    bfReserved2     : w.WORD
-    bfOffBits       : w.DWORD
+    class BITMAPFILEHEADER(ctypes.Structure, metaclass=FieldsFromTypeHints):
+        bfType          : w.WORD
+        bfSize          : w.DWORD
+        bfReserved1     : w.WORD
+        bfReserved2     : w.WORD
+        bfOffBits       : w.DWORD
 
 
 GMEM_DDESHARE = 0x2000
 GMEM_ZEROINIT = 0x0040
 
 
-class CF(IntEnum):
+class CF(enum.IntEnum):
     TEXT = 1
     DIB = 8
     OEMTEXT = 7
