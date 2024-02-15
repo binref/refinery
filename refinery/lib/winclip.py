@@ -111,7 +111,7 @@ class GlobalMemory:
         return self
 
     def __exit__(self, *args):
-        GlobalFree(self.buffer)
+        return None
 
 
 class ClipBoard:
@@ -160,8 +160,17 @@ class ClipBoard:
 
     def copy(self, data):
         EmptyClipboard()
-        with GlobalMemory(data) as gmem:
-            SetClipboardData(self.mode.value, gmem.buffer)
+        size = len(data)
+        if self.mode in (CF.TEXT, CF.OEMTEXT):
+            size += 1
+        if self.mode is CF.UNICODETEXT:
+            size += 2
+        glob = GlobalAlloc(GMEM_DDESHARE | GMEM_ZEROINIT, size)
+        lock = GlobalLock(ctypes.c_void_p(glob))
+        ctypes.windll.msvcrt.memset(ctypes.c_char_p(lock), 0, size)
+        ctypes.windll.msvcrt.memcpy(ctypes.c_char_p(lock), data, len(data))
+        GlobalUnlock(lock)
+        SetClipboardData(self.mode.value, glob)
 
 
 def get_any_data():
