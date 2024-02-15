@@ -26,12 +26,14 @@ class emit(Unit):
         if self.args.data:
             yield from self.args.data
             return
-        data = self._pyperclip.paste()
-        if data:
-            yield data.encode(self.codec, 'replace')
-        elif os.name == 'nt':
+        if os.name == 'nt':
             from refinery.lib.winclip import get_any_data
             mode, data = get_any_data()
             if mode is not None:
                 self.log_info(F'retrieved clipboard data in {mode.name} format')
             yield data
+        else:
+            data = self._pyperclip.paste()
+            if not data:
+                return
+            yield data.encode(self.codec, 'replace')

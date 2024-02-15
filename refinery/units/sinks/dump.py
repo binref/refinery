@@ -122,7 +122,23 @@ class dump(Unit):
         if self.args.stream and not final:
             return
         if self._clipcopy:
-            self._pyperclip.copy(self.stream.getvalue())
+            if os.name == 'nt':
+                from refinery.lib.winclip import ClipBoard, CF
+                try:
+                    img = self._image.open(self.stream)
+                    with io.BytesIO() as out:
+                        img.save(out, 'BMP')
+                except Exception:
+                    with ClipBoard(CF.TEXT) as cpb:
+                        cpb.copy(self.stream.getvalue())
+                else:
+                    with ClipBoard(CF.DIB) as cpb:
+                        out.seek(14, io.SEEK_SET)
+                        cpb.copy(out.read())
+            else:
+                data = self.stream.getvalue()
+                data = data.decode(self.codec, errors='backslashreplace')
+                self._pyperclip.copy(data)
         self.stream.close()
         self.stream = None
 
@@ -131,10 +147,15 @@ class dump(Unit):
         import pyperclip
         return pyperclip
 
+    @Unit.Requires('Pillow', 'formats')
+    def _image():
+        from PIL import Image
+        return Image
+
     def process(self, data: bytes):
         forward_input_data = self.args.tee
         if self._clipcopy:
-            self.stream.write(data.decode(self.codec, errors='backslashreplace'))
+            self.stream.write(data)
         elif not self.exhausted:
             if not self.stream:
                 # This should happen only when the unit is called from Python code
@@ -166,7 +187,7 @@ class dump(Unit):
         clipcopy = self._clipcopy
 
         if clipcopy:
-            self.stream = io.StringIO()
+            self.stream = io.BytesIO()
 
         for index, chunk in enumerate(chunks, 0):
             if not chunk.visible:
