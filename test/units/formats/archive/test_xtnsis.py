@@ -24,3 +24,20 @@ class TestNSISExtractor(TestUnitBase):
         unit = self.load('csrss.bat')
         result = str(data | unit | self.ldu('recode', 'cp1251'))
         self.assertIn(U'КАК РАСШИФРОВАТЬ ФАЙЛЫ.TXT', result)
+
+    def test_all_modes_and_methods(self):
+        data = self.download_sample('bf777a9a51cbea4b27b97c9dd81076e68aceb22edb535fdd0c16321d5ac2f6f8')
+        test = data | self.ldu('xtzip') [ self.load('filetwo.txt') ]| {str} # noqa
+        self.assertEqual(len(test), 1)
+        test = next(iter(test)).splitlines(False)
+        for k, line in enumerate([
+            r'  /  |                            ',
+            r' _$$ |_    __   __   __   ______  ',
+            r'/ $$   |  /  | /  | /  | /      \ ',
+            r'$$$$$$/   $$ | $$ | $$ |/$$$$$$  |',
+            r'  $$ | __ $$ | $$ | $$ |$$ |  $$ |',
+            r'  $$ |/  |$$ \_$$ \_$$ |$$ \__$$ |',
+            r'  $$  $$/ $$   $$   $$/ $$    $$/ ',
+            r'   $$$$/   $$$$$/$$$$/   $$$$$$/  ',
+        ], 1):
+            self.assertEqual(line, test[k])
