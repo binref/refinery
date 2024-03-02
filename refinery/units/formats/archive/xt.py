@@ -87,8 +87,6 @@ class xt(ArchiveUnit):
             date=self.args.date,
             join_path=self.args.join,
             drop_path=self.args.drop,
-            lenient=self.args.lenient,
-            quiet=self.args.quiet
         )
         if self.args.pwd:
             key_args.update(pwd=self.args.pwd)
@@ -116,6 +114,8 @@ class xt(ArchiveUnit):
                         self.unit.log_info(F'accepted: {handler.name}')
                     try:
                         unit = handler(*pos_args, **key_args)
+                        unit.args.lenient = self.unit.args.lenient
+                        unit.args.quiet = self.unit.args.quiet
                     except TypeError as error:
                         self.unit.log_debug('handler construction failed:', error)
                         return
