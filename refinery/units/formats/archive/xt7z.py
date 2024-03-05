@@ -16,7 +16,7 @@ class xt7z(ArchiveUnit):
     """
     Extract files from a 7zip archive.
     """
-    @ArchiveUnit.Requires('py7zr<0.21', 'arc', 'default', 'extended')
+    @ArchiveUnit.Requires('py7zr', 'arc', 'default', 'extended')
     def _py7zr():
         import py7zr
         import py7zr.exceptions
@@ -77,7 +77,7 @@ class xt7z(ArchiveUnit):
         for info in archive.list():
             def extract(archive: SevenZipFile = archive, info: FileInfo = info):
                 archive.reset()
-                return archive.read(info.filename).get(info.filename).read()
+                return archive.read([info.filename]).get(info.filename).read()
             if info.is_directory:
                 continue
             yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32)
