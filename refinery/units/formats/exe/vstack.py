@@ -12,6 +12,7 @@ from refinery.lib.meta import SizeInt
 from refinery.lib.tools import NoLogging
 
 from dataclasses import dataclass, field
+from collections import defaultdict
 
 if TYPE_CHECKING:
     from typing import Tuple, Optional, Iterator
@@ -40,6 +41,8 @@ class EmuState:
     allocations: List[Range] = field(default_factory=list)
     ticks: int = field(default_factory=lambda: INF)
     max_wait: int = 0
+    max_loop: int = 0
+    visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
 
     def disassemble(self, address: int, size: int):
         if self.disassembler is None:
@@ -115,6 +118,7 @@ class vstack(Unit):
             help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
+        max_visits: Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.') = 0x1000,
         log_writes_in_calls: Arg.Switch('-W', help='Log writes of values that occur in functions calls.') = False,
         log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
         log_other_addresses: Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.') = False,
@@ -134,6 +138,7 @@ class vstack(Unit):
             wait_calls=wait_calls,
             skip_calls=skip_calls,
             block_size=block_size,
+            max_visits=max_visits,
             log_writes_in_calls=log_writes_in_calls,
             log_stack_addresses=log_stack_addresses,
             log_other_addresses=log_other_addresses,
@@ -308,7 +313,8 @@ class vstack(Unit):
                 ip_register=ip,
                 rv_register=rv,
                 allocations=[stack],
-                max_wait=self.args.wait
+                max_wait=self.args.wait,
+                max_loop=self.args.max_visits,
             )
 
             timeout = self.args.timeout
@@ -424,6 +430,13 @@ class vstack(Unit):
     def _hook_code(self, emu: Uc, address: int, size: int, state: EmuState):
         try:
             state.ticks -= 1
+            state.visits[address] += 1
+            if state.visits[address] > state.max_loop:
+                self.log_info(
+                    F'aborting emulation: 0x{address:0{state.executable.pointer_size // 8}X}'
+                    F' was visited more than {state.max_loop} times.')
+                emu.emu_stop()
+                return False
             if address == state.stop or state.ticks == 0:
                 emu.emu_stop()
                 return False
