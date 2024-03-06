@@ -377,9 +377,12 @@ class vstack(Unit):
                 and unsigned_value == 0
                 and state.writes.at(address) is not None
                 and self.args.log_zero_overwrites is False
-                and any(emu.mem_read(address, size))
             ):
-                skipped = 'zero overwrite'
+                try:
+                    if any(emu.mem_read(address, size)):
+                        skipped = 'zero overwrite'
+                except Exception:
+                    pass
 
             if not skipped:
                 state.writes.addi(address, address + size + 1)
