@@ -511,13 +511,15 @@ class StructReader(MemoryFile[T]):
         current_cursor = self.tell()
 
         # reserved struct characters: xcbB?hHiIlLqQnNefdspP
-        for k, part in enumerate(re.split('(\\d*[auwE])', spec)):
+        for k, part in enumerate(re.split('(\\d*[auwgE])', spec)):
             if k % 2 == 1:
                 count = 1 if len(part) == 1 else int(part[:~0])
                 part = part[~0]
                 for _ in range(count):
                     if part == 'a':
                         data.append(self.read_c_string())
+                    elif part == 'g':
+                        data.append(self.read_guid())
                     elif part == 'u':
                         data.append(self.read_w_string())
                     elif part == 'w':
@@ -577,6 +579,22 @@ class StructReader(MemoryFile[T]):
             data = self.read_exactly(end - pos)
             self.seekrel(len(terminator))
             return bytearray(data)
+
+    def read_guid(self) -> str:
+        _mode = self.bigendian
+        self.bigendian = False
+        try:
+            a = self.u32()
+            b = self.u16()
+            c = self.u16()
+            d = self.read(2).hex().upper()
+            e = self.read(6).hex().upper()
+        except:
+            raise
+        else:
+            return F'{a:08X}-{b:02X}-{c:02X}-{d}-{e}'
+        finally:
+            self.bigendian = _mode
 
     def read_c_string(self, encoding=None) -> Union[str, bytearray]:
         data = self.read_terminated_array(B'\0')
