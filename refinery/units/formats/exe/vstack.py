@@ -166,6 +166,7 @@ class vstack(Unit):
             exe = ExecutableCodeBlob(data, self.args.base, self.args.arch)
             blob = True
         arch = exe.arch()
+        width = exe.pointer_size // 4
         block_size = self.args.block_size
         stack_size = self.args.stack_size
         stack_addr = self._find_stack_location(exe)
@@ -302,7 +303,6 @@ class vstack(Unit):
                 except Exception as error:
                     if address in vmem:
                         raise
-                    width = exe.pointer_size // 4
                     self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
             tree = self._intervaltree.IntervalTree()
@@ -339,7 +339,11 @@ class vstack(Unit):
                 size = interval.end - interval.begin - 1
                 if size not in bounds[self.args.patch_range]:
                     continue
-                patch = emulator.mem_read(interval.begin, size)
+                try:
+                    patch = emulator.mem_read(interval.begin, size)
+                except uc.UcError as error:
+                    self.log_info(F'error reading 0x{interval.begin:0{width}X}:{size}: {error!s}')
+                    continue
                 if not any(patch):
                     continue
                 self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
