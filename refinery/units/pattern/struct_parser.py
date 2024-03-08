@@ -28,7 +28,9 @@ class struct(Unit):
 
     - `a` for null-terminated ASCII strings,
     - `u` to read encoded, null-terminated UTF16 strings,
-    - `w` to read decoded, null-terminated UTF16 strings.
+    - `w` to read decoded, null-terminated UTF16 strings,
+    - `g` to read Microsoft GUID values,
+    - `E` to read 7-bit encoded integers.
 
     For example, the string `LLxxHaa` will read two unsigned 32bit integers, then skip two bytes,
     then read one unsigned 16bit integer, then two null-terminated ASCII strings. The unit defaults
