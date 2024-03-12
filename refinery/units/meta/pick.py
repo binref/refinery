@@ -3,6 +3,7 @@
 from typing import Iterable, Iterator, List, Deque, Optional
 from refinery.units import Arg, Unit, Chunk
 from refinery.lib.tools import begin
+from refinery.lib.argformats import sliceobj
 
 from collections import deque
 from dataclasses import dataclass, field
@@ -44,8 +45,8 @@ class pick(Unit):
     Picks sequences from the array of multiple inputs. For example, `pick 0 2:`
     will return all but the second ingested input (which has index `1`).
     """
-    def __init__(self, *slice: Arg.Bounds(nargs='*', default=[slice(None, None)])):
-        super().__init__(slice=slice)
+    def __init__(self, *bounds: Arg.Bounds(nargs='*', default=[0])):
+        super().__init__(slice=[sliceobj(s) for s in bounds])
 
     def process(self, data: Chunk):
         if not data.visible:

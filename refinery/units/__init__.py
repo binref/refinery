@@ -371,6 +371,11 @@ class Arg(Argument):
                     return ', '.join(self.arg.kwargs['choices'])
                 if key == 'default':
                     default: Union[bytes, int, str, slice] = self.arg.kwargs['default']
+                    if isinstance(default, (list, tuple, set)):
+                        if not default:
+                            return 'empty'
+                        elif len(default) == 1:
+                            default = default[0]
                     if isinstance(default, slice):
                         parts = [default.start or '', default.stop or '', default.step]
                         default = ':'.join(str(x) for x in parts if x is not None)
@@ -513,7 +518,7 @@ class Arg(Argument):
     def Bounds(
         cls,
         *args   : str,
-        help    : Union[omit, str] = 'Specify start:end:step in Python slice syntax.',
+        help    : Optional[Union[omit, str]] = None,
         dest    : Union[omit, str] = omit,
         nargs   : Union[omit, int, str] = omit,
         default : Union[omit, Any] = omit,
@@ -523,6 +528,10 @@ class Arg(Argument):
         """
         Used to add argparse arguments that contain a slice.
         """
+        if help is None:
+            help = 'Specify start:end:step in Python slice syntax.'
+            if default is not cls.omit:
+                help = F'{help} The default is {{default}}.'
         return cls(*args, group=group, help=help, default=default, nargs=nargs, dest=dest, type=sliceobj, metavar=metavar)
 
     @classmethod
@@ -882,7 +891,7 @@ class Executable(ABCMeta):
             elif not any(len(a) > 2 for a in known.args):
                 flagname = normalize_to_display(known.destination, False)
                 known.args.append(F'--{flagname}')
-            action = known.kwargs.get('action', 'store')
+            action: str = known.kwargs.get('action', 'store')
             if action.startswith('store_'):
                 known.kwargs.pop('default', None)
                 continue
