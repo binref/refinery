@@ -257,7 +257,7 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
     argument format type will process the string `0x11:0x11+4*0x34` as the slice
     object `slice(17, 225, None)`.
     """
-    if isinstance(expression, slice):
+    if isinstance(expression, (slice, SliceAgain)):
         return expression
     if isinstance(expression, int):
         return slice(expression, expression + 1)
