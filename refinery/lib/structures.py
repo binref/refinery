@@ -589,7 +589,7 @@ class StructReader(MemoryFile[T]):
             c = self.u16()
             d = self.read(2).hex().upper()
             e = self.read(6).hex().upper()
-        except:
+        except Exception:
             raise
         else:
             return F'{a:08X}-{b:02X}-{c:02X}-{d}-{e}'
