@@ -46,7 +46,7 @@ class pick(Unit):
     will return all but the second ingested input (which has index `1`).
     """
     def __init__(self, *bounds: Arg.Bounds(nargs='*', default=[0])):
-        super().__init__(slice=[sliceobj(s) for s in bounds])
+        super().__init__(bounds=[sliceobj(s) for s in bounds])
 
     def process(self, data: Chunk):
         if not data.visible:
@@ -98,7 +98,7 @@ class pick(Unit):
         container, chunks = chunks
         container = container.copy()
         container.visible = True
-        state = _PickState(deque(self.args.slice), chunks)
+        state = _PickState(deque(self.args.bounds), chunks)
         while state.next():
             if not state.consumed:
                 if not state.discardable():
