@@ -126,7 +126,7 @@ def documentation(unit):
 
 def begin(iterable: Iterable[_T]) -> Optional[Tuple[_T, Iterable[_T]]]:
     """
-    Iterates the first element of an iterator and returns None of this fails.
+    Iterates the first element of an iterator and returns None if this fails.
     Otherwise, it returns both the first element and a new iterable which will
     return the same elements as the input.
     """
