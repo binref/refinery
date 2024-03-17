@@ -39,8 +39,8 @@ As mostly pure-python implementation, it is significantly slower than
 native implementations, but more robust against vulnerabilities.
 
 This implementation supports up to version 2.0 of the ACE archive format,
-including the EXE, DELTA, PIC and SOUND modes of ACE 2.0, password-protected
-archives and multi-volume archives. It does not support writing to archives.
+including the EXE, DELTA, PIC and SOUND modes of ACE 2.0, password protected
+archives and multi-volume archives.  It does not support writing to archives.
 It is an implementation from scratch, based on the 1998 document titled
 "Technical information of the archiver ACE v1.2" by Marcel Lemke, using
 unace 2.5 and WinAce 2.69 by Marcel Lemke as reference implementations.
@@ -177,7 +177,7 @@ def c_div(q, d):
 
 def c_schar(i):
     """
-    Convert arbitrary integer to c signed char type range as if cast in c.
+    Convert arbitrary integer to c signed char type range as if casted in c.
 
     >>> c_schar(0x12345678)
     120
@@ -188,7 +188,7 @@ def c_schar(i):
 
 def c_uchar(i):
     """
-    Convert arbitrary integer to c unsigned char type range as if cast in c.
+    Convert arbitrary integer to c unsigned char type range as if casted in c.
 
     >>> c_uchar(0x12345678)
     120
@@ -2669,7 +2669,7 @@ class MainHeaderNotFoundError(AceError):
     """
     The main ACE header marked by the magic bytes ``**ACE**`` could not be
     found.
-    Either the *search* argument was too small or the archive is not an ACE
+    Either the *search* argument was to small or the archive is not an ACE
     format archive.
     """
     pass
@@ -3044,7 +3044,7 @@ class AceVolume:
         """
         Derive the filename of the next volume after this one.
         If the filename ends in ``.[cC]XX``, XX is incremented by 1.
-        Otherwise, self is assumed to be the first in the series and
+        Otherwise self is assumed to be the first in the series and
         ``.[cC]00`` is used as extension.
         Returns the derived filename in two variants, upper and lower case,
         to allow for finding the file on fully case-sensitive filesystems.
@@ -3907,7 +3907,7 @@ class AceArchive:
     @property
     def volumes_loaded(self):
         """
-        Number of loaded volumes in these archives.  When opening a subsequent
+        Number of loaded volumes in this archives.  When opening a subsequent
         volume of a multi-volume archive, this may be lower than the
         theoretical volume count.
         """
