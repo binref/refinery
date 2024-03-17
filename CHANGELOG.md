@@ -624,7 +624,7 @@ Updates build system.
 - The `pemeta` unit was added.
 - The `carve-json` unit was added.
 - The `peslice` and `elfslice` units were given a unified interface.
-- The `b85` for base 85 encoding a decoding was added.
+- The `b85` for base 85 encoding and decoding was added.
 
 ## Version 0.1.3
 - Fixes a bug in the .NET header parser where the tables were sometimes parsed in the wrong order.
