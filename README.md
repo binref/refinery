@@ -17,25 +17,26 @@
 The Binary Refinery&trade; is a collection of Python scripts that implement transformations of binary data such as compression and encryption.
 We will often refer to it simply by _refinery_, which is also the name of the corresponding package.
 The scripts are designed to exclusively read input from stdin and write output to stdout.
-This way, the individual units can be chained with the piping operator `|` on the commandline to perform more complex tasks.
-The project was born to aid with malware triage, and is an attempt to implement something like [CyberChef](https://github.com/gchq/CyberChef) on the commandline.
-
-The main philosophy of the refinery is that every script should be a unit in the sense that it does _one_ job.
-It is always a case by case decision, but it is generally desirable to reduce the number of possible arguments of each script to a minimum and prefer strong capsulation if some functionality could be provided by a separate unit. 
+The main philosophy is that every script should be a unit in the sense that it does _one_ job,
+and individual units can be combined into _pipelines_ with the piping operator `|` on the commandline to perform more complex tasks.
+The project's main focus is malware triage,
+and is an attempt to implement something like [CyberChef](https://github.com/gchq/CyberChef) on the commandline.
 
 ## Documentation
 
-The main documentation is [generated automatically from the source code][docs];
-it serves primarily as a reference but also contains the specification for the three fundamental concepts of the toolkit:
-[framing][frame], [multibin arguments][argformats], and [meta variables][meta]. 
+The help text that is displayed when executing a unit with the `-h` or `--help` switch is its main documentation.
+The [automatically generated documentation][docs] contains a compilation of that output for each unit at the top level,
+but also contains the specification for the three fundamental concepts of the toolkit:
+[framing][frame], [multibin arguments][argformats], and [meta variables][meta].
+
+> [!TIP]  
+> Full-text search of the description and help text for every unit is also available on the command line, via the provided `binref` command.
 
 In recognition of the fact that reference documentation can be somewhat dry,
 there is an ongoing effort to produce a series of [tutorials](tutorials) and there are a few additional resources:
 
 - [OALabs](https://www.youtube.com/c/OALabs) was kind enough to let me [demo the toolkit in a feature video](https://www.youtube.com/watch?v=4gTaGfFyMK4).
-- [Johannes Bader](https://bin.re/) wrote an amazing [blog post about how to analyze TA551 malspam with binary refinery](https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/). It should really be turned into a tutorial at some point.
-
-Full-text search of the description and help text for every unit is also available on the command line, via the provided `binref` command.
+- [Johannes Bader](https://bin.re/) wrote an amazing [blog post about how to analyze TA551 malspam with binary refinery](https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/).
 
 ## License
 
@@ -47,7 +48,8 @@ If you want to do something with it that's not covered by this license, please f
 
 The refinery requires at least **Python 3.7**.
 It is recommended to install it into its own [virtual environment][venv]:
-The package has a **lot** of dependencies, and installing it into your global Python is somewhat prone to dependency conflicts.
+The package can pull in a **lot** of dependencies,
+and installing it into your global Python is somewhat prone to version conflicts.
 Also, since the toolkit introduces a large number of new commands,
 there is a good chance that some of these will clash on some systems,
 and keeping them in their own separate virtual environment is one way to prevent that.
@@ -104,8 +106,8 @@ For example, [pcap][] is the only unit that requires a packet capture file parsi
 These libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users.
 The corresponding units will tell you what to do when their dependency is missing:
 ```
-$ emit data.pcap | pcap [| peek ]
-(13:37:00) failure in pcap: dependency pypcapkit[scapy] is missing; run pip install 'pypcapkit[scapy]'
+$ emit archive.7z | xt7z -l
+(13:37:00) failure in xt7z: dependency py7zr is missing; run pip install py7zr
 ```
 You can then install these missing dependencies manually.
 If you do not want to be bothered by missing dependencies and don't mind a long refinery installation, you can install the package as follows:
@@ -115,16 +117,16 @@ pip install -U binary-refinery[all]
 which will install _all_ dependencies on top of the required ones.
 More precisely, there are the following extra categories available:
 
-| Name       | Included Dependencies                                             |
-|------------|-------------------------------------------------------------------|
-| `all`      | all dependencies for all refinery units                           |
-| `arc`      | all archiving-related dependencies (i.e. 7zip support)            |
-| `default`  | recommended selection of reasonable dependencies, author's choice |
-| `display`  | the packages `colorama` and `jsbeautifier`                        |
+|       Name | Included Dependencies                                             |
+|-----------:|-------------------------------------------------------------------|
+|      `all` | all dependencies for all refinery units                           |
+|      `arc` | all archiving-related dependencies (i.e. 7zip support)            |
+|  `default` | recommended selection of reasonable dependencies, author's choice |
+|  `display` | the packages `colorama` and `jsbeautifier`                        |
 | `extended` | an extended selection, excluding only the most heavyweight ones   |
-| `formats`  | all dependencies related to parsing of various file formats       |
-| `office`   | subset of `formats`; all office-related parsing dependencies      |
-| `python`   | packages related to Python decompilation                          |
+|  `formats` | all dependencies related to parsing of various file formats       |
+|   `office` | subset of `formats`; all office-related parsing dependencies      |
+|   `python` | packages related to Python decompilation                          |
 
 You can specify any combination of these to the installation to have some control over trading dependencies for capabilities.
 
