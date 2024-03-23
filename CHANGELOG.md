@@ -1,5 +1,13 @@
 # Binary Refinery Changelog
 
+> [!NOTE]  
+> Almost every release contains bugfixes, but these are not usually included in the changelog.
+> If a release contains only bugfix, it is marked as a 'bugfix release'.
+> Otherwise, the changelog entries highlight only new or changed functionality.
+
+## Version 0.6.33
+- The `struct` unit was extended with an additional format string character, `g`, for reading GUID values.
+
 ## Version 0.6.32 - bugfix release
 
 ## Version 0.6.31 - bugfix release
