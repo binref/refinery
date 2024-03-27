@@ -135,15 +135,11 @@ class alu(ArithmeticUnit):
                 return n
 
         if fbits is INF:
-            def rotate_right(n, k):
-                return n >> k
-            def rotate_left(n, k):
-                return n << k
+            def rotate_r(n, k): return n >> k
+            def rotate_l(n, k): return n << k
         else:
-            def rotate_right(n, k):
-                return (n >> k) | (n << (fbits - k)) & fmask
-            def rotate_left(n, k):
-                return (n << k) | (n >> (fbits - k)) & fmask
+            def rotate_r(n, k): return (n >> k) | (n << (fbits - k)) & fmask
+            def rotate_l(n, k): return (n << k) | (n >> (fbits - k)) & fmask
 
         def negate_bits(n):
             return n ^ fmask
@@ -156,8 +152,8 @@ class alu(ArithmeticUnit):
             S=seed,
             I=cast_signed,
             U=cast_unsigned,
-            R=rotate_right,
-            L=rotate_left,
+            R=rotate_r,
+            L=rotate_l,
             X=negate_bits,
             M=mask_to_bits,
         )
