@@ -5,6 +5,7 @@ from __future__ import annotations
 from refinery.units.blockwise import Arg, ArithmeticUnit, FastBlockError
 from refinery.lib.meta import metavars
 from refinery.lib.argformats import PythonExpression
+from refinery.lib.types import INF
 
 
 class IndexCounter:
@@ -36,9 +37,12 @@ class alu(ArithmeticUnit):
     - the variable `V`: the vector of arguments
     - the variable `I`: function that casts to a signed int in current precision
     - the variable `U`: function that casts to unsigned int in current precision
-    - the variable `R`: function that rotates right
-    - the variable `L`: function that rotates left
+    - the variable `R`: function; `R(x,4)` rotates x by 4 to the right
+    - the variable `L`: function; `L(x,4)` rotates x by 4 to the left
+    - the variable `M`: function; `M(x,8)` picks the lower 8 bits of x
     - the variable `X`: function that negates the bits of the input
+
+    (The rotation operations are interpreted as shifts when arbitrary precision is used.)
 
     Each block of the input is replaced by the value of this expression. Additionally, it is possible to
     specify prologue and epilogue expressions which are used to update the state variable `S` before and
@@ -56,7 +60,7 @@ class alu(ArithmeticUnit):
             if default is None:
                 raise ValueError('No definition given')
             definition = default
-        return PythonExpression(definition, *'IBASNVRLX', all_variables_allowed=True)
+        return PythonExpression(definition, *'IBASMNVRLX', all_variables_allowed=True)
 
     def __init__(
         self, operator: Arg(type=str, help='A Python expression defining the operation.'), *argument,
@@ -130,14 +134,22 @@ class alu(ArithmeticUnit):
             else:
                 return n
 
-        def rotate_right(n, k):
-            return (n >> k) | (n << (fbits - k)) & fmask
-
-        def rotate_left(n, k):
-            return (n << k) | (n >> (fbits - k)) & fmask
+        if fbits is INF:
+            def rotate_right(n, k):
+                return n >> k
+            def rotate_left(n, k):
+                return n << k
+        else:
+            def rotate_right(n, k):
+                return (n >> k) | (n << (fbits - k)) & fmask
+            def rotate_left(n, k):
+                return (n << k) | (n >> (fbits - k)) & fmask
 
         def negate_bits(n):
             return n ^ fmask
+
+        def mask_to_bits(x, b):
+            return x & ((1 << b) - 1)
 
         context.update(
             N=len(data),
@@ -146,7 +158,8 @@ class alu(ArithmeticUnit):
             U=cast_unsigned,
             R=rotate_right,
             L=rotate_left,
-            X=negate_bits
+            X=negate_bits,
+            M=mask_to_bits,
         )
 
         def operate(block, index, *args):
