@@ -329,16 +329,18 @@ class formats(PatternEnum):
     "Base85 encoded strings"
     b64any = alphabet(R'(?:[-\w\+/]{4})', postfix=R'(?:(?:[-\w\+/]{2,3})={0,3})?')
     "Both URL-safe and normal Base64 alphabets."
-    b64space = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
-    "Base64 encoded strings, separated by whitespace"
-    b85space = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]')
-    "Base85 encoded string, separated by whitespace"
     b64url = alphabet(R'[-\w]{4}', postfix=R'(?:[-\w]{2,3}={0,3})?')
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]{2}')
     "Hexadecimal strings"
     uppercase_hex = alphabet(R'[0-9A-F]{2}')
     "Uppercase hexadecimal strings"
+    spaced_hex = tokenize(R'[0-9a-fA-F]+', R'\s*')
+    "Hexadecimal strings"
+    spaced_b64 = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
+    "Base64 encoded strings, separated by whitespace"
+    spaced_b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]')
+    "Base85 encoded string, separated by whitespace"
     utf8 = pattern(_pattern_utf8)
     "A sequence of bytes that can be decoded as UTF8."
     hexdump = tokenize(_pattern_hexline, bound='', sep=R'\s*\n')
