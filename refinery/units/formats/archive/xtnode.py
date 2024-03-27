@@ -127,13 +127,13 @@ class xtnode(ArchiveUnit):
                     yield UnpackResult(path, blob[offset:end])
 
     def _unpack_pkg(self, data: ByteStr):
-        def _extract_coordinates(*v):
+        def _extract_coordinates(*v: bytes):
             for name in v:
-                pattern = BR'%s\s{0,3}=\s{0,3}(%s)' % (name, formats.string)
-                value, = re.findall(pattern, data)
-                yield int((value | esc(quoted=True) | str).strip())
+                pattern = name + BR'''\s{0,3}=\s{0,3}(['"])([\s\d]+)\1'''
+                value, = re.finditer(pattern, data)
+                yield int(value.group(2).decode('utf8').strip(), 0)
 
-        def _extract_data(*v):
+        def _extract_data(*v: bytes):
             try:
                 offset, length = _extract_coordinates(*v)
             except Exception:
