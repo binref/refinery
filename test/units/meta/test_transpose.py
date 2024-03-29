@@ -55,5 +55,5 @@ class TestTranspose(TestUnitBase):
         ))
 
     def test_push_pop(self):
-        p = self.load_pipeline('emit FOOBAR [| push | chop size/2 | transpose | pop x y z | ccp var:z ]')
+        p = self.load_pipeline('emit FOOBAR [| push | chop size//2 | transpose | pop x y z | ccp var:z ]')
         self.assertEqual(p(), B'ORFOOBAR')

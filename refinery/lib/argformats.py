@@ -181,9 +181,6 @@ class PythonExpression:
             def visit_MatMult(self, node: ast.MatMult) -> Any:
                 return ast.BitXor()
 
-            def visit_Div(self, node: ast.MatMult) -> Any:
-                return ast.FloorDiv()
-
         expression = ast.fix_missing_locations(StringToBytes().visit(expression))
         nodes = ast.walk(expression)
 
