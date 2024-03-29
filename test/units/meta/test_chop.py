@@ -30,10 +30,9 @@ class TestChop(TestUnitBase):
         pl = self.load_pipeline('emit FOOBARBAZ [| chop 3 [| chop 1 [| nop ]]| sep , ]')
         self.assertEqual(pl(), B'FOOBARBAZ')
 
-    def test_chop_into(self):
-        unit = self.load('--into', 10)
-        for size in (11, 15, 20, 34, 200, 2011):
-            buffer = self.generate_random_buffer(size)
-            chunks = list(unit.process(buffer))
-            self.assertEqual(len(chunks), 10)
-            self.assertEqual(B''.join(chunks), buffer)
+    def test_chop_interlaced(self):
+        goal = ['HEL', 'ELL', 'LLO', 'LOW', 'OWO', 'WOR', 'ORL', 'RLD', 'LD', 'D']
+        test = b'HELLOWORLD' | self.load(3, 1) | [str]
+        self.assertListEqual(test, goal)
+        test = b'HELLOWORLD' | self.load(3, 1, truncate=True) | [str]
+        self.assertListEqual(test, goal[:8])

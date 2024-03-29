@@ -256,18 +256,6 @@ def isbuffer(obj) -> bool:
         return False
 
 
-def splitchunks(data: ByteString, size: int, truncate=False) -> Iterable[ByteString]:
-    if len(data) <= size:
-        if not truncate or len(data) == size:
-            yield data
-        return
-    total = len(data)
-    if truncate:
-        total -= len(data) % size
-    for k in range(0, total, size):
-        yield data[k:k + size]
-
-
 def make_buffer_mutable(data: ByteString):
     """
     Returns a mutable version of the input data. Already mutable inputs are returned
