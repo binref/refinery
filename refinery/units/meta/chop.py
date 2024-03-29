@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units import Arg, Unit
+from refinery.lib.tools import splitchunks
 
 
 class chop(Unit):
@@ -23,19 +24,6 @@ class chop(Unit):
         view = memoryview(data)
         size = self.args.size
         step = self.args.step
-        snip = self.args.truncate
         if size < 1:
             raise ValueError('The chunk size has to be a positive integer value.')
-        if step is None:
-            step = size
-        if len(view) <= size:
-            if not snip or len(view) == size:
-                yield data
-            return
-        for k in range(0, len(view), step):
-            chunk = view[k:k + size]
-            if not chunk:
-                break
-            if len(chunk) < size and snip:
-                break
-            yield chunk
+        yield from splitchunks(view, size, step, self.args.truncate)

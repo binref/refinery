@@ -256,6 +256,34 @@ def isbuffer(obj) -> bool:
         return False
 
 
+def splitchunks(
+    data: ByteString,
+    size: int,
+    step: Optional[int] = None,
+    truncate: bool = False
+) -> Iterable[ByteString]:
+    """
+    Split `data` into chunks of size `size`. The cursor advances by `step` bytes after
+    extracting a block, the default value for `step` is equal to `size`. The boolean
+    parameter `truncate` specifies whether any chunks of size smaller than `size` are
+    generated or whether to abort as soon as the last complete chunk of the given size
+    is extracted.
+    """
+    if step is None:
+        step = size
+    if len(data) <= size:
+        if not truncate or len(data) == size:
+            yield data
+        return
+    for k in range(0, len(data), step):
+        chunk = data[k:k + size]
+        if not chunk:
+            break
+        if len(chunk) < size and truncate:
+            break
+        yield chunk
+
+
 def make_buffer_mutable(data: ByteString):
     """
     Returns a mutable version of the input data. Already mutable inputs are returned
