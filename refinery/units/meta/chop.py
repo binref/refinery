@@ -14,7 +14,7 @@ class chop(Unit):
         size: Arg.Number('size', help='Chop data into chunks of this size'),
         step: Arg.Number('step', help=(
             'Optionally specify a step size (which is equal to the size by default) which indicates the number of bytes by '
-            'which the cursor will be increased after extracting a chunk.')) = None, 
+            'which the cursor will be increased after extracting a chunk.')) = None,
         truncate: Arg.Switch('-t', help=(
             'Truncate possible excess bytes at the end of the input, by default they are appended as a single chunk.')) = False,
     ):
