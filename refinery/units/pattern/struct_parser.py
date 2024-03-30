@@ -180,8 +180,8 @@ class struct(Unit):
                     elif name:
                         meta[name] = value
 
-                if until and not until(meta):
-                    self.log_info(F'the expression ({until}) evaluated to zero; aborting.')
+                if until and until(meta):
+                    self.log_info(F'the expression ({until}) evaluated to true; aborting.')
                     break
 
                 with StreamDetour(reader, checkpoint) as detour:

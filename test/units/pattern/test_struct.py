@@ -65,3 +65,8 @@ class TestStructUnit(TestUnitBase):
         data = self.download_sample('4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5')
         test = data | self.load_pipeline('vsect .bss | struct {n:L}{k:n}{c:} {c:rc4[var:k]:snip[::2]}') | bytes
         self.assertIn(B'165.22.5'B'.66', test)
+
+    def test_until(self):
+        data = B'1A92750293738'
+        test = data | self.load('{k:B}', multi=True, until='k==0x30') | []
+        self.assertEqual(len(test), 6)
