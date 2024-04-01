@@ -6,11 +6,13 @@ import sys
 import os
 import textwrap
 import codecs
+import itertools
+import collections
 
 from refinery.units.sinks import Arg, HexViewer
 from refinery.lib.meta import ByteStringWrapper, metavars, CustomStringRepresentation, SizeInt
 from refinery.lib.types import INF
-from refinery.lib.tools import get_terminal_size, isbuffer, lookahead
+from refinery.lib.tools import get_terminal_size, isbuffer
 from refinery.lib.environment import environment
 
 
@@ -291,11 +293,26 @@ class peek(HexViewer):
         except ImportError:
             pass
         discarded = 0
-        for final, item in lookahead(chunks):
-            item.temp = final
-            if not item.visible and self.isatty:
+        it = iter(chunks)
+        buffer = collections.deque(itertools.islice(it, 0, 2))
+        buffer.reverse()
+
+        while buffer:
+            if self.isatty and not buffer[0].visible:
+                buffer.popleft()
                 discarded += 1
             else:
-                yield item
+                item = buffer.pop()
+                last = not bool(buffer)
+                item.temp = last
+                if not item.visible and self.isatty:
+                    discarded += 1
+                else:
+                    yield item
+            try:
+                buffer.appendleft(next(it))
+            except StopIteration:
+                pass
+
         if discarded:
             self.log_warn(F'discarded {discarded} invisible chunks to prevent them from leaking into the terminal.')
