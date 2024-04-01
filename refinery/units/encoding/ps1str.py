@@ -42,7 +42,7 @@ class ps1str(Unit):
 
     @unicoded
     def process(self, data):
-        match = re.fullmatch(R'''@(['"])\s*\n(.*?)\n\s*\1@''', data)
+        match = re.fullmatch(R'''@(['"])\s*?[\r\n](.*?)[\r\n]\1@''', data, flags=re.DOTALL)
         if match:
             return match.group(2)
         if data[0] not in ''''"''' or data[-1] != data[0]:

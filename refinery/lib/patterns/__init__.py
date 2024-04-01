@@ -24,20 +24,21 @@ class pattern:
     bin_compiled: re.Pattern
     str_compiled: re.Pattern
 
-    def __init__(self, pattern: str):
+    def __init__(self, pattern: str, flags: int = 0):
         self.str_pattern = pattern
         self.bin_pattern = pattern.encode('ascii')
+        self.regex_flags = flags
 
     def __bytes__(self):
         return self.bin_pattern
 
     @cached_property
     def bin_compiled(self):
-        return re.compile(B'(%s)' % self.bin_pattern)
+        return re.compile(B'(%s)' % self.bin_pattern, flags=self.regex_flags)
 
     @cached_property
     def str_compiled(self):
-        return re.compile(self.str_pattern)
+        return re.compile(self.str_pattern, flags=self.regex_flags)
 
     def __str__(self):
         return self.str_pattern
@@ -192,8 +193,9 @@ _pattern_number = (
     '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|(?:[1-9][0-9]*|0)(?P<fp1>\\.[0-9]*)?|(?P<fp2>\\.[0-9]+))'
     '(?(fp1)(?:[eE][-+]?[0-9]+)?|(?(fp2)(?:[eE][-+]?[0-9]+)?|(?=[uU]?[iI]\\d{1,2}|[LlHh]|[^a-zA-Z0-9]|$)))'
 )
+
 _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
-_pattern_ps1str = R'''(?:@"\s*?[\r\n].*?[\r\n]"@|@'\s*?[\r\n].*?[\r\n]'@|"(?:`.|""|[^"])*"|'(?:''|[^'])*')'''
+_pattern_ps1str = R'''(?:(?:@"\s*?[\r\n].*?[\r\n]"@)|(?:@'\s*?[\r\n].*?[\r\n]'@)|(?:"(?:`.|""|[^"\n])*")|(?:'(?:''|[^'\n])*'))'''
 _pattern_vbastr = R'''"(?:""|[^"])*"'''
 _pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]*|[-+]?(?:[1-9][0-9]*|0))(?=\b|$)'
 _pattern_string = R'''(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*')'''
@@ -295,7 +297,7 @@ class formats(PatternEnum):
     "C syntax string literal that also allows line breaks"
     cmdstr = pattern(_pattern_cmdstr)
     "Windows command line escaped string literal"
-    ps1str = pattern(_pattern_ps1str)
+    ps1str = pattern(_pattern_ps1str, flags=re.DOTALL)
     "PowerShell escaped string literal"
     vbastr = pattern(_pattern_vbastr)
     "VBS/VBA string literal"
