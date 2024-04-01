@@ -5,6 +5,11 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.6.34
+- The `chop` unit has a second argument now that allows to specify the step size.
+  Also, The `--into` argument has been removed because this can be done more succinctly using the `size` meta variable and long division.
+- The `alu` unit has been extended with a new helper function called `M`; it can be used to mask a value down to a certain number of bits.
+
 ## Version 0.6.33
 - The `struct` unit was extended with an additional format string character, `g`, for reading GUID values.
 
