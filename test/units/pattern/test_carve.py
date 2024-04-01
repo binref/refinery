@@ -172,3 +172,33 @@ class TestCarve(TestUnitBase):
     def test_carve_intarray(self):
         data = B'$$$x = 1,2,3,4;\r\n'
         self.assertEqual(bytes(data | self.load('intarray')), b'1,2,3,4')
+
+    def test_carve_ps1str(self):
+        def multibytes(c):
+            return inspect.getdoc(c).encode('utf8')
+
+        @multibytes
+        class data:
+            """
+            Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Bypass -Force
+            "RegSvcs", "mshta", "wscript", "msbuild" | ForEach-Object { Stop-Process -Name $_ -Force }
+            $downloadsFolder = [System.IO.Path]::Combine($env:USERPROFILE, 'Downloads')
+
+            $lulli = @'
+            $muthal = "^^^^0011^^^^^^-101011010101-10".replace('^','000').replace('~','111').replace('-','100')
+            $bulgumchupitum = '11101110-*1^1010111-110^1011^1101110-1011^0^0-010^111110-1010'.replace('*','1000000').replace('-','10000').replace('^','100')
+
+            #kcuf em rederhar
+            '@
+            [IO.File]::WriteAllText("KAMASUTRAKI", $lulli)
+            $lulli | .('{1}{Â°Â°Â°Â°Â°}'.replace('Â°Â°Â°Â°Â°','0')-f'!','I').replace('!','ex')
+
+            $scriptPath = $MyInvocation.MyCommand.Path
+            """
+
+        test = data | self.load('ps1str', decode=True) | [str]
+        self.assertEqual(test[0], 'RegSvcs')
+        self.assertEqual(test[1], 'mshta')
+        self.assertTrue(test[5].startswith("$muthal"))
+        self.assertTrue(test[5].endswith("rederhar"))
+        self.assertEqual(test[6], 'KAMASUTRAKI')
