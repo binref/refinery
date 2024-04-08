@@ -52,7 +52,7 @@ class nrv2b(NRVUnit):
             if length == 0:
                 length = 2 + next(bb)
                 while not next(bb):
-                   length = 2 * length + next(bb)
+                    length = 2 * length + next(bb)
                 length += 2
             length += int(bool(offset > 0xD00))
             dst.replay(offset, length + 1)
@@ -78,14 +78,14 @@ class nrv2d(NRVUnit):
                 offset = (offset - 3) * 0x100 + src.read_byte()
                 if offset & 0xFFFFFFFF == 0xFFFFFFFF:
                     break
-                length = (offset  ^ 1) & 1
+                length = (offset  ^ 1) & 1 # noqa
                 offset = (offset >> 1) + 1
                 last_offset = offset
             length = 2 * length + next(bb)
             if length == 0:
                 length = 2 + next(bb)
                 while not next(bb):
-                   length = 2 * length + next(bb)
+                    length = 2 * length + next(bb)
                 length += 2
             length += int(bool(offset > 0x500))
             dst.replay(offset, length + 1)
@@ -111,7 +111,7 @@ class nrv2e(NRVUnit):
                 offset = (offset - 3) * 0x100 + src.read_byte()
                 if offset & 0xFFFFFFFF == 0xFFFFFFFF:
                     break
-                length = (offset ^  1) & 1
+                length = (offset ^  1) & 1 # noqa
                 offset = (offset >> 1) + 1
                 last_offset = offset
             if length:
@@ -121,7 +121,7 @@ class nrv2e(NRVUnit):
             else:
                 length += 1
                 while not next(bb):
-                   length = 2 * length + next(bb)
+                    length = 2 * length + next(bb)
                 length += 3
             length += int(bool(offset > 0x500))
             dst.replay(offset, length + 1)
