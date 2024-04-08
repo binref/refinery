@@ -53,4 +53,4 @@ class xtgz(ArchiveUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        return B'\x1F\x8B' in data
+        return data.startswith(B'\x1F\x8B')
