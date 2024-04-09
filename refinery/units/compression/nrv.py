@@ -16,11 +16,16 @@ class NRVUnit(Unit, abstract=True):
         super().__init__(bits=bits)
 
     def process(self, data):
-        src = StructReader(data)
-        bbr = BitBufferedReader(src, self.args.bits)
-        dst = MemoryFile()
-        self._decompress(src, dst, bbr)
-        return dst.getbuffer()
+        def process(length_prefix: bool):
+            src = StructReader(data)
+            bbr = BitBufferedReader(src, self.args.bits)
+            dst = MemoryFile(size_limit=src.u32()) if length_prefix else MemoryFile()
+            self._decompress(src, dst, bbr)
+            return dst.getbuffer()
+        try:
+            return process(False)
+        except Exception:
+            return process(True)
 
     @abc.abstractmethod
     def _decompress(self, src: StructReader, dst: MemoryFile, bb: BitBufferedReader):
@@ -119,7 +124,7 @@ class nrv2e(NRVUnit):
             elif next(bb):
                 length = 3 + next(bb)
             else:
-                length += 1
+                length = 2 + next(bb)
                 while not next(bb):
                     length = 2 * length + next(bb)
                 length += 3
