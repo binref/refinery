@@ -5,6 +5,10 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.6.35
+- Adds the `nrv2b`, `nrv2d`, and `nrv2e` decompression units.
+- Adds the `fernet` unit to decrypt messages in Fernet format.
+
 ## Version 0.6.34
 - The `chop` unit has a second argument now that allows to specify the step size.
   Also, The `--into` argument has been removed because this can be done more succinctly using the `size` meta variable and long division.
