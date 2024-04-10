@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import re
+import glob
 import os
 
 from pathlib import Path
@@ -88,21 +88,8 @@ class ef(Unit):
     def _glob(self, pattern: str) -> Iterable[Path]:
         if pattern.endswith('**'):
             pattern += '/*'
-        wildcard = re.search(R'[\[\?\*]', pattern)
-        if wildcard is None:
-            yield Path(pattern)
-        else:
-            k = wildcard.start()
-            base, pattern = pattern[:k], pattern[k:]
-            root = Path(base)
-            if root.parts:
-                last = root.parts[-1]
-                if base.endswith(last):
-                    # /base/something.*
-                    pattern = F'{last}{pattern}'
-                    root = root.parent
-            for match in root.glob(pattern):
-                yield match
+        for match in glob.glob(pattern, recursive=True):
+            yield Path(match)
 
     def process(self, data):
         meta = metavars(data)
@@ -115,8 +102,13 @@ class ef(Unit):
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
             for path in paths(mask):
-                if wild and not path.is_file():
-                    continue
+                if wild:
+                    try:
+                        if not path.is_file():
+                            continue
+                    except Exception:
+                        self.log_info(F'access error while scanning: {path!s}')
+                        continue
                 if self.args.meta:
                     stat = path.stat()
                     kwargs.update(
