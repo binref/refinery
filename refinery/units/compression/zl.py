@@ -34,9 +34,10 @@ class zl(Unit):
 
     def process(self, data):
         if data[0] == 0x78 or data[0:2] == B'\x1F\x8B' or self.args.zlib_header or self.args.gzip_header:
-            mode_candidates = [self.args.window | 0x20, -self.args.window, 0]
+            mode_candidates = [self.args.window | 0x20, -self.args.window]
         else:
-            mode_candidates = [-self.args.window, self.args.window | 0x20, 0]
+            mode_candidates = [-self.args.window, self.args.window | 0x20]
+        mode_candidates.extend([0x10 | self.args.window, 0])
         for mode in mode_candidates:
             self.log_debug(F'using mode {mode} for decompression')
             try:
