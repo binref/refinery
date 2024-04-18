@@ -14,7 +14,7 @@ import io
 import warnings
 import re
 
-from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar
+from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar, Dict
 from math import log
 from enum import IntFlag
 
@@ -352,6 +352,30 @@ class NoLogging:
         if self.mode & NoLogging.Mode.STD_OUT:
             sys.stdout.close()
             sys.stdout = self._stdout
+
+class MonkeyPatch:
+    """
+    A context manager to monkey patch functions in a given module.
+    """
+
+    def __init__(self, object, **patches: Dict[str, Callable]):
+        self.object = object
+        self.patches = patches
+        self.backups = {}
+
+    def __enter__(self):
+        for name, patch in self.patches.items():
+            try:
+                self.backups[name] = getattr(self.object, name)
+            except AttributeError:
+                continue
+            else:
+                setattr(self.object, name, patch)
+
+    def __exit__(self, *_):
+        for name, original in self.backups.items():
+            setattr(self.object, name, original)
+        self.backups.clear()
 
 
 class NotOne(LookupError):

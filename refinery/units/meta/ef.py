@@ -9,6 +9,7 @@ from typing import Iterable
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import MonkeyPatch
 from refinery.units import Arg, Unit
 
 
@@ -88,8 +89,9 @@ class ef(Unit):
     def _glob(self, pattern: str) -> Iterable[Path]:
         if pattern.endswith('**'):
             pattern += '/*'
-        for match in glob.glob(pattern, recursive=True):
-            yield Path(match)
+        with MonkeyPatch(glob, _ishidden=lambda _: False):
+            for match in glob.glob(pattern, recursive=True):
+                yield Path(match)
 
     def process(self, data):
         meta = metavars(data)
