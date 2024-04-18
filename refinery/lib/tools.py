@@ -370,6 +370,7 @@ class NoLogging:
             sys.stdout.close()
             sys.stdout = self._stdout
 
+
 class MonkeyPatch:
     """
     A context manager to monkey patch functions in a given module.
