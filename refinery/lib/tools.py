@@ -316,12 +316,26 @@ except AttributeError:
 
 
 class NoLogging:
+    """
+    A context manager to prevent various unwanted kinds of logging messages to appear.
+    The class is initialized with a given mode that encodes the logging channels to be
+    suppressed. After the context is exited, the original logging behavior is restored.
+    """
+
     class Mode(IntFlag):
+        """
+        A set of flags for different logging mechanisms to be suppressed.
+        """
         STD_OUT = 0b0001
+        """Silence the standard output channel."""
         STD_ERR = 0b0010
+        """Silence the standard error channel."""
         WARNING = 0b0100
+        """Silence the Python warning module."""
         LOGGING = 0b1000
+        """Silence the Python logging module."""
         ALL     = 0b1111 # noqa
+        """Silence all known logging mechanisms."""
 
     def __init__(self, mode: Mode = Mode.WARNING | Mode.LOGGING):
         self.mode = mode
