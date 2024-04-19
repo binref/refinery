@@ -14,7 +14,7 @@ import io
 import warnings
 import re
 
-from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar, Dict
+from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar
 from math import log
 from enum import IntFlag
 

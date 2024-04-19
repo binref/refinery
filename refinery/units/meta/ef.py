@@ -5,7 +5,7 @@ import os
 
 from pathlib import Path
 from datetime import datetime
-from typing import Iterable, Union
+from typing import Iterable
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
