@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import glob
+import re
 import os
 
 from pathlib import Path
 from datetime import datetime
-from typing import Iterable
+from typing import Iterable, Union
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import MonkeyPatch
 from refinery.units import Arg, Unit
 
 
@@ -86,17 +85,38 @@ class ef(Unit):
                 out.seek(0)
                 out.truncate()
 
+    def _absolute_path(self, path_string: str):
+        path = Path(path_string).absolute()
+        if os.name == 'nt' and not path.parts[0].startswith('\\\\?\\'):
+            # The pathlib glob method will simply fail mid-traversal if it attempts to descend into
+            # a folder or to a file whose path exceeds MAX_PATH on Windows. As a workaround, we use
+            # UNC paths throughout and truncate to relative paths after enumeration.
+            path = Path(F'\\\\?\\{path!s}')
+        return path
+
     def _glob(self, pattern: str) -> Iterable[Path]:
         if pattern.endswith('**'):
             pattern += '/*'
-        with MonkeyPatch(glob, _ishidden=lambda _: False):
-            for match in glob.glob(pattern, recursive=True):
-                yield Path(match)
+        wildcard = re.search(R'[\[\?\*]', pattern)
+        if wildcard is None:
+            yield self._absolute_path(pattern)
+            return
+        k = wildcard.start()
+        base, pattern = pattern[:k], pattern[k:]
+        path = self._absolute_path(base or '.')
+        last = path.parts[-1]
+        if base.endswith(last):
+            # /base/something.*
+            pattern = F'{last}{pattern}'
+            path = path.parent
+        for match in path.glob(pattern):
+            yield match
 
     def process(self, data):
         meta = metavars(data)
         meta.ghost = True
         wild = (os.name == 'nt' or self.args.wild) and not self.args.tame
+        root = self._absolute_path('.')
         paths = self._glob if wild else lambda mask: [Path(mask)]
 
         for mask in self.args.filenames:
@@ -104,12 +124,13 @@ class ef(Unit):
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
             for path in paths(mask):
+                relative = path.relative_to(root)
                 if wild:
                     try:
                         if not path.is_file():
                             continue
                     except Exception:
-                        self.log_info(F'access error while scanning: {path!s}')
+                        self.log_info(F'access error while scanning: {relative!s}')
                         continue
                 if self.args.meta:
                     stat = path.stat()
@@ -121,9 +142,9 @@ class ef(Unit):
                     )
                 if self.args.list:
                     try:
-                        yield self.labelled(str(path).encode(self.codec), **kwargs)
+                        yield self.labelled(str(relative).encode(self.codec), **kwargs)
                     except OSError:
-                        self.log_warn(F'os error while scanning: {path!s}')
+                        self.log_warn(F'os error while scanning: {relative!s}')
                     continue
                 try:
                     with path.open('rb') as stream:
@@ -133,8 +154,8 @@ class ef(Unit):
                             yield from self._read_chunks(stream)
                         else:
                             data = stream.read()
-                            self.log_info(lambda: F'reading: {path!s} ({len(data)} bytes)')
-                            yield self.labelled(data, path=path.as_posix(), **kwargs)
+                            self.log_info(lambda: F'reading: {relative!s} ({len(data)} bytes)')
+                            yield self.labelled(data, path=relative.as_posix(), **kwargs)
                 except PermissionError:
                     self.log_warn('permission denied:', path.as_posix())
                 except FileNotFoundError:
