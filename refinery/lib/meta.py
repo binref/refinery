@@ -807,7 +807,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             wrap = ByteStringWrapper
         if not isinstance(value, wrap):
             with contextlib.suppress(TypeError):
-                value = ByteStringWrapper(value)
+                value = wrap(value)
         return value
 
     def __setitem__(self, key, value):

@@ -87,3 +87,9 @@ class TestMeta(TestBase):
     def test_regression_nulled_history(self):
         pl = L('emit FOO [[| put b [| emit BAR ]| rex . | swap k | swap b | cfmt {}/{k} | sep / ]]')
         self.assertEqual(pl(), B'FOO/B/FOO/A/FOO/R')
+
+    def test_wrapper_works_after_deserialization(self):
+        e1 = L('emit range:0x100 [| cm entropy | cfmt {entropy!r} ]') | str
+        e2 = L('emit range:0x100 | cfmt {entropy!r}') | str
+        self.assertEqual(e1, e2)
+        self.assertEqual(e1, '100.00%')
