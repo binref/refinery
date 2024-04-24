@@ -70,3 +70,11 @@ class TestStructUnit(TestUnitBase):
         data = B'1A92750293738'
         test = data | self.load('{k:B}', multi=True, until='k==0x30') | []
         self.assertEqual(len(test), 6)
+
+    def test_argument_assignment_failure_regression_01(self):
+        test = self.load_pipeline('emit rep[10]:5szz | struct -m {k:1}{d:3} {k}{d:xor[var:k]} []') | bytes
+        self.assertEqual(test, 10 * B'5FOO')
+
+    def test_argument_assignment_failure_regression_02(self):
+        test = self.load_pipeline('emit rep[1000]:5szz | struct -m {k:1}{d:3} {k}{d:xor[var:k]} []') | bytes
+        self.assertEqual(test, 1000 * B'5FOO')

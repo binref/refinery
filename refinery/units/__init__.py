@@ -165,6 +165,7 @@ from abc import ABCMeta
 from enum import Enum
 from functools import wraps
 from collections import OrderedDict
+from threading import Lock
 
 from typing import (
     Dict,
@@ -1063,19 +1064,18 @@ class DelayedArgumentProxy:
     can be computed only as soon as input data becomes available and which also have to be
     recomputed for each input.
     """
-    class PendingUpdate:
-        pass
-
     _argv: Namespace
     _argo: List[str]
     _args: Dict[str, Any]
     _done: bool
     _guid: int
+    _lock: Lock
 
     def __copy__(self):
         cls = self.__class__
         clone = cls.__new__(cls)
         clone._store(
+            _lock=Lock(),
             _argv=self._argv,
             _argo=list(self._argo),
             _args=dict(self._args),
@@ -1099,6 +1099,7 @@ class DelayedArgumentProxy:
             else:
                 done = False
         self._store(
+            _lock=Lock(),
             _argv=argv,
             _argo=list(argo),
             _args=args,
@@ -1116,13 +1117,16 @@ class DelayedArgumentProxy:
         not be available for a second interpretation call.
         """
         for name in self._argo:
-            value = getattr(self._argv, name, None)
-            if value is self.PendingUpdate:
+            if self._lock.locked():
                 raise RuntimeError(F'Attempting to resolve {name} while an update for this argument is in flight')
-            if value and pending(value):
-                self._args[name] = self.PendingUpdate
-                self._args[name] = manifest(value, data)
-        self._store(_guid=id(data))
+            with self._lock:
+                try:
+                    value = getattr(self._argv, name, None)
+                    if value and pending(value):
+                        self._args[name] = manifest(value, data)
+                except BaseException as E:
+                    raise
+            self._store(_guid=id(data))
         return data
 
     def __matmul__(self, data: bytearray):
