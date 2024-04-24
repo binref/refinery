@@ -287,11 +287,10 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         else:
             self.log_debug('fast block method successful')
             return result
+        arguments = [
+            self._normalize_argument(*self._argument_parse_hook(a))
+            for a in self.args.argument]
         try:
-            arguments = [
-                self._normalize_argument(*self._argument_parse_hook(a))
-                for a in self.args.argument
-            ]
             mask = self.fmask
             size = len(data)
             if mask is NoMask:
