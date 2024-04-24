@@ -673,8 +673,7 @@ class Struct(metaclass=StructMeta):
     The initialization routine of the structure will be called with a single argument `reader`. If
     the object `data` is already a `refinery.lib.structures.StructReader`, then it will be passed
     as `reader`. Otherwise, the argument will be wrapped in a `refinery.lib.structures.StructReader`.
-    Before initialization of the struct, the member `bar` of the newly created structure will be
-    set to the value `29`.
+    Additional arguments to the struct are passed through.
     """
     _data: Union[memoryview, bytearray]
 
@@ -689,7 +688,7 @@ class Struct(metaclass=StructMeta):
             self._data = bytearray(self._data)
         return self._data
 
-    def __init__(self, reader: StructReader):
+    def __init__(self, reader: StructReader, *args, **kwargs):
         pass
 
 
