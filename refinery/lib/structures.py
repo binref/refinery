@@ -37,7 +37,7 @@ class EOF(EOFError):
 
 
 class StreamDetour:
-    def __init__(self, stream: io.IOBase, offset=None, whence=io.SEEK_SET):
+    def __init__(self, stream: io.IOBase, offset: Optional[int] = None, whence: int = io.SEEK_SET):
         self.stream = stream
         self.offset = offset
         self.whence = whence
