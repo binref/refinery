@@ -78,3 +78,13 @@ class TestStructUnit(TestUnitBase):
     def test_argument_assignment_failure_regression_02(self):
         test = self.load_pipeline('emit rep[1000]:5szz | struct -m {k:1}{d:3} {k}{d:xor[var:k]} []') | bytes
         self.assertEqual(test, 1000 * B'5FOO')
+
+    def test_correct_leftover_calculation(self):
+        test = self.load_pipeline('emit ABCDE | struct -mM {a:1}{b:1} {a} []')
+        self.assertEqual(test(), b'ACE')
+        test = self.load_pipeline('emit ABCDEF | struct -mM {a:1}{b:1} {a} []')
+        self.assertEqual(test(), b'ACE')
+        test = self.load_pipeline('emit ABCDE | struct -m {a:1}{b:1} {a} []')
+        self.assertEqual(test(), b'AC')
+        test = self.load_pipeline('emit ABCDEF | struct -m {a:1}{b:1} {a} []')
+        self.assertEqual(test(), b'ACE')

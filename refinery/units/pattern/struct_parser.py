@@ -105,6 +105,8 @@ class struct(Unit):
         it = itertools.count() if self.args.multi else (0,)
         for index in it:
 
+            checkpoint = reader.tell()
+
             if reader.eof:
                 break
             if index >= self.args.count:
@@ -116,8 +118,7 @@ class struct(Unit):
 
             args = []
             last = None
-            checkpoint = reader.tell()
-            self.log_info(F'starting new read at: 0x{checkpoint:08X}')
+            self.log_debug(F'starting new read at: 0x{checkpoint:08X}')
 
             try:
                 for prefix, name, spec, conversion in formatter.parse(mainspec):
