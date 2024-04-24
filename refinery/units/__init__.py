@@ -1120,12 +1120,9 @@ class DelayedArgumentProxy:
             if self._lock.locked():
                 raise RuntimeError(F'Attempting to resolve {name} while an update for this argument is in flight')
             with self._lock:
-                try:
-                    value = getattr(self._argv, name, None)
-                    if value and pending(value):
-                        self._args[name] = manifest(value, data)
-                except BaseException as E:
-                    raise
+                value = getattr(self._argv, name, None)
+                if value and pending(value):
+                    self._args[name] = manifest(value, data)
             self._store(_guid=id(data))
         return data
 
