@@ -61,11 +61,11 @@ _root = os.path.abspath(os.getcwd())
 _popen = subprocess.Popen
 
 
-def _virtual_fs_stat(name):
+def _virtual_fs_stat(name, *args, **kwargs):
     try:
         data = store.cache[name]
     except KeyError:
-        return _stat(name)
+        return _stat(name, *args, **kwargs)
     M = stat.S_IMODE(0xFFFF) | stat.S_IFREG
     S = len(data)
     return os.stat_result((
