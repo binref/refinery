@@ -78,7 +78,8 @@ class carve_zip(Unit):
                 end = end - len(ZipEndOfCentralDirectory.SIGNATURE)
                 continue
             start = central_directory.header_offset + shift
-            if mem[start:start + 4] != B'PK\x03\x04':
+            if mem[start:start + 4] not in (B'PK\x03\x04', B'\0\0\0\0'):
+                # SFX payloads seem to have a nulled header, so we permit this.
                 self.log_debug('computed start of ZIP archive does not have the correct signature bytes')
                 continue
             rev.append((start, end + len(end_marker)))
