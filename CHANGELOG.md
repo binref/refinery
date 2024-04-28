@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.6.37 - bugfix release
+
 ## Version 0.6.36
 - Adds the `xtmacho` unit which can unpack MachO fat binaries.
 
