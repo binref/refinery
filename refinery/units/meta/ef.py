@@ -124,8 +124,10 @@ class ef(Unit):
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
             for path in paths(mask):
-                if path.is_relative_to(root):
+                try:
                     path = path.relative_to(root)
+                except ValueError:
+                    pass
                 if wild:
                     try:
                         if not path.is_file():
