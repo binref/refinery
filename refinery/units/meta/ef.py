@@ -124,13 +124,14 @@ class ef(Unit):
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
             for path in paths(mask):
-                relative = path.relative_to(root)
+                if path.is_relative_to(root):
+                    path = path.relative_to(root)
                 if wild:
                     try:
                         if not path.is_file():
                             continue
                     except Exception:
-                        self.log_info(F'access error while scanning: {relative!s}')
+                        self.log_info(F'access error while scanning: {path!s}')
                         continue
                 if self.args.meta:
                     stat = path.stat()
@@ -142,9 +143,9 @@ class ef(Unit):
                     )
                 if self.args.list:
                     try:
-                        yield self.labelled(str(relative).encode(self.codec), **kwargs)
+                        yield self.labelled(str(path).encode(self.codec), **kwargs)
                     except OSError:
-                        self.log_warn(F'os error while scanning: {relative!s}')
+                        self.log_warn(F'os error while scanning: {path!s}')
                     continue
                 try:
                     with path.open('rb') as stream:
@@ -154,8 +155,8 @@ class ef(Unit):
                             yield from self._read_chunks(stream)
                         else:
                             data = stream.read()
-                            self.log_info(lambda: F'reading: {relative!s} ({len(data)} bytes)')
-                            yield self.labelled(data, path=relative.as_posix(), **kwargs)
+                            self.log_info(lambda: F'reading: {path!s} ({len(data)} bytes)')
+                            yield self.labelled(data, path=path.as_posix(), **kwargs)
                 except PermissionError:
                     self.log_warn('permission denied:', path.as_posix())
                 except FileNotFoundError:
