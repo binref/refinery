@@ -79,3 +79,14 @@ class TestFileReader(TestUnitBase):
 
         self.assertGreaterEqual(loc, 7000)
         self.assertLessEqual(loc, 7000000)
+
+    def test_regression_relative_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            with temporary_chwd(root):
+                with (root / 'sample.txt').open('w') as fd:
+                    fd.write('test')
+                t1 = None | self.load('sample.txt', tame=True) | str
+                t2 = None | self.load('sample.txt', wild=True) | str
+        self.assertEqual(t1, 'test')
+        self.assertEqual(t2, 'test')
