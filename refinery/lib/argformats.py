@@ -1093,28 +1093,40 @@ class DelayedArgument(LazyEvaluation):
             return finalize()
 
     @handler.register('be')
-    def be(self, arg: Union[int, ByteString]) -> int:
+    def be(self, arg: Union[int, ByteString], size: Optional[str] = None) -> int:
         """
-        Convert a binary input into the integer that it encodes in big endian format, and vice versa.
+        The handler `be[size=0]:data` converts a binary input into the integer that it encodes in
+        big endian format, and vice versa. The optional parameter `size` can be used to specify
+        the number of bytes used for encoding integers. For byte string inputs, this parameter is
+        used to truncate the input before conversion.
         """
+        if size is not None:
+            size = int(size, 0)
         if isinstance(arg, int):
-            size, remainder = divmod(arg.bit_length(), 8)
-            if remainder: size += 1
+            if size is None:
+                size, r = divmod(arg.bit_length(), 8)
+                size += int(bool(r))
             return arg.to_bytes(size, 'big')
         else:
-            return int.from_bytes(arg, 'big')
+            return int.from_bytes(arg[:size], 'big')
 
     @handler.register('le')
-    def le(self, arg: Union[int, ByteString]) -> int:
+    def le(self, arg: Union[int, ByteString], size: Optional[str] = None) -> int:
         """
-        Convert a binary input into the integer that it encodes in little endian format, and vice versa.
+        The handler `be[size=0]:data` converts a binary input into the integer that it encodes in
+        little endian format, and vice versa. The optional parameter `size` can be used to specify
+        the number of bytes used for encoding integers. For byte string inputs, this parameter is
+        used to truncate the input before conversion.
         """
+        if size is not None:
+            size = int(size, 0)
         if isinstance(arg, int):
-            size, remainder = divmod(arg.bit_length(), 8)
-            if remainder: size += 1
+            if size is None:
+                size, r = divmod(arg.bit_length(), 8)
+                size += int(bool(r))
             return arg.to_bytes(size, 'little')
         else:
-            return int.from_bytes(arg, 'little')
+            return int.from_bytes(arg[:size], 'little')
 
     @handler.register('reduce')
     def reduce(self, it: Iterable[int], reduction: str, seed: Optional[str] = None) -> int:
