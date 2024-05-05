@@ -128,3 +128,13 @@ class TestGrabBagExamples(TestBase):
         self.assertTrue(exe.startswith(b'MZ'))
         self.assertEqual(sha256(exe).hexdigest().lower(),
             '7c318ed4278ec449deebb5897daf2e547f7e1ab10e19be3fe5ec9ac5f061cb26')
+
+    def test_malicious_pdf_with_javascript(self):
+        data = self.download_sample('066aec7b106f669e587b10b3e3c6745f11f1c116f7728002f30c072bd42d6253')
+        pipeline = load_pipeline(
+            R'xt JS | carve -sd string | carve -sd string | url | xtp url [| urlfix ]]')
+        urls = data | pipeline | {str}
+        self.assertSetEqual(urls, {
+            'http'U':/'R'/addvertseense'U'.co'R'.uk/bfgnqs2.exe',
+            'http'U':/'R'/addvertseense'U'.co'R'.uk/click.php',
+        })

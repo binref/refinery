@@ -47,9 +47,12 @@ class xtpdf(PathExtractorUnit):
         else:
             path = *path[:-1], F'/{name}'
         try:
+            def extract():
+                with NoLogging():
+                    return get_data()
             if TYPE_CHECKING:
-                blob: EncodedStreamObject = cast(EncodedStreamObject, blob)
-            extract = blob.get_data
+                blob = cast(EncodedStreamObject, blob)
+            get_data = blob.get_data
         except AttributeError:
             pass
         else:

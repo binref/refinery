@@ -267,6 +267,12 @@ Extract the malicious downloader payload from a malicious document's text body:
 emit ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394 \
   | doctxt | repl drp:c: | carve -s b64 | rev | b64 | rev | ppjscript
 ```
+Extract payload URLs from a malicious PDF document:
+```
+emit 066aec7b106f669e587b10b3e3c6745f11f1c116f7728002f30c072bd42d6253 \
+  | xt JS | carve -sd string | carve -sd string | url | xtp url [| urlfix ]]
+```
+
 
 ### AES Encryption
 

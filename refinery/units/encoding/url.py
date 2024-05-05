@@ -8,8 +8,9 @@ from refinery.units import Arg, Unit
 
 class url(Unit):
     """
-    Decodes and encodes URL-Encoding, which preserves only alphanumeric characters and the symbols `_`, `.`, `-`, `~`, `\\`, and `/`.
-    Every other character is escaped by hex-encoding it and prefixing it with a percent symbol.
+    Decodes and encodes URL-encoding, which preserves only alphanumeric characters and the
+    following symbols: `_`, `.`, `-`, `~`, `\\`, `/`. Every other character is escaped by
+    hex-encoding it and prefixing it with a percent symbol.
     """
 
     def __init__(
@@ -22,7 +23,12 @@ class url(Unit):
     def process(self, data):
         if self.args.plus:
             data = data.replace(B'+', B' ')
-        return unquote_to_bytes(bytes(data))
+        data = unquote_to_bytes(bytes(data))
+        data = re.sub(
+            B'%[uU]([0-9a-fA-F]{4})',
+            lambda m: int(m[1], 16).to_bytes(2, 'little'),
+            data)
+        return data
 
     def reverse(self, data):
         if self.args.hex:
