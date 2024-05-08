@@ -14,10 +14,23 @@ import re
 import struct
 import weakref
 
-from typing import List, Union, Tuple, Optional, Iterable, ByteString, TypeVar, Generic, Any, Dict
+from typing import (
+    Any,
+    ByteString,
+    Dict,
+    Generic,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 
 T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
+C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
 UnpackType = Union[int, bool, float, bytes]
 
 
@@ -137,12 +150,21 @@ class MemoryFile(Generic[T], io.IOBase):
     def remaining_bytes(self) -> int:
         return len(self._data) - self.tell()
 
+    def detour(self, offset: Optional[int] = None, whence: int = io.SEEK_SET):
+        return StreamDetour(self, offset, whence=whence)
+
     def writable(self) -> bool:
         if self._closed:
             return False
         if isinstance(self._data, memoryview):
             return not self._data.readonly
         return isinstance(self._data, bytearray)
+
+    def read_as(self, cast: Type[C], size: int = -1, peek: bool = False) -> C:
+        out = self.read(size, peek)
+        if not isinstance(out, cast):
+            out = cast(out)
+        return out
 
     def read(self, size: int = -1, peek: bool = False) -> T:
         beginning = self._cursor
