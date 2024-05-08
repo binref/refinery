@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, unquote, quote
 
 from refinery.units import Arg, Unit
