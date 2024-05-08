@@ -11,13 +11,14 @@ from xml.parsers import expat
 from xml.etree.ElementTree import Element, ElementTree
 
 from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import exception_to_string
 
 
 def ForgivingParse(data, entities=None) -> ElementTree:
     try:
         return et.parse(MemoryFile(data), parser=ForgivingXMLParser(entities))
     except et.ParseError as PE:
-        raise ValueError from PE
+        raise ValueError(exception_to_string(PE)) from PE
 
 
 class ForgivingXMLParser(et.XMLParser):

@@ -477,3 +477,15 @@ def typename(thing):
         return thing.__name__
     except AttributeError:
         return repr(thing)
+
+
+def exception_to_string(exception: BaseException, default=None) -> str:
+    """
+    Attempts to convert a given exception to a good description that can be exposed to the user.
+    """
+    if not exception.args:
+        return exception.__class__.__name__
+    it = (a for a in exception.args if isinstance(a, str))
+    if default is None:
+        default = str(exception)
+    return max(it, key=len, default=default).strip()
