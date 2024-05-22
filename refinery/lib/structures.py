@@ -614,7 +614,7 @@ class StructReader(MemoryFile[T]):
         except Exception:
             raise
         else:
-            return F'{a:08X}-{b:02X}-{c:02X}-{d}-{e}'
+            return F'{a:08X}-{b:04X}-{c:04X}-{d}-{e}'
         finally:
             self.bigendian = _mode
 
