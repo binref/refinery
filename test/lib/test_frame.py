@@ -153,3 +153,7 @@ class TestFraming(TestBase):
         ''')(B'')
 
         self.assertEqual(x, B'X' * 1000)
+
+    def test_regression_unaltered_pop(self):
+        pl = load_pipeline('rex "..(?P<t>..)" [| push var:t [| rex .. | pick ~0 | pop t ]| cfmt {t} ]')
+        self.assertEqual(b'REFINERY' | pl | bytes, B'FIRY')
