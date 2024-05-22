@@ -137,6 +137,8 @@ class xtp(PatternExtractor):
         'microsoft.com'           : 1,
         'msdn.com'                : 1,
         'msn.com'                 : 1,
+        'newtonsoft.com'          : 3, # json.net
+        'nuget.org'               : 3,
         'office.com'              : 1,
         'office365.com'           : 2,
         'openssl.org'             : 1,
