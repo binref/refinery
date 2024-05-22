@@ -129,3 +129,7 @@ class TestArgumentFormats(TestBase):
         t = argformats.multibin('take[:32]:accu[0xBA2,0,16]:A*0x5A7F+0x3079#(4*A)>>16')
         self.assertEqual(t, bytes.fromhex(
             '0003030100010303030302010301020003000202030202000300020203020200'))
+
+    def test_integer_nonempty(self):
+        self.assertEqual(argformats.multibin('le:e:0'), b'\0')
+        self.assertEqual(argformats.multibin('be:e:0'), b'\0')

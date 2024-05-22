@@ -1106,7 +1106,7 @@ class DelayedArgument(LazyEvaluation):
             if size is None:
                 size, r = divmod(arg.bit_length(), 8)
                 size += int(bool(r))
-            return arg.to_bytes(size, 'big')
+            return arg.to_bytes(max(size, 1), 'big')
         else:
             return int.from_bytes(arg[:size], 'big')
 
@@ -1124,7 +1124,7 @@ class DelayedArgument(LazyEvaluation):
             if size is None:
                 size, r = divmod(arg.bit_length(), 8)
                 size += int(bool(r))
-            return arg.to_bytes(size, 'little')
+            return arg.to_bytes(max(size, 1), 'little')
         else:
             return int.from_bytes(arg[:size], 'little')
 
