@@ -91,9 +91,12 @@ class tokenize(pattern):
     before and after each token, its default value is the regular expression zero length
     match for a word boundary.
     """
-    def __init__(self, token, sep, bound='\\b', unique_sep=False, **kwargs):
+    def __init__(self, token, sep, bound='\\b', unique_sep=False, sep_ignores_whitespace=True, **kwargs):
         if unique_sep:
-            p = R'(?:{b}{t}{b}(?P<__sep>{s}))(?:(?:{b}{t}{b}(?P=__sep))+{b}{t}{b}|{b}{t}{b})'
+            if sep_ignores_whitespace:
+                p = R'(?:{b}{t}{b}\s{{0,50}}(?P<__sep>{s})\s{{0,50}})(?:(?:{b}{t}{b}\s{{0,50}}(?P=__sep)\s{{0,50}})+{b}{t}{b}|{b}{t}{b})'
+            else:
+                p = R'(?:{b}{t}{b}(?P<__sep>{s}))(?:(?:{b}{t}{b}(?P=__sep))+{b}{t}{b}|{b}{t}{b})'
         else:
             p = R'(?:{b}{t}{b}{s})+(?:{b}{t}{b})'
         pattern.__init__(self, p.format(s=sep, b=bound, t=token), **kwargs)
@@ -311,9 +314,9 @@ class formats(PatternEnum):
     "Any sequence of url-encoded characters, coarser variant with more characters allowed"
     urlquote_narrow = pattern(_pattern_urlenc_narrow)
     "A hex-encoded buffer using URL escape sequences"
-    intarray = tokenize(_pattern_integer, sep=R'\s*[;,]\s*', bound='', unique_sep=True)
+    intarray = tokenize(_pattern_integer, sep=R'[;,]', bound='', unique_sep=True)
     "Sequences of integers, separated by commas or semicolons"
-    numarray = tokenize(_pattern_number, sep=R'\s*[;,]\s*', bound='', unique_sep=True)
+    numarray = tokenize(_pattern_number, sep=R'[;,]', bound='', unique_sep=True)
     "Sequences of numbers, separated by commas or semicolons"
     word = alphabet(R'\\w')
     "Sequences of word characters"
@@ -354,7 +357,7 @@ class formats(PatternEnum):
         46 4F 4F 0A 42 41 52 0A  FOO.BAR.
         F0 0B AA BA F0 0B        ......
     """
-    hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'\s*[;,]\s*', bound='')
+    hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'[;,]', bound='', unique_sep=True)
     "Arrays of hexadecimal strings, separated by commas or semicolons"
     uuencode = pattern(_pattern_uuencode)
     "UUEncoded data"
