@@ -2,15 +2,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from io import BytesIO
-from typing import Dict, List, TYPE_CHECKING
+from typing import Iterable, Dict, List, TYPE_CHECKING
+from hashlib import md5
 
 from refinery.units import Arg, Unit
 from refinery.units.formats.pe.pemeta import pemeta
 from refinery.units.sinks.ppjson import ppjson
+from refinery.lib.tools import NoLogging
+from refinery.lib.structures import MemoryFile
 
 if TYPE_CHECKING:
     from ktool import Image
+    from ktool.loader import Symbol
     from ktool.codesign import BlobIndex, SuperBlob
 
 
@@ -50,6 +53,16 @@ class machometa(Unit):
         import ktool.macho
         import ktool.codesign
         return ktool
+
+    def compute_symhash(self, macho_image: Image) -> Dict:
+        def _symbols(symbols: Iterable[Symbol]):
+            for sym in symbols:
+                if sym.types:
+                    continue
+                yield sym.fullname
+        symbols = sorted(set(_symbols(macho_image.symbol_table.ext)))
+        symbols: str = ','.join(symbols)
+        return md5(symbols.encode('utf8')).hexdigest()
 
     def parse_macho_header(self, macho_image: Image, data=None) -> Dict:
         info = {}
@@ -210,7 +223,8 @@ class machometa(Unit):
     def process(self, data: bytearray):
         result = {}
         ktool = self._ktool
-        macho = ktool.load_macho_file(fp=BytesIO(data), use_mmaped_io=False)
+        with NoLogging(NoLogging.Mode.ALL):
+            macho = ktool.load_macho_file(fp=MemoryFile(memoryview(data)), use_mmaped_io=False)
         if macho.type is ktool.MachOFileType.FAT:
             result['FileType'] = 'FAT'
         elif macho.type is ktool.MachOFileType.THIN:
@@ -245,6 +259,7 @@ class machometa(Unit):
             if macho_image.uuid is not None:
                 uuid: bytes = macho_image.uuid
                 slice_result['UUID'] = uuid.hex()
+            slice_result['SymHash'] = self.compute_symhash(macho_image)
             slice_result['BaseName'] = macho_image.base_name
             slice_result['InstallName'] = macho_image.install_name
             slices.append(slice_result)

@@ -205,3 +205,15 @@ class TestMachoMeta(TestUnitBase):
                 ],
             }
             self.assertDictEqual(slice_metadata['LinkedImages'], expected_load_dylibs)
+
+    def test_symhashes(self):
+        hashes = {
+            'a64fa9f1c76457ecc58402142a8728ce34ccba378c17318b3340083eeb7acc67': 'c6662a6dcbca427f7c41fb822923c893',
+            '38c9b858c32fcc6b484272a182ae6e7f911dea53a486396037d8f7956d2110be': '67be6774c05722e934d1ed3d83c2b472',
+            '6c121f2b2efa6592c2c22b29218157ec9e63f385e7a1d7425857d603ddef8c59': 'fa5f574909b0a1e4556fbc1d880e71d6',
+            '3e4bbd21756ae30c24ff7d6942656be024139f8180b7bddd4e5c62a9dfbd8c79': 'a5bc75202b42446adb156c9af2d5a51f',
+            '1a9a5c797777f37463b44de2b49a7f95abca786db3977dcdac0f79da739c08ac': '3923ccd52355686ddcf14cbc42a73baa'}
+        for sha256hash, symhash in hashes.items():
+            data = self.download_sample(sha256hash)
+            test = data | self.load() | self.ldu('xtjson', 'SymHash') | {str}
+            self.assertIn(symhash, test)
