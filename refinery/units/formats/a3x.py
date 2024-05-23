@@ -667,7 +667,7 @@ def a3x_decrypt(data: memoryview, key: int) -> bytearray:
         t[a] = r
         a = (a - 1) % 17
         b = (b - 1) % 17
-        d, = struct.unpack('<d', struct.pack('<II', 
+        d, = struct.unpack('<d', struct.pack('<II',
             (0x00000000 | (r << 0x14)) & 0xFFFFFFFF,
             (0x3ff00000 | (r >> 0x0c)) & 0xFFFFFFFF,
         ))
