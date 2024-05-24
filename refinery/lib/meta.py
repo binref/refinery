@@ -555,7 +555,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     if v == value:
                         link = k
                         break
-            if link is not None and link < spot - 1:
+            if link is not None and link + 1 < scope:
                 stack[spot - 1] = (True, link)
             else:
                 stack[spot - 1] = (False, value)
