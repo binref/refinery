@@ -620,7 +620,7 @@ def a3x_decompress(data: bytearray) -> bytearray:
     bit_reader = StructReader(view[8:], bigendian=True)
     bits = bit_reader.read_integer
     while cursor < size:
-        if bit_reader.read_integer(1) == 1:
+        if bits(1) == 1:
             output.write_byte(bits(8))
             cursor += 1
             continue
