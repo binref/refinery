@@ -6,7 +6,6 @@ from typing import Optional, List, Dict, Iterable, Tuple, Generator, Set
 from enum import Enum
 
 import io
-import struct
 
 from refinery.lib.structures import Struct, StructReader, MemoryFile
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -619,27 +618,30 @@ def a3x_decompress(data: bytearray) -> bytearray:
     view = memoryview(data)
     size = int.from_bytes(view[4:8], 'big')
     bit_reader = StructReader(view[8:], bigendian=True)
-    ep = (
-        (0b00000011, 0x003, 3),
-        (0b00000111, 0x00A, 5),
-        (0b00011111, 0x029, 8),
-        (0b11111111, 0x128, 8))
+    bits = bit_reader.read_integer
     while cursor < size:
         if bit_reader.read_integer(1) == 1:
-            output.write_byte(bit_reader.read_integer(8))
+            output.write_byte(bits(8))
             cursor += 1
             continue
         delta = 0
-        offset = bit_reader.read_integer(15)
-        length = bit_reader.read_integer(2)
-        for sentinel, d, n in ep:
-            if length != sentinel:
-                break
-            delta = d
-            length = bit_reader.read_integer(n)
+        offset = bits(15)
+        length = bits(2)
+        if length == 0b00000011:
+            delta = 0x003
+            length = bits(3)
+            if length == 0b00000111:
+                delta = 0x00A
+                length = bits(5)
+                if length == 0b00011111:
+                    delta = 0x029
+                    length = bits(8)
+                    if length == 0b11111111:
+                        delta = 0x128
+                        length = bits(8)
         while length == 0b11111111:
             delta += 0xFF
-            length = bit_reader.read_integer(8)
+            length = bits(8)
         length += delta + 3
         length &= 0xFFFFFFFF
         output.replay(offset, length)
@@ -648,31 +650,32 @@ def a3x_decompress(data: bytearray) -> bytearray:
 
 
 def a3x_decrypt(data: memoryview, key: int) -> bytearray:
-    a, b, t = 0, 10, []
-    out = bytearray(len(data))
+    a, b, t = 16, 6, []
     for _ in range(17):
         key = 1 - key * 0x53A9B4FB & 0xFFFFFFFF
         t.append(key)
+    t.reverse()
     for _ in range(9):
         r = (t[a] << 9 | t[a] >> 23) + (t[b] << 13 | t[b] >> 19) & 0xFFFFFFFF
         t[a] = r
-        a = (a - 1) % 17
-        b = (b - 1) % 17
-    for k, v in enumerate(data):
-        r = (t[a] << 9 | t[a] >> 23) + (t[b] << 13 | t[b] >> 19) & 0xFFFFFFFF
-        t[a] = r
-        a = (a - 1) % 17
-        b = (b - 1) % 17
-        r = (t[a] << 9 | t[a] >> 23) + (t[b] << 13 | t[b] >> 19) & 0xFFFFFFFF
-        t[a] = r
-        a = (a - 1) % 17
-        b = (b - 1) % 17
-        d, = struct.unpack('<d', struct.pack('<II',
-            (0x00000000 | (r << 0x14)) & 0xFFFFFFFF,
-            (0x3ff00000 | (r >> 0x0c)) & 0xFFFFFFFF,
-        ))
-        out[k] = min(0xFF, int((d - 1) * 0x100)) ^ v
-    return out
+        a = (a + 1) % 17
+        b = (b + 1) % 17
+    def _decrypted():
+        nonlocal a, b, t
+        for v in data:
+            x = t[a]
+            y = t[b]
+            t[a] = (x << 9 | x >> 23) + (y << 13 | y >> 19) & 0xFFFFFFFF
+            a = (a + 1) % 17
+            b = (b + 1) % 17
+            x = t[a]
+            y = t[b]
+            r = (x << 9 | x >> 23) + (y << 13 | y >> 19) & 0xFFFFFFFF
+            t[a] = r
+            a = (a + 1) % 17
+            b = (b + 1) % 17
+            yield (r >> 24) ^ v
+    return bytearray(_decrypted())
 
 
 class A3xType(str, Enum):
