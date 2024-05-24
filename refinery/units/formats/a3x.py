@@ -651,15 +651,19 @@ def a3x_decompress(data: bytearray) -> bytearray:
 
 def a3x_decrypt(data: memoryview, key: int) -> bytearray:
     a, b, t = 16, 6, []
+
     for _ in range(17):
         key = 1 - key * 0x53A9B4FB & 0xFFFFFFFF
         t.append(key)
+
     t.reverse()
+
     for _ in range(9):
         r = (t[a] << 9 | t[a] >> 23) + (t[b] << 13 | t[b] >> 19) & 0xFFFFFFFF
         t[a] = r
         a = (a + 1) % 17
         b = (b + 1) % 17
+
     def _decrypted():
         nonlocal a, b, t
         for v in data:
@@ -675,6 +679,7 @@ def a3x_decrypt(data: memoryview, key: int) -> bytearray:
             a = (a + 1) % 17
             b = (b + 1) % 17
             yield (r >> 24) ^ v
+
     return bytearray(_decrypted())
 
 
