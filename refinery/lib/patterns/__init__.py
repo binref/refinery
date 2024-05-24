@@ -373,7 +373,7 @@ class wallets(PatternEnum):
     ATOM = pattern("cosmos[-\\w\\.]{10,}")
     BCH = pattern("(bitcoincash:)?(q|p)[a-z0-9]{41}|(BITCOINCASH:)?(Q|P)[A-Z0-9]{41}")
     BTC = pattern("(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{25,39})")
-    BTCP = pattern("5[HJK][1-9A-Za-z][^OIl]{48}")
+    BTCP = pattern("5[HJK][1-9A-Za-z][^A-HJ-NP-Za-km-z0-9]{48}")
     DASH = pattern("X[1-9A-HJ-NP-Za-km-z]{33}")
     DOGE = pattern("D{1}[5-9A-HJ-NP-U]{1}[1-9A-HJ-NP-Za-km-z]{32}")
     DOT = pattern("1[0-9a-zA-Z]{47}")
