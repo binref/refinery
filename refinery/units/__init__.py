@@ -1724,15 +1724,15 @@ class Unit(UnitBase, abstract=True):
                 return (stdin | self | stdout).getvalue()
 
     @classmethod
-    def labelled(cls, data: Union[Chunk, ByteString], **meta) -> Chunk:
+    def labelled(cls, ___br___data: Union[Chunk, ByteString], **meta) -> Chunk:
         """
         This class method can be used to label a chunk of binary output with metadata. This
         metadata will be visible inside pipeline frames, see `refinery.lib.frame`.
         """
-        if isinstance(data, Chunk):
-            data.meta.update(meta)
-            return data
-        return Chunk(data, meta=meta)
+        if isinstance(___br___data, Chunk):
+            ___br___data.meta.update(meta)
+            return ___br___data
+        return Chunk(___br___data, meta=meta)
 
     def process(self, data: ByteString) -> Union[Optional[ByteString], Generator[ByteString, None, None]]:
         return data
