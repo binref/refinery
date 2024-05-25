@@ -509,58 +509,57 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             return scope - k + 1
         return scope
 
-    def serialize(self, scope: int) -> Dict[str, List[Tuple[bool, Any]]]:
-        if not scope:
+    def serialize(self, target_scope: int) -> Dict[str, List[Tuple[bool, Any]]]:
+        if not target_scope:
             return {}
         current_scope = self.scope
         if current_scope == 0:
-            padding = [(True, 0)] * (scope - 1)
+            padding = [(True, 0)] * (target_scope - 1)
             return {key: [(False, value)] + padding for key, value in self.current.items()}
         serializable = {key: list(stack) for key, stack in self.history.items()}
-        if scope > current_scope:
-            padding = scope - current_scope
+        if target_scope > current_scope:
+            padding = target_scope - current_scope
             for key, stack in serializable.items():
                 stack.extend(itertools.repeat((True, (current_scope - 1)), padding))
         for key, stack in serializable.items():
             if key not in self.current:
                 stack[~0] = (False, None)
-        if scope < current_scope:
+        if target_scope < current_scope:
             for key, stack in serializable.items():
-                del stack[scope:]
+                del stack[target_scope:]
         for key, value in self.current.items():
             if value is None:
                 raise RuntimeError(F'Meta variable "{key}" was set to None.')
             try:
-                spot = self.rescope[key]
+                item_scope = self.rescope[key]
             except KeyError:
-                spot = current_scope
-            finally:
-                link = None
-            if spot == current_scope and not self.updated[key]:
+                item_scope = current_scope
+            if item_scope == current_scope and not self.updated[key]:
                 continue
-            if spot > scope:
+            if item_scope > target_scope:
                 continue
-            if spot < 0:
-                raise RuntimeError('computed a negative spot for variable placement')
+            link = index = item_scope - 1
+            if index < 0:
+                raise RuntimeError('computed a negative index for variable placement')
             try:
                 stack = serializable[key]
             except KeyError:
-                serializable[key] = stack = [(False, None)] * scope
+                serializable[key] = stack = [(False, None)] * target_scope
             else:
                 for k, (is_link, v) in enumerate(stack):
-                    if k >= spot:
+                    if k > index:
                         break
                     while is_link:
                         k, is_link, v = v, *stack[v]
                     if v == value:
                         link = k
                         break
-            if link is not None and link + 1 < scope:
-                stack[spot - 1] = (True, link)
+            if link < index:
+                stack[index] = (True, link)
             else:
-                stack[spot - 1] = (False, value)
-            for k in range(spot, scope):
-                stack[k] = (True, spot - 1)
+                stack[index] = (False, value)
+            for k in range(index + 1, target_scope):
+                stack[k] = (True, index)
         vanishing_variables = []
         for key, stack in serializable.items():
             if all(v is None for lnk, v in stack if not lnk):
