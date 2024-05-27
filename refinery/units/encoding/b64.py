@@ -32,6 +32,6 @@ class b64(Unit):
     @classmethod
     def handles(self, data: bytearray) -> bool:
         from refinery.lib.patterns import formats
-        if not formats.b64space.fullmatch(data):
+        if not formats.spaced_b64.value.fullmatch(data):
             return False
         return len(set(data)) in range(60, 67)
