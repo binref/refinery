@@ -110,7 +110,7 @@ class xtnode(ArchiveUnit):
                 reader = StructReader(view[start:end])
                 code = reader.read_exactly(code_size)
                 blob = reader.read_exactly(blob_size)
-            except EOF:
+            except EOFError:
                 self.log_debug(F'found marker at 0x{marker.start():X}, but failed to read data')
                 continue
             else:

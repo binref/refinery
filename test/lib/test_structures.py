@@ -97,7 +97,7 @@ class TestStructures(TestBase):
             self.assertEqual(sr.read_integer(10), 0b100100001)
             self.assertTrue(all(sr.read_flags(4)))
             self.assertEqual(sr.read_integer(82), 0b0111101010000101010101010010010111100000101001010101100000001110010111110100111000)
-            self.assertRaises(EOF, sr.u16)
+            self.assertRaises(EOFError, sr.u16)
 
     def test_bitreader_le(self):
         data = 0b10010100111010100100001111101_11_00000000_0101010101010010010111100000101001010101100000001110010111110100_111_000_100

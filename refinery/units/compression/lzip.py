@@ -363,7 +363,7 @@ class lzip(Unit):
                         self.log_warn(F'member size in stream {k} was {decoder.member_position}, should have been {member_size}.')
                     if data_size != decoder.data_position:
                         self.log_warn(F'data size in stream {k} was {decoder.data_position}, should have been {data_size}.')
-                except EOF:
+                except EOFError:
                     if k <= 1:
                         raise
                     self.log_info(F'silently ignoring {trailing_size} bytes of trailing data')

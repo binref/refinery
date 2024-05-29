@@ -138,7 +138,7 @@ class LZO(Struct):
         while not self.reader.eof:
             try:
                 chunk = LZOChunk(self.reader, self.flags)
-            except EOF:
+            except EOFError:
                 break
             if not chunk.data:
                 break

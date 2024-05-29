@@ -206,7 +206,7 @@ class struct(Unit):
                     chunk.set_next_batch(index)
                     yield chunk
 
-            except EOF:
+            except EOFError:
                 break
 
         leftover = len(reader) - checkpoint

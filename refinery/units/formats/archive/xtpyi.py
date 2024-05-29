@@ -348,7 +348,7 @@ class PyInstallerArchiveEpilogue(Struct):
         position = reader.tell()
         try:
             libname, t, rest = reader.read_bytes(64).partition(B'\0')
-        except EOF:
+        except EOFError:
             reader.seekset(position)
             return None
         try:
@@ -383,7 +383,7 @@ class PyInstallerArchiveEpilogue(Struct):
         while reader.tell() < toc_end:
             try:
                 entry = PiTOCEntry(reader)
-            except EOF:
+            except EOFError:
                 xtpyi.logger.warning('end of file while reading TOC')
                 break
             except Exception as error:

@@ -113,7 +113,7 @@ class blz(Unit):
                 else:
                     self._dst.write(self._src.read_exactly(1))
                     decompressed += 1
-        except EOF as E:
+        except EOFError as E:
             raise RefineryPartialResult(str(E), partial=self._dst.getbuffer())
         dst = self._dst.getbuffer()
         if decompressed < size:
