@@ -428,13 +428,22 @@ class StructReader(MemoryFile[T]):
         self._nbits = 0
         self._bbits = 0
         mod = self._cursor % blocksize
-        self.seekrel(mod and blocksize - mod)
+        if mod:
+            self.seekrel(blocksize - mod)
         return nbits, bbits
 
-    def read_integer(self, length: int, peek: bool = False) -> int:
+    @property
+    def remaining_bits(self) -> int:
+        return 8 * self.remaining_bytes + self._nbits
+
+    def read_integer(self, length: Optional[int] = None, peek: bool = False) -> int:
         """
         Read `length` many bits from the underlying stream as an integer.
         """
+        if length is None:
+            length = self.remaining_bits
+        if length < 0:
+            raise ValueError
         if length < self._nbits:
             new_count = self._nbits - length
             if self.bigendian:
@@ -449,16 +458,19 @@ class StructReader(MemoryFile[T]):
                 self._nbits = new_count
             return result
 
-        nbits, bbits = self.byte_align()
+        nbits, bbits = self._nbits, self._bbits
         number_of_missing_bits = length - nbits
         bytecount, rest = divmod(number_of_missing_bits, 8)
         if rest:
             bytecount += 1
             rest = 8 - rest
+        bb = self.read1(bytecount, peek)
+        if len(bb) != bytecount:
+            raise EOF(bb)
         if bytecount == 1:
-            result, = self.read_exactly(1, peek)
+            result, = bb
         else:
-            result = int.from_bytes(self.read_exactly(bytecount, peek), self.byteorder_name)
+            result = int.from_bytes(bb, self.byteorder_name)
         if not nbits and not rest:
             return result
         if self.bigendian:

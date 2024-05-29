@@ -150,6 +150,7 @@ _format_defanged_domain = (
 )
 
 _pattern_utf8 = R'(?:[\x00-\x7F]|[\xC0-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF7][\x80-\xBF]{3})+'
+_pattern_b92 = R'~|(?:[!-_a-}]{2})+[!-_a-}]?'
 
 _pattern_serrated_domain = _format_serrated_domain.format(repeat='{0,20}', tlds=_TLDS)
 _pattern_defanged_domain = _format_defanged_domain.format(repeat='{0,20}', tlds=_TLDS)
@@ -332,6 +333,8 @@ class formats(PatternEnum):
     "Base64 encoded strings"
     b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]')
     "Base85 encoded strings"
+    b92 = pattern(_pattern_b92)
+    "Base64 encoded strings"
     b64any = alphabet(R'(?:[-\w\+/]{4})', postfix=R'(?:(?:[-\w\+/]{2,3})={0,3})?')
     "Both URL-safe and normal Base64 alphabets."
     b64url = alphabet(R'[-\w]{4}', postfix=R'(?:[-\w]{2,3}={0,3})?')
