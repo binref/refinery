@@ -464,9 +464,11 @@ class StructReader(MemoryFile[T]):
         if rest:
             bytecount += 1
             rest = 8 - rest
-        bb = self.read1(bytecount, peek)
+        bb = self.read1(bytecount, True)
         if len(bb) != bytecount:
-            raise EOF(bb)
+            raise EOFError
+        if not peek:
+            self.seekrel(bytecount)
         if bytecount == 1:
             result, = bb
         else:
