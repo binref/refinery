@@ -4,7 +4,7 @@ import struct
 import zlib
 
 from refinery.units import Unit, RefineryPartialResult
-from refinery.lib.structures import EOF, StructReader, MemoryFile
+from refinery.lib.structures import StructReader, MemoryFile
 
 
 class blz(Unit):

@@ -20,7 +20,7 @@ from importlib.util import MAGIC_NUMBER
 
 from refinery.units.formats.archive import Arg, ArchiveUnit
 from refinery.units.pattern.carve import carve
-from refinery.lib.structures import EOF, MemoryFile, StreamDetour, Struct, StructReader
+from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import NoLogging, normalize_word_separators
 
 from Cryptodome.Cipher import AES

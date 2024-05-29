@@ -6,7 +6,7 @@ import itertools
 from refinery.units import Arg, Unit, Chunk
 
 from refinery.lib.meta import SizeInt, metavars, check_variable_name
-from refinery.lib.structures import EOF, StructReader, StreamDetour
+from refinery.lib.structures import StructReader, StreamDetour
 from refinery.lib.argformats import ParserError, PythonExpression, multibin
 from refinery.lib.types import INF
 

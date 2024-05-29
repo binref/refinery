@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import io
 
-from refinery.lib.structures import StructReader, StreamDetour, EOF
+from refinery.lib.structures import StructReader, StreamDetour
 from refinery.units.crypto.hash.xxhash import xxhash
 from refinery.units import Unit, RefineryPartialResult
 

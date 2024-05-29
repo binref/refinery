@@ -8,7 +8,7 @@ import json
 
 from refinery.units.formats.archive import Arg, ArchiveUnit, UnpackResult
 from refinery.units.encoding.esc import esc
-from refinery.lib.structures import EOF, StructReader
+from refinery.lib.structures import StructReader
 from refinery.lib.patterns import formats
 from refinery.lib.types import ByteStr, JSON
 from refinery.units.pattern.carve_json import JSONCarver
