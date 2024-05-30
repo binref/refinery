@@ -334,7 +334,7 @@ class formats(PatternEnum):
     b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]')
     "Base85 encoded strings"
     b92 = pattern(_pattern_b92)
-    "Base64 encoded strings"
+    "Base92 encoded strings"
     b64any = alphabet(R'(?:[-\w\+/]{4})', postfix=R'(?:(?:[-\w\+/]{2,3})={0,3})?')
     "Both URL-safe and normal Base64 alphabets."
     b64url = alphabet(R'[-\w]{4}', postfix=R'(?:[-\w]{2,3}={0,3})?')
