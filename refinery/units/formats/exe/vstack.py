@@ -111,7 +111,7 @@ class vstack(Unit):
         write_range: Arg.Bounds('-n', metavar='MIN:MAX',
             help='Log only writes whose size is in the given range, default is {default}.') = slice(1, None),
         wait: Arg.Number('-w', help=(
-            'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 10,
+            'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 20,
         wait_calls: Arg.Switch('-c', group='CALL',
             help='Wait indefinitely when inside a function call.') = False,
         skip_calls: Arg.Counts('-C', group='CALL',
