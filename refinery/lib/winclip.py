@@ -131,7 +131,7 @@ class ClipBoard:
         if self.mode is CF.TEXT or self.mode is CF.OEMTEXT:
             return ctypes.c_char_p(hg).value
         if self.mode is CF.UNICODETEXT:
-            return ctypes.c_wchar_p(hg).value
+            return ctypes.c_wchar_p(hg).value.encode('utf8')
         if self.mode is CF.DIB:
             def get_pixel_data_offset_for_packed_dib(header: BITMAPINFOHEADER) -> int:
                 extra = 0
@@ -174,7 +174,12 @@ class ClipBoard:
 
 
 def get_any_data():
-    for mode in CF:
+    for mode in [
+        CF.UNICODETEXT,
+        CF.TEXT,
+        CF.DIB,
+        CF.OEMTEXT,
+    ]:
         if not IsClipboardFormatAvailable(mode.value):
             continue
         with ClipBoard(mode) as cp:
