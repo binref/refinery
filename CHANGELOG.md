@@ -5,7 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
-## Version 0.6.38
+## Version 0.6.40 - bugfix release
+
+## Version 0.6.39
 - Adds the `b92` unit for Base92 encoding and decoding.
 - Improves the performance of AutoIt3 unpacking in `a3x`.
 - Adds the `SymHash` field to the `machometa` unit.
