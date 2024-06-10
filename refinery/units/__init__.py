@@ -1023,17 +1023,14 @@ class Executable(ABCMeta):
         return cls().__ror__(other)
 
     @property
-    def is_reversible(cls) -> bool:
+    def is_reversible(cls: Unit) -> bool:
         """
         This property is `True` if and only if the unit has a member function named `reverse`. By convention,
         this member function implements the inverse of `refinery.units.Unit.process`.
         """
         if cls.reverse is MissingFunction:
             return False
-        try:
-            return not cls.reverse.__isabstractmethod__
-        except AttributeError:
-            return True
+        return not getattr(cls.reverse, '__isabstractmethod__', False)
 
     @property
     def codec(cls) -> str:
