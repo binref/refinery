@@ -498,3 +498,4 @@ def nopdoc(obj: object):
     """
     pdoc: dict = sys.modules[obj.__module__].__dict__.setdefault('__pdoc__', {})
     pdoc[obj.__qualname__] = False
+    return obj
