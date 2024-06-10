@@ -79,7 +79,8 @@ class __unit_loader__:
         self.load()
 
     def __enter__(self):
-        return self._lock.__enter__()
+        self._lock.__enter__()
+        return self
 
     def __exit__(self, et, ev, tb):
         return self._lock.__exit__(et, ev, tb)
@@ -156,6 +157,9 @@ class __pdoc__(dict):
         from .explore import get_help_string
         self['Unit'] = False
         self['Arg'] = False
+        with __unit_loader__ as ul:
+            for name in ul.units:
+                unit = ul.resolve(name)
                 if unit is None:
                     continue
                 for base in unit.mro():
@@ -190,13 +194,13 @@ __all__ = sorted(__unit_loader__.units, key=lambda x: x.lower()) + [
 
 
 def load(name) -> Optional[Unit]:
-    with __unit_loader__:
-        return __unit_loader__.resolve(name)
+    with __unit_loader__ as ul:
+        return ul.resolve(name)
 
 
 def __getattr__(name):
-    with __unit_loader__:
-        unit = __unit_loader__.resolve(name)
+    with __unit_loader__ as ul:
+        unit = ul.resolve(name)
     if unit is None:
         raise AttributeError(name)
     return unit
