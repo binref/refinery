@@ -37,7 +37,7 @@ various `refinery.units.Unit`s can be combined.
 __version__ = '0.6.40'
 __distribution__ = 'binary-refinery'
 
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Type, TypeVar, Iterable
 from importlib import resources
 from datetime import datetime
 from threading import RLock
@@ -46,8 +46,10 @@ import pickle
 
 from refinery.units import Arg, Unit
 
+_T = TypeVar('_T')
 
-def _singleton(cls):
+
+def _singleton(cls: Type[_T]) -> _T:
     return cls()
 
 
@@ -135,7 +137,7 @@ class __pdoc__(dict):
         self._loaded = False
 
     def _strip_globals(self, hlp: str):
-        def _strip(lines):
+        def _strip(lines: Iterable[str]):
             triggered = False
             for line in lines:
                 if triggered:
