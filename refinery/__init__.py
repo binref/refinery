@@ -154,9 +154,8 @@ class __pdoc__(dict):
         from .explore import get_help_string
         self['Unit'] = False
         self['Arg'] = False
-        with __unit_loader__:
-            for name in __unit_loader__.units:
-                unit = __unit_loader__.resolve(name)
+                if unit is None:
+                    continue
                 for base in unit.mro():
                     try:
                         abstractmethods: List[str] = base.__abstractmethods__
