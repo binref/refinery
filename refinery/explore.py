@@ -4,10 +4,11 @@
 A commandline script to search for binary refinery units based on keywords.
 """
 import re
+import argparse
 
 from refinery.lib.tools import documentation, terminalfit, get_terminal_size
 from refinery.units import ArgparseError
-from refinery.lib.argparser import RefineryArgumentParser
+from refinery.lib.argparser import LineWrapRawTextHelpFormatter
 
 import refinery
 
@@ -79,7 +80,8 @@ def explorer(keyword_color='91', unit_color='93'):
     headline = highlight_word(headline, 'unit', unit_color)
     print(headline)
 
-    argp = RefineryArgumentParser()
+    argp = argparse.ArgumentParser(formatter_class=LineWrapRawTextHelpFormatter)
+
     argp.add_argument(
         'keywords',
         metavar='keyword',
