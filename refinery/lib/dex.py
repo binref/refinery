@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 A rudimentary parser for Dalvik Executable (dex) files. The parser is not yet complete
-and currently only parses the string table, which is required for the `refinery.dextr`
+and currently only parses the string table, which is required for the `refinery.dexstr`
 unit.
 
 Main Reference: https://source.android.com/devices/tech/dalvik/dex-format

@@ -115,7 +115,7 @@ from typing import TYPE_CHECKING, get_type_hints
 from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 
 from refinery.lib.frame import Chunk
-from refinery.lib.tools import isbuffer, infinitize, one, nopdoc, normalize_to_identifier
+from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
 from refinery.lib.meta import is_valid_variable_name, metavars
 
 if TYPE_CHECKING:
@@ -1476,8 +1476,20 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
     as possible values and causes the parsed argument to contain the corresponding
     value from the `options` dictionary.
     """
-    @nopdoc
-    class __Option(Option):
+    try:
+        cache = OptionFactory.Cache
+    except AttributeError:
+        cache = OptionFactory.Cache = {}
+
+    option_description = ','.join(sorted(options))
+    option_identifier = hash(option_description)
+
+    try:
+        return cache[option_identifier]
+    except KeyError:
+        pass
+
+    class TheOption(Option):
         def __init__(self, name: str):
             if ignorecase and name not in options:
                 needle = name.upper()
@@ -1490,7 +1502,9 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
             self.mode = options[name]
             self.name = name
 
-    return __Option
+    TheOption.__qualname__ = F'OptionFactory.Option[{option_description}]'
+    cache[option_identifier] = TheOption
+    return TheOption
 
 
 def extract_options(symbols, prefix: str, *exceptions: str):

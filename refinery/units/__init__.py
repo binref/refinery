@@ -37,10 +37,10 @@ very simple XOR unit (less versatile than the already existing `refinery.xor`):
                 data[k] ^= next(key)
             return data
 
-The `refinery.Arg` decorator is optional and only used here to provide a help
-message on the command line. It is also available as the `Arg` class property
-of the `refinery.Unit` class for convenience. The example also shows that the
-`__init__` code can be left empty: In this case, refinery automatically adds
+The `refinery.units.Arg` decorator is optional and only used here to provide a
+help message on the command line. It is also available as the `Arg` class property
+of the `refinery.units.Unit` class for convenience. The example also shows that
+the `__init__` code can be left empty: In this case, refinery automatically adds
 boilerplate code that copies all `__init__` parameters to the `args` member
 variable of the unit. In this case, the constructor will be completed to have
 the following code:
@@ -775,7 +775,7 @@ class Arg(Argument):
 
 class ArgumentSpecification(OrderedDict):
     """
-    A container object that stores `refinery.units.arg` specifications.
+    A container object that stores `refinery.units.Arg` specifications.
     """
 
     def merge(self: Dict[str, Arg], argument: Arg):
@@ -1300,7 +1300,7 @@ class Unit(UnitBase, abstract=True):
     @property
     def log_level(self) -> LogLevel:
         """
-        Returns the current log level as an element of `refinery.units.LogLevel`.
+        Returns the current log level as an element of `refinery.lib.environment.LogLevel`.
         """
         if self.is_quiet:
             return LogLevel.NONE
@@ -1737,7 +1737,7 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_fail(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
-        Log the message if and only if the current log level is at least `refinery.units.LogLevel.ERROR`.
+        Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.ERROR`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.ERROR)
         if rv and messages:
@@ -1747,7 +1747,7 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_warn(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
-        Log the message if and only if the current log level is at least `refinery.units.LogLevel.WARN`.
+        Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.WARN`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.WARNING)
         if rv and messages:
@@ -1757,7 +1757,7 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_info(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
-        Log the message if and only if the current log level is at least `refinery.units.LogLevel.INFO`.
+        Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.INFO`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.INFO)
         if rv and messages:
@@ -1767,7 +1767,7 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_debug(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
-        Log the pmessage if and only if the current log level is at least `refinery.units.LogLevel.DEBUG`.
+        Log the pmessage if and only if the current log level is at least `refinery.lib.environment.LogLevel.DEBUG`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.DEBUG)
         if rv and messages:

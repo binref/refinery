@@ -191,7 +191,7 @@ def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
 
 def entropy_fallback(data: ByteString) -> float:
     """
-    This method is called by `refinery.lib.entropy` when the `numpy` module is not available.
+    This method is called by `refinery.lib.tools.entropy` when the `numpy` module is not available.
     It computes the shannon entropy of the input byte string and is written in pure Python.
     """
     if isinstance(data, memoryview):
