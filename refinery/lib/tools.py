@@ -489,3 +489,12 @@ def exception_to_string(exception: BaseException, default=None) -> str:
     if default is None:
         default = str(exception)
     return max(it, key=len, default=default).strip()
+
+
+def nopdoc(obj: object):
+    """
+    This decorator can be applied to any object to exclude it from the automatically generated
+    documentation.
+    """
+    pdoc: dict = sys.modules[obj.__module__].__dict__.setdefault('__pdoc__', {})
+    pdoc[obj.__qualname__] = False

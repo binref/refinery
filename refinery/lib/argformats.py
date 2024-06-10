@@ -115,7 +115,7 @@ from typing import TYPE_CHECKING, get_type_hints
 from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 
 from refinery.lib.frame import Chunk
-from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
+from refinery.lib.tools import isbuffer, infinitize, one, nopdoc, normalize_to_identifier
 from refinery.lib.meta import is_valid_variable_name, metavars
 
 if TYPE_CHECKING:
@@ -128,8 +128,19 @@ MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 _DEFAULT_BITS = 64
 
 
-class ParserError(ArgumentTypeError): pass
-class ParserVariableMissing(ParserError): pass
+class ParserError(ArgumentTypeError):
+    """
+    An exception raised by the `refinery.lib.argformats.PythonExpression` parser.
+    """
+    pass
+
+
+class ParserVariableMissing(ParserError):
+    """
+    Raised when the `refinery.lib.argformats.PythonExpression` parser fails to evaluate an
+    expression because of a missing variable.
+    """
+    pass
 
 
 class RepeatedInteger(int):
@@ -218,7 +229,12 @@ class PythonExpression:
         return eval(self.expression, None, variables)
 
     @classmethod
-    def Evaluate(cls, definition, values):
+    def Evaluate(cls, definition: str, values: dict):
+        """
+        Creates a new `refinery.lib.argformats.PythonExpression` object based on `definition` and
+        evaluates it based on the variable mapping `values`. If a variable used in the expression
+        is missing, a `refinery.lib.argformats.ParserVariableMissing` exception is raised.
+        """
         expression = cls(definition, all_variables_allowed=True)
         for name in expression.variables:
             if name not in values:
@@ -336,6 +352,10 @@ class TooLazy(Exception):
 
 
 class VariableMissing(ArgumentTypeError):
+    """
+    Exception which indicates that a `refinery.lib.meta` variable was missing during evaluation
+    of a Python expression.
+    """
     def __init__(self, name):
         super().__init__(F'The variable {name} is not defined.')
         self.name = name
@@ -433,6 +453,11 @@ class DelayedArgumentDispatch:
 
 
 def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
+    """
+    Wraps the given expression for use as a `refinery.lib.argformats.multibin` expression. If it
+    contains no variables, the expression is evaluated immediately, otherwise the function returns
+    a callable that will evaluate the given expression on an incoming `refinery.lib.frame.Chunk`.
+    """
     import re
     match = re.fullmatch(
         R'(?i)(?P<digits>[1-9][0-9]*|0)(?P<unit>[KMGTPE]B?)',
@@ -1451,7 +1476,8 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
     as possible values and causes the parsed argument to contain the corresponding
     value from the `options` dictionary.
     """
-    class _Option(Option):
+    @nopdoc
+    class __Option(Option):
         def __init__(self, name: str):
             if ignorecase and name not in options:
                 needle = name.upper()
@@ -1464,7 +1490,7 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
             self.mode = options[name]
             self.name = name
 
-    return _Option
+    return __Option
 
 
 def extract_options(symbols, prefix: str, *exceptions: str):
