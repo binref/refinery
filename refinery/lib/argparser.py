@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Provides a customized argument parser that is used by all refinery `refinery.units.Unit`s.
+"""
+from __future__ import annotations
+
+from typing import IO, Optional, List, Dict, Any
+from argparse import ArgumentParser, ArgumentError, Action, RawDescriptionHelpFormatter
+
 import sys
-
-from argparse import (
-    ArgumentParser,
-    ArgumentError,
-    RawDescriptionHelpFormatter,
-)
-
-from typing import IO, Optional, List
 
 from refinery.lib.tools import terminalfit, get_terminal_size
 
@@ -56,34 +56,38 @@ class LineWrapRawTextHelpFormatter(RawDescriptionHelpFormatter):
             return ', '.join(parts)
 
 
-class RefineryArgumentParser(ArgumentParser):
-
-    def __init__(self, prog=None, description=None, add_help=True):
-        super().__init__(prog=prog, description=description, add_help=add_help,
-            formatter_class=LineWrapRawTextHelpFormatter)
-
-
-class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
+class ArgumentParserWithKeywordHooks(ArgumentParser):
     """
     The refinery argument parser remembers the order of arguments in the property `order`.
     Furthermore, the parser can be initialized with a given set of keywords which will be
     parsed as if they had been passed as keyword arguments on the command line.
     """
 
-    class RememberOrder:
-        def __init__(self, action): super().__setattr__('__wrapped__', action)
-        def __setattr__(self, name, value): return setattr(self.__wrapped__, name, value)
-        def __getattr__(self, name): return getattr(self.__wrapped__, name)
+    order: List[str]
+    keywords: Dict[str, Any]
 
-        def __call__(self, parser, ns, values, opt=None):
+    class RememberOrder:
+        __wrapped__: Action
+
+        def __init__(self, action: Action):
+            super().__setattr__('__wrapped__', action)
+
+        def __setattr__(self, name, value):
+            return setattr(self.__wrapped__, name, value)
+
+        def __getattr__(self, name):
+            return getattr(self.__wrapped__, name)
+
+        def __call__(self, parser: ArgumentParserWithKeywordHooks, *args, **kwargs):
             destination = self.__wrapped__.dest
             if destination not in parser.order:
                 parser.order.append(destination)
-            return self.__wrapped__(parser, ns, values, opt)
+            return self.__wrapped__(parser, *args, **kwargs)
 
     def __init__(self, keywords, prog=None, description=None, add_help=True):
-        super().__init__(prog, description, add_help)
-        self._keywords = keywords
+        super().__init__(prog=prog, description=description, add_help=add_help,
+            formatter_class=LineWrapRawTextHelpFormatter)
+        self.keywords = keywords
         self.order = []
 
     def print_help(self, file: Optional[IO[str]] = None) -> None:
@@ -92,8 +96,8 @@ class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
             file = sys.stderr
         return super().print_help(file=file)
 
-    def _add_action(self, action):
-        keywords = self._keywords
+    def _add_action(self, action: Action):
+        keywords = self.keywords
         if action.dest in keywords:
             action.required = False
             if callable(getattr(action, 'type', None)):
@@ -115,7 +119,7 @@ class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
     def parse_args_with_nesting(self, args: List[str], namespace=None):
         self.order = []
         args = list(args)
-        keywords = self._keywords
+        keywords = self.keywords
         if args and args[~0] and isinstance(args[~0], str):
             nestarg = args[~0]
             nesting = len(nestarg)
@@ -129,7 +133,7 @@ class ArgumentParserWithKeywordHooks(RefineryArgumentParser):
             elif nestarg == '[' * nesting:
                 self.set_defaults(nesting=nesting)
                 del args[~0:]
-        self.set_defaults(**self._keywords)
+        self.set_defaults(**self.keywords)
         try:
             parsed = self.parse_args(args=args, namespace=namespace)
         except ArgumentError as e:
