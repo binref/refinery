@@ -218,7 +218,7 @@ class PythonExpression:
         return eval(self.expression, None, variables)
 
     @classmethod
-    def evaluate(cls, definition, values):
+    def Evaluate(cls, definition, values):
         expression = cls(definition, all_variables_allowed=True)
         for name in expression.variables:
             if name not in values:
@@ -279,7 +279,7 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
     if not sliced or len(sliced) > 3:
         raise ArgumentTypeError(F'the expression "{expression}" is not a valid slice.')
     try:
-        sliced = [None if not t else PythonExpression.evaluate(t, variables) for t in sliced]
+        sliced = [None if not t else PythonExpression.Evaluate(t, variables) for t in sliced]
     except ParserVariableMissing:
         if final:
             raise

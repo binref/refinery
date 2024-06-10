@@ -132,7 +132,7 @@ class struct(Unit):
                         check_variable_name(name)
                     if conversion:
                         _aa = reader.tell()
-                        reader.byte_align(PythonExpression.evaluate(conversion, meta))
+                        reader.byte_align(PythonExpression.Evaluate(conversion, meta))
                         _ab = reader.tell()
                         if _aa != _ab:
                             self.log_info(F'aligned from 0x{_aa:X} to 0x{_ab:X}')
@@ -141,7 +141,7 @@ class struct(Unit):
                         spec = meta.format_str(spec, self.codec, args)
                     if spec:
                         try:
-                            _exp = PythonExpression.evaluate(spec, meta)
+                            _exp = PythonExpression.Evaluate(spec, meta)
                         except ParserError:
                             pass
                         else:

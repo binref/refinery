@@ -81,7 +81,7 @@ class iff(ConditionalUnit, extend_docs=True):
             if rhs is not None:
                 lhs = DelayedNumSeqArgument(lhs, additional_types=(float, str))(chunk)
             else:
-                lhs = PythonExpression.evaluate(lhs, meta)
+                lhs = PythonExpression.Evaluate(lhs, meta)
 
         self.log_debug('lhs:', lhs)
         self.log_debug('rhs:', rhs)
