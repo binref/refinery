@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 
 class ParsingFailure(ValueError):
+    """
+    Exception generated for parsing errors of an input `refinery.lib.executable.Executable`.
+    """
     def __init__(self, kind):
         super().__init__(F'unable to parse input as {kind} file')
 
@@ -55,6 +58,11 @@ _MACHO_ARCHS = {
 
 
 def align(alignment: int, value: int, down=False) -> int:
+    """
+    Given an alignment size and an integer value, compute the byte boundary to where this value
+    would be aligned. By default, the next higher address that satisfies the alignment is computed;
+    The optional parameter `down` can be set to `True` to instead return the next lower one.
+    """
     if alignment >= 2:
         incomplete_chunk_count = value % alignment
         if incomplete_chunk_count > 0:
@@ -73,6 +81,12 @@ def exeroute(
     *args,
     **kwargs
 ) -> _T:
+    """
+    Given some input `data` representing the raw bytes of an `refinery.lib.executable.Executable`,
+    route this data to one of three handlers for the ELF, MachO, or PE format. All additional
+    (keyword) arguments are forwarded to the handler. The function checks for well-known signature
+    bytes and magic numbers to route the data.
+    """
     if data[:2] == B'MZ':
         try:
             parsed = PEFile(data=data, fast_load=True)
@@ -102,13 +116,25 @@ def exeroute(
 
 
 class Range(NamedTuple):
+    """
+    A range of bytes specified by a lower and an upper bound. A `refinery.lib.executable.Range`
+    can be subtracted from another one to return a list of ranges that are the result of
+    removing the former from the latter. This operation is the only reason for using a custom
+    class over the builtin `range` object, which does not support this.
+    """
     lower: int
     upper: int
 
     def range(self):
+        """
+        Convertsion to a `range` object.
+        """
         return range(self.lower, self.upper)
 
     def slice(self):
+        """
+        Conversion to a `slice` object.
+        """
         return slice(self.lower, self.upper)
 
     def __len__(self):
@@ -133,6 +159,9 @@ class Range(NamedTuple):
 
 
 class BoxedOffset(NamedTuple):
+    """
+    An offset together with a range of available bytes at that location.
+    """
     box: Range
     position: int
 
@@ -144,6 +173,10 @@ class BoxedOffset(NamedTuple):
 
 
 class Location(NamedTuple):
+    """
+    A location in an `refinery.lib.executable.Executable`. Contains `refinery.lib.executable.BoxedOffset`
+    for both its physical and virtual range of bytes.
+    """
     physical: BoxedOffset
     virtual: BoxedOffset
 
@@ -155,6 +188,10 @@ class Location(NamedTuple):
 
 
 class ArchItem(NamedTuple):
+    """
+    An item of the `refinery.lib.executable.Arch` enumeration. It is used to store the register
+    size in bits for a given architecture.
+    """
     id: int
     pointer_size: int
 
@@ -164,6 +201,9 @@ class ArchItem(NamedTuple):
 
 
 class Arch(ArchItem, Enum):
+    """
+    An enumeration of supported architectures and their register sizes.
+    """
     X32 = ArchItem.New(32)
     X64 = ArchItem.New(64)
     ARM32 = ArchItem.New(32)
@@ -178,11 +218,17 @@ class Arch(ArchItem, Enum):
 
 
 class LT(str, Enum):
+    """
+    An enumeration to distinguish between physical and virtual address types.
+    """
     PHYSICAL = 'offset'
     VIRTUAL = 'address'
 
 
 class ET(str, Enum):
+    """
+    An enumeration to distinguish various executable types.
+    """
     ELF = 'ELF'
     MachO = 'MachO'
     PE = 'PE'
@@ -190,11 +236,17 @@ class ET(str, Enum):
 
 
 class BO(str, Enum):
+    """
+    An enumeration to distinguish big and little endian.
+    """
     BE = 'big'
     LE = 'little'
 
 
 class Section(NamedTuple):
+    """
+    An abstract representation of a section inside an `refinery.lib.executable.Executable`.
+    """
     name: str
     physical: Range
     virtual: Range
@@ -212,6 +264,9 @@ class Section(NamedTuple):
 
 
 class Segment(NamedTuple):
+    """
+    An abstract representation of a segment inside an `refinery.lib.executable.Executable`.
+    """
     physical: Range
     virtual: Range
     sections: Optional[List[Section]]
@@ -233,6 +288,10 @@ class Segment(NamedTuple):
 
 
 class CompartmentNotFound(LookupError):
+    """
+    This exception is raised when `refinery.lib.executable.Executable.lookup_location` fails to
+    find a `refinery.lib.executable.Segment` that contains the given location.
+    """
     def __init__(self, lt: LT, location: int):
         super().__init__(F'Unable to find a segment that contains the {lt.value} 0x{location:X}.')
         self.location_type = lt
@@ -240,6 +299,9 @@ class CompartmentNotFound(LookupError):
 
 
 class Executable(ABC):
+    """
+    An abstract representation of a parsed executable in memory.
+    """
 
     _data: ByteStr
     _head: Union[PEFile, ELFFile, MachO]
@@ -248,6 +310,14 @@ class Executable(ABC):
 
     @classmethod
     def Load(cls: Type[_T], data: ByteStr, base: Optional[int] = None) -> _T:
+        """
+        Uses the `refinery.lib.executable.exeroute` function to parse the input data with one of
+        the following specializations of this class:
+
+        - `refinery.lib.executable.ExecutableELF`
+        - `refinery.lib.executable.ExecutableMachO`
+        - `refinery.lib.executable.ExecutablePE`
+        """
         return exeroute(
             data,
             ExecutableELF,
