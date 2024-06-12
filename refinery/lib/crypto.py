@@ -279,7 +279,7 @@ class PCBC(StatefulCipherMode):
 @_register_cipher_mode
 class CFB(CipherMode):
     """
-    An implementation of [Cipher Feedback Mode](https://csrc.nist.gov/publications/detail/sp/800-38a/final).
+    Cipher Feedback Mode: https://csrc.nist.gov/publications/detail/sp/800-38a/final
     """
 
     iv: BufferType
@@ -596,14 +596,6 @@ class BlockCipherFactory(CipherObjectFactory):
 
 
 class BlockCipher(CipherInterface, ABC):
-    """
-    The abstract base class for a custom block cipher operating in a `refinery.lib.crypto.CipherMode`.
-    Only requires implementation of the following methods:
-
-    - `refinery.lib.crypto.BlockCipher.block_encrypt`
-    - `refinery.lib.crypto.BlockCipher.block_decrypt`
-    """
-
     block_size: int
     key: BufferType
     mode: CipherMode
