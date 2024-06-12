@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+This module contains units who are primarily intended to sit at the end of a pipeline where they
+perform a final operation such as visualizing the incoming data in some way, or e.g. dumping it to
+disk.
+"""
 import re
 import io
 import dataclasses
