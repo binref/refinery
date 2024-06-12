@@ -245,6 +245,11 @@ class RefineryPartialResult(ValueError):
 
 
 class RefineryImportMissing(ModuleNotFoundError):
+    """
+    A special variant of the `ModuleNotFoundError` exception which is raised when a dependency of a
+    refinery unit is not installed in the current environment. The exception also provides hints
+    about what package has to be installed in order to make that module available.
+    """
     def __init__(self, missing: str, *dependencies: str):
         super().__init__()
         import shlex
@@ -361,9 +366,14 @@ class Arg(Argument):
         super().__init__(*args, **kwargs)
 
     def update_help(self):
-        if 'help' not in self.kwargs:
-            return
-
+        """
+        This method is called to format the help text of the argument retroactively. The primary
+        purpose is to fill in default arguments via the formatting symbol `{default}`. These
+        default values are not necessarily part of the `refinery.units.Arg` object itself: They
+        may be a default value in the `__init__` function of the `refinery.units.Unit` subclass.
+        Therefore, it is necessary to format the help text after all information has been
+        compiled.
+        """
         class formatting(dict):
             arg = self
 
@@ -403,13 +413,24 @@ class Arg(Argument):
 
     @staticmethod
     def AsOption(value: Optional[Any], cls: Enum) -> Enum:
+        """
+        This method converts the input `value` to an instance of the enum `cls`. It is intended to
+        be used on values that are passed as an argument marked with the `refinery.units.Arg.Option`
+        decorator. If the input value is `None` or already an instance of `cls`, it is returned
+        unchanged. Otherwise, the function attempts to find an element of the enumeration that
+        matches the input, either by name or by value.
+        """
         if value is None or isinstance(value, cls):
             return value
         if isinstance(value, str):
-            try: return cls[value]
-            except KeyError: pass
+            try:
+                return cls[value]
+            except KeyError:
+                pass
             needle = normalize_to_identifier(value).casefold()
             for item in cls.__members__:
+                if not isinstance(item, str):
+                    break
                 if item.casefold() == needle:
                     return cls[item]
         try:
@@ -420,6 +441,10 @@ class Arg(Argument):
 
     @classmethod
     def Delete(cls):
+        """
+        This should be specified when the argument is present for a (potentially abstract) parent
+        unit but should be removed on the child.
+        """
         return cls(nargs=cls.delete)
 
     @classmethod
@@ -591,6 +616,10 @@ class Arg(Argument):
 
     @property
     def positional(self) -> bool:
+        """
+        Indicates whether the argument is positional. This is crudely determined by whether it has
+        a specifier that does not start with a dash.
+        """
         return any(a[0] != '-' for a in self.args)
 
     @property
@@ -716,6 +745,10 @@ class Arg(Argument):
         return cls(*guessed_pos_args, **guessed_kwd_args, guessed=guessed)
 
     def merge_args(self, them: Argument) -> None:
+        """
+        Merge the `args` component of another `refinery.units.Argument` into this one without
+        overwriting or removing any of the `args` in this instance.
+        """
         def iterboth():
             yield from them.args
             yield from self.args
@@ -725,15 +758,24 @@ class Arg(Argument):
         sflag = None
         lflag = None
         for a in iterboth():
-            if a[:2] == '--': lflag = lflag or a
-            elif a[0] == '-': sflag = sflag or a
+            if a[:2] == '--':
+                lflag = lflag or a
+            elif a[0] == '-':
+                sflag = sflag or a
         self.args = []
-        if sflag: self.args.append(sflag)
-        if lflag: self.args.append(lflag)
+        if sflag:
+            self.args.append(sflag)
+        if lflag:
+            self.args.append(lflag)
         if not self.args:
             self.args = list(them.args)
 
     def merge_all(self, them: Arg) -> None:
+        """
+        Merge another `refinery.units.Arg` into the current instance. This is an additive process
+        where no data on the present instance is destroyed unless `refinery.units.Arg.Delete` was
+        used on `them` to explicitly remove an option.
+        """
         for key, value in them.kwargs.items():
             if value is Arg.delete:
                 self.kwargs.pop(key, None)
@@ -795,7 +837,7 @@ ProcType = Callable[['Unit', ByteString], Optional[Union[DataType, Iterable[Data
 _T = TypeVar('_T')
 
 
-def UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]:
+def _UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]:
     @wraps(operation)
     def wrapped(self: Unit, data: ByteString) -> Optional[Union[Chunk, Iterable[Chunk]]]:
         ChunkType = Chunk
@@ -821,7 +863,7 @@ def UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]
     return wrapped
 
 
-def UnitFilterBoilerplate(
+def _UnitFilterBoilerplate(
     operation : Callable[[Any, Iterable[Chunk]], Iterable[Chunk]]
 ) -> Callable[[Any, Iterable[Chunk]], Iterable[Chunk]]:
     @wraps(operation)
@@ -911,9 +953,9 @@ class Executable(ABCMeta):
                     continue
                 nmspc[method] = decorator(old)
         decorate(
-            filter=UnitFilterBoilerplate,
-            process=UnitProcessorBoilerplate,
-            reverse=UnitProcessorBoilerplate,
+            filter=_UnitFilterBoilerplate,
+            process=_UnitProcessorBoilerplate,
+            reverse=_UnitProcessorBoilerplate,
             __init__=no_type_check,
         )
         if not abstract and Entry not in bases:
@@ -1042,10 +1084,17 @@ class Executable(ABCMeta):
 
     @property
     def name(cls) -> str:
+        """
+        The name of the unit as it would be used on the command line. This is the application of
+        the function `refinery.lib.tools.normalize_to_display` to the class name.
+        """
         return normalize_to_display(cls.__name__)
 
     @property
     def logger(cls) -> Logger:
+        """
+        The debug logger instance for the unit.
+        """
         try:
             return cls._logger
         except AttributeError:
@@ -1215,6 +1264,12 @@ class UnitBase(metaclass=Executable, abstract=True):
 
 
 class requirement(property):
+    """
+    An empty descendant of the builtin `property` class that is used to distinguish import
+    requirements on units from other properties. When `refinery.units.Unit.Requires` is used to
+    decorate a member function as an import, this member function becomes an instance of this
+    class.
+    """
     pass
 
 
@@ -1271,31 +1326,45 @@ class Unit(UnitBase, abstract=True):
                 else:
                     return module
 
+        Requirement.__qualname__ = F'Requirement({distribution!r})'
         return Requirement
 
     @property
     def is_reversible(self) -> bool:
+        """
+        Proxy to `refinery.units.Executable.is_reversible`.
+        """
         return self.__class__.is_reversible
 
     @property
     def codec(self) -> str:
+        """
+        Proxy to `refinery.units.Executable.codec`.
+        """
         return self.__class__.codec
 
     @property
     def logger(self):
+        """
+        Proxy to `refinery.units.Executable.logger`.
+        """
         logger: Logger = self.__class__.logger
         return logger
 
     @property
     def name(self) -> str:
+        """
+        Proxy to `refinery.units.Executable.name`.
+        """
         return self.__class__.name
 
     @property
     def is_quiet(self) -> bool:
-        try:
-            return self.args.quiet
-        except AttributeError:
-            return False
+        """
+        Returns whether the global `--quiet` flag is set, indicating that the unit should not
+        generate any log output.
+        """
+        return getattr(self.args, 'quiet', False)
 
     @property
     def log_level(self) -> LogLevel:
@@ -1308,6 +1377,9 @@ class Unit(UnitBase, abstract=True):
 
     @log_level.setter
     def log_level(self, value: Union[int, LogLevel]) -> None:
+        """
+        Returns the current `refinery.lib.environment.LogLevel` that the unit adheres to.
+        """
         if not isinstance(value, LogLevel):
             value = LogLevel.FromVerbosity(value)
         self.logger.setLevel(value)
@@ -1327,6 +1399,9 @@ class Unit(UnitBase, abstract=True):
 
     @property
     def leniency(self) -> int:
+        """
+        Returns the value of the global `--lenient` flag.
+        """
         return getattr(self.args, 'lenient', 0)
 
     def _exception_handler(self, exception: BaseException, data: Optional[ByteString]):
