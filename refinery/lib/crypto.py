@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Primitives used in custom cryptographic implementations.
+"""
 from __future__ import annotations
 
 from typing import Callable, ClassVar, Container, Generator, Optional, Type, Union, Dict
@@ -11,6 +14,10 @@ CIPHER_MODES: Dict[str, CipherMode] = {}
 
 
 def strxor(a: bytes, b: bytes):
+    """
+    Return the XOR of the two byte strings `a` and `b`. The shorter of the two strings defines the
+    length of the output.
+    """
     return bytes(a ^ b for a, b in zip(a, b))
 
 
@@ -21,63 +28,109 @@ def _register_cipher_mode(cls: Type[CipherMode]):
 
 
 def rotl128(x: int, c: int):
+    """
+    Rotate the 128-bit integer `x` by `c` positions to the left.
+    """
     return ((x << c) | (x >> (0x80 - c))) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 
 
 def rotl64(x: int, c: int):
+    """
+    Rotate the 64-bit integer `x` by `c` positions to the left.
+    """
     return ((x << c) | (x >> (0x40 - c))) & 0xFFFFFFFFFFFFFFFF
 
 
 def rotl32(x: int, c: int):
+    """
+    Rotate the 32-bit integer `x` by `c` positions to the left.
+    """
     return ((x << c) | (x >> (0x20 - c))) & 0xFFFFFFFF
 
 
 def rotl16(x: int, c: int):
+    """
+    Rotate the 16-bit integer `x` by `c` positions to the left.
+    """
     return ((x << c) | (x >> (0x10 - c))) & 0xFFFF
 
 
 def rotl8(x: int, c: int):
+    """
+    Rotate the byte `x` by `c` positions to the left.
+    """
     return ((x << c) | (x >> (0x08 - c))) & 0xFF
 
 
 def rotr128(x: int, c: int):
+    """
+    Rotate the 128-bit integer `x` by `c` positions to the right.
+    """
     return (x << (0x80 - c) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF) | (x >> c)
 
 
 def rotr64(x: int, c: int):
+    """
+    Rotate the 64-bit integer `x` by `c` positions to the right.
+    """
     return (x << (0x40 - c) & 0xFFFFFFFFFFFFFFFF) | (x >> c)
 
 
 def rotr32(x: int, c: int):
+    """
+    Rotate the 32-bit integer `x` by `c` positions to the right.
+    """
     return (x << (0x20 - c) & 0xFFFFFFFF) | (x >> c)
 
 
 def rotr16(x: int, c: int):
+    """
+    Rotate the 16-bit integer `x` by `c` positions to the right.
+    """
     return (x << (0x10 - c) & 0xFFFF) | (x >> c)
 
 
 def rotr8(x: int, c: int):
+    """
+    Rotate the byte `x` by `c` positions to the right.
+    """
     return (x << (0x08 - c) & 0xFF) | (x >> c)
 
 
-def rotr(size: int, x: int, c: int) -> int:
-    mask = (1 << size) - 1
-    c %= size
-    return (x >> c) | (x << (size - c) & mask)
+def rotr(n: int, x: int, c: int) -> int:
+    """
+    Rotate the `n`-bit integer `x` by `c` positions to the right. If `n` is among the common bit
+    sizes 8, 16, 32, 64, or 128, then one of the more specific functions in this module should be
+    used instead.
+    """
+    mask = (1 << n) - 1
+    c %= n
+    return (x >> c) | (x << (n - c) & mask)
 
 
-def rotl(size: int, x: int, c: int) -> int:
-    mask = (1 << size) - 1
-    c %= size
-    return (x >> (size - c)) | (x << c & mask)
+def rotl(n: int, x: int, c: int) -> int:
+    """
+    Rotate the `n`-bit integer `x` by `c` positions to the left. If `n` is among the common bit
+    sizes 8, 16, 32, 64, or 128, then one of the more specific functions in this module should be
+    used instead.
+    """
+    mask = (1 << n) - 1
+    c %= n
+    return (x >> (n - c)) | (x << c & mask)
 
 
-class Direction(str, Enum):
+class Operation(str, Enum):
+    """
+    Specifies whether data is currently being encrypted or decrypted.
+    """
     Encrypt = 'encrypt'
     Decrypt = 'decrypt'
 
 
 class CipherMode(ABC):
+    """
+    Abstract base class for a cipher mode of operation.
+    """
 
     encrypt_block: Callable[[memoryview], memoryview]
     decrypt_block: Callable[[memoryview], memoryview]
@@ -86,27 +139,39 @@ class CipherMode(ABC):
 
     @abstractmethod
     def encrypt(self) -> Generator[memoryview, memoryview, None]:
+        """
+        Implements data encryption according to the current cipher mode and underlying cipher.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def decrypt(self) -> Generator[memoryview, memoryview, None]:
+        """
+        Implements data decryption according to the current cipher mode and underlying cipher.
+        """
         raise NotImplementedError
 
     def apply(
         self,
-        direction: Direction,
+        operation: Operation,
         dst: memoryview,
         src: memoryview,
         encrypt_block: Callable[[memoryview], memoryview],
         decrypt_block: Callable[[memoryview], memoryview],
         blocksize: int,
     ) -> memoryview:
+        """
+        This method is used to perform a cryptographic `refinery.lib.crypto.Operation` to a given
+        source `src` and write the result to the memory at `dst` according to the current cipher
+        mode. To this end, it requires the block encryption and decryption primitives of the
+        underlying cipher and the current block size.
+        """
         self.encrypt_block = encrypt_block
         self.decrypt_block = decrypt_block
         engine: Generator[memoryview, memoryview, None] = {
-            Direction.Encrypt: self.encrypt,
-            Direction.Decrypt: self.decrypt,
-        }[direction]()
+            Operation.Encrypt: self.encrypt,
+            Operation.Decrypt: self.decrypt,
+        }[operation]()
         next(engine)
         top, rest = divmod(len(src), blocksize)
         top *= blocksize
@@ -120,6 +185,10 @@ class CipherMode(ABC):
 
 @_register_cipher_mode
 class ECB(CipherMode):
+    """
+    The Electronic Codebook (ECB) is the most simple cipher mode of operation. The underlying
+    cipher is applied block-wise with no additional safeguards.
+    """
 
     def decrypt(self) -> Generator[memoryview, memoryview, None]:
         M = None
@@ -137,13 +206,23 @@ class ECB(CipherMode):
 
 
 class DataUnaligned(ValueError):
+    """
+    Raised when input data is unexpectedly unaligned to the current block size.
+    """
     def __init__(self) -> None:
         super().__init__('Data not aligned to block size.')
 
 
 class StatefulCipherMode(CipherMode):
+    """
+    A subclass of `refinery.lib.crypto.CipherMode` that holds a state while performing any of
+    its cryptographic `refinery.lib.crypto.Operation`s.
+    """
 
     iv: BufferType
+    """
+    The initial vector for the internal state of the cipher mode.
+    """
 
     def __init__(self, iv: BufferType):
         self.iv = iv
@@ -151,6 +230,9 @@ class StatefulCipherMode(CipherMode):
 
 @_register_cipher_mode
 class CBC(StatefulCipherMode):
+    """
+    An implementation of the popular Cipher Block Chaining mode of operation.
+    """
 
     def encrypt(self) -> Generator[memoryview, memoryview, None]:
         C = self.iv
@@ -171,6 +253,9 @@ class CBC(StatefulCipherMode):
 
 @_register_cipher_mode
 class PCBC(StatefulCipherMode):
+    """
+    An implementation of Propagating Cipher Block Chaining.
+    """
 
     def encrypt(self) -> Generator[memoryview, memoryview, None]:
         S = self.iv
@@ -194,7 +279,7 @@ class PCBC(StatefulCipherMode):
 @_register_cipher_mode
 class CFB(CipherMode):
     """
-    Cipher Feedback Mode: https://csrc.nist.gov/publications/detail/sp/800-38a/final
+    An implementation of [Cipher Feedback Mode](https://csrc.nist.gov/publications/detail/sp/800-38a/final).
     """
 
     iv: BufferType
@@ -257,6 +342,9 @@ class CFB(CipherMode):
 
 @_register_cipher_mode
 class OFB(StatefulCipherMode):
+    """
+    An implementation of Output Feedback Mode.
+    """
 
     aligned = False
 
@@ -274,6 +362,9 @@ class OFB(StatefulCipherMode):
 
 @_register_cipher_mode
 class CTR(CipherMode):
+    """
+    An implementation of Counter mode.
+    """
 
     counter_len: int
     prefix: BufferType
@@ -346,16 +437,39 @@ class CTR(CipherMode):
 
 
 class CipherInterface(ABC):
+    """
+    Abstract base class for refinery's block cipher interface.
+    """
+
     key_size: Container[int]
+    """
+    A container containing all valid key sizes for this cipher.
+    """
+
     block_size: int
+    """
+    The block size of this cipher.
+    """
 
     @abstractmethod
     def encrypt(self, M: BufferType) -> BufferType: ...
+    """
+    Data encryption according to this cipher interface.
+    """
+
     @abstractmethod
     def decrypt(self, C: BufferType) -> BufferType: ...
+    """
+    Data decryption according to this cipher interface.
+    """
 
 
 class CipherObjectFactory(ABC):
+    """
+    An abstract class to build `refinery.lib.crypto.CipherInterface`s from an asortment of
+    cryptographic secrets and parameters.
+    """
+
     name: str
     key_size: Optional[Container[int]] = None
     block_size: Optional[int] = None
@@ -373,10 +487,19 @@ class CipherObjectFactory(ABC):
         block_size: Optional[int] = None,
         **cipher_args
     ) -> CipherInterface:
+        """
+        Build the actual `refinery.lib.crypto.CipherInterface` from the given input parameters.
+        This mimics the PyCrypto interface for new ciphers in order to make the refinery factory
+        cross-compatible with that library.
+        """
         ...
 
 
 class PyCryptoFactoryWrapper(CipherObjectFactory):
+    """
+    Wraps a PyCrypto module as a `refinery.lib.crypto.CipherObjectFactory`.
+    """
+
     def __init__(self, module):
         self.module = module
 
@@ -412,6 +535,10 @@ class PyCryptoFactoryWrapper(CipherObjectFactory):
 
 
 class BlockCipherFactory(CipherObjectFactory):
+    """
+    A `refinery.lib.crypto.CipherObjectFactory` for custom block ciphers.
+    """
+
     cipher: Type[BlockCipher]
 
     def __init__(self, cipher: Type[BlockCipher]):
@@ -469,6 +596,14 @@ class BlockCipherFactory(CipherObjectFactory):
 
 
 class BlockCipher(CipherInterface, ABC):
+    """
+    The abstract base class for a custom block cipher operating in a `refinery.lib.crypto.CipherMode`.
+    Only requires implementation of the following methods:
+
+    - `refinery.lib.crypto.BlockCipher.block_encrypt`
+    - `refinery.lib.crypto.BlockCipher.block_decrypt`
+    """
+
     block_size: int
     key: BufferType
     mode: CipherMode
@@ -482,13 +617,19 @@ class BlockCipher(CipherInterface, ABC):
 
     @abstractmethod
     def block_encrypt(self, data: BufferType) -> BufferType:
+        """
+        Encryption of a single block of data.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def block_decrypt(self, data: BufferType) -> BufferType:
+        """
+        Decryption of a single block of data.
+        """
         raise NotImplementedError
 
-    def _apply_blockwise(self, direction: Direction, data: BufferType) -> BufferType:
+    def _apply_blockwise(self, operation: Operation, data: BufferType) -> BufferType:
         block_size = self.block_size
         mode = self.mode
         if len(data) % block_size != 0 and mode.aligned:
@@ -497,7 +638,7 @@ class BlockCipher(CipherInterface, ABC):
         if dst.readonly:
             dst = bytearray(src)
         return mode.apply(
-            direction,
+            operation,
             dst,
             src,
             self.block_encrypt,
@@ -506,7 +647,13 @@ class BlockCipher(CipherInterface, ABC):
         )
 
     def encrypt(self, data: BufferType) -> BufferType:
-        return self._apply_blockwise(Direction.Encrypt, data)
+        """
+        Encrypt the input data.
+        """
+        return self._apply_blockwise(Operation.Encrypt, data)
 
     def decrypt(self, data: BufferType) -> BufferType:
-        return self._apply_blockwise(Direction.Decrypt, data)
+        """
+        Decrypt the input data.
+        """
+        return self._apply_blockwise(Operation.Decrypt, data)
