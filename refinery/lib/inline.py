@@ -38,19 +38,36 @@ _R = TypeVar('_R')
 
 
 class PassAsConstant:
+    """
+    This simple wrapper can be used to mark an argument as a constant when passing it as an inline
+    argument to `refinery.lib.inline.iterspread`.
+    """
     def __init__(self, value):
         self.value = value
 
 
 def getsource(f):
+    """
+    Retrieve the source code of a given object and remove any common indentation from all lines.
+    This function is used by `refinery.lib.inline.iterspread` to obtain the source code for the
+    input method, which is then parsed and reshaped to provide the optimized callable.
+    """
     return inspect.cleandoc(F'\n{inspect.getsource(f)}')
 
 
 class ArgumentCountMismatch(ValueError):
+    """
+    Raised by `refinery.lib.inline.iterspread` if the input method expects a different number of
+    arguments than provided by the arguments to `refinery.lib.inline.iterspread`.
+    """
     pass
 
 
 class NoFunctionDefinitionFound(ValueError):
+    """
+    When `refinery.lib.inline.iterspread` fails to find a function definition when parsing the
+    source code that belongs to the input method, this error is raised.
+    """
     pass
 
 
@@ -61,9 +78,9 @@ def iterspread(
     mask: Optional[int] = None
 ) -> Callable[..., Generator[_R, None, None]]:
     """
-    This function receives an arbitrary callable `method`, a primary iterator called `iterator`, and
-    an arbitrary number of additional arguments, collected in the `inline_args` variable. The function
-    will essentially turn this:
+    This function receives an arbitrary callable `method`, a primary iterator called `iterator`,
+    and an arbitrary number of additional arguments, collected in the `inline_args` variable. The
+    function will essentially turn this:
 
         def method(self, a, b):
             return a + b
@@ -75,17 +92,19 @@ def iterspread(
                 _var_b = next(_arg_b)
                 yield _var_a + _var_b
 
-    where `_arg_a` and `_arg_b` are closure variables that are bound to the primary iterator, and the
-    single element of `inline_args`, respectively. If one of the elements in `inline_args` is a constant,
-    then this constant will instead be set initially in front of the loop:
+    where `_arg_a` and `_arg_b` are closure variables that are bound to the primary iterator and
+    the single element of `inline_args`, respectively. If one of the elements in `inline_args` is
+    a constant, then this constant will instead be set initially in front of the loop, as shown
+    below. An argument is identified as a constant if it is of type `str`, `int`, `bytes`, or
+    explicitly wrapped in a `refinery.lib.inline.PassAsConstant`.
 
         def iterspread_method(self):
             _var_b = 5
             for _var_a in _arg_a:
                 yield _var_a + _var_b
 
-    Spreading the application of `method` like this provides a high performance increase over making a
-    function call to `method` in each step of the iteration.
+    Spreading the application of `method` like this provides a high performance increase over
+    making a function call to `method` in each step of the iteration.
     """
 
     code = ast.parse(getsource(method))
