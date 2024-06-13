@@ -334,16 +334,26 @@ class Executable(ABC):
 
     @property
     def head(self):
+        """
+        Return the internal object representing the parsed file format header.
+        """
         return self._head
 
     @property
     def type(self):
+        """
+        Returns the `refinery.lib.executable.ET` instance that identifies the executable type.
+        """
         return self._type
 
     def __getitem__(self, key: Union[int, slice, Range]):
         return self.read(key)
 
-    def read(self, key: Union[int, slice, Range]):
+    def read(self, key: Union[int, slice, Range]) -> memoryview:
+        """
+        Read data from the binary based on a given address. If the input `key` is a single integer,
+        the function reads a single byte from the given address.
+        """
         if isinstance(key, Range):
             key = slice(key.lower, key.upper)
         elif isinstance(key, int):
@@ -366,6 +376,11 @@ class Executable(ABC):
 
     @staticmethod
     def ascii(string: Union[str, ByteStr]) -> str:
+        """
+        If the input `string` is a `str` instance, the function returns the input value. Byte
+        strings are truncated to the first occurrence of a null byte and then decoded using
+        the `latin-1` codec.
+        """
         if isinstance(string, str):
             return string
         for k, b in enumerate(string):
@@ -382,12 +397,19 @@ class Executable(ABC):
 
     @property
     def base(self) -> int:
+        """
+        Return the base address when mapped to memory. This is either the value passed to the
+        constructor, or `refinery.lib.exectuable.Executable.image_defined_base`.
+        """
         if self._base is None:
             return self.image_defined_base()
         return self._base
 
     @property
     def data(self) -> memoryview:
+        """
+        Return a (readonly) view to the raw bytes of the executable image.
+        """
         view = memoryview(self._data)
         if sys.version_info >= (3, 8):
             view = view.toreadonly()
@@ -395,15 +417,27 @@ class Executable(ABC):
 
     @property
     def pointer_size(self) -> int:
+        """
+        Return the size of a pointer in bits. Depends on `refinery.lib.executable.Executable.arch`.
+        """
         return self.arch().pointer_size
 
     def location_from_address(self, address: int) -> Location:
+        """
+        Return a `refinery.lib.executable.Location` from the given address.
+        """
         return self.lookup_location(address, LT.VIRTUAL)
 
     def location_from_offset(self, offset: int) -> Location:
+        """
+        Return a `refinery.lib.executable.Location` from the given file offset.
+        """
         return self.lookup_location(offset, LT.PHYSICAL)
 
     def image_defined_size(self) -> int:
+        """
+        Returns the size of the executable on disk.
+        """
         size = 0
         for segment in self.segments():
             size = max(size, segment.physical.upper)
@@ -412,6 +446,9 @@ class Executable(ABC):
         return size
 
     def image_defined_address_space(self) -> Range:
+        """
+        Returns the size of the executalbe in memory.
+        """
         upper = 0
         lower = INF
         for segment in self.segments():
@@ -425,6 +462,9 @@ class Executable(ABC):
         return Range(lower, upper)
 
     def lookup_location(self, location: int, lt: LT) -> Location:
+        """
+        For a address or file offset, compute the corresponding `refinery.lib.executable.Location`.
+        """
         for part in itertools.chain(self.sections(), self.segments()):
             phys = part.physical
             virt = part.virtual
@@ -443,14 +483,23 @@ class Executable(ABC):
 
     @abstractmethod
     def byte_order(self) -> BO:
+        """
+        The byte order used by the architecture of this executable.
+        """
         ...
 
     @abstractmethod
     def image_defined_base(self) -> int:
+        """
+        The image defined base address when mapped to memory.
+        """
         ...
 
     @abstractmethod
     def arch(self) -> Arch:
+        """
+        The architecture for which this executable was built.
+        """
         ...
 
     @abstractmethod
@@ -462,9 +511,15 @@ class Executable(ABC):
         ...
 
     def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+        """
+        An iterable of all `refinery.lib.executable.Segment`s in this executable.
+        """
         yield from self._segments(populate_sections=populate_sections)
 
     def sections(self) -> Generator[Section, None, None]:
+        """
+        An iterable of all `refinery.lib.executable.Section`s in this executable.
+        """
         ib = self.image_defined_base()
         missing = [Range(0, len(self._data))]
         offsets = {}
@@ -492,6 +547,11 @@ class Executable(ABC):
 
 
 class ExecutableCodeBlob(Executable):
+    """
+    A dummy specialization of `refinery.lib.executable.Executable` that represents an unstructured
+    blob of (shell)code. All information that would usually be obtained from a file header must be
+    provided in the constructor for this object.
+    """
 
     _head: Type[None] = None
     _type = ET.BLOB
@@ -522,6 +582,9 @@ class ExecutableCodeBlob(Executable):
 
 
 class ExecutablePE(Executable):
+    """
+    A Windows Portable Executable (PE) file.
+    """
 
     _head: PEFile
     _type = ET.PE
@@ -602,6 +665,9 @@ class ExecutablePE(Executable):
 
 
 class ExecutableELF(Executable):
+    """
+    A file in Executable and Linkable Format (ELF).
+    """
 
     _head: ELFFile
     _type = ET.ELF
@@ -675,6 +741,9 @@ class ExecutableELF(Executable):
 
 
 class ExecutableMachO(Executable):
+    """
+    A MachO-executable.
+    """
 
     _head: MachO
     _type = ET.MachO
