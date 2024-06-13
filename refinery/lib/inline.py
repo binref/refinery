@@ -37,15 +37,6 @@ from ast import (
 _R = TypeVar('_R')
 
 
-class inline(Callable[..., _R]):
-    def __init__(self, function: Callable[..., _R]):
-        self._function = function
-        functools.update_wrapper(self, function)
-
-    def __call__(self, *args, **kwargs):
-        return self._function(*args, **kwargs)
-
-
 class PassAsConstant:
     def __init__(self, value):
         self.value = value
