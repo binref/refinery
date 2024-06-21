@@ -521,7 +521,7 @@ class JvOpCode(Struct):
                 self.table = {k + low: offset for k, offset in enumerate(offsets)}
                 self.table[None] = default
             elif self.code == opc.wide:
-                argop = opc(reader.get_byte())
+                argop = opc(reader.u8())
                 self.arguments = (argop, reader.u16())
                 if argop == opc.iinc:
                     self.arguments += reader.i16(),
