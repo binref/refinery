@@ -20,6 +20,21 @@ class JavaEncoder(BytesAsArrayEncoder):
             return True
         return False
 
+    def convert_key(self, key):
+        if isinstance(key, dsjava._javaobj.beans.JavaString):
+            return str(key)
+        return key
+
+    def preprocess(self, obj):
+        if isinstance(obj, dict):
+            # Recursively convert dictionary keys
+            return {self.convert_key(k): self.preprocess(v) for k, v in obj.items()}
+        return obj
+
+    def encode(self, obj):
+        obj = self.preprocess(obj)
+        return super().encode(obj)
+
     def default(self, obj):
         try:
             return super().default(obj)
