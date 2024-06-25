@@ -62,3 +62,8 @@ class TestJavaDeserializer(TestUnitBase):
         self.assertEqual(jser['fields']['type'], 'PRIVATE')
         self.assertGreater(len(jser['fields']['encoded']), 1000)
         self.assertIn(bytes(jser['fields']['encoded']), data)
+
+    def test_nested_dictionary_example(self):
+        data = self.download_sample('68cfd543ed967db9d19784da95ddbf21ca165af467d5cd0c9587b2d6b0f1040b')
+        test = data | self.load() | json.loads
+        self.assertEqual(test['windows']['payload'], 'windows/beacon_http/reverse_http')
