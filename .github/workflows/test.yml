@@ -21,14 +21,14 @@ jobs:
     steps:
     - name: Checkout Main Repository
       uses: actions/checkout@v4
-      if: github.event_name != 'pull_request'
+      if: ${{ github.event_name != 'pull_request' }}
     - name: Clone PR Source Repository
       uses: actions/checkout@v4
-      if: github.event_name == 'pull_request'
+      if: ${{ github.event_name == 'pull_request' }}
       with:
         fetch-depth: 0
-        ref: ${{github.event.pull_request.head.ref}}
-        repository: ${{github.event.pull_request.head.repo.full_name}}
+        ref: ${{ github.event.pull_request.head.ref }}
+        repository: ${{ github.event.pull_request.head.repo.full_name }}
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
