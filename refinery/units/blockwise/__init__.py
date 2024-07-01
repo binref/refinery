@@ -16,7 +16,7 @@ from refinery.lib.argformats import numseq
 from refinery.lib import chunks
 from refinery.lib.tools import infinitize, cached_property
 from refinery.lib.inline import iterspread
-from refinery.lib.types import Singleton, INF
+from refinery.lib.types import NoMask, INF
 
 if TYPE_CHECKING:
     from numpy import ndarray
@@ -26,11 +26,6 @@ if TYPE_CHECKING:
 
 class FastBlockError(Exception):
     pass
-
-
-class NoMask(metaclass=Singleton):
-    def __rand__(self, other):
-        return other
 
 
 class BlockTransformationBase(Unit, abstract=True):

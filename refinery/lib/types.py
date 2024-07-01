@@ -148,3 +148,18 @@ class bounds:
         if value > self.max:
             return False
         return (value - self.min) % self.inc == 0
+
+
+class _NoMask(metaclass=Singleton):
+    def __rand__(self, other):
+        return other
+
+    def __and__(self, other):
+        return other
+
+
+NoMask = _NoMask
+"""
+The value of `NoMask & X` and `X & NoMask` is always equal to `X`. This singleton serves as a
+mock bitmask when the value `X` should not be masked at all.
+"""
