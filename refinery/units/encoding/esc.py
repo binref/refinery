@@ -40,17 +40,26 @@ class esc(Unit):
         hex     : Arg.Switch('-x', help='Hex encode everything, do not use C escape sequences.') = False,
         unicode : Arg.Switch('-u', help='Use unicode escape sequences and UTF-8 encoding.') = False,
         greedy  : Arg.Switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.') = False,
-        quoted  : Arg.Switch('-q', help='Remove enclosing quotes while decoding and add them for encoding.') = False,
+        unquoted: Arg.Switch('-p', group='Q', help='Never remove enclosing quotes.') = False,
+        quoted  : Arg.Switch('-q', group='Q', help='Remove enclosing quotes while decoding and add them for encoding.') = False,
         bare    : Arg.Switch('-b', help='Do not escape quote characters.') = False,
     ) -> Unit: pass  # noqa
 
     def process(self, data):
+        data = memoryview(data)
+
         if self.args.quoted:
             quote = data[0]
             if data[-1] != quote:
                 self.log_info('string is not correctly quoted')
             else:
                 data = data[1:-1]
+        elif not self.args.unquoted:
+            quote = data[:1]
+            strip = data[1:-1]
+            if data[-1:] == quote and not re.search(br'(?<!\\)' + re.escape(quote), strip):
+                self.log_info('removing automatically detected quotes')
+                data = strip
 
         def unescape(match):
             c = match[1]
