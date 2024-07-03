@@ -146,26 +146,28 @@ class pemeta(Unit):
     extracted.
     """
     def __init__(
-        self, all : Arg('-c', '--custom',
-            help='Unless enabled, all default categories will be extracted.') = True,
-        debug      : Arg('-D', help='Parse the PDB path from the debug directory.') = False,
-        dotnet     : Arg('-N', help='Parse the .NET header.') = False,
-        signatures : Arg('-S', help='Parse digital signatures.') = False,
-        timestamps : Arg('-T', help='Extract time stamps.') = False,
-        version    : Arg('-V', help='Parse the VERSION resource.') = False,
-        header     : Arg('-H', help='Parse data from the PE header.') = False,
-        exports    : Arg('-E', help='List all exported functions.') = False,
-        imports    : Arg('-I', help='List all imported functions.') = False,
-        tabular    : Arg('-t', help='Print information in a table rather than as JSON') = False,
-        timeraw    : Arg('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
+        self, custom : Arg('-c', '--custom',
+            help='Unless enabled, all default categories will be extracted.') = False,
+        debug      : Arg.Switch('-D', help='Parse the PDB path from the debug directory.') = False,
+        dotnet     : Arg.Switch('-N', help='Parse the .NET header.') = False,
+        signatures : Arg.Switch('-S', help='Parse digital signatures.') = False,
+        timestamps : Arg.Switch('-T', help='Extract time stamps.') = False,
+        version    : Arg.Switch('-V', help='Parse the VERSION resource.') = False,
+        header     : Arg.Switch('-H', help='Parse base data from the PE header.') = False,
+        exports    : Arg.Counts('-E', help='List all exported functions. Specify twice to include addresses.') = 0,
+        imports    : Arg.Switch('-I', help='List all imported functions') = False,
+        tabular    : Arg.Switch('-t', help='Print information in a table rather than as JSON') = False,
+        timeraw    : Arg.Switch('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
     ):
+        if not custom and not any((debug, dotnet, signatures, timestamps, version, header)):
+            debug = dotnet = signatures = timestamps = version = header = True
         super().__init__(
-            debug=all or debug,
-            dotnet=all or dotnet,
-            signatures=all or signatures,
-            timestamps=all or timestamps,
-            version=all or version,
-            header=all or header,
+            debug=debug,
+            dotnet=dotnet,
+            signatures=signatures,
+            timestamps=timestamps,
+            version=version,
+            header=header,
             imports=imports,
             exports=exports,
             timeraw=timeraw,
@@ -282,6 +284,29 @@ class pemeta(Unit):
             return info
         return info
 
+    def _pe_characteristics(self, pe: PE):
+        return {name for name, mask in image_characteristics
+            if pe.FILE_HEADER.Characteristics & mask}
+
+    def _pe_address_width(self, pe: PE, default=16) -> int:
+        if 'IMAGE_FILE_16BIT_MACHINE' in self._pe_characteristics(pe):
+            return 4
+        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in ['IMAGE_FILE_MACHINE_I386']:
+            return 8
+        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in [
+            'IMAGE_FILE_MACHINE_AMD64',
+            'IMAGE_FILE_MACHINE_IA64',
+        ]:
+            return 16
+        else:
+            return default
+
+    def _vint(self, pe: PE, value: int):
+        if not self.args.tabular:
+            return value
+        aw = self._pe_address_width(pe)
+        return F'0x{value:0{aw}X}'
+
     def parse_version(self, pe: PE, data=None) -> dict:
         """
         Extracts a JSON-serializable and human-readable dictionary with information about
@@ -320,14 +345,17 @@ class pemeta(Unit):
         else:
             return string_table_entries
 
-    def parse_exports(self, pe: PE, data=None) -> list:
+    def parse_exports(self, pe: PE, data=None, include_addresses=False) -> list:
         pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
+        base = pe.OPTIONAL_HEADER.ImageBase
         info = []
         for k, exp in enumerate(pe.DIRECTORY_ENTRY_EXPORT.symbols):
             if not exp.name:
-                info.append(F'@{k}')
+                name = F'@{k}'
             else:
-                info.append(exp.name.decode('ascii'))
+                name = exp.name.decode('ascii')
+            item = {'Name': name, 'Address': self._vint(pe, exp.address + base)} if include_addresses else name
+            info.append(item)
         return info
 
     def parse_imports(self, pe: PE, data=None) -> list:
@@ -390,6 +418,7 @@ class pemeta(Unit):
 
         rich_header = pe.parse_rich_header()
         rich = []
+
         if rich_header:
             it = rich_header.get('values', [])
             if self.args.tabular:
@@ -411,10 +440,7 @@ class pemeta(Unit):
                     })
             header_information['RICH'] = rich
 
-        characteristics = [
-            name for name, mask in image_characteristics
-            if pe.FILE_HEADER.Characteristics & mask
-        ]
+        characteristics = self._pe_characteristics(pe)
         for typespec, flag in {
             'EXE': 'IMAGE_FILE_EXECUTABLE_IMAGE',
             'DLL': 'IMAGE_FILE_DLL',
@@ -422,22 +448,12 @@ class pemeta(Unit):
         }.items():
             if flag in characteristics:
                 header_information['Type'] = typespec
-        address_width = None
-        if 'IMAGE_FILE_16BIT_MACHINE' in characteristics:
-            address_width = 4
-        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in ['IMAGE_FILE_MACHINE_I386']:
-            address_width = 8
-        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in [
-            'IMAGE_FILE_MACHINE_AMD64',
-            'IMAGE_FILE_MACHINE_IA64',
-        ]:
-            address_width = 16
-        if address_width:
-            header_information['Bits'] = 4 * address_width
-        else:
-            address_width = 16
-        header_information['ImageBase'] = F'0x{pe.OPTIONAL_HEADER.ImageBase:0{address_width}X}'
+
+        base = pe.OPTIONAL_HEADER.ImageBase
+        header_information['ImageBase'] = self._vint(pe, base)
         header_information['ImageSize'] = get_pe_size(pe)
+        header_information['Bits'] = 4 * self._pe_address_width(pe, 16)
+        header_information['EntryPoint'] = self._vint(pe, pe.OPTIONAL_HEADER.AddressOfEntryPoint + base)
         return header_information
 
     def parse_time_stamps(self, pe: PE, raw_time_stamps: bool) -> dict:
@@ -524,8 +540,8 @@ class pemeta(Unit):
             )
 
         try:
-            entry = header.head.EntryPointToken + pe.OPTIONAL_HEADER.ImageBase
-            info.update(EntryPoint=F'0x{entry:08X}')
+            entry = self._vint(pe, header.head.EntryPointToken + pe.OPTIONAL_HEADER.ImageBase)
+            info.update(EntryPoint=entry)
         except AttributeError:
             pass
 
@@ -567,8 +583,11 @@ class pemeta(Unit):
             if not switch:
                 continue
             self.log_debug(F'parsing: {name}')
+            args = pe, data
+            if switch > 1:
+                args = *args, True
             try:
-                info = resolver(pe, data)
+                info = resolver(*args)
             except Exception as E:
                 self.log_info(F'failed to obtain {name}: {E!s}')
                 continue
