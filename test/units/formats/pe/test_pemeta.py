@@ -25,7 +25,7 @@ class TestPEMeta(TestUnitBase):
 
         self.assertEqual(result['Header']['Subsystem'], 'Windows CUI')
         self.assertEqual(result['Header']['Type'], 'EXE')
-        self.assertEqual(result['Header']['ImageBase'], '0x00400000')
+        self.assertEqual(result['Header']['ImageBase'], 0x00400000)
 
         self.assertEqual(result['Signature']['Serial'], '07fb45d9f70b5529036097b4f4e14370')
 
