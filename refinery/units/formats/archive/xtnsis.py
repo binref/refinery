@@ -425,7 +425,7 @@ class NSItem:
 
     def __str__(self):
         return self.name
-    
+
     def __eq__(self, other) -> bool:
         if not other or not isinstance(other, self.__class__):
             return False
