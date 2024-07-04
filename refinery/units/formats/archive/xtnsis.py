@@ -593,8 +593,7 @@ class NSHeader(Struct):
 
         items: Dict[(str, int), NSItem] = {}
         for item in self._read_items():
-            if items.setdefault((item.path, item.offset), item) != item:
-                raise ValueError(F'Two different items with the same position {item.offset} and the same path: {item.path}.')
+            items.setdefault((item.path, item.offset), item)
 
         self.items = [items[t] for t in sorted(items.keys())]
 
