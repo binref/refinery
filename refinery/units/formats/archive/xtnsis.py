@@ -401,7 +401,7 @@ class NSCharCode(enum.IntEnum):
         return self > NSCharCode.CHAR
 
 
-@dataclasses.dataclass(eq=True)
+@dataclasses.dataclass
 class NSItem:
     offset: int
     name: Optional[str] = None
@@ -594,7 +594,6 @@ class NSHeader(Struct):
         items: Dict[(str, int), NSItem] = {}
         for item in self._read_items():
             items.setdefault((item.path, item.offset), item)
-
         self.items = [items[t] for t in sorted(items.keys())]
 
     @property
