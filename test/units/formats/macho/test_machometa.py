@@ -217,3 +217,13 @@ class TestMachoMeta(TestUnitBase):
             data = self.download_sample(sha256hash)
             test = data | self.load() | self.ldu('xtjson', 'SymHash') | {str}
             self.assertIn(symhash, test)
+
+    def test_entitlements_parser(self):
+        data = self.download_sample('6c121f2b2efa6592c2c22b29218157ec9e63f385e7a1d7425857d603ddef8c59')
+        test = data | self.load() | json.loads
+        et = test['Slices'][0]['Signatures']['Entitlements']
+        self.assertEqual(et['com.apple.security.get-task-allow'], True)
+        self.assertEqual(et['com.apple.security.temporary-exception.files.absolute-path.read-only'], '/')
+        self.assertListEqual(
+            et['com.apple.security.temporary-exception.mach-lookup.global-name'],
+            ['com.apple.testmanagerd', 'com.apple.coresymbolicationd'])

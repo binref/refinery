@@ -10,6 +10,7 @@ from refinery.units.formats.pe.pemeta import pemeta
 from refinery.units.sinks.ppjson import ppjson
 from refinery.lib.tools import NoLogging
 from refinery.lib.structures import MemoryFile
+from refinery.lib import xml
 
 if TYPE_CHECKING:
     from ktool import Image
@@ -174,7 +175,42 @@ class machometa(Unit):
                 # https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/RequirementLang/RequirementLang.html
                 info['Requirements'] = macho_image.codesign_info.req_dat.hex()
             if macho_image.codesign_info.entitlements is not None:
-                info['Entitlements'] = macho_image.codesign_info.entitlements
+                def parse_entitlements(xmldata):
+                    def parse_value(v: xml.XMLNodeBase):
+                        if v.tag == 'array':
+                            return [parse_value(c) for c in v.children]
+                        if v.tag == 'string':
+                            try:
+                                return v.content.strip()
+                            except Exception:
+                                return ''
+                        if v.tag == 'true':
+                            return True
+                        if v.tag == 'false':
+                            return False
+                        raise ValueError('unknown type')
+                    parsed = xml.parse(xmldata)
+                    tags = []
+                    while len(parsed.children) == 1:
+                        tags.append(parsed.tag)
+                        parsed = parsed.children[0]
+                    if tags[-1] != 'plist' or parsed.tag != 'dict':
+                        raise ValueError
+                    it = iter(parsed.children)
+                    for key, value in zip(it, it):
+                        if key.tag != 'key':
+                            raise ValueError
+                        yield key.content, parse_value(value)
+
+                entitlements = macho_image.codesign_info.entitlements
+
+                try:
+                    entitlements = dict(parse_entitlements(entitlements))
+                except Exception as error:
+                    self.log_warn(F'failed to parse entitlements: {error!s}')
+                finally:
+                    info['Entitlements'] = entitlements
+
         return info
 
     def parse_version(self, macho_image: Image, data=None) -> Dict:
