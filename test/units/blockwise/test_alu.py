@@ -6,11 +6,11 @@ from .. import TestUnitBase
 class TestALUInput(TestUnitBase):
 
     def test_invalid_expression(self):
-        self.assertRaises(Exception, self.load, '"§$%$$$§$§$$$UU')
-        self.assertRaises(Exception, self.load, '(B + 9')
+        self.assertRaises(Exception, lambda: B'' | self.load() | None, '"§$%$$$§$§$$$UU')
+        self.assertRaises(Exception, lambda: B'' | self.load() | None, '(B + 9')
 
     def test_not_an_expression(self):
-        self.assertRaises(Exception, self.load, 'def foo(x):\n    return 29')
+        self.assertRaises(Exception, lambda: B'' | self.load() | None, 'def foo(x):\n    return 29')
 
 
 class TestALU(TestUnitBase):
@@ -28,8 +28,14 @@ class TestALU(TestUnitBase):
     def test_real_world_01(self):
         data = bytes.fromhex('7C737376545F0808244368244668652724684643275F2424054B')
         goal = b'https'b'://45.41.204'b'.150:443\0'
-        unit = self.load('(41*(B-75))%127')
+        unit = self.load('(41*(B-75))%127', precision=0)
         self.assertEqual(data | unit | bytes, goal)
+
+    def test_real_world_02(self):
+        data = b'\x63\x0a\x9f\xf2\x21\x0e\x76\x45\xf4\xc8\x4d\xaa\x16\x04\x11\x1a\xc2\xca'
+        line = self.load_pipeline('put key le:x::4 [| alu -P4 -B1 -s=key -e=(S*0xBC8F%0x7FFFFFFF) B@S ]')
+        test = data | line | str
+        self.assertEqual(test, 'BCryptHashData')
 
     def test_signed_unsigned_methods(self):
         data = bytes.fromhex(

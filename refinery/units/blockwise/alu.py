@@ -51,16 +51,10 @@ class alu(ArithmeticUnit):
 
     @staticmethod
     def _parse_op(definition, default=None):
-        """
-        An argparse type which uses the `refinery.lib.argformats.PythonExpression` parser to parse the
-        expressions that can be passed to `refinery.alu`. Essentially, these are Python expressions which can
-        contain variables `B`, `A`, `S`, and `V`.
-        """
+        definition = definition or default
         if not definition:
-            if default is None:
-                raise ValueError('No definition given')
-            definition = default
-        return PythonExpression(definition, *'IBASMNVRLX', all_variables_allowed=True)
+            raise ValueError('No definition given')
+        return definition
 
     def __init__(
         self, operator: Arg(type=str, help='A Python expression defining the operation.'), *argument,
@@ -113,16 +107,20 @@ class alu(ArithmeticUnit):
     def process(self, data):
         context = dict(metavars(data))
         seed = self.args.seed
+        fbits = self.fbits
+        fmask = self.fmask
         if isinstance(seed, str):
-            seed = PythonExpression(seed, 'N', constants=metavars(data))
+            seed = PythonExpression(seed, 'N', constants=metavars(data), mask=fmask)
         if callable(seed):
             seed = seed(context, N=len(data))
         self._index.init(self.fmask)
-        prologue = self.args.prologue.expression
-        epilogue = self.args.epilogue.expression
-        operator = self.args.operator.expression
-        fbits = self.fbits
-        fmask = self.fmask
+
+        def _expression(definition: str):
+            return PythonExpression(definition, *'IBASMNVRLX', all_variables_allowed=True, mask=fmask)
+
+        prologue = _expression(self.args.prologue).expression
+        epilogue = _expression(self.args.epilogue).expression
+        operator = _expression(self.args.operator).expression
 
         def cast_unsigned(n) -> int:
             return int(n) & fmask
@@ -169,8 +167,12 @@ class alu(ArithmeticUnit):
 
         placeholder = self.operate
         self.operate = operate
-        result = super().process(data)
-        self.operate = placeholder
+
+        try:
+            result = super().process(data)
+        finally:
+            self.operate = placeholder
+
         return result
 
     @staticmethod
