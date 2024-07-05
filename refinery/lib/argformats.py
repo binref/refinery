@@ -116,6 +116,7 @@ from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, Ty
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
+from refinery.lib.types import NoMask
 from refinery.lib.meta import is_valid_variable_name, metavars
 
 if TYPE_CHECKING:
@@ -168,7 +169,7 @@ class PythonExpression:
     were present, or a callable which expects keyword arguments corresponding to the
     permitted variable names.
     """
-    def __init__(self, definition: AnyStr, *variables, constants=None, all_variables_allowed=False):
+    def __init__(self, definition: AnyStr, *variables, constants=None, all_variables_allowed=False, mask=None):
         self.definition = definition = definition.strip()
         if not isinstance(definition, str):
             definition = definition.decode('utf8')
@@ -179,7 +180,7 @@ class PythonExpression:
         except Exception:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}')
 
-        class StringToBytes(ast.NodeTransformer):
+        class Postprocessor(ast.NodeTransformer):
             if sys.version_info >= (3, 8):
                 def visit_Constant(self, node: ast.Constant):
                     if not isinstance(node.value, str):
@@ -192,7 +193,23 @@ class PythonExpression:
             def visit_MatMult(self, node: ast.MatMult) -> Any:
                 return ast.BitXor()
 
-        expression = ast.fix_missing_locations(StringToBytes().visit(expression))
+            def visit_BinOp(self, node: ast.BinOp) -> Any:
+                node = self.generic_visit(node)
+                if mask in (NoMask, None):
+                    return node
+                if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
+                    return node
+                return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
+
+            def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+                node = self.generic_visit(node)
+                if mask in (NoMask, None):
+                    return node
+                if not isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
+                    return node
+                return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
+
+        expression = ast.fix_missing_locations(Postprocessor().visit(expression))
         nodes = ast.walk(expression)
 
         try:
