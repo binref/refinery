@@ -72,6 +72,14 @@ class pcap(Unit):
         import pcapkit
         return pcapkit
 
+    @Unit.Requires('dictdumper==0.8.4', 'all')
+    def _pcapkit_python37_bugfix():
+        """
+        TODO: This artificial requirement pins a dependency of pypcapkit that otherwise breaks for
+        Python 3.7; see issue [#51](https://github.com/binref/refinery/issues/51). Once that issue
+        is resolved, this should be removed.
+        """
+
     def process(self, data):
         with NoLogging():
             pcapkit = self._pcapkit
