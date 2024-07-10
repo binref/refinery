@@ -236,7 +236,7 @@ _pattern_win_path = R'(?:{s})(?P<__pathsep>[\\\/])(?:{p}(?P=__pathsep))*{p}(?:(?
     s='|'.join([
         _pattern_win_env_variable,    # environment variable
         R'[A-Za-z]:',                 # drive letter with colon
-        R'\\\\[a-zA-Z0-9_.$]{1,50}',  # UNC path
+        R'\\\\[a-zA-Z0-9_.$@]{1,50}', # UNC path
         R'HK[A-Z_]{1,30}',            # registry root key
     ]),
     p=_pattern_win_path_element
