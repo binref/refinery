@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 import weakref
+import re
 import defusedxml.ElementTree as et
 
 from typing import Any, Dict, Iterable, List, Optional
@@ -17,10 +18,15 @@ from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import exception_to_string
 
 
-def ForgivingParse(data, entities=None) -> ElementTree:
+def ForgivingParse(data: bytes, entities=None) -> ElementTree:
     """
     Uses the `refinery.lib.xml.ForgivingXMLParser` to parse the input data.
     """
+    try:
+        codec = re.search(rb'^\s*<\?xml[^>]+?encoding="?([-\w]+)"?', data)
+        data = data.decode('utf8').encode(codec[1].decode('utf8'))
+    except Exception:
+        pass
     try:
         return et.parse(MemoryFile(data), parser=ForgivingXMLParser(entities))
     except et.ParseError as PE:
