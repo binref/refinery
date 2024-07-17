@@ -215,9 +215,7 @@ class rsa(Unit):
                 self.log_info('Detected PKCS1.5 padding.')
                 self._pads = PAD.PKCS15
                 return data
-            self.log_warn('No padding worked, returning raw decrypted blocks.')
-            self._pads = PAD.NONE
-            return data
+            raise RefineryPartialResult('No padding worked, returning raw decrypted blocks.', data)
         else:
             raise ValueError(F'Invalid padding value: {self._pads!r}')
 
