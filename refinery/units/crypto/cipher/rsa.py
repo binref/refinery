@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.tools import splitchunks
 from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
 from refinery.lib.xml import ForgivingParse
@@ -178,25 +178,20 @@ class rsa(Unit):
 
     def _decrypt_block_OAEP(self, data):
         self.log_debug('Attempting decryption with PyCrypto PKCS1 OAEP.')
-        result = PKCS1_OAEP.new(self.key).decrypt(data)
-        if result is not None:
-            return result
-        raise ValueError('OAEP decryption was unsuccessful.')
+        return PKCS1_OAEP.new(self.key).decrypt(data)
 
     def _encrypt_block_OAEP(self, data):
         self.log_debug('Attempting encryption with PyCrypto PKCS1 OAEP.')
-        result = PKCS1_OAEP.new(self.key).encrypt(data)
-        if result is None:
-            return result
-        raise ValueError('OAEP encryption was unsuccessful.')
+        return PKCS1_OAEP.new(self.key).encrypt(data)
 
     def _decrypt_block(self, data):
         if self._oaep and self._pads in {PAD.AUTO, PAD.OAEP}:
             try:
                 return self._decrypt_block_OAEP(data)
-            except ValueError:
-                if self._pads: raise
-                self.log_debug('PyCrypto primitives failed, no longer attempting OAEP.')
+            except ValueError as E:
+                if self._pads:
+                    raise
+                self.log_debug(F'{E!s} No longer attempting OAEP.')
                 self._oaep = False
 
         data = self._decrypt_raw(data)
