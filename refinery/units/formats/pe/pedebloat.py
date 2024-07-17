@@ -42,8 +42,8 @@ class pedebloat(OverlayUnit):
         memdump=False,
         resources: Arg.Switch('-r', help='Strip large resources.') = False,
         sections : Arg.Switch('-s', help='Strip large sections.') = False,
-        trim_text: Arg.Switch('-X', help='Lift the exception on .TEXT section for stripping.') = False,
-        trim_rsrc: Arg.Switch('-Y', help='Lift the exception on .RSRC section for stripping.') = False,
+        trim_code: Arg.Switch('-X', help='Lift the exception on code sections for stripping.') = False,
+        trim_rsrc: Arg.Switch('-Y', help='Lift the exception on rsrc sections for stripping.') = False,
         threshold: Arg('-t', metavar='T', type=percent, help=(
             'Trailing data from resources and sections is stripped until the compression ratio '
             'of the remaining data rises above this threshold. The default value is {default}. '
@@ -72,7 +72,7 @@ class pedebloat(OverlayUnit):
             keep_limit=keep_limit,
             threshold=threshold,
             trim_rsrc=trim_rsrc,
-            trim_text=trim_text,
+            trim_code=trim_code,
             names=names,
         )
 
@@ -238,11 +238,11 @@ class pedebloat(OverlayUnit):
             section: SectionStructure
             offset = section.PointerToRawData
             name = _ASCII(section.Name)
-            if not self.args.trim_text and name.lower() in ('.text', '.code'):
-                self.log_info(F'skipping code section {name}')
+            if not self.args.trim_code and name.lower() in ('.text', '.code'):
+                self.log_debug(F'skipping code section {name}; specify --trim-code to override.')
                 continue
             if not self.args.trim_rsrc and name.lower() == '.rsrc':
-                self.log_info(F'skipping rsrc section {name}')
+                self.log_debug(F'skipping rsrc section {name}; specify --trim-rsrc to override.')
                 continue
             old_size = section.SizeOfRawData
             if old_size <= S and not any(fnmatch(name, p) for p in P):
@@ -251,6 +251,8 @@ class pedebloat(OverlayUnit):
             new_size = self._right_strip_data(
                 memoryview(data)[offset:offset + old_size],
                 pe.OPTIONAL_HEADER.FileAlignment)
+            if new_size == old_size:
+                continue
             self.log_info(F'stripping section {name} from {TI(old_size)!r} to {TI(new_size)!r}')
             gap_size = old_size - new_size
             gap_offset = offset + new_size
