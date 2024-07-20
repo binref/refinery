@@ -31,7 +31,6 @@ __C = {
     'md2'      : _CDome,
     'md4'      : _CDome,
     'ripemd160': _CDome,
-    'ripemd128': _CDome,
     'keccak256': _CDome,
     'md5'      : _PyLib,
     'sha1'     : _PyLib,
@@ -55,3 +54,12 @@ for name, HashUnitFactory in __C.items():
     __display = name.upper().replace('_', '-')
     __G[name] = HashUnitFactory(name, (HashUnit,), {
         '__module__': __name__, '__doc__': F'Returns the {__display} hash of the input data.'})
+
+
+class ripemd128(HashUnit):
+    """
+    Returns the RIPEMD-128 hash of the input data.
+    """
+    def _algorithm(self, data):
+        from refinery.lib.ripemd128 import ripemd128
+        return ripemd128(data)
