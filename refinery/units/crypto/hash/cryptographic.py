@@ -52,8 +52,6 @@ __C = {
 __all__ = list(__C)
 
 for name, HashUnitFactory in __C.items():
-    c = HashUnitFactory(name, (HashUnit,), {})
     __display = name.upper().replace('_', '-')
-    __G[name] = c
-    c.__doc__ = F'Returns the {__display} hash of the input data.'
-    c.__module__ = __name__
+    __G[name] = HashUnitFactory(name, (HashUnit,), {
+        '__module__': __name__, '__doc__': F'Returns the {__display} hash of the input data.'})
