@@ -5,120 +5,55 @@ Implements various cryptographic hashing algorithms.
 """
 import hashlib
 
+from refinery.units import Executable
 from refinery.units.crypto.hash import HashUnit
 
 
-class md4(HashUnit):
-    """
-    Returns the MD4 hash of the input data.
-    """
-    def _algorithm(self, data):
-        from Cryptodome.Hash import MD4
-        return MD4.new(data)
+class _CDome(Executable):
+    def __new__(cls, name: str, bases, namespace: dict):
+        def _algorithm(self, data):
+            return getattr(__import__(F'Cryptodome.Hash.{algo}').Hash, algo).new(data)
+        algo = name.upper()
+        namespace['_algorithm'] = _algorithm
+        return Executable.__new__(cls, name, bases, namespace)
 
 
-class md2(HashUnit):
-    """
-    Returns the MD2 hash of the input data.
-    """
-    def _algorithm(self, data):
-        from Cryptodome.Hash import MD2
-        return MD2.new(data)
+class _PyLib(Executable):
+    def __new__(cls, name: str, bases, namespace: dict):
+        def _algorithm(self, data):
+            return getattr(hashlib, name)(data)
+        namespace['_algorithm'] = _algorithm
+        return Executable.__new__(cls, name, bases, namespace)
 
 
-class md5(HashUnit):
-    """
-    Returns the MD5 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.md5(data)
+__G = globals()
+__C = {
+    'md2'      : _CDome,
+    'md4'      : _CDome,
+    'ripemd160': _CDome,
+    'ripemd128': _CDome,
+    'keccak256': _CDome,
+    'md5'      : _PyLib,
+    'sha1'     : _PyLib,
+    'sha224'   : _PyLib,
+    'sha256'   : _PyLib,
+    'sha384'   : _PyLib,
+    'sha512'   : _PyLib,
+    'blk224'   : _PyLib,
+    'blk256'   : _PyLib,
+    'blk384'   : _PyLib,
+    'blk512'   : _PyLib,
+    'sha3_224' : _PyLib,
+    'sha3_256' : _PyLib,
+    'sha3_384' : _PyLib,
+    'sha3_512' : _PyLib,
+}
 
+__all__ = list(__C)
 
-class sha1(HashUnit):
-    """
-    Returns the SHA1 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.sha1(data)
-
-
-class sha224(HashUnit):
-    """
-    Returns the SHA224 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.sha224(data)
-
-
-class sha256(HashUnit):
-    """
-    Returns the SHA256 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.sha256(data)
-
-
-class sha384(HashUnit):
-    """
-    Returns the SHA384 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.sha384(data)
-
-
-class sha512(HashUnit):
-    """
-    Returns the SHA512 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.sha512(data)
-
-
-class blk224(HashUnit):
-    """
-    Returns the BLK224 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.blake2b(data, digest_size=28)
-
-
-class blk256(HashUnit):
-    """
-    Returns the BLK256 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.blake2b(data, digest_size=32)
-
-
-class blk384(HashUnit):
-    """
-    Returns the BLK384 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.blake2b(data, digest_size=48)
-
-
-class blk512(HashUnit):
-    """
-    Returns the BLK512 hash of the input data.
-    """
-    def _algorithm(self, data):
-        return hashlib.blake2b(data, digest_size=64)
-
-
-class ripemd160(HashUnit):
-    """
-    Returns the RIPEMD-160 hash of the input data.
-    """
-    def _algorithm(self, data):
-        from Cryptodome.Hash import RIPEMD160
-        return RIPEMD160.new(data)
-
-
-class ripemd128(HashUnit):
-    """
-    Returns the RIPEMD-128 hash of the input data.
-    """
-    def _algorithm(self, data):
-        from refinery.lib.ripemd128 import ripemd128
-        return ripemd128(data)
+for name, HashUnitFactory in __C.items():
+    c = HashUnitFactory(name, (HashUnit,), {})
+    __display = name.upper().replace('_', '-')
+    __G[name] = c
+    c.__doc__ = F'Returns the {__display} hash of the input data.'
+    c.__module__ = __name__
