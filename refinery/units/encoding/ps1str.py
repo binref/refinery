@@ -45,7 +45,7 @@ class ps1str(Unit):
         match = re.fullmatch(R'''@(['"])\s*?[\r\n](.*?)[\r\n]\1@''', data, flags=re.DOTALL)
         if match:
             return match.group(2)
-        if data[0] not in ''''"''' or data[-1] != data[0]:
+        if data[0] not in '\'\"' or data[-1] != data[0]:
             raise ValueError(
                 'No quotes found at beginning of input. To escape a PowerShell string, the '
                 'quotes must be included because quote escaping depends on whether a single '
