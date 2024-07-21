@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.6.43
+- Adds the hash units `sha3-224`, `sha3-256`, `sha3-384`, `sha3-512`, and `keccak256`.
+
 ## Version 0.6.42 - bugfix release
 
 ## Version 0.6.41 - bugfix release
