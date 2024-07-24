@@ -123,8 +123,8 @@ class xthtml(XMLToPathExtractorUnit):
     """
     def __init__(
         self, *paths,
-        outer: Arg.Switch('-o', help='Include the HTML tags for an extracted element.'),
-        attributes: Arg.Switch('-a', help='Populate chunk metadata with HTML tag attributes.'),
+        outer: Arg.Switch('-o', help='Include the HTML tags for an extracted element.') = False,
+        attributes: Arg.Switch('-a', help='Populate chunk metadata with HTML tag attributes.') = False,
         **keywords
     ):
         super().__init__(*paths, outer=outer, attributes=attributes, **keywords)
