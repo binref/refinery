@@ -361,7 +361,8 @@ class PyInstallerArchiveEpilogue(Struct):
             return None
         return libname
 
-    def __init__(self, reader: StructReader, offset: int, unmarshal: Unmarshal = Unmarshal.No):
+    def __init__(self, reader: StructReader, offset: int, unmarshal: Unmarshal = Unmarshal.No, decompile: bool = False):
+        self.decompile = decompile
         reader.bigendian = True
         reader.seekset(offset)
         self.reader = reader
@@ -439,14 +440,18 @@ class PyInstallerArchiveEpilogue(Struct):
             del self.files[extracted.name]
             extracted.name = F'{name}.pyc'
             self.files[extracted.name] = extracted
+            is_crypto_key = name.endswith('crypto_key')
 
             if len(magics) == 1 and data[:4] != magics[0]:
                 extracted.data = magics[0] + data
-            decompiled = make_decompiled_item(name, data, *magics)
-            if entry.type is PiType.SOURCE:
-                decompiled.type = PiType.USERCODE
-            self.files[F'{name}.py'] = decompiled
-            if name.endswith('crypto_key'):
+
+            if is_crypto_key or self.decompile:
+                decompiled = make_decompiled_item(name, data, *magics)
+                if entry.type is PiType.SOURCE:
+                    decompiled.type = PiType.USERCODE
+                self.files[decompiled.name] = decompiled
+
+            if is_crypto_key:
                 for key in decompiled.unpack() | carve('string', decode=True):
                     if len(key) != 0x10:
                         continue
@@ -493,9 +498,10 @@ class xtpyi(ArchiveUnit):
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', date=b'date',
+        decompile: Arg.Switch('-c', help='Attempt to decompile PYC files.'),
         user_code: Arg.Switch('-u', group='FILTER', help=(
             'Extract only source code files from the root of the archive. These usually implement '
-            'the actual domain logic.')) = False,
+            'the actual domain logic. This implies the --decompile option.')) = False,
         unmarshal: Arg('-y', action='count', group='FILTER', help=(
             '(DANGEROUS) Unmarshal embedded PYZ archives. Warning: Maliciously crafted packages can '
             'potentially exploit this to execute code. It is advised to only use this option inside '
@@ -512,6 +518,7 @@ class xtpyi(ArchiveUnit):
             regex=regex,
             path=path,
             date=date,
+            decompile=decompile,
             unmarshal=unmarshal,
             user_code=user_code,
         )
@@ -572,7 +579,8 @@ class xtpyi(ArchiveUnit):
             for position in positions:
                 self.log_info(F'magic signature found at offset 0x{position:0{width}X}')
             self.log_warn(F'found {len(positions) - 1} potential PyInstaller epilogue markers; using last one.')
-        archive = PyInstallerArchiveEpilogue(view, positions[-1], mode)
+        decompile = self.args.decompile or self.args.user_code
+        archive = PyInstallerArchiveEpilogue(view, positions[-1], mode, decompile)
         for name, file in archive.files.items():
             if self.args.user_code:
                 if file.type != PiType.USERCODE:
