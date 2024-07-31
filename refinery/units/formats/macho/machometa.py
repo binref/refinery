@@ -177,12 +177,13 @@ class machometa(Unit):
                 info['Requirements'] = macho_image.codesign_info.req_dat.hex()
             if macho_image.codesign_info.entitlements is not None:
                 entitlements: str = macho_image.codesign_info.entitlements
-                try:
-                    entitlements = plistlib.loads(entitlements.encode('utf8'))
-                except Exception as error:
-                    self.log_warn(F'failed to parse entitlements: {error!s}')
-                else:
-                    info['Entitlements'] = entitlements
+                if entitlements:
+                    try:
+                        entitlements = plistlib.loads(entitlements.encode('utf8'))
+                    except Exception as error:
+                        self.log_warn(F'failed to parse entitlements: {error!s}')
+                    else:
+                        info['Entitlements'] = entitlements
 
         return info
 
