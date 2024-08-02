@@ -34,10 +34,14 @@ class struct(Unit):
 
     For example, the string `LLxxHaa` will read two unsigned 32bit integers, then skip two bytes,
     then read one unsigned 16bit integer, then two null-terminated ASCII strings. The unit defaults
-    to using native byte order with no alignment.
+    to using native byte order with no alignment. The `spec` parameter may additionally contain
+    format expressions of the following form:
 
-    The `spec` parameter may additionally contain format expressions of the form `{name:format}`.
-    Here, `format` can either be an integer expression specifying a number of bytes to read, or any
+    {name[!alignment]:format}
+
+    The `alignment` parameter is optional. It must be an expression that evaluates to an integer
+    value. The current data pointer is aligned to a multiple of this value before reading the field.
+    The `format` can either be an integer expression specifying a number of bytes to read, or any
     format string. If `name` is specified for an extracted field, its value is made available as a
     meta variable under the given name. For example, the expression `LLxxH{foo:a}{bar:a}` would be
     parsed in the same way as the previous example, but the two ASCII strings would also be stored
