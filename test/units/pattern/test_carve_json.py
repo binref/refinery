@@ -29,3 +29,11 @@ class TestCarveJSON(TestUnitBase):
         output = unit(data).decode('ascii')
         output = json.loads(output)
         self.assertEqual(output['data']['cobaltstrike']['status'], 'success')
+
+    def test_incorrect_string_parsing(self):
+        data = """{
+            "bugcheck": "]",
+            "escape": "\\"",
+            "problem": false
+        }""".encode('latin1')
+        self.assertEqual(data, data | self.load() | bytes)

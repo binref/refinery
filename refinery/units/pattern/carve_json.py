@@ -10,7 +10,6 @@ from refinery.units import Arg, Unit
 _JSON_DELIMITER = re.compile(BR'[\[\]\{\}"]')
 
 _JSON_TOKEN_TO_TERMINATOR = {
-    B'"'[0]: B'"'[0],
     B'['[0]: B']'[0],
     B'{'[0]: B'}'[0],
 }
@@ -69,6 +68,15 @@ class JSONCarver:
                 return None
             cursor = delim.start()
             token = data[cursor]
+            if token == 0x22:
+                while True:
+                    cursor = data.find(B'"', cursor + 1)
+                    if cursor < 0:
+                        return None
+                    elif data[cursor - 1] != 0x5C:
+                        break
+                cursor = cursor + 1
+                continue
             if token not in printable:
                 return None
             if scope[~0] == token:
