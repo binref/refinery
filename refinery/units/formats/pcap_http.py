@@ -47,8 +47,6 @@ class pcap_http(Unit):
     """
     Extracts HTTP payloads from packet capture (PCAP) files.
     """
-    pcap = pcap()
-
     def process(self, data):
         http_parser = httpresponse()
         requests: List[_HTTP_Request] = []
@@ -61,7 +59,7 @@ class pcap_http(Unit):
                     return self.labelled(data, url=request.url)
             return None
 
-        for stream in data | pcap:
+        for stream in data | pcap(merge=True):
             try:
                 data = http_parser.process(stream)
             except Exception:
