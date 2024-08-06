@@ -68,7 +68,7 @@ class pcap(Unit):
     def __init__(self, merge: Arg.Switch('-m', help='Merge both parts of each TCP conversation into one chunk.') = False):
         super().__init__(merge=merge)
 
-    @Unit.Requires('pypcapkit[scapy]>=1.3', 'all')
+    @Unit.Requires('pypcapkit[scapy]==1.3.1', 'all')
     def _pcapkit():
         import scapy.layers.tls.session # noqa
         import pcapkit
