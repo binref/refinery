@@ -41,7 +41,7 @@ If you want to do something with it that's not covered by this license, please f
 
 ## Warnings & Advice
 
-The refinery requires at least **Python 3.7**.
+The refinery requires at least **Python 3.8**.
 It is recommended to install it into its own [virtual environment][venv]:
 The package can pull in a **lot** of dependencies,
 and installing it into your global Python is somewhat prone to version conflicts.
