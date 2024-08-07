@@ -284,7 +284,7 @@ class peek(HexViewer):
                     brief = F'#{index:03d}: {brief}'
                 yield brief
 
-        if final and not empty:
+        if final and (self.args.bare or not empty):
             yield separator()
 
     def filter(self, chunks):
