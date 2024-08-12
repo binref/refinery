@@ -210,6 +210,7 @@ from refinery.lib.argformats import (
     ParserVariableMissing,
     pending,
     regexp,
+    slicerange,
     sliceobj,
     VariableMissing,
 )
@@ -548,6 +549,7 @@ class Arg(Argument):
         dest    : Union[omit, str] = omit,
         nargs   : Union[omit, int, str] = omit,
         default : Union[omit, Any] = omit,
+        range   : bool = False,
         metavar : Optional[str] = 'start:end:step',
         group   : Optional[str] = None,
     ):
@@ -558,7 +560,8 @@ class Arg(Argument):
             help = 'Specify start:end:step in Python slice syntax.'
             if default is not cls.omit:
                 help = F'{help} The default is {{default}}.'
-        return cls(*args, group=group, help=help, default=default, nargs=nargs, dest=dest, type=sliceobj, metavar=metavar)
+        parser = slicerange if range else sliceobj
+        return cls(*args, group=group, help=help, default=default, nargs=nargs, dest=dest, type=parser, metavar=metavar)
 
     @classmethod
     def Number(
