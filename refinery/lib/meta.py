@@ -189,6 +189,12 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         for c, p in [('utf8', 's'), ('latin1', 'a'), ('utf-16le', 'u')]
     }
 
+    @classmethod
+    def Wrap(cls, string: Union[str, ByteString, ByteStringWrapper], codec: Optional[str] = None):
+        if isinstance(string, cls):
+            return string
+        return cls(string, codec=codec)
+
     def __init__(self, string: Union[str, ByteString], codec: Optional[str] = None):
         if isinstance(string, str):
             self._string = string
@@ -673,7 +679,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     with contextlib.suppress(TypeError):
                         if isinstance(value, CustomStringRepresentation):
                             continue
-                        store[key] = ByteStringWrapper(value, codec)
+                        store[key] = ByteStringWrapper.Wrap(value, codec)
 
         formatter = string.Formatter()
         autoindex = 0
@@ -687,98 +693,116 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
-                output = value = None
+                def recover_placeholder():
+                    recovery = F'{{{field}'
+                    if conversion:
+                        recovery = F'{recovery}!{conversion}'
+                    if modifier:
+                        recovery = F'{recovery}:{modifier}'
+                    return F'{recovery}}}'
+
+                value = None
+
+                converter = {
+                    'a': ascii,
+                    's': str,
+                    'r': repr,
+                }.get(conversion)
+
                 if prefix:
-                    if binary:
-                        prefix = prefix.encode(codec)
-                    elif escaped:
+                    if escaped:
                         prefix = prefix.encode('raw-unicode-escape').decode('unicode-escape')
-                    stream.write(prefix)
+                    putstr(prefix)
+
                 if field is None:
                     continue
+
                 if not field:
                     if not args:
-                        raise LookupError('no positional arguments given to formatter')
+                        ph = recover_placeholder()
+                        if self.ghost:
+                            putstr(ph)
+                            continue
+                        raise LookupError(F'Spec contains placeholder {ph} but no positional arguments were given.')
                     value = args[autoindex]
                     used.add(autoindex)
                     if autoindex < len(args) - 1:
                         autoindex += 1
-                if binary and conversion:
+
+                if conversion:
                     conversion = conversion.lower()
                     if conversion == 'h':
                         value = bytes.fromhex(field)
                     elif conversion == 'q':
                         value = unquote_to_bytes(field)
-                    elif conversion == 's':
-                        value = field.encode(codec)
                     elif conversion == 'u':
                         value = field.encode('utf-16le')
-                    elif conversion == 'a':
-                        value = field.encode('latin1')
-                    elif conversion == 'e':
+                    elif conversion == 'n':
                         value = field.encode(codec).decode('unicode-escape').encode('latin1')
                 elif field in symb:
                     value = symb[field]
                     used.add(field)
+
                 if value is None:
                     with contextlib.suppress(ValueError, IndexError):
                         index = int(field, 0)
                         value = args[index]
                         used.add(index)
+
                 if value is None:
                     with contextlib.suppress(KeyError):
                         value = self[field]
                         used.add(field)
+
                 if value is None:
                     try:
                         expression = PythonExpression(field, *self, *symb)
                         value = expression(self, **symb)
                     except ParserError:
-                        if not self.ghost:
-                            raise KeyError(field)
-                        putstr(F'{{{field}')
-                        if conversion:
-                            putstr(F'!{conversion}')
-                        if modifier:
-                            putstr(F':{modifier}')
-                        putstr('}')
-                        continue
-                if binary:
-                    modifier = modifier.strip()
-                    if modifier:
-                        expression = self.format(modifier, codec, args, symb, True, False, used)
-                        output = multibin(expression.decode(codec), reverse=True, seed=value)
-                        if pending(output):
-                            output = output(Chunk(value, meta=self))
-                    elif isbuffer(value):
-                        output = value
-                    elif not isinstance(value, int):
-                        with contextlib.suppress(TypeError):
-                            output = bytes(value)
-                if output is None:
-                    converter = {
-                        'a': ascii,
-                        's': str,
-                        'r': repr,
-                        'H': lambda b: b.hex().upper(),
-                        'h': lambda b: b.hex(),
-                        'u': lambda b: b.decode('utf-16le'),
-                        'e': lambda b: repr(bytes(b)).lstrip('bBrR')[1:-1],
-                        'q': lambda b: quote_from_bytes(bytes(b))
-                    }.get(conversion)
+                        ph = recover_placeholder()
+                        if self.ghost:
+                            putstr(ph)
+                            continue
+                        raise KeyError(ph)
+
+                try:
+                    converted = ByteStringWrapper.Wrap(value)
+                except TypeError:
                     if converter:
-                        output = converter(value)
-                    elif modifier:
-                        output = value
+                        converted = converter(value)
                     elif isinstance(value, CustomStringRepresentation):
-                        output = str(value)
-                    elif isbuffer(value):
-                        output = value.decode('utf8', errors='replace')
+                        converted = str(value)
                     else:
-                        output = value
-                    output = output.__format__(modifier)
-                    if binary:
-                        output = output.encode(codec)
+                        converted = value
+
+                if binary and isbuffer(converted):
+                    output = None
+                else:
+                    try:
+                        output = converted.__format__(modifier)
+                    except Exception:
+                        if not modifier:
+                            raise
+                        output = None
+
+                if modifier and output is None:
+                    modifier = modifier.strip()
+                    expression = self.format(modifier, codec, args, symb, True, False, used)
+                    output = multibin(expression.decode(codec), reverse=True, seed=converted)
+                    if pending(output):
+                        output = output(Chunk(value, meta=self))
+
+                if output is None:
+                    output = converted
+
+                if not binary:
+                    if isinstance(output, (bytes, bytearray)):
+                        output = output.decode()
+                    elif not isinstance(output, str):
+                        output = str(output)
+                elif isinstance(output, str):
+                    output = output.encode()
+
                 stream.write(output)
             return stream.getvalue()
 

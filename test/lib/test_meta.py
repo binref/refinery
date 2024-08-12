@@ -26,9 +26,6 @@ class TestMeta(TestBase):
     def test_binary_formatter_literal(self):
         meta = metavars(B'')
         self.assertEqual(meta.format_bin('{726566696E657279!H}', 'utf8'), b'refinery')
-        self.assertEqual(meta.format_bin('{refinery!a}', 'utf8'), 'refinery'.encode('latin1'))
-        self.assertEqual(meta.format_bin('{refinery!s}', 'utf8'), 'refinery'.encode('utf8'))
-        self.assertEqual(meta.format_bin('{refinery!u}', 'utf8'), 'refinery'.encode('utf-16le'))
 
     def test_hex_byte_strings(self):
         pl = L('emit Hello [| cm -2 | cfmt {sha256!r} ]')
