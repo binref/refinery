@@ -885,6 +885,58 @@ class DelayedArgument(LazyEvaluation):
             return result
         return extract
 
+    @handler.register('pp')
+    def pp(self, input: str, region: Union[slice, str] = slice(1, None, 1), separator: str = '/') -> str:
+        """
+        The handler `pp[region=1:,sep=/]:input` splits the input at the given string `sep`
+        and reverses the sequence. Parts are then selected according to the `region` parameter,
+        which can be any expression in Python slice syntax. Afterwards, the resulting sequence
+        is reversed again and joined at the `sep` parameter. For example, the expression
+
+            pp[:2]:/path/to/some/item/and/more
+
+        will return the string `/path/to/some/item`.
+        """
+        def _pp(data: Optional[Chunk] = None):
+            b: slice = sliceobj(region, data=data, final=True)
+            pp = input.split(separator)
+            pp.reverse()
+            pp = pp[b]
+            pp.reverse()
+            return separator.join(pp)
+        try:
+            return _pp()
+        except TooLazy:
+            return _pp
+
+    @handler.register('pb')
+    def pb(self, input: str, separator: str = '/') -> str:
+        """
+        The handler `pb:input` is equivalent to `pp[0:1]:input` and corresponds to "basename".
+        """
+        return self.pp(input, slice(0, 1, 1), separator=separator)
+
+    @handler.register('pn')
+    def pn(self, path: Union[str, bytes]) -> str:
+        """
+        The handler `pn:/path/to/file.ext` returns `/path/to/file`, i.e. the path without its
+        extension. The handler name is short for "path name". If the last part does not have
+        any extension, the input path is returned unchanged.
+        """
+        if not isinstance(path, str):
+            path = path.decode('utf8')
+        return Path(path).with_suffix('').as_posix()
+
+    @handler.register('px')
+    def px(self, path: Union[str, bytes]) -> str:
+        """
+        The handler `px:/path/to/file.ext` returns `ext`, i.e. the extension
+        extension. The handler name is short for "path name".
+        """
+        if not isinstance(path, str):
+            path = path.decode('utf8')
+        return Path(path).suffix[1:]
+
     def _interpret_variable(self, name: str, obj: Any):
         if isbuffer(obj) or isinstance(obj, int) or obj is None:
             return obj

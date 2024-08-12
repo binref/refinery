@@ -133,3 +133,14 @@ class TestArgumentFormats(TestBase):
     def test_integer_nonempty(self):
         self.assertEqual(argformats.multibin('le:e:0'), b'\0')
         self.assertEqual(argformats.multibin('be:e:0'), b'\0')
+
+    def test_path_parts(self):
+        self.assertEqual(argformats.multibin('pp[:3]:/a/very/deep/path/to/some/file.exe'), b'to/some/file.exe')
+        self.assertEqual(argformats.multibin('pp[3:]:/a/very/deep/path/to/some/file.exe'), b'/a/very/deep/path')
+
+    def test_path_name(self):
+        self.assertEqual(argformats.multibin('pn:/a/very/deep/path/to/some/file.exe'), b'/a/very/deep/path/to/some/file')
+        self.assertEqual(argformats.multibin('pb:pn:/a/very/deep/path/to/some/file.exe'), b'file')
+
+    def test_path_extension(self):
+        self.assertEqual(argformats.multibin('px:/a/very/deep/path/to/some/file.exe'), b'exe')
