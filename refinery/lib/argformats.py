@@ -116,7 +116,7 @@ from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, Ty
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
-from refinery.lib.types import NoMask
+from refinery.lib.types import NoMask, INF
 from refinery.lib.meta import is_valid_variable_name, metavars
 
 if TYPE_CHECKING:
@@ -293,7 +293,7 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
     if isinstance(expression, (slice, SliceAgain)):
         return expression
     if isinstance(expression, int):
-        return slice(expression, expression + 1)
+        return slice(expression, expression + 1, 1)
     if isinstance(expression, (bytes, bytearray)):
         expression = expression.decode('utf8')
 
@@ -310,7 +310,7 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
     sliced = expression and expression.split(':') or ['', '']
 
     if not sliced or len(sliced) > 3:
-        raise ArgumentTypeError(F'the expression "{expression}" is not a valid slice.')
+        raise ArgumentTypeError(F'The expression "{expression}" is not a valid slice.')
     try:
         sliced = [None if not t else PythonExpression.Evaluate(t, variables) for t in sliced]
     except ParserVariableMissing:
@@ -325,15 +325,28 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
         k = sliced[0]
         if not range:
             return slice(k, k + 1) if k + 1 else slice(k, None, None)
-        return slice(0, k)
+        return slice(0, k, 1)
+    if range:
+        range_defaults = (0, INF, 1)
+        k = len(range_defaults) - len(sliced)
+        if k > 0:
+            sliced.extend(range_defaults[-k:])
     for k, item in enumerate(sliced):
-        if item is None or isinstance(item, int):
+        if item is None:
+            if range:
+                sliced[k] = range_defaults[k]
+            continue
+        if isinstance(item, int):
             continue
         if isbuffer(item) and len(item) in (1, 2, 4, 8, 16):
             sliced[k] = int.from_bytes(item, 'little')
             continue
         raise TypeError(F'The value {item!r} of type {type(item).__name__} cannot be used as a slice index.')
     return slice(*sliced)
+
+
+def slicerange(expression: Union[int, str, slice], data: Optional[Chunk] = None, final=False) -> Union[slice, SliceAgain]:
+    return sliceobj(expression, data=data, range=True, final=final)
 
 
 def utf8(x: str):
