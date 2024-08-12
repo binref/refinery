@@ -116,7 +116,7 @@ from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, Ty
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
-from refinery.lib.types import NoMask, INF
+from refinery.lib.types import NoMask
 from refinery.lib.meta import is_valid_variable_name, metavars
 
 if TYPE_CHECKING:
@@ -327,7 +327,7 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
             return slice(k, k + 1) if k + 1 else slice(k, None, None)
         return slice(0, k, 1)
     if range:
-        range_defaults = (0, INF, 1)
+        range_defaults = (0, None, 1)
         k = len(range_defaults) - len(sliced)
         if k > 0:
             sliced.extend(range_defaults[-k:])
