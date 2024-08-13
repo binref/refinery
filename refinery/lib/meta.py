@@ -121,7 +121,7 @@ import itertools
 import os
 
 from io import StringIO
-from urllib.parse import quote_from_bytes, unquote_to_bytes
+from urllib.parse import unquote_to_bytes
 from typing import Callable, Dict, List, Tuple, Any, Iterable, Optional, ByteString, Union, TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
