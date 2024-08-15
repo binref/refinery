@@ -20,6 +20,7 @@ class RSAFormat(str, enum.Enum):
     XKMS = 'XKMS'
     TEXT = 'TEXT'
     JSON = 'JSON'
+    BLOB = 'BLOB'
 
 
 class rsakey(Unit):
@@ -31,7 +32,7 @@ class rsakey(Unit):
     def __init__(
         self,
         public: Arg.Switch('-p', help='Force public key output even if the input is private.') = False,
-        output: Arg(help='Select an output format (PEM/DER/XKMS/TEXT/JSON), default is PEM.') = RSAFormat.PEM
+        output: Arg.Option(help='Select an output format ({choices}), default is {default}.', choices=RSAFormat) = RSAFormat.PEM
     ):
         super().__init__(public=public, output=Arg.AsOption(output, RSAFormat))
 
@@ -41,6 +42,7 @@ class rsakey(Unit):
         return base64.b64encode(number.to_bytes(size, 'big'))
 
     def process(self, data):
+        from refinery.lib.mscrypto import TYPES, ALGORITHMS
         key = normalize_rsa_key(data, force_public=self.args.public)
         out = self.args.output
         if out is RSAFormat.PEM:
@@ -48,6 +50,35 @@ class rsakey(Unit):
             return
         if out is RSAFormat.DER:
             yield key.export_key('DER')
+            return
+        if out is RSAFormat.BLOB:
+            def le(v: int, s: int):
+                return v.to_bytes(s, 'little')
+            buffer = bytearray()
+            buffer.append(TYPES.PRIVATEKEYBLOB if key.has_private() else TYPES.PUBLICKEYBLOB)
+            buffer.extend(le(2, 3))
+            buffer.extend(le(ALGORITHMS.CALG_RSA_KEYX, 4))
+            buffer.extend(B'RSA2' if key.has_private() else B'RSA1')
+            size = 2
+            while size < key.n.bit_length():
+                size <<= 1
+            self.log_info(F'using bit size {size}')
+            buffer.extend(le(size, 4))
+            size //= 8
+            buffer.extend(le(key.e, 4))
+            buffer.extend(le(key.n, size))
+            if key.has_private():
+                exp_1 = key.d % (key.p - 1)
+                exp_2 = key.d % (key.q - 1)
+                coeff = pow(key.q, -1, key.p)
+                half = size // 2
+                buffer.extend(le(key.p, half))
+                buffer.extend(le(key.q, half))
+                buffer.extend(le(exp_1, half))
+                buffer.extend(le(exp_2, half))
+                buffer.extend(le(coeff, half))
+                buffer.extend(le(key.d, size))
+            yield buffer
             return
         components = {
             'Modulus' : key.n,
