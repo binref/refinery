@@ -946,8 +946,10 @@ class NSHeader(Struct):
                 if self._is_var_str(arg[1], self.NS_OUTDIR) and arg[2] == 0 and arg[3] == 0:
                     out_dir = prefixes[-1]
             elif cmd is Op.EXTRACTFILE:
+                def epoch(t: int):
+                    return (t / 10000000 - 11644473600)
                 try:
-                    time = datetime.fromtimestamp((arg[4] << 32) | arg[3])
+                    time = datetime.fromtimestamp(epoch((arg[4] << 32) | arg[3]))
                 except Exception:
                     time = None
                 item = NSItem(arg[2], mtime=time)
