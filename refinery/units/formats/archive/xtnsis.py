@@ -1210,7 +1210,7 @@ class NSArchive(Struct):
             data = self.src.read(read)
             if len(data) != read:
                 raise EOFError('Unexpected end of stream while decompressing archive entries.')
-            self.pos = offset + size + 4
+            self.pos = offset + read + 4
             return NSArchive.Entry(offset, data, size)
 
     class PartsReader(SolidReader):
