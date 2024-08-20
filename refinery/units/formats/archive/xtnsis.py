@@ -18,7 +18,8 @@ from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.lib.structures import MemoryFile, Struct, StructReader, StreamDetour
 
-from refinery.lib.thirdparty.pyflate import BZip2File
+from refinery.lib.thirdparty.pyflate import BZip2File, GZipFile
+from refinery.lib.tools import exception_to_string
 
 from typing import (
     BinaryIO,
@@ -77,6 +78,7 @@ class NSMethod(str, enum.Enum):
     LZMA = 'LZMA'
     BZip2 = 'BZIP2'
     Deflate = 'DEFLATE'
+    NSGzip = 'NsisGzip'
 
 
 class Op(enum.IntEnum):
@@ -1024,7 +1026,7 @@ class NSArchive(Struct):
         offset: int
         data: bytearray
         size: int
-        decompression_failed: bool = False
+        decompression_error: Optional[Exception] = None
 
     def __init__(self, reader: StructReader[bytearray]):
         self.flags = NSHeaderFlags(reader.u32())
@@ -1124,7 +1126,7 @@ class NSArchive(Struct):
         elif bzipcheck(preview_bytes):
             self.method = NSMethod.BZip2
 
-        xtnsis.log_debug(F'compression: {self.method.name}')
+        xtnsis.log_debug(F'compression: {self.method.value}')
         xtnsis.log_debug(F'archive is solid: {self.solid}')
 
         reader.seekset(self.archive_offset)
@@ -1132,10 +1134,10 @@ class NSArchive(Struct):
         if header_data is None:
             it = self._decompress_items(reader)
             header_entry = next(it)
-            if header_entry.decompression_failed:
+            if header_entry.decompression_error:
                 raise NotImplementedError(
-                    'This archive seems to use an NSIS-specific deflate '
-                    'algorithm which has not been implemented yet.')
+                    U'This archive seems to use an NSIS-specific deflate algorithm which has not been implemented yet. '
+                    F'Original error: {exception_to_string(header_entry.decompression_error)}')
             if self.solid:
                 self._solid_iter = it
             self.entry_offset_delta += header_entry.size
@@ -1150,6 +1152,9 @@ class NSArchive(Struct):
 
         self.header = NSHeader(header_data, size=header_size, extended=self.extended)
         self.reader = reader
+
+        if self.method is NSMethod.Deflate and self.header.nsis_deflate:
+            self.method = NSMethod.NSGzip
 
     @property
     def script(self):
@@ -1176,8 +1181,10 @@ class NSArchive(Struct):
             self.reader.seek(self.offset_items + item.offset)
             dc = self._decompress_items(self.reader)
             entry = next(dc)
-        if entry.decompression_failed:
-            raise RefineryPartialResult('decompression failed; lenient mode will extract uncompressed item', entry.data)
+        if entry.decompression_error:
+            err = exception_to_string(entry.decompression_error)
+            msg = F'decompression failed ({err}); lenient mode will extract uncompressed item'
+            raise RefineryPartialResult(msg, entry.data)
         else:
             return entry
 
@@ -1217,8 +1224,8 @@ class NSArchive(Struct):
                 try:
                     dc = self._dc(MemoryFile(item.data))
                     item.data = dc.read()
-                except Exception:
-                    item.decompression_failed = True
+                except Exception as E:
+                    item.decompression_error = E
             return item
 
     class LZMAFix:
@@ -1249,6 +1256,7 @@ class NSArchive(Struct):
         decompressor: Type[BinaryIO] = {
             NSMethod.Copy    : None,
             NSMethod.Deflate : DeflateFile,
+            NSMethod.NSGzip  : GZipFile,
             NSMethod.LZMA    : NSISLZMAFile,
             NSMethod.BZip2   : BZip2File,
         }[self.method]
@@ -1324,7 +1332,7 @@ class xtnsis(ArchiveUnit):
 
         def info():
             yield F'{arc.header.type.name} archive'
-            yield F'{arc.method.name.lower()} compression'
+            yield F'compression type {arc.method.value}'
             yield F'mystery value 0x{arc.header.unknown_value:X}'
             yield 'solid archive' if arc.solid else 'fragmented archive'
             yield '64-bit header' if arc.header.is64bit else '32-bit header'

@@ -540,36 +540,37 @@ class GZipFile(_DecompressionFile):
     def __init__(self, data: BinaryIO, nsis: bool = True):
         super().__init__(data, nsis)
         br = self.bits = LBitfield(data)
-        if self.data.read(2) != b'\x1F\x8B':
+        if not nsis and self.data.read(2) != b'\x1F\x8B':
             raise RuntimeError('Unknown (not 1F8B) header')
-        if br.readbits(8) != 8:
+        if not nsis and br.readbits(8) != 8:
             raise RuntimeError('Unknown (not type 8 DEFLATE) compression method')
-        self.flags = br.readbits(8)
-        self.mtime = br.readbits(32)
-        self.extra_flags = br.readbits(8)
-        self.os_type = br.readbits(8)
-        self.file_name = ''
-        self.comment = ''
+        if not nsis:
+            self.flags = br.readbits(8)
+            self.mtime = br.readbits(32)
+            self.extra_flags = br.readbits(8)
+            self.os_type = br.readbits(8)
+            self.file_name = ''
+            self.comment = ''
 
-        if self.flags & 0x04:
-            # structured GZ_FEXTRA miscellaneous data
-            xlen = br.readbits(16)
-            br.dropbytes(xlen)
-        while self.flags & 0x08:
-            # original GZ_FNAME filename
-            cc = br.readbits(8)
-            if not cc:
-                break
-            self.file_name += chr(cc)
-        while self.flags & 0x10:
-            # human readable GZ_FCOMMENT
-            cc = br.readbits(8)
-            if not cc:
-                break
-            self.comment += chr(cc)
-        if self.flags & 0x02:
-            # header-only GZ_FHCRC checksum
-            br.readbits(16)
+            if self.flags & 0x04:
+                # structured GZ_FEXTRA miscellaneous data
+                xlen = br.readbits(16)
+                br.dropbytes(xlen)
+            while self.flags & 0x08:
+                # original GZ_FNAME filename
+                cc = br.readbits(8)
+                if not cc:
+                    break
+                self.file_name += chr(cc)
+            while self.flags & 0x10:
+                # human readable GZ_FCOMMENT
+                cc = br.readbits(8)
+                if not cc:
+                    break
+                self.comment += chr(cc)
+            if self.flags & 0x02:
+                # header-only GZ_FHCRC checksum
+                br.readbits(16)
 
     def _readblock(self) -> bool:
         if self.done:
@@ -585,7 +586,7 @@ class GZipFile(_DecompressionFile):
         if blocktype == 0:
             br.align()
             length = br.readbits(16)
-            if length & br.readbits(16):
+            if not self.nsis and 0 != length & br.readbits(16):
                 raise RuntimeError('stored block lengths do not match each other')
             if not br.bits:
                 it = self.data.read(length)
@@ -683,8 +684,12 @@ class GZipFile(_DecompressionFile):
         if lastbit:
             self.done = True
             br.align()
-            _ = br.readbits(32) # crc
-            _ = br.readbits(32) # length
+            try:
+                _ = br.readbits(32) # crc
+                _ = br.readbits(32) # length
+            except Exception:
+                if not self.nsis:
+                    raise
             return False
         else:
             return True
