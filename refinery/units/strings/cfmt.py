@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from codecs import encode, decode
 from functools import partial
 
 from refinery.units import Arg, Unit
