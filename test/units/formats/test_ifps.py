@@ -30,3 +30,9 @@ class TestIFPSStrings(TestUnitBase):
             R'https''://''d1pqn6m5ywnw3a.cloudfront''.''net/f/',
         ):
             self.assertIn(string, strings)
+
+    def test_function_signature_parsing_version_22(self):
+        data = self.download_sample('fb0fc2e3c2059e6159540920a4ff7f75f92212639b318da7eb7fadece4a46ecc')
+        goal = {'path', 'b512c1_Flash7231FixClass_b512c1', 'mp3-cd-ripper-beta-', 'A1ADB8BE8E677894E', 'M'}
+        test = data | self.ldu('ifpsstr') | {str}
+        self.assertSetEqual(test, goal)

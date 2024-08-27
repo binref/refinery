@@ -381,28 +381,31 @@ class DeclSpec:
         return self.represent(self.name or '(*)')
 
     @classmethod
-    def ParseF(cls, reader: StructReader[bytes]):
-        def readcc():
+    def ParseF(cls, reader: StructReader[bytes], load_flags: bool):
+        def ascii():
+            return reader.read_c_string('latin1')
+
+        def boolean():
+            return bool(reader.u8())
+
+        def cc():
             return {
                 0: 'register',
                 1: 'pascal',
                 2: 'cdecl',
                 3: 'stdcall',
             }.get(reader.u8(), cls.calling_convention)
+
         kw = {}
         parameters = None
         if reader.peek(4) == b'dll:':
             reader.seekrel(4)
             if reader.peek(6) == B'files:':
                 reader.seekrel(6)
-            kw.update(
-                module=reader.read_c_string('latin1'),
-                name=reader.read_c_string('latin1'),
-                calling_convention=readcc(),
-                delay_load=bool(reader.u8()),
-                load_with_altered_search_path=bool(reader.u8())
-            )
-            void = not reader.u8()
+            kw.update(module=ascii(), name=ascii(), calling_convention=cc())
+            if load_flags:
+                kw.update(delay_load=boolean(), load_with_altered_search_path=boolean())
+            void = not boolean()
         elif reader.peek(6) == b'class:':
             reader.seekrel(6)
             if reader.remaining_bytes == 1:
@@ -420,7 +423,7 @@ class DeclSpec:
                 if name[-1] == '@':
                     kw.update(is_property=True)
                     name = name[:-1]
-                kw.update(name=name, calling_convention=readcc())
+                kw.update(name=name, calling_convention=cc())
                 void = not reader.u8()
         else:
             void = not reader.u8()
@@ -589,6 +592,10 @@ class IFPSFile(Struct):
         self._load_functions()
         self._load_variables()
 
+    @property
+    def _load_flags(self):
+        return self.version >= 23
+
     def _load_types(self):
         reader = self.reader
         types = self.types
@@ -687,7 +694,8 @@ class IFPSFile(Struct):
             if imported:
                 name = reader.read_length_prefixed_ascii(8)
                 if exported:
-                    decl = DeclSpec.ParseF(StructReader(bytes(reader.read_length_prefixed())))
+                    read = StructReader(bytes(reader.read_length_prefixed()))
+                    decl = DeclSpec.ParseF(read, self._load_flags)
             else:
                 offset = reader.u32()
                 size = reader.u32()
