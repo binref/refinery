@@ -5,6 +5,13 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.0
+- Raises minimum Python requirement to 3.8.
+- Removes automatic escapes from `cfmt`; this now has to be done explicitly.
+- The `rsa` unit can now output keys in Microsoft BLOB format.
+- Adds the `urn` unit.
+- Adds several multibin handlers to modify file system paths (`pp`/`pb`/`pn`/`px`).
+
 ## Version 0.6.43
 - Adds the hash units `sha3-224`, `sha3-256`, `sha3-384`, `sha3-512`, and `keccak256`.
 
