@@ -712,7 +712,7 @@ Updates build system.
 
 
 [@baderj]: https://github.com/baderj
-[@alphillips-lab] https://github.com/alphillips-lab
+[@alphillips-lab]: https://github.com/alphillips-lab
 [@cxiao]: https://github.com/cxiao
 [@EricFaehrmann]: https://github.com/EricFaehrmann
 [@larsborn]: https://github.com/larsborn
