@@ -654,7 +654,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         """
         # prevents circular import:
         from refinery.lib.argformats import (
-            numseq, ParserError, PythonExpression, pending, Chunk)
+            DelayedNumSeqArgument, ParserError, PythonExpression, Chunk)
 
         symb = symb or {}
 
@@ -752,6 +752,10 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
                 if value is None:
                     try:
+                        field = self.format(field, codec, args, symb, False, False, used)
+                    except Exception:
+                        pass
+                    try:
                         expression = PythonExpression(field, *self, *symb)
                         value = expression(self, **symb)
                     except ParserError:
@@ -760,6 +764,8 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                             putstr(ph)
                             continue
                         raise KeyError(ph)
+                    except Exception:
+                        value = B''
 
                 try:
                     converted = ByteStringWrapper.Wrap(value)
@@ -784,8 +790,11 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 if modifier and output is None:
                     modifier = modifier.strip()
                     expression = self.format(modifier, codec, args, symb, True, False, used)
-                    output = numseq(expression.decode(codec), reverse=True, seed=converted)
-                    if pending(output):
+                    output = DelayedNumSeqArgument(
+                        expression.decode(codec), reverse=True, seed=converted)
+                    try:
+                        output = output()
+                    except Exception:
                         output = output(Chunk(value, meta=self))
 
                 if output is None:

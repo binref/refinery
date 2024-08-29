@@ -88,3 +88,9 @@ class TestStructUnit(TestUnitBase):
         self.assertEqual(test(), b'AC')
         test = self.load_pipeline('emit ABCDEF | struct -m {a:1}{b:1} {a} []')
         self.assertEqual(test(), b'ACE')
+
+    def test_variables_available_in_pipeline(self):
+        data = B'\x02xxREFINERY'
+        unit = self.load(r'{k:B}{d}', r'{d:snip[k:]}')
+        test = data | unit | bytes
+        self.assertEqual(test, B'REFINERY')

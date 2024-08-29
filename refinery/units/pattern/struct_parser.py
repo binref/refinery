@@ -195,10 +195,12 @@ class struct(Unit):
                     last = full
 
                 outputs = []
+                symbols = dict(meta)
+                symbols[_SHARP] = last
 
                 for template in self.args.outputs:
                     used = set()
-                    outputs.append(meta.format(template, self.codec, [full, *args], {_SHARP: last}, True, used=used))
+                    outputs.append(meta.format(template, self.codec, [full, *args], symbols, True, used=used))
                     for key in used:
                         if key in previously_existing_variables:
                             continue
