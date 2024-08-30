@@ -34,4 +34,29 @@ class b64(Unit):
         from refinery.lib.patterns import formats
         if not formats.spaced_b64.value.fullmatch(data):
             return False
-        return len(set(data)) in range(60, 67)
+        histogram = set()
+        lcase_count = 0
+        ucase_count = 0
+        digit_count = 0
+        other_count = 0
+        total_count = len(data)
+        for byte in data:
+            histogram.add(byte)
+            if len(histogram) > 60:
+                return True
+            elif byte in range(0x61, 0x7B):
+                lcase_count += 1
+            elif byte in range(0x41, 0x5B):
+                ucase_count += 1
+            elif byte in range(0x30, 0x40):
+                digit_count += 1
+            elif byte in B'\v\f\t\r\n\x20':
+                total_count -= 1
+            else:
+                other_count += 1
+        for c in (lcase_count, ucase_count, digit_count, other_count):
+            # Call this a false positive if more than 2/3ds of the data
+            # consist of a single category of letters.
+            if c * 3 > total_count * 2:
+                return False
+        return True
