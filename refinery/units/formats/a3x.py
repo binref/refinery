@@ -2,10 +2,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Iterable, Tuple, Generator, Set
+from typing import Optional, Union, List, Dict, Iterable, Tuple, Generator, Set
 from enum import Enum
 
 import io
+import math
+import struct
 
 from refinery.lib.structures import Struct, StructReader, MemoryFile
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -515,6 +517,23 @@ _PRETTY.update((name.lower(), name) for name in A3X_APICALLS)
 _PRETTY.update((name.lower(), name) for name in A3X_KEYWORDS)
 
 
+def a3x_number_representation(value: Union[float, int]) -> str:
+    """
+    The AutoIt3 compiler will emit constants for -inf/inf/nan. However, AutoIt3 itself has no
+    keywords for these values; The output of this function is valid AutoIt3 code that will
+    produce these constants.
+
+    https://www.autoitscript.com/autoit3/docs/functions/Dec.htm
+    """
+    if isinstance(value, int):
+        return str(value)
+    elif math.isnan(value) or math.isinf(value):
+        value = struct.pack('>d', value).hex().upper()
+        return RF'Dec("{value}", 3)'
+    else:
+        return RF'{value!s}'
+
+
 def a3x_decompile(bytecode: bytearray) -> Generator[Tuple[int, str]]:
     class _decompiler(dict):
         def __missing__(self, key):
@@ -539,10 +558,7 @@ def a3x_decompile(bytecode: bytearray) -> Generator[Tuple[int, str]]:
             if number < 0 and tokens and tokens[~0] == '+':
                 number = -number
                 tokens[~0] = '-'
-            if isinstance(number, int) and number > 0x80:
-                return hex(number)
-            else:
-                return str(number)
+            return a3x_number_representation(number)
 
     decompiler = _decompiler()
     reader = A3xReader(bytecode)
