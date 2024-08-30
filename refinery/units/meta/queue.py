@@ -31,6 +31,7 @@ class QueueUnit(Unit, abstract=True):
             data = self.args.data or [B'']
             for bin in data:
                 chunk = head.copy(meta=False, data=False)
+                chunk.visible = True
                 chunk[:] = bin
                 yield chunk
 

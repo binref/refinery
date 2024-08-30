@@ -11,3 +11,7 @@ class TestQueue(TestUnitBase):
         pipeline = L('xtjson [| rex . [| qb var:path ]]')
         out = pipeline(data)
         self.assertEqual(out, B'XfooYbar')
+
+    def test_inserted_chunks_are_visible(self):
+        pipeline = L('emit AA | push [| qb BB | pop a b | cfmt {a}{b} ]')
+        self.assertEqual(pipeline(), b'AABB')
