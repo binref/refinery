@@ -19,7 +19,7 @@ class cm(Unit):
         all     : Arg.Switch('-a', group='ALL', help='populate all options') = False,
         reset   : Arg.Switch('-r', help='discard all meta variables that were not explicitly specified') = False,
         size    : Arg.Switch('-S', help='size of the chunk') = False,
-        ext     : Arg.Switch('-F', help='guess file extension') = False,
+        ext     : Arg.Switch('-X', help='guess file extension') = False,
         entropy : Arg.Switch('-E', help='compute data entropy') = False,
         ic      : Arg.Switch('-C', help='compute the index of coincidence') = False,
         magic   : Arg.Switch('-M', help='compute file magic') = False,

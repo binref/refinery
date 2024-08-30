@@ -58,10 +58,7 @@ unit will look as follows:
       key            Encryption key
 
     generic options:
-      -h, --help     Show this help message and exit.
-      -Q, --quiet    Disables all log output.
-      -0, --devnull  Do not produce any output.
-      -v, --verbose  Specify up to two times to increase log level.
+      ...
 
 ### Refinery Syntax in Code
 
@@ -181,7 +178,6 @@ from typing import (
     ClassVar,
     Tuple,
     Any,
-    ByteString,
     Generator,
     overload,
     no_type_check,
@@ -235,7 +231,7 @@ class RefineryPartialResult(ValueError):
     """
     This exception indicates that a partial result is available.
     """
-    def __init__(self, message: str, partial: ByteString, rest: Optional[ByteString] = None):
+    def __init__(self, message: str, partial: ByteStr, rest: Optional[ByteStr] = None):
         super().__init__(message)
         self.message = message
         self.partial = partial
@@ -834,15 +830,15 @@ class ArgumentSpecification(OrderedDict):
         self[dest] = argument
 
 
-DataType = TypeVar('DataType', bound=ByteString)
-ProcType = Callable[['Unit', ByteString], Optional[Union[DataType, Iterable[DataType]]]]
+DataType = TypeVar('DataType', bound=ByteStr)
+ProcType = Callable[['Unit', ByteStr], Optional[Union[DataType, Iterable[DataType]]]]
 
 _T = TypeVar('_T')
 
 
-def _UnitProcessorBoilerplate(operation: ProcType[ByteString]) -> ProcType[Chunk]:
+def _UnitProcessorBoilerplate(operation: ProcType[ByteStr]) -> ProcType[Chunk]:
     @wraps(operation)
-    def wrapped(self: Unit, data: ByteString) -> Optional[Union[Chunk, Iterable[Chunk]]]:
+    def wrapped(self: Unit, data: ByteStr) -> Optional[Union[Chunk, Iterable[Chunk]]]:
         ChunkType = Chunk
         if data is None:
             data = B''
@@ -1225,14 +1221,14 @@ class UnitBase(metaclass=Executable, abstract=True):
     """
 
     @abc.abstractmethod
-    def process(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+    def process(self, data: ByteStr) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
         """
         This routine is overridden by children of `refinery.units.Unit` to define how
         the unit processes a given chunk of binary data.
         """
 
     @abc.abstractmethod
-    def reverse(self, data: ByteString) -> Union[Optional[ByteString], Iterable[ByteString]]:
+    def reverse(self, data: ByteStr) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
         """
         If this routine is overridden by children of `refinery.units.Unit`, then it must
         implement an operation that reverses the `refinery.units.Unit.process` operation.
@@ -1240,8 +1236,9 @@ class UnitBase(metaclass=Executable, abstract=True):
         `refinery.units.UnitBase`.
         """
 
-    @abc.abstractclassmethod
-    def handles(self, data: ByteString) -> Optional[bool]:
+    @classmethod
+    @abc.abstractmethod
+    def handles(self, data: ByteStr) -> Optional[bool]:
         """
         This tri-state routine returns `True` if the unit is certain that it can process the
         given input data, and `False` if it is convinced of the opposite. `None` is returned
@@ -1407,7 +1404,7 @@ class Unit(UnitBase, abstract=True):
         """
         return getattr(self.args, 'lenient', 0)
 
-    def _exception_handler(self, exception: BaseException, data: Optional[ByteString]):
+    def _exception_handler(self, exception: BaseException, data: Optional[ByteStr]):
         if data is not None and self.leniency > 1:
             try:
                 return exception.partial
@@ -1473,13 +1470,9 @@ class Unit(UnitBase, abstract=True):
         if self._framed:
             return self._framed
 
-        def normalized_action(data: ByteString) -> Generator[Chunk, None, None]:
+        def normalized_action(data: ByteStr) -> Generator[Chunk, None, None]:
             try:
-                result = self.act(data)
-                if inspect.isgenerator(result):
-                    yield from (x for x in result if x is not None)
-                elif result is not None:
-                    yield result
+                yield from self.act(data)
             except KeyboardInterrupt:
                 raise
             except BaseException as B:
@@ -1583,7 +1576,7 @@ class Unit(UnitBase, abstract=True):
             reversed = reversed | pipeline.pop()
         return reversed
 
-    def __ror__(self, stream: Union[str, ByteIO, ByteString]):
+    def __ror__(self, stream: Union[str, ByteIO, ByteStr]):
         if stream is None:
             return self
         if not isstream(stream):
@@ -1788,24 +1781,35 @@ class Unit(UnitBase, abstract=True):
         except StopIteration:
             return B''
 
-    def act(self, data: Union[Chunk, ByteString]) -> Union[Optional[ByteString], Generator[ByteString, None, None]]:
+    def act(self, data: Union[Chunk, ByteStr]) -> Generator[ByteStr, None, None]:
+        skip = self.args.iff
         mode = self.args.reverse
-        data = self.args @ data
-        if not mode:
-            return self.process(data)
-        elif mode % 2:
-            return self.reverse(data)
+        if skip and not self.handles(data):
+            if skip < 2:
+                yield data
+            return
         else:
-            return self.reverse(self.process(data))
+            data = self.args @ data
+        if not mode:
+            it = self.process(data)
+        elif mode % 2:
+            it = self.reverse(data)
+        else:
+            it = self.reverse(self.process(data))
+        if not inspect.isgenerator(it):
+            it = (it,)
+        for out in it:
+            if out is not None:
+                yield out
 
-    def __call__(self, data: Optional[Union[ByteString, Chunk]] = None) -> bytes:
+    def __call__(self, data: Optional[Union[ByteStr, Chunk]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
             stdin: ByteIO
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
 
     @classmethod
-    def labelled(cls, ___br___data: Union[Chunk, ByteString], **meta) -> Chunk:
+    def labelled(cls, ___br___data: Union[Chunk, ByteStr], **meta) -> Chunk:
         """
         This class method can be used to label a chunk of binary output with metadata. This
         metadata will be visible inside pipeline frames, see `refinery.lib.frame`.
@@ -1815,7 +1819,7 @@ class Unit(UnitBase, abstract=True):
             return ___br___data
         return Chunk(___br___data, meta=meta)
 
-    def process(self, data: ByteString) -> Union[Optional[ByteString], Generator[ByteString, None, None]]:
+    def process(self, data: ByteStr) -> Union[Optional[ByteStr], Generator[ByteStr, None, None]]:
         return data
 
     @classmethod
@@ -1903,7 +1907,7 @@ class Unit(UnitBase, abstract=True):
         """
         base = argp.add_argument_group('generic options')
 
-        base.set_defaults(reverse=False, squeeze=False)
+        base.set_defaults(reverse=False, squeeze=False, iff=0)
         base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
         base.add_argument('-L', '--lenient', action='count', default=0, help='Allow partial results as output.')
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
@@ -1915,6 +1919,10 @@ class Unit(UnitBase, abstract=True):
             base.add_argument('-R', '--reverse', action='count', default=0,
                 help='Use the reverse operation; Specify twice to normalize (first decode, then encode).')
 
+        if cls.handles.__func__ is not Unit.handles.__func__:
+            base.add_argument('-F', '--iff', action='count', default=0,
+                help='Only apply unit if it can handle the input format. Specify twice to drop all other chunks.')
+
         groups = {None: argp}
 
         for argument in reversed(cls._argument_specification.values()):
@@ -1923,8 +1931,10 @@ class Unit(UnitBase, abstract=True):
                 groups[gp] = argp.add_mutually_exclusive_group()
             try:
                 groups[gp].add_argument @ argument
-            except Exception:
-                raise RefineryCriticalException(F'Failed to queue argument: {argument!s}')
+            except Exception as E:
+                raise RefineryCriticalException(F'Failed to queue argument: {argument!s}; {E!s}')
+            except Exception as E:
+                raise RefineryCriticalException(F'Failed to queue argument: {argument!s}; {E!s}')
 
         return argp
 
@@ -1987,6 +1997,7 @@ class Unit(UnitBase, abstract=True):
         else:
             unit.args._store(_argo=argp.order)
             unit.args.quiet = args.quiet
+            unit.args.iff = args.iff
             unit.args.lenient = args.lenient
             unit.args.squeeze = args.squeeze
             unit.args.nesting = args.nesting
@@ -2024,6 +2035,7 @@ class Unit(UnitBase, abstract=True):
 
         keywords.update(dict(
             nesting=0,
+            iff=0,
             reverse=False,
             squeeze=False,
             devnull=False,

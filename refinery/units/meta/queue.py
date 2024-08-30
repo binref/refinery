@@ -16,8 +16,8 @@ class QueueUnit(Unit, abstract=True):
     ))):
         super().__init__(data=data)
 
-    def act(self, data: Union[Chunk, ByteString]) -> ByteString:
-        return data
+    def act(self, data: Union[Chunk, ByteString]):
+        yield data
 
     def _queue(self, chunks: Iterable[Chunk], front: bool) -> Generator[Chunk, None, None]:
         it = iter(chunks)

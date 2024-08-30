@@ -41,7 +41,12 @@ class reduce(Unit):
             accu[name] = chunk
             unit.args(accu)
             self.log_info('current input:', accu, clip=True)
-            accu[:] = unit.act(accu)
+            pos = 0
+            for chunk in unit.act(accu):
+                end = pos + len(chunk)
+                accu[pos:end] = chunk
+                pos = end
+            del accu[end:]
         temp = [key for key in accu.meta.keys() if key not in meta]
         for key in temp:
             accu.meta.discard(key)
