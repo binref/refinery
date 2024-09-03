@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import ByteString, Callable, Dict, List, Optional, Set, Union, NamedTuple, Generator
-from types import CodeType
+from typing import TYPE_CHECKING, NamedTuple
 
 import marshal
 import enum
@@ -26,6 +25,13 @@ from refinery.lib.tools import NoLogging, normalize_word_separators
 from Cryptodome.Cipher import AES
 
 
+if TYPE_CHECKING:
+    from types import CodeType
+    from typing import Callable, Dict, List, Tuple, Optional, Set, Union, Generator, Iterable
+    from xdis import Instruction
+    from refinery.lib.types import ByteStr
+
+
 class Unmarshal(enum.IntEnum):
     No = 0
     Yes = 1
@@ -44,7 +50,7 @@ def decompress_peek(buffer, size=512) -> Optional[bytes]:
 
 
 class Code(NamedTuple):
-    version: float
+    version: Tuple[int]
     timestamp: int
     magic: int
     container: CodeType
@@ -52,44 +58,61 @@ class Code(NamedTuple):
     code_objects: dict
 
 
-def extract_code_from_buffer(buffer: ByteString, file_name: Optional[str] = None) -> Generator[Code, None, None]:
-    main: xtpyi = xtpyi
+def extract_code_from_buffer(buffer: ByteStr, file_name: Optional[str] = None) -> Generator[Code, None, None]:
     code_objects = {}
-    sys_stderr = sys.stderr
-    sys.stderr = open(os.devnull, 'w')
     file_name = file_name or '<unknown>'
-    try:
-        version, timestamp, magic_int, codes, is_pypy, _, _ = \
-            main._xdis.load.load_module_from_file_object(MemoryFile(buffer), file_name, code_objects)
-    finally:
-        sys.stderr.close()
-        sys.stderr = sys_stderr
+    load = xtpyi._xdis.load.load_module_from_file_object
+    with NoLogging(NoLogging.Mode.STD_ERR):
+        version, timestamp, magic_int, codes, is_pypy, _, _ = load(MemoryFile(buffer), file_name, code_objects)
     if not isinstance(codes, list):
         codes = [codes]
     for code in codes:
         yield Code(version, timestamp, magic_int, code, is_pypy, code_objects)
 
 
-def decompile_buffer(buffer: Union[Code, ByteString], file_name: Optional[str] = None) -> ByteString:
+def disassemble_code(code: CodeType, version=None) -> Iterable[Instruction]:
+    dis = xtpyi._xdis
+    opc = None
+    if version is not None:
+        if isinstance(version, float):
+            version = str(version)
+        if not isinstance(version, str):
+            version = dis.version_info.version_tuple_to_str(version)
+        with contextlib.suppress(KeyError):
+            opc = dis.op_imports.op_imports[version]
+    return dis.std.Bytecode(code, opc=opc)
+
+
+def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = None) -> ByteStr:
     main: xtpyi = xtpyi
     errors = ''
     python = ''
     codes = [buffer]
+
     if not isinstance(buffer, Code):
         codes = list(extract_code_from_buffer(buffer, file_name))
+
+    def _engines():
+        nonlocal errors
+        try:
+            dc = main._decompyle3
+        except ImportError:
+            errors += '# The decompiler decompyle3 is not installed.\n'
+        else:
+            yield 'decompyle3', dc
+        try:
+            dc = main._uncompyle6
+        except ImportError:
+            errors += '# The decompiler decompyle3 is not installed.\n'
+        else:
+            yield 'uncompyle6', dc
+
+    engines = dict(_engines())
+
+    if not engines:
+        errors += '# (all missing, install one of the above to enable decompilation)'
+
     for code in codes:
-        engines = {}
-        for e in ['decompyle3', 'uncompyle6']:
-            try:
-                dc = getattr(main, F'_{e}')
-                if isinstance(dc, property):
-                    dc = dc.fget()
-            except ImportError:
-                errors += F'# The decompiler {dc} is not installed.\n'
-            else:
-                engines['decompyle3'] = dc
-        if not engines:
-            errors += '# (all missing, install one of the above to enable decompilation)'
         for name, engine in engines.items():
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
                 try:
@@ -127,7 +150,7 @@ def decompile_buffer(buffer: Union[Code, ByteString], file_name: Optional[str] =
         output.write(errors)
         output.write('# Generating Disassembly:\n\n')
         for code in codes:
-            instructions = list(main._xdis.std.Bytecode(code.container))
+            instructions = list(disassemble_code(code.container, code.version))
             width_offset = max(len(str(i.offset)) for i in instructions)
             for i in instructions:
                 opname = normalize_word_separators(i.opname, '.').lower()
@@ -163,15 +186,15 @@ class PzType(enum.IntEnum):
 class PiMeta:
     type: PiType
     name: str
-    data: Union[Callable[[], ByteString], ByteString]
+    data: Union[Callable[[], ByteStr], ByteStr]
 
-    def unpack(self) -> ByteString:
+    def unpack(self) -> ByteStr:
         if callable(self.data):
             self.data = self.data()
         return self.data
 
 
-def make_decompiled_item(name: str, data: ByteString, *magics) -> PiMeta:
+def make_decompiled_item(name: str, data: ByteStr, *magics) -> PiMeta:
 
     def extract(data=data, magics=magics):
         error = None
@@ -529,6 +552,7 @@ class xtpyi(ArchiveUnit):
         import xdis.magics
         import xdis.marsh
         import xdis.op_imports
+        import xdis.version_info
         import xdis
         A, B, C, *_ = sys.version_info
         version = F'{A}.{B}.{C}'
@@ -590,5 +614,5 @@ class xtpyi(ArchiveUnit):
             yield self._pack(name, None, file.data, type=file.type.name)
 
     @classmethod
-    def handles(cls, data: ByteString) -> Optional[bool]:
+    def handles(cls, data: ByteStr) -> Optional[bool]:
         return PyInstallerArchiveEpilogue.MagicSignature in data
