@@ -193,7 +193,7 @@ from argparse import (
 )
 
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
-from refinery.lib.frame import Framed, Chunk
+from refinery.lib.frame import generate_frame_header, Framed, Chunk
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr, Singleton
@@ -1576,13 +1576,24 @@ class Unit(UnitBase, abstract=True):
             reversed = reversed | pipeline.pop()
         return reversed
 
-    def __ror__(self, stream: Union[str, ByteIO, ByteStr]):
+    def __ror__(self, stream: Union[str, Chunk, ByteIO, ByteStr, None]):
         if stream is None:
             return self
-        if not isstream(stream):
+        if isinstance(stream, Chunk):
+            chunk = stream
+            scope = chunk.scope + 1
+            stream = MemoryFile()
+            stream.write(generate_frame_header(scope))
+            stream.write(chunk.pack(1))
+            stream.seekset(0)
+            self.args.nesting = -scope
+        elif not isstream(stream):
             if isinstance(stream, str):
                 stream = stream.encode(self.codec)
-            stream = MemoryFile(stream) if stream else open(os.devnull, 'rb')
+            if stream:
+                stream = MemoryFile(stream)
+            else:
+                stream = open(os.devnull, 'rb')
         self.reset()
         self.nozzle.source = stream
         return self
