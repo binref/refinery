@@ -452,6 +452,15 @@ class DelayedArgumentDispatch:
     def __call__(self, instance: DelayedArgument, data, modifier=None, *args):
         try:
             handler = self.default if modifier is None else self.handlers[modifier]
+        except KeyError:
+            unit = self._get_unit(modifier, *args)
+            if not unit:
+                raise ArgumentTypeError(F'failed to build unit {modifier}')
+            result = list(unit.act(data))
+            if not result:
+                return B''
+            return B''.join(result) if len(result) > 1 else result[0]
+        else:
             name = next(itertools.islice(inspect.signature(handler).parameters.values(), 1, None)).name
             hint = get_type_hints(handler).get(name, None)
             if hint == Iterable[type(data)]:
@@ -461,14 +470,6 @@ class DelayedArgumentDispatch:
                     data = bytes(data)
                 data = data.decode('utf8')
             return handler(instance, data, *args)
-        except KeyError:
-            unit = self._get_unit(modifier, *args)
-            if not unit:
-                raise ArgumentTypeError(F'failed to build unit {modifier}')
-            result = list(unit.act(data))
-            if not result:
-                return B''
-            return B''.join(result) if len(result) > 1 else result[0]
 
     def can_handle(self, modifier, *args):
         return modifier in self.handlers or bool(self._get_unit(modifier, *args))
