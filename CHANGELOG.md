@@ -5,6 +5,16 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.1
+- The global `--iff` option was added to units; this allows you to apply the unit only to formats that it knows it can handle.
+- When using refinery in code, it is now possible to pipe a `Chunk` object directly to a pipeline.
+- The `csb` and `csd` shortcuts were added for common applications of `carve`.
+- The `loop` unit was added; it allows repeated application of a multibin suffix to the input data.
+- To match the `loop` unit, the `reduce` unit now also works with a multibin suffix rather than with a pipeline string.
+- The `vstack` unit now attempts to detect stack cookies and ignores them by default.
+- Adds a deobfuscator for the `kramer` obfuscator.
+- The `xtmsi` unit now automatically extracts embedded CAB files and infers the file names of these subfiles from the MSI manifest.
+
 ## Version 0.7.0
 - Raises minimum Python requirement to 3.8.
 - Removes automatic escapes from `cfmt`; this now has to be done explicitly.
