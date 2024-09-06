@@ -43,6 +43,7 @@ class EmuState:
     max_wait: int = 0
     max_loop: int = 0
     visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    last_read: Optional[int] = None
 
     def disassemble(self, address: int, size: int):
         if self.disassembler is None:
@@ -123,6 +124,7 @@ class vstack(Unit):
         log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
         log_other_addresses: Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.') = False,
         log_zero_overwrites: Arg.Switch('-Z', help='Log writes of zeros to memory that contained nonzero values.') = False,
+        log_stack_cookies  : Arg.Switch('-E', help='Log writes that look like stack cookies.') = False,
     ):
         super().__init__(
             address=address or [0],
@@ -143,6 +145,7 @@ class vstack(Unit):
             log_stack_addresses=log_stack_addresses,
             log_other_addresses=log_other_addresses,
             log_zero_overwrites=log_zero_overwrites,
+            log_stack_cookies=log_stack_cookies
         )
 
     def _find_stack_location(self, exe: Executable):
@@ -324,6 +327,7 @@ class vstack(Unit):
 
             emulator.hook_add(uc.UC_HOOK_CODE, self._hook_code, user_data=state)
             emulator.hook_add(uc.UC_HOOK_MEM_WRITE, self._hook_mem_write, user_data=state, )
+            emulator.hook_add(uc.UC_HOOK_MEM_READ_AFTER, self._hook_mem_read, user_data=state, )
             emulator.hook_add(uc.UC_HOOK_INSN_INVALID, self._hook_insn_error, user_data=state)
             emulator.hook_add(uc.UC_HOOK_MEM_INVALID, self._hook_mem_error, user_data=state)
 
@@ -349,6 +353,10 @@ class vstack(Unit):
                 self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
                 yield patch
 
+    def _hook_mem_read(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
+        mask = (1 << (size * 8)) - 1
+        state.last_read = value & mask
+
     def _hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
         try:
             mask = (1 << (size * 8)) - 1
@@ -367,7 +375,11 @@ class vstack(Unit):
 
             skipped = False
 
-            if size not in bounds[self.args.write_range]:
+            if not self.args.log_stack_cookies:
+                stack_position = emu.reg_read(state.sp_register)
+                if unsigned_value ^ stack_position == state.last_read:
+                    skipped = 'stack cookie'
+            elif size not in bounds[self.args.write_range]:
                 skipped = 'size excluded'
             elif (
                 state.callstack_ceiling > 0
@@ -382,6 +394,7 @@ class vstack(Unit):
                     if address in s.virtual:
                         skipped = F'write to section {s.name}'
                         break
+
             if (
                 not skipped
                 and unsigned_value == 0
