@@ -1907,7 +1907,8 @@ class Unit(UnitBase, abstract=True):
         if clip:
             from refinery.lib.tools import get_terminal_size
             length = get_terminal_size(75) - len(cls.name) - 27
-            message = message[:length] + "..."
+            if len(message) > length:
+                message = message[:length] + "..."
         return message
 
     @classmethod
