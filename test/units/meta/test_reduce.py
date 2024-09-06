@@ -11,8 +11,8 @@ class TestReduce(TestUnitBase):
         self.assertEqual(pl(), B'012345')
 
     def test_variables_are_retained(self):
-        pl = L('emit 5 4 3 2 1 0 [| put q | reduce cca[var:q] ]')
-        self.assertEqual(pl(), B'012345')
+        pl = L('emit +Y X X X [| put q index | reduce cfmt[{q}{}{t}] ]')
+        self.assertEqual(pl(), B'3X2X1X+Y')
 
     def test_addition(self):
         pl = L('emit 12 20 8 10000 [| pack -B4 | reduce add[t] | pack -RB4 ]')
