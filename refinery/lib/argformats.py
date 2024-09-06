@@ -127,6 +127,7 @@ DelayedType = Callable[[ByteString], FinalType]
 MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 
 _DEFAULT_BITS = 64
+_REVERSE_SIGN = '!'
 
 
 class ParserError(ArgumentTypeError):
@@ -431,13 +432,17 @@ class DelayedArgumentDispatch:
         self.units = {}
 
     def _get_unit(self, name: str, *args) -> Unit:
-        name = normalize_to_identifier(name)
+        name, rev, empty = normalize_to_identifier(name).partition(_REVERSE_SIGN)
+        if empty:
+            raise ValueError(name)
         uhash = hash((name,) + args)
         if uhash in self.units:
             return self.units[uhash]
         from refinery import load
         unit = load(name)
         unit = unit and unit.assemble(*args).log_detach()
+        if rev == _REVERSE_SIGN:
+            unit = -unit
         self.units[uhash] = unit
         return unit
 
