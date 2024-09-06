@@ -218,6 +218,10 @@ class TestCarve(TestUnitBase):
             B''',78,111, 110, 80 ,39 , 43,39, 117 , 98 ,108,105 , 99,44 , 83 , 116 ,97 , 39, 43 ,39,116, 105, 99, 3'''
             B'''9 ,41,46 ,83,101 , 116 ,86, 97 , 108 , 117, 101, 40,36, 110 ,117 , 108 ,108 , 44, 32 ,36, 116, 114 '''
             B''',117, 101 ,41 ,10,125,99 , 97 ,116 ,99, 104 , 123 , 125, 10, 110, 108 , 116 , 101 ,115,116,32, 47, '''
-            B'''100,111, 109 ,97,105, 110 ,95, 116 ,114,117 , 115 , 116 ,115)| ForeaCH{ ( [cHAr] [iNt] $_) }))''')
-        test = data | self.load('intarray', decode=True) | bytearray
-        self.assertGreater(len(test), 200)
+            B'''100,111, 109 ,97,105, 110 ,95, 116 ,114,117 , 115 , 116 ,115)| ForeaCH{ ( [cHAr] [iNt] $_) }))\n   '''
+            B'''12, 31, 9''')
+        t1 = data | self.ldu('csb', 'intarray') | self.ldu('pack') | bytes
+        t2 = data | self.ldu('csd', 'intarray') | bytes
+        t3 = data | self.load('intarray', single=True, decode=True) | bytes
+        self.assertEqual(len({t1, t2, t3}), 1)
+        self.assertGreater(len(t1), 200)
