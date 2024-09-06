@@ -38,7 +38,7 @@ class dnfields(PathExtractorUnit):
             BR'\x8D(...)([\x01\x02])'           # newarr  col|row
             BR'\x25'                            # dup
             BR'\xD0\x%02x\x%02x\x%02x\x04'      # ldtoken t
-            BR'(?:.{0,12}'                      # ...
+            BR'(?:.{0,12}?'                      # ...
             BR'\x80(...)\x04)?' % (             # stsfld variable
                 (t >> 0x00) & 0xFF,
                 (t >> 0x08) & 0xFF,
