@@ -11,9 +11,10 @@ import re
 import struct
 
 from refinery.lib.structures import StructReader
+from refinery.units import Arg
 from refinery.units.formats.office.xtdoc import xtdoc, UnpackResult
 from refinery.lib import chunks
-from refinery.lib.types import ByteStr
+from refinery.lib.types import ByteStr, JSONDict
 from refinery.lib.mime import FileMagicInfo
 from refinery.lib.tools import cached_property
 
@@ -157,6 +158,23 @@ class xtmsi(xtdoc):
         0x35: 'JScript text specified by a property value.',
         0x36: 'VBScript text specified by a property value.',
     }
+
+    def __init__(
+            self, *paths,
+            list=False, path=b'path', join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
+            nocab: Arg.Switch('-N', help='Do not list and extract embedded CAB archives.') = False,
+    ):
+        super().__init__(
+            *paths,
+            list=list,
+            path=path,
+            join_path=join_path,
+            drop_path=drop_path,
+            nocab=nocab,
+            fuzzy=fuzzy,
+            exact=exact,
+            regex=regex,
+        )
 
     def unpack(self, data):
         streams = {result.path: result for result in super().unpack(data)}
@@ -330,6 +348,45 @@ class xtmsi(xtdoc):
             if dot == '.' and prefix.lower() == 'binary':
                 path = F'{prefix}/{name}'
             return path
+
+        if self.args.nocab:
+            cabs = {}
+        else:
+            def _iscab(path):
+                return media_info and any(item.get('Cabinet', '') == F'#{path}' for item in media_info)
+            media_info: List[JSONDict] = processed_table_data.get('Media', [])
+            cabs: Dict[str, UnpackResult] = {
+                path: item for path, item in streams.items() if _iscab(path)}
+        if cabs:
+            from refinery.units.formats.archive.xtcab import xtcab
+            file_names: Dict[str, JSONDict] = {}
+
+            for file_info in processed_table_data.get('File', []):
+                try:
+                    src_name = file_info['File']
+                    dst_name = file_info['FileName']
+                except KeyError:
+                    continue
+                short, pipe, long = dst_name.partition('|')
+                if pipe == '|' and short and long:
+                    file_names[src_name] = long
+
+            for path, cab in cabs.items():
+                try:
+                    unpacked: List[UnpackResult] = list(xtcab().unpack(cab.get_data()))
+                except Exception:
+                    continue
+                base, dot, ext = path.rpartition('.')
+                if dot == '.' and ext.lower() == 'cab':
+                    path = base
+                else:
+                    del streams[path]
+                    cab.path = F'{path}.cab'
+                    streams[cab.path] = cab
+                for result in unpacked:
+                    sub_path = file_names.get(result.path, result.path)
+                    sub_path = self._custom_path_separator.join((path, sub_path))
+                    streams[sub_path] = result
 
         streams = {fix_msi_path(path): item for path, item in streams.items()}
         ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME,
