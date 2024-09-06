@@ -431,10 +431,10 @@ class DelayedArgumentDispatch:
         self.final = {}
         self.units = {}
 
-    def _get_unit(self, name: str, *args) -> Unit:
+    def _get_unit(self, name: str, *args) -> Optional[Unit]:
         name, rev, empty = normalize_to_identifier(name).partition(_REVERSE_SIGN)
         if empty:
-            raise ValueError(name)
+            return None
         uhash = hash((name,) + args)
         if uhash in self.units:
             return self.units[uhash]
