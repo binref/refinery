@@ -98,7 +98,7 @@ class dnfields(PathExtractorUnit):
             else:
                 guess = self._guess_field_info(tables, data, _index)
             if guess is None:
-                self.log_debug(lambda: F'field {k:0{iwidth}d} name {field.Signature}: unable to guess type information')
+                self.log_debug(lambda: F'field {k:0{iwidth}d} with signature {field.Signature.hex()}: unable to guess type information')
                 continue
             totalsize = guess.count * guess.size
             if guess.name is not None:
@@ -108,7 +108,8 @@ class dnfields(PathExtractorUnit):
             ext = ftype = guess.type.lower()
             if guess.count > 1:
                 ftype += F'[{guess.count}]'
-            self.log_info(lambda: F'field {k:0{iwidth}d} at RVA 0x{rv.RVA:04X} of type {guess.type}, count: {guess.count}, name: {fname}')
+            self.log_info(
+                F'field {k:0{iwidth}d}; token 0x{_index:06X}; RVA 0x{rv.RVA:04X}; count {guess.count}; type {guess.type}; name {fname}')
             offset = header.pe.get_offset_from_rva(rv.RVA)
             yield UnpackResult(
                 F'{fname}.{ext}',
