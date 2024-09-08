@@ -9,6 +9,7 @@ from typing import Union, Tuple, Type, Dict, Any, Optional, List
 
 
 ByteStr = Union[bytes, bytearray, memoryview]
+BufferOrStr = Union[bytes, bytearray, memoryview, str]
 
 JSON = Optional[Union[str, int, float, bool, Type[None], Dict[str, 'JSON'], List['JSON']]]
 JSONDict = Dict[str, JSON]
