@@ -25,17 +25,17 @@ class loop(RegexUnit):
         self,
         count: Arg.Number(metavar='count', help='The number of repeated applications of the suffix.'),
         suffix: Arg(type=str, help='A multibin expression suffix.'),
-        whiLe: Arg('-w', '--while', type=regexp, metavar='RE',
+        do_while: Arg('-w', '--while', type=regexp, metavar='RE',
             help='Halt when the given regular expression does not match the data.'),
-        until: Arg('-u', '--until', type=regexp, metavar='RE',
+        do_until: Arg('-u', '--until', type=regexp, metavar='RE',
             help='Halt when the given regular expression matches the data.'),
         fullmatch=False, multiline=False, ignorecase=False,
     ):
         super().__init__(
             count=count,
             suffix=suffix,
-            whiLe=whiLe,
-            until=until,
+            do_while=do_while,
+            do_until=do_until,
             fullmatch=fullmatch,
             multiline=multiline,
             ignorecase=ignorecase,
@@ -71,8 +71,8 @@ class loop(RegexUnit):
 
     @property
     def _while(self):
-        return self._make_matcher(self.args.whiLe)
+        return self._make_matcher(self.args.do_while)
 
     @property
     def _until(self):
-        return self._make_matcher(self.args.until)
+        return self._make_matcher(self.args.do_until)
