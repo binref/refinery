@@ -111,3 +111,24 @@ class pick(Unit):
                     state.consumed = True
             container.temp = state
             yield container
+
+
+class p1(pick):
+    """
+    A shortcut for `refinery.pick` with the argument `0:1`.
+    """
+    def __init__(self): super().__init__(slice(0, 1))
+
+
+class p2(pick):
+    """
+    A shortcut for `refinery.pick` with the argument `0:2`.
+    """
+    def __init__(self): super().__init__(slice(0, 2))
+
+
+class p3(pick):
+    """
+    A shortcut for `refinery.pick` with the argument `0:3`.
+    """
+    def __init__(self): super().__init__(slice(0, 3))
