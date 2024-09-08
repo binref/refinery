@@ -16,6 +16,11 @@ class TestIPFS(TestUnitBase):
         ):
             self.assertIn(line, disassembly)
 
+    def test_x(self):
+        data = self.download_sample('2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd')
+        test = data | self.load() | str
+        self.assertIn('external symbol GETARRAYLENGTH', test)
+
 
 class TestIFPSStrings(TestUnitBase):
 

@@ -450,16 +450,20 @@ class DeclSpec:
 
 class Function(NamedTuple):
     name: str
-    decl: DeclSpec
+    decl: Optional[DeclSpec]
     body: Optional[List[Instruction]] = None
     exported: bool = False
     attributes: Optional[List[Attribute]] = None
 
     def reference(self) -> str:
+        if self.decl is None:
+            return self.name
         return self.decl.represent(self.name, ref=True)
 
     def __repr__(self):
-        return self.decl.represent(self.name)
+        if self.decl is None:
+            return F'symbol {self.name}'
+        return self.reference()
 
 
 class Variable(NamedTuple):
