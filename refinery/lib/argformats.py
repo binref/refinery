@@ -1400,6 +1400,21 @@ class DelayedRegexpArgument(DelayedArgument):
 
         return expression.encode('latin-1')
 
+    @handler.register('f', final=True)
+    def format(self, name: str) -> bytes:
+        """
+        The handler `f:[name]` returns a regular expression for to one of the format types
+        supported by `refinery.carve` unit.
+        """
+        from refinery.lib.patterns import formats
+        try:
+            return formats[name]
+        except LookupError:
+            raise ArgumentTypeError(
+                F'Based on the prefix "f:", the parser looked for a carve format named "{name}".'
+                U' No such format is known; prefix the entire expression with "s:" if this was '
+                U'unintended, otherwise correct the format name spelling.')
+
     @handler.register('yara', 'Y')
     def yara(self, pattern: bytes) -> bytes:
         """
