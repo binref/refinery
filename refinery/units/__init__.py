@@ -1793,20 +1793,19 @@ class Unit(UnitBase, abstract=True):
             return B''
 
     def act(self, data: Union[Chunk, ByteStr]) -> Generator[ByteStr, None, None]:
-        skip = self.args.iff
-        mode = self.args.reverse
-        if skip and not self.handles(data):
-            if skip < 2:
+        reverse = self.args.reverse
+        iff = self.args.iff
+        if iff and not self.handles(data):
+            if iff < 2:
                 yield data
             return
         else:
             data = self.args @ data
-        if not mode:
-            it = self.process(data)
-        elif mode % 2:
+            data = data
+        if reverse:
             it = self.reverse(data)
         else:
-            it = self.reverse(self.process(data))
+            it = self.process(data)
         if not inspect.isgenerator(it):
             it = (it,)
         for out in it:
@@ -1928,8 +1927,8 @@ class Unit(UnitBase, abstract=True):
             help='Specify up to two times to increase log level.')
 
         if cls.is_reversible:
-            base.add_argument('-R', '--reverse', action='count', default=0,
-                help='Use the reverse operation; Specify twice to normalize (first decode, then encode).')
+            base.add_argument('-R', '--reverse', action='store_true',
+                help='Use the reverse operation.')
 
         if cls.handles.__func__ is not Unit.handles.__func__:
             base.add_argument('-F', '--iff', action='count', default=0,
