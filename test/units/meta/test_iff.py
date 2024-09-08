@@ -9,11 +9,11 @@ from .. import TestUnitBase
 class TestIfExpr(TestUnitBase):
 
     def test_pick_only_odd_items(self):
-        pl = L('emit Marry had a little lamb.') [ self.load('index % 2 == 0') | L('cull') | L('sep " "') ]
+        pl = L('emit Marry had a little lamb.') [ self.load('index % 2 == 0') | L('sep " "') ]
         self.assertEqual(pl(), B'Marry a lamb.')
 
     def test_filter_by_size(self):
-        pl = L('emit Tim Ada Jake Elisabeth James Meredith') [ self.load('size > 3') | L('cull') | L('sep') ]
+        pl = L('emit Tim Ada Jake Elisabeth James Meredith') [ self.load('size > 3') | L('sep') ]
         self.assertEqual(pl(), B'\n'.join([
             B'Jake',
             B'Elisabeth',
@@ -34,9 +34,9 @@ class TestIfExpr(TestUnitBase):
         self.assertEqual(pl(), B'..')
 
     def test_single(self):
-        pl = load_pipeline('emit A B C D [| put x | iff -s x -eq C [| scope ]]')
-        self.assertEqual(pl(), B'ABC')
+        pl = load_pipeline('emit a b c c d [| put x | iff x -eq c | p1 ]')
+        self.assertEqual(pl(), B'c')
 
-    def test_squeezing(self):
-        pl = load_pipeline('emit A B C D [| put x | iff -s x -eq C []]')
-        self.assertEqual(pl(), B'ABC')
+    def test_retain(self):
+        pl = load_pipeline('emit a b c d c [| put x | iff x -eq c -r | cfmt {}{} | scope ]')
+        self.assertEqual(pl(), B'abccdcc')
