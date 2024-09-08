@@ -6,7 +6,7 @@ Provides a customized argument parser that is used by all refinery `refinery.uni
 from __future__ import annotations
 
 from typing import IO, Optional, List, Dict, Any
-from argparse import ArgumentParser, ArgumentError, Action, RawDescriptionHelpFormatter
+from argparse import ArgumentParser, ArgumentError, ArgumentTypeError, Action, RawDescriptionHelpFormatter
 
 import sys
 
@@ -136,10 +136,10 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         self.set_defaults(**self.keywords)
         try:
             parsed = self.parse_args(args=args, namespace=namespace)
-        except ArgumentError as e:
+        except (ArgumentError, ArgumentTypeError, ArgparseError) as e:
             self.error(str(e))
-        except Exception:
-            self.error(F'Failed to parse arguments: {args!r}')
+        except Exception as e:
+            self.error(F'Failed to parse arguments: {args!r}, {e}, {type(e).__name__}')
         for name in keywords:
             param = getattr(parsed, name, None)
             if param != keywords[name]:
