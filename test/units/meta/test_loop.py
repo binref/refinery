@@ -26,5 +26,10 @@ class TestLoop(TestUnitBase):
 
     def test_abort_gracefully_on_error(self):
         data = self._DATA
-        test = data | self.load(1000, 'rev:csd[b64]:zl') | str
+        test = data | self.load(1000, 'rev:csd[b64]:zl', lenient=1) | str
+        self.assertEqual(test, 'refinery')
+
+    def test_abort_with_condition(self):
+        data = self._DATA
+        test = data | self.load(1000, 'rev:csd[b64]:zl', do_until=b'fine') | str
         self.assertEqual(test, 'refinery')
