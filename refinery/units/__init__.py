@@ -1443,8 +1443,8 @@ class Unit(UnitBase, abstract=True):
                 message = F'{message}; {explanation!s}'
             if self.log_level <= LogLevel.INFO and data is not None:
                 from refinery.units.sinks.peek import peek
-                peeked = str(data | peek(lines=2, decode=True, stdout=True))
-                message = F'{message}\n{peeked}'
+                preview = data | peek(lines=2, decode=True, stdout=True) | [str]
+                message = '\n'.join((message, *preview))
             self.log_fail(message)
 
         if self.log_debug():
