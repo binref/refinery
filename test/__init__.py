@@ -90,9 +90,11 @@ class TestBase(unittest.TestCase):
         self.assertIn(member, container, msg)
 
     @classmethod
-    def load_pipeline(cls, cmd: str) -> refinery.Unit:
+    def load_pipeline(cls, cmd: str, clear_cache=False) -> refinery.Unit:
         from refinery.units import Unit, LogLevel
         from refinery.lib.loader import load_pipeline
+        if clear_cache:
+            load_pipeline.cache_clear()
         unit = pl = load_pipeline(cmd)
         while isinstance(unit, Unit):
             unit.log_level = LogLevel.DETACHED

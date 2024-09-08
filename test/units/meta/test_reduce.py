@@ -19,8 +19,9 @@ class TestReduce(TestUnitBase):
         self.assertEqual(pl(), b'10040')
 
     def test_regression(self):
+        pl = 'emit range::18 | chop 1 [| reduce add[t] ]'
         for k in range(2000):
-            chunk = next(self.load_pipeline('emit range::18 | chop 1 [| reduce add[t] ]'))
+            chunk = next(self.load_pipeline(pl, clear_cache=True))
             self.assertEqual(chunk, B'\x99', F'race after {k} rounds')
 
     def test_just_parameter(self):
