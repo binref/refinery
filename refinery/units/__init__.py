@@ -1113,7 +1113,7 @@ class DelayedArgumentProxy:
     _argo: List[str]
     _args: Dict[str, Any]
     _done: bool
-    _guid: int
+    _uuid: Any
     _lock: Lock
 
     def __copy__(self):
@@ -1125,7 +1125,7 @@ class DelayedArgumentProxy:
             _argo=list(self._argo),
             _args=dict(self._args),
             _done=self._done,
-            _guid=self._guid,
+            _uuid=self._uuid,
         )
         return clone
 
@@ -1149,10 +1149,10 @@ class DelayedArgumentProxy:
             _argo=list(argo),
             _args=args,
             _done=done,
-            _guid=None,
+            _uuid=None,
         )
 
-    def __call__(self, data: bytearray):
+    def __call__(self, data: Chunk):
         """
         Update the current arguments for the input `data`, regardless of whether or not this chunk
         has already been used. In most cases, the matrix-multiplication syntax should be used instead
@@ -1168,18 +1168,16 @@ class DelayedArgumentProxy:
                 value = getattr(self._argv, name, None)
                 if value and pending(value):
                     self._args[name] = manifest(value, data)
-            self._store(_guid=id(data))
+            self._store(_uuid=data.uuid)
         return data
 
-    def __matmul__(self, data: bytearray):
+    def __matmul__(self, data: Chunk):
         """
         Interpret the current arguments for the given input `data`.
         """
         if self._done:
             return data
-        if not isinstance(data, bytearray):
-            data = bytearray(data)
-        if id(data) == self._guid:
+        if self._uuid == data.uuid:
             return data
         return self(data)
 

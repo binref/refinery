@@ -120,6 +120,7 @@ import json
 import base64
 import itertools
 import zlib
+import uuid
 
 from typing import Generator, Iterable, BinaryIO, Callable, Optional, List, Dict, ByteString, Any
 from typing import TYPE_CHECKING
@@ -175,6 +176,7 @@ class Chunk(bytearray):
     """
     temp: Any = None
     meta: LazyMetaOracle
+    uuid: uuid.UUID
 
     def __init__(
         self,
@@ -190,6 +192,8 @@ class Chunk(bytearray):
             bytearray.__init__(self)
         else:
             bytearray.__init__(self, data)
+
+        self.uuid = uuid.uuid4()
 
         if path is None:
             path = []
@@ -219,10 +223,6 @@ class Chunk(bytearray):
         if isinstance(data, cls):
             return data
         return cls(data)
-
-    @property
-    def guid(self) -> int:
-        return hash((id(self), *(id(v) for v in self.meta.values())))
 
     def set_next_scope(self, visible: bool) -> None:
         self._fill_scope = visible
