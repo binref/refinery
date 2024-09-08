@@ -1412,7 +1412,7 @@ class Unit(UnitBase, abstract=True):
             if self.leniency >= 1:
                 return exception.partial
             if self.log_level < LogLevel.DETACHED:
-                self.log_warn(F'error, partial result returned: {exception}')
+                self.log_warn(F'A partial result was returned, use the -L switch to retrieve it: {exception}')
                 return None
             raise exception
         elif self.log_level >= LogLevel.DETACHED:

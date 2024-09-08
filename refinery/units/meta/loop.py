@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from refinery.units import RefineryPartialResult
 from refinery.units.pattern import Arg, RegexUnit
 from refinery.lib.argformats import regexp, DelayedBinaryArgument
 from refinery.lib.tools import exception_to_string
@@ -15,7 +16,9 @@ class loop(RegexUnit):
 
     Notably, the argument after the count is a suffix, which means that handlers are applied
     from left to right (not from right to left). The loop is aborted and the previous result
-    returned if an error occurs while evaluating the suffix, or when the output is empty.
+    returned if the newly computed result is empty. If the an error occurs while computing
+    the suffix and the unit is lenient (i.e. the `-L` switch is set), the last known result
+    is returned.
     """
 
     def __init__(
@@ -55,13 +58,14 @@ class loop(RegexUnit):
                 out = DelayedBinaryArgument(
                     self.args.suffix, reverse=True, seed=data)(data)
             except Exception as error:
-                msg = exception_to_string(error)
-                self.log_info(F'step {k:0{_width}}: stopping after error; {msg}')
-                break
+                self.log_info(F'step {k:0{_width}}: error;', exception_to_string(error))
+                msg = F'Stopped after {k} steps, increase verbosity for additional details.'
+                raise RefineryPartialResult(msg, data) from error
             if not out:
                 self.log_info(F'step {k:0{_width}}: stopping after empty result')
                 break
             data[:] = out
+            self.log_debug(F'step {k:0{_width}}: data =', data, clip=True)
 
         return data
 
