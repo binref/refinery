@@ -463,7 +463,7 @@ class Function(NamedTuple):
     def __repr__(self):
         if self.decl is None:
             return F'symbol {self.name}'
-        return self.reference()
+        return self.decl.represent(self.name)
 
 
 class Variable(NamedTuple):
