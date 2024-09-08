@@ -5,6 +5,14 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.2
+- The `loop` unit was enhanced with more options to abort execution based on regular expression patterns. It now also offers better control over terminating the execution when an error occurs.
+- Conditional units (`iff`/`iffp`/`iffx`/`iffs`) were reworked to have less magic behavior. The `-R` switch now controls boolean negation and a separate switch controls whether chunks are hidden instead of being discarded. The `-s` switch was also removed from conditional units.
+- The `cull` unit was removed from refinery.
+- The units `p1`, `p2`, and `p3` were added, which are shortcuts for picking the first 1, 2, or 3 chunks from a frame, respectively.
+- Regular expression arguments now have a new handler `f:`, which initializes the regular expression entirely from one of the formats used in `carve`.
+
+
 ## Version 0.7.1
 - The global `--iff` option was added to units; this allows you to apply the unit only to formats that it knows it can handle.
 - When using refinery in code, it is now possible to pipe a `Chunk` object directly to a pipeline.
