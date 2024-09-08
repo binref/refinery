@@ -10,13 +10,11 @@ class iffs(ConditionalUnit, extend_docs=True):
     def __init__(
         self,
         needle: Arg(help='the string to search for'),
-        negate=False,
-        single=False,
+        retain=False,
     ):
         super().__init__(
             needle=needle,
-            negate=negate,
-            single=single,
+            retain=retain,
         )
 
     def match(self, chunk):

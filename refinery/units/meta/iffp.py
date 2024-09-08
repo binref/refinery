@@ -19,11 +19,10 @@ class iffp(ConditionalUnit, extend_docs=True):
         self,
         *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS),
         partial: Arg.Switch('-p', help='Allow partial matches on the data.') = False,
-        negate=False, single=False
+        retain=False
     ):
         super().__init__(
-            negate=negate,
-            single=single,
+            retain=retain,
             patterns=patterns,
             partial=partial
         )

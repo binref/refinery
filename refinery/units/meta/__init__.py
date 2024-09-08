@@ -3,14 +3,9 @@
 """
 A package for units that operate primarily on frames of several of inputs.
 """
-from __future__ import annotations
+import abc
 
-from typing import Iterable, TYPE_CHECKING
-from abc import abstractmethod
-if TYPE_CHECKING:
-    from refinery.lib.frame import Chunk
-
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, Chunk
 
 
 class FrameSlicer(Unit, abstract=True):
@@ -24,34 +19,30 @@ class FrameSlicer(Unit, abstract=True):
 
 class ConditionalUnit(Unit, abstract=True):
     """
-    Conditional units can be used in two different ways. When a new frame opens after using this
-    unit, chunks that did not match the condition are moved out of scope for that frame but still
-    exist and will re-appear after the frame closes. When used inside a frame, however, the unit
-    works as a filter and will discard any chunks that do not match.
+    Note: The reverse operation of a conditional unit uses the logical negation of its condition.
     """
 
     def __init__(
-        self,
-        negate: Arg.Switch('-n', help='invert the logic of this filter; drop all matching chunks instead of keeping them') = False,
-        single: Arg.Switch('-s', help='discard all chunks after filtering a single one that matches the condition') = False,
+        self, retain: Arg.Switch('-r',
+            help='Move non-matching chunks out of scope rather than discarding them.') = False,
         **kwargs
     ):
-        super().__init__(negate=negate, single=single, **kwargs)
+        super().__init__(retain=retain, **kwargs)
 
-    @abstractmethod
+    @abc.abstractmethod
     def match(self, chunk) -> bool:
         ...
 
-    def filter(self, chunks: Iterable[Chunk]):
-        single: bool = self.args.single
-        negate: bool = self.args.negate
-        nested: bool = self.args.nesting > 0 or self.args.squeeze
-        for chunk in chunks:
-            skipped = chunk.visible and self.match(chunk) is negate
-            if skipped:
-                if not nested:
-                    continue
-                chunk.set_next_scope(False)
-            yield chunk
-            if single and not skipped:
-                break
+    def process(self, chunk: Chunk):
+        if not self.match(chunk):
+            if not self.args.retain:
+                return
+            chunk.visible = False
+        yield chunk
+
+    def reverse(self, chunk: Chunk):
+        if self.match(chunk):
+            if not self.args.retain:
+                return
+            chunk.visible = False
+        yield chunk

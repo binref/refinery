@@ -32,8 +32,7 @@ class iff(ConditionalUnit, extend_docs=True):
             help='check that the expression is contained in {varname}') = None,
         eq: Arg('-eq', '-e', type=str, metavar='RHS', group='OP',
             help='check that the expression is equal to {varname}') = None,
-        single=False,
-        negate=False,
+        retain=False,
     ):
         operators = [
             (ge, operator.__ge__),
@@ -64,8 +63,7 @@ class iff(ConditionalUnit, extend_docs=True):
             lhs=lhs,
             rhs=rhs,
             cmp=cmp,
-            negate=negate,
-            single=single,
+            retain=retain,
         )
 
     def match(self, chunk):
