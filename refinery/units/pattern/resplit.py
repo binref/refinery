@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.pattern import RegexUnit
+from refinery.units.pattern import SingleRegexUnit
 
 
-class resplit(RegexUnit):
+class resplit(SingleRegexUnit):
     """
     Splits the data at the given regular expression and returns the sequence of
     chunks between the separators. By default, the input is split along line breaks.

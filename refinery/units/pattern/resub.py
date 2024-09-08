@@ -3,10 +3,10 @@
 from typing import Match
 
 from refinery.lib.meta import metavars
-from refinery.units.pattern import Arg, RegexUnit
+from refinery.units.pattern import Arg, SingleRegexUnit
 
 
-class resub(RegexUnit):
+class resub(SingleRegexUnit):
     """
     A unit for performing substitutions based on a binary regular expression pattern. Besides the
     syntax `{k}` to insert the `k`-th match group, the unit supports processing the contents of

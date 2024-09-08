@@ -9,7 +9,7 @@ from typing import Iterable, Optional, Callable, Union, ByteString, Dict
 from itertools import islice
 from hashlib import blake2b
 
-from refinery.lib.types import INF, AST
+from refinery.lib.types import INF, AST, BufferOrStr
 from refinery.lib.argformats import regexp
 from refinery.units import Arg, Unit
 
@@ -145,22 +145,59 @@ class PatternExtractor(PatternExtractorBase, abstract=True):
 class RegexUnit(Unit, abstract=True):
 
     def __init__(
-        self, regex: Arg(type=regexp, help='Regular expression to match.'),
-        multiline: Arg.Switch('-M',
-            help='Caret and dollar match the beginning and end of a line, a dot does not match line breaks.') = False,
-        ignorecase: Arg.Switch('-I',
-            help='Ignore capitalization for alphabetic characters.') = False,
-        count: Arg.Number('-c', help='Specify the maximum number of operations to perform.') = 0,
+        self,
+        fullmatch: Arg.Switch('-U', help=(
+            'Regular expressions are matched against the full input, not substrings of it.')) = False,
+        multiline: Arg.Switch('-M', help=(
+            'Caret and dollar in regular expressions match the beginning and end of a line and '
+            'a dot does not match line breaks.')) = False,
+        ignorecase: Arg.Switch('-I', help=(
+            'Ignore capitalization for alphabetic characters in regular expressions.')) = False,
         **keywords
     ):
         flags = re.MULTILINE if multiline else re.DOTALL
         if ignorecase:
             flags |= re.IGNORECASE
-        super().__init__(regex=regex, flags=flags, count=count, **keywords)
+        super().__init__(flags=flags, fullmatch=fullmatch, **keywords)
+
+    def _make_matcher(self, pattern: Optional[BufferOrStr], default=None):
+        if pattern is None:
+            return default
+        if self.args.fullmatch:
+            return self._make_regex(pattern).fullmatch
+        else:
+            return self._make_regex(pattern).search
+
+    def _make_regex(self, pattern: Optional[BufferOrStr]):
+        if pattern is None:
+            return None
+        if isinstance(pattern, str):
+            pattern = pattern.encode(self.codec)
+        elif not isinstance(pattern, bytes):
+            pattern = bytes(pattern)
+        return re.compile(pattern, flags=self.args.flags)
+
+
+class SingleRegexUnit(RegexUnit, abstract=True):
+
+    def __init__(
+        self, regex: Arg(type=regexp, help='Regular expression to match.'),
+        count: Arg.Number('-c', help='Specify the maximum number of operations to perform.') = 0,
+        fullmatch=False, multiline=False, ignorecase=False, **keywords
+    ):
+        super().__init__(
+            regex=regex,
+            count=count,
+            fullmatch=fullmatch,
+            multiline=multiline,
+            ignorecase=ignorecase,
+            **keywords
+        )
 
     @property
     def regex(self):
-        flags = self.args.flags
-        regex = self.args.regex
-        regex = regex.encode(self.codec) if isinstance(regex, str) else bytes(regex)
-        return re.compile(regex, flags=flags)
+        return self._make_regex(self.args.regex)
+
+    @property
+    def matcher(self):
+        return self._make_matcher(self.args.regex)

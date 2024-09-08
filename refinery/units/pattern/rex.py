@@ -4,11 +4,11 @@ from typing import List, Match
 
 from refinery.lib.argformats import utf8
 from refinery.lib.meta import metavars
-from refinery.units.pattern import Arg, RegexUnit, PatternExtractor
+from refinery.units.pattern import Arg, SingleRegexUnit, PatternExtractor
 from refinery.units import Chunk
 
 
-class rex(RegexUnit, PatternExtractor):
+class rex(SingleRegexUnit, PatternExtractor):
     """
     Short for Regular Expression eXtractor: A binary grep which can apply a transformation to each
     match. Each match is an individual output. Besides the syntax `{k}` to insert the `k`-th match
