@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.3 - bugfix release
+
 ## Version 0.7.2
 - The `loop` unit was enhanced with more options to abort execution based on regular expression patterns. It now also offers better control over terminating the execution when an error occurs.
 - Conditional units (`iff`/`iffp`/`iffx`/`iffs`) were reworked to have less magic behavior. The `-R` switch now controls boolean negation and a separate switch controls whether chunks are hidden instead of being discarded. The `-s` switch was also removed from conditional units.
