@@ -143,7 +143,7 @@ class TestModesUsingRC2(TestUnitBase):
         key = b'refinery/testing'
         for mode in CIPHER_MODES:
             try:
-                E = -rc2(key, mode=mode, iv=B'refinery', raw=True)
+                E = -rc2(key, mode=mode, iv=B'refinery', raw=True, eks=128)
                 D = +jc2(key, mode=mode, iv=B'refinery', raw=True)
             except ValueError:
                 continue
@@ -156,7 +156,7 @@ class TestModesUsingRC2(TestUnitBase):
         for mode in CIPHER_MODES:
             try:
                 E = -jc2(key, mode=mode, iv=B'refinery', raw=True)
-                D = +rc2(key, mode=mode, iv=B'refinery', raw=True)
+                D = +rc2(key, mode=mode, iv=B'refinery', raw=True, eks=128)
             except ValueError:
                 continue
             M = self.generate_random_buffer(RC2.block_size * 20)
@@ -166,7 +166,7 @@ class TestModesUsingRC2(TestUnitBase):
     def test_ctr_mode(self):
         key = b'testing/refinery'
         E = -jc2(key, mode='ctr', iv=B'n0nc3', raw=True)
-        D = +rc2(key, mode='ctr', iv=B'n0nc3', raw=True)
+        D = +rc2(key, mode='ctr', iv=B'n0nc3', raw=True, eks=128)
         M = self.generate_random_buffer(RC2.block_size * 20)
         self.assertEqual(M, M | E | D | memoryview)
 
@@ -174,5 +174,5 @@ class TestModesUsingRC2(TestUnitBase):
         data = B'BeispielklartextBeispielklartext'
         key = B'Schokoladentorte'
         wish = bytes.fromhex('0969F22A 6E5BF195 E788759E 876521AF 0969F22A 6E5BF195 E788759E 876521AF')
-        self.assertEqual(bytes(data | -rc2(key, raw=True)), wish)
+        self.assertEqual(bytes(data | -rc2(key, raw=True, eks=128)), wish)
         self.assertEqual(bytes(wish | +jc2(key, raw=True)), data)
