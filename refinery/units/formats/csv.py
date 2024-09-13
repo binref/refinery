@@ -34,6 +34,19 @@ class csv(Unit):
         if not isinstance(table, list):
             raise ValueError('Input must be a JSON list.')
 
+        out = MemoryFile()
+
+        with io.TextIOWrapper(out, self.codec, newline='') as stream:
+            writer = _csv.writer(stream, quotechar=quote, delimiter=delim, skipinitialspace=True)
+            for row in table:
+                if not isinstance(row, list):
+                    break
+                if not all(isinstance(item, str) for item in row):
+                    break
+                writer.writerow(row)
+            else:
+                return out.getvalue()
+
         keys = {}
         # A dictionary is used here over a set because dictionaries remember insertion order.
         # When feeding the unit a sequence of JSON objects, the user would likely expect the
@@ -46,7 +59,7 @@ class csv(Unit):
                 keys[key] = None
 
         keys = list(keys)
-        out = MemoryFile()
+        out.truncate(0)
 
         with io.TextIOWrapper(out, self.codec, newline='') as stream:
             writer = _csv.writer(stream, quotechar=quote, delimiter=delim, skipinitialspace=True)
