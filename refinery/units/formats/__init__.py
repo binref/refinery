@@ -92,8 +92,10 @@ class PathExtractorUnit(Unit, abstract=True):
             'with it. This can be disabled using the --exact switch.')),
         list: Arg.Switch('-l',
             help='Return all matching paths as UTF8-encoded output chunks.') = False,
-        join_path: Arg.Switch('-j', group='PATH',
-            help='Join path names from container with previous path names.') = False,
+        join_path: Arg.Switch('-j', group='PATH', help=(
+            'Join path names with the previously existing one. If the previously existing path has '
+            'a file extension, it is removed. Then, if that path already exists on disk, a numeric '
+            'extension is appended to avoid conflict with the file system.')) = False,
         drop_path: Arg.Switch('-d', group='PATH',
             help='Do not modify the path variable for output chunks.') = False,
         fuzzy: Arg.Counts('-z', group='MATCH', help=(
@@ -160,6 +162,12 @@ class PathExtractorUnit(Unit, abstract=True):
         root = ''
         uuid = 0
 
+        def path_exists(p: str):
+            try:
+                return os.path.exists(p)
+            except Exception:
+                return False
+
         def get_data(result: UnpackResult):
             try:
                 data = result.get_data()
@@ -192,9 +200,16 @@ class PathExtractorUnit(Unit, abstract=True):
 
         if self.args.join:
             try:
-                root = ByteStringWrapper(meta[metavar], self.codec)
+                root = str(ByteStringWrapper(meta[metavar], self.codec))
             except KeyError:
                 pass
+            if path_exists(root):
+                root, _, rest = root.rpartition('.')
+                root = root or rest
+            _rr = root
+            _rk = 1
+            while path_exists(root):
+                root = F'{_rr}.{_rk}'
 
         for result in results:
             path = normalize(result.path)
