@@ -83,99 +83,99 @@ class NSMethod(str, enum.Enum):
 
 class Op(enum.IntEnum):
     INVALID_OPCODE     = 0              # noqa
-    RET                = enum.auto()    # noqa; Return
-    NOP                = enum.auto()    # noqa; Nop, Goto
-    ABORT              = enum.auto()    # noqa; Abort
-    QUIT               = enum.auto()    # noqa; Quit
-    CALL               = enum.auto()    # noqa; Call, InitPluginsDir
-    UPDATETEXT         = enum.auto()    # noqa; DetailPrint
-    SLEEP              = enum.auto()    # noqa; Sleep
-    BRINGTOFRONT       = enum.auto()    # noqa; BringToFront
-    CHDETAILSVIEW      = enum.auto()    # noqa; SetDetailsView
-    SETFILEATTRIBUTES  = enum.auto()    # noqa; SetFileAttributes
-    CREATEDIR          = enum.auto()    # noqa; CreateDirectory, SetOutPath
-    IFFILEEXISTS       = enum.auto()    # noqa; IfFileExists
-    SETFLAG            = enum.auto()    # noqa; SetRebootFlag, ...
-    IFFLAG             = enum.auto()    # noqa; IfAbort, IfSilent, IfErrors, IfRebootFlag
-    GETFLAG            = enum.auto()    # noqa; GetInstDirError, GetErrorLevel
-    RENAME             = enum.auto()    # noqa; Rename
-    GETFULLPATHNAME    = enum.auto()    # noqa; GetFullPathName
-    SEARCHPATH         = enum.auto()    # noqa; SearchPath
-    GETTEMPFILENAME    = enum.auto()    # noqa; GetTempFileName
-    EXTRACTFILE        = enum.auto()    # noqa; File
-    DELETEFILE         = enum.auto()    # noqa; Delete
-    MESSAGEBOX         = enum.auto()    # noqa; MessageBox
-    RMDIR              = enum.auto()    # noqa; RMDir
-    STRLEN             = enum.auto()    # noqa; StrLen
-    ASSIGNVAR          = enum.auto()    # noqa; StrCpy
-    STRCMP             = enum.auto()    # noqa; StrCmp
-    READENVSTR         = enum.auto()    # noqa; ReadEnvStr, ExpandEnvStrings
-    INTCMP             = enum.auto()    # noqa; IntCmp, IntCmpU
-    INTOP              = enum.auto()    # noqa; IntOp
-    INTFMT             = enum.auto()    # noqa; IntFmt/Int64Fmt
-    PUSHPOP            = enum.auto()    # noqa; Push/Pop/Exchange
-    FINDWINDOW         = enum.auto()    # noqa; FindWindow
-    SENDMESSAGE        = enum.auto()    # noqa; SendMessage
-    ISWINDOW           = enum.auto()    # noqa; IsWindow
-    GETDLGITEM         = enum.auto()    # noqa; GetDlgItem
-    SETCTLCOLORS       = enum.auto()    # noqa; SetCtlColors
-    SETBRANDINGIMAGE   = enum.auto()    # noqa; SetBrandingImage / LoadAndSetImage
-    CREATEFONT         = enum.auto()    # noqa; CreateFont
-    SHOWWINDOW         = enum.auto()    # noqa; ShowWindow, EnableWindow, HideWindow
-    SHELLEXEC          = enum.auto()    # noqa; ExecShell
-    EXECUTE            = enum.auto()    # noqa; Exec, ExecWait
-    GETFILETIME        = enum.auto()    # noqa; GetFileTime
-    GETDLLVERSION      = enum.auto()    # noqa; GetDLLVersion
-#   GETFONTVERSION     = enum.auto()    # noqa; Park : 2.46.2
-#   GETFONTNAME        = enum.auto()    # noqa; Park : 2.46.3
-    REGISTERDLL        = enum.auto()    # noqa; RegDLL, UnRegDLL, CallInstDLL
-    CREATESHORTCUT     = enum.auto()    # noqa; CreateShortCut
-    COPYFILES          = enum.auto()    # noqa; CopyFiles
-    REBOOT             = enum.auto()    # noqa; Reboot
-    WRITEINI           = enum.auto()    # noqa; WriteINIStr, DeleteINISec, DeleteINIStr, FlushINI
-    READINISTR         = enum.auto()    # noqa; ReadINIStr
-    DELREG             = enum.auto()    # noqa; DeleteRegValue, DeleteRegKey
-    WRITEREG           = enum.auto()    # noqa; WriteRegStr, WriteRegExpandStr, WriteRegBin, WriteRegDWORD
-    READREGSTR         = enum.auto()    # noqa; ReadRegStr, ReadRegDWORD
-    REGENUM            = enum.auto()    # noqa; EnumRegKey, EnumRegValue
-    FCLOSE             = enum.auto()    # noqa; FileClose
-    FOPEN              = enum.auto()    # noqa; FileOpen
-    FPUTS              = enum.auto()    # noqa; FileWrite, FileWriteByte
-    FGETS              = enum.auto()    # noqa; FileRead, FileReadByte
+    Ret                = enum.auto()    # noqa; Return
+    Nop                = enum.auto()    # noqa; Nop, Goto
+    Abort              = enum.auto()    # noqa; Abort
+    Quit               = enum.auto()    # noqa; Quit
+    Call               = enum.auto()    # noqa; Call, InitPluginsDir
+    UpdateText         = enum.auto()    # noqa; DetailPrint
+    Sleep              = enum.auto()    # noqa; Sleep
+    BringToFront       = enum.auto()    # noqa; BringToFront
+    SetDetailsView     = enum.auto()    # noqa; SetDetailsView
+    SetFileAttributes  = enum.auto()    # noqa; SetFileAttributes
+    CreateDirectory    = enum.auto()    # noqa; CreateDirectory, SetOutPath
+    IfFileExists       = enum.auto()    # noqa; IfFileExists
+    SetFlag            = enum.auto()    # noqa; SetRebootFlag, ...
+    IfFlag             = enum.auto()    # noqa; IfAbort, IfSilent, IfErrors, IfRebootFlag
+    GetFlag            = enum.auto()    # noqa; GetInstDirError, GetErrorLevel
+    Rename             = enum.auto()    # noqa; Rename
+    GetFullPathName    = enum.auto()    # noqa; GetFullPathName
+    SearchPath         = enum.auto()    # noqa; SearchPath
+    GetTempFileName    = enum.auto()    # noqa; GetTempFileName
+    ExtractFile        = enum.auto()    # noqa; File
+    DeleteFile         = enum.auto()    # noqa; Delete
+    MessageBox         = enum.auto()    # noqa; MessageBox
+    RmDir              = enum.auto()    # noqa; RMDir
+    StrLen             = enum.auto()    # noqa; StrLen
+    AssignVar          = enum.auto()    # noqa; StrCpy
+    StrCmp             = enum.auto()    # noqa; StrCmp
+    ReadEnvStr         = enum.auto()    # noqa; ReadEnvStr, ExpandEnvStrings
+    IntCmp             = enum.auto()    # noqa; IntCmp, IntCmpU
+    IntOp              = enum.auto()    # noqa; IntOp
+    IntFmt             = enum.auto()    # noqa; IntFmt/Int64Fmt
+    PushPop            = enum.auto()    # noqa; Push/Pop/Exchange
+    FindWindow         = enum.auto()    # noqa; FindWindow
+    SendMessage        = enum.auto()    # noqa; SendMessage
+    IsWindow           = enum.auto()    # noqa; IsWindow
+    GetDlgItem         = enum.auto()    # noqa; GetDlgItem
+    SetCtlColors       = enum.auto()    # noqa; SetCtlColors
+    SetBrandingImage   = enum.auto()    # noqa; SetBrandingImage / LoadAndSetImage
+    CreateFont         = enum.auto()    # noqa; CreateFont
+    ShowWindow         = enum.auto()    # noqa; ShowWindow, EnableWindow, HideWindow
+    ShellExec          = enum.auto()    # noqa; ExecShell
+    Execute            = enum.auto()    # noqa; Exec, ExecWait
+    GetFileTime        = enum.auto()    # noqa; GetFileTime
+    GetDLLVersion      = enum.auto()    # noqa; GetDLLVersion
+#   GetFontVersion     = enum.auto()    # noqa; Park : 2.46.2
+#   GetFontName        = enum.auto()    # noqa; Park : 2.46.3
+    RegisterDll        = enum.auto()    # noqa; RegDLL, UnRegDLL, CallInstDLL
+    CreateShortcut     = enum.auto()    # noqa; CreateShortcut
+    CopyFiles          = enum.auto()    # noqa; CopyFiles
+    Reboot             = enum.auto()    # noqa; Reboot
+    WriteINI           = enum.auto()    # noqa; WriteINIStr, DeleteINISec, DeleteINIStr, FlushINI
+    ReadINIStr         = enum.auto()    # noqa; ReadINIStr
+    DelReg             = enum.auto()    # noqa; DeleteRegValue, DeleteRegKey
+    WriteReg           = enum.auto()    # noqa; WriteRegStr, WriteRegExpandStr, WriteRegBin, WriteRegDWORD
+    ReadRegStr         = enum.auto()    # noqa; ReadRegStr, ReadRegDWORD
+    RegEnum            = enum.auto()    # noqa; EnumRegKey, EnumRegValue
+    FileClose          = enum.auto()    # noqa; FileClose
+    FileOpen           = enum.auto()    # noqa; FileOpen
+    FileWrite          = enum.auto()    # noqa; FileWrite, FileWriteByte
+    FileRead           = enum.auto()    # noqa; FileRead, FileReadByte
 #   Park:
-#   FPUTWS             = enum.auto()    # noqa; FileWriteUTF16LE, FileWriteWord
-#   FGETWS             = enum.auto()    # noqa; FileReadUTF16LE, FileReadWord
-    FSEEK              = enum.auto()    # noqa; FileSeek
-    FINDCLOSE          = enum.auto()    # noqa; FindClose
-    FINDNEXT           = enum.auto()    # noqa; FindNext
-    FINDFIRST          = enum.auto()    # noqa; FindFirst
-    WRITEUNINSTALLER   = enum.auto()    # noqa; WriteUninstaller
+#   FileWriteW         = enum.auto()    # noqa; FileWriteUTF16LE, FileWriteWord
+#   FileReadW          = enum.auto()    # noqa; FileReadUTF16LE, FileReadWord
+    FileSeek           = enum.auto()    # noqa; FileSeek
+    FindClose          = enum.auto()    # noqa; FindClose
+    FindNext           = enum.auto()    # noqa; FindNext
+    FindFirst          = enum.auto()    # noqa; FindFirst
+    WriteUninstaller   = enum.auto()    # noqa; WriteUninstaller
 #   Park : since 2.46.3 the log is enabled in main Park version
-#   LOG                = enum.auto()    # noqa; LogSet, LogText
-    SECTIONSET         = enum.auto()    # noqa; Get*, Set*
-    INSTTYPESET        = enum.auto()    # noqa; InstTypeSetText, InstTypeGetText, SetCurInstType, GetCurInstType
+#   Log                = enum.auto()    # noqa; LogSet, LogText
+    SectionSet         = enum.auto()    # noqa; Get*, Set*
+    InstTypeSet        = enum.auto()    # noqa; InstTypeSetText, InstTypeGetText, SetCurInstType, GetCurInstType
 #   Before NSIS v3.06: Instructions not actually implemented in exehead, but used in compiler.
 #   GETLABELADDR       = enum.auto()    # noqa; both of these get converted to ASSIGNVAR
 #   GETFUNCTIONADDR    = enum.auto()    # noqa
 #   In NSIS v3.06 and later it was changed to:
-    GETOSINFO          = enum.auto()    # noqa
-    RESERVEDOPCODE     = enum.auto()    # noqa
-    LOCKWINDOW         = enum.auto()    # noqa; LockWindow
+    GetOSInfo          = enum.auto()    # noqa
+    ReservedOpcode     = enum.auto()    # noqa
+    LockWindow         = enum.auto()    # noqa; LockWindow
 #   Two unicode commands available only in Unicode archive:
-    FPUTWS             = enum.auto()    # noqa; FileWriteUTF16LE, FileWriteWord
-    FGETWS             = enum.auto()    # noqa; FileReadUTF16LE, FileReadWord
+    FileWriteW         = enum.auto()    # noqa; FileWriteUTF16LE, FileWriteWord
+    FileReadW          = enum.auto()    # noqa; FileReadUTF16LE, FileReadWord
 #   Since NSIS v3.06 the fllowing IDs codes was moved here:
 #   Opcodes listed here are not actually used in exehead.
 #   No exehead opcodes should be present after these!
-#   GETLABELADDR       = enum.auto()    # noqa; ASSIGNVAR
-#   GETFUNCTIONADDR    = enum.auto()    # noqa; ASSIGNVAR
+#   GetLabelAddr       = enum.auto()    # noqa; ASSIGNVAR
+#   GetFunctionAddr    = enum.auto()    # noqa; ASSIGNVAR
 #   The following IDs are not IDs in real order.
 #   We just need some IDs to translate eny extended layout to main layout:
-    LOG                = enum.auto()    # noqa; LogSet, LogText
+    Log                = enum.auto()    # noqa; LogSet, LogText
 #   Park
-    FINDPROC           = enum.auto()    # noqa; FindProc
-    GETFONTVERSION     = enum.auto()    # noqa; GetFontVersion
-    GETFONTNAME        = enum.auto()    # noqa; GetFontName
+    FindProc           = enum.auto()    # noqa; FindProc
+    GetFontVersion     = enum.auto()    # noqa; GetFontVersion
+    GetFontName        = enum.auto()    # noqa; GetFontName
 
     @classmethod
     def FromInt(cls, value: int):
@@ -186,80 +186,80 @@ class Op(enum.IntEnum):
 
 
 _Op_PARAMETER_COUNT = {
-    Op.INVALID_OPCODE   : 0,
-    Op.RET              : 0,
-    Op.NOP              : 1,
-    Op.ABORT            : 1,
-    Op.QUIT             : 0,
-    Op.CALL             : 2,
-    Op.UPDATETEXT       : 6,
-    Op.SLEEP            : 1,
-    Op.BRINGTOFRONT     : 0,
-    Op.CHDETAILSVIEW    : 2,
-    Op.SETFILEATTRIBUTES: 2,
-    Op.CREATEDIR        : 3,
-    Op.IFFILEEXISTS     : 3,
-    Op.SETFLAG          : 3,
-    Op.IFFLAG           : 4,
-    Op.GETFLAG          : 2,
-    Op.RENAME           : 4,
-    Op.GETFULLPATHNAME  : 3,
-    Op.SEARCHPATH       : 2,
-    Op.GETTEMPFILENAME  : 2,
-    Op.EXTRACTFILE      : 6,
-    Op.DELETEFILE       : 2,
-    Op.MESSAGEBOX       : 6,
-    Op.RMDIR            : 2,
-    Op.STRLEN           : 2,
-    Op.ASSIGNVAR        : 4,
-    Op.STRCMP           : 5,
-    Op.READENVSTR       : 3,
-    Op.INTCMP           : 6,
-    Op.INTOP            : 4,
-    Op.INTFMT           : 4,
-    Op.PUSHPOP          : 6,
-    Op.FINDWINDOW       : 5,
-    Op.SENDMESSAGE      : 6,
-    Op.ISWINDOW         : 3,
-    Op.GETDLGITEM       : 3,
-    Op.SETCTLCOLORS     : 2,
-    Op.SETBRANDINGIMAGE : 4,
-    Op.CREATEFONT       : 5,
-    Op.SHOWWINDOW       : 4,
-    Op.SHELLEXEC        : 6,
-    Op.EXECUTE          : 3,
-    Op.GETFILETIME      : 3,
-    Op.GETDLLVERSION    : 4,
-    Op.REGISTERDLL      : 6,
-    Op.CREATESHORTCUT   : 6,
-    Op.COPYFILES        : 4,
-    Op.REBOOT           : 1,
-    Op.WRITEINI         : 5,
-    Op.READINISTR       : 4,
-    Op.DELREG           : 5,
-    Op.WRITEREG         : 6,
-    Op.READREGSTR       : 5,
-    Op.REGENUM          : 5,
-    Op.FCLOSE           : 1,
-    Op.FOPEN            : 4,
-    Op.FPUTS            : 3,
-    Op.FGETS            : 4,
-    Op.FSEEK            : 4,
-    Op.FINDCLOSE        : 1,
-    Op.FINDNEXT         : 2,
-    Op.FINDFIRST        : 3,
-    Op.WRITEUNINSTALLER : 4,
-    Op.SECTIONSET       : 5,
-    Op.INSTTYPESET      : 4,
-    Op.GETOSINFO        : 6,
-    Op.RESERVEDOPCODE   : 2,
-    Op.LOCKWINDOW       : 1,
-    Op.FPUTWS           : 4,
-    Op.FGETWS           : 4,
-    Op.LOG              : 2,
-    Op.FINDPROC         : 2,
-    Op.GETFONTVERSION   : 2,
-    Op.GETFONTNAME      : 2,
+    Op.INVALID_OPCODE    : 0,
+    Op.Ret               : 0,
+    Op.Nop               : 1,
+    Op.Abort             : 1,
+    Op.Quit              : 0,
+    Op.Call              : 2,
+    Op.UpdateText        : 6,
+    Op.Sleep             : 1,
+    Op.BringToFront      : 0,
+    Op.SetDetailsView    : 2,
+    Op.SetFileAttributes : 2,
+    Op.CreateDirectory   : 3,
+    Op.IfFileExists      : 3,
+    Op.SetFlag           : 3,
+    Op.IfFlag            : 4,
+    Op.GetFlag           : 2,
+    Op.Rename            : 4,
+    Op.GetFullPathName   : 3,
+    Op.SearchPath        : 2,
+    Op.GetTempFileName   : 2,
+    Op.ExtractFile       : 6,
+    Op.DeleteFile        : 2,
+    Op.MessageBox        : 6,
+    Op.RmDir             : 2,
+    Op.StrLen            : 2,
+    Op.AssignVar         : 4,
+    Op.StrCmp            : 5,
+    Op.ReadEnvStr        : 3,
+    Op.IntCmp            : 6,
+    Op.IntOp             : 4,
+    Op.IntFmt            : 4,
+    Op.PushPop           : 6,
+    Op.FindWindow        : 5,
+    Op.SendMessage       : 6,
+    Op.IsWindow          : 3,
+    Op.GetDlgItem        : 3,
+    Op.SetCtlColors      : 2,
+    Op.SetBrandingImage  : 4,
+    Op.CreateFont        : 5,
+    Op.ShowWindow        : 4,
+    Op.ShellExec         : 6,
+    Op.Execute           : 3,
+    Op.GetFileTime       : 3,
+    Op.GetDLLVersion     : 4,
+    Op.RegisterDll       : 6,
+    Op.CreateShortcut    : 6,
+    Op.CopyFiles         : 4,
+    Op.Reboot            : 1,
+    Op.WriteINI          : 5,
+    Op.ReadINIStr        : 4,
+    Op.DelReg            : 5,
+    Op.WriteReg          : 6,
+    Op.ReadRegStr        : 5,
+    Op.RegEnum           : 5,
+    Op.FileClose         : 1,
+    Op.FileOpen          : 4,
+    Op.FileWrite         : 3,
+    Op.FileRead          : 4,
+    Op.FileSeek          : 4,
+    Op.FindClose         : 1,
+    Op.FindNext          : 2,
+    Op.FindFirst         : 3,
+    Op.WriteUninstaller  : 4,
+    Op.SectionSet        : 5,
+    Op.InstTypeSet       : 4,
+    Op.GetOSInfo         : 6,
+    Op.ReservedOpcode    : 2,
+    Op.LockWindow        : 1,
+    Op.FileWriteW        : 4,
+    Op.FileReadW         : 4,
+    Op.Log               : 2,
+    Op.FindProc          : 2,
+    Op.GetFontVersion    : 2,
+    Op.GetFontName       : 2,
 }
 
 
@@ -758,34 +758,34 @@ class NSHeader(Struct):
         if self.type < NSType.Park1:
             if self._log_cmd_is_enabled:
                 return Op.FromInt(code)
-            if code < Op.SECTIONSET:
+            if code < Op.SectionSet:
                 return Op.FromInt(code)
-            if code is Op.SECTIONSET:
-                return Op.LOG
+            if code is Op.SectionSet:
+                return Op.Log
             return Op.FromInt(code - 1)
-        if code < Op.REGISTERDLL:
+        if code < Op.RegisterDll:
             return Op.FromInt(code)
         if self.type >= NSType.Park2:
-            if code == Op.REGISTERDLL:
-                return Op.GETFONTVERSION
+            if code == Op.RegisterDll:
+                return Op.GetFontVersion
             code -= 1
         if self.type >= NSType.Park3:
-            if code == Op.REGISTERDLL:
-                return Op.GETFONTNAME
+            if code == Op.RegisterDll:
+                return Op.GetFontName
             code -= 1
-        if code >= Op.FSEEK:
+        if code >= Op.FileSeek:
             if self.unicode:
-                if code == Op.FSEEK:
-                    return Op.FPUTWS
-                if code == Op.FSEEK + 1:
-                    return Op.FGETWS
+                if code == Op.FileSeek:
+                    return Op.FileWriteW
+                if code == Op.FileSeek + 1:
+                    return Op.FileReadW
                 code -= 2
-            if code >= Op.SECTIONSET and self._log_cmd_is_enabled:
-                if code == Op.SECTIONSET:
-                    return Op.LOG
+            if code >= Op.SectionSet and self._log_cmd_is_enabled:
+                if code == Op.SectionSet:
+                    return Op.Log
                 return Op.FromInt(code - 1)
-            if code == Op.FPUTWS:
-                return Op.FINDPROC
+            if code == Op.FileWriteW:
+                return Op.FindProc
         return Op.FromInt(code)
 
     def _find_bad_cmd(self):
@@ -798,15 +798,15 @@ class NSHeader(Struct):
             if cmd >= self._bad_cmd >= 0:
                 continue
             if self.type is NSType.Nsis3:
-                if cmd == Op.RESERVEDOPCODE:
+                if cmd == Op.ReservedOpcode:
                     self._bad_cmd = cmd
                     continue
             else:
-                if cmd == Op.RESERVEDOPCODE or cmd == Op.GETOSINFO:
+                if cmd == Op.ReservedOpcode or cmd == Op.GetOSInfo:
                     self._bad_cmd = cmd
                     continue
             u = max((k for k, a in enumerate(arg, 1) if a), default=0)
-            if cmd == Op.FINDPROC and u == 0:
+            if cmd == Op.FindProc and u == 0:
                 self._bad_cmd = cmd
                 continue
             if _Op_PARAMETER_COUNT[cmd] < u:
@@ -837,13 +837,13 @@ class NSHeader(Struct):
             for instruction in self.instructions:
                 cmd = self.opcode(instruction)
                 arg = instruction.arguments
-                if cmd is Op.GETDLGITEM:
+                if cmd is Op.GetDlgItem:
                     if self._is_var_str(arg[1], self.NS_HWNDPARENT_225):
                         self._is_nsis225 = True
                         if arg[0] == self.NS_OUTDIR_225:
                             self._is_nsis200 = True
                             break
-                if cmd is Op.ASSIGNVAR:
+                if cmd is Op.AssignVar:
                     if arg[0] == self.NS_OUTDIR_225 and arg[2] == 0 and arg[3] == 0:
                         self._is_nsis225 = self._is_var_str(arg[1], self.NS_OUTDIR)
         got_park_version = False
@@ -854,7 +854,7 @@ class NSHeader(Struct):
                 cmd = instruction.opcode
                 arg = instruction.arguments
                 alt = arg[3]
-                if cmd < Op.WRITEUNINSTALLER or cmd > Op.WRITEUNINSTALLER + IN:
+                if cmd < Op.WriteUninstaller or cmd > Op.WriteUninstaller + IN:
                     continue
                 if arg[4] != 0 or arg[5] != 0 or arg[0] <= 1 or alt <= 1:
                     continue
@@ -867,7 +867,7 @@ class NSHeader(Struct):
                 if index != self.NS_INSTDIR:
                     continue
                 if self._read_string_raw(alt + additional) == self._read_string_raw(arg[0]):
-                    inserts = cmd - Op.WRITEUNINSTALLER.value
+                    inserts = cmd - Op.WriteUninstaller.value
                     mask |= 1 << inserts
             if mask == 1:
                 got_park_version = True
@@ -884,24 +884,24 @@ class NSHeader(Struct):
                     got_park_version = True
                     self.type = nt
         self._find_bad_cmd()
-        if self._bad_cmd < Op.REGISTERDLL:
+        if self._bad_cmd < Op.RegisterDll:
             return
         if self.strong_park and not got_park_version:
-            if self._bad_cmd < Op.SECTIONSET:
+            if self._bad_cmd < Op.SectionSet:
                 self.type = NSType.Park3
                 self._log_cmd_is_enabled = True
                 self._find_bad_cmd()
-                if self._bad_cmd in range(Op.SECTIONSET):
+                if self._bad_cmd in range(Op.SectionSet):
                     self.type = NSType.Park2
                     self._log_cmd_is_enabled = False
                     self._find_bad_cmd()
-                    if self._bad_cmd in range(Op.SECTIONSET):
+                    if self._bad_cmd in range(Op.SectionSet):
                         self.type = NSType.Park1
                         self._find_bad_cmd()
-        if self._bad_cmd >= Op.SECTIONSET:
+        if self._bad_cmd >= Op.SectionSet:
             self._log_cmd_is_enabled = not self._log_cmd_is_enabled
             self._find_bad_cmd()
-            if self._bad_cmd >= Op.SECTIONSET and self._log_cmd_is_enabled:
+            if self._bad_cmd >= Op.SectionSet and self._log_cmd_is_enabled:
                 self._log_cmd_is_enabled = False
                 self._find_bad_cmd()
 
@@ -927,7 +927,7 @@ class NSHeader(Struct):
 
             if cmd is Op.INVALID_OPCODE:
                 continue
-            elif cmd is Op.CREATEDIR:
+            elif cmd is Op.CreateDirectory:
                 if not arg[1]:
                     continue
                 _path = arg[0]
@@ -940,12 +940,12 @@ class NSHeader(Struct):
                 elif index == self.NS_OUTDIR:
                     path = prefixes[-1] + path
                 prefixes.append(path)
-            elif cmd is Op.ASSIGNVAR:
+            elif cmd is Op.AssignVar:
                 if arg[0] != out_dir_index:
                     continue
                 if self._is_var_str(arg[1], self.NS_OUTDIR) and arg[2] == 0 and arg[3] == 0:
                     out_dir = prefixes[-1]
-            elif cmd is Op.EXTRACTFILE:
+            elif cmd is Op.ExtractFile:
                 def epoch(t: int):
                     return (t / 10000000 - 11644473600)
                 try:
@@ -960,28 +960,28 @@ class NSHeader(Struct):
                 cmd_back_offset = 28
                 if cmd_index > 1:
                     previous = self.instructions[cmd_index - 1]
-                    if self.opcode(previous) is Op.NOP:
+                    if self.opcode(previous) is Op.Nop:
                         cmd_back_offset -= 2
                 if cmd_index <= cmd_back_offset:
                     continue
                 previous = self.instructions[cmd_index - cmd_back_offset]
-                if self.opcode(previous) is Op.ASSIGNVAR:
+                if self.opcode(previous) is Op.AssignVar:
                     pa = previous.arguments
                     if pa[0] == 14 and pa[2] == 0 and pa[3] == 0:
                         setpath(pa[1])
-            elif cmd is Op.SETFILEATTRIBUTES:
+            elif cmd is Op.SetFileAttributes:
                 if cmd_index > 0:
                     previous = self.instructions[cmd_index - 1]
                     pa = previous.arguments
-                    if self.opcode(previous) is Op.EXTRACTFILE and arg[0] == pa[1]:
+                    if self.opcode(previous) is Op.ExtractFile and arg[0] == pa[1]:
                         item = items[-1]
                         item.attributes = arg[1]
-            elif cmd is Op.WRITEUNINSTALLER:
+            elif cmd is Op.WriteUninstaller:
                 if arg[4] or arg[5] or arg[0] <= 1 or arg[3] <= 1:
                     continue
                 if not self._is_good_string(arg[0]):
                     continue
-                if self._bad_cmd in range(Op.WRITEUNINSTALLER):
+                if self._bad_cmd in range(Op.WriteUninstaller):
                     continue
                 item = NSItem(arg[1])
                 setpath(arg[0])
