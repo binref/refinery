@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 from fnmatch import fnmatch
 
@@ -139,25 +141,25 @@ class Workbook:
         xlrd = 2
         pyxlsb2 = 3
 
-    def __init__(self, data):
+    def __init__(self, data, unit: _ExcelUnit):
         def openpyxl():
-            return _excel._openpyxl.load_workbook(MemoryFile(data), read_only=True)
+            return unit._openpyxl.load_workbook(MemoryFile(data), read_only=True)
 
         def pyxlsb2():
-            return _excel._pyxlsb2.open_workbook(MemoryFile(data))
+            return unit._pyxlsb2.open_workbook(MemoryFile(data))
 
         def xlrd():
             with io.StringIO() as logfile:
-                vb = max(self.log_level.verbosity - 1, 0)
-                wb = _excel._xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=vb, on_demand=True)
+                vb = max(unit.log_level.verbosity - 1, 0)
+                wb = unit._xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=vb, on_demand=True)
                 logfile.seek(0)
                 for entry in logfile:
                     entry = entry.strip()
                     if re.search(R'^[A-Z]+:', entry) or '***' in entry:
-                        self.log_info(entry)
+                        unit.log_info(entry)
                 return wb
 
-        last_error = None
+        exception = None
 
         for mode, loader in [
             (self._xlmode.openpyxl, openpyxl),
@@ -167,13 +169,14 @@ class Workbook:
             try:
                 self.workbook = loader()
             except Exception as e:
-                last_error = e
-                continue
-            self.mode = mode
-            break
+                exception = e
+            else:
+                self.mode = mode
+                exception = None
+                break
 
-        if last_error:
-            raise last_error
+        if exception:
+            raise exception
 
     def sheets(self):
         if self.mode is self._xlmode.openpyxl:
@@ -236,7 +239,7 @@ class Workbook:
         return data
 
 
-class _excel(Unit, abstract=True):
+class _ExcelUnit(Unit, abstract=True):
 
     @Unit.Requires('xlrd2', 'formats', 'office', 'extended')
     def _xlrd():
@@ -254,7 +257,7 @@ class _excel(Unit, abstract=True):
         return pyxlsb2
 
 
-class xlxtr(_excel):
+class xlxtr(_ExcelUnit):
     """
     Extract data from Microsoft Excel documents, both Legacy and new XML type documents. A sheet
     reference is of the form `B1` or `1.2`, both specifying the first cell of the second column.
@@ -273,7 +276,7 @@ class xlxtr(_excel):
         super().__init__(references=references)
 
     def process(self, data):
-        wb = Workbook(data)
+        wb = Workbook(data, self)
         for ref in self.args.references:
             ref: SheetReference
             for k, name in enumerate(wb.sheets()):
