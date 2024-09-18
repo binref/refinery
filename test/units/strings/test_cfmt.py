@@ -36,3 +36,6 @@ class TestFormatter(TestUnitBase):
     def test_escaped_formats(self):
         for u, g in [(False, 'Y\\nX'), (True, 'Y\nX')]:
             self.assertEqual(B'X' | self.load(r'Y\n{}', unescape=u) | str, g)
+
+    def test_formatting_something_that_is_also_a_handler(self):
+        self.assertEqual(B'access.h' | self.load('{:px}') | str, 'h')

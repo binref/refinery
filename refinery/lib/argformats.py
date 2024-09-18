@@ -1323,6 +1323,8 @@ class DelayedNumSeqArgument(DelayedArgument):
         value = super().__call__(data)
         if isbuffer(value):
             return value
+        if isinstance(value, str):
+            return value.encode()
         if hasattr(value, '__iter__'):
             try:
                 if len(value) == 1:
