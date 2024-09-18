@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 import re
 import os
+import os.path
+import sys
 
 from pathlib import Path
 from datetime import datetime
@@ -9,6 +11,7 @@ from typing import Iterable
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import exception_to_string
 from refinery.units import Arg, Unit
 
 
@@ -38,6 +41,7 @@ class ef(Unit):
         )) = 0,
         wild: Arg.Switch('-w', group='W', help='Force use of wildcard patterns in file masks.') = False,
         tame: Arg.Switch('-t', group='W', help='Disable wildcard patterns in file masks.') = False,
+        symlinks: Arg.Switch('-y', help='Follow symbolic links and junctions, these are ignored by default.') = False,
         linewise: Arg.Switch('-i', help=(
             'Read the file linewise. By default, one line is read at a time. '
             'In line mode, the --size argument can be used to read the given '
@@ -52,6 +56,7 @@ class ef(Unit):
             meta=meta,
             wild=wild,
             tame=tame,
+            symlinks=symlinks,
             linewise=linewise,
             filenames=filenames
         )
@@ -109,8 +114,52 @@ class ef(Unit):
             # /base/something.*
             pattern = F'{last}{pattern}'
             path = path.parent
-        for match in path.glob(pattern):
-            yield match
+
+        scandir = os.scandir
+
+        class EmptyIterator:
+            def __enter__(self): return self
+            def __exit__(self, *_, **__): pass
+            def __next__(self): raise StopIteration
+            def __iter__(self): return self
+
+        if sys.version_info >= (3, 12):
+            def islink(path):
+                return os.path.islink(path) or os.path.isjunction(path)
+        else:
+            def islink(path):
+                try:
+                    return bool(os.readlink(path))
+                except OSError:
+                    return False
+
+        paths_scanned = set()
+
+        def _patched_scandir(path):
+            if islink(path):
+                if not self.args.symlinks:
+                    return EmptyIterator()
+                try:
+                    rp = os.path.realpath(path, strict=True)
+                except OSError:
+                    return EmptyIterator()
+                if rp in paths_scanned:
+                    self.log_warn(F'file system loop at: {path!s}')
+                    return EmptyIterator()
+                paths_scanned.add(rp)
+                path = rp
+            try:
+                return scandir(path)
+            except Exception as e:
+                self.log_warn('error calling scandir:', exception_to_string(e))
+                return EmptyIterator()
+
+        try:
+            os.scandir = _patched_scandir
+            for match in path.glob(pattern):
+                yield match
+        finally:
+            os.scandir = scandir
 
     def process(self, data):
         meta = metavars(data)
