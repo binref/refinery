@@ -7,7 +7,7 @@ import sys
 
 from pathlib import Path
 from datetime import datetime
-from typing import Iterable
+from typing import Iterable, Dict, Set, Optional
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
@@ -168,37 +168,72 @@ class ef(Unit):
         root = self._absolute_path('.')
         paths = self._glob if wild else lambda mask: [self._absolute_path(mask)]
 
+        class SkipErrors:
+            unit = self
+
+            def __init__(self):
+                self._history: Set[type] = set()
+                self._message: Dict[type, Optional[str]] = {
+                    ValueError: (
+                        None
+                    ), PermissionError: (
+                        'access error while scanning: {}'
+                    ), OSError: (
+                        'system error while scanning: {}'
+                    ), FileNotFoundError: (
+                        'file unexpectedly not found: {}'
+                    ), Exception: (
+                        'unknown error while reading: {}'
+                    ),
+                }
+                self.path = None
+
+            def reset(self, path):
+                self._history.clear()
+                self.path = path
+                return self
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, et, ev, trace):
+                if et is None:
+                    return False
+                for t, msg in self._message.items():
+                    if issubclass(et, t):
+                        if t not in self._history:
+                            self._history.add(t)
+                            if msg is not None:
+                                self.unit.log_info(msg.format(self.path))
+                        return True
+                else:
+                    return False
+
         for mask in self.args.filenames:
             mask = meta.format_str(mask, self.codec, [data])
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
+            skip_errors = SkipErrors()
             for path in paths(mask):
-                try:
+                skip_errors.reset(path)
+                with skip_errors:
                     path = path.relative_to(root)
-                except ValueError:
-                    pass
-                if wild:
-                    try:
-                        if not path.is_file():
-                            continue
-                    except Exception:
-                        self.log_info(F'access error while scanning: {path!s}')
+                with skip_errors:
+                    if wild and not path.is_file():
                         continue
-                if self.args.meta:
-                    stat = path.stat()
-                    kwargs.update(
-                        size=stat.st_size,
-                        atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
-                        ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
-                        mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds')
-                    )
-                if self.args.list:
-                    try:
+                with skip_errors:
+                    if self.args.meta:
+                        stat = path.stat()
+                        kwargs.update(
+                            size=stat.st_size,
+                            atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
+                            ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
+                            mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds')
+                        )
+                with skip_errors:
+                    if self.args.list:
                         yield self.labelled(str(path).encode(self.codec), **kwargs)
-                    except OSError:
-                        self.log_warn(F'os error while scanning: {path!s}')
-                    continue
-                try:
+                        continue
                     with path.open('rb') as stream:
                         if self.args.linewise:
                             yield from self._read_lines(stream)
@@ -208,9 +243,3 @@ class ef(Unit):
                             data = stream.read()
                             self.log_info(lambda: F'reading: {path!s} ({len(data)} bytes)')
                             yield self.labelled(data, path=path.as_posix(), **kwargs)
-                except PermissionError:
-                    self.log_warn('permission denied:', path.as_posix())
-                except FileNotFoundError:
-                    self.log_warn('file is missing:', path.as_posix())
-                except Exception:
-                    self.log_warn('unknown error while reading:', path.as_posix())
