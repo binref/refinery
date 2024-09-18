@@ -357,6 +357,8 @@ class xtmsi(xtdoc):
             media_info: List[JSONDict] = processed_table_data.get('Media', [])
             cabs: Dict[str, UnpackResult] = {
                 path: item for path, item in streams.items() if _iscab(path)}
+            for cab in cabs:
+                self.log_info(F'found cab file: {cab}')
         if cabs:
             from refinery.units.formats.archive.xtcab import xtcab
             file_names: Dict[str, JSONDict] = {}
@@ -374,7 +376,8 @@ class xtmsi(xtdoc):
             for path, cab in cabs.items():
                 try:
                     unpacked: List[UnpackResult] = list(xtcab().unpack(cab.get_data()))
-                except Exception:
+                except Exception as e:
+                    self.log_info(F'unable to extract embedded cab file: {e!s}')
                     continue
                 base, dot, ext = path.rpartition('.')
                 if dot == '.' and ext.lower() == 'cab':
