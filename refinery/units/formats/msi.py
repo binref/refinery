@@ -162,7 +162,7 @@ class xtmsi(xtdoc):
     def __init__(
             self, *paths,
             list=False, path=b'path', join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-            nocab: Arg.Switch('-N', help='Do not list and extract embedded CAB archives.') = False,
+            nocab: Arg.Switch('-N', help='Do not list and extract embedded CAB archives.') = False, **kw,
     ):
         super().__init__(
             *paths,
@@ -174,6 +174,7 @@ class xtmsi(xtdoc):
             fuzzy=fuzzy,
             exact=exact,
             regex=regex,
+            **kw,
         )
 
     def unpack(self, data):
