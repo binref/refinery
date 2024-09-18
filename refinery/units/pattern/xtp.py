@@ -100,6 +100,7 @@ class xtp(PatternExtractor):
         self.args.filter = filter
 
     _ALPHABETIC = ascii_letters.encode('ASCII')
+
     _LEGITIMATE_HOSTS = {
         'acm.org'                 : 1,
         'adobe.com'               : 1,
@@ -143,6 +144,7 @@ class xtp(PatternExtractor):
         'office365.com'           : 2,
         'openssl.org'             : 1,
         'openxmlformats.org'      : 1,
+        'oracle.com'              : 1,
         'purl.org'                : 1,
         'python.org'              : 1,
         'schema.org'              : 2,
@@ -150,6 +152,7 @@ class xtp(PatternExtractor):
         'skype.com'               : 1,
         'sourceforge.net'         : 4,
         'stackoverflow.com'       : 1,
+        'sun.com'                 : 1,
         'sway-cdn.com'            : 1,
         'sway-extensions.com'     : 1,
         'symantec.com'            : 1,
@@ -157,6 +160,7 @@ class xtp(PatternExtractor):
         'symcb.com'               : 1,
         'symcd.com'               : 1,
         'thawte.com'              : 1,
+        'unicode.org'             : 2,
         'usertrust.com'           : 1,
         'verisign.com'            : 1,
         'w3.org'                  : 1,
@@ -166,6 +170,22 @@ class xtp(PatternExtractor):
         'xmlsoap.org'             : 1,
         'yahoo.com'               : 1,
     }
+
+    for _ext in [
+        'build',
+        'data',
+        'do',
+        'help',
+        'java',
+        'md',
+        'mov',
+        'name',
+        'py',
+        'so',
+        'sys',
+        'zip',
+    ]:
+        _LEGITIMATE_HOSTS[_ext] = 4
 
     _DOMAIN_WHITELIST = [
         'system.net',
