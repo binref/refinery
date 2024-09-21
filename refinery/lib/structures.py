@@ -80,6 +80,69 @@ class StreamDetour(Generic[R]):
         self.stream.seek(self.cursor, io.SEEK_SET)
 
 
+class MemoryFileRO(io.BytesIO):
+    @property
+    def raw(self):
+        return self
+
+    def __init__(self, initial_bytes: bytes = ..., fileno: Optional[int] = None) -> None:
+        super().__init__(initial_bytes)
+        self._fileno = fileno
+
+    def readall(self):
+        return self.read()
+
+    def isatty(self) -> bool:
+        return False
+
+    def fileno(self) -> int:
+        if self._fileno is None:
+            raise OSError
+        return self._fileno
+
+    @property
+    def eof(self) -> bool:
+        return self.tell() >= len(self.getbuffer())
+
+    @property
+    def remaining_bytes(self) -> int:
+        return len(self.getbuffer()) - self.tell()
+
+    def peek(self, size: int = -1) -> memoryview:
+        cursor = self.tell()
+        buffer = self.getbuffer()
+        if size is None or size < 0:
+            return buffer[cursor:]
+        return buffer[cursor:cursor + size]
+
+    def seekrel(self, offset: int) -> int:
+        return self.seek(offset, io.SEEK_CUR)
+
+    def seekset(self, offset: int) -> int:
+        if offset < 0:
+            return self.seek(offset, io.SEEK_END)
+        else:
+            return self.seek(offset, io.SEEK_SET)
+
+    def write_byte(self, byte: int) -> None:
+        self.write(bytes((byte,)))
+
+    def getbuffer(self) -> memoryview:
+        return super().getbuffer()
+
+    def replay(self, offset: int, length: int):
+        cursor = self.tell()
+        buffer = self.getbuffer()
+        if offset not in range(cursor + 1):
+            raise ValueError(F'The supplied delta {offset} is not in the valid range [0,{cursor}].')
+        rep, r = divmod(length, offset)
+        offset = -offset - len(self) + cursor
+        replay = buffer[offset:offset + r]
+        if rep > 0:
+            replay = bytes(buffer[offset:cursor]) * rep + replay
+        self.write(replay)
+
+
 class MemoryFileMethods(Generic[T]):
     """
     A thin wrapper around (potentially mutable) byte sequences which gives it the features of a
