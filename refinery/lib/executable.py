@@ -674,7 +674,7 @@ class ExecutableELF(Executable):
 
     @lru_cache(maxsize=1)
     def image_defined_base(self) -> int:
-        return min(self._pt_load())
+        return min(self._pt_load(), default=0)
 
     @lru_cache(maxsize=1)
     def _pt_load(self):
