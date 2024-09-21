@@ -159,6 +159,7 @@ class xtp(PatternExtractor):
         'symauth.com'             : 1,
         'symcb.com'               : 1,
         'symcd.com'               : 1,
+        'sysinternals.com'        : 3,
         'thawte.com'              : 1,
         'unicode.org'             : 2,
         'usertrust.com'           : 1,
