@@ -29,3 +29,24 @@ class TestPEResourceExtractor(TestUnitBase):
         result = data | unit | bytearray
         result = result[12:44]
         self.assertEqual(result, 'Binary Refinery!'.encode('UTF-16LE'))
+
+    def test_pretty_icon_extraction_01(self):
+        data = self.download_sample('e58d7a6fe9d80d757458a5ebc7c8bddd345b355c2bce06fd86d083b5d0ee8384')
+        prefix = bytes.fromhex('00 00 01 00 01 00 20 20 10 00 01 00 04 00 E8 02 00 00 16 00 00 00')
+        t1 = next(data | self.load('ICON', pretty=True))
+        t2 = next(data | self.load('ICON', pretty=False))
+        self.assertEqual(prefix + t2, t1)
+
+    def test_pretty_icon_extraction_02(self):
+        data = self.download_sample('d68f0ed81b6a19f566af1c00daae4a595533a743671dc9d23303b5b81cd90006')
+        prefix = bytes.fromhex('00 00 01 00 01 00 10 10 00 00 01 00 20 00 68 04 00 00 16 00 00 00')
+        t1 = next(data | self.load('ICON/1', pretty=True))
+        t2 = next(data | self.load('ICON/1', pretty=False))
+        self.assertEqual(prefix + t2, t1)
+
+    def test_pretty_bitmap_extraction(self):
+        data = self.download_sample('d68f0ed81b6a19f566af1c00daae4a595533a743671dc9d23303b5b81cd90006')
+        prefix = bytes.fromhex('42 4D 2E 42 01 00 00 00 00 00 36 00 00 00')
+        t1 = next(data | self.load('BITMAP/103', pretty=True))
+        t2 = next(data | self.load('BITMAP/103', pretty=False))
+        self.assertEqual(prefix + t2, t1)
