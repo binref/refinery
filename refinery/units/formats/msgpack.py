@@ -19,11 +19,6 @@ class msgpack(Unit):
         while True:
             try:
                 item = unpacker.unpack()
-            except mp.exceptions.OutOfData:
-                position = unpacker.tell()
-                if position < len(data):
-                    self.log_warn("oops")
-                break
             except Exception as E:
                 position = unpacker.tell()
                 if not position:
