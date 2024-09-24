@@ -97,7 +97,7 @@ class hexload(HexViewer):
             decoded_line = bytes.fromhex(encoded_line)
             decoded_bytes.extend(decoded_line)
             txt = line[end:]
-            txt_stripped = txt.strip()
+            txt_stripped = re.sub('\\s+', '', txt)
             if not txt_stripped:
                 continue
             if len(decoded_line) not in range(len(txt_stripped), len(txt) + 1):
