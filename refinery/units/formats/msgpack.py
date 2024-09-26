@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import itertools
 import json
 import msgpack as mp
 
@@ -15,15 +16,14 @@ class msgpack(Unit):
         return mp.dumps(json.loads(data))
 
     def process(self, data):
-        unpacker = mp.Unpacker(MemoryFile(data, read_as_bytes=True))
-        while True:
+        unpacker: mp.fallback.Unpacker = mp.Unpacker(MemoryFile(data, read_as_bytes=True))
+        for k in itertools.count():
             try:
+                last = unpacker.tell()
                 item = unpacker.unpack()
             except Exception as E:
-                position = unpacker.tell()
-                if not position:
-                    raise
-                view = memoryview(data)
-                raise RefineryPartialResult(str(E), view[position:])
+                if isinstance(E, mp.OutOfData) and k == 1:
+                    break
+                raise RefineryPartialResult(str(E), memoryview(data)[last:]) from E
             else:
                 yield json.dumps(item).encode(self.codec)
