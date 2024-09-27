@@ -26,6 +26,9 @@ class xkey(Unit):
 
         n = len(data)
 
+        if n <= 1:
+            return data
+
         start = bounds.start or 1
         stop = min(bounds.stop or n, n)
 
@@ -38,7 +41,7 @@ class xkey(Unit):
 
         self.log_debug(F'received input range [{bounds.start}:{bounds.stop}:{bounds.step}], using [{start}:{stop}:{step}]')
 
-        for _count in range(start, stop, step):
+        for _count in range(start, stop + 1, step):
             _guess = [Counter(data[j::_count]).most_common(1)[0] for j in range(_count)]
             _score = sum(letter_count for _, letter_count in _guess) / n
 

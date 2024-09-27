@@ -17,7 +17,7 @@ class autoxor(xkey):
         key = super().process(data)
         bin, = data | xor(key)
         txt, = bin | xor(0x20)
-        if re.fullmatch(BR'[\s!-~]+', txt):
+        if re.fullmatch(BR'[\s!-~]+', txt) and not txt.isspace():
             key = bytes(key | xor(0x20))
             bin = txt
         return self.labelled(bin, key=key)
