@@ -310,50 +310,53 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         root: XMLNodeBase
     ) -> Callable[[XMLNodeBase, Optional[int]], str]:
 
-        path_attributes = Counter()
-
-        def walk(node: XMLNodeBase):
-            total = 1
-            for key, val in node.attributes.items():
-                if re.fullmatch(R'[-\s\w+,.;@(){}]{1,64}', self._normalize_val(val)):
-                    path_attributes[key] += 1
-            for child in node.children:
-                total += walk(child)
-            return total
-
-        total = walk(root)
-
-        if not path_attributes:
-            path_attribute = None
-            count = 0
-        else:
-            path_attribute, count = path_attributes.most_common(1)[0]
-            if 3 * count <= 2 * total:
-                path_attribute = None
-
+        nfmt = self.args.format
         nkey = self._normalize_key
         nval = self._normalize_val
-        node_format = self.args.format
+        nmap = {}
 
-        def path_builder(node: XMLNodeBase, index: Optional[int] = None) -> str:
+        if nfmt is None:
+            def rank_attribute(attribute: str):
+                length = len(attribute)
+                scount = length - len(re.sub(r'\s+', '', attribute))
+                return (1 / length, scount)
+
+            def walk(node: XMLNodeBase):
+                candidates = [
+                    candidate for candidate, count in Counter(
+                        key
+                        for child in node.children
+                        for key, val in child.attributes.items()
+                        if re.fullmatch(R'[-\s\w+,.;@(){}]{2,64}', nval(val))
+                    ).items()
+                    if count == len(node.children)
+                ]
+                if not candidates:
+                    attr = None
+                else:
+                    candidates.sort(key=rank_attribute)
+                    attr = candidates[0]
+                for child in node.children:
+                    nmap[child.path] = attr
+                    walk(child)
+
+            walk(root)
+
+        def path_builder(node: XMLNodeBase) -> str:
             attrs = node.attributes
-            if node_format and meta:
+            if nfmt and meta is not None:
                 try:
-                    return meta.format_str(
-                        node_format,
-                        self.codec,
-                        node.tag, **{
-                            nkey(key): nval(val)
-                            for key, val in attrs.items()
-                        }
-                    )
+                    symbols = {nkey(key): nval(val) for key, val in attrs.items()}
+                    return meta.format_str(nfmt, self.codec, node.tag, symbols)
                 except KeyError:
                     pass
-            if path_attribute is not None and path_attribute in attrs:
-                return nval(attrs[path_attribute])
-            out = nval(node.tag)
-            if index is not None:
-                out = F'{out}/{index}'
-            return out
+            try:
+                return nval(attrs[nmap[node.path]])
+            except KeyError:
+                index = node.index
+                name = nval(node.tag)
+                if index is not None:
+                    name = F'{name}/{index}'
+                return name
 
         return path_builder
