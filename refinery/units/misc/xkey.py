@@ -22,12 +22,12 @@ class xkey(Unit):
         score = 0
         guess = None
         bounds: slice = self.args.range
-        data = memoryview(data)
+        view = memoryview(data)
 
-        n = len(data)
+        n = len(view)
 
         if n <= 1:
-            return data
+            return view
 
         start = bounds.start or 1
         stop = min(bounds.stop or n, n)
@@ -42,14 +42,12 @@ class xkey(Unit):
         self.log_debug(F'received input range [{bounds.start}:{bounds.stop}:{bounds.step}], using [{start}:{stop}:{step}]')
 
         for _count in range(start, stop + 1, step):
-            _guess = [Counter(data[j::_count]).most_common(1)[0] for j in range(_count)]
+            _guess = [Counter(view[j::_count]).most_common(1)[0] for j in range(_count)]
             _score = sum(letter_count for _, letter_count in _guess) / n
 
-            # This scaling accounts for the smaller probability of larger keys. The scaling power is arbitrary and has
-            # been chosen as 5 based on in-the-wild examples. For illustration, consider that a key of length equal to
-            # the input can be chosen such that the input is annihilated entirely, so that would always yield the best
-            # score. However, we are looking for an annihilating sequence of relatively small length.
-            _score = _score * ((n - _count) / (n - 1)) ** 5
+            # This scaling accounts for the smaller probability of larger keys. No proper statistical analysis has been
+            # conducted to derive it; there might be plenty of room for improvement here.
+            _score = _score * ((n - _count) / (n - 1)) ** _count
 
             logmsg = F'got score {_score * 100:5.2f}% for length {_count}'
             if _score > score:

@@ -3,7 +3,7 @@
 from .. import TestUnitBase
 
 
-class TestXKey(TestUnitBase):
+class TestAutoXOR(TestUnitBase):
 
     def test_real_world_01(self):
         from refinery import iff, hex, autoxor, vbastr
