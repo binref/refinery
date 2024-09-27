@@ -54,10 +54,18 @@ class VirtualFile:
         Emulate the result of an `mmap` call to the virtual file.
         """
         view = memoryview(self.data)
+        node = self.node
         if length:
             view = view[offset:offset + length]
-        fd = MemoryFile(view, read_as_bytes=True, fileno=self.node)
-        return fd
+
+        class _MappedView(bytearray, MemoryFile):
+            def __init__(self):
+                MemoryFile.__init__(self, self, True, node)
+
+        mapped = _MappedView()
+        mapped[:] = view
+
+        return mapped
 
     def open(self, mode: str) -> MemoryFile:
         """

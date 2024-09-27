@@ -65,7 +65,7 @@ class StreamDetour:
         self.stream.seek(self.cursor, io.SEEK_SET)
 
 
-class MemoryFile(Generic[T], io.IOBase):
+class MemoryFile(Generic[T]):
     """
     A thin wrapper around (potentially mutable) byte sequences which gives it the
     features of a file-like object.
