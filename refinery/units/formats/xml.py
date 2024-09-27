@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from collections import Counter
-
 from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import metavars
 from refinery.lib import xml

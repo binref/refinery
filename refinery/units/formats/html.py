@@ -6,9 +6,7 @@ from refinery.lib.xml import XMLNodeBase
 from refinery.lib.meta import metavars
 from refinery.units.formats import XMLToPathExtractorUnit, UnpackResult, Arg
 
-import io
-
-from collections import Counter
+from io import StringIO
 from html.parser import HTMLParser
 
 _HTML_DATA_ROOT_TAG = 'html'
@@ -27,7 +25,7 @@ class HTMLNode(XMLNodeBase):
         return self.tag == _HTML_DATA_ROOT_TAG
 
     def recover(self, inner=True) -> str:
-        with io.StringIO() as stream:
+        with StringIO() as stream:
             if not inner:
                 stream.write(self.content)
             for child in self.children:
@@ -64,7 +62,7 @@ class HTMLTreeParser(HTMLParser):
     def handle_starttag(self, tag: str, attributes):
         if tag in self._SELF_CLOSING_TAGS:
             return
-        node = HTMLNode(tag, self.tos, self.get_starttag_text(), attributes={
+        node = HTMLNode(tag, None, self.tos, self.get_starttag_text(), attributes={
             key: value for key, value in attributes if key and value})
         children = self.tos.children
         previous = children[-1] if children else None
@@ -92,7 +90,7 @@ class HTMLTreeParser(HTMLParser):
             if last.textual:
                 last.content += ntt
                 return
-        self.tos.children.append(HTMLNode(None, self.tos, ntt))
+        self.tos.children.append(HTMLNode(None, None, self.tos, ntt))
 
     def handle_charref(self, name: str) -> None:
         self.handle_entityref(F'#{name}')
@@ -113,7 +111,7 @@ class HTMLTreeParser(HTMLParser):
         self.tos = cursor.parent
 
     def handle_data(self, data):
-        self.tos.children.append(HTMLNode(None, self.tos, data))
+        self.tos.children.append(HTMLNode(None, None, self.tos, data))
 
 
 class xthtml(XMLToPathExtractorUnit):
@@ -133,6 +131,8 @@ class xthtml(XMLToPathExtractorUnit):
         html = HTMLTreeParser()
         html.feed(data.decode(self.codec))
         root = html.tos
+        root.reindex()
+
         meta = metavars(data)
         path = self._make_path_builder(meta, root)
 
@@ -140,8 +140,11 @@ class xthtml(XMLToPathExtractorUnit):
             self.log_info(F'tag was not closed: {root.tag}')
             root = root.parent
 
-        while len(root.children) == 1 and root.children[0].tag == root.tag:
-            root, = root.children
+        while len(root.children) == 1:
+            child, = root.children
+            if child.tag != root.tag:
+                break
+            root = child
 
         def tree(root: HTMLNode, *parts: str):
 
@@ -164,22 +167,10 @@ class xthtml(XMLToPathExtractorUnit):
             else:
                 yield UnpackResult(tagpath, inner, **meta)
 
-            tag_pre_count = Counter()
-            tag_run_count = Counter()
             for child in root.children:
                 if child.textual:
                     continue
-                tag_pre_count[child.tag] += 1
-
-            for child in root.children:
-                if child.textual:
-                    continue
-                if tag_pre_count[child.tag] == 1:
-                    yield from tree(child, *parts, path(child))
-                    continue
-                tag_run_count[child.tag] += 1
-                index = tag_run_count[child.tag]
-                yield from tree(child, *parts, path(child, index))
+                yield from tree(child, *parts, path(child))
 
         yield from tree(root, path(root))
 
