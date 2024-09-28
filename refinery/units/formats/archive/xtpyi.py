@@ -603,11 +603,12 @@ class xtpyi(ArchiveUnit):
             for position in positions:
                 self.log_info(F'magic signature found at offset 0x{position:0{width}X}')
             self.log_warn(F'found {len(positions) - 1} potential PyInstaller epilogue markers; using last one.')
-        decompile = self.args.decompile or self.args.user_code
+        decompile = self.args.decompile
+        uc_target = PiType.USERCODE if decompile else PiType.SOURCE
         archive = PyInstallerArchiveEpilogue(view, positions[-1], mode, decompile)
         for name, file in archive.files.items():
             if self.args.user_code:
-                if file.type != PiType.USERCODE:
+                if file.type != uc_target:
                     continue
                 if name.startswith('pyiboot'):
                     continue
