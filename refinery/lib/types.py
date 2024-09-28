@@ -98,6 +98,7 @@ class _AST(metaclass=Singleton):
     def __eq__(self, other): return True
     def __ne__(self, other): return False
     def __or__(self, other): return other
+    def __contains__(self, other): return True
     def __repr__(self): return '*'
 
 
