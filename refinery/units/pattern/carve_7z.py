@@ -3,10 +3,8 @@
 from refinery.units import Unit
 from refinery.lib.structures import MemoryFile
 
-import io
 
-
-class MemoryFileRecorder(MemoryFile, io.BytesIO):
+class MemoryFileRecorder(MemoryFile):
 
     def __init__(self, data):
         self.max_cursor = 0
