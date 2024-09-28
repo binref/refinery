@@ -118,7 +118,7 @@ class decompress(Unit):
             if engine.handles(ingest) is False:
                 return Decompression(engine, None, cutoff, prefix)
             try:
-                result = engine.process(ingest)
+                result = next(engine.act(ingest))
             except RefineryPartialResult as pr:
                 result = pr.partial
             except Exception:
