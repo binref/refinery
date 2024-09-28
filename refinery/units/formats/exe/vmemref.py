@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
 from typing import TYPE_CHECKING, Container
 
 from refinery.units import Arg, Unit
-from refinery.lib.executable import Executable, ET, CompartmentNotFound
-from refinery.lib.structures import MemoryFile
+from refinery.lib.executable import Executable
 from refinery.lib.tools import NoLogging
-
+from refinery.lib.types import AST
 
 if TYPE_CHECKING:
-    from angr.project import Project
-    from angr.analyses.cfg.cfg_emulated import CFGEmulated
-    from angr.knowledge_plugins.functions.function import Function
-    from cle.memory import Clemory
+    from smda.common.SmdaFunction import SmdaFunction
 
 
 class vmemref(Unit):
@@ -21,57 +18,52 @@ class vmemref(Unit):
     The unit expects an executable as input (PE/ELF/MachO) and scans a function at a given virtual
     address for memory references. For each memory reference, the unit looks up the corresponding
     section and file offset for the reference. It then returns all data from that section starting
-    at the given offset.
+    at the given offset. If no address is given, all detected functions are scanned.
     """
 
-    @Unit.Requires('angr', 'all')
-    def _angr():
-        import angr
-        import angr.project
-        import angr.engines
-        return angr
+    @Unit.Requires('smda', 'all')
+    def _smda():
+        import smda
+        import smda.Disassembler
+        return smda
 
-    def _memory_references(
+    @Unit.Requires('lief', 'all')
+    def _lief():
+        import lief
+        return lief
+
+    def __init__(
         self,
-        function: Function,
-        memory: Clemory,
-        functions: Container[int],
-        pointer_size: int,
-        max_dereference: int = 1
+        *addresses: Arg.Number(metavar='ADDR', help='The address of a function to scan.'),
+        base: Arg.Number('-b', metavar='ADDR', help='A custom base address B.') = None,
+        size: Arg.Number('-n', help='Optionally specify a number of bytes to read from each address.') = None,
     ):
-        pointer_size //= 8
-        references = []
-        code = set()
-        for block in function.blocks:
-            code.update(block.instruction_addrs)
-        try:
-            constants = function.code_constants
-        except Exception:
-            pass
-        else:
-            def is_valid_data_address(address):
-                if not isinstance(address, int):
-                    return False
-                if address not in memory:
-                    return False
-                if address in code:
-                    return False
-                if address in functions:
-                    return False
-                return True
+        super().__init__(addresses=addresses, base=base, size=size)
 
-            def dereference(address):
-                data = bytes(memory[k] for k in range(address, address + pointer_size))
-                return int.from_bytes(data, 'little')
+    def process(self, data):
+        executable = Executable.Load(data, self.args.base)
+        size = self.args.size
+        ps_n = executable.pointer_size // 4
+        ps_b = executable.pointer_size // 8
 
+        self.log_info('discovering functions')
+
+        with NoLogging():
+            dasm = self._smda.Disassembler.Disassembler()
+            out = dasm.disassembleUnmappedBuffer(bytes(data))
+
+        def dereference(address):
+            return int.from_bytes(executable[address:address + ps_b], executable.byte_order())
+
+        def references(constants: Container[int], max_dereference: int = 2):
             for address in constants:
                 try:
                     address = int(address)
                 except Exception:
                     continue
                 times_dereferenced = 0
-                while is_valid_data_address(address) and address not in references:
-                    references.append(address)
+                while isinstance(address, int) and address in executable:
+                    yield address
                     times_dereferenced += 1
                     if max_dereference and max_dereference > 0 and times_dereferenced > max_dereference:
                         break
@@ -80,47 +72,21 @@ class vmemref(Unit):
                     except Exception:
                         break
 
-        return references
+        def refs(sf: SmdaFunction):
+            with NoLogging():
+                init = [dr for insn in sf.getInstructions() for dr in insn.getDataRefs()]
+            yield from references(init)
 
-    def __init__(
-        self,
-        address: Arg.Number(metavar='ADDR', help='Specify the address of a function to scan.'),
-        base: Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None,
-    ):
-        super().__init__(address=address, base=base)
+        check = self.args.addresses or AST
+        self.log_info('searching for data references')
 
-    def process(self, data):
-        address = self.args.address
-        executable = Executable.Load(data, self.args.base)
-        code = executable.location_from_address(address).virtual.box
-
-        self.log_info(R'loading project into angr')
-        with NoLogging():
-            project: Project = self._angr.Project(MemoryFile(data), load_options={'auto_load_libs': False})
-
-        self.log_info(F'scanning function at 0x{address:X}')
-        with NoLogging():
-            cfg: CFGEmulated = project.analyses.CFGEmulated(
-                call_depth=0,
-                starts=[address],
-                enable_symbolic_back_traversal=True,
-                address_whitelist=code.range(),
-            )
-
-        function = cfg.functions[address]
-        code_addresses = cfg.functions
-
-        if executable.type is ET.PE:
-            code_addresses = code
-
-        self.log_info(R'extracting memory references from lifted function')
-        for ref in self._memory_references(
-            function,
-            project.loader.memory,
-            code_addresses,
-            executable.pointer_size
-        ):
-            try:
-                yield executable[ref:]
-            except CompartmentNotFound:
-                self.log_info(F'memory reference could not be resolved: 0x{ref:0{executable.pointer_size // 4}X}')
+        for function in out.getFunctions():
+            if function.offset not in check:
+                continue
+            self.log_debug(F'scanning function 0x{function.offset:0{ps_n}X}')
+            for ref in refs(function):
+                try:
+                    end = ref + size if size else None
+                    yield executable[ref:end]
+                except LookupError:
+                    self.log_debug(F'memory reference could not be resolved: 0x{ref:0{ps_n}X}')
