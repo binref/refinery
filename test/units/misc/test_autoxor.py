@@ -23,3 +23,8 @@ class TestAutoXOR(TestUnitBase):
     def test_very_short_input(self):
         pl = self.load_pipeline('emit A B C "" [| autoxor ]')
         self.assertEqual(pl(), B'\0\0\0')
+
+    def test_chunk_scope_regression(self):
+        data = self.generate_random_buffer(2000)
+        pl = self.load_pipeline('autoxor [| nop ]')
+        self.assertEqual(len(data), data | pl | len)

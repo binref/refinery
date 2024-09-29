@@ -340,3 +340,13 @@ class TestScoping(TestUnitBase):
             self.assertFalse(refinery.__unit_loader__.reloading)
             refinery.__unit_loader__.reload()
         self.assertIs(refinery.hex, hex)
+
+    def test_nesting_for_code_chunk_to_pipeline(self):
+        from refinery.units import Chunk
+        for scope in range(4):
+            unit = self.ldu('nop')
+            data = Chunk(B'hello', [0] * scope, [True] * scope, {'tv': 7})
+            self.assertEqual(data.scope, scope)
+            test = next(data | unit)
+            self.assertEqual(test.scope, 0)
+            self.assertEqual(test['tv'], 7)

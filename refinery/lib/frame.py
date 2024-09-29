@@ -174,9 +174,19 @@ class Chunk(bytearray):
     Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
     receives an iterable of `refinery.lib.frame.Chunk`s.
     """
-    temp: Any = None
+    temp: Any
     meta: LazyMetaOracle
     uuid: uuid.UUID
+
+    __slots__ = (
+        '_meta',
+        '_view',
+        '_path',
+        '_fill_scope',
+        '_fill_batch',
+        'temp',
+        'uuid',
+    )
 
     def __init__(
         self,
@@ -194,6 +204,7 @@ class Chunk(bytearray):
             bytearray.__init__(self, data)
 
         self.uuid = uuid.uuid4()
+        self.temp = None
 
         if path is None:
             path = []
@@ -295,6 +306,8 @@ class Chunk(bytearray):
         """
         self._path = parent._path
         self._view = self._view or parent._view
+        del self._path[parent.scope:]
+        del self._view[parent.scope:]
         self._meta.inherit(parent.meta)
         return self
 
@@ -376,6 +389,11 @@ class Chunk(bytearray):
             self._meta[bounds] = value
         else:
             bytearray.__setitem__(self, bounds, value)
+
+    def truncate(self, scope: int = 0):
+        del self._path[scope:]
+        del self._view[scope:]
+        return self
 
     def copy(self, meta=True, data=True) -> Chunk:
         data = data and self or None
@@ -643,7 +661,8 @@ class Framed:
                 for chunk in self._apply_filter():
                     results = self._generate_chunks(chunk) if chunk.visible else (chunk,)
                     if not scope:
-                        yield from results
+                        for chunk in results:
+                            yield chunk.truncate()
                         continue
                     for result in results:
                         if trunk is None:
