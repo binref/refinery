@@ -48,7 +48,7 @@ class zl(Unit):
             modes = [-self.args.window, self.args.window | 0x20]
         modes.extend([0x10 | self.args.window, 0])
         view = memoryview(data)
-        step = 32 if self.args.lenient else len(data)
+        step = 32 if self.leniency > 0 else len(data)
         for k in itertools.count(1):
             error = None
             rest = view
