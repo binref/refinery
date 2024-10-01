@@ -35,7 +35,9 @@ class ef(Unit):
         meta: Arg.Switch('-m', help=(
             'Adds the atime, mtime, ctime, and size metadata variables.'
         )) = False,
-        size: Arg.Number('-s', help=(
+        size: Arg.Bounds('-s', range=True, help=(
+            'If specified, only files are read whose size is in the given range.')) = None,
+        read: Arg.Number('-r', help=(
             'If specified, files will be read in chunks of size N and each '
             'chunk is emitted as one element in the output list.'
         )) = 0,
@@ -44,7 +46,7 @@ class ef(Unit):
         symlinks: Arg.Switch('-y', help='Follow symbolic links and junctions, these are ignored by default.') = False,
         linewise: Arg.Switch('-i', help=(
             'Read the file linewise. By default, one line is read at a time. '
-            'In line mode, the --size argument can be used to read the given '
+            'In line mode, the --read argument can be used to read the given '
             'number of lines in each chunk.'
         )) = False
     ):
@@ -52,6 +54,7 @@ class ef(Unit):
             raise ValueError('Cannot be both wild and tame!')
         super().__init__(
             size=size,
+            read=read,
             list=list,
             meta=meta,
             wild=wild,
@@ -63,13 +66,13 @@ class ef(Unit):
 
     def _read_chunks(self, fd):
         while True:
-            buffer = fd.read(self.args.size)
+            buffer = fd.read(self.args.read)
             if not buffer:
                 break
             yield buffer
 
     def _read_lines(self, fd):
-        count = self.args.size or 1
+        count = self.args.read or 1
         if count == 1:
             while True:
                 buffer = fd.readline()
@@ -163,10 +166,14 @@ class ef(Unit):
 
     def process(self, data):
         meta = metavars(data)
+        size = self.args.size
+        size = size and range(size.start, size.stop, size.step)
         meta.ghost = True
         wild = (os.name == 'nt' or self.args.wild) and not self.args.tame
         root = self._absolute_path('.')
         paths = self._glob if wild else lambda mask: [self._absolute_path(mask)]
+        do_meta = self.args.meta
+        do_stat = size or do_meta
 
         class SkipErrors:
             unit = self
@@ -216,20 +223,25 @@ class ef(Unit):
             skip_errors = SkipErrors()
             for path in paths(mask):
                 skip_errors.reset(path)
+                filesize = None
                 with skip_errors:
                     path = path.relative_to(root)
                 with skip_errors:
                     if wild and not path.is_file():
                         continue
                 with skip_errors:
-                    if self.args.meta:
+                    if do_stat:
                         stat = path.stat()
+                        filesize = stat.st_size
+                    if do_meta:
                         kwargs.update(
-                            size=stat.st_size,
+                            size=filesize,
                             atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
                             ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
                             mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds')
                         )
+                if size is not None and filesize not in size:
+                    continue
                 with skip_errors:
                     if self.args.list:
                         yield self.labelled(str(path).encode(self.codec), **kwargs)
@@ -237,7 +249,7 @@ class ef(Unit):
                     with path.open('rb') as stream:
                         if self.args.linewise:
                             yield from self._read_lines(stream)
-                        elif self.args.size:
+                        elif self.args.read:
                             yield from self._read_chunks(stream)
                         else:
                             data = stream.read()
