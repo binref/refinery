@@ -144,3 +144,23 @@ class TestArgumentFormats(TestBase):
 
     def test_path_extension(self):
         self.assertEqual(argformats.multibin('px:/a/very/deep/path/to/some/file.exe'), b'exe')
+
+    def test_read_handler(self):
+        import os
+        import os.path
+        import tempfile
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False) as ntf:
+                name = os.path.abspath(ntf.name)
+                ntf.write(B'binary refinery')
+            self.assertEqual(argformats.multibin(F'read[6]:{name}'), b'binary')
+            self.assertEqual(argformats.multibin(F'read[0:6]:{name}'), b'binary')
+            self.assertEqual(argformats.multibin(F'read[7:]:{name}'), b'refinery')
+            self.assertEqual(argformats.multibin(F'read[7:20]:{name}'), b'refinery')
+            self.assertEqual(argformats.multibin(F'read[7:3]:{name}'), b'ref')
+        finally:
+            try:
+                os.unlink(name)
+            except Exception:
+                pass
