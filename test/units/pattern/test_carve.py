@@ -225,3 +225,12 @@ class TestCarve(TestUnitBase):
         t3 = data | self.load('intarray', single=True, decode=True) | bytes
         self.assertEqual(len({t1, t2, t3}), 1)
         self.assertGreater(len(t1), 200)
+
+    def test_carve_utf16_be(self):
+        data = B'%s%s%s' % (
+            self.generate_random_buffer(20),
+            'af2d4e6bc8'.encode('utf-16be'),
+            self.generate_random_buffer(20))
+        goal = 'af2d4e6bc8'
+        test = data | self.load('hex') | str
+        self.assertEqual(goal, test)

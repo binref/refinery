@@ -52,8 +52,11 @@ class PatternExtractorBase(Unit, abstract=True):
         if self.args.ascii:
             yield from pattern.finditer(data)
         if self.args.utf16:
-            for zm in re.findall(BR'(?:.\0)+', data, flags=re.DOTALL):
-                yield from pattern.finditer(zm[::2])
+            for zm in re.finditer(BR'(.?)((?:.\0)+)', data, flags=re.DOTALL):
+                a, b = zm.span(2)
+                # Look one character further if there is evidence that this is UTF16-BE
+                b += bool(zm[1] and data[a])
+                yield from pattern.finditer(bytes(data[a:b:2]))
 
     def _prefilter(self, matches: Iterable[re.Match]) -> Iterable[re.Match]:
         barrier = set()
