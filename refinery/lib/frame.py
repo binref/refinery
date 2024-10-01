@@ -122,7 +122,7 @@ import itertools
 import zlib
 import uuid
 
-from typing import Generator, Iterable, BinaryIO, Callable, Optional, List, Dict, ByteString, Any
+from typing import Generator, Iterable, BinaryIO, Callable, Optional, List, Tuple, Dict, ByteString, Any
 from typing import TYPE_CHECKING
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer
@@ -196,7 +196,8 @@ class Chunk(bytearray):
         meta: Optional[Dict[str, Any]] = None,
         seed: Optional[Dict[str, list]] = None,
         fill_scope: Optional[bool] = None,
-        fill_batch: Optional[int] = None
+        fill_batch: Optional[int] = None,
+        ignore_chunk_properties: bool = False,
     ):
         if data is None:
             bytearray.__init__(self)
@@ -213,9 +214,9 @@ class Chunk(bytearray):
         elif len(view) != len(path):
             raise ValueError('view must have the same length as path')
 
-        if isinstance(data, Chunk):
-            path = path or data.path
-            view = view or data.view
+        if not ignore_chunk_properties and isinstance(data, Chunk):
+            path = path or list(data.path)
+            view = view or list(data.view)
             meta = meta or data.meta
             fill_scope = fill_scope or data._fill_scope
             fill_batch = fill_batch or data._fill_batch
@@ -299,17 +300,6 @@ class Chunk(bytearray):
                 raise AttributeError('cannot make chunk invisible outside frame')
         else:
             view[~0] = value
-
-    def inherit(self, parent: Chunk):
-        """
-        This method can be used to take over properties of a parent `refinery.lib.frame.Chunk`.
-        """
-        self._path = parent._path
-        self._view = self._view or parent._view
-        del self._path[parent.scope:]
-        del self._view[parent.scope:]
-        self._meta.inherit(parent.meta)
-        return self
 
     @classmethod
     def unpack(cls, stream):
@@ -403,6 +393,7 @@ class Chunk(bytearray):
             view=list(self._view),
             fill_scope=self._fill_scope,
             fill_batch=self._fill_batch,
+            ignore_chunk_properties=True,
         )
         if meta:
             copy.meta.update(self.meta)
@@ -432,7 +423,8 @@ class FrameUnpacker(Iterable[Chunk]):
     """
     next_chunk: Optional[Chunk]
     depth: int
-    trunk: List[int]
+    trunk: Tuple[int, ...]
+    check: Tuple[int, ...]
     stream: Optional[BinaryIO]
     finished: bool
     framed: bool
@@ -441,6 +433,7 @@ class FrameUnpacker(Iterable[Chunk]):
     def __init__(self, stream: Optional[BinaryIO]):
         self.finished = False
         self.trunk = ()
+        self.check = ()
         self.stream = None
         self.depth = 0
         self.next_chunk = None
@@ -464,6 +457,7 @@ class FrameUnpacker(Iterable[Chunk]):
         while not self.finished:
             try:
                 self.next_chunk = chunk = Chunk.unpack(self.unpacker)
+                self.check = tuple(chunk.path)
                 if chunk.scope != self.depth:
                     raise RuntimeError(F'Frame of depth {self.depth} contained chunk of scope {chunk.scope}.')
                 return True
@@ -489,12 +483,12 @@ class FrameUnpacker(Iterable[Chunk]):
         """
         if self.finished:
             return False
-        self.trunk = self.next_chunk.path
+        self.trunk = self.check
         return True
 
     def abort(self):
         if self.depth > 1:
-            while not self.finished and self.trunk == self.next_chunk.path:
+            while not self.finished and self.trunk == self.check:
                 self._advance()
         else:
             self.unpacker = None
@@ -505,11 +499,11 @@ class FrameUnpacker(Iterable[Chunk]):
         return self.trunk != self.peek
 
     @property
-    def peek(self) -> List[int]:
+    def peek(self) -> Tuple[int, ...]:
         """
         Contains the identifier of the next frame.
         """
-        return self.next_chunk.path
+        return self.check
 
     def __iter__(self) -> Generator[Chunk, None, None]:
         if self.finished:
@@ -518,7 +512,7 @@ class FrameUnpacker(Iterable[Chunk]):
             yield self.next_chunk
             self.finished = True
             return
-        while not self.finished and self.trunk == self.next_chunk.path:
+        while not self.finished and self.trunk == self.check:
             yield self.next_chunk
             self._advance()
 
@@ -594,24 +588,37 @@ class Framed:
         return self.nesting + self.unpack.depth < 0
 
     def _generate_chunks(self, parent: Chunk):
+        path = list(parent.path)
+        view = list(parent.view)
+        meta = parent.meta
+        scope = parent.scope
+
+        def inherit(chunk: Chunk):
+            if chunk is parent:
+                return chunk
+            if path:
+                chunk._path[:] = path
+            if view and not chunk._view:
+                chunk._view[:] = view
+            chunk._meta.inherit(meta)
+            return chunk.truncate(scope)
+
         if not self.squeeze:
             for chunk in self.action(parent):
-                if chunk is not parent:
-                    chunk.inherit(parent)
-                yield chunk
-            return
-        it = self.action(parent)
-        for header in it:
-            header.inherit(parent)
-            buffer = MemoryFile(header)
-            buffer.seek(len(header))
-            break
+                yield inherit(chunk)
         else:
-            return
-        for item in it:
-            header.intersect(item)
-            buffer.write(item)
-        yield header
+            it = self.action(parent)
+            for header in it:
+                inherit(header)
+                buffer = MemoryFile(header)
+                buffer.seek(len(header))
+                break
+            else:
+                return
+            for item in it:
+                header.intersect(item)
+                buffer.write(item)
+            yield header
 
     def _generate_bytes(self, data: ByteString):
         if not self.squeeze:
