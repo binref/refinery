@@ -388,7 +388,7 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
         nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY',
         magic: Arg('-m', help='The magic constant; depends on the key size by default.') = B'',
         offset: Arg.Number('-x', help='Optionally specify the stream index, default is {default}.') = 0,
-        rounds: Arg.Number('-r', help='The number of rounds. Has to be an even number.') = 20,
+        rounds: Arg.Number('-r', help='The number of rounds. Has to be an even number. Default is {default}.') = 20,
     ):
         super().__init__(
             key=key,
