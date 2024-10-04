@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.5
+- The a3x unit now is capable of decrypting EA05 formatted scripts, previously only capable of decrypting EA06 formatted scripts.
+
 ## Version 0.7.4
 - The `--join` option of all path extraction units has been improved for producing paths that can always be used for dumping data to disk. This includes units to unpack archives, resources, or other embedded data that can be referenced by a name.
 - The `ef` unit has a new option that specifies whether to follow (directory) symlinks / junctions or not.
