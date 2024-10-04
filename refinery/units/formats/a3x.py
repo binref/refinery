@@ -844,12 +844,9 @@ class A3xReader(StructReader[memoryview]):
 
 
 class A3xRecord(Struct, parser=A3xReader):
-    MAGIC = b'\x6B\x43\xCA\x52'
 
     def __init__(self, reader: A3xReader, encryption_type: A3xEncryptionType):
-        if reader.read(4) != self.MAGIC:
-            pass
-            #raise ValueError('Invalid record header magic.')
+        self.magic = reader.read(4)
         self.encryption_type = encryption_type
         self.type = reader.read_encrypted_string(encryption_type.tag_size, encryption_type.tag, encryption_type.is_current).lstrip('>').rstrip('<')
         self.src_path = reader.read_encrypted_string(encryption_type.path_size, encryption_type.path, encryption_type.is_current)
