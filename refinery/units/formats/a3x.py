@@ -703,6 +703,7 @@ def a3x_decrypt_current(data: memoryview, key: int) -> bytearray:
 
     return bytearray(_decrypted())
 
+
 def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
     a, b, t = 1, 0, []
 
@@ -714,7 +715,7 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
     def _refactor_state():
         nonlocal t
         for i in range(0, 0xe3):
-            x = t[i] ^ t[i+1]
+            x = t[i] ^ t[i + 1]
             x &= 0x7FFFFFFE
             x ^= t[i]
             x >>= 1
@@ -747,8 +748,8 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
         else:
             x = 0
         y ^= x
-        y ^= t[0x18c+0xe3-227]
-        t[0x18c+0xe3] = y
+        y ^= t[0x18c + 0xe3 - 227]
+        t[0x18c + 0xe3] = y
 
     def _decrypted():
         nonlocal a, b, t
@@ -770,6 +771,7 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
 
     return bytearray(_decrypted())
 
+
 def a3x_decrypt(data: memoryview, key: int, is_current: bool = True) -> bytearray:
     if is_current:
         return a3x_decrypt_current(data, key)
@@ -782,6 +784,7 @@ class A3xType(str, Enum):
     NOEXEC = 'AUTOIT NO CMDEXECUTE'
     AHK_SCRIPT = 'AUTOHOTKEY SCRIPT'
     AHK_WITH_ICON = 'AHK WITH ICON'
+
 
 class A3xEncryptionType():
     KEYS = {
@@ -824,8 +827,8 @@ class A3xReader(StructReader[memoryview]):
         else:
             size = (self.u32() ^ size_key)
             seed += size
-        
-        return a3x_decrypt(self.read_exactly(size), seed, is_current) 
+
+        return a3x_decrypt(self.read_exactly(size), seed, is_current)
 
     def read_encrypted_string(self, size_key, seed, is_current=True):
         if is_current:
@@ -849,7 +852,11 @@ class A3xRecord(Struct, parser=A3xReader):
     def __init__(self, reader: A3xReader, encryption_type: A3xEncryptionType):
         self.magic = reader.read(4)
         self.encryption_type = encryption_type
-        self.type = reader.read_encrypted_string(encryption_type.tag_size, encryption_type.tag, encryption_type.is_current).lstrip('>').rstrip('<')
+        self.type = reader.read_encrypted_string(
+            encryption_type.tag_size,
+            encryption_type.tag,
+            encryption_type.is_current
+        ).lstrip('>').rstrip('<')
         self.src_path = reader.read_encrypted_string(encryption_type.path_size, encryption_type.path, encryption_type.is_current)
         self.is_compressed = bool(reader.u8())
         self.is_encrypted = True
