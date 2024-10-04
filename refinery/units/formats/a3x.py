@@ -844,6 +844,7 @@ class A3xReader(StructReader[memoryview]):
 
 
 class A3xRecord(Struct, parser=A3xReader):
+    MAGIC = b'\x6B\x43\xCA\x52'
 
     def __init__(self, reader: A3xReader, encryption_type: A3xEncryptionType):
         self.magic = reader.read(4)
