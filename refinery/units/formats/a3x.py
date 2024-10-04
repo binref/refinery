@@ -726,7 +726,7 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
             x ^= t[i + 397]
             t[i] = x
 
-        for i in range(0xe3, 0x18c+0xe3):
+        for i in range(0xe3, 0x18c + 0xe3):
             x = t[i] ^ t[i + 1]
             x &= 0x7FFFFFFE
             x ^= t[i]
@@ -739,9 +739,9 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
             t[i] = x
 
         x = t[0]
-        y = t[0x18c+0xe3] ^ x
+        y = t[0x18c + 0xe3] ^ x
         y &= 0x7FFFFFFE
-        y ^= t[0x18c+0xe3]
+        y ^= t[0x18c + 0xe3]
         y >>= 1
         if (x % 2 == 1):
             x = 0x9908B0DF
