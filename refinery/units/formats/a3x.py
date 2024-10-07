@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Optional, Union, List, Dict, Iterable, Tuple, Generator, Set
+from typing import NamedTuple, Optional, Union, List, Dict, Iterable, Tuple, Generator, Set
 from enum import Enum
 
 import io
@@ -786,36 +786,44 @@ class A3xType(str, Enum):
     AHK_WITH_ICON = 'AHK WITH ICON'
 
 
-class A3xEncryptionType():
-    KEYS = {
-        "AU3!EA06": {
-            "tag_size": 0xADBC,
-            "tag": 0xB33F,
-            "path_size": 0xF820,
-            "path": 0xF479,
-            "compressed_size": 0x87BC,
-            "decompressed_size": 0x87BC,
-            "checksum": 0xA685,
-            "data": 0x2477,
-            "is_current": True
-        },
-        "AU3!EA05": {
-            "tag_size": 0x29BC,
-            "tag": 0xA25E,
-            "path_size": 0x29AC,
-            "path": 0xF25E,
-            "compressed_size": 0x45AA,
-            "decompressed_size": 0x45AA,
-            "checksum": 0xC3D2,
-            "data": 0x22AF,
-            "is_current": False
-        }
-    }
+class A3xEncryptionConstants(NamedTuple):
+    version: bytes
+    tag_size: int
+    tag: int
+    path_size: int
+    path: int
+    compressed_size: int
+    decompressed_size: int
+    checksum: int
+    data: int
+    is_current: bool
 
-    def __init__(self, encryption_type: str):
-        self.type = encryption_type
-        for key, value in self.KEYS.get(encryption_type, self.KEYS["AU3!EA06"]).items():
-            setattr(self, key, value)
+
+class A3xEncryptionType(A3xEncryptionConstants, Enum):
+    EA06 = A3xEncryptionConstants(
+        b'AU3!EA06',
+        tag_size=0xADBC,
+        tag=0xB33F,
+        path_size=0xF820,
+        path=0xF479,
+        compressed_size=0x87BC,
+        decompressed_size=0x87BC,
+        checksum=0xA685,
+        data=0x2477,
+        is_current=True
+    )
+    EA05 = A3xEncryptionConstants(
+        b'AU3!EA05',
+        tag_size=0x29BC,
+        tag=0xA25E,
+        path_size=0x29AC,
+        path=0xF25E,
+        compressed_size=0x45AA,
+        decompressed_size=0x45AA,
+        checksum=0xC3D2,
+        data=0x22AF,
+        is_current=False
+    )
 
 
 class A3xReader(StructReader[memoryview]):
@@ -938,10 +946,12 @@ class A3xScript(Struct, parser=A3xReader):
             return
         self.body: List[A3xRecord] = []
         last_known_good_position = reader.tell()
+        types = {at.version: at for at in A3xEncryptionType}
         while not reader.eof:
             pos = reader.tell()
             try:
-                self.body.append(A3xRecord(reader, A3xEncryptionType(self.type.decode('utf-8'))))
+                rt = types.get(self.type, A3xEncryptionType.EA06)
+                self.body.append(A3xRecord(reader, rt))
             except (ValueError, EOFError):
                 reader.seekset(pos)
                 break
