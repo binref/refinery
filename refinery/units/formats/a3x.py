@@ -637,11 +637,7 @@ def a3x_decompress(data: bytearray, is_current: bool) -> bytearray:
     bits = bit_reader.read_integer
     while cursor < size:
         check = bits(1)
-        if is_current and check == 1:
-            output.write_byte(bits(8))
-            cursor += 1
-            continue
-        if not is_current and check == 0:
+        if check == is_current:
             output.write_byte(bits(8))
             cursor += 1
             continue
@@ -865,7 +861,11 @@ class A3xRecord(Struct, parser=A3xReader):
             encryption_type.tag,
             encryption_type.is_current
         ).lstrip('>').rstrip('<')
-        self.src_path = reader.read_encrypted_string(encryption_type.path_size, encryption_type.path, encryption_type.is_current)
+        self.src_path = reader.read_encrypted_string(
+            encryption_type.path_size,
+            encryption_type.path,
+            encryption_type.is_current
+        )
         self.is_compressed = bool(reader.u8())
         self.is_encrypted = True
         self.size = reader.u32() ^ encryption_type.compressed_size
