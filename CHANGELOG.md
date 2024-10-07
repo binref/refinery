@@ -9,7 +9,7 @@
 - The `--join` option of all path extraction units has been improved for producing paths that can always be used for dumping data to disk. This includes units to unpack archives, resources, or other embedded data that can be referenced by a name.
 - The `ef` unit has a new option that specifies whether to follow (directory) symlinks / junctions or not.
 - The key scaling method for `autoxor` was adjusted to produce less false positives when scanning for larger keys.
-- The a3x unit now is capable of decrypting EA05 formatted scripts, previously only capable of decrypting EA06 formatted scripts.
+- Thanks to [@alphillips-lab][], the `a3x` unit is now capable of decrypting EA05 formatted scripts, previously only EA06 was supported.
 
 ## Version 0.7.3 - bugfix release
 
