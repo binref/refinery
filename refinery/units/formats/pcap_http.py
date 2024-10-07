@@ -59,7 +59,7 @@ class pcap_http(Unit):
                     return self.labelled(data, url=request.url)
             return None
 
-        for stream in data | pcap(merge=True):
+        for stream in data | pcap():
             try:
                 data = http_parser.process(stream)
             except Exception:
