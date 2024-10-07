@@ -96,6 +96,8 @@ class pick(Unit):
         if chunks is None:
             return
         container, chunks = chunks
+        if container.scope < 1:
+            raise RuntimeError(F'{self.__class__.__name__} cannot be used outside a frame; maybe you meant to use snip?')
         container = container.copy()
         container.visible = True
         state = _PickState(deque(self.args.bounds), chunks)
