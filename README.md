@@ -91,6 +91,7 @@ The following is a summary of how well various shell environments are currently 
 | CMD        | Windows  | 🔵 Good         | Used extensively by the author.                                  |
 | PowerShell | Windows  | 🟡 Reasonable   | It [just works if the PowerShell version is at least 7.4.][psh1] |
 | Zsh        | Posix    | 🟠 Minor Issues | Following a [discussion][zsh1], there is a [fix][zsh2].          |
+| Fish       | Posix    | 🟠 Minor Issues | See issue [#55][fsh1] and discussion [#22][fsh2].                |
 
 If you are using a different shell and have some feedback to share, please [let me know](https://github.com/binref/refinery/discussions)!
 
@@ -310,6 +311,8 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [zsh1]: https://github.com/binref/refinery/discussions/18
 [zsh2]: shells/zsh
 [psh1]: https://github.com/binref/refinery/issues/5
+[fsh1]: https://github.com/binref/refinery/discussions/55
+[fsh2]: https://github.com/binref/refinery/issues/22
 
 [dump]: https://binref.github.io/#refinery.dump
 [emit]: https://binref.github.io/#refinery.emit
