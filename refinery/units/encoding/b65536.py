@@ -99,7 +99,7 @@ _B2 = {
 class b65536(Unit):
     """
     Base65536 encoding and decoding.
-    A relatively esoteric encoding scheme utilizing the UTF-16 character set.
+    A relatively esoteric encoding scheme utilizing the UTF-16 / UTF-32 character set.
     """
     def reverse(self, data):
         if not data:
