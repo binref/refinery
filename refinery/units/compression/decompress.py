@@ -44,7 +44,7 @@ class decompress(Unit):
             'To determine whether a decompression algorithm was successful, the '
             'ratio of compressed size to decompressed size may at most be as large '
             'as this number, a floating point value R; default value is {default}.')
-        ) = 1,
+        ) = 1.0,
         min_ratio: Arg('-n', metavar='R', help=(
             'Require that compression ratios must be at least as large as R. This '
             'is a "too good to be true" heuristic against algorithms like lznt1 '

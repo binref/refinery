@@ -68,11 +68,7 @@ class lzw(Unit):
             ibuf = ibuf[posbits >> 3:]
             insize = len(ibuf)
             posbits = 0
-
-            if insize < LZW.EXTRA:
-                inbits = (insize - insize % n_bits) << 3
-            else:
-                inbits = (insize << 3) - (n_bits - 1)
+            inbits = (insize << 3) - (n_bits - 1)
 
             while inbits > posbits:
                 if free_entry > maxcode:
