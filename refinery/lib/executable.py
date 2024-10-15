@@ -263,6 +263,20 @@ class Section(NamedTuple):
         return F'<{self.__class__.__name__}:{self!s}>'
 
 
+class Symbol(NamedTuple):
+    address: int
+    name: Optional[str] = None
+    code: bool = True
+    exported: bool = True
+    meta: Optional[dict] = None
+
+    def get_name(self, default: str = 'entry'):
+        return self.name or default
+
+    def get_meta(self):
+        return self.meta or {}
+
+
 class Segment(NamedTuple):
     """
     An abstract representation of a segment inside an `refinery.lib.executable.Executable`.
@@ -482,6 +496,13 @@ class Executable(ABC):
             raise CompartmentNotFound(lt, location)
 
     @abstractmethod
+    def symbols(self) -> Generator[Symbol, None, None]:
+        """
+        Generates a list of symbols in the executable.
+        """
+        ...
+
+    @abstractmethod
     def byte_order(self) -> BO:
         """
         The byte order used by the architecture of this executable.
@@ -571,6 +592,9 @@ class ExecutableCodeBlob(Executable):
 
     def arch(self) -> Arch:
         return self._arch
+
+    def symbols(self) -> Generator[Symbol, None, None]:
+        yield Symbol(0)
 
     def _sections(self) -> Generator[Section, None, None]:
         r = Range(0, len(self.data))
@@ -663,6 +687,20 @@ class ExecutablePE(Executable):
     def byte_order(self) -> BO:
         return BO.LE
 
+    def symbols(self) -> Generator[Symbol, None, None]:
+        base = self.image_defined_base()
+        yield Symbol(self._head.OPTIONAL_HEADER.AddressOfEntryPoint + base)
+        self._head.parse_data_directories(
+            directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
+        try:
+            exports = self._head.DIRECTORY_ENTRY_EXPORT.symbols
+        except AttributeError:
+            return
+        for k, exp in enumerate(exports):
+            name = exp.name
+            name = name and name.decode('ascii') or F'@{k}'
+            yield Symbol(exp.address + base, name)
+
 
 class ExecutableELF(Executable):
     """
@@ -739,6 +777,52 @@ class ExecutableELF(Executable):
     def byte_order(self) -> BO:
         return BO.LE if self.head.little_endian else BO.BE
 
+    def symbols(self) -> Generator[Symbol, None, None]:
+        ee = self._head.header['e_entry']
+        symbols = {ee: Symbol(ee)}
+        try:
+            sections = list(self._head.iter_sections())
+        except Exception:
+            return
+        for section in sections:
+            if not isinstance(section, SymbolTableSection):
+                continue
+            if section['sh_entsize'] == 0:
+                continue
+            for sym in section.iter_symbols():
+                st_name = sym.name
+                if sym['st_info']['type'] == 'STT_SECTION' and sym['st_shndx'] < len(sections) and sym['st_name'] == 0:
+                    try:
+                        st_name = self._head.get_section(sym['st_shndx']).name
+                    except Exception:
+                        pass
+                st_addr = sym['st_value']
+                st_name = re.sub('[\x01-\x1f]+', '', st_name)
+                st_type = sym['st_info']['type']
+                st_bind = sym['st_info']['bind']
+                st_size = sym['st_size']
+                insert = False
+                try:
+                    prev = symbols[st_addr]
+                except KeyError:
+                    insert = True
+                else:
+                    insert = prev.name is None or len(prev.name) < len(st_name)
+                if insert:
+                    symbols[st_addr] = Symbol(
+                        st_addr,
+                        st_name,
+                        st_type == 'STT_FUNC',
+                        st_bind == 'STB_GLOBAL',
+                        dict(
+                            st_type=st_type,
+                            st_bind=st_bind,
+                            st_size=st_size,
+                        )
+                    )
+        for addr in sorted(symbols):
+            yield symbols[addr]
+
 
 class ExecutableMachO(Executable):
     """
@@ -747,6 +831,9 @@ class ExecutableMachO(Executable):
 
     _head: MachO
     _type = ET.MachO
+
+    def symbols(self) -> Generator[Symbol, None, None]:
+        raise NotImplementedError
 
     @lru_cache(maxsize=1)
     def image_defined_base(self) -> int:
