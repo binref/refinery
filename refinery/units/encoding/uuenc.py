@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import uu
 import pathlib
 
 from refinery.units import Unit
@@ -12,10 +11,15 @@ class uuenc(Unit):
     """
     Unit for uuencode.
     """
+    @property
+    def _uu(self):
+        import uu
+        return uu
+
     def process(self, data):
         with MemoryFile(data) as stream:
             with MemoryFile() as output:
-                uu.decode(stream, output, quiet=True)
+                self._uu.decode(stream, output, quiet=True)
                 return output.getvalue()
 
     def reverse(self, data):
@@ -24,5 +28,5 @@ class uuenc(Unit):
         name = path and pathlib.Path(path).name
         with MemoryFile(data) as stream:
             with MemoryFile() as output:
-                uu.encode(stream, output, name, backtick=True)
+                self._uu.encode(stream, output, name, backtick=True)
                 return output.getvalue()
