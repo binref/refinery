@@ -242,7 +242,7 @@ _pattern_win_path = R'(?:{s})(?P<__pathsep>[\\\/])(?:{p}(?P=__pathsep))*{p}(?:(?
     p=_pattern_win_path_element
 )
 
-_pattern_nix_path = R'\b/?(?:{n}/){{2,}}{n}\b'.format(n=_pattern_nix_path_element)
+_pattern_nix_path = R'(?:/(?:{n}/)+|(?:{n}/){{2,}}){n}'.format(n=_pattern_nix_path_element)
 _pattern_any_path = R'(?:{nix})|(?:{win})'.format(
     nix=_pattern_nix_path,
     win=_pattern_win_path

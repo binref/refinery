@@ -58,3 +58,6 @@ class TestFormats(TestBase):
     def test_guid_in_path(self):
         self.assertTrue(indicators.path.fullmatch(
             RB'C:\Users\W10PRO~1\AppData\Local\Temp\{CAE44DB5-22DC-4A76-B334-E77C8D459505}\word_data.bin'))
+
+    def test_two_part_path(self):
+        self.assertTrue(indicators.path.fullmatch(RB'/root/something_something_in_the_root.txt'))
