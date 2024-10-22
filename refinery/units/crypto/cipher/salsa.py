@@ -4,10 +4,11 @@ import struct
 
 from Cryptodome.Cipher import Salsa20
 from abc import ABC, abstractmethod
-from typing import List, ByteString, Union, Sequence, Optional, Iterable, Tuple
+from typing import List, Union, Sequence, Optional, Iterable, Tuple, Type, TypeVar
 
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
 from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
+from refinery.lib.types import ByteStr
 
 
 class LatinCipher(ABC):
@@ -19,7 +20,7 @@ class LatinCipher(ABC):
     _round_access_pattern: Tuple[Tuple[int, int, int, int], ...]
 
     @classmethod
-    def FromState(cls, state: Union[Sequence[int], ByteString]):
+    def FromState(cls, state: Union[Sequence[int], ByteStr]):
         try:
             state = struct.unpack('<16L', state)
         except TypeError:
@@ -37,9 +38,9 @@ class LatinCipher(ABC):
             '<2L', *state[cls._idx_count]), 'little')
         return cls(key, nonce, magic, counter=count)
 
-    def __init__(self, key: ByteString, nonce: ByteString, magic: Optional[ByteString] = None, rounds: int = 20, counter: int = 0):
+    def __init__(self, key: ByteStr, nonce: ByteStr, magic: Optional[ByteStr] = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
-            key += key
+            key = 2 * key
         elif len(key) != 32:
             raise ValueError('The key must be of length 16 or 32.')
         if rounds % 2:
@@ -85,12 +86,15 @@ class LatinCipher(ABC):
     def quarter(self, x: List[int], a: int, b: int, c: int, d: int):
         raise NotImplementedError
 
+    def permute(self, x: List[int]):
+        for a, b, c, d in self.rounds * self._round_access_pattern:
+            self.quarter(x, a, b, c, d)
+
     def __iter__(self):
         x = [0] * len(self.state)
         while True:
             x[:] = self.state
-            for a, b, c, d in self.rounds * self._round_access_pattern:
-                self.quarter(x, a, b, c, d)
+            self.permute(x)
             yield from struct.pack('<16L', *(
                 (a + b) & 0xFFFFFFFF for a, b in zip(x, self.state)))
             self.count()
@@ -121,6 +125,27 @@ class SalsaCipher(LatinCipher):
         x[a] ^= rotl32(x[d] + x[c] & 0xFFFFFFFF, 0x12)
 
 
+_X = TypeVar('_X', bound=LatinCipher)
+
+
+def LatinX(
+    cipher: Type[_X],
+    blocks: Iterable[int],
+    key: ByteStr,
+    kdn: ByteStr,
+    kdp: ByteStr,
+    nonce: ByteStr,
+    magic: ByteStr,
+    rounds: int,
+    offset: int,
+) -> _X:
+    from refinery.lib import chunks
+    kd = cipher(key, kdn, magic, rounds, kdp)
+    kd.permute(kd.state)
+    key = chunks.pack((kd.state[i] for i in blocks), 4)
+    return cipher(key, nonce, magic, rounds, offset)
+
+
 class salsa(LatinCipherUnit):
     """
     Salsa encryption and decryption. The nonce must be 8 bytes long. When 64 bytes are provided
@@ -140,6 +165,25 @@ class salsa(LatinCipherUnit):
                 self.args.offset,
             )
         yield from it
+
+
+class xsalsa(LatinCipherUnit):
+    """
+    XSalsa encryption and decryption. The nonce must be 24 bytes long.
+    """
+    def keystream(self) -> Iterable[int]:
+        kdn, kdp, nonce = struct.unpack('<8sQ8s', self.args.nonce)
+        yield from LatinX(
+            SalsaCipher,
+            (0, 5, 10, 15, 6, 7, 8, 9),
+            self.args.key,
+            kdn,
+            kdp,
+            nonce,
+            self.args.magic,
+            self.args.rounds,
+            self.args.offset,
+        )
 
 
 class salsa20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(Salsa20)):

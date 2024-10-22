@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from Cryptodome.Cipher import ChaCha20
+from Cryptodome.Cipher import ChaCha20, ChaCha20_Poly1305
 from typing import List, Iterable
 
-from refinery.units.crypto.cipher.salsa import LatinCipher
+import struct
+
+from refinery.units.crypto.cipher.salsa import LatinCipher, LatinX
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
 from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
 
@@ -44,6 +46,18 @@ class chacha20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20))
     pass
 
 
+class chacha20poly1305(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20_Poly1305)):
+    """
+    ChaCha20-Poly1305 and XChaCha20-Poly1305 encryption and decryption. For the ChaCha20
+    variant, the nonce must be 8 or 12 bytes long; for XChaCha20, provide a 24 bytes nonce
+    instead.
+    """
+    def _get_cipher(self, reset_cache=False):
+        cipher = super()._get_cipher(reset_cache)
+        cipher.block_size = 1
+        return cipher
+
+
 class chacha(LatinCipherUnit):
     """
     ChaCha encryption and decryption. The nonce must be 8 bytes long as currently, only the
@@ -63,3 +77,22 @@ class chacha(LatinCipherUnit):
                 self.args.offset,
             )
         yield from it
+
+
+class xchacha(LatinCipherUnit):
+    """
+    XChaCha encryption and decryption. The nonce must be 24 bytes long.
+    """
+    def keystream(self) -> Iterable[int]:
+        kdp, kdn, nonce = struct.unpack('<Q8s8s', self.args.nonce)
+        yield from LatinX(
+            ChaChaCipher,
+            (0, 1, 2, 3, 12, 13, 14, 15),
+            self.args.key,
+            kdn,
+            kdp,
+            nonce,
+            self.args.magic,
+            self.args.rounds,
+            self.args.offset,
+        )
