@@ -187,10 +187,9 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                     if not warnings:
                         self.log_warn('additional warnings are suppressed')
                 yield out
-        it = infinitize(it)
         if not masked:
             it = _mask(it)
-        return it
+        return infinitize(it)
 
     @abc.abstractmethod
     def operate(self, block, *args) -> int:
