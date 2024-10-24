@@ -348,5 +348,5 @@ class TestScoping(TestUnitBase):
             data = Chunk(B'hello', [0] * scope, [True] * scope, {'tv': 7})
             self.assertEqual(data.scope, scope)
             test = next(data | unit)
-            self.assertEqual(test.scope, 0)
+            self.assertEqual(test.scope, scope)
             self.assertEqual(test['tv'], 7)

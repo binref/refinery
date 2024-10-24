@@ -193,7 +193,7 @@ from argparse import (
 )
 
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
-from refinery.lib.frame import generate_frame_header, Framed, Chunk
+from refinery.lib.frame import generate_frame_header, Framed, Chunk, MAGIC, MSIZE
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr, Singleton
@@ -1449,12 +1449,15 @@ class Unit(UnitBase, abstract=True):
             import traceback
             traceback.print_exc(file=sys.stderr)
 
-    def __next__(self) -> Chunk:
+    def output(self):
         if not self._chunks:
             self._chunks = iter(self._framehandler)
+        return self._chunks
+
+    def __next__(self) -> Chunk:
         while True:
             try:
-                return next(self._chunks)
+                chunk = next(self.output())
             except StopIteration:
                 raise
             except RefineryCriticalException as R:
@@ -1462,6 +1465,9 @@ class Unit(UnitBase, abstract=True):
             except BaseException as B:
                 self._exception_handler(B, None)
                 raise StopIteration from B
+            if not self.console and len(chunk) == MSIZE and chunk.startswith(MAGIC):
+                continue
+            return chunk
 
     @property
     def _framehandler(self) -> Framed:
@@ -1486,6 +1492,7 @@ class Unit(UnitBase, abstract=True):
             self.args.squeeze,
             self.filter,
             self.finish,
+            self.console
         )
         return self._framed
 
@@ -1520,6 +1527,8 @@ class Unit(UnitBase, abstract=True):
         if isinstance(stream, self.__class__.__class__):
             stream = stream()
         if not isinstance(stream, self.__class__):
+            if not isstream(stream):
+                raise TypeError(F'Cannot connect object of type {type(stream).__name__} to unit.')
             self.reset()
         self._source = stream
 
@@ -1584,7 +1593,7 @@ class Unit(UnitBase, abstract=True):
             stream.write(generate_frame_header(scope))
             stream.write(chunk.pack(1))
             stream.seekset(0)
-            self.args.nesting = -scope
+            self.args.nesting -= 1
         elif not isstream(stream):
             if isinstance(stream, str):
                 stream = stream.encode(self.codec)
@@ -1781,7 +1790,9 @@ class Unit(UnitBase, abstract=True):
         the result.
         """
         try:
-            out = self._buffer or next(self)
+            out = self._buffer or next(self.output())
+            if isinstance(out, Chunk) and out.scope > 0:
+                out = out.pack()
             if bytecount and bytecount > 0:
                 out, self._buffer = out[:bytecount], out[bytecount:]
             elif self._buffer:
@@ -2041,6 +2052,7 @@ class Unit(UnitBase, abstract=True):
         self._target = None
         self._framed = None
         self._chunks = None
+        self.console = False
 
         keywords.update(dict(
             nesting=0,
@@ -2134,6 +2146,8 @@ class Unit(UnitBase, abstract=True):
             if yappi is not None:
                 yappi.set_clock_type('cpu')
                 yappi.start()
+
+            unit.console = True
 
             try:
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:

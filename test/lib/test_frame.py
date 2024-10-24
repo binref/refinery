@@ -11,9 +11,12 @@ from .. import TestBase
 class TestFraming(TestBase):
 
     def test_simple_frame(self):
-        chunks = [B'A' * k for k in (0x14, 0x154, 0x81, 0x12031, 0x1311, 0x8012)]
+        chunks = [B'A' * k for k in (12, 17, 20, 2, 80, 9)]
+        source = io.BytesIO(B'\n'.join(chunks))
         buffer = io.BytesIO()
-        for chunk in (io.BytesIO(B'\n'.join(chunks)) | L('resplit [')):
+        unit = L('resplit [')
+        unit.console = True
+        for chunk in source | unit:
             buffer.write(chunk)
         buffer.seek(0)
         expected = []

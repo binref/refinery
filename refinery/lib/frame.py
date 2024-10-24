@@ -161,6 +161,7 @@ class BytesDecoder(json.JSONDecoder):
 
 
 MAGIC = bytes.fromhex('FEED1985C0CAC01AC0DE')
+MSIZE = len(MAGIC) + 1
 
 
 def generate_frame_header(scope: int):
@@ -310,42 +311,61 @@ class Chunk(bytearray):
         path, view, meta, fs, data = item
         return cls(data, path=path, view=view, seed=meta, fill_scope=fs)
 
-    def pack(self, nest: int = 0, position: int = 0):
+    def pack(self, nest: int = 0, position: int = 0, serialize: bool = True):
         """
-        Return the serialized representation of this chunk.
+        This function is equivalent to `refinery.lib.frame.Chunk.pack` if `serialize` is `True`.
+        Otherwise, the function creates a copy of the chunk whose location in the frame tree has
+        been adjusted based on the given nesting and position. With the default arguments, the
+        value of all the following expressions is the same:
+
+        - `chunk.pack(nesting, position)`
+        - `chunk.gift(nesting, position, True)`
+        - `chunk.gift(nesting, position).pack()`
+
+        The difference, however, is that the first two options require one less copy operation
+        than the latter.
         """
-        view = self._view
-        path = self._path
+        scope = self.scope + nest
         fs = self._fill_scope
         fb = self._fill_batch
-        scope = self.scope + nest
-
         if nest > 0:
-            view = list(view)
-            path = list(path)
-            if fs is not None:
-                view.extend(itertools.repeat(self.visible, nest - 1))
-                view.append(fs)
-                fs = None
-            else:
-                view.extend(itertools.repeat(self.visible, nest))
-            if fb is not None and nest > 1:
-                path.append(position)
-                path.append(fb)
-                path.extend(itertools.repeat(0, nest - 2))
-            else:
-                path.append(position)
-                path.extend(itertools.repeat(0, nest - 1))
-        if nest < 0:
-            view = view[:nest]
-            path = path[:nest]
+            view = list(self._view)
+            path = list(self._path)
+            if nest > 0:
+                if fs is not None:
+                    view.extend(itertools.repeat(self.visible, nest - 1))
+                    view.append(fs)
+                    fs = None
+                else:
+                    view.extend(itertools.repeat(self.visible, nest))
+                if fb is not None and nest > 1:
+                    path.append(position)
+                    path.append(fb)
+                    path.extend(itertools.repeat(0, nest - 2))
+                else:
+                    path.append(position)
+                    path.extend(itertools.repeat(0, nest - 1))
+        elif nest < 0:
+            view = self._view[:nest]
+            path = self._path[:nest]
+        else:
+            view = self._view
+            path = self._path
+            if not serialize:
+                view = list(view)
+                path = list(path)
 
         assert len(path) == scope
         assert len(view) == scope
 
-        meta = self._meta.serialize(scope)
-        item = (path, view, meta, fs, self)
-        return msgpack.packb(item)
+        meta = self._meta.serialize(self.scope + nest)
+
+        if serialize:
+            item = (path, view, meta, fs, self)
+            return msgpack.packb(item)
+        else:
+            return Chunk(self, path, view, None, meta, fs, fb,
+                ignore_chunk_properties=True)
 
     def __repr__(self) -> str:
         layer = '/'.join(str(p) if s else F'!{p}' for p, s in zip(self._path, self._view))
@@ -466,7 +486,7 @@ class FrameUnpacker(Iterable[Chunk]):
             try:
                 recv = self.stream.read1()
             except TypeError:
-                recv = None
+                raise
             recv = recv or self.stream.read()
             if not recv:
                 break
@@ -537,11 +557,13 @@ class Framed:
         squeeze: bool = False,
         filter : Optional[Callable[[Iterable[Chunk]], Iterable[Chunk]]] = None,
         finish : Optional[Callable[[], Iterable[Chunk]]] = None,
+        serialized: bool = True,
     ):
         self.unpack = FrameUnpacker(stream)
         self.action = action
         self.filter = filter
         self.finish = finish
+        self.serialized = serialized
         self.nesting = nesting
         self.squeeze = squeeze
 
@@ -631,6 +653,7 @@ class Framed:
 
     def __iter__(self):
         nesting = self.nesting
+        serialized = self.serialized
         scope = max(self.unpack.depth + nesting, 0)
         if self.unpack.finished:
             if scope:
@@ -642,10 +665,10 @@ class Framed:
             while self.unpack.nextframe():
                 for k, chunk in enumerate(self._apply_filter()):
                     if not chunk.visible:
-                        yield chunk.pack(nesting, k)
+                        yield chunk.pack(nesting, k, serialized)
                         continue
                     for result in self._generate_chunks(chunk):
-                        yield result.pack(nesting, k)
+                        yield result.pack(nesting, k, serialized)
         elif not self.unpack.framed:
             for chunk in self._apply_filter():
                 yield from self._generate_bytes(chunk)
@@ -655,10 +678,10 @@ class Framed:
             while self.unpack.nextframe():
                 for chunk in self._apply_filter():
                     if not chunk.visible:
-                        yield chunk.pack()
+                        yield chunk.pack(0, 0, serialized)
                         continue
                     for result in self._generate_chunks(chunk):
-                        yield result.pack()
+                        yield result.pack(0, 0, serialized)
         else:
             trunk = None
             check = scope + 1
@@ -678,9 +701,9 @@ class Framed:
                             trunk.intersect(result)
                             trunk.extend(result)
                         else:
-                            yield trunk.pack(nesting)
+                            yield trunk.pack(nesting, 0, serialized)
                             trunk = result
                 if not scope or trunk is None:
                     continue
             if trunk is not None:
-                yield trunk.pack(nesting)
+                yield trunk.pack(nesting, 0, serialized)
