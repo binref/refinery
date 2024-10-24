@@ -168,8 +168,16 @@ class TestArgumentFormats(TestBase):
 
     def test_prng(self):
         import random
-        random.seed(0x1337)
-        goal = random.randbytes(2000)
+
+        try:
+            randbytes = random.randbytes
+        except AttributeError:
+            def randbytes(n):
+                return bytes(random.randint(0, 0xFF) for _ in range(n))
+        finally:
+            random.seed(0x1337)
+
+        goal = randbytes(2000)
         test = argformats.multibin('prng[0x1337]:2000')
         self.assertEqual(goal, test)
 
