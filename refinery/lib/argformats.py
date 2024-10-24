@@ -1135,6 +1135,55 @@ class DelayedArgument(LazyEvaluation):
             return it
         return itertools.cycle(it)
 
+    @handler.register('rng', final=True)
+    def rng(
+        self,
+        size: str,
+    ) -> bytes:
+        """
+        The `rng:count` handler generates `count` secure random bytes using the Python standard
+        library module function `secrets.token_bytes`.
+        """
+        import secrets
+        size = PythonExpression.Lazy(size)
+        try:
+            _size = size()
+        except ParserVariableMissing:
+            def finalize(data):
+                meta = dict(metavars(data))
+                return secrets.token_bytes(size(meta))
+            return finalize
+        else:
+            return secrets.token_bytes(_size)
+
+    @handler.register('prng', final=True)
+    def prng(
+        self,
+        size: str,
+        seed: Optional[str] = None
+    ) -> bytes:
+        """
+        The `prng[seed]:count` handler generates `count` random bytes using Python's built-in random
+        number generator. The `seed` argument can be omitted, in which case the PRNG will be seeded
+        with the current timestamp in nanoseconds.
+        """
+        import random
+        import time
+        seed = time.time_ns if seed is None else PythonExpression.Lazy(seed)
+        size = PythonExpression.Lazy(size)
+        try:
+            _size = size()
+            _seed = seed()
+        except ParserVariableMissing:
+            def finalize(data):
+                meta = dict(metavars(data))
+                random.seed(seed(meta))
+                return random.randbytes(size(meta))
+            return finalize
+        else:
+            random.seed(_seed)
+            return random.randbytes(_size)
+
     @handler.register('accu', final=True)
     def accu(
         self,

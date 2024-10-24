@@ -3,6 +3,7 @@
 from argparse import ArgumentTypeError
 
 from refinery.lib import argformats
+from refinery.lib.tools import entropy
 
 from .. import TestBase
 
@@ -164,3 +165,14 @@ class TestArgumentFormats(TestBase):
                 os.unlink(name)
             except Exception:
                 pass
+
+    def test_prng(self):
+        import random
+        random.seed(0x1337)
+        goal = random.randbytes(2000)
+        test = argformats.multibin('prng[0x1337]:2000')
+        self.assertEqual(goal, test)
+
+    def test_rng(self):
+        test = argformats.multibin('rng:200000')
+        self.assertGreaterEqual(entropy(test), 0.99)
