@@ -1169,6 +1169,13 @@ class DelayedArgument(LazyEvaluation):
         """
         import random
         import time
+
+        try:
+            randbytes = random.randbytes
+        except AttributeError:
+            def randbytes(n):
+                return bytearray(random.randint(0, 0xFF) for _ in range(n))
+
         seed = time.time_ns if seed is None else PythonExpression.Lazy(seed)
         size = PythonExpression.Lazy(size)
         try:
@@ -1178,11 +1185,11 @@ class DelayedArgument(LazyEvaluation):
             def finalize(data):
                 meta = dict(metavars(data))
                 random.seed(seed(meta))
-                return random.randbytes(size(meta))
+                return randbytes(size(meta))
             return finalize
         else:
             random.seed(_seed)
-            return random.randbytes(_size)
+            return randbytes(_size)
 
     @handler.register('accu', final=True)
     def accu(
