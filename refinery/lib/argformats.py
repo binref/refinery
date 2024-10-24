@@ -958,7 +958,7 @@ class DelayedArgument(LazyEvaluation):
             return obj
         raise ArgumentTypeError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion is known.')
 
-    @handler.register('?', 'var', final=True)
+    @handler.register('v', 'var', final=True)
     def var(self, name: str) -> bytes:
         """
         The final handler `var:name` contains the value of the meta variable `name`.
