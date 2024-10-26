@@ -4,18 +4,15 @@
 Implements programmatic inlining, specifically for the units in `refinery.units.blockwise`.
 """
 from __future__ import annotations
-from typing import Any, Callable, Generator, Optional, Type, TypeVar, Union
+from typing import Any, Callable, Generator, Optional, Type, TypeVar
 
 import ast
 import inspect
-import functools
-import sys
 
 from ast import (
     Assign,
     BinOp,
     BitAnd,
-    Bytes,
     Call,
     Constant,
     Expr,
@@ -25,10 +22,8 @@ from ast import (
     Load,
     Name,
     NodeTransformer,
-    Num,
     Return,
     Store,
-    Str,
     Yield,
     arg,
     comprehension,
@@ -129,19 +124,8 @@ def iterspread(
         nonlocal code
         code = ast.fix_missing_locations(cls().visit(code))
 
-    if sys.version_info >= (3, 8):
-        def constant(value):
-            return Constant(value=value)
-    else:
-        @functools.singledispatch
-        def constant(value: Union[int, str, bytes]):
-            raise NotImplementedError(F'The type {type(value).__name__} is not supported for inlining')
-        @constant.register # noqa
-        def _(value: bytes): return Bytes(s=value)
-        @constant.register
-        def _(value: int): return Num(n=value)
-        @constant.register
-        def _(value: str): return Str(s=value)
+    def constant(value):
+        return Constant(value=value)
 
     @apply_node_transformation
     class _(NodeTransformer):
