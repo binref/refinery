@@ -161,10 +161,22 @@ class BytesDecoder(json.JSONDecoder):
 
 
 MAGIC = bytes.fromhex('FEED1985C0CAC01AC0DE')
+"""
+This is the magic signature that is used by refinery to prefix serialized frame data. If a unit
+reads data from STDIN that is prefixed with these bytes, it assumes that serialized frame data
+follows. Otherwise, the input is treated as a single unframed chunk.
+"""
 MSIZE = len(MAGIC) + 1
+"""
+This is the length of the data returned by `refinery.lib.frame.generate_frame_header`.
+"""
 
 
 def generate_frame_header(scope: int):
+    """
+    This function generates a frame header for a frame tree of depth equal to `scope`. The depth
+    is encoded as a single byte following `refinery.lib.frame.MAGIC`.
+    """
     if scope > 0xFE:
         raise ValueError('Maximum frame depth exceeded.')
     return B'%s%c' % (MAGIC, scope)
@@ -172,12 +184,27 @@ def generate_frame_header(scope: int):
 
 class Chunk(bytearray):
     """
-    Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method
-    receives an iterable of `refinery.lib.frame.Chunk`s.
+    Represents the individual chunks in a frame. The `refinery.units.Unit.filter` method receives
+    an iterable of `refinery.lib.frame.Chunk`s.
     """
     temp: Any
-    meta: LazyMetaOracle
+    """
+    Units can use this field to transport temporary data between different callbacks. For example,
+    a unit might want to transport information from `refinery.units.Unit.filter` to:
+
+    - `refinery.units.Unit.reverse`
+    - `refinery.units.Unit.process`
+
+    These methods, in turn, might want to transport information to `refinery.units.Unit.finish`.
+    """
     uuid: uuid.UUID
+    """
+    Each chunk object carries a unique identifier. The `refinery.units.DelayedArgumentProxy` uses
+    this property to check whether `refinery.units.Unit` command-line arguments were previously
+    evaluated against this chunk. Otherwise `refinery.lib.argformats.DelayedArgument`s that alter
+    the input data could produce unexpected results when the argument proxy is mapped against the
+    same chunk twice.
+    """
 
     __slots__ = (
         '_meta',
@@ -241,10 +268,42 @@ class Chunk(bytearray):
         self._fill_scope = visible
 
     def set_next_batch(self, batch: int) -> None:
+        """
+        This function allows units to emit trees of depth one rather than lists. When a unit emits
+        a chunk at index `a`, sets the next batch to `b`, and when a double frame opens after this
+        unit's invocation, then said chunk will have `a/b` added to its path. By default, `b` would
+        always be `0`. For example, the `refinery.rex` unit uses this feature. As a result:
+
+            $ emit #1yellow-#3red-#2orange | rex #(.)([a-z]+) {1} {2} [[| pop x:e ]| rep v:x ]]
+            yellow
+            red
+            red
+            red
+            orange
+            orange
+
+        The double frame after `refinery.rex` looks like this:
+
+            [[1,yellow],[2,red],[3,orange]]
+
+        By default, the frame would simply look like this:
+
+            [[1,yellow,2,red,3,orange]]
+
+        This feature is useful for `refinery.Unit`s that produce multiple outputs for each of a
+        number of intermediate results - in the case of `refinery.rex`, that intermediate result
+        is a regular expression match, and `refinery.rex` allows to produce different outputs for
+        each of those.
+        """
         self._fill_batch = batch
 
     @property
     def scope(self) -> int:
+        """
+        This value is the length of `refinery.lib.frame.Chunk.path` and therefore corresponds to
+        the depth of the frame tree. It is called "scope" because it is equally the scope at which
+        new metadata variables for this chunk will be created.
+        """
         return len(self._path)
 
     @property
@@ -269,7 +328,8 @@ class Chunk(bytearray):
     @property
     def meta(self) -> LazyMetaOracle:
         """
-        Every chunk can contain a dictionary of arbitrary metadata.
+        Every chunk can contain a dictionary of arbitrary metadata. Further details about this data
+        are available in the module-level documetnation of `refinery.lib.meta`.
         """
         if self._meta.chunk is not self:
             raise RuntimeError('meta dictionary carries invalid parent reference')
@@ -373,6 +433,10 @@ class Chunk(bytearray):
         return F'<chunk{layer}:{bytes(self)!r}>'
 
     def intersect(self, other: Chunk):
+        """
+        Removes all meta variables from this chunk whose value differs from those of the `other`
+        inut chunk.
+        """
         other_meta = other._meta
         meta = self._meta
         for key, value in list(meta.items()):
@@ -401,11 +465,20 @@ class Chunk(bytearray):
             bytearray.__setitem__(self, bounds, value)
 
     def truncate(self, scope: int = 0):
+        """
+        Truncate the `refinery.lib.frame.Chunk.path` and `refinery.lib.frame.Chunk.view` lists
+        to the given length, setting the `refinery.lib.frame.Chunk.scope` to the given value.
+        """
         del self._path[scope:]
         del self._view[scope:]
         return self
 
     def copy(self, meta=True, data=True) -> Chunk:
+        """
+        Produce a copy of this chunk. The metadata is copied if the `meta` argument is `True`,
+        otherwise the copy has no metadata. The body of the chunk is copied only if the `data`
+        argument is `True`.
+        """
         data = data and self or None
         copy = Chunk(
             data,
@@ -507,6 +580,9 @@ class FrameUnpacker(Iterable[Chunk]):
         return True
 
     def abort(self):
+        """
+        Abort unpacking chunks from the frame.
+        """
         if self.depth > 1:
             while not self.finished and self.trunk == self.check:
                 self._advance()
@@ -516,6 +592,9 @@ class FrameUnpacker(Iterable[Chunk]):
 
     @property
     def eol(self) -> bool:
+        """
+        Specifies whether the current frame was fully consumed.
+        """
         return self.trunk != self.peek
 
     @property

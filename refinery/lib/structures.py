@@ -34,13 +34,20 @@ C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
 UnpackType = Union[int, bool, float, bytes]
 
 
-def signed(k: int, bits: int):
-    M = 1 << bits
+def signed(k: int, bitsize: int):
+    """
+    If `k` is an integer of the given bit size, cast it to a signed one.
+    """
+    M = 1 << bitsize
     k = k & (M - 1)
-    return k - M if k >> (bits - 1) else k
+    return k - M if k >> (bitsize - 1) else k
 
 
 class EOF(EOFError):
+    """
+    While reading from a `refinery.lib.structures.MemoryFile`, less bytes were available than
+    requested. The exception contains the data from the incomplete read.
+    """
     def __init__(self, rest: ByteString = B''):
         super().__init__('Unexpected end of buffer.')
         self.rest = rest
@@ -50,6 +57,10 @@ class EOF(EOFError):
 
 
 class StreamDetour:
+    """
+    A stream detour is used as a context manager to temporarily read from a different location
+    in the stream and then return to the original offset when the context ends.
+    """
     def __init__(self, stream: io.IOBase, offset: Optional[int] = None, whence: int = io.SEEK_SET):
         self.stream = stream
         self.offset = offset
@@ -67,8 +78,8 @@ class StreamDetour:
 
 class MemoryFileMethods(Generic[T]):
     """
-    A thin wrapper around (potentially mutable) byte sequences which gives it the
-    features of a file-like object.
+    A thin wrapper around (potentially mutable) byte sequences which gives it the features of a
+    file-like object.
     """
     closed: bool
     read_as_bytes: bool
@@ -360,8 +371,8 @@ class order(str, enum.Enum):
 
 class StructReader(MemoryFile[T]):
     """
-    An extension of a `refinery.lib.structures.MemoryFile` which provides methods to
-    read structured data.
+    An extension of a `refinery.lib.structures.MemoryFile` which provides methods to read
+    structured data.
     """
 
     class Unaligned(RuntimeError):

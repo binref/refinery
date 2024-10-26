@@ -23,10 +23,16 @@ class TH32CS(enum.IntEnum):
 
 
 class NotWindows(RuntimeError):
-    pass
+    """
+    PowerShell support is only available on Windows; this exception is raised when the operating
+    system is something else.
+    """
 
 
 class PROCESSENTRY32(ctypes.Structure):
+    """
+    The [PROCESSENTRY32](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/ns-tlhelp32-processentry32) structure.
+    """
     _fields_ = [
         ('dwSize',              ctypes.c_uint32),                 # noqa
         ('cntUsage',            ctypes.c_uint32),                 # noqa
@@ -42,6 +48,9 @@ class PROCESSENTRY32(ctypes.Structure):
 
 
 class MODULEENTRY32(ctypes.Structure):
+    """
+    The [MODULEENTRY32](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/ns-tlhelp32-moduleentry32) structure.
+    """
     _fields_ = [
         ('dwSize',              ctypes.c_uint32),                 # noqa
         ('th32ModuleID',        ctypes.c_uint32),                 # noqa
@@ -57,6 +66,9 @@ class MODULEENTRY32(ctypes.Structure):
 
 
 def get_parent_processes():
+    """
+    Returns a list of file paths that identify the images of all our parent processes.
+    """
     try:
         k32 = ctypes.windll.kernel32
     except AttributeError:
@@ -100,6 +112,12 @@ def get_parent_processes():
 
 
 def shell_supports_binref() -> bool:
+    """
+    This checks whether the current shell is known to support binary refinery natively. This
+    requires full binary and streaming STDIN/STDOUT. PowerShell 7.4 does have this, so does
+    the command interpreter. If the operating system is not Windows, the shell is assumed to
+    be compatible.
+    """
     if os.name != 'nt':
         return True
     try:
@@ -127,6 +145,9 @@ def shell_supports_binref() -> bool:
 
 
 class Ps1Wrapper:
+    """
+    Boilerplace for the STDIN and STDOUT wrappers.
+    """
     WRAPPED = False
 
     def __new__(cls, stream: TextIO):
@@ -152,6 +173,10 @@ class Ps1Wrapper:
 
 
 class PS1OutputWrapper(Ps1Wrapper):
+    """
+    The PowerShell STDOUT compatibility wrapper. It takes the binary output and hex encodes it.
+    This data is then prefixed by a special (printable) magic sequence.
+    """
     _header_written = False
 
     def write(self, data):
@@ -178,7 +203,10 @@ class PS1OutputWrapper(Ps1Wrapper):
 
 
 class PS1InputWrapper(Ps1Wrapper):
-
+    """
+    The PowerShell STDIN compatibility wrapper. If it receives data prefixed with the correct magic
+    sequence, it will hex-decode the remaining data and forward the binary result.
+    """
     _init = True
 
     def read(self, size=None):
@@ -208,6 +236,11 @@ class PS1InputWrapper(Ps1Wrapper):
 
 
 def bandaid(codec) -> bool:
+    """
+    This function will invoke `refinery.lib.powershell.shell_supports_binref` to check whether
+    the bandaid is necessary. If so, it uses the IO wrappers in this module to wrap STDIN/STDOUT
+    in a compatibility layer that will make refinery work, albeit poorly.
+    """
     if shell_supports_binref():
         return False
 

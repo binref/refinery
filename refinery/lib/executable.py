@@ -7,6 +7,7 @@ The provided interface is the same for all executables. It powers the following 
 - `refinery.vsnip`
 - `refinery.vsect`
 - `refinery.vaddr`
+- `refinery.vmemref`
 """
 from __future__ import annotations
 
