@@ -116,8 +116,6 @@ above example would not be separated by a dash.
 """
 from __future__ import annotations
 
-import json
-import base64
 import itertools
 import zlib
 import uuid
@@ -125,7 +123,6 @@ import uuid
 from typing import Generator, Iterable, BinaryIO, Callable, Optional, List, Tuple, Dict, ByteString, Any
 from typing import TYPE_CHECKING
 from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import isbuffer
 from refinery.lib.meta import LazyMetaOracle
 
 if TYPE_CHECKING:
@@ -139,25 +136,11 @@ except ModuleNotFoundError:
 __all__ = [
     'Chunk',
     'Framed',
-    'FrameUnpacker'
+    'FrameUnpacker',
+    'MAGIC',
+    'MSIZE',
+    'generate_frame_header'
 ]
-
-
-class BytesEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isbuffer(obj):
-            return {'_bin': base64.b85encode(obj).decode('ascii')}
-        return super().default(obj)
-
-
-class BytesDecoder(json.JSONDecoder):
-    def __init__(self, *args, **kwargs):
-        json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
-
-    def object_hook(self, obj):
-        if isinstance(obj, dict) and len(obj) == 1 and '_bin' in obj:
-            return base64.b85decode(obj['_bin'])
-        return obj
 
 
 MAGIC = bytes.fromhex('FEED1985C0CAC01AC0DE')
