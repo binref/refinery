@@ -158,9 +158,11 @@ This is the length of the data returned by `refinery.lib.frame.generate_frame_he
 def generate_frame_header(scope: int):
     """
     This function generates a frame header for a frame tree of depth equal to `scope`. The depth
-    is encoded as a single byte following `refinery.lib.frame.MAGIC`.
+    is encoded as a single byte following `refinery.lib.frame.MAGIC`. This implies a depth limit
+    of 255 for frame trees in refinery, and I dearly hope that noone is insane enough to build a
+    refinery pipeline that would be affected.
     """
-    if scope > 0xFE:
+    if scope > 0xFF:
         raise ValueError('Maximum frame depth exceeded.')
     return B'%s%c' % (MAGIC, scope)
 
@@ -273,8 +275,8 @@ class Chunk(bytearray):
 
             [[1,yellow,2,red,3,orange]]
 
-        This feature is useful for `refinery.Unit`s that produce multiple outputs for each of a
-        number of intermediate results - in the case of `refinery.rex`, that intermediate result
+        This feature is useful for `refinery.units.Unit`s that produce multiple outputs for each of
+        a number of intermediate results - in the case of `refinery.rex`, that intermediate result
         is a regular expression match, and `refinery.rex` allows to produce different outputs for
         each of those.
         """
