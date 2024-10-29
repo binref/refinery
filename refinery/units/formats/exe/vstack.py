@@ -118,7 +118,7 @@ class vstack(Unit):
         skip_calls: Arg.Counts('-C', group='CALL',
             help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
-        block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
+        block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 512,
         max_visits: Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.') = 0x1000,
         log_writes_in_calls: Arg.Switch('-W', help='Log writes of values that occur in functions calls.') = False,
         log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
