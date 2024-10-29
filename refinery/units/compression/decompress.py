@@ -7,6 +7,7 @@ from refinery.lib.types import INF
 
 from .ap import aplib
 from .blz import blz
+from .brotli import brotli
 from .bz2 import bz2
 from .jcalg import jcalg
 from .lz import lzma
@@ -61,7 +62,7 @@ class decompress(Unit):
         )
         self.engines: List[Unit] = [
             engine.assemble() for engine in [
-                szdd, zl, lzma, aplib, qlz, lzf, lzw, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1, nrv2e, nrv2d, nrv2b]
+                szdd, brotli, zl, lzma, aplib, qlz, lzf, lzw, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1, nrv2e, nrv2d, nrv2b]
         ]
         for engine in self.engines:
             engine.log_detach()
