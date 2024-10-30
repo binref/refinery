@@ -1589,8 +1589,12 @@ class Unit(UnitBase, abstract=True):
         if isinstance(stream, Chunk):
             chunk = stream
             stream = MemoryFile()
-            stream.write(generate_frame_header(chunk.scope))
-            stream.write(chunk.pack())
+            scope = max(chunk.scope, 1)
+            delta = scope - chunk.scope
+            stream.write(generate_frame_header(scope))
+            stream.write(chunk.pack(delta))
+            if delta:
+                self.args.nesting -= delta
             stream.seekset(0)
         elif not isstream(stream):
             if isinstance(stream, str):
