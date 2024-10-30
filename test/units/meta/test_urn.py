@@ -33,3 +33,7 @@ class TestUrn(TestUnitBase):
             'FOOBARBAZ',
             'FOOBAZBAR',
         })
+
+    def test_default_behavior_nonempty(self):
+        test = self.load_pipeline('emit A B C [| urn -ks []]') | bytes
+        self.assertEqual(len(test), 18)

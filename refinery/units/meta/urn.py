@@ -51,7 +51,7 @@ class urn(Unit):
             0b11: permutations
         }[m]
         self.log_info(F'choosing {method.__name__}')
-        for n in range(a, b, c):
+        for n in range(a, b + 1, c):
             self.log_debug(F'generating sequences of length {n}')
             for head.temp in method(buffer, n):
                 yield head
