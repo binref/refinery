@@ -35,7 +35,7 @@ class ArchiveExecutable(Executable):
             try:
                 arc1 = next(carved)
             except StopIteration:
-                raise ValueError('The input does not contain any archive.')
+                arc1 = data
             try:
                 arc2 = next(carved)
             except StopIteration:
