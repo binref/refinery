@@ -25,3 +25,11 @@ class TestUrn(TestUnitBase):
                 test = emit[unit[_sep] | _nop]
                 test = test | {bytes}
                 self.assertSetEqual(goal, test)
+
+    def test_variables_are_preserved(self):
+        test = self.load_pipeline('emit FOO BAR BAZ [| pop a | urn -ks []| ccp var:a ]')
+        test = test | {str}
+        self.assertSetEqual(test, {
+            'FOOBARBAZ',
+            'FOOBAZBAR',
+        })

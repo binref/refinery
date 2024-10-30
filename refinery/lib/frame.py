@@ -695,7 +695,6 @@ class Framed:
         else:
             it = self.action(parent)
             for header in it:
-                inherit(header)
                 buffer = MemoryFile(header)
                 buffer.seek(len(header))
                 break
@@ -704,6 +703,7 @@ class Framed:
             for item in it:
                 header.intersect(item)
                 buffer.write(item)
+            inherit(header)
             yield header
 
     def _generate_bytes(self, data: ByteString):

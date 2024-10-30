@@ -34,7 +34,7 @@ class urn(Unit):
         head = next(it)
         buffer = [bytes(head)]
         buffer.extend(bytes(c) for c in it)
-        head = head.copy(meta=False, data=False)
+        head = head.copy(meta=True, data=False)
         head.meta['N'] = len(buffer)
         size = sliceobj(self.args.size, head)
         a = size.start or 1
