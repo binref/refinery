@@ -39,6 +39,7 @@ class urn(Unit):
         size = sliceobj(self.args.size, head)
         a = size.start or 1
         b = size.stop or len(buffer)
+        b = max(b, a + 1)
         c = size.step or 1
         self.log_debug(F'using size [{a}:{b}:{c}]')
         s = 1 if self.args.sort else 0
@@ -51,7 +52,7 @@ class urn(Unit):
             0b11: permutations
         }[m]
         self.log_info(F'choosing {method.__name__}')
-        for n in range(a, b + 1, c):
+        for n in range(a, b, c):
             self.log_debug(F'generating sequences of length {n}')
             for head.temp in method(buffer, n):
                 yield head
