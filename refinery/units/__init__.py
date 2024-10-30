@@ -1588,12 +1588,10 @@ class Unit(UnitBase, abstract=True):
             return self
         if isinstance(stream, Chunk):
             chunk = stream
-            scope = chunk.scope + 1
             stream = MemoryFile()
-            stream.write(generate_frame_header(scope))
-            stream.write(chunk.pack(1))
+            stream.write(generate_frame_header(chunk.scope))
+            stream.write(chunk.pack())
             stream.seekset(0)
-            self.args.nesting -= 1
         elif not isstream(stream):
             if isinstance(stream, str):
                 stream = stream.encode(self.codec)

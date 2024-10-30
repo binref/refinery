@@ -160,3 +160,11 @@ class TestFraming(TestBase):
     def test_regression_unaltered_pop(self):
         pl = load_pipeline('rex "..(?P<t>..)" [| push var:t [| rex .. | pick ~0 | pop t ]| cfmt {t} ]')
         self.assertEqual(b'REFINERY' | pl | bytes, B'FIRY')
+
+    def test_chunk_output_to_list(self):
+        from refinery.units import Chunk
+        from refinery.units.meta.chop import chop
+        data = Chunk(B'Hello', [0], [True])
+        self.assertEqual(data.scope, 1)
+        test = data | chop(2) | [str]
+        self.assertEqual(test, ['He', 'll', 'o'])
