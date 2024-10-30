@@ -81,7 +81,7 @@ class bruteforce(Unit):
 
         for length in integers_of_slice(self.args.length):
             self.log_info(F'generating {length} digits')
-            if not length or length <= 0:
+            if not isinstance(length, int) or length < 0:
                 raise ValueError(F'Unable to brute force {length} characters.')
             for string in itertools.product(self._alphabet(), repeat=length):
                 string = bytes(string)
