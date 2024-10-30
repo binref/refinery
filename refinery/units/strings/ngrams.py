@@ -18,6 +18,7 @@ class ngrams(Unit):
 
     def process(self, data: bytearray):
         for n in integers_of_slice(self.args.size):
+            self.log_info(F'emitting {n}-grams')
             if n > len(data):
                 break
             deduplicator = set()
