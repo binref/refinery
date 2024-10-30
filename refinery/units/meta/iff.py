@@ -81,10 +81,10 @@ class iff(ConditionalUnit, extend_docs=True):
             else:
                 lhs = PythonExpression.Evaluate(lhs, meta)
 
-        self.log_debug('lhs:', lhs)
-        self.log_debug('rhs:', rhs)
-
         rhs = rhs and DelayedNumSeqArgument(rhs, additional_types=(float, str))(chunk)
+
+        self.log_info(F'lhs: type={lhs.__class__.__name__}; value={lhs!r}')
+        self.log_info(F'rhs: type={rhs.__class__.__name__}; value={rhs!r}')
 
         if lhs is None:
             return bool(chunk)
