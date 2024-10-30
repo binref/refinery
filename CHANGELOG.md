@@ -5,6 +5,13 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.6
+- Adds the `brotli` decompression unit.
+- The `pym` unit was added which provides an interface to Python's marshal serialization.
+- The units `xsalsa`, `xchacha`, and `chacha20poly1305` were added. The latter only performs the decryption part of the scheme.
+- Refinery pipelines used in Python code will now preserve the scope of a `Chunk` object when one is provided as input.
+- The argument handlers `prng` and `rng` were added for random number generation.
+
 ## Version 0.7.5
 - The `b65536` unit was added (thanks to [@alphillips-lab][]).
 
