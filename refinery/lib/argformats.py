@@ -117,7 +117,7 @@ from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, Ty
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
 from refinery.lib.types import NoMask
-from refinery.lib.meta import is_valid_variable_name, metavars
+from refinery.lib.meta import is_valid_variable_name, metavars, Percentage
 
 if TYPE_CHECKING:
     from refinery import Unit
@@ -503,17 +503,15 @@ def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
     a callable that will evaluate the given expression on an incoming `refinery.lib.frame.Chunk`.
     """
     import re
-    match = re.fullmatch(
-        R'(?i)(?P<digits>[1-9][0-9]*|0)(?P<unit>[KMGTPE]B?)',
-        expression.strip())
-    if match is not None:
+    expression = expression.strip()
+    if match := re.fullmatch(R'([1-9][0-9]?)%', expression):
+        return Percentage(int(match[1]) / 100)
+    if match := re.fullmatch(R'(?i)(?P<digits>[1-9][0-9]*|0)(?P<unit>[KMGTPE]B?)', expression):
         unit = match['unit'].upper()
         for k, symbol in enumerate('KMGTPE', 1):
             if unit.startswith(symbol):
-                expression = match['digits'] + (k * 3 * '0')
-                break
-    parser = PythonExpression.Lazy(expression)
-    if parser.variables:
+                return int(match['digits']) * k * 1000
+    if (parser := PythonExpression.Lazy(expression)).variables:
         def evaluate(data: Chunk):
             try:
                 return parser(metavars(data))
