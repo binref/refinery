@@ -15,7 +15,7 @@ from zlib import adler32
 from collections import Counter
 from typing import ByteString, Iterable, Callable, List, Union, Optional
 
-from refinery.units import Arg, Unit, RefineryPartialResult
+from refinery.units import Arg, Unit, RefineryPartialResult, RefineryPotentialUserError
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
 from refinery.lib.xml import XMLNodeBase
 
@@ -134,7 +134,14 @@ class PathExtractorUnit(Unit, abstract=True):
             def to_string(t: Union[str, bytes]) -> str:
                 if isinstance(t, str):
                     return t
-                return t.decode(self.codec)
+                try:
+                    return t.decode(self.codec)
+                except Exception as E:
+                    raise RefineryPotentialUserError(
+                        F'invalid path pattern of length {len(t)};'
+                        U' if that path exists on disk, these are the file contents.'
+                        U' to prevent this, specify s:path.txt rather than path.txt.'
+                    ) from E
             paths = [to_string(p) for p in paths]
         for path in paths:
             self.log_debug('path:', path)
