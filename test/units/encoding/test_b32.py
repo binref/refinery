@@ -3,7 +3,7 @@
 from .. import TestUnitBase
 
 
-class TestB32(TestUnitBase):
+class TestBase32(TestUnitBase):
 
     def test_too_much_padding(self):
         unit = self.load()

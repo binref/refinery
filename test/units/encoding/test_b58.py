@@ -3,7 +3,7 @@
 from .. import TestUnitBase
 
 
-class TestB32(TestUnitBase):
+class TestBase58(TestUnitBase):
 
     def test_bitcoin_address(self):
         unit = self.load(reverse=True)
