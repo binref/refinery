@@ -41,6 +41,12 @@ def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0, 
         if pad and overlap:
             unpacked.append(int.from_bytes(view[-overlap:], bo))
         return unpacked
+    elif bigendian and pad and (overlap := len(view) % blocksize):
+        def chunks():
+            for k in range(0, ub - overlap, step):
+                yield int.from_bytes(view[k:k + blocksize], bo)
+            yield int.from_bytes(view[-blocksize:], bo) << ((blocksize - overlap) * 8)
+        return chunks()
     else:
         return (int.from_bytes(view[k:k + blocksize], bo) for k in range(0, ub, step))
 
