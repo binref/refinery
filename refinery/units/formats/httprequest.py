@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from typing import Union, Dict, List
+
 from cgi import parse_header, FieldStorage
 from email.message import Message
 from enum import Enum
@@ -44,7 +48,7 @@ class httprequest(Unit):
             ct, info = parse_header(ct)
             mode = _Fmt(ct)
 
-        def chunks(upload: dict[str | bytes, list[bytes]]):
+        def chunks(upload: Dict[Union[str, bytes], List[bytes]]):
             for key, values in upload.items():
                 if not isinstance(key, str):
                     key = key.decode('utf8')
