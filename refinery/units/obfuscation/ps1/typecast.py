@@ -29,7 +29,7 @@ class deob_ps1_typecast(Deobfuscator):
 
         @strlit.outside
         def char_literal(match):
-            c = chr(int(match[1]))
+            c = chr(int(match[1].lower(), 0))
             if c == "'":
                 return '''"'"'''
             return F"'{c}'"

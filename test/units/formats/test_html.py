@@ -63,3 +63,11 @@ class TestHTMLExtractor(TestUnitBase):
                 '    </head>',
             ))
         )
+
+    def test_javascript_regression(self):
+        data = self.download_sample('5775dd79d6529e77182ceccb5f0a1d9d22d4884017df41dade409caf6471e48f')
+        pipe = self.load_pipeline('loop 8 xthtml[script]:csd[string]:url | deob-ps1 | csd string | b64 | xtp url')
+        self.assertEqual(
+            data | pipe | str,
+            'http'':/''/198.46.178''.''151/65/seethebesthtingswithmewhichgivegreatoutputofmegood.tIF'
+        )

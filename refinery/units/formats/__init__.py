@@ -277,8 +277,8 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         self, *paths,
         format: Arg('-f', type=str, metavar='F', help=(
             'A format expression to be applied for computing the path of an item. This must use '
-            'metadata that is available on the item. The current tag can be accessed as {0}. If '
-            'no format is specified, the unit attempts to derive a good attribute from the XML '
+            'metadata that is available on the item. The current tag can be accessed as {{tag}}. '
+            'If no format is specified, the unit attempts to derive a good attribute from the XML '
             'tree to use for generating paths.'
         )) = None,
         list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
