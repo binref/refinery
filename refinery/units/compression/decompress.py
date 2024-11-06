@@ -143,7 +143,6 @@ class decompress(Unit):
 
             @property
             def unmodified(self):
-                return self.cutoff == 0
                 return self.prefix is None and self.cutoff == 0
 
             @property
