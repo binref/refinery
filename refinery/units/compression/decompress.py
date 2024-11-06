@@ -139,7 +139,7 @@ class decompress(Unit):
             def ratio(self):
                 if not self.result:
                     return INF
-                return len(data) / len(self.result)
+                return len(data) / len(self)
 
             @property
             def unmodified(self):
@@ -199,7 +199,7 @@ class decompress(Unit):
             if not best or len(new) < len(best):
                 q = 0
             else:
-                q = ratio / best.ratio
+                q = len(best) / len(new)
             ratio *= 100
             brief = new.rating.brief
             if q < threshold:
