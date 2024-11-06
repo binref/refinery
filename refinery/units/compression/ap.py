@@ -287,4 +287,18 @@ class aplib(Unit):
         return compressor(buf).compress()
 
     def process(self, buf):
-        return decompressor(buf).decompress()
+        view = memoryview(buf)
+        size = 0
+        if view[:4] == B'AP32':
+            size = int.from_bytes(buf[4:8], 'little')
+            if size > 0x80:
+                size = 0
+            else:
+                self.log_info(F'detected aPLib header of size {size}')
+        return decompressor(view[size:]).decompress()
+
+    @classmethod
+    def handles(self, data: bytearray):
+        if data[:4] == B'AP32':
+            return True
+        return None
