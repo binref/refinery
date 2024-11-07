@@ -5,6 +5,12 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.7
+- Adds the `httprequest` unit for parsing HTTP requests.
+- Adds the `b62` unit (thanks to [@lukaskuzmiak][]).
+- The `uuenc` unit was updated to remove reliance on the now deprecated `uu` module.
+- Adds support for aPLib compressed data with headers.
+
 ## Version 0.7.6
 - Adds the `brotli` decompression unit.
 - The `pym` unit was added which provides an interface to Python's marshal serialization.
@@ -749,6 +755,7 @@ Updates build system.
 
 [@baderj]: https://github.com/baderj
 [@alphillips-lab]: https://github.com/alphillips-lab
+[@lukaskuzmiak]: https://github.com/lukaskuzmiak
 [@cxiao]: https://github.com/cxiao
 [@EricFaehrmann]: https://github.com/EricFaehrmann
 [@larsborn]: https://github.com/larsborn
