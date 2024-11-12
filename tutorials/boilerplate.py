@@ -13,17 +13,19 @@ import fnmatch
 import hashlib
 import logging
 import re
+import requests
 import shlex
 import getpass
 
-
-os.environ['REFINERY_TERM_SIZE'] = '120'
-os.environ['REFINERY_COLORLESS'] = '1'
+if True:
+    os.environ['REFINERY_TERM_SIZE'] = '120'
+    os.environ['REFINERY_COLORLESS'] = '1'
 
 from refinery.lib.meta import SizeInt
 from refinery.lib.loader import load_pipeline
 from refinery.units import Executable, Unit
-from test import SampleStore
+
+from samples import SampleStore
 
 logging.disable(logging.CRITICAL)
 Executable.Entry = '__DEMO__'
@@ -203,6 +205,18 @@ def show(line: str):
     return Image(filename=line.strip())
 
 
+@register_cell_magic
+def cat(line: str, cell=None):
+    cat, _, out = line.partition('>')
+    cat, _, eof = cat.partition('<<')
+    out = out.strip()
+    eof = eof.strip()
+    cell = cell or ''
+    cell, _, _ = cell.partition(eof)
+    cell = cell.strip()
+    store.cache[out] = cell.encode('utf8')
+
+
 def store_sample(hash: str, name: Optional[str] = None, key: Optional[str] = None):
     store.download(hash, key=key)
     if name is None:
@@ -212,3 +226,14 @@ def store_sample(hash: str, name: Optional[str] = None, key: Optional[str] = Non
 
 def store_clear():
     store.cache.clear()
+
+
+@register_line_magic
+def flare(line: str):
+    name, _, pattern = line.strip().partition(' ')
+    url = F'https://www.awarenetwork.org/home/outlaw/ctfs/flareon/{name}'
+    store_clear()
+    store.cache[name] = requests.get(url).content
+    emit(F'{name} | xt7z {pattern} [| dump {{path}} ]')
+    rm(name)
+    ls()
