@@ -21,3 +21,9 @@ class hex(Unit):
         if len(data) % 2:
             data = data[:-1]
         return base64.b16decode(data, casefold=True)
+
+    @classmethod
+    def handles(self, data: bytearray):
+        from refinery.lib.patterns import formats
+        if formats.spaced_hex.fullmatch(data):
+            return True
