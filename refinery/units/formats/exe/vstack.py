@@ -375,10 +375,11 @@ class vstack(Unit):
 
             skipped = False
 
-            if not self.args.log_stack_cookies:
-                stack_position = emu.reg_read(state.sp_register)
-                if unsigned_value ^ stack_position == state.last_read:
-                    skipped = 'stack cookie'
+            if (
+                not self.args.log_stack_cookies
+                and emu.reg_read(state.sp_register) ^ unsigned_value == state.last_read
+            ):
+                skipped = 'stack cookie'
             elif size not in bounds[self.args.write_range]:
                 skipped = 'size excluded'
             elif (
