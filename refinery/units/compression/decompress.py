@@ -240,5 +240,4 @@ class decompress(Unit):
                     self.log_info('the only decompression with result returned only a partial result.')
                 return self.labelled(dc.result, method=dc.method)
 
-        self.log_warn('no compression engine worked, returning original data.')
-        return data
+        raise ValueError('no compression engine worked')
