@@ -583,7 +583,7 @@ class NSHeader(Struct):
         if string_table_size < 2:
             raise ValueError(F'The calculated string table size is {string_table_size}, too small to parse.')
         reader.seekset(self.bh_strings.offset)
-        strings = reader.read(string_table_size)
+        self.string_data = strings = reader.read(string_table_size)
         self.unicode = strings[:2] == B'\0\0'
         if strings[-1] != 0 or (self.unicode and strings[-2] != 0):
             raise ValueError(U'The last string table character was unexpectedly nonzero.')
@@ -1344,6 +1344,13 @@ class xtnsis(ArchiveUnit):
 
         for item in arc.header.items:
             yield self._pack(item.path, item.mtime, lambda i=item: arc._extract_item(i).data)
+
+        with MemoryFile() as bin:
+            for opc in arc.header.instructions:
+                bin.write(opc.get_data())
+            yield self._pack('$HEADER/opcodes.bin', None, bin.getvalue())
+
+        yield self._pack('$HEADER/strings.bin', None, arc.header.string_data)
         yield self._pack('setup.nsis', None, arc.script.encode(self.codec))
 
     @classmethod
