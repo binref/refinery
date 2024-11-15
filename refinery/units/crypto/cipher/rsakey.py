@@ -43,7 +43,8 @@ class rsakey(Unit):
 
     def process(self, data):
         from refinery.lib.mscrypto import TYPES, ALGORITHMS
-        key = normalize_rsa_key(data, force_public=self.args.public)
+        fmt, key = normalize_rsa_key(data, force_public=self.args.public)
+        self.log_info(F'parsing input as {fmt.value} format')
         out = self.args.output
         if out is RSAFormat.PEM:
             yield key.export_key('PEM')
