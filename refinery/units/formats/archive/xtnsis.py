@@ -1037,7 +1037,7 @@ class NSArchive(Struct):
         if errors > 3:
             raise ValueError(F'Out of {0x10} bytes, there were {errors} errors in the signature.')
 
-        header_data = None
+        self.header_data = None
         header_size = reader.u32()
         # not the same, since the header might be compressed:
         header_data_length = None
@@ -1114,7 +1114,7 @@ class NSArchive(Struct):
                 raise ValueError(F'Found header length at unexpected offset {preview_check}; unknown NSIS format.')
             reader.seekrel(header_prefix_size)
             self.entry_offset_delta = header_prefix_size
-            header_data = reader.read_exactly(header_data_length)
+            self.header_data = reader.read_exactly(header_data_length)
         elif lzmacheck(preview_bytes):
             self.method = NSMethod.LZMA
         elif preview_bytes[3] == 0x80:
@@ -1133,7 +1133,7 @@ class NSArchive(Struct):
 
         reader.seekset(self.archive_offset)
 
-        if header_data is None:
+        if self.header_data is None:
             it = self._decompress_items(reader)
             header_entry = next(it)
             if header_entry.decompression_error:
@@ -1143,16 +1143,16 @@ class NSArchive(Struct):
             if self.solid:
                 self._solid_iter = it
             self.entry_offset_delta += header_entry.size
-            header_data = header_entry.data
+            self.header_data = header_entry.data
         else:
-            self.entry_offset_delta += len(header_data)
+            self.entry_offset_delta += len(self.header_data)
 
-        if not header_data:
+        if not self.header_data:
             raise ValueError('header data had length zero')
 
-        xtnsis.log_debug(F'read header of length {len(header_data)}')
+        xtnsis.log_debug(F'read header of length {len(self.header_data)}')
 
-        self.header = NSHeader(header_data, size=header_size, extended=self.extended)
+        self.header = NSHeader(self.header_data, size=header_size, extended=self.extended)
         self.reader = reader
 
         if self.method is NSMethod.Deflate and self.header.nsis_deflate:
@@ -1352,6 +1352,7 @@ class xtnsis(ArchiveUnit):
 
         yield self._pack('$HEADER/strings.bin', None, arc.header.string_data)
         yield self._pack('setup.nsis', None, arc.script.encode(self.codec))
+        yield self._pack('setup.bin', None, arc.header_data)
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
