@@ -22,14 +22,9 @@ class csv(Unit):
     ):
         super().__init__(quote=quote, delim=delim)
 
-    def reverse(self, data: bytearray):
+    def json_to_csv(self, table: dict):
         quote = self.args.quote.decode(self.codec)
         delim = self.args.delim.decode(self.codec)
-
-        try:
-            table: List[Dict[str, Any]] = json.loads(data)
-        except Exception:
-            table: List[Dict[str, Any]] = [json.loads(line) for line in data.splitlines()]
 
         if not isinstance(table, list):
             raise ValueError('Input must be a JSON list.')
@@ -59,13 +54,21 @@ class csv(Unit):
                 keys[key] = None
 
         keys = list(keys)
-        out.truncate(0)
+        out = MemoryFile()
 
         with io.TextIOWrapper(out, self.codec, newline='') as stream:
             writer = _csv.writer(stream, quotechar=quote, delimiter=delim, skipinitialspace=True)
+            writer.writerow(keys)
             for row in table:
                 writer.writerow([str(row.get(key, '')) for key in keys])
             return out.getvalue()
+
+    def reverse(self, data: bytearray):
+        try:
+            table: List[Dict[str, Any]] = json.loads(data)
+        except Exception:
+            table: List[Dict[str, Any]] = [json.loads(line) for line in data.splitlines()]
+        return self.json_to_csv(table)
 
     def process(self, data):
         quote = self.args.quote.decode(self.codec)
