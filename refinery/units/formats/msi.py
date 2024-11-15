@@ -18,6 +18,8 @@ from refinery.lib.types import ByteStr, JSONDict
 from refinery.lib.mime import FileMagicInfo
 from refinery.lib.tools import cached_property
 
+from refinery.units.formats.csv import csv
+
 
 class MsiType(enum.IntEnum):
     """
@@ -137,6 +139,7 @@ class xtmsi(xtdoc):
     """
 
     _SYNTHETIC_STREAMS_FILENAME = 'MsiTables.json'
+    _SYNTHETIC_STREAMS_TOPLEVEL = 'MsiTables'
 
     # https://learn.microsoft.com/en-us/windows/win32/msi/summary-list-of-all-custom-action-types
     _CUSTOM_ACTION_TYPES = {
@@ -240,7 +243,7 @@ class xtmsi(xtdoc):
             while True:
                 _replace.done = True
                 string = re.sub(R'''(?x)
-                    \[             # open square brackent
+                    \[             # open square bracket
                       (?![~\\])    # not followed by escapes
                       ([%$!#]?)    # any of the valid prefix characters
                       ([^[\]{}]+)  # no brackets or braces
@@ -346,7 +349,7 @@ class xtmsi(xtdoc):
 
         def fix_msi_path(path: str):
             prefix, dot, name = path.partition('.')
-            if dot == '.' and prefix.lower() == 'binary':
+            if dot == '.' and prefix in processed_table_data:
                 path = F'{prefix}/{name}'
             return path
 
@@ -396,6 +399,17 @@ class xtmsi(xtdoc):
         ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME,
                 json.dumps(processed_table_data, indent=4).encode(self.codec))
         streams[ds.path] = ds
+
+        converter = csv()
+        for key, data in processed_table_data.items():
+            sk = key.strip('_')
+            if sk not in processed_table_data:
+                key = sk
+            try:
+                tbl = UnpackResult(F'{self._SYNTHETIC_STREAMS_TOPLEVEL}/{key}.csv', converter.json_to_csv(data))
+            except Exception:
+                continue
+            streams[tbl.path] = tbl
 
         for path in sorted(streams):
             streams[path].path = path
