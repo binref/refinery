@@ -62,3 +62,12 @@ class TestSnip(TestUnitBase):
             B'03456789',
             B'01236789',
         ])
+
+    def test_stream_partitioning(self):
+        a = self.generate_random_buffer(280)
+        b = self.generate_random_buffer(900)
+        c = self.generate_random_buffer(128)
+        data = a + b + c
+        unit = self.load(':280', ':900', ':', stream=True)
+        test = data | unit | [bytes]
+        self.assertListEqual(test, [a, b, c])

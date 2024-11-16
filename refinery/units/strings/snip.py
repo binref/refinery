@@ -39,7 +39,7 @@ class snip(Unit):
             upper = bounds.stop
             lower = bounds.start or 0
             if upper is None:
-                upper = len(data) - cursor
+                upper = len(data)
             else:
                 upper += cursor
             if length:
