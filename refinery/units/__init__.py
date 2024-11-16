@@ -1672,6 +1672,10 @@ class Unit(UnitBase, abstract=True):
                 def identity(x):
                     return x
                 return identity
+            if isinstance(c, type):
+                def converter(v):
+                    return v if isinstance(v, c) else c(v)
+                return converter
             if callable(c):
                 return c
 
