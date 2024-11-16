@@ -2,10 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from copy import copy
-
 from refinery.units import Arg, Unit
-from refinery.lib.tools import lookahead
 
 
 class snip(Unit):
@@ -20,25 +17,45 @@ class snip(Unit):
     def __init__(
         self,
         slices: Arg(help='Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
-        length: Arg.Switch('-l',
-            help='Interpret the end of a slice as a length rather than as an offset.') = False,
-        remove: Arg.Switch('-r',
-            help='Remove the slices from the input rather than selecting them.') = False,
+        length: Arg.Switch('-l', help=(
+            'Interpret the end of a slice as a length rather than as an offset.')) = False,
+        stream: Arg.Switch('-s', help=(
+            'After each slice, consider only the data that follows after it for subsequent '
+            'slicing.')) = False,
+        remove: Arg.Switch('-r', help=(
+            'Remove the slices from the input rather than selecting them.')) = False,
     ):
-        super().__init__(slices=slices, length=length, remove=remove)
+        super().__init__(slices=slices, length=length, stream=stream, remove=remove)
 
     def process(self, data: bytearray):
         slices: list[slice] = list(self.args.slices)
-        if self.args.length:
-            for k, s in enumerate(slices):
-                if s.stop is None:
-                    continue
-                slices[k] = slice(s.start, (s.start or 0) + s.stop, s.step)
-        if self.args.remove:
-            for last, bounds in lookahead(slices):
-                chunk = data if last else copy(data)
-                del chunk[bounds]
-                yield chunk
-        else:
-            for bounds in slices:
-                yield data[bounds]
+        stream = self.args.stream
+        remove = self.args.remove
+        length = self.args.length
+        cursor = 0
+        view = memoryview(data)
+
+        for k, bounds in enumerate(slices):
+            upper = bounds.stop
+            lower = bounds.start or 0
+            if upper is None:
+                upper = len(data) - cursor
+            else:
+                upper += cursor
+            if length:
+                upper += lower
+            bounds = slice(
+                lower + cursor, upper, bounds.step)
+            if stream:
+                cursor = upper
+            if not remove:
+                temp = view[bounds]
+            else:
+                if k + 1 >= len(slices):
+                    view.release()
+                    del view
+                    temp = data
+                else:
+                    temp = bytearray(data)
+                del temp[bounds]
+            yield temp

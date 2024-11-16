@@ -39,3 +39,26 @@ class TestSnip(TestUnitBase):
         data = b"FOOBARFOOBAZBAZ"
         unit = self.load('3:3', '9:', length=True, squeeze=True)
         self.assertEqual(data | unit | bytes, B'BARBAZBAZ')
+
+    def test_stream_normal(self):
+        data = (
+            B'0'   # skipped
+            B'12'  # selected
+            B'3'   # selected
+            B'45'  # skipped
+            B'567' # selected
+        )
+        unit = self.load('1:3', ':1', '2:5', stream=True, squeeze=True)
+        self.assertEqual(data | unit | bytes, B'123567')
+
+        unit = self.load('1:2', ':1', '2:3', stream=True, squeeze=True, length=True)
+        self.assertEqual(data | unit | bytes, B'123567')
+
+    def test_stream_removal(self):
+        data = B'0123456789'
+        unit = self.load('1:2', '1:2',
+            stream=True, length=True, remove=True)
+        self.assertListEqual(data | unit | [bytes], [
+            B'03456789',
+            B'01236789',
+        ])
