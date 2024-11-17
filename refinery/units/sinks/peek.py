@@ -162,14 +162,18 @@ class peek(HexViewer):
         decoded = decoded.splitlines(False)
         if not wrap:
             for k, line in enumerate(decoded):
+                line = line.replace('\t', '\x20' * 4)
                 if len(line) <= width:
                     continue
+                clipped = line[:width - 3]
                 if self.args.gray:
-                    decoded[k] = line[:width]
+                    color = ''
+                    reset = ''
                 else:
-                    c = self._colorama
-                    d = line.replace('\t', '    ')[:width - 1]
-                    decoded[k] = F'{d}{c.Fore.LIGHTRED_EX}…{c.Style.RESET_ALL}'
+                    colorama = self._colorama
+                    color = colorama.Fore.LIGHTRED_EX
+                    reset = colorama.Style.RESET_ALL
+                decoded[k] = F'{clipped}{color}...{reset}'
             return decoded[:abs(linecount)]
         for paragraph in decoded:
             if not remaining:
