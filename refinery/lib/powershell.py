@@ -106,9 +106,13 @@ def get_parent_processes():
     finally:
         k32.CloseHandle(snap)
     pid = os.getpid()
+    loop_detection = set()
     while pid in processes:
+        if pid in loop_detection:
+            break
         pid, path = processes[pid]
         yield path
+        loop_detection.add(pid)
 
 
 def shell_supports_binref() -> bool:
