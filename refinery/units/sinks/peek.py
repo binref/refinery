@@ -98,16 +98,16 @@ class peek(HexViewer):
             self.log_info('forwarding input to next unit')
             yield data
 
-    def _peekmeta(self, linewidth, sep, _x_peek=None, **meta) -> Generator[str, None, None]:
-        if not meta and not _x_peek:
+    def _peekmeta(self, linewidth, sep, meta: dict, peek=None) -> Generator[str, None, None]:
+        if not meta and not peek:
             return
         width = max((len(name) for name in meta), default=0)
         separators = iter([sep])
-        if _x_peek is not None:
-            if len(_x_peek) > linewidth:
-                _x_peek = _x_peek[:linewidth - 3] + '...'
+        if peek is not None:
+            if len(peek) > linewidth:
+                peek = peek[:linewidth - 3] + '...'
             yield from separators
-            yield _x_peek
+            yield peek
         for name in sorted(meta):
             value = meta[name]
             if value is None:
@@ -268,7 +268,7 @@ class peek(HexViewer):
             if self.args.meta > 2:
                 for name in meta.derivations:
                     meta[name]
-            for line in self._peekmeta(metrics.hexdump_width, line, _x_peek=peek, **meta):
+            for line in self._peekmeta(metrics.hexdump_width, line, meta, peek=peek):
                 empty = False
                 yield line
 
