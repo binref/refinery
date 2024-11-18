@@ -343,7 +343,7 @@ class formats(PatternEnum):
     "Hexadecimal strings"
     uppercase_hex = alphabet(R'[0-9A-F]{2}')
     "Uppercase hexadecimal strings"
-    spaced_hex = tokenize(R'[0-9a-fA-F]+', R'\s*')
+    spaced_hex = tokenize(R'[0-9a-fA-F]+', R'\s*', bound='')
     "Hexadecimal strings"
     spaced_b64 = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
     "Base64 encoded strings, separated by whitespace"
