@@ -49,18 +49,24 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, pp: Union[str, re.Pattern], regex=False, fuzzy=0):
-        if isinstance(pp, re.Pattern):
-            self.stops = []
-            self.pattern = pp
-            return
-        elif not regex:
-            self.stops = [stop for stop in re.split(R'(.*?[/*?])', pp) if stop]
-            pp, _, _ = fnmatch.translate(pp).partition(r'\Z')
-        p1 = re.compile(pp)
-        p2 = re.compile(F'.*?{pp}')
-        self.matchers = [p1.fullmatch, p2.fullmatch, p1.search]
+    def __init__(self, query: Union[str, re.Pattern], regex=False, fuzzy=0):
+        self.query = query
+        self.regex = regex
         self.fuzzy = fuzzy
+        self.compile()
+
+    def compile(self, **kw):
+        query = self.query
+        if isinstance(query, re.Pattern):
+            self.stops = []
+            self.pattern = query
+            return
+        elif not self.regex:
+            self.stops = [stop for stop in re.split(R'(.*?[/*?])', query) if stop]
+            query, _, _ = fnmatch.translate(query).partition(r'\Z')
+        p1 = re.compile(query, **kw)
+        p2 = re.compile(F'.*?{query}')
+        self.matchers = [p1.fullmatch, p2.fullmatch, p1.search]
 
     def reach(self, path):
         if not any(self.stops):
@@ -245,6 +251,10 @@ class PathExtractorUnit(Unit, abstract=True):
                 else:
                     result.path = F'{base}.v{counter:0{width}d}{extension}'
                 self.log_warn(F'read chunk with duplicate path; deduplicating to {result.path}')
+
+        if len({r.path.lower() for r in results}) == len(results):
+            for p in patterns:
+                p.compile(flags=re.IGNORECASE)
 
         for p in patterns:
             for fuzzy in range(3):
