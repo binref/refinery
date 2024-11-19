@@ -7,7 +7,7 @@ from refinery.units import Arg, Unit, Chunk
 
 from refinery.lib.meta import SizeInt, metavars, check_variable_name
 from refinery.lib.structures import StructReader, StreamDetour
-from refinery.lib.argformats import ParserError, PythonExpression, multibin
+from refinery.lib.argformats import ParserError, PythonExpression, numseq
 from refinery.lib.types import INF
 
 
@@ -169,7 +169,7 @@ class struct(Unit):
                             value = value[0]
 
                     if pipeline:
-                        value = multibin(pipeline, reverse=True, seed=value)
+                        value = numseq(pipeline, reverse=True, seed=value)
                     args.append(value)
 
                     if name == _SHARP:
