@@ -214,7 +214,7 @@ emit 0xC0A80C2A | pack -EB4 | pack -R [| sep . ]
 ```
 Perform a single byte XOR brute force and attempt to extract a PE file payload in every iteration:
 ```
-emit file.bin | rep 0x100 [|cm| xor var:index | carve-pe -R | peek | dump {name} ]
+emit file.bin | rep 0x100 [| xor v:index | carve-pe -R | peek | dump {name} ]
 ```
 
 ### Malware Config Examples
@@ -263,7 +263,12 @@ Extract payload from a shellcode loader and carve its c2:
 emit 58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3 \
   | rex yara:50607080.* [| struct LL{s:L}{} | xor -B2 accu[s]:@msvc | xtp url ]
 ```
-Extract the malicious downloader payload from a malicious document's text body:
+Get the malicious VBA macros from a forgotten time when this was how it was done:
+```
+emit ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394 \
+  | xtvba
+```
+And then extract the malicious downloader payload:
 ```
 emit ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394 \
   | doctxt | repl drp:c: | carve -s b64 | rev | b64 | rev | ppjscript
@@ -271,7 +276,7 @@ emit ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394 \
 Extract payload URLs from a malicious PDF document:
 ```
 emit 066aec7b106f669e587b10b3e3c6745f11f1c116f7728002f30c072bd42d6253 \
-  | xt JS | carve -sd string | carve -sd string | url | xtp url [| urlfix ]]
+  | xt JS | csd string | csd string | url | xtp url [| urlfix ]]
 ```
 
 
