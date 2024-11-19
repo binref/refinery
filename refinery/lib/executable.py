@@ -12,6 +12,7 @@ The provided interface is the same for all executables. It powers the following 
 from __future__ import annotations
 
 import sys
+import re
 import itertools
 
 from typing import TYPE_CHECKING, NamedTuple
@@ -23,7 +24,7 @@ from uuid import uuid4
 
 from macholib.MachO import load_command, MachO, MachOHeader
 from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
-from elftools.elf.elffile import ELFFile
+from elftools.elf.elffile import ELFFile, SymbolTableSection
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.types import INF, ByteStr
