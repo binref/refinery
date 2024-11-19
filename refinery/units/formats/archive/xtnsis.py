@@ -1152,6 +1152,7 @@ class NSArchive(Struct):
 
         xtnsis.log_debug(F'read header of length {len(header_data)}')
 
+        self.header_data = header_data
         self.header = NSHeader(header_data, size=header_size, extended=self.extended)
         self.reader = reader
 
@@ -1345,12 +1346,7 @@ class xtnsis(ArchiveUnit):
         for item in arc.header.items:
             yield self._pack(item.path, item.mtime, lambda i=item: arc._extract_item(i).data)
 
-        with MemoryFile() as bin:
-            for opc in arc.header.instructions:
-                bin.write(opc.get_data())
-            yield self._pack('$HEADER/opcodes.bin', None, bin.getvalue())
-
-        yield self._pack('$HEADER/strings.bin', None, arc.header.string_data)
+        yield self._pack('setup.bin', None, arc.header_data)
         yield self._pack('setup.nsis', None, arc.script.encode(self.codec))
 
     @classmethod
