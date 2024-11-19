@@ -423,9 +423,10 @@ def date_from_timestamp(ts: int):
     Convert a UTC timestamp to a datetime object.
     """
     if sys.version_info >= (3, 12):
-        return datetime.datetime.fromtimestamp(ts, datetime.UTC)
+        dt = datetime.datetime.fromtimestamp(ts, datetime.UTC)
     else:
-        return datetime.datetime.utcfromtimestamp(ts)
+        dt = datetime.datetime.utcfromtimestamp(ts)
+    return dt.replace(tzinfo=None)
 
 
 def integers_of_slice(s: slice) -> Iterable[int]:
