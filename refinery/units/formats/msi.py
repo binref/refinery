@@ -373,9 +373,9 @@ class xtmsi(xtdoc):
                     dst_name = file_info['FileName']
                 except KeyError:
                     continue
-                short, pipe, long = dst_name.partition('|')
-                if pipe == '|' and short and long:
-                    file_names[src_name] = long
+                _, _, long = dst_name.partition('|')
+                dst_name = long or dst_name
+                file_names[src_name] = dst_name
 
             for path, cab in cabs.items():
                 try:
