@@ -5,6 +5,14 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.8
+- The `u16` unit is no longer limited to the little-endian variant of UTF-16.
+- The `snip` unit was given a new argument `--stream` which allows each offset to be relative to the end of the previously extracted data.
+- Path extraction units will now match paths case-insensitively when this does not cause ambiguity.
+- The `xtmsi` unit now extracts all MSI tables as CSV on top of the JSON blob.
+- The `xtnsis` unit now extracts `setup.bin` alongside `setup.nsis`, the former containing a full binary copy of the extracted header.
+- The `dedup` unit now has an optional argument which can specify a meta variable to deduplicate by.
+
 ## Version 0.7.7
 - Adds the `httprequest` unit for parsing HTTP requests.
 - Adds the `b62` unit (thanks to [@lukaskuzmiak][]).
