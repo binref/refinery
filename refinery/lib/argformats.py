@@ -1492,19 +1492,21 @@ class DelayedRegexpArgument(DelayedArgument):
         import re
 
         def y2r(match: re.Match[bytes]):
-            expr = match[2]
-            if expr == B'??':
-                if match[1]:
+            mask = match[2]
+            _not = bool(match[1])
+            if mask == B'??':
+                if _not:
                     raise ArgumentTypeError('Found ~?? in YARA pattern; cannot negate arbitrary wildcard.')
                 return B'.'
-            if B'?' not in expr:
-                pattern = BR'\x%s' % expr
-            elif expr.endswith(B'?'):
-                pattern = BR'\x%c0-\x%cF' % (expr[0], expr[0])
+            if B'?' not in mask:
+                pattern = BR'\x%s' % mask
+                if not _not:
+                    return pattern
+            elif mask.endswith(B'?'):
+                pattern = BR'\x%c0-\x%cF' % (mask[0], mask[0])
             else:
-                pattern = BR'%s' % BR''.join(BR'\x%x%c' % (k, expr[1]) for k in range(0x10))
-            modifier = B'^' if match[1] else B''
-            return B'[%s%s]' % (modifier, pattern)
+                pattern = BR'%s' % BR''.join(BR'\x%x%c' % (k, mask[1]) for k in range(0x10))
+            return B'[%s%s]' % (_not * B'^', pattern)
 
         def yara_range(rng: bytes, last: bool):
             bounds = [t.strip() for t in rng[1:-1].split(B'-')]
