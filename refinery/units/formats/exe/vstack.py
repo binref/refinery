@@ -9,7 +9,7 @@ from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, BO, Executable, Range, ExecutableCodeBlob
 from refinery.lib.types import bounds, INF
 from refinery.lib.meta import SizeInt
-from refinery.lib.tools import NoLogging
+from refinery.lib.tools import isbuffer, NoLogging
 
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -19,6 +19,17 @@ if TYPE_CHECKING:
     from capstone import Cs
     from unicorn import Uc
     from intervaltree import IntervalTree, Interval
+
+
+def _get_reg_size(mu: Uc, reg: int):
+    # props to Matthieu Walter
+    backup = mu.reg_read(reg)
+    mu.reg_write(reg, (1 << 512) - 1)
+    size = mu.reg_read(reg).bit_length()
+    q, r = divmod(size, 8)
+    assert r == 0
+    mu.reg_write(reg, backup)
+    return q
 
 
 @dataclass
@@ -105,7 +116,9 @@ class vstack(Unit):
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
-        meta_registers: Arg.Switch('-r', help='Consume register initialization values from the chunk\'s metadata.') = False,
+        meta_registers: Arg.Switch('-r', help=(
+            'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
+            'the data will be mapped.')) = False,
         timeout: Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.') = None,
         patch_range: Arg.Bounds('-p', metavar='MIN:MAX',
             help='Extract only patches that are in the given range, default is {default}.') = slice(5, None),
@@ -118,6 +131,8 @@ class vstack(Unit):
         skip_calls: Arg.Counts('-C', group='CALL',
             help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
+        stack_push: Arg('-u', action='append', type=str, metavar='REG',
+            help='Push the value of a register to the stack before beginning emulation; implies -r.') = None,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
         max_visits: Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.') = 0x1000,
         log_writes_in_calls: Arg.Switch('-W', help='Log writes of values that occur in functions calls.') = False,
@@ -137,6 +152,7 @@ class vstack(Unit):
             write_range=write_range,
             wait=wait,
             stack_size=stack_size,
+            stack_push=stack_push,
             wait_calls=wait_calls,
             skip_calls=skip_calls,
             block_size=block_size,
@@ -148,17 +164,16 @@ class vstack(Unit):
             log_stack_cookies=log_stack_cookies
         )
 
-    def _find_stack_location(self, exe: Executable):
+    def _find_stack_and_heap(self, exe: Executable):
         stack_size = self.args.stack_size
+        block_size = self.args.block_size
         memory_max = 1 << exe.pointer_size
         space = exe.image_defined_address_space()
-        aligned = align(stack_size, space.upper)
-        if aligned + stack_size < memory_max:
-            return aligned
-        aligned = align(stack_size, space.lower - stack_size, down=True)
-        if aligned > 0:
-            return aligned
-        raise RuntimeError('The primitive method used to map stack memory has failed.')
+        heap = align(block_size, space.upper)
+        stack = align(stack_size, memory_max - (4 * stack_size), down=True)
+        if heap < stack:
+            return stack, heap
+        raise RuntimeError('The primitive method used to map heap and stack has failed.')
 
     def process(self, data):
         uc = self._unicorn
@@ -172,7 +187,7 @@ class vstack(Unit):
         width = exe.pointer_size // 4
         block_size = self.args.block_size
         stack_size = self.args.stack_size
-        stack_addr = self._find_stack_location(exe)
+        stack_addr, alloc = self._find_stack_and_heap(exe)
         self.log_info(F'mapping {SizeInt(stack_size)!r} of stack at 0x{stack_addr:X}')
         image = memoryview(data)
         disassembler = self._capstone.Cs(*self._cs_arch(arch, exe.byte_order()))
@@ -234,9 +249,8 @@ class vstack(Unit):
                 ),
             }[arch]
 
-        if self.args.meta_registers:
-            from refinery.lib.meta import metavars
-            meta = metavars(data)
+        def get_register_id(var: str):
+            var = var.upper()
             for module in [uc.x86_const, uc.arm_const, uc.mips_const, uc.sparc_const]:
                 md: Dict[str, Any] = module.__dict__
                 for name, register in md.items():
@@ -246,20 +260,55 @@ class vstack(Unit):
                         continue
                     if kind != 'REG' or u != 'UC':
                         continue
-                    for var, value in list(meta.items()):
-                        if var.upper() != name:
-                            continue
-                        meta.discard(var)
-                        register_values[register] = value
-                        break
+                    if name.upper() == var:
+                        return register
+
+        if self.args.meta_registers or self.args.stack_push:
+            from refinery.lib.meta import metavars
+            meta = metavars(data)
+            for var, value in list(meta.items()):
+                register = get_register_id(var)
+                if register is None:
+                    continue
+                meta.discard(var)
+                register_values[register] = var, value
 
         for address in self.args.address:
 
             emulator = uc.Uc(*self._uc_arch(arch, exe.byte_order()))
             stack = Range(stack_addr, stack_addr + 3 * stack_size)
 
+            tos = stack.lower + 2 * len(stack) // 3
             emulator.mem_map(stack.lower, len(stack))
-            emulator.reg_write(sp, stack.lower + 2 * len(stack) // 3)
+
+            for reg, (var, value) in register_values.items():
+                if isinstance(value, int):
+                    self.log_info(F'setting {var} to integer value 0x{value:X}')
+                    emulator.reg_write(reg, value)
+                    continue
+                if isinstance(value, str):
+                    value = value.encode()
+                if isbuffer(value):
+                    size = align(block_size, len(value))
+                    emulator.mem_map(alloc, size)
+                    emulator.mem_write(alloc, bytes(value))
+                    emulator.reg_write(reg, alloc)
+                    self.log_info(F'setting {var} to mapped buffer of size 0x{size:X}')
+                    alloc += size
+                    continue
+                _tn = value.__class__.__name__
+                self.log_warn(F'canot interpret value of type {_tn} for register {var}')
+
+            if push := self.args.stack_push:
+                for reg in push:
+                    rid = get_register_id(reg)
+                    if (rid is None) or not (size := _get_reg_size(emulator, rid)):
+                        raise ValueError(F'unkown register in push: {reg}')
+                    val = emulator.reg_read(rid)
+                    tos = tos - size
+                    emulator.mem_write(tos, val.to_bytes(size, exe.byte_order().value))
+
+            emulator.reg_write(sp, tos)
 
             if arch is Arch.X32:
                 for reg in [
@@ -271,7 +320,8 @@ class vstack(Unit):
                     uc.x86_const.UC_X86_REG_EDI,
                     uc.x86_const.UC_X86_REG_EBP,
                 ]:
-                    emulator.reg_write(reg, stack_addr + stack_size)
+                    if reg not in register_values:
+                        emulator.reg_write(reg, stack_addr + stack_size)
             if arch is Arch.X64:
                 for reg in [
                     uc.x86_const.UC_X86_REG_RAX,
@@ -290,10 +340,8 @@ class vstack(Unit):
                     uc.x86_const.UC_X86_REG_R14,
                     uc.x86_const.UC_X86_REG_R15,
                 ]:
-                    emulator.reg_write(reg, stack_addr + stack_size)
-
-            for reg, value in register_values.items():
-                emulator.reg_write(reg, value)
+                    if reg not in register_values:
+                        emulator.reg_write(reg, stack_addr + stack_size)
 
             for segment in exe.segments():
                 pmem = segment.physical
@@ -501,13 +549,12 @@ class vstack(Unit):
                 state.waiting += 1
             state.expected_address += size
 
-            instruction = state.disassemble(address, size)
-            if instruction:
-                instruction = F'{instruction.mnemonic} {instruction.op_str}'
-                self.log_debug(state.log(instruction))
-            else:
-                self.log_debug(state.log('unrecognized instruction, aborting'))
-                emu.emu_stop()
+            def _log():
+                instruction = state.disassemble(address, size)
+                if instruction:
+                    return F'{instruction.mnemonic} {instruction.op_str}'
+                return 'unrecognized instruction'
+            self.log_debug(lambda: state.log(_log()))
 
         except KeyboardInterrupt:
             emu.emu_stop()
