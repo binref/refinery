@@ -1475,7 +1475,7 @@ class DelayedRegexpArgument(DelayedArgument):
                 U' No such format is known; prefix the entire expression with "s:" if this was '
                 U'unintended, otherwise correct the format name spelling.')
 
-    @handler.register('yara', 'Y')
+    @handler.register('yara', 'y', 'Y')
     def yara(self, pattern: bytes) -> bytes:
         """
         The handler `yara:pattern` or `Y:pattern` converts YARA syntax wildcard hexadecimal
@@ -1491,25 +1491,37 @@ class DelayedRegexpArgument(DelayedArgument):
         """
         import re
 
-        def y2r(match):
-            expr = match[0]
+        def y2r(match: re.Match[bytes]):
+            expr = match[2]
             if expr == B'??':
+                if match[1]:
+                    raise ArgumentTypeError('Found ~?? in YARA pattern; cannot negate arbitrary wildcard.')
                 return B'.'
             if B'?' not in expr:
-                return BR'\x%s' % expr
-            if expr.endswith(B'?'):
-                return BR'[\x%c0-\x%cF]' % (expr[0], expr[0])
-            return BR'[%s]' % BR''.join(
-                BR'\x%x%c' % (k, expr[1]) for k in range(0x10)
-            )
+                pattern = BR'\x%s' % expr
+            elif expr.endswith(B'?'):
+                pattern = BR'\x%c0-\x%cF' % (expr[0], expr[0])
+            else:
+                pattern = BR'%s' % BR''.join(BR'\x%x%c' % (k, expr[1]) for k in range(0x10))
+            modifier = B'^' if match[1] else B''
+            return B'[%s%s]' % (modifier, pattern)
 
-        def yara_range(rng):
-            return B'.{%s}' % B','.join(t.strip() for t in rng[1:-1].split(B'-'))
+        def yara_range(rng: bytes, last: bool):
+            bounds = [t.strip() for t in rng[1:-1].split(B'-')]
+            if len(bounds) > 2:
+                raise ArgumentTypeError(F'Invalid YARA range: {rng}')
+            if not any(bounds):
+                return B'.*' if last else B'.*?'
+            if not bounds[0]:
+                bounds[0] = B'0'
+            return B'.{%s}' % B','.join(bounds)
 
-        pattern = re.split(BR'(\[\s*\d+(?:\s*-\s*\d+)?\s*\])', pattern)
-        pattern[0::2] = [re.sub(BR'[A-Fa-f0-9?]{2}', y2r, c) for c in pattern[::2]]
-        pattern[1::2] = [yara_range(b) for b in pattern[1::2]]
-        return B''.join(pattern)
+        pattern = re.split(BR'(\[\s*\d*(?:\s*-\s*\d*)?\s*\])', pattern)
+        length = (len(pattern) // 2) - int(not pattern[~0])
+        pattern[0::2] = [re.sub(BR'(~?)([A-Fa-f0-9?]{2})', y2r, c) for c in pattern[::2]]
+        pattern[1::2] = [yara_range(b, k == length) for k, b in enumerate(pattern[1::2])]
+        pattern = B''.join(pattern)
+        return pattern
 
 
 class DelayedNumberArgument(DelayedArgument):

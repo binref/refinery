@@ -278,7 +278,11 @@ Extract payload URLs from a malicious PDF document:
 emit 066aec7b106f669e587b10b3e3c6745f11f1c116f7728002f30c072bd42d6253 \
   | xt JS | csd string | csd string | url | xtp url [| urlfix ]]
 ```
-
+Extract the payload URL from an equation editor exploit document:
+```
+emit e850f3849ea82980cf23844ad3caadf73856b2d5b0c4179847d82ce4016e80ee \
+  | officecrypt | xt oleObject | xt native | rex Y:E9[] | vstack -a=x32 -w=200 | xtp
+```
 
 ### AES Encryption
 
