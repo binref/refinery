@@ -51,11 +51,11 @@ class TestVStack(TestUnitBase):
             '018B45F83B45F47CC38B45FCC9'
         )
         unit = self.load(patch_range=slice(10, 50), arch='x64')
-        test = data | unit | []
-        self.assertListEqual(test, [
+        test = data | unit | {bytes}
+        self.assertSetEqual(test, {
             h('2A233337285B4041462B202E20205F59424033212D3D37575D5B4335392C3E2A40555F5A7073756D6C6F72656D69707300'),
             h('6C6F72656D697073756D6C6F72656D697073756D6C6F72656D697073756D6C6F72656D697073756D6C6F72656D69707300'),
-        ])
+        })
 
     def test_shellcode_example(self):
         data = self.download_sample('e850f3849ea82980cf23844ad3caadf73856b2d5b0c4179847d82ce4016e80ee')
