@@ -41,3 +41,8 @@ class TestIFPSStrings(TestUnitBase):
         goal = {'path', 'b512c1_Flash7231FixClass_b512c1', 'mp3-cd-ripper-beta-', 'A1ADB8BE8E677894E', 'M'}
         test = data | self.ldu('ifpsstr') | {str}
         self.assertSetEqual(test, goal)
+
+    def test_issue_70(self):
+        data = self.download_sample('dd4b75e1045c32756de639404b1d9644394891dfb53adc8b701c7a5c2a4b650c')
+        test = data | self.load() | self.ldu('resplit') | [str]
+        self.assertIn('WIZARDFORM: Class;', test)

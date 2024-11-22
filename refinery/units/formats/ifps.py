@@ -465,6 +465,12 @@ class Function(NamedTuple):
             return F'symbol {self.name}'
         return self.decl.represent(self.name)
 
+    @property
+    def type(self):
+        if self.decl is None:
+            return 'symbol'
+        return self.decl.type
+
 
 class Variable(NamedTuple):
     index: int
@@ -635,6 +641,8 @@ class IFPSFile(Struct):
                 t = TGeneric(code, symbol=code.name)
             if exported:
                 t.symbol = reader.read_length_prefixed_ascii()
+                if self.version <= 21:
+                    t.name = reader.read_length_prefixed_ascii()
             types.append(t)
             if self.version >= 21:
                 t.attributes = list(self._read_attributes())
@@ -900,7 +908,7 @@ class IFPSFile(Struct):
                 output.write(F'begin {function!s}\n')
                 for instruction in function.body:
                     output.write(F'{_TAB}0x{instruction.offset:0{width}X}{_TAB}{instruction!s}\n')
-                output.write(F'end {function.decl.type}\n\n')
+                output.write(F'end {function.type}\n\n')
 
         return output.getvalue()
 
