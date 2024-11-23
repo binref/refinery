@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.7.9
+- Adds the `morse` unit for Morse code encoding and decoding.
+
 ## Version 0.7.8
 - The `u16` unit is no longer limited to the little-endian variant of UTF-16.
 - The `snip` unit was given a new argument `--stream` which allows each offset to be relative to the end of the previously extracted data.
