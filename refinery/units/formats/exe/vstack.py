@@ -297,7 +297,6 @@ class vstack(Unit):
             tos = stack.lower + 2 * len(stack) // 3
             emulator.mem_map(stack.lower, len(stack))
 
-
             if arch is Arch.X32:
                 for reg in [
                     uc.x86_const.UC_X86_REG_EAX,
