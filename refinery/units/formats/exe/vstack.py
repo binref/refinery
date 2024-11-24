@@ -297,34 +297,6 @@ class vstack(Unit):
             tos = stack.lower + 2 * len(stack) // 3
             emulator.mem_map(stack.lower, len(stack))
 
-            for reg, (var, value) in register_values.items():
-                if isinstance(value, int):
-                    self.log_info(F'setting {var} to integer value 0x{value:X}')
-                    emulator.reg_write(reg, value)
-                    continue
-                if isinstance(value, str):
-                    value = value.encode()
-                if isbuffer(value):
-                    size = align(block_size, len(value))
-                    emulator.mem_map(alloc, size)
-                    emulator.mem_write(alloc, bytes(value))
-                    emulator.reg_write(reg, alloc)
-                    self.log_info(F'setting {var} to mapped buffer of size 0x{size:X}')
-                    alloc += size
-                    continue
-                _tn = value.__class__.__name__
-                self.log_warn(F'canot interpret value of type {_tn} for register {var}')
-
-            if push := self.args.stack_push:
-                for reg in push:
-                    rid = get_register_id(reg)
-                    if (rid is None) or not (size := _get_reg_size(emulator, rid)):
-                        raise ValueError(F'unkown register in push: {reg}')
-                    val = emulator.reg_read(rid)
-                    tos = tos - size
-                    emulator.mem_write(tos, val.to_bytes(size, exe.byte_order().value))
-
-            emulator.reg_write(sp, tos)
 
             if arch is Arch.X32:
                 for reg in [
@@ -358,6 +330,35 @@ class vstack(Unit):
                 ]:
                     if reg not in register_values:
                         emulator.reg_write(reg, stack_addr + stack_size)
+
+            for reg, (var, value) in register_values.items():
+                if isinstance(value, int):
+                    self.log_info(F'setting {var} to integer value 0x{value:X}')
+                    emulator.reg_write(reg, value)
+                    continue
+                if isinstance(value, str):
+                    value = value.encode()
+                if isbuffer(value):
+                    size = align(block_size, len(value))
+                    emulator.mem_map(alloc, size)
+                    emulator.mem_write(alloc, bytes(value))
+                    emulator.reg_write(reg, alloc)
+                    self.log_info(F'setting {var} to mapped buffer of size 0x{size:X}')
+                    alloc += size
+                    continue
+                _tn = value.__class__.__name__
+                self.log_warn(F'canot interpret value of type {_tn} for register {var}')
+
+            if push := self.args.stack_push:
+                for reg in push:
+                    rid = get_register_id(reg)
+                    if (rid is None) or not (size := _get_reg_size(emulator, rid)):
+                        raise ValueError(F'unkown register in push: {reg}')
+                    val = emulator.reg_read(rid)
+                    tos = tos - size
+                    emulator.mem_write(tos, val.to_bytes(size, exe.byte_order().value))
+
+            emulator.reg_write(sp, tos)
 
             for segment in exe.segments():
                 pmem = segment.physical
