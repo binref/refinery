@@ -217,7 +217,7 @@ class decompress(Unit):
         for engine in self.engines:
             self.log_debug(F'attempting engine: {engine.name}')
             careful = isinstance(engine, (lznt1, lzf, lzjb))
-            for t in range(self.args.tolerance):
+            for t in range(self.args.tolerance + 1):
                 if best_current_rating() >= _R.Successful and careful and t > 0:
                     break
                 update(decompress(engine, t), careful)
