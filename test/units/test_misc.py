@@ -282,7 +282,7 @@ class TestSimpleInvertible(TestUnitBase):
         sys_stdout = sys.stdout
         sys.stdin = dummy(MemoryFile(B'test'), False)
         sys.stdout = out = dummy(MemoryFile(), True)
-        sys.argv = ['cfmt', '=={}==', cfmt._SECRET_DEBUG_TIMING_FLAG]
+        sys.argv = ['cfmt', '=={}==']
         try:
             cfmt.run()
             self.assertEqual(out.buffer.getvalue(), b'==test==')
