@@ -45,6 +45,11 @@ class morse(Unit):
     ):
         super().__init__(language=Arg.AsOption(language, MorseLanguage))
 
+    @classmethod
+    def handles(self, data: bytearray):
+        if re.fullmatch(BR'[-.\s]+', data, re.DOTALL):
+            return True
+
     @unicoded
     def process(self, data: str):
         language: MorseLanguage = self.args.language
