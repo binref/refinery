@@ -195,11 +195,9 @@ def entropy_fallback(data: ByteString) -> float:
     It computes the shannon entropy of the input byte string and is written in pure Python.
     """
     if isinstance(data, memoryview):
-        def count(b):
-            return sum(1 for _b in data if _b == b)
-    else:
-        count = data.count
-    histogram = {b: count(b) for b in range(0x100)}
+        # this copy is better than re-implementing count in Python for memory views
+        data = bytes(data)
+    histogram = {b: data.count(b) for b in range(0x100)}
     S = [histogram[b] / len(data) for b in histogram]
     return 0.0 + -sum(p * log(p, 2) for p in S if p) / 8.0
 
@@ -214,10 +212,10 @@ def entropy(data: ByteString) -> float:
         import numpy
     except ImportError:
         return entropy_fallback(data)
-    _, counts = numpy.unique(memoryview(data), return_counts=True)
-    probs = counts / len(data)
+    hist = numpy.unique(memoryview(data), return_counts=True)[1]
+    prob = hist / len(data)
     # 8 bits are the maximum number of bits of information in a byte
-    return 0.0 + -sum(p * log(p, 2) for p in probs) / 8.0
+    return 0.0 - (numpy.log2(prob) * prob).sum() / 8.0
 
 
 def index_of_coincidence(data: bytearray) -> float:
