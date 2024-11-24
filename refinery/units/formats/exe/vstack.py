@@ -33,7 +33,23 @@ def _get_reg_size(mu: Uc, reg: int):
 
 
 @dataclass
+class EmuConfig:
+    wait_calls: bool
+    skip_calls: bool
+    write_range: slice
+    wait: int
+    block_size: int
+    stack_size: int
+    log_stack_cookies: bool
+    log_writes_in_calls: bool
+    log_stack_addresses: bool
+    log_other_addresses: bool
+    log_zero_overwrites: bool
+
+
+@dataclass
 class EmuState:
+    cfg: EmuConfig
     executable: Executable
     writes: IntervalTree
     expected_address: int
@@ -357,8 +373,24 @@ class vstack(Unit):
                     self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
 
             tree = self._intervaltree.IntervalTree()
+            args = self.args
+
+            cfg = EmuConfig(
+                args.wait_calls,
+                args.skip_calls,
+                args.write_range,
+                args.wait,
+                args.block_size,
+                args.stack_size,
+                args.log_stack_cookies,
+                args.log_writes_in_calls,
+                args.log_stack_addresses,
+                args.log_other_addresses,
+                args.log_zero_overwrites,
+            )
+
             state = EmuState(
-                exe, tree, address, stack, blob, disassembler,
+                cfg, exe, tree, address, stack, blob, disassembler,
                 stop=self.args.stop,
                 sp_register=sp,
                 ip_register=ip,
@@ -386,6 +418,7 @@ class vstack(Unit):
             except uc.UcError:
                 pass
 
+            tree.merge_overlaps()
             it: Iterator[Interval] = iter(tree)
             for interval in it:
                 size = interval.end - interval.begin - 1
@@ -413,7 +446,7 @@ class vstack(Unit):
             if unsigned_value == state.expected_address:
                 callstack = state.callstack
                 state.retaddr = unsigned_value
-                if not self.args.skip_calls:
+                if not state.cfg.skip_calls:
                     if not callstack:
                         state.callstack_ceiling = emu.reg_read(state.sp_register)
                     callstack.append(unsigned_value)
@@ -424,21 +457,21 @@ class vstack(Unit):
             skipped = False
 
             if (
-                not self.args.log_stack_cookies
+                not state.cfg.log_stack_cookies
                 and emu.reg_read(state.sp_register) ^ unsigned_value == state.last_read
             ):
                 skipped = 'stack cookie'
-            elif size not in bounds[self.args.write_range]:
+            elif size not in bounds[state.cfg.write_range]:
                 skipped = 'size excluded'
             elif (
                 state.callstack_ceiling > 0
-                and not self.args.log_writes_in_calls
+                and not state.cfg.log_writes_in_calls
                 and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling)
             ):
                 skipped = 'inside call'
-            elif not self.args.log_stack_addresses and unsigned_value in state.stack:
+            elif not state.cfg.log_stack_addresses and unsigned_value in state.stack:
                 skipped = 'stack address'
-            elif not self.args.log_other_addresses and not state.blob:
+            elif not state.cfg.log_other_addresses and not state.blob:
                 for s in state.executable.sections():
                     if address in s.virtual:
                         skipped = F'write to section {s.name}'
@@ -448,7 +481,7 @@ class vstack(Unit):
                 not skipped
                 and unsigned_value == 0
                 and state.writes.at(address) is not None
-                and self.args.log_zero_overwrites is False
+                and state.cfg.log_zero_overwrites is False
             ):
                 try:
                     if any(emu.mem_read(address, size)):
@@ -458,7 +491,6 @@ class vstack(Unit):
 
             if not skipped:
                 state.writes.addi(address, address + size + 1)
-                state.writes.merge_overlaps()
                 state.waiting = 0
 
             def info():
@@ -484,7 +516,7 @@ class vstack(Unit):
         return False
 
     def _hook_mem_error(self, emu: Uc, access: int, address: int, size: int, value: int, state: EmuState):
-        bs = self.args.block_size
+        bs = state.cfg.block_size
         try:
             emu.mem_map(align(bs, address, down=True), 2 * bs)
         except Exception:
@@ -514,10 +546,10 @@ class vstack(Unit):
             state.retaddr = None
 
             if address != state.expected_address:
-                if retaddr is not None and self.args.skip_calls:
-                    if self.args.skip_calls > 1:
-                        stack_size = self.args.stack_size
-                        block_size = self.args.block_size
+                if retaddr is not None and state.cfg.skip_calls:
+                    if state.cfg.skip_calls > 1:
+                        stack_size = state.cfg.stack_size
+                        block_size = state.cfg.block_size
                         rv = state.rv_register
                         alloc_addr = align(block_size, state.allocations[-1].upper)
                         state.allocations.append(Range(alloc_addr, alloc_addr + stack_size))
@@ -535,17 +567,17 @@ class vstack(Unit):
                     if depth == 0:
                         state.callstack_ceiling = 0
                 state.expected_address = address
-            elif retaddr is not None and not self.args.skip_calls:
+            elif retaddr is not None and not state.cfg.skip_calls:
                 # The present address was moved to the stack but we did not branch.
                 # This is not quite accurate, of course: We could be calling the
                 # next instruction. However, that sort of code is usually not really
                 # a function call anyway, but rather a way to get the IP.
                 callstack.pop()
 
-            if waiting > self.args.wait:
+            if waiting > state.cfg.wait:
                 emu.emu_stop()
                 return False
-            if not depth or not self.args.wait_calls:
+            if not depth or not state.cfg.wait_calls:
                 state.waiting += 1
             state.expected_address += size
 

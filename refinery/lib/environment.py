@@ -28,6 +28,7 @@ class LogLevel(IntEnum):
     an exception.
     """
     NONE = logging.CRITICAL + 50
+    PROFILE = logging.CRITICAL + 10
 
     @classmethod
     def FromVerbosity(cls, verbosity: int):
@@ -73,6 +74,7 @@ class RefineryFormatter(logging.Formatter):
         logging.WARNING  : 'warning',
         logging.INFO     : 'comment',
         logging.DEBUG    : 'verbose',
+        LogLevel.PROFILE : 'profile',
     }
 
     def __init__(self, format, **kwargs):

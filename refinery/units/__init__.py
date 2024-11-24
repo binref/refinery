@@ -2121,15 +2121,14 @@ class Unit(UnitBase, abstract=True):
             from time import process_time
             argv.remove(cls._SECRET_DEBUG_TIMING_FLAG)
             clock = process_time()
-            cls.logger.setLevel(LogLevel.INFO)
-            cls.logger.info('starting clock: {:.4f}'.format(clock))
+            cls.logger.log(LogLevel.PROFILE, 'starting clock: {:.4f}'.format(clock))
 
         if cls._SECRET_YAPPI_TIMING_FLAG in argv:
             argv.remove(cls._SECRET_YAPPI_TIMING_FLAG)
             try:
                 import yappi as _yappi
             except ImportError:
-                cls.logger.warn('unable to start yappi; package is missing')
+                cls.logger.log(LogLevel.PROFILE, 'unable to start yappi; package is missing')
             else:
                 yappi = _yappi
 
@@ -2159,8 +2158,7 @@ class Unit(UnitBase, abstract=True):
                 unit.log_level = loglevel
 
             if clock:
-                unit.log_level = min(unit.log_level, LogLevel.INFO)
-                unit.logger.info('unit launching: {:.4f}'.format(clock))
+                cls.logger.log(LogLevel.PROFILE, 'unit launching: {:.4f}'.format(clock))
 
             if yappi is not None:
                 yappi.set_clock_type('cpu')
@@ -2184,12 +2182,12 @@ class Unit(UnitBase, abstract=True):
                 stats = yappi.get_func_stats()
                 filename = F'{unit.name}.perf'
                 stats.save(filename, type='CALLGRIND')
-                cls.logger.info(F'wrote yappi results to file: {filename}')
+                cls.logger.log(LogLevel.PROFILE, F'wrote yappi results to file: {filename}')
 
             if clock:
                 stop_clock = process_time()
-                unit.logger.info('stopping clock: {:.4f}'.format(stop_clock))
-                unit.logger.info('time delta was: {:.4f}'.format(stop_clock - clock))
+                cls.logger.log(LogLevel.PROFILE, 'stopping clock: {:.4f}'.format(stop_clock))
+                cls.logger.log(LogLevel.PROFILE, 'time delta was: {:.4f}'.format(stop_clock - clock))
 
 
 __pdoc__ = {
