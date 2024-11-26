@@ -90,13 +90,14 @@ class __unit_loader__:
             cache: dict = pickle.load(self.path.open('rb'))
         except (FileNotFoundError, EOFError):
             cache = None
-        try:
-            version = cache['version']
-        except KeyError:
-            cache = None
         else:
-            if version != __version__:
+            try:
+                version = cache['version']
+            except KeyError:
                 cache = None
+            else:
+                if version != __version__:
+                    cache = None
         if cache is None:
             self.reload()
         else:
