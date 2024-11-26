@@ -87,10 +87,20 @@ class __unit_loader__:
 
     def load(self):
         try:
-            self.units = pickle.load(self.path.open('rb'))
+            cache: dict = pickle.load(self.path.open('rb'))
         except (FileNotFoundError, EOFError):
+            cache = None
+        try:
+            version = cache['version']
+        except KeyError:
+            cache = None
+        else:
+            if version != __version__:
+                cache = None
+        if cache is None:
             self.reload()
         else:
+            self.units = cache['units']
             self.loaded = True
 
     def clear(self):
@@ -100,7 +110,10 @@ class __unit_loader__:
 
     def save(self):
         try:
-            pickle.dump(self.units, self.path.open('wb'))
+            pickle.dump({
+                'units': self.units,
+                'version': __version__,
+            }, self.path.open('wb'))
         except Exception:
             pass
         else:
