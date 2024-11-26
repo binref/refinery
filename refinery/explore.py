@@ -31,7 +31,7 @@ def highlight_word(text, word, color):
     return highlight(text, re.compile('(?i)' + re.escape(word)), color)
 
 
-def get_help_string(unit, brief=False, width=None):
+def get_help_string(unit, brief=False, width=None, remove_generic=False):
     """
     Retrieves the help string from a given refinery unit.
     """
@@ -50,7 +50,8 @@ def get_help_string(unit, brief=False, width=None):
             buffer = StringIO('w')
             argp.print_help(buffer)
             info = buffer.getvalue()
-            info, _, _ = info.partition('\ngeneric options:\n')
+            if remove_generic:
+                info, _, _ = info.partition('\ngeneric options:\n')
             return info.strip()
         finally:
             environment.term_size.value = _ts
@@ -151,7 +152,7 @@ def explorer(keyword_color='91', unit_color='93'):
         except TypeError:
             continue
 
-        info = get_help_string(unit, not args.all, width)
+        info = get_help_string(unit, not args.all, width, remove_generic=True)
 
         if not args.quantifier(k.search(name) or k.search(info) for k in args.keywords):
             continue
