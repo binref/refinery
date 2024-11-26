@@ -3,14 +3,42 @@
 from __future__ import annotations
 
 from typing import Union, Dict, List
-
-from cgi import parse_header, FieldStorage
-from email.message import Message
+from email.parser import BytesParser
 from enum import Enum
 from urllib.parse import parse_qs
 
 from refinery.units import Unit
-from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import isbuffer
+
+
+def _parseparam(parameter: str):
+    while parameter[:1] == ';':
+        parameter = parameter[1:]
+        end = parameter.find(';')
+        while end > 0 and (parameter.count('"', 0, end) - parameter.count('\\"', 0, end)) % 2:
+            end = parameter.find(';', end + 1)
+        if end < 0:
+            end = len(parameter)
+        f = parameter[:end]
+        yield f.strip()
+        parameter = parameter[end:]
+
+
+def _parse_header(line: str):
+    parts = _parseparam(F';{line}')
+    key = next(parts)
+    pdict = {}
+    for p in parts:
+        i = p.find('=')
+        if i < 0:
+            continue
+        name = p[:i].strip().lower()
+        value = p[i + 1:].strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+            value = value.replace('\\\\', '\\').replace('\\"', '"')
+        pdict[name] = value
+    return key, pdict
 
 
 class _Fmt(str, Enum):
@@ -35,7 +63,6 @@ class httprequest(Unit):
         headers = dict(t for line in headers for t in header(line))
         method, path, _, *rest = request.split()
 
-        info = {}
         mode = _Fmt.RawBody
 
         if rest:
@@ -45,7 +72,7 @@ class httprequest(Unit):
             mode = _Fmt.UrlEncode
             body = path.partition(B'?')[1]
         if method == b'POST' and (ct := headers.get('content-type', None)):
-            ct, info = parse_header(ct)
+            ct, _ = _parse_header(ct)
             mode = _Fmt(ct)
 
         def chunks(upload: Dict[Union[str, bytes], List[bytes]]):
@@ -59,25 +86,19 @@ class httprequest(Unit):
             yield body
             return
         if mode is _Fmt.Multipart:
-            boundary = info['boundary']
-            headers = Message()
-            headers.set_type(F'{_Fmt.Multipart.value}; boundary={boundary}')
-            try:
-                headers['Content-Length'] = info['CONTENT-LENGTH']
-            except KeyError:
-                pass
-            fs = FieldStorage(MemoryFile(body, read_as_bytes=True),
-                headers=headers, environ={'REQUEST_METHOD': method.decode()})
-            for name in fs:
-                fields = fs[name]
-                if not isinstance(fields, list):
-                    fields = [fields]
-                for field in fields:
-                    field: FieldStorage
-                    chunk = self.labelled(field.value)
-                    if fn := field.filename:
-                        chunk.meta['name'] = fn
-                    yield chunk
+            _, _, message_data = data.partition(b'\n')
+            msg = BytesParser().parsebytes(message_data)
+            for part in msg.walk():
+                payloads = part.get_payload(decode=True)
+                if not isinstance(payloads, list):
+                    payloads = [payloads]
+                for payload in payloads:
+                    if not isbuffer(payload):
+                        continue
+                    if name := part.get_filename():
+                        payload = self.labelled(payload, name=name)
+                    yield payload
+
         if mode is _Fmt.UrlEncode:
             yield from chunks(parse_qs(body, keep_blank_values=1))
 
