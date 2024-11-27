@@ -11,6 +11,7 @@ from refinery.units import ArgparseError
 from refinery.lib.argparser import RawDescriptionHelpFormatter
 
 import refinery
+import refinery.units
 
 
 def highlight(text, expression, color):
@@ -144,7 +145,7 @@ def explorer(keyword_color='91', unit_color='93'):
     args.keywords = [pattern(k) for k in args.keywords]
 
     for name in refinery.__all__:
-        unit = getattr(refinery, name)
+        unit = getattr(refinery, name, None)
 
         try:
             if not issubclass(unit, refinery.units.Entry) or unit is refinery.units.Entry:
