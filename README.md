@@ -27,11 +27,21 @@ and is an attempt to implement something like [CyberChef](https://github.com/gch
 The help text that is displayed when executing a unit with the `-h` or `--help` switch is its main documentation.
 The [automatically generated documentation][docs] contains a compilation of that output for each unit at the top level,
 but also contains the specification for the three fundamental concepts of the toolkit:
-[framing][frame], [multibin arguments][argformats], and [meta variables][meta]. Full-text search of the description and help text for every unit is also available on the command line, via the provided `binref` command. In recognition of the fact that reference documentation can be somewhat dry,
+[framing][frame], [multibin arguments][argformats], and [meta variables][meta].
+Full-text search of the description and help text for every unit is also available on the command line,
+via the provided `binref` command. In recognition of the fact that reference documentation can be somewhat dry,
 there is an ongoing effort to produce a series of [tutorials](tutorials) and there are a few additional resources:
 
-- [OALabs](https://www.youtube.com/c/OALabs) was kind enough to let me [demo the toolkit in a feature video](https://www.youtube.com/watch?v=4gTaGfFyMK4).
-- [Johannes Bader](https://bin.re/) wrote an amazing [blog post about how to analyze TA551 malspam with binary refinery](https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/).
+- (2021/08) [OALabs](https://www.youtube.com/c/OALabs) was kind enough to let me
+  [demo the toolkit in a feature video](https://www.youtube.com/watch?v=4gTaGfFyMK4).
+  In the video, I essentially work through the contents of
+  [the first tutorial](tutorials/tbr-files.v0x01.netwalker.dropper.ipynb).
+- (2021/11) [Johannes Bader](https://bin.re/) wrote an amazing 
+  [blog post](https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/)
+  about how to analyze TA551 malspam with binary refinery.
+- (2024/11) [the CyberYeti](https://www.youtube.com/@jstrosch) had me 
+  [on stream presenting refinery](https://www.youtube.com/live/-B072w0qjNk).
+  Showcases again include samples from the example section below and the [tutorials](tutorials).
 
 ## License
 
