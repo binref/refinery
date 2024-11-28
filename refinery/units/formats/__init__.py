@@ -18,6 +18,7 @@ from typing import ByteString, Iterable, Callable, List, Union, Optional
 from refinery.units import Arg, Unit, RefineryPartialResult, RefineryPotentialUserError
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
 from refinery.lib.xml import XMLNodeBase
+from refinery.lib.tools import exception_to_string
 
 
 def pathspec(expression):
@@ -274,7 +275,7 @@ class PathExtractorUnit(Unit, abstract=True):
                     except Exception as error:
                         if self.log_debug():
                             raise
-                        self.log_warn(F'extraction failure for {path}: {error!s}')
+                        self.log_warn(F'extraction failure for {path}: {exception_to_string(error)}')
                     else:
                         self.log_debug(F'extraction success for {path}')
                         yield self.labelled(chunk, **result.meta)
