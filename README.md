@@ -52,7 +52,7 @@ On top of that, I collect additional resources (including some produced by third
 - [`2021/08`] [OALabs][OA] was kind enough to let me [demo the toolkit in a feature video][VOD1].
   In the video, I essentially work through the contents of 
   [the first tutorial](tutorials/tbr-files.v0x01.netwalker.dropper.ipynb).
-- [`2021/11`] [Johannes Bader][JB] wrote an amazing [blog post][BLOG] about how to analyze malicious spam with binary refinery.
+- [`2021/11`] [Johannes Bader][JB] wrote an amazing [blog post][BLOG] about analyzing malspam with binary refinery.
 - [`2024/03`] [Malware Analysis For Hedgehogs][MH] made [a video about unpacking an XWorm sample][VOD2] using refinery.
 - [`2024/11`] [the CyberYeti][CY] had me [on stream presenting refinery][VOD3].
   Showcases again include samples from the example section below and the [tutorials](tutorials).
