@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json
+import re
 
 from email.parser import Parser
 from functools import partial
@@ -152,6 +153,8 @@ class xtmail(PathExtractorUnit):
             b'\nReceived:\x20from'
             b'\nSubject:\x20',
             b'\nTo:\x20',
+            b'\nFrom:\x20',
+            B'\nMessage-ID:\x20',
             b'\nBcc:\x20',
             b'\nContent-Transfer-Encoding:\x20',
             b'\nContent-Type:\x20',
@@ -159,4 +162,10 @@ class xtmail(PathExtractorUnit):
         ]
         if data.startswith(B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'):
             markers = [marker.decode('latin1').encode('utf-16le') for marker in markers]
-        return sum(1 for marker in markers if marker in data) >= 3
+        counter = 0
+        for marker in markers:
+            if re.search(re.escape(marker), data, flags=re.IGNORECASE):
+                counter += 1
+            if counter >= 3:
+                return True
+        return False
