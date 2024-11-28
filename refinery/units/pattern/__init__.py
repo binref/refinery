@@ -3,15 +3,20 @@
 """
 Pattern matching based extraction and substitution units.
 """
+from __future__ import annotations
+
 import re
 
-from typing import Iterable, Optional, Callable, Union, Tuple, ByteString, Dict
+from typing import Iterable, Optional, Callable, Union, Tuple, ByteString, Dict, TYPE_CHECKING
 from itertools import islice
 from hashlib import blake2b
 
 from refinery.lib.types import INF, AST, BufferOrStr
 from refinery.lib.argformats import regexp
 from refinery.units import Arg, Unit
+
+if TYPE_CHECKING:
+    MT = Tuple[int, re.Match[bytes]]
 
 
 class PatternExtractorBase(Unit, abstract=True):
@@ -61,7 +66,7 @@ class PatternExtractorBase(Unit, abstract=True):
                     start = a + match.start() * 2
                     yield start, match
 
-    def _prefilter(self, matches: Iterable[Tuple[int, re.Match[bytes]]]) -> Iterable[Tuple[int, re.Match[bytes]]]:
+    def _prefilter(self, matches: Iterable[MT]) -> Iterable[MT]:
         barrier = set()
         taken = 0
         for offset, match in matches:
@@ -78,7 +83,7 @@ class PatternExtractorBase(Unit, abstract=True):
             if not self.args.longest and taken >= self.args.take:
                 break
 
-    def _postfilter(self, matches: Iterable[Tuple[int, re.Match[bytes]]]) -> Iterable[Tuple[int, re.Match[bytes]]]:
+    def _postfilter(self, matches: Iterable[MT]) -> Iterable[MT]:
         result = matches
         if self.args.longest and self.args.take and self.args.take is not INF:
             try:
@@ -94,7 +99,7 @@ class PatternExtractorBase(Unit, abstract=True):
         elif self.args.take:
             yield from islice(result, abs(self.args.take))
 
-    def matchfilter(self, matches: Iterable[Tuple[int, re.Match[bytes]]]) -> Iterable[Tuple[int, re.Match[bytes]]]:
+    def matchfilter(self, matches: Iterable[MT]) -> Iterable[MT]:
         yield from self._postfilter(self._prefilter(matches))
 
     def matches_filtered(
