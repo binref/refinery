@@ -22,6 +22,17 @@ and individual units can be combined into _pipelines_ with the piping operator `
 The project's main focus is malware triage,
 and is an attempt to implement something like [CyberChef](https://github.com/gchq/CyberChef) on the commandline.
 
+## Short Version
+
+Make a Python virtual environment. You need Python 3.8 or later. Install refinery like this:
+```
+pip install binary-refinery[extended]
+```
+Run units with `-h` to learn how they work, grep through the [docs][] or use the command `binref` to find them.
+Watch [the latest video][VOD3] if you want to see it in action.
+But also, read the rest of this readme.
+
+
 ## Documentation
 
 The help text that is displayed when executing a unit with the `-h` or `--help` switch is its main documentation.
@@ -38,24 +49,13 @@ On top of that, I collect additional resources (including some produced by third
 > i.e. units and parameters can be removed or renamed.
 > Hence, it can happen that specific command lines from older videos and blog posts don't work any more.
 
-- [`2021/08`] [OALabs](https://www.youtube.com/c/OALabs)
-   was kind enough to let me
-  [demo the toolkit in a feature video](https://www.youtube.com/watch?v=4gTaGfFyMK4).
-  In the video, I essentially work through the contents of
+- [`2021/08`] [OALabs][OA] was kind enough to let me [demo the toolkit in a feature video][VOD1].
+  In the video, I essentially work through the contents of 
   [the first tutorial](tutorials/tbr-files.v0x01.netwalker.dropper.ipynb).
-- [`2021/11`] [Johannes Bader](https://bin.re/)
-  wrote an amazing 
-  [blog post](https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/)
-  about how to analyze malicious spam with binary refinery.
-- [`2024/03`] [Malware Analysis For Hedgehogs](https://www.youtube.com/@MalwareAnalysisForHedgehogs)
-  made
-  [a video about unpacking an XWorm sample](https://www.youtube.com/watch?v=5ZtmYNmVMKo)
-  using refinery.
-- [`2024/11`] [the CyberYeti](https://www.youtube.com/@jstrosch)
-  had me 
-  [on stream presenting refinery](https://www.youtube.com/live/-B072w0qjNk).
-  Showcases again include samples from the example section below and the
-  [tutorials](tutorials).
+- [`2021/11`] [Johannes Bader][JB] wrote an amazing [blog post][BLOG] about how to analyze malicious spam with binary refinery.
+- [`2024/03`] [Malware Analysis For Hedgehogs][MH] made [a video about unpacking an XWorm sample][VOD2] using refinery.
+- [`2024/11`] [the CyberYeti][CY] had me [on stream presenting refinery][VOD3].
+  Showcases again include samples from the example section below and the [tutorials](tutorials).
 
 ## License
 
@@ -104,6 +104,7 @@ For example, the following will install the very latest refinery commit:
 ```
 pip install -U git+git://github.com/binref/refinery.git
 ```
+Finally, if you are using [REMnux][remnux-main], you can use their [refinery docker container][remnux].
 
 ## Shell Support
 
@@ -329,7 +330,18 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
     | aes pbkdf2[32,s4lty]:swordfish --iv cut:0:16 
 ```
 
+[OA]: https://www.youtube.com/c/OALabs
+[JB]: https://bin.re/
+[MH]: https://www.youtube.com/@MalwareAnalysisForHedgehogs
+[CY]: https://www.youtube.com/@jstrosch
 
+[BLOG]: https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/
+[VOD1]: https://www.youtube.com/watch?v=4gTaGfFyMK4
+[VOD2]: https://www.youtube.com/watch?v=5ZtmYNmVMKo
+[VOD3]: https://www.youtube.com/live/-B072w0qjNk
+
+[remnux]: https://hub.docker.com/r/remnux/binary-refinery
+[remnux-main]: https://remnux.org/
 [pdoc3]: https://pdoc3.github.io/pdoc/
 [docs]: https://binref.github.io/
 [argformats]: https://binref.github.io/lib/argformats.html
