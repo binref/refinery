@@ -691,17 +691,39 @@ class ExecutablePE(Executable):
 
     def symbols(self) -> Generator[Symbol, None, None]:
         base = self.image_defined_base()
-        yield Symbol(self._head.OPTIONAL_HEADER.AddressOfEntryPoint + base)
-        self._head.parse_data_directories(
-            directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
+        head = self._head
+
+        yield Symbol(head.OPTIONAL_HEADER.AddressOfEntryPoint + base)
+
+        head.parse_data_directories(directories=[
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT'],
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT'],
+        ])
+
         try:
-            exports = self._head.DIRECTORY_ENTRY_EXPORT.symbols
+            exports = head.DIRECTORY_ENTRY_EXPORT.symbols
         except AttributeError:
             return
-        for k, exp in enumerate(exports):
+        for exp in exports:
             name = exp.name
-            name = name and name.decode('ascii') or F'@{k}'
-            yield Symbol(exp.address + base, name)
+            if not name:
+                continue
+            yield Symbol(exp.address + base, name.decode('ascii'))
+
+        for itype in ['IMPORT', 'DELAY_IMPORT']:
+            try:
+                imports = getattr(head, F'DIRECTORY_ENTRY_{itype}').imports
+            except AttributeError:
+                continue
+            for idd in imports:
+                dll: str = idd.dll.decode('ascii')
+                if dll.lower().endswith('.dll'):
+                    dll = dll[:-4]
+                for imp in idd.imports:
+                    if name := imp.name:
+                        name = name.decode('ascii')
+                        yield Symbol(imp.address, name, exported=False)
 
 
 class ExecutableELF(Executable):
