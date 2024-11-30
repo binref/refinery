@@ -235,7 +235,7 @@ class ef(Unit):
                         filesize = stat.st_size
                     if do_meta:
                         kwargs.update(
-                            size=filesize,
+                            fsize=filesize,
                             atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
                             ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
                             mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds')
