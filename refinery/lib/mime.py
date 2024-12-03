@@ -13,6 +13,7 @@ class NoMagicAvailable(ModuleNotFoundError):
 
 
 FileTypeMap = {
+    'application/x-setupscript': 'ini',
     'applicaiton/x-bytecode.python': 'pyc',
     'application/acad': 'dwg',
     'application/arj': 'arj',
