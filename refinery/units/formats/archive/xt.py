@@ -122,8 +122,11 @@ class xt(ArchiveUnit):
                         self.unit.log_debug('handler construction failed:', error)
                         return
                     try:
+                        test_unpack = not self.unit.args.list
                         for item in unit.unpack(data):
-                            item.get_data()
+                            if test_unpack:
+                                item.get_data()
+                                test_unpack = False
                             yield item
                     except Exception as error:
                         if not self.fallback:

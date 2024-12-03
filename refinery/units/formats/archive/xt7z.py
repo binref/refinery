@@ -41,6 +41,12 @@ class xt7z(ArchiveUnit):
         pwd = self.args.pwd
         mv = memoryview(data)
 
+        def test(archive: SevenZipFile):
+            if self.args.list:
+                archive.list()
+                return False
+            return archive.testzip()
+
         if pwd:
             try:
                 archive = mk7z(password=pwd.decode(self.codec))
@@ -51,9 +57,13 @@ class xt7z(ArchiveUnit):
                 yield None
                 yield from self._COMMON_PASSWORDS
             for pwd in passwords():
+                if pwd is None:
+                    self.log_debug(U'trying empty password')
+                else:
+                    self.log_debug(F'trying password: {pwd}')
                 try:
                     archive = mk7z(password=pwd)
-                    problem = archive.testzip()
+                    problem = test(archive)
                 except self._py7zr.PasswordRequired:
                     problem = True
                 except self._py7zr.UnsupportedCompressionMethodError as E:
@@ -69,8 +79,6 @@ class xt7z(ArchiveUnit):
                     problem = True
                 if not problem:
                     break
-                if pwd is not None:
-                    self.log_debug(F'trying password: {pwd}')
             else:
                 raise ValueError('a password is required and none of the default passwords worked.')
 
@@ -80,7 +88,7 @@ class xt7z(ArchiveUnit):
                 return archive.read([info.filename]).get(info.filename).read()
             if info.is_directory:
                 continue
-            yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32)
+            yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32, uncompressed=info.uncompressed)
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
