@@ -342,12 +342,11 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
             def walk(node: XMLNodeBase):
                 candidates = [
                     candidate for candidate, count in Counter(
-                        key
-                        for child in node.children
-                        for key, val in child.attributes.items()
-                        if re.fullmatch(R'[-\s\w+,.;@(){}]{2,64}', nval(val))
+                        key for child in node.children for key, val in child.attributes.items()
+                        if len(val) in range(2, 65) and re.fullmatch(R'[-\s\w+,.;@()]+', nval(val))
                     ).items()
-                    if count == len(node.children)
+                    if count == len(node.children) == len(
+                        {child.attributes[candidate] for child in node.children})
                 ]
                 if not candidates:
                     attr = None

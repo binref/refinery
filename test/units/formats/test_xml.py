@@ -30,3 +30,13 @@ class TestXMLUnpacker(TestUnitBase):
         unit = self.load('WLANProfile/SSIDConfig')
         test = str(data | unit)
         self.assertIn('33344333', test)
+
+    def test_lure_document(self):
+        data = self.download_sample('e6daa00e095948acfc176d71c5bf667a0403e5259653ea5ac8950aee13180ae0')
+        data = data | self.ldu('xt', 'settings.xml') | bytes
+
+        pipe = self.load_pipeline('xtxml w.settings/w.rsids/w.rsidRoot [| eat val ]')
+        self.assertEqual(data | pipe | str, '00BA5B2D')
+
+        pipe = self.load_pipeline('xtxml docVars/10* [| eat val ]| hex | wshenc | carve -dn5 string [| dedup | pop k | swap k | hex | xor var:k ]| xtp url')
+        self.assertEqual(data | pipe | str, 'http'':/''/trust-certificate''.net')
