@@ -23,6 +23,7 @@ from .qlz import qlz
 from .lzf import lzf
 from .lzw import lzw
 from .nrv import nrv2b, nrv2d, nrv2e
+from .zstd import zstd
 
 
 class _R(IntFlag):
@@ -108,7 +109,7 @@ class decompress(Unit):
         )
         self.engines: List[Unit] = [
             engine.assemble() for engine in [
-                szdd, brotli, zl, lzma, aplib, qlz, lzf, lzw, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1, nrv2e, nrv2d, nrv2b]
+                zstd, szdd, brotli, zl, lzma, aplib, qlz, lzf, lzw, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1, nrv2e, nrv2d, nrv2b]
         ]
         for engine in self.engines:
             engine.log_detach()

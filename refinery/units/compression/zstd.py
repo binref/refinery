@@ -19,3 +19,7 @@ class zstd(Unit):
         zc = self._pyzstd.ZstdCompressor()
         zc.compress(data)
         return zc.flush()
+
+    @classmethod
+    def handles(self, data: bytearray) -> bool:
+        return data[:4] == B'\x28\xB5\x2F\xFD'
