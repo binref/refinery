@@ -270,7 +270,12 @@ class FileMagicInfo:
         if self.description == 'Microsoft OOXML':
             extension = 'docx'
         if extension == 'exe':
-            extension = 'dll' if '(DLL)' in self.description else 'exe'
+            if '(DLL)' in self.description:
+                extension = 'dll'
+            elif '(native)' in self.description:
+                extension = 'sys'
+            else:
+                extension = 'exe'
         elif extension in ('gz', 'gzip', 'bz2') and decompress:
             if extension == 'bz2':
                 import bz2
