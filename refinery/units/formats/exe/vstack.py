@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import List, Dict, Any, TYPE_CHECKING
+from typing import Union, List, Dict, Any, TYPE_CHECKING
 
 import re
 
@@ -129,7 +129,7 @@ class vstack(Unit):
 
     def __init__(
         self,
-        *address: Arg.Binary(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
+        *address: Arg.NumSeq(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
@@ -289,7 +289,9 @@ class vstack(Unit):
                 meta.discard(var)
                 register_values[register] = var, value
 
-        def parse_address(a: bytes):
+        def parse_address(a: Union[int, bytes]):
+            if isinstance(a, int):
+                return a
             a = a.decode(self.codec)
             if m := re.fullmatch('(?i)([A-F0-9]+)H?', a):
                 return int(m[1], 16)
