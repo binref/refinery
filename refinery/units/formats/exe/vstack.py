@@ -359,18 +359,26 @@ class vstack(Unit):
 
             emulator.reg_write(sp, tos)
 
+            segtree = self._intervaltree.IntervalTree()
+            for segment in exe.segments():
+                vmem = segment.virtual
+                if not vmem:
+                    continue
+                segtree.addi(
+                    align(block_size, vmem.lower, down=True),
+                    align(block_size, vmem.upper))
+            segtree.merge_overlaps()
+            it: Iterator[Interval] = iter(segtree)
+            for interval in it:
+                emulator.mem_map(interval.begin, interval.end - interval.begin)
+                self.log_info(F'mapping segment [{interval.begin:0{width}X}-{interval.end:0{width}X}]')
+
             for segment in exe.segments():
                 pmem = segment.physical
                 vmem = segment.virtual
-                try:
-                    emulator.mem_map(vmem.lower, align(block_size, len(vmem)))
-                    emulator.mem_write(vmem.lower, bytes(image[pmem.slice()]))
-                except KeyboardInterrupt:
-                    raise
-                except Exception as error:
-                    if address in vmem:
-                        raise
-                    self.log_info(F'error mapping segment [{vmem.lower:0{width}X}-{vmem.upper:0{width}X}]: {error!s}')
+                if len(pmem) == 0:
+                    continue
+                emulator.mem_write(vmem.lower, bytes(image[pmem.slice()]))
 
             tree = self._intervaltree.IntervalTree()
             args = self.args
