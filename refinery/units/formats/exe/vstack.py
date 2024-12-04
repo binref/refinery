@@ -8,8 +8,9 @@ import re
 from refinery.units import Arg, Unit
 from refinery.lib.executable import align, Arch, BO, Executable, Range, ExecutableCodeBlob
 from refinery.lib.types import bounds, INF
-from refinery.lib.meta import SizeInt
+from refinery.lib.meta import metavars, SizeInt
 from refinery.lib.tools import isbuffer, NoLogging
+from refinery.lib.argformats import PythonExpression, ParserVariableMissing
 
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -128,7 +129,7 @@ class vstack(Unit):
 
     def __init__(
         self,
-        *address: Arg.Number(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
+        *address: Arg.Binary(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
@@ -158,7 +159,7 @@ class vstack(Unit):
         log_stack_cookies  : Arg.Switch('-E', help='Log writes that look like stack cookies.') = False,
     ):
         super().__init__(
-            address=address or [0],
+            address=address,
             stop=stop,
             base=base,
             arch=Arg.AsOption(arch, Arch),
@@ -199,6 +200,7 @@ class vstack(Unit):
         except ValueError:
             exe = ExecutableCodeBlob(data, self.args.base, self.args.arch)
             blob = True
+        meta = metavars(data)
         arch = exe.arch()
         width = exe.pointer_size // 4
         block_size = self.args.block_size
@@ -280,8 +282,6 @@ class vstack(Unit):
                         return register
 
         if self.args.meta_registers or self.args.stack_push:
-            from refinery.lib.meta import metavars
-            meta = metavars(data)
             for var, value in list(meta.items()):
                 register = get_register_id(var)
                 if register is None:
@@ -289,7 +289,38 @@ class vstack(Unit):
                 meta.discard(var)
                 register_values[register] = var, value
 
-        for address in self.args.address:
+        def parse_address(a: bytes):
+            a = a.decode(self.codec)
+            if m := re.fullmatch('(?i)([A-F0-9]+)H?', a):
+                return int(m[1], 16)
+            try:
+                return PythonExpression.Evaluate(a, meta)
+            except ParserVariableMissing:
+                pass
+            symbols = list(exe.symbols())
+            for filter in [
+                lambda s: s.get_name().casefold() == a.casefold(),
+                lambda s: s.name == a,
+                lambda s: s.code,
+                lambda s: s.exported
+            ]:
+                symbols = [s for s in symbols if filter(s)]
+                if len(symbols) == 1:
+                    return symbols[0].address
+            if len(symbols) > 1:
+                raise RuntimeError(F'there are {len(symbols)} exported function symbol named "{a}", please specify the address')
+            if not symbols:
+                raise LookupError(F'no symbol with name "{a}" was found')
+
+        addresses = [parse_address(a) for a in self.args.address]
+
+        if not addresses:
+            for symbol in exe.symbols():
+                if symbol.name is None:
+                    addresses.append(symbol.address)
+                    break
+
+        for address in addresses:
 
             emulator = uc.Uc(*self._uc_arch(arch, exe.byte_order()))
             stack = Range(stack_addr, stack_addr + 3 * stack_size)
