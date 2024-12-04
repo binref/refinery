@@ -109,7 +109,7 @@ class decompress(Unit):
         )
         self.engines: List[Unit] = [
             engine.assemble() for engine in [
-                zstd, szdd, brotli, zl, lzma, aplib, qlz, lzf, lzw, jcalg, bz2, blz, lzjb, lz4, lzo, lznt1, nrv2e, nrv2d, nrv2b]
+                zstd, szdd, bz2, zl, lzf, lzma, lzw, jcalg, lzo, aplib, qlz, brotli, blz, lzjb, lz4, lznt1, nrv2e, nrv2d, nrv2b]
         ]
         for engine in self.engines:
             engine.log_detach()

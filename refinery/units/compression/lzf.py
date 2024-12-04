@@ -195,3 +195,8 @@ class lzf(Unit):
                 raise RefineryPartialResult(msg, out.getvalue())
 
         return out.getvalue()
+
+    @classmethod
+    def handles(self, data: bytearray):
+        if data[:2] == LZFHeader.MAGIC:
+            return True
