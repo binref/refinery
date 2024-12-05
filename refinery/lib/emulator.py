@@ -44,7 +44,9 @@ class MissingModule:
         self.name = name
         self.dist = dist or name
 
-    def __getattr__(self, key):
+    def __getattr__(self, key: str):
+        if key.startswith('__') and key.endswith('__'):
+            raise AttributeError(key)
         raise RefineryImportMissing(self.name, self.dist)
 
 
