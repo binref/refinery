@@ -18,11 +18,16 @@ from refinery.units import RefineryImportMissing
 
 if TYPE_CHECKING:
     from capstone import Cs
-    from speakeasy import Speakeasy
+    from speakeasy import Speakeasy as Se
     from speakeasy.memmgr import MemMap
     from unicorn import Uc
-    from icicle import Icicle
+    from icicle import Icicle as Ic
     from intervaltree import Interval
+else:
+    Cs = TypeVar('Cs')
+    Uc = TypeVar('Uc')
+    Ic = TypeVar('Ic')
+    Se = TypeVar('Se')
 
 
 _T = TypeVar('_T')
@@ -579,7 +584,7 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
         self.alloc_base += size
 
 
-class UnicornEmulator(RawMetalEmulator[uc.Uc, int, _T]):
+class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
     """
     A Unicorn-based emulator.
     """
@@ -682,7 +687,7 @@ class UnicornEmulator(RawMetalEmulator[uc.Uc, int, _T]):
         return self.unicorn.mem_read(address, size)
 
 
-class IcicleEmulator(RawMetalEmulator[ic.Icicle, str, _T]):
+class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
     """
     An Icicle-based emulator. Icicle is a more recent emulator engine and not yet as mature as
     Unicorn. There are some compelling arguments for its robustness, but with the current
@@ -692,7 +697,7 @@ class IcicleEmulator(RawMetalEmulator[ic.Icicle, str, _T]):
     [ICE]: https://arxiv.org/pdf/2301.13346
     """
 
-    icicle: Icicle
+    icicle: Ic
 
     def _init(self):
         ...
@@ -788,13 +793,13 @@ class IcicleEmulator(RawMetalEmulator[ic.Icicle, str, _T]):
         return self.icicle.mem_read(address, size)
 
 
-class SpeakeasyEmulator(Emulator[se.Speakeasy, str, _T]):
+class SpeakeasyEmulator(Emulator[Se, str, _T]):
     """
     A Speakeasy-based emulator. Speakeasy only supports PE files, but it has support for several
     Windows API routines which can be an advantage.
     """
 
-    speakeasy: Speakeasy
+    speakeasy: Se
 
     def _init(self):
         self._regs: Dict[str, Register[str]] = {}
