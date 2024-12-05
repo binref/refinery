@@ -829,7 +829,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 self.base = emu.load_module(vf, data=db).get_base()
 
         emu.emu.timeout = 0
-        emu.emu.builtin_hooks_set = True
 
         if self.hooked(Hook.CodeExecute):
             emu.add_code_hook(self.hook_code_execute, ctx=self.state)
