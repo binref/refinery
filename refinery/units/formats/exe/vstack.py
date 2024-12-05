@@ -24,9 +24,6 @@ if TYPE_CHECKING:
     FN = TypeVar('FN')
 
 
-_CANARY = 0xCFDE82D5A091BFF5F2A6FFB0
-
-
 class Engine(enum.Enum):
     speakeasy = SpeakeasyEmulator
     icicle = IcicleEmulator
@@ -77,6 +74,7 @@ class EmuState:
     callstack_ceiling: int = 0
     ticks: int = field(default_factory=lambda: INF)
     visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    init_registers: List[int] = field(default_factory=list)
     last_read: Optional[int] = None
 
     def log(self, msg: str) -> str:
@@ -143,9 +141,7 @@ class VStackEmulatorMixin(Emulator):
 
         skipped = False
 
-        if size >= 4 and unsigned_value == _CANARY & mask:
-            skipped = 'uninitialized register'
-        elif (
+        if (
             not state.cfg.log_stack_cookies
             and self.sp ^ unsigned_value == state.last_read
         ):
@@ -210,6 +206,13 @@ class VStackEmulatorMixin(Emulator):
 
     @inject_state_argument
     def hook_code_execute(self, _, address: int, size: int, state: EmuState):
+
+        if _init := state.init_registers:
+            tos = self.sp
+            for reg in _init:
+                self.set_register(reg, tos)
+            _init.clear()
+
         state.ticks -= 1
         state.visits[address] += 1
         if state.visits[address] > state.cfg.max_visits > 0:
@@ -441,9 +444,9 @@ class vstack(Unit):
             state = EmuState(cfg, tree, address, emu.exe.pointer_size // 4, stop=args.stop)
             emu.reset(state)
 
-            reg_init = emu.sp or _CANARY
             for reg in emu.general_purpose_registers():
-                emu.set_register(reg, reg_init)
+                if reg not in register_values:
+                    state.init_registers.append(reg)
 
             for reg, (var, value) in register_values.items():
                 if isinstance(value, int):
