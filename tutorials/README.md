@@ -38,6 +38,6 @@ This is a refinery-focused write-up of how to solve FlareOn10.
 [0x03]: tbr-files.v0x03.seduploader.ipynb
 [0x04]: tbr-files.v0x04.run.length.encoding.ipynb
 [0x05]: tbr-files.v0x05.flare.on.9.ipynb
-[0x06]: tbr-files.v0x06.Qakbot.Decoder.ipynb
-[0x07]: tbr-files.v0x07.DCRat.ipynb
+[0x06]: tbr-files.v0x06.qakbot.decoder.ipynb
+[0x07]: tbr-files.v0x07.dc.rat.ipynb
 [0x08]: tbr-files.v0x08.flare.on.10.ipynb
