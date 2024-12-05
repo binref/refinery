@@ -15,7 +15,7 @@ import sys
 import re
 import itertools
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, ClassVar, NamedTuple
 from os import devnull as DEVNULL
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -324,6 +324,8 @@ class Executable(ABC):
     _base: Optional[int]
     _type: ET
 
+    blob: ClassVar[bool] = False
+
     @classmethod
     def Load(cls: Type[_T], data: ByteStr, base: Optional[int] = None) -> _T:
         """
@@ -405,10 +407,10 @@ class Executable(ABC):
                 break
         return string.decode('latin-1')
 
-    def _rebase_usr_to_img(self, addr: int) -> int:
+    def rebase_usr_to_img(self, addr: int) -> int:
         return addr - self.base + self.image_defined_base()
 
-    def _rebase_img_to_usr(self, addr: int) -> int:
+    def rebase_img_to_usr(self, addr: int) -> int:
         return addr - self.image_defined_base() + self.base
 
     @property
@@ -420,6 +422,10 @@ class Executable(ABC):
         if self._base is None:
             return self.image_defined_base()
         return self._base
+
+    @base.setter
+    def base(self, value: int):
+        self._base = value
 
     @property
     def data(self) -> memoryview:
@@ -581,6 +587,8 @@ class ExecutableCodeBlob(Executable):
     _byte_order: BO
     _arch: Arch
 
+    blob = True
+
     def __init__(self, data, base=None, arch: Arch = Arch.X32, byte_order: BO = BO.LE):
         super().__init__(None, data, base)
         self._byte_order = byte_order
@@ -599,8 +607,9 @@ class ExecutableCodeBlob(Executable):
         yield Symbol(0)
 
     def _sections(self) -> Generator[Section, None, None]:
-        r = Range(0, len(self.data))
-        yield Section('blob', r, r, False)
+        v = Range(self.base, self.base + len(self.data))
+        p = Range(0, len(self.data))
+        yield Section('blob', p, v, False)
 
     def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for s in self.sections():
@@ -661,7 +670,7 @@ class ExecutablePE(Executable):
             p_lower = section.PointerToRawData
             p_upper = p_lower + section.SizeOfRawData
             v_lower = section.VirtualAddress + ib
-            v_lower = self._rebase_img_to_usr(v_lower)
+            v_lower = self.rebase_img_to_usr(v_lower)
             v_upper = v_lower + section.Misc_VirtualSize
             p = Range(p_lower, p_upper)
             v = Range(v_lower, v_upper)
@@ -753,7 +762,7 @@ class ExecutableELF(Executable):
     def _convert_section(self, section) -> Section:
         p_lower = section['sh_offset']
         v_lower = section['sh_addr']
-        v_lower = self._rebase_img_to_usr(v_lower)
+        v_lower = self.rebase_img_to_usr(v_lower)
         v_upper = v_lower + align(section['sh_addralign'], section.data_size)
         p_upper = p_lower + section.data_size
         return Section(self.ascii(section.name), Range(p_lower, p_upper), Range(v_lower, v_upper), False)
@@ -769,7 +778,7 @@ class ExecutableELF(Executable):
             header = segment.header
             p_lower = header.p_offset
             v_lower = header.p_vaddr
-            v_lower = self._rebase_usr_to_img(v_lower)
+            v_lower = self.rebase_img_to_usr(v_lower)
             p_upper = p_lower + header.p_filesz
             v_upper = v_lower + header.p_memsz
             if not populate_sections:
@@ -877,7 +886,7 @@ class ExecutableMachO(Executable):
     def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         for segment, sections in self._macho_segments():
             v_lower = segment.vmaddr
-            v_lower = self._rebase_img_to_usr(v_lower)
+            v_lower = self.rebase_img_to_usr(v_lower)
             p_lower = segment.fileoff
             v_upper = v_lower + segment.vmsize
             p_upper = p_lower + segment.filesize
@@ -905,7 +914,7 @@ class ExecutableMachO(Executable):
         name = self.ascii(section.sectname)
         p_lower = section.offset
         v_lower = section.addr
-        v_lower = self._rebase_img_to_usr(v_lower)
+        v_lower = self.rebase_img_to_usr(v_lower)
         p_upper = p_lower + section.size
         v_upper = v_lower + align(section.align, section.size)
         return Section(F'{segment}/{name}', Range(p_lower, p_upper), Range(v_lower, v_upper), False)

@@ -59,5 +59,5 @@ class TestVStack(TestUnitBase):
 
     def test_shellcode_example(self):
         data = self.download_sample('e850f3849ea82980cf23844ad3caadf73856b2d5b0c4179847d82ce4016e80ee')
-        unit = self.load_pipeline(r'officecrypt | xt oleObject1 | xt native | rex y:E9[] | vstack -a=x32 -w=80 | xtp -ff')
+        unit = self.load_pipeline(r'officecrypt | xt oleObject1 | xt native | rex y:E9[] | vstack -b 0x8000 -a=x32 -w=80 0x8000 | xtp -ff')
         self.assertEqual(data | unit | str, 'htt''p:/''/103.153.79''.104/windows10/csrss.exe')
