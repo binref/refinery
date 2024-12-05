@@ -111,9 +111,10 @@ class VStackEmulatorMixin(Emulator):
         return Range(self.stack_base, self.stack_base + self.stack_size)
 
     def disassemble(self, address: int, size: int):
+        ea = address - self.base + self.exe.base
         try:
             _cs = self.disassembler()
-            pos = self.exe.location_from_address(address).physical.position
+            pos = self.exe.location_from_address(ea).physical.position
             end = pos + size
             return next(_cs.disasm(bytes(self.exe.data[pos:end]), address, 1))
         except Exception:
