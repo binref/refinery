@@ -115,6 +115,12 @@ class Register(Generic[_R]):
         self.code = code
         self.size = size
 
+    def __eq__(self, other: Register):
+        return self.code == other.code and self.size == other.size
+
+    def __hash__(self):
+        return hash((self.code, self.size))
+
 
 class Hook(IntFlag):
     """
