@@ -367,6 +367,14 @@ class Executable(ABC):
     def __getitem__(self, key: Union[int, slice, Range]):
         return self.read(key)
 
+    def __contains__(self, key: Union[int, slice, Range]):
+        try:
+            self.read(key)
+        except LookupError:
+            return False
+        else:
+            return True
+
     def read(self, key: Union[int, slice, Range]) -> memoryview:
         """
         Read data from the binary based on a given address. If the input `key` is a single integer,
