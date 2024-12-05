@@ -287,7 +287,7 @@ class vstack(Unit):
         import capstone
         return capstone
 
-    @Unit.Requires('unicorn==2.0.1.post1', 'default', 'extended')
+    @Unit.Requires('unicorn', 'default', 'extended')
     def _unicorn():
         with NoLogging():
             import unicorn
