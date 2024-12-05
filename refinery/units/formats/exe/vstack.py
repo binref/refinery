@@ -28,9 +28,9 @@ _CANARY = 0xCFDE82D5A091BFF5F2A6FFB0
 
 
 class Engine(enum.Enum):
-    Speakeasy = SpeakeasyEmulator
-    Icicle = IcicleEmulator
-    Unicorn = UnicornEmulator
+    speakeasy = SpeakeasyEmulator
+    icicle = IcicleEmulator
+    unicorn = UnicornEmulator
 
 
 @dataclass
@@ -278,24 +278,24 @@ class vstack(Unit):
         import intervaltree
         return intervaltree
 
+    @Unit.Requires('capstone', 'default', 'extended')
+    def _capstone():
+        import capstone
+        return capstone
+
     @Unit.Requires('unicorn==2.0.1.post1', 'default', 'extended')
     def _unicorn():
         with NoLogging():
             import unicorn
             return unicorn
 
-    @Unit.Requires('capstone', 'default', 'extended')
-    def _capstone():
-        import capstone
-        return capstone
-
     @Unit.Requires('speakeasy-emulator', 'extended')
     def _speakeasy():
         import speakeasy
         return speakeasy
 
-    @Unit.Requires('icicle-emu', 'extended')
-    def _speakeasy():
+    @Unit.Requires('icicle-emu', 'all')
+    def _icicle():
         import icicle
         return icicle
 
@@ -306,7 +306,7 @@ class vstack(Unit):
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
         engine: Arg.Option('-e', choices=Engine,
-            help='The emulator engine. The default is {default}, options are: {choices}') = Engine.Unicorn,
+            help='The emulator engine. The default is {default}, options are: {choices}') = Engine.unicorn,
         meta_registers: Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
             'the data will be mapped.')) = False,
@@ -361,7 +361,8 @@ class vstack(Unit):
         args = self.args
 
         engine: Engine = args.engine
-        self.log_debug(F'using {engine.name}')
+        self.log_debug(F'attempting to use {engine.name}')
+        getattr(self, F'_{engine.name}')
 
         class Emu(engine.value, VStackEmulatorMixin):
             pass
