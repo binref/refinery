@@ -1109,6 +1109,17 @@ class Executable(ABCMeta):
         cls._logger = _logger = logger(cls.name)
         return _logger
 
+    @property
+    def logger_locked(cls) -> bool:
+        try:
+            return cls._logger_locked
+        except AttributeError:
+            return False
+
+    @logger_locked.setter
+    def logger_locked(cls, value):
+        cls._logger_locked = value
+
 
 class DelayedArgumentProxy:
     """
@@ -1386,6 +1397,8 @@ class Unit(UnitBase, abstract=True):
         """
         Returns the current `refinery.lib.environment.LogLevel` that the unit adheres to.
         """
+        if self.__class__.logger_locked:
+            return
         if not isinstance(value, LogLevel):
             value = LogLevel.FromVerbosity(value)
         self.logger.setLevel(value)
@@ -1821,24 +1834,29 @@ class Unit(UnitBase, abstract=True):
             return B''
 
     def act(self, data: Union[Chunk, ByteStr]) -> Generator[ByteStr, None, None]:
-        reverse = self.args.reverse
+        cls = self.__class__
         iff = self.args.iff
-        if iff and not self.handles(data):
-            if iff < 2:
-                yield data
-            return
-        else:
-            data = self.args @ data
-            data = data
-        if reverse:
-            it = self.reverse(data)
-        else:
-            it = self.process(data)
-        if not inspect.isgenerator(it):
-            it = (it,)
-        for out in it:
-            if out is not None:
-                yield out
+        reverse = self.args.reverse
+        cls.logger_locked = True
+        try:
+            if iff and not self.handles(data):
+                if iff < 2:
+                    yield data
+                return
+            else:
+                data = self.args @ data
+                data = data
+            if reverse:
+                it = self.reverse(data)
+            else:
+                it = self.process(data)
+            if not inspect.isgenerator(it):
+                it = (it,)
+            for out in it:
+                if out is not None:
+                    yield out
+        finally:
+            cls.logger_locked = False
 
     def __call__(self, data: Optional[Union[ByteStr, Chunk]] = None) -> bytes:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:

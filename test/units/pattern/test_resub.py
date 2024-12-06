@@ -125,3 +125,13 @@ class TestRegexSubstitution(TestUnitBase):
         unit = self.load('yara:(?P<op>DD057822480083EC08DD1C24E8[4]DDD883C408)', '{90!H:rep[{len(op)}]}')
         goal = B'\x90' * 66 + B'\xE8\0\0\0\0'
         self.assertEqual(data | unit | bytearray, goal)
+
+    def test_weird_exception(self):
+        from refinery.units import LogLevel
+        data = (
+            B'ORGANIZED("112f106f119f115f106f113f56f55f51f105f113f113", 6 - 1)\n'
+            B'PixelGetColor("Assist^", "Assist^")'
+        )
+        pipe = self.load_pipeline(r'resub "\\(((??string)),(.*?)\)" "{1:esc:resub[\D,/]:pack:sub[e:{2}]:esc[-qR]}"')
+        pipe.log_level = LogLevel.INFO
+        self.assertEqual(data | pipe | bytes, B'')
