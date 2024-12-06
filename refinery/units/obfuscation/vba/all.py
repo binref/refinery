@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from typing import Type, List, TYPE_CHECKING
+
 import re
 
 from refinery.units.obfuscation import IterativeDeobfuscator
+
+if TYPE_CHECKING:
+    from .. import Deobfuscator
 
 from .arithmetic import deob_vba_arithmetic
 from .brackets import deob_vba_brackets
@@ -17,7 +24,7 @@ from .stringreverse import deob_vba_stringreverse
 
 class deob_vba(IterativeDeobfuscator):
 
-    _SUBUNITS = [sub() for sub in [
+    _SUBUNITS: List[Type[Deobfuscator]] = [
         deob_vba_comments,
         deob_vba_brackets,
         deob_vba_char_function,
@@ -27,12 +34,13 @@ class deob_vba(IterativeDeobfuscator):
         deob_vba_dummy_variables,
         deob_vba_stringreplace,
         deob_vba_stringreverse,
-    ]]
+    ]
 
     def deobfuscate(self, data):
-        for u in self._SUBUNITS:
+        units = [u() for u in self._SUBUNITS]
+        for u in units:
             u.log_level = self.log_level
-        for unit in self._SUBUNITS:
+        for unit in units:
             self.log_debug(lambda: F'invoking {unit.name}')
             checkpoint = hash(data)
             data = unit.deobfuscate(data)
