@@ -1836,17 +1836,19 @@ class Unit(UnitBase, abstract=True):
     def act(self, data: Union[Chunk, ByteStr]) -> Generator[ByteStr, None, None]:
         cls = self.__class__
         iff = self.args.iff
-        reverse = self.args.reverse
+
+        if iff and not self.handles(data):
+            if iff < 2:
+                yield data
+            return
+        else:
+            data = self.args @ data
+            data = data
+
         cls.logger_locked = True
+
         try:
-            if iff and not self.handles(data):
-                if iff < 2:
-                    yield data
-                return
-            else:
-                data = self.args @ data
-                data = data
-            if reverse:
+            if self.args.reverse:
                 it = self.reverse(data)
             else:
                 it = self.process(data)
