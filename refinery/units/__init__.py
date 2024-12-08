@@ -1836,6 +1836,7 @@ class Unit(UnitBase, abstract=True):
     def act(self, data: Union[Chunk, ByteStr]) -> Generator[ByteStr, None, None]:
         cls = self.__class__
         iff = self.args.iff
+        lvl = cls.log_level
 
         if iff and not self.handles(data):
             if iff < 2:
@@ -1845,6 +1846,7 @@ class Unit(UnitBase, abstract=True):
             data = self.args @ data
             data = data
 
+        cls.log_level = lvl
         cls.logger_locked = True
 
         try:
