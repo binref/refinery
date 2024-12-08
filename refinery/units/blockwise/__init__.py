@@ -236,7 +236,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             if isinstance(it, int):
                 if not masked:
                     it &= self.fmask
-                npa = it
+                npa = int(it)
             elif self.precision is INF:
                 npa = numpy.array(list(itertools.islice(na, blocks)), dtype=dtype)
             else:

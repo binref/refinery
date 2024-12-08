@@ -116,7 +116,7 @@ from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, Ty
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
-from refinery.lib.types import NoMask
+from refinery.lib.types import NoMask, RepeatedInteger
 from refinery.lib.meta import is_valid_variable_name, metavars, Percentage
 
 if TYPE_CHECKING:
@@ -143,15 +143,6 @@ class ParserVariableMissing(ParserError):
     expression because of a missing variable.
     """
     pass
-
-
-class RepeatedInteger(int):
-    """
-    This class serves as a dual-purpose result for `refinery.lib.argformats.numseq`
-    types. It is an integer, but can be infinitely iterated.
-    """
-    def __iter__(self): return self
-    def __next__(self): return self
 
 
 class LazyEvaluation:

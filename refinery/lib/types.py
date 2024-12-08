@@ -165,3 +165,12 @@ NoMask = _NoMask
 The value of `NoMask & X` and `X & NoMask` is always equal to `X`. This singleton serves as a
 mock bitmask when the value `X` should not be masked at all.
 """
+
+
+class RepeatedInteger(int):
+    """
+    This class serves as a dual-purpose result for `refinery.lib.argformats.numseq` types. It
+    is an integer, but can be infinitely iterated.
+    """
+    def __iter__(self): return self
+    def __next__(self): return self
