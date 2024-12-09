@@ -10,4 +10,4 @@ class iffx(SingleRegexUnit, ConditionalUnit, extend_docs=True):
     regular expression.
     """
     def match(self, chunk):
-        return self.matcher(chunk) is not None
+        return bool(self.matcher(chunk))

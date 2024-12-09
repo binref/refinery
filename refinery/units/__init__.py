@@ -966,9 +966,9 @@ class Executable(ABCMeta):
             __init__=no_type_check,
         )
         if not abstract and Entry not in bases:
-            bases = bases + (Entry,)
-            if not bases[0].is_reversible:
+            if not any(b.is_reversible for b in bases):
                 nmspc.setdefault('reverse', MissingFunction)
+            bases = bases + (Entry,)
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 

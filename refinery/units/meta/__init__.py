@@ -23,7 +23,8 @@ class ConditionalUnit(Unit, abstract=True):
     """
 
     def __init__(
-        self, retain: Arg.Switch('-r',
+        self,
+        retain: Arg.Switch('-r',
             help='Move non-matching chunks out of scope rather than discarding them.') = False,
         **kwargs
     ):
