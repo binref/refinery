@@ -832,9 +832,9 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             db = bytes(exe.data)
             vf = vfs.new(db)
             if exe.blob:
-                self.base = emu.load_shellcode(vf, data=db, arch=arch)
+                self.base = emu.load_shellcode(vf.path, data=db, arch=arch)
             else:
-                self.base = emu.load_module(vf, data=db).get_base()
+                self.base = emu.load_module(vf.path, data=db).get_base()
 
         emu.emu.timeout = 0
 

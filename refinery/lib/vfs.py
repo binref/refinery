@@ -45,6 +45,9 @@ class VirtualFile:
         self.data = data
         fs.install(self)
 
+    def __repr__(self):
+        return F'<VirtualFile/{self.name}>'
+
     @property
     def node(self) -> int:
         return self.uuid.fields[1]
@@ -192,20 +195,30 @@ class VirtualFileSystem:
             else:
                 return vf.mmap(length, kwargs.get('offset', 0))
 
+        def hook_exists(path):
+            try:
+                with self._lock:
+                    return os.path.basename(path) in self._by_name
+            except BaseException:
+                return self._exists(path)
+
         self._builtins_open = builtins.open
         self._os_stat = os.stat
         self._mmap_mmap = mmap.mmap
         self._io_open = io.open
         self._isfile = os.path.isfile
+        self._exists = os.path.exists
         builtins.open = hook_open
         io.open = hook_open
         os.stat = hook_stat
         mmap.mmap = hook_mmap
         os.path.isfile = hook_isfile
+        os.path.exists = hook_exists
         return self
 
     def release(self):
         os.path.isfile = self._isfile
+        os.path.exists = self._exists
         builtins.open = self._builtins_open
         os.stat = self._os_stat
         mmap.mmap = self._mmap_mmap
