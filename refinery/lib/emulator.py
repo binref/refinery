@@ -589,7 +589,9 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
     def malloc(self, size: int) -> int:
         size = self.align(size)
         self.map(self.alloc_base, size)
+        addr = self.alloc_base
         self.alloc_base += size
+        return addr
 
 
 class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
