@@ -219,6 +219,7 @@ from refinery.lib.tools import (
     lookahead,
     normalize_to_display,
     normalize_to_identifier,
+    exception_to_string,
     one,
     skipfirst,
 )
@@ -1935,11 +1936,7 @@ class Unit(UnitBase, abstract=True):
             if callable(message):
                 message = message()
             if isinstance(message, Exception):
-                args = [arg for arg in message.args if isinstance(arg, str)]
-                if len(args) == 1:
-                    message = args[0]
-                else:
-                    message = str(message)
+                message = exception_to_string(message)
             if isinstance(message, str):
                 return message
             if isbuffer(message):
