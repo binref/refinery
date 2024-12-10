@@ -925,7 +925,12 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         try:
             reg = self._regs[var]
         except KeyError:
-            reg = self._regs[var] = Register(var, var, self.measure_register_size(var))
+            try:
+                size = self.measure_register_size(var)
+            except Exception:
+                raise LookupError(var)
+            else:
+                reg = self._regs[var] = Register(var, var, size)
         return reg
 
     def _map(self, address: int, size: int):
