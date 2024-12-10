@@ -31,6 +31,7 @@ class alu(ArithmeticUnit):
 
     - the variable `A`: same as `V[0]`
     - the variable `B`: current block
+    - the variable `E`: block value of encoded input (not changed after update)
     - the variable `N`: number of bytes in the input
     - the variable `K`: current index in the input
     - the variable `S`: the internal state value
@@ -116,7 +117,7 @@ class alu(ArithmeticUnit):
         self._index.init(self.fmask)
 
         def _expression(definition: str):
-            return PythonExpression(definition, *'IBASMNVRLX', all_variables_allowed=True, mask=fmask)
+            return PythonExpression(definition, *'IBEASMNVRLX', all_variables_allowed=True, mask=fmask)
 
         prologue = _expression(self.args.prologue).expression
         epilogue = _expression(self.args.epilogue).expression
@@ -157,7 +158,7 @@ class alu(ArithmeticUnit):
         )
 
         def operate(block, index, *args):
-            context.update(K=index, B=block, V=args)
+            context.update(K=index, B=block, E=block, V=args)
             if args:
                 context['A'] = args[0]
             context['S'] = eval(prologue, None, context)
