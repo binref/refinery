@@ -54,4 +54,4 @@ It illustrates the use of path extraction units and features some steganography.
 [0x06]: tbr-files.v0x06.qakbot.decoder.ipynb
 [0x07]: tbr-files.v0x07.dc.rat.ipynb
 [0x08]: tbr-files.v0x08.flare.on.10.ipynb
-[0x08]: tbr-files.v0x09.exploit.document.ipynb
+[0x09]: tbr-files.v0x09.exploit.document.ipynb
