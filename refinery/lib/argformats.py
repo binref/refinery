@@ -25,11 +25,11 @@ UTF8 encoding of the string is returned.
 
 The handlers `copy` and `cut` as well as their shortcuts `c` and `x` are **final** handlers like
 the above example `s`, i.e. the string that follows `copy:` will not be interpreted as a multibin
-expression. Indeed, `copy` and `cut` expect the remaining string to be in Python slice syntax. The
-expression `copy:0:1` would, for example, represent the first byte of the input data. With `copy`,
-this data is copied out of the input and used for the argument. With `cut`, this data is removed
-from the input data and used for the argument. All `cut` operations are performed in the order in
-which the arguments are specified on the command line. For example:
+expression. Indeed, `copy` and `cut` expect the remaining string to be in Python slice syntax,
+where the second part of the slice specifies the length rather than the end of the buffer. For
+example, `copy:5:4` would copy four bytes from the input data at offset 5. When `cut` us used instead,
+these four bytes are also removed from the input data after copying them. All `cut` operations are
+performed in the order in which the arguments are specified on the command line. For example:
 ```
 emit 1234 | cca x::1 x::1
 ```
@@ -277,6 +277,22 @@ def percent(expression: str):
     if expression.endswith('%'):
         return float(expression[:-1].strip()) / 100
     return float(expression)
+
+
+def relslice(expression: Union[int, str, slice], data: Optional[Chunk] = None) -> Union[slice, SliceAgain]:
+    """
+    Uses `refinery.lib.argformats.sliceobj` to parse a slice from the input, but
+    interprets the second part of the slice as a relative length (which can also
+    be negative).
+    """
+    bounds = sliceobj(expression, data)
+    if (stop := bounds.stop) is not None:
+        start = bounds.start or 0
+        stop += start
+        if (step := bounds.step) is None and stop < start:
+            step = -1
+        bounds = slice(start, stop, step)
+    return bounds
 
 
 def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, range=False, final=False) -> Union[slice, SliceAgain]:
@@ -869,24 +885,27 @@ class DelayedArgument(LazyEvaluation):
     @handler.register('c', 'copy', final=True)
     def copy(self, region: str) -> bytes:
         """
-        Implements the final modifier `c:region` or `copy:region`, where `region` is parsed
-        as a `refinery.lib.argformats.sliceobj`. The result contains the corresponding slice
-        of the input data.
+        Implements the final modifier `copy:start[:length[:step]]`. It copies `length` bytes
+        from the input using step size `step` at offset `start`. If length is not given, it
+        defaults to the input length. If step is not given, it defaults to 1.
         """
-        return lambda d: d[sliceobj(region, d)]
+        def _copy(data: bytearray):
+            bounds = relslice(region, data)
+            return data[bounds]
+        return _copy
 
     @handler.register('x', 'cut', final=True)
     def cut(self, region: str) -> bytes:
         """
-        `x:region` and `cut:region` work like `refinery.lib.argformats.DelayedBinaryArgument.copy`,
-        but the corresponding bytes are also removed from the input data.
+        The handler `cut:region` work like `refinery.lib.argformats.DelayedBinaryArgument.copy`,
+        but the bytes are removed from the input data after copying them.
         """
-        def extract(data: Union[bytearray, Chunk]):
-            bounds = sliceobj(region, data)
+        def _cut(data: Union[bytearray, Chunk]):
+            bounds = relslice(region, data)
             result = bytearray(data[bounds])
-            data[bounds] = []
+            del data[bounds]
             return result
-        return extract
+        return _cut
 
     @handler.register('pp')
     def pp(self, input: bytes, region: Union[slice, str] = slice(1, None, 1), separator: bytes = B'/') -> bytes:
