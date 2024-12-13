@@ -91,12 +91,12 @@ def explorer(keyword_color='91', unit_color='93'):
              'a unit, it will be listed.'
     )
     argp.add_argument(
-        '-I', '--conjunctive',
+        '-o', '--or',
         dest='quantifier',
         action='store_const',
-        const=all,
-        default=any,
-        help='All keywords must match rather than any of them.'
+        const=any,
+        default=all,
+        help='Any keywords may match rather than requiring all of them to match.'
     )
     argp.add_argument(
         '-a', '--all',
