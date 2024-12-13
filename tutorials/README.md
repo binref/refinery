@@ -46,12 +46,12 @@ The tutorial goes through several layers of a multi-stage downloader.
 It illustrates the use of path extraction units and features some steganography.
 
 
-[0x01]: tbr-files.v0x01.netwalker.dropper.ipynb
-[0x02]: tbr-files.v0x02.amadey.loader.ipynb
-[0x03]: tbr-files.v0x03.seduploader.ipynb
-[0x04]: tbr-files.v0x04.run.length.encoding.ipynb
-[0x05]: tbr-files.v0x05.flare.on.9.ipynb
-[0x06]: tbr-files.v0x06.qakbot.decoder.ipynb
-[0x07]: tbr-files.v0x07.dc.rat.ipynb
-[0x08]: tbr-files.v0x08.flare.on.10.ipynb
-[0x09]: tbr-files.v0x09.exploit.document.ipynb
+[0x01]: notebooks/tbr-files.v0x01.netwalker.dropper.ipynb
+[0x02]: notebooks/tbr-files.v0x02.amadey.loader.ipynb
+[0x03]: notebooks/tbr-files.v0x03.seduploader.ipynb
+[0x04]: notebooks/tbr-files.v0x04.run.length.encoding.ipynb
+[0x05]: notebooks/tbr-files.v0x05.flare.on.9.ipynb
+[0x06]: notebooks/tbr-files.v0x06.qakbot.decoder.ipynb
+[0x07]: notebooks/tbr-files.v0x07.dc.rat.ipynb
+[0x08]: notebooks/tbr-files.v0x08.flare.on.10.ipynb
+[0x09]: notebooks/tbr-files.v0x09.exploit.document.ipynb
