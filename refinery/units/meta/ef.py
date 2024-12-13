@@ -15,6 +15,11 @@ from refinery.lib.tools import exception_to_string
 from refinery.units import Arg, Unit
 
 
+_ERROR_IGNORES = {
+    'nt': {'system volume information'}
+}
+
+
 class ef(Unit):
     """
     Short for "emit file". The unit reads files from disk and outputs them individually. Has the ability to
@@ -154,7 +159,9 @@ class ef(Unit):
             try:
                 return scandir(path)
             except Exception as e:
-                self.log_warn('error calling scandir:', exception_to_string(e))
+                ignore = _ERROR_IGNORES.get(os.name, set())
+                if not any(p.lower() in ignore for p in Path(path).parts):
+                    self.log_warn(F'error calling scandir, {exception_to_string(e)}: {path}')
                 return EmptyIterator()
 
         try:
