@@ -5,6 +5,13 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.0
+- The `binref` command was changed to use conjunctive search logic by default.
+- The `copy:` and `cut:` multibin handlers now accept arguments of the form `[offset]:[length]:[step]` instead of `[start]:[end]:[step]`.
+- The `vstack` unit now supports 3 emulator engines: `unicorn`, `speakeasy`, `icicle`.
+  This is somewhat experimental and `unicorn` remains the default. 
+- As part of the changes to `vstack`, the `vmemref` unit was changed to use `smda` rather than `angr`.
+
 ## Version 0.7.12 - bugfix release
 
 ## Version 0.7.11 - bugfix release
