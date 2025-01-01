@@ -258,13 +258,12 @@ class VStackEmulatorMixin(Emulator):
             state.waiting += 1
         state.expected_address += size
 
-        def _log():
-            instruction = self.disassemble(address, size)
-            if instruction:
-                return F'{instruction.mnemonic} {instruction.op_str}'
-            return 'unrecognized instruction'
-
-        vstack.log_debug(lambda: state.log(_log()))
+        instruction = self.disassemble(address, size)
+        if instruction:
+            vstack.log_debug(F'{instruction.mnemonic} {instruction.op_str}')
+        else:
+            vstack.log_info('unrecognized instruction')
+            self.halt()
 
 
 class vstack(Unit):
