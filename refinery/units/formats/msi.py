@@ -98,6 +98,8 @@ class MSIStringData:
         self._unknown = pool.u16()
         while not pool.eof:
             size, rc = pool.read_struct('<HH')
+            if size == 0 and rc != 0:
+                size = pool.u32()
             string = data.read_bytes(size)
             self.strings.append(string)
             self.provided_ref_count.append(rc)
