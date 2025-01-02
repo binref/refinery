@@ -772,7 +772,6 @@ class IFPSFile(Struct):
 
     def _parse_bytecode(self, data: memoryview) -> Generator[Instruction, None, None]:
         disassembly: Dict[int, Instruction] = OrderedDict()
-        stackdepth = 0
         reader = StructReader(data)
 
         argcount = {
@@ -800,7 +799,7 @@ class IFPSFile(Struct):
             aryness = argcount.get(code)
             if aryness is not None:
                 arg(aryness)
-            elif code in (Op.Ret, Op.Nop):
+            elif code in (Op.Ret, Op.Nop, Op.Pop):
                 pass
             elif code is Op.Calculate:
                 infix = ['+', '-', '*', '/', '%', '<<', '>>', '&', '|', '^'][reader.u8()]
@@ -809,12 +808,7 @@ class IFPSFile(Struct):
                 b = self._read_operand(reader)
                 args.extend((a, infix, b))
             elif code in (Op.Push, Op.PushVar):
-                stackdepth += 1
                 arg()
-            elif code is Op.Pop:
-                if stackdepth < 1:
-                    raise RuntimeError(F'Stack grew negative at instruction {len(disassembly) + 1}.')
-                stackdepth -= 1
             elif code in (Op.Jump, Op.JumpFlag):
                 target = reader.i32()
                 args.append(reader.tell() + target)
@@ -826,18 +820,15 @@ class IFPSFile(Struct):
                 args.append(reader.tell() + target)
                 args.append(val)
             elif code is Op.JumpPop1:
-                stackdepth -= 1
                 target = reader.i32()
                 args.append(reader.tell() + target)
             elif code is Op.JumpPop2:
-                stackdepth -= 2
                 target = reader.i32()
                 args.append(reader.tell() + target)
             elif code is Op.StackType:
                 args.append(self._read_variant(reader.u32()))
                 args.append(reader.u32())
             elif code is Op.PushType:
-                stackdepth += 1
                 args.append(self.types[reader.u32()])
             elif code is Op.Compare:
                 infix = ['>=', '<=', '>', '<', '!=', '==', 'in', 'is'][reader.u8()]

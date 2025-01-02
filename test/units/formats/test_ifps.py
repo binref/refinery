@@ -16,10 +16,16 @@ class TestIPFS(TestUnitBase):
         ):
             self.assertIn(line, disassembly)
 
-    def test_x(self):
+    def test_regression_01(self):
         data = self.download_sample('2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd')
         test = data | self.load() | str
         self.assertIn('external symbol GETARRAYLENGTH', test)
+
+    def test_regression_02(self):
+        data = self.download_sample('24e78242889d836eb31e2e7d39c7c87f97dcd35f15282813aad5f02978b5bf3b')
+        test = data | self.load() | str
+        self.assertEqual(test.count('https://aka.ms/vs/16/release/vc_redist.x64.exe'), 1)
+        self.assertEqual(test.count('https://aka.ms/vs/16/release/vc_redist.x86.exe'), 1)
 
 
 class TestIFPSStrings(TestUnitBase):
