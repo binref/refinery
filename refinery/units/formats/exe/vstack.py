@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Union, List, Dict, TYPE_CHECKING
+from typing import Any, Union, List, Dict, TYPE_CHECKING
 
 import enum
 import functools
@@ -106,7 +106,7 @@ def inject_state_argument(pfn: FN) -> FN:
     return wrapped
 
 
-class VStackEmulatorMixin(Emulator[..., ..., EmuState]):
+class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
 
     def stackrange(self):
         return Range(self.stack_base, self.stack_base + self.stack_size)
