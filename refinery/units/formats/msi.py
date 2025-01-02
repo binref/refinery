@@ -339,10 +339,12 @@ class xtmsi(xtdoc):
             streams.pop(ignored_stream, None)
 
         inconsistencies = 0
+        w1 = len(str(len(strings)))
+        w2 = len(str(max(max(strings.computed_ref_count), max(strings.provided_ref_count))))
         for k in range(len(strings)):
             c = strings.computed_ref_count[k]
             p = strings.provided_ref_count[k]
-            if c != p and not self.log_debug(F'string reference count computed={c} provided={p}:', strings.ref(k + 1, False)):
+            if c != p and not self.log_debug(F'string {k:0{w1}d} reference count computed={c:0{w2}d} provided={p:0{w2}d}'):
                 inconsistencies += 1
         if inconsistencies:
             self.log_info(F'found {inconsistencies} incorrect string reference counts')
