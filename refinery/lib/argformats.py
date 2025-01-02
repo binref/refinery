@@ -1570,16 +1570,21 @@ class number:
     def __getitem__(self, bounds):
         return self.__class__(bounds.start, bounds.stop)
 
-    def __call__(self, value: Union[str, int]):
+    def __call__(self, value):
         if isinstance(value, int):
             return value
-        if match := re.fullmatch('(?:0x)?([A-F0-9]+)H?', value, flags=re.IGNORECASE):
-            value = F'0x{match[1]}'
-        delay = DelayedNumberArgument(value, self.min, self.max)
         try:
-            return delay()
-        except TooLazy:
-            return delay
+            delay = DelayedNumberArgument(value, self.min, self.max)
+            try:
+                return delay()
+            except TooLazy:
+                return delay
+        except ParserError:
+            import re
+            match = re.fullmatch('(?:0x)?([A-F0-9]+)H?', value, flags=re.IGNORECASE)
+            if not match:
+                raise
+            return number(F'0x{match[1]}')
 
 
 number = number()
