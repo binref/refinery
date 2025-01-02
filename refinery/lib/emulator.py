@@ -131,19 +131,23 @@ class Hook(IntFlag):
     MemoryRead   = 0b000_00100  # noqa
     MemoryWrite  = 0b000_01000  # noqa
     MemoryError  = 0b000_10000  # noqa
+    ApiCall      = 0b001_00000  # noqa
 
     OnlyErrors   = 0b000_10010  # noqa
+    Default      = 0b000_11111  # noqa
     Everything   = 0b111_11111  # noqa
     Nothing      = 0b000_00000  # noqa
     MemoryAccess = 0b000_01100  # noqa
     Memory       = 0b000_11100  # noqa
-    NoErrors     = 0b000_01101  # noqa
+    NoErrors     = 0b001_01101  # noqa
 
 
 class Emulator(ABC, Generic[_E, _R, _T]):
     """
     The emulator base class.
     """
+
+    state: _T
 
     def __init__(
         self,
@@ -325,11 +329,19 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             return var
         return self._lookup_register(var)
 
+    def _map_update(self):
+        """
+        This function can be implemented by a child class to update the internal memory maps before
+        resizing a requested mapping to fit with the already existing maps.
+        """
+        pass
+
     def map(self, address: int, size: int):
         """
         Map memory of the given size at the given address. This function does not fail when part
         of the memory is already mapped; it will instead map only the missing pieces.
         """
+        self._map_update()
         lower = address
         upper = address + size
         for interval in self._memorymap.overlap(lower, upper):
@@ -482,6 +494,9 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             pass
         return True
 
+    def hook_api_call(self, emu: _E, api_name: str, func: str, *args, **kwargs) -> bool:
+        return True
+
     @lru_cache
     def disassembler(self) -> Cs:
         """
@@ -626,6 +641,9 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         self._map_segments()
         self._map_stack_and_heap()
 
+        if self.hooked(Hook.ApiCall):
+            raise NotImplementedError(F'{self.__class__.__name__} cannot hook API calls.')
+
         for hook, flag, callback in [
             (uc.UC_HOOK_CODE,           Hook.CodeExecute, self.hook_code_execute ),  # noqa
             (uc.UC_HOOK_INSN_INVALID,   Hook.CodeError,   self.hook_code_error   ),  # noqa
@@ -724,6 +742,9 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             arch = None
         if arch not in ic.architectures():
             raise NotImplementedError(F'Icicle cannot handle executables of arch {exe.arch().name}')
+
+        if self.hooked(Hook.ApiCall):
+            raise NotImplementedError(F'{self.__class__.__name__} cannot hook API calls.')
 
         if self.hooks & Hook.Memory:
             raise NotImplementedError(U'Icicle does not support memory hooks yet.')
@@ -850,6 +871,9 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         if self.hooked(Hook.MemoryError):
             emu.add_mem_invalid_hook(self.hook_mem_error)
 
+        if self.hooked(Hook.ApiCall):
+            emu.add_api_hook(self.hook_api_call, '*', '*')
+
     @property
     def stack_region(self):
         emu = self.speakeasy
@@ -878,6 +902,11 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     @stack_size.setter
     def stack_size(self, value):
         raise AttributeError
+
+    def _map_update(self):
+        self._memorymap.clear()
+        for a, b, _ in self.speakeasy.emu.emu_eng.emu.mem_regions():
+            self._memorymap.addi(a, b)
 
     def malloc(self, size: int) -> int:
         return self.speakeasy.mem_alloc(size)
@@ -933,15 +962,27 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 reg = self._regs[var] = Register(var, var, size)
         return reg
 
-    def _map(self, address: int, size: int):
+    def _map(self, base: int, size: int):
         spksy = self.speakeasy
-        alloc = spksy.mem_alloc(size, address)
-        if alloc != address:
-            spksy.mem_free(alloc)
-            alloc = spksy.emu.mem_map(size, address)
-        if alloc != address:
-            raise LookupError(F'Unable to allocate {size} bytes at address 0x{address:X}')
-        return alloc
+        if spksy.emu.get_address_map(base):
+            raise ValueError(base)
+        if mm := spksy.emu.get_reserve_map(base):
+            mm: MemMap = spksy.emu.get_address_map(spksy.emu.mem_map_reserve(mm.base))
+            if base not in range(mm.base, mm.base + mm.size):
+                raise RuntimeError(F'Speakeasy claimed to map 0x{base:X} in map 0x{mm.base:X}-0x{mm.base + mm.size:X}.')
+            map_size = mm.size
+            map_base = mm.base
+            _new_size = size - map_size + base - map_base
+            _new_base = base + map_size
+            if _new_size > 0 and self._map(_new_base, _new_size) != _new_base:
+                raise RuntimeError(F'Attempting to remain rest of size 0x{_new_size:X} at 0x{_new_base:X} failed.')
+            return base
+        else:
+            alloc = spksy.mem_alloc(size, base)
+            if alloc != base:
+                spksy.mem_free(alloc)
+                raise LookupError(F'Unable to allocate {size} bytes at address 0x{base:X} because Speakeasy has reserved this region.')
+            return alloc
 
     def mem_write(self, address: int, data: bytes):
         return self.speakeasy.mem_write(address, data)

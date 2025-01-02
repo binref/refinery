@@ -11,9 +11,10 @@ from refinery.units import Arg, Unit
 from refinery.lib.executable import Arch, Range
 from refinery.lib.types import bounds, INF
 from refinery.lib.meta import metavars
-from refinery.lib.tools import isbuffer, NoLogging
+from refinery.lib.tools import isbuffer, exception_to_string, NoLogging
 from refinery.lib.emulator import Emulator, SpeakeasyEmulator, UnicornEmulator, IcicleEmulator, Hook, EmulationError
 from refinery.lib.argformats import PythonExpression, ParserVariableMissing
+from refinery.lib.structures import StructReader
 
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     FN = TypeVar('FN')
 
 
-class Engine(enum.Enum):
+class _engine(enum.Enum):
     speakeasy = SpeakeasyEmulator
     icicle = IcicleEmulator
     unicorn = UnicornEmulator
@@ -72,6 +73,8 @@ class EmuState:
     stop: Optional[int] = None
     previous_address: int = 0
     callstack_ceiling: int = 0
+    invalid_instructions: int = 0
+    synthesized: set[bytes] = field(default_factory=set)
     ticks: int = field(default_factory=lambda: INF)
     visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
     init_registers: List[int] = field(default_factory=list)
@@ -103,7 +106,7 @@ def inject_state_argument(pfn: FN) -> FN:
     return wrapped
 
 
-class VStackEmulatorMixin(Emulator):
+class VStackEmulatorMixin(Emulator[..., ..., EmuState]):
 
     def stackrange(self):
         return Range(self.stack_base, self.stack_base + self.stack_size)
@@ -117,6 +120,22 @@ class VStackEmulatorMixin(Emulator):
             return next(_cs.disasm(bytes(self.exe.data[pos:end]), address, 1))
         except Exception:
             return None
+
+    def hook_api_call(self, _, name: str, function, args: tuple[int, ...], **ka) -> bool:
+        module, dot, symbol = name.partition('.')
+        if dot != '.':
+            return
+        logged_args = [repr(a) for a in args]
+        if symbol == 'connect':
+            sockaddr = StructReader(self.mem_read(args[1], 8))
+            if sockaddr.u16() == 2:
+                sockaddr.bigendian = True
+                port = sockaddr.u16()
+                host = '.'.join(map(str, sockaddr.read(4)))
+                self.state.synthesized.add(F'{host}:{port}'.encode(vstack.codec))
+                logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
+        vstack.log_info(self.state.log(F'{module}::{symbol}({", ".join(logged_args)})'))
+        return function(args)
 
     @inject_state_argument
     def hook_mem_read(self, _, access: int, address: int, size: int, value: int, state: EmuState):
@@ -195,8 +214,8 @@ class VStackEmulatorMixin(Emulator):
     def hook_mem_error(self, _, access: int, address: int, size: int, value: int, state: EmuState) -> bool:
         try:
             self.map(self.align(address, down=True), self.alloc_size)
-        except Exception:
-            vstack.log_debug(F'error accessing memory at {state.fmt(address)}')
+        except Exception as error:
+            vstack.log_debug(F'error accessing memory at {state.fmt(address)}: {exception_to_string(error)}')
         return True
 
     def hook_code_error(self, _, state: EmuState):
@@ -260,10 +279,14 @@ class VStackEmulatorMixin(Emulator):
 
         instruction = self.disassemble(address, size)
         if instruction:
-            vstack.log_debug(F'{instruction.mnemonic} {instruction.op_str}')
+            state.invalid_instructions = 0
+            vstack.log_debug(state.log(F'{instruction.mnemonic} {instruction.op_str}'))
         else:
-            vstack.log_info('unrecognized instruction')
-            self.halt()
+            iv = state.invalid_instructions + 1
+            state.invalid_instructions += iv
+            vstack.log_debug(state.log('unrecognized instruction'))
+            if iv > 2:
+                self.halt()
 
 
 class vstack(Unit):
@@ -308,8 +331,8 @@ class vstack(Unit):
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
-        engine: Arg.Option('-e', choices=Engine,
-            help='The emulator engine. The default is {default}, options are: {choices}') = Engine.unicorn,
+        engine: Arg.Option('-e', choices=_engine,
+            help='The emulator engine. The default is {default}, options are: {choices}') = _engine.unicorn,
         meta_registers: Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
             'the data will be mapped.')) = False,
@@ -328,7 +351,7 @@ class vstack(Unit):
         stack_push: Arg('-u', action='append', type=str, metavar='REG',
             help='Push the value of a register to the stack before beginning emulation; implies -r.') = None,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
-        max_visits: Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.') = 0x1000,
+        max_visits: Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.') = 0x10000,
         log_writes_in_calls: Arg.Switch('-W', help='Log writes of values that occur in functions calls.') = False,
         log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
         log_other_addresses: Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.') = False,
@@ -340,7 +363,7 @@ class vstack(Unit):
             stop=stop,
             base=base,
             arch=Arg.AsOption(arch, Arch),
-            engine=Arg.AsOption(engine, Engine),
+            engine=Arg.AsOption(engine, _engine),
             meta_registers=meta_registers,
             timeout=timeout,
             patch_range=patch_range,
@@ -363,9 +386,13 @@ class vstack(Unit):
         meta = metavars(data)
         args = self.args
 
-        engine: Engine = args.engine
+        engine: _engine = args.engine
+        flags = Hook.Default
         self.log_debug(F'attempting to use {engine.name}')
         getattr(self, F'_{engine.name}')
+
+        if engine is _engine.speakeasy:
+            flags |= Hook.ApiCall
 
         class Emu(engine.value, VStackEmulatorMixin):
             pass
@@ -374,7 +401,7 @@ class vstack(Unit):
             data,
             args.base,
             args.arch,
-            Hook.Everything,
+            flags,
             args.block_size,
             args.stack_size,
         )
@@ -476,6 +503,8 @@ class vstack(Unit):
                 emu.emulate(address, args.stop)
             except EmulationError:
                 pass
+
+            yield from state.synthesized
 
             tree.merge_overlaps()
             it: Iterator[Interval] = iter(tree)

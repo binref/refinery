@@ -104,6 +104,7 @@ import ast
 import builtins
 import itertools
 import inspect
+import re
 import sys
 
 from abc import ABC, abstractmethod
@@ -509,15 +510,13 @@ def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
     contains no variables, the expression is evaluated immediately, otherwise the function returns
     a callable that will evaluate the given expression on an incoming `refinery.lib.frame.Chunk`.
     """
-    import re
     expression = expression.strip()
     if match := re.fullmatch(R'([1-9][0-9]?)%', expression):
         return Percentage(int(match[1]) / 100)
     if match := re.fullmatch(R'(?i)(?P<digits>[1-9][0-9]*|0)(?P<unit>[KMGTPE]B?)', expression):
         unit = match['unit'].upper()
-        for k, symbol in enumerate('KMGTPE', 1):
-            if unit.startswith(symbol):
-                return int(match['digits']) * k * 1000
+        k = 'KMGTPE'.index(unit[0])
+        return int(match['digits']) * (1000 ** k)
     if (parser := PythonExpression.Lazy(expression)).variables:
         def evaluate(data: Chunk):
             try:
@@ -849,7 +848,6 @@ class DelayedArgument(LazyEvaluation):
             occurrence = int(occurrence, 0)
 
         def _pos(data: bytearray) -> int:
-            import re
             it: Iterable[re.Match] = re.finditer(bytes(regex), data, flags=re.DOTALL)
 
             if occurrence < 0:
@@ -879,7 +877,6 @@ class DelayedArgument(LazyEvaluation):
         The handler `rx:str` returns a regular expression which matches the exact string
         sequence given by `str`, with special regular expression control characters escaped.
         """
-        import re
         return re.escape(str)
 
     @handler.register('c', 'copy', final=True)
@@ -1451,7 +1448,6 @@ class DelayedRegexpArgument(DelayedArgument):
         of four URL strings which are all terminated with a null character.
         """
         if '(??' in expression:
-            import re
             from refinery.lib.patterns import formats, indicators
 
             def replace(match):
@@ -1499,8 +1495,6 @@ class DelayedRegexpArgument(DelayedArgument):
         ranges such as `[2-6]` are substituted, all other characters in the pattern are
         left unchanged.
         """
-        import re
-
         def y2r(match: re.Match[bytes]):
             mask = match[2]
             _not = bool(match[1])
@@ -1555,7 +1549,7 @@ class DelayedNumberArgument(DelayedArgument):
             raise ArgumentTypeError(F'The value computed from {self.expression} is of type {tv}, it should be an integer.')
         if self.min is not None and value < self.min or self.max is not None and value > self.max:
             a = '-∞' if self.min is None else self.min
-            b = '∞' if self.max is None else self.max
+            b = u'∞' if self.max is None else self.max
             raise ArgumentTypeError(F'value {value} is out of bounds [{a}, {b}]')
         return value
 
@@ -1576,21 +1570,16 @@ class number:
     def __getitem__(self, bounds):
         return self.__class__(bounds.start, bounds.stop)
 
-    def __call__(self, value):
+    def __call__(self, value: Union[str, int]):
         if isinstance(value, int):
             return value
+        if match := re.fullmatch('(?:0x)?([A-F0-9]+)H?', value, flags=re.IGNORECASE):
+            value = F'0x{match[1]}'
+        delay = DelayedNumberArgument(value, self.min, self.max)
         try:
-            delay = DelayedNumberArgument(value, self.min, self.max)
-            try:
-                return delay()
-            except TooLazy:
-                return delay
-        except ParserError:
-            import re
-            match = re.fullmatch('(?:0x)?([A-F0-9]+)H?', value, flags=re.IGNORECASE)
-            if not match:
-                raise
-            return number(F'0x{match[1]}')
+            return delay()
+        except TooLazy:
+            return delay
 
 
 number = number()
