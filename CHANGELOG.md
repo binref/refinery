@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.1 - bugfix release
+
 ## Version 0.8.0
 - The `binref` command was changed to use conjunctive search logic by default.
 - The `copy:` and `cut:` multibin handlers now accept arguments of the form `[offset]:[length]:[step]` instead of `[start]:[end]:[step]`.
