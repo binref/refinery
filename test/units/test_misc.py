@@ -205,6 +205,7 @@ class TestSimpleInvertible(TestUnitBase):
         'u16',
         'vaddr',
         'wshenc',
+        'xjl',
     ]
 
     def setUp(self):
