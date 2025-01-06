@@ -90,7 +90,8 @@ class xj0(Unit):
 
 class xjl(Unit):
     """
-    Returns all JSON elements from a JSON iterable as individual outputs.
+    Returns all JSON elements from a JSON iterable as individual outputs. When reversed, the unit
+    collects all chunks in the frame and wraps them as a JSON list.
     """
 
     def process(self, data):
@@ -105,3 +106,19 @@ class xjl(Unit):
             it = doc
         for item in it:
             yield json.dumps(item, indent=4).encode(self.codec)
+
+    def reverse(self, data):
+        return json.dumps(data.temp).encode(self.codec)
+
+    def filter(self, chunks: Iterable[Chunk]):
+        if not self.args.reverse:
+            yield from chunks
+
+        from refinery.lib.tools import begin
+
+        if it := begin(chunks):
+            head, rest = it
+            collected = [head.decode(self.codec)]
+            collected.extend(chunk.decode(self.codec) for chunk in rest)
+            head.temp = collected
+            yield head
