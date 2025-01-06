@@ -37,7 +37,7 @@ class put(Unit):
                 if not isinstance(value, (int, float)):
                     raise NotImplementedError(F'put does not support {value.__class__.__name__} values.')
             else:
-                if not isinstance(value, list):
+                if not isinstance(value, (dict, list)):
                     value = list(value)
         self.log_debug(F'storing {typename(value)}:', value, clip=True)
         data.meta[self.args.name] = value
