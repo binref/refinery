@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Union, Optional
+from typing import Union, Optional, Iterable
 
 import json
 
+from refinery.units import Chunk
 from refinery.units.formats import PathExtractorUnit, UnpackResult, Unit
-from refinery.lib.meta import is_valid_variable_name
+from refinery.lib.meta import is_valid_variable_name, metavars
 from refinery.lib.patterns import checks
 
 
@@ -51,41 +52,70 @@ class xj0(Unit):
     """
     def __init__(
         self,
-        key: Unit.Arg.Binary(help='Optional key of a value to become the main body of the chunk.') = None,
-        raw: Unit.Arg.Switch('-r', group='META', help='Do not extract any other fields as metadata.') = False,
-        all: Unit.Arg.Switch('-a', group='META', help='Extract all other fields as metadata.') = False
+        fmt: Unit.Arg.String(help=(
+            'Format expression for the output chunk; may use previously extracted JSON items. The default '
+            'is {default}, which represents the input data.')) = '',
+        all: Unit.Arg.Switch('-a', group='META', help='Extract all other fields as metadata regardless of length and type.') = False,
+        one: Unit.Arg.Switch('-x', group='META', help='Do not extract any other fields as metadata.') = False,
+        raw: Unit.Arg.Switch('-r', help='Disable conversion of JSON strings to binary strings in metadata') = False,
     ):
-        super().__init__(key=key, raw=raw, all=all)
+        super().__init__(fmt=fmt, one=one, raw=raw, all=all)
 
-    def process(self, data):
+    def process(self, data: Chunk):
 
-        def acceptable(key, value, inside_list=False):
-            if not is_valid_variable_name(key):
-                return False
-            if isinstance(value, dict):
-                return False
+        def convert(value, iskey=False):
+            if self.args.raw:
+                return value
             if isinstance(value, (float, int, bool)):
-                return True
-            if inside_list:
-                return False
+                return value
+            if isinstance(value, str):
+                return value.encode(self.codec)
+            if iskey:
+                raise TypeError
+            if isinstance(value, dict):
+                return {convert(k): convert(v) for k, v in value.items()}
             if isinstance(value, list):
+                return [convert(k) for k in value]
+
+        def acceptable(key, value, nested=False, convert=False):
+            if not is_valid_variable_name(key):
+                self.log_info(F'rejecting item with invalid name {key}')
+                return None
+            if isinstance(value, (float, int, bool)):
+                return value
+            if isinstance(value, dict):
+                if not self.args.all:
+                    self.log_info(F'rejecting item {key} with dictionary value')
+                    return False
+                return True
+            if isinstance(value, list):
+                if nested:
+                    self.log_info(F'rejecting item {key} containing a doubly nested list')
+                    return False
                 return all(acceptable(key, t, True) for t in value)
             if isinstance(value, str):
-                if self.args.all:
-                    return True
-                return len(value) in range(1, 80) and '\n' not in value
+                if not self.args.all:
+                    if len(value) not in range(1, 80):
+                        self.log_info(F'rejecting string item {key} because {len(value)} exceeds the length limit')
+                        return False
+                    if '\n' in value:
+                        self.log_info(F'rejecting string item {key} because it contains line breaks')
+                        return False
+                return True
+            return False
 
-        doc: dict = json.loads(data)
-        if not isinstance(doc, dict):
+        jdoc: dict = json.loads(data)
+        if not isinstance(jdoc, dict):
             raise ValueError('The input must be a JSON dictionary.')
-        key = self.args.key
-        result = key and doc.pop(key.decode(self.codec), '').encode(self.codec)
-        if self.args.raw:
-            return result
-        else:
-            return self.labelled(result, **{
-                key: value for key, value in doc.items() if acceptable(key, value)
-            })
+        meta = metavars(data)
+        args = {k: convert(v) for k, v in jdoc.items() if acceptable(k, v)}
+        used = set()
+        data[:] = meta.format_bin(self.args.fmt, self.codec, [data], args, used)
+        for u in used:
+            args.pop(u, None)
+        if not self.args.one:
+            data.meta.update(args)
+        return data
 
 
 class xjl(Unit):

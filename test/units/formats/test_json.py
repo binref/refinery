@@ -62,31 +62,31 @@ class TestJSONLevel0Extractor(TestUnitBase):
             "n2": {
                 "nope": "I am a dictionary and should not be in meta"
             },
-            "n3": ["No lists", "of strings", "even when they contain numbers:", 7, 8],
+            "n3": ["No", ["nested", "lists"], "even when they contain numbers:", 7, 8],
             "n4": "something way too long %s"
         }''' % (B'OOM' * 200)
-        unit = self.ldu('xj0', 'data')
+        unit = self.ldu('xj0', '{data}')
         result: Chunk = next(data | unit)
 
         for k in range(4):
-            self.assertNotIn(F'n{k+1}', result.meta)
+            self.assertNotIn(F'n{k + 1}', result.meta)
 
         self.assertEqual(result['date'], b'2021-09-04 12:00')
         self.assertEqual(result['test'], True)
         self.assertEqual(result['keys'], [7, 1, 12, 9, 1, 4])
         self.assertEqual(result, B'Binary Refinery!')
 
-        unit = self.ldu('xj0', 'data', raw=True)
+        unit = self.ldu('xj0', '{data}', one=True)
         result: Chunk = next(data | unit)
         self.assertEqual(0, len(result.meta))
 
-        unit = self.ldu('xj0', 'data', all=True)
+        unit = self.ldu('xj0', '{data}', all=True)
         result: Chunk = next(data | unit)
         self.assertEqual(result['date'], b'2021-09-04 12:00')
         self.assertEqual(result['test'], True)
         self.assertEqual(result['keys'], [7, 1, 12, 9, 1, 4])
         self.assertEqual(result, B'Binary Refinery!')
-        self.assertNotIn('n2', result.meta)
         self.assertNotIn('n3', result.meta)
         self.assertEqual(result['n1'], b'I have\nline breaks and should not be in meta')
+        self.assertIn('n2', result.meta)
         self.assertIn('n4', result.meta)
