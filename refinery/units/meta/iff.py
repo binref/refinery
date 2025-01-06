@@ -28,20 +28,37 @@ class iff(ConditionalUnit, extend_docs=True):
             help='check that the expression is less than {varname}') = None,
         ct: Arg('-ct', type=str, metavar='RHS', group='OP',
             help='check that the expression contains {varname}') = None,
+        ne: Arg('-ne', type=str, metavar='RHS', group='OP',
+            help='check that the expression is equal to {varname}') = None,
         iN: Arg('-in', '-i', type=str, metavar='RHS', group='OP',
             help='check that the expression is contained in {varname}') = None,
         eq: Arg('-eq', '-e', type=str, metavar='RHS', group='OP',
             help='check that the expression is equal to {varname}') = None,
         retain=False,
     ):
+        def encodings(v: str):
+            if not isinstance(v, str):
+                return
+            for codec in [self.codec, 'latin1', 'utf-16le']:
+                yield v.encode(codec)
+
+        def __br_contains__(container, value):
+            if value in container:
+                return True
+            if isinstance(value, str):
+                return any(b in container for b in encodings(value))
+            else:
+                return any(value == b for v in container for b in encodings(v))
+
         operators = [
             (ge, operator.__ge__),
             (gt, operator.__gt__),
             (le, operator.__le__),
             (lt, operator.__lt__),
             (eq, operator.__eq__),
-            (ct, operator.__contains__),
-            (iN, lambda a, b: operator.__contains__(b, a)),
+            (ne, operator.__ne__),
+            (ct, __br_contains__),
+            (iN, lambda a, b: __br_contains__(b, a)),
         ]
 
         operators = [
