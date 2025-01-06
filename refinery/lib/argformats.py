@@ -116,7 +116,7 @@ from typing import TYPE_CHECKING, get_type_hints
 from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, ByteString, Callable
 
 from refinery.lib.frame import Chunk
-from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier
+from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier, exception_to_string
 from refinery.lib.types import NoMask, RepeatedInteger
 from refinery.lib.meta import is_valid_variable_name, metavars, Percentage
 
@@ -170,8 +170,8 @@ class PythonExpression:
         variables = set(variables) | set(constants)
         try:
             expression = ast.parse(definition, mode='eval')
-        except Exception:
-            raise ParserError(F'The provided expression could not be parsed: {definition!s}')
+        except Exception as error:
+            raise ParserError(F'The provided expression could not be parsed: {definition!s}; {exception_to_string(error)}')
 
         class Postprocessor(ast.NodeTransformer):
             if sys.version_info >= (3, 8):
@@ -211,7 +211,8 @@ class PythonExpression:
         except StopIteration:
             raise ParserError('The input string is not a Python expression.')
 
-        names = {node.id for node in nodes if isinstance(node, ast.Name)}
+        names = {node for node in nodes if isinstance(node, ast.Name)}
+        names = {node.id for node in names} - {node.id for node in names if isinstance(node.ctx, ast.Store)}
         names.difference_update(dir(builtins))
         names.difference_update(globals())
         if not all_variables_allowed and not names <= variables:
@@ -520,7 +521,7 @@ def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
     if (parser := PythonExpression.Lazy(expression)).variables:
         def evaluate(data: Chunk):
             try:
-                return parser(metavars(data))
+                result = parser(metavars(data))
             except ParserVariableMissing:
                 # It is possible that a byte string can accidentally look like a valid Python
                 # expression, e.g.: B0fGtH*9/HKlwT:
@@ -528,6 +529,8 @@ def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
                 if isinstance(definition, str):
                     definition = definition.encode('utf8')
                 return definition
+            else:
+                return result
         return evaluate
     else:
         return parser()
