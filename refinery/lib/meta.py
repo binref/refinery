@@ -596,6 +596,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         codec: str,
         args: Optional[Iterable] = None,
         symb: Optional[dict] = None,
+        used: Optional[set] = None,
     ) -> str:
         """
         Formats the input expression like a normal Python format string expression. Certain refinery
@@ -607,14 +608,15 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         - `sha1`, `sha256`, `sha512`, and `md5` are formatted as hex strings.
         - `size` is formatted as a human-readable size with unit.
         """
-        return self.format(spec, codec, args, symb, False)
+        return self.format(spec, codec, args, symb, False, used)
 
     def format_bin(
         self,
         spec: str,
         codec: str,
         args: Optional[Iterable] = None,
-        symb: Optional[dict] = None
+        symb: Optional[dict] = None,
+        used: Optional[set] = None,
     ) -> ByteString:
         """
         Formats the input expression using a Python F-string like expression. These strings contain
@@ -633,7 +635,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         - `h`: literal is a hex-encoded binary string
         - `e`: literal is an escaped ASCII string
         """
-        return self.format(spec, codec, args, symb, True)
+        return self.format(spec, codec, args, symb, True, used)
 
     def format(
         self,
