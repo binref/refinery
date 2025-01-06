@@ -79,12 +79,15 @@ class struct(Unit):
         until: Arg('-u', metavar='E', type=str, help=(
             'An expression evaluated on each chunk in multi mode. New chunks will be parsed '
             'only if the result is nonzero.')) = None,
+        field: Arg.String('-f', help=(
+            'Optionally specify a format string expression to auto-name extracted fields without a '
+            'given name based on their position.')) = None,
         more : Arg.Switch('-M', help=(
             'After parsing the struct, emit one chunk that contains the data that was left '
             'over in the buffer. If no data was left over, this chunk will be empty.')) = False
     ):
         outputs = outputs or [F'{{{_SHARP}}}']
-        super().__init__(spec=spec, outputs=outputs, until=until, count=count, multi=multi, more=more)
+        super().__init__(spec=spec, outputs=outputs, until=until, field=field, count=count, multi=multi, more=more)
 
     def process(self, data: Chunk):
         formatter = string.Formatter()
@@ -129,7 +132,11 @@ class struct(Unit):
                     name: str
                     spec: str = spec and spec.strip()
                     if prefix:
-                        args.extend(reader.read_struct(fixorder(prefix)))
+                        fields = reader.read_struct(fixorder(prefix))
+                        if fmt := self.args.field:
+                            for k, field in enumerate(fields, len(args)):
+                                meta[fmt.format(k)] = field
+                        args.extend(fields)
                     if name is None:
                         continue
                     if name and not name.isdecimal():
