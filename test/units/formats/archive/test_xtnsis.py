@@ -41,3 +41,15 @@ class TestNSISExtractor(TestUnitBase):
             r'   $$$$/   $$$$$/$$$$/   $$$$$$/  ',
         ], 1):
             self.assertEqual(line, test[k])
+
+    def test_lzma_bcj_solid(self):
+        import hashlib
+        data = self.download_sample('4caa12766e4e16f5d275d2aaadc01484f1875b80819234e5bf49506dedcc5330')
+        test = data | self.load() | {'path': bytes}
+        test = {k.decode().rpartition('/')[-1]: hashlib.sha256(v).hexdigest()
+            for k, v in test.items() if b'$PLUGINSDIR' in k}
+        self.assertDictEqual(test, {
+            'System.dll'         : '02493e0d7e4d7951104559f6603fc2aab14d7c07cf1c3fdddae206cb60d86885',
+            'RCWidgetPlugin.dll' : '14ef3bf106392331c8c1fb6dfaf460df89d2f934f9584ba6083185ae82ef7ccc',
+            'FileInfo.dll'       : 'ab3d7b37215753a48ed60cf59a080bb8b92cf535c35ccd435c57c954073b8a2e',
+        })
