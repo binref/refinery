@@ -1128,7 +1128,10 @@ class NSArchive(Struct):
         elif bzipcheck(preview_bytes):
             self.method = NSMethod.BZip2
 
-        xtnsis.log_debug(F'compression: {self.method.value}')
+        dbg_method = self.method.value
+        if self.method is NSMethod.LZMA and self.lzma_options.filter_flag:
+            dbg_method = F'{dbg_method}/BCJ'
+        xtnsis.log_debug(F'compression: {dbg_method}')
         xtnsis.log_debug(F'archive is solid: {self.solid}')
 
         reader.seekset(self.archive_offset)
@@ -1254,8 +1257,28 @@ class NSArchive(Struct):
             return out
 
     def _decompress_items(self, reader: StructReader[bytearray]) -> Iterator[NSArchive.Entry]:
-        def NSISLZMAFile(d):
-            return lzma.LZMAFile(self.LZMAFix(d))
+        def NSISLZMAFile(d: StructReader[bytearray]):
+            if not self.lzma_options.filter_flag:
+                _filter = None
+                _format = None
+                _stream = self.LZMAFix(d)
+            else:
+                use_filter = d.u8()
+                if use_filter not in {0, 1}:
+                    raise ValueError(F'LZMA/BCJ chunk with invalid filter indicator byte 0x{use_filter:X}')
+                pv = d.u8()
+                ds = max(self.lzma_options.dictionary_size, d.u32())
+                if (pv >= 225):
+                    raise ValueError('Unexpected LZMA properties; value exceeds 225.')
+                pv, lc = divmod(pv, 9)
+                pb, lp = divmod(pv, 5)
+                _filter = [
+                    dict(id=lzma.FILTER_X86),
+                    dict(id=lzma.FILTER_LZMA1, dict_size=ds, lc=lc, lp=lp, pb=pb)]
+                _format = lzma.FORMAT_RAW
+                _stream = d
+            return lzma.LZMAFile(_stream, filters=_filter, format=_format)
+
         decompressor: Type[BinaryIO] = {
             NSMethod.Copy    : None,
             NSMethod.Deflate : DeflateFile,
