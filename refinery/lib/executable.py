@@ -270,13 +270,22 @@ class Symbol(NamedTuple):
     name: Optional[str] = None
     code: bool = True
     exported: bool = True
-    meta: Optional[dict] = None
+    is_entry: bool = False
+    size: Optional[int] = None
+    tls_index: Optional[int] = None
+    type_name: Optional[str] = None
+    bind_name: Optional[str] = None
 
-    def get_name(self, default: str = 'entry'):
-        return self.name or default
-
-    def get_meta(self):
-        return self.meta or {}
+    def get_name(self):
+        name = self.name
+        if name is not None:
+            return name
+        if self.is_entry:
+            return 'entry'
+        if self.code:
+            return F'sub_{self.address:08X}'
+        else:
+            return F'sym_{self.address:08X}'
 
 
 class Segment(NamedTuple):
@@ -512,11 +521,16 @@ class Executable(ABC):
             raise CompartmentNotFound(lt, location)
 
     @abstractmethod
+    def _symbols(self) -> Generator[Symbol, None, None]:
+        ...
+
     def symbols(self) -> Generator[Symbol, None, None]:
         """
         Generates a list of symbols in the executable.
         """
-        ...
+        for symbol in self._symbols():
+            if symbol.address in self:
+                yield symbol
 
     @abstractmethod
     def byte_order(self) -> BO:
@@ -611,8 +625,8 @@ class ExecutableCodeBlob(Executable):
     def arch(self) -> Arch:
         return self._arch
 
-    def symbols(self) -> Generator[Symbol, None, None]:
-        yield Symbol(0)
+    def _symbols(self) -> Generator[Symbol, None, None]:
+        yield Symbol(0, is_entry=True)
 
     def _sections(self) -> Generator[Section, None, None]:
         v = Range(self.base, self.base + len(self.data))
@@ -706,17 +720,30 @@ class ExecutablePE(Executable):
     def byte_order(self) -> BO:
         return BO.LE
 
-    def symbols(self) -> Generator[Symbol, None, None]:
+    def _symbols(self) -> Generator[Symbol, None, None]:
         base = self.image_defined_base()
         head = self._head
 
-        yield Symbol(head.OPTIONAL_HEADER.AddressOfEntryPoint + base)
+        yield Symbol(head.OPTIONAL_HEADER.AddressOfEntryPoint + base, is_entry=True)
 
         head.parse_data_directories(directories=[
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT'],
             DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT'],
+            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_TLS'],
         ])
+
+        try:
+            tls = head.DIRECTORY_ENTRY_TLS
+        except AttributeError:
+            pass
+        else:
+            callback_array_rva = tls.struct.AddressOfCallBacks - base
+            ps = self.pointer_size // 8
+            for k in itertools.count():
+                if 0 == (cb := int.from_bytes(head.get_data(callback_array_rva + ps * k, ps), self.byte_order())):
+                    break
+                yield Symbol(cb, F'TlsCallback{k}', tls_index=k)
 
         try:
             exports = head.DIRECTORY_ENTRY_EXPORT.symbols
@@ -818,9 +845,9 @@ class ExecutableELF(Executable):
     def byte_order(self) -> BO:
         return BO.LE if self.head.little_endian else BO.BE
 
-    def symbols(self) -> Generator[Symbol, None, None]:
+    def _symbols(self) -> Generator[Symbol, None, None]:
         ee = self._head.header['e_entry']
-        symbols = {ee: Symbol(ee)}
+        symbols = {ee: Symbol(ee, is_entry=True)}
         try:
             sections = list(self._head.iter_sections())
         except Exception:
@@ -855,11 +882,9 @@ class ExecutableELF(Executable):
                         st_name,
                         st_type == 'STT_FUNC',
                         st_bind == 'STB_GLOBAL',
-                        dict(
-                            st_type=st_type,
-                            st_bind=st_bind,
-                            st_size=st_size,
-                        )
+                        size=st_size,
+                        type_name=st_type,
+                        bind_name=st_bind,
                     )
         for addr in sorted(symbols):
             yield symbols[addr]
@@ -873,7 +898,7 @@ class ExecutableMachO(Executable):
     _head: MachO
     _type = ET.MachO
 
-    def symbols(self) -> Generator[Symbol, None, None]:
+    def _symbols(self) -> Generator[Symbol, None, None]:
         raise NotImplementedError
 
     @lru_cache(maxsize=1)
