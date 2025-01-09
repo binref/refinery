@@ -68,3 +68,10 @@ class uuenc(Unit):
                         stream.write_byte(0x20 + (((chunk >> j * 6) & 0x3F) or 0x40))
             stream.write(B'\n`\nend\n')
             return stream.getvalue()
+
+    @classmethod
+    def handles(self, data):
+        if len(data) < 16:
+            return False
+        if data[:6] == B'begin ':
+            return set(data[6:9]) <= set(B'01234567')
