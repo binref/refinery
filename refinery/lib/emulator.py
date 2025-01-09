@@ -236,6 +236,19 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             end = end - exe.base + self.base
         return self._emulate(start, end)
 
+    def call(self, function: int):
+        """
+        Call the function at the given address. When the function returns, emulation will halt.
+        """
+        try:
+            tp = self._trampoline
+        except AttributeError:
+            rs = self.exe.pointer_size // 8
+            tp = self._trampoline = self.malloc(rs)
+            self.mem_write(tp, B'\x90' * rs)
+        self.push(tp)
+        self.emulate(function, tp)
+
     @abstractmethod
     def _reset(self):
         """
@@ -497,6 +510,16 @@ class Emulator(ABC, Generic[_E, _R, _T]):
 
     def hook_api_call(self, emu: _E, api_name: str, func: str, *args, **kwargs) -> bool:
         return True
+
+    def disassemble_instruction(self, address: int):
+        """
+        Disassemble a single instruction at the given address.
+        """
+        ea = address - self.base + self.exe.base
+        cs = self.disassembler()
+        cs.detail = True
+        pa = self.exe.location_from_address(ea).physical.position
+        return next(cs.disasm(bytes(self.exe.data[pa:pa + 0x20]), address, 1))
 
     @lru_cache
     def disassembler(self) -> Cs:
