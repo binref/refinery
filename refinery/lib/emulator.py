@@ -682,7 +682,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         try:
             self.unicorn.emu_start(start, end)
         except uc.UcError as E:
-            raise EmulationError(*E.args) from E
+            raise EmulationError(str(E)) from E
 
     def halt(self):
         self.unicorn.emu_stop()
