@@ -24,10 +24,10 @@ if TYPE_CHECKING:
     from icicle import Icicle as Ic
     from intervaltree import Interval
 else:
-    Cs = TypeVar('Cs')
-    Uc = TypeVar('Uc')
-    Ic = TypeVar('Ic')
-    Se = TypeVar('Se')
+    class Cs: pass
+    class Uc: pass
+    class Ic: pass
+    class Se: pass
 
 
 _T = TypeVar('_T')
