@@ -416,6 +416,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
                     raise
                 self.morestack()
             else:
+                self.sp = tos
                 break
 
     def pop(self, size: Optional[int] = None):
