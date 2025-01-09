@@ -72,4 +72,15 @@ class TestBaseUnit(TestUnitBase):
         alphabet = b'abc'
         data = 'cbac'
         unit = self.load(alphabet)
-        self.assertEqual(bytes(data | unit), b'A') 
+        self.assertEqual(bytes(data | unit), b'A')
+
+    def test_small_alphabet_autocase(self):
+        alphabet = b'ABC'
+        data = 'cbac'
+        unit = self.load(alphabet)
+        self.assertEqual(bytes(data | unit), b'A')
+
+    def test_regression_base36(self):
+        data = b'5114678'
+        test = data | self.load(36) | -self.load(36, strip_padding=True) | bytes
+        self.assertEqual(test, data)
