@@ -1607,16 +1607,27 @@ class Unit(UnitBase, abstract=True):
             reversed = reversed | pipeline.pop()
         return reversed
 
-    def __ror__(self, stream: Union[str, Chunk, ByteIO, ByteStr, None]):
+    def __ror__(self, stream: Union[str, Chunk, list[Chunk], ByteIO, ByteStr, None]):
         if stream is None:
             return self
         if isinstance(stream, Chunk):
-            chunk = stream
+            stream = [stream]
+        if isinstance(stream, (list, tuple)):
+            chunks = list(stream)
+            scopes = set()
             stream = MemoryFile()
-            scope = max(chunk.scope, 1)
-            delta = scope - chunk.scope
-            stream.write(generate_frame_header(scope))
-            stream.write(chunk.pack(delta))
+            for k, chunk in enumerate(chunks):
+                if not isinstance(chunk, Chunk):
+                    chunks[k] = chunk = Chunk(chunk)
+                scopes.add(chunk.scope)
+            if len(scopes) != 1:
+                raise ValueError('Inconsistent scopes in iterable input')
+            chunk_scope = next(iter(scopes))
+            frame_scope = max(chunk_scope, 1)
+            delta = frame_scope - chunk_scope
+            stream.write(generate_frame_header(frame_scope))
+            for chunk in chunks:
+                stream.write(chunk.pack(delta))
             if delta:
                 self.args.nesting -= delta
             stream.seekset(0)
