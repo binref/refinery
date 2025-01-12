@@ -97,7 +97,7 @@ class TestALUAgainstOtherUnits(TestUnitBase):
 
     def test_performance(self):
         data = self.download_sample('bb41df67b503fef9bfd8f74757adcc50137365fbc25b92933573a64c7d419c1b')
-        pipe = self.load_pipeline("alu -vv 'B@(S//256)' -P0 -e=((B+16526)*33270+23891) | rev")
+        pipe = self.load_pipeline("alu B@S -P2 -e=R(E*0x81F6+0xF3C7,8) | rev")
         test = data | pipe | bytes
         self.assertEqual(test[:2], B'MZ')
         self.assertIn(B'This program cannot be run in DOS mode.', test)
