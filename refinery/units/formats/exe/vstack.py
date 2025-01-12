@@ -422,6 +422,7 @@ class vstack(Unit):
         )
 
         register_values = {}
+        emu.reset(None)
 
         if args.meta_registers or args.stack_push:
             for var, value in list(meta.items()):
@@ -485,7 +486,7 @@ class vstack(Unit):
                     base = emu.malloc(len(value))
                     emu.mem_write(base, bytes(value))
                     emu.set_register(reg, base)
-                    self.log_info(F'setting {var} to mapped buffer of size 0x{size:X}')
+                    self.log_info(F'setting {var} to mapped buffer of size 0x{len(value):X}')
                     continue
                 _tn = value.__class__.__name__
                 self.log_warn(F'canot interpret value of type {_tn} for register {var}')
