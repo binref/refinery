@@ -108,7 +108,7 @@ class peek(HexViewer):
                 peek = peek[:linewidth - 3] + '...'
             yield from separators
             yield peek
-        for name in sorted(meta):
+        for name in sorted(meta, key=lambda s: (len(s) <= 3, s)):
             value = meta[name]
             if value is None:
                 continue
