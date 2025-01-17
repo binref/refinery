@@ -396,7 +396,7 @@ class xtmsi(xtdoc):
                     streams[cab.path] = cab
                 for result in unpacked:
                     sub_path = file_names.get(result.path, result.path)
-                    sub_path = self._custom_path_separator.join((path, sub_path))
+                    sub_path = self._get_path_separator().join((path, sub_path))
                     streams[sub_path] = result
 
         streams = {fix_msi_path(path): item for path, item in streams.items()}

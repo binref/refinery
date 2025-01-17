@@ -87,7 +87,11 @@ class PathPattern:
 
 class PathExtractorUnit(Unit, abstract=True):
 
-    _custom_path_separator = '/'
+    CustomPathSeparator = None
+    """
+    This class variable can be overwritten by child classes to change the path separator from the
+    default forward slash to something else.
+    """
 
     def __init__(
         self,
@@ -128,6 +132,9 @@ class PathExtractorUnit(Unit, abstract=True):
             regex=regex,
             **keywords
         )
+
+    def _get_path_separator(self) -> str:
+        return self.CustomPathSeparator or '/'
 
     @property
     def _patterns(self):
@@ -199,7 +206,13 @@ class PathExtractorUnit(Unit, abstract=True):
             return F'_{crc}.{uid:04X}'
 
         def normalize(_path: str) -> str:
-            parts = re.split(r'[\\/]', F'{root}/{_path}')
+            pathsep = self.CustomPathSeparator
+            pattern = '[\\\\/]'
+            if pathsep is None:
+                pathsep = '/'
+            else:
+                pattern = re.escape(pathsep)
+            parts = re.split(pattern, F'{root}{pathsep}{_path}')
             while True:
                 for k, part in enumerate(parts):
                     if not part.strip('.'):
@@ -209,7 +222,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 size = len(part)
                 j = max(k - size, 0)
                 del parts[j:k + 1]
-            path = self._custom_path_separator.join(parts)
+            path = pathsep.join(parts)
             return path
 
         if self.args.join:

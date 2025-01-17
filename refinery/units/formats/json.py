@@ -15,17 +15,19 @@ class xtjson(PathExtractorUnit):
     """
     Extract values from a JSON document.
     """
-    _custom_path_separator = '.'
+    CustomPathSeparator = '.'
 
     def unpack(self, data):
+
+        sep = self.CustomPathSeparator
 
         def crawl(path, cursor):
             if isinstance(cursor, dict):
                 for key, value in cursor.items():
-                    yield from crawl(F'{path}/{key}', value)
+                    yield from crawl(F'{path}{sep}{key}', value)
             elif isinstance(cursor, list):
                 for key, value in enumerate(cursor):
-                    yield from crawl(F'{path}/{key:d}', value)
+                    yield from crawl(F'{path}{sep}{key:d}', value)
             if path:
                 yield path, cursor, cursor.__class__.__name__
 
@@ -36,6 +38,7 @@ class xtjson(PathExtractorUnit):
                 else:
                     dumped = str(item)
                 return dumped.encode('latin1')
+
             yield UnpackResult(path, extract, type=typename)
 
     @classmethod

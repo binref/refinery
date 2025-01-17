@@ -141,7 +141,7 @@ class xt(ArchiveUnit):
                     fallback.append(handler)
 
         for handler in self.handlers():
-            self._custom_path_separator = handler._custom_path_separator
+            self.CustomPathSeparator = handler.CustomPathSeparator
             it = unpacker(handler, fallback=False)
             yield from it
             if it.success:
