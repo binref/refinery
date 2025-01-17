@@ -35,7 +35,7 @@ class xtjson(PathExtractorUnit):
                     dumped = json.dumps(item, indent=4)
                 else:
                     dumped = str(item)
-                return dumped.encode(self.codec)
+                return dumped.encode('latin1')
             yield UnpackResult(path, extract, type=typename)
 
     @classmethod

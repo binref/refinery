@@ -92,7 +92,7 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
         return False
 
 
-class BytesAsArrayEncoder(JSONEncoderEx):
+class _BytesEncode(JSONEncoderEx):
     """
     This JSON Encoder encodes byte strings as arrays of integers.
     """
@@ -105,12 +105,29 @@ class BytesAsArrayEncoder(JSONEncoderEx):
     def handled(cls, obj) -> bool:
         return cls._is_byte_array(obj) or super().handled(obj)
 
-    def encode_bytes(self, obj):
-        return self.encode_raw('[{}]'.format(','.join(F'{b & 0xFF:d}' for b in obj)))
 
+class BytesAsArrayEncoder(_BytesEncode):
+    """
+    This JSON Encoder encodes byte strings as arrays of integers.
+    """
     def default(self, obj):
         if self._is_byte_array(obj):
-            return self.encode_bytes(obj)
+            return self.encode_raw('[{}]'.format(','.join(str(b) for b in obj)))
+        return super().default(obj)
+
+
+class BytesAsStringEncoder(_BytesEncode):
+    """
+    This JSON Encoder encodes byte strings as escaped strings.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def default(self, obj):
+        if isinstance(obj, memoryview):
+            obj = bytes(obj)
+        if self._is_byte_array(obj):
+            return obj.decode('latin1')
         return super().default(obj)
 
 
