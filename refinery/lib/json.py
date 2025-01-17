@@ -11,6 +11,8 @@ import json
 import re
 import uuid
 
+from refinery.lib.types import ByteStr
+
 
 class JSONEncoderExMeta(type):
     """
@@ -92,9 +94,9 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
         return False
 
 
-class _BytesEncode(JSONEncoderEx):
+class BytesEncoder(JSONEncoderEx):
     """
-    This JSON Encoder encodes byte strings as arrays of integers.
+    A base class for JSON encoders that can encode byte arrays.
     """
 
     @classmethod
@@ -105,30 +107,31 @@ class _BytesEncode(JSONEncoderEx):
     def handled(cls, obj) -> bool:
         return cls._is_byte_array(obj) or super().handled(obj)
 
+    def encode_bytes(self, obj: ByteStr):
+        raise NotImplementedError
 
-class BytesAsArrayEncoder(_BytesEncode):
+    def default(self, obj):
+        if self._is_byte_array(obj):
+            return self.encode_bytes(obj)
+        return super().default(obj)
+
+
+class BytesAsArrayEncoder(BytesEncoder):
     """
     This JSON Encoder encodes byte strings as arrays of integers.
     """
-    def default(self, obj):
-        if self._is_byte_array(obj):
-            return self.encode_raw('[{}]'.format(','.join(str(b) for b in obj)))
-        return super().default(obj)
+    def encode_bytes(self, obj: ByteStr):
+        return self.encode_raw('[{}]'.format(','.join(str(b & 0xFF) for b in obj)))
 
 
-class BytesAsStringEncoder(_BytesEncode):
+class BytesAsStringEncoder(BytesEncoder):
     """
     This JSON Encoder encodes byte strings as escaped strings.
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def default(self, obj):
+    def encode_bytes(self, obj: ByteStr):
         if isinstance(obj, memoryview):
             obj = bytes(obj)
-        if self._is_byte_array(obj):
-            return obj.decode('latin1')
-        return super().default(obj)
+        return obj.decode('latin1')
 
 
 def flattened(data: dict, prefix='', separator='.') -> List[Tuple[str, Union[int, float, str]]]:
