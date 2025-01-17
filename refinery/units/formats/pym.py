@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units import Unit
+from refinery.lib.json import BytesAsStringEncoder
 
 import marshal
 
@@ -39,14 +40,8 @@ class pym(Unit):
                 q += int(bool(r))
                 return data.to_bytes(q, 'big')
             if isinstance(data, dict):
-                try:
-                    import json
-                    serialized = json.dumps(data, indent=4)
-                except Exception:
-                    pass
-                else:
-                    self.log_info(U'unmarshalled a serializable dictionary, returning JSON')
-                    return serialized.encode(self.codec)
+                with BytesAsStringEncoder as encoder:
+                    return encoder.dumps(data).encode(self.codec)
             raise NotImplementedError(
                 F'No serialization implemented for object of type {data.__class__.__name__}')
 

@@ -13,7 +13,7 @@ from refinery.units.encoding.esc import esc
 from refinery.units.encoding.url import url
 from refinery.units.encoding.b64 import b64
 
-from refinery.lib.json import BytesAsArrayEncoder
+from refinery.lib.json import BytesAsStringEncoder
 from refinery.lib.dotnet.types import Blob
 
 
@@ -32,7 +32,7 @@ class HASH(Enum):
     SHA512 = sha512
 
 
-class DotNetEncoder(BytesAsArrayEncoder):
+class DotNetEncoder(BytesAsStringEncoder):
     def default(self, obj):
         if isinstance(obj, Blob):
             obj = bytes(obj)

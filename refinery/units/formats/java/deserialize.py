@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units import Unit
-from refinery.lib.json import BytesAsArrayEncoder
+from refinery.lib.json import BytesAsStringEncoder
 
 
-class JavaEncoder(BytesAsArrayEncoder):
+class JavaEncoder(BytesAsStringEncoder):
 
     @classmethod
     def _is_byte_array(cls, obj) -> bool:

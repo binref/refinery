@@ -129,7 +129,9 @@ class BytesAsStringEncoder(BytesEncoder):
     This JSON Encoder encodes byte strings as escaped strings.
     """
     def encode_bytes(self, obj: ByteStr):
-        if isinstance(obj, memoryview):
+        if not isinstance(obj, (bytes, bytearray)):
+            if not isinstance(obj, memoryview):
+                obj = (b & 0xFF for b in obj)
             obj = bytes(obj)
         return obj.decode('latin1')
 

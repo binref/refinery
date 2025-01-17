@@ -6,7 +6,7 @@ from contextlib import suppress
 from datetime import datetime
 
 from refinery.units import Unit
-from refinery.lib.json import BytesAsArrayEncoder
+from refinery.lib.json import BytesAsStringEncoder
 
 
 class pkcs7(Unit):
@@ -76,7 +76,7 @@ class pkcs7(Unit):
         cms.CMSAttributeType._map['1.3.6.1.4.1.311.2.1.12'] = 'authenticode_info'
         cms.CMSAttribute._oid_specs['authenticode_info'] = SetOfInfos
 
-        class ParsedASN1ToJSON(BytesAsArrayEncoder):
+        class ParsedASN1ToJSON(BytesAsStringEncoder):
             unit = self
 
             @classmethod
@@ -89,7 +89,7 @@ class pkcs7(Unit):
 
             @classmethod
             def handled(cls, obj) -> bool:
-                return BytesAsArrayEncoder.handled(obj) or cls._is_keyval(obj)
+                return BytesAsStringEncoder.handled(obj) or cls._is_keyval(obj)
 
             def encode_bytes(self, obj: bytes):
                 with suppress(Exception):
