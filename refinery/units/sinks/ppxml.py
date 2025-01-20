@@ -3,7 +3,7 @@
 import io
 
 from refinery.units import Arg, Unit
-from refinery.lib.xml import ForgivingParse
+from refinery.lib.xml import is_xml, ForgivingParse
 
 
 class ppxml(Unit):
@@ -70,3 +70,7 @@ class ppxml(Unit):
             result = result.replace(needle, entity)
 
         return result
+
+    @classmethod
+    def handles(cls, data):
+        return is_xml(data)

@@ -17,9 +17,57 @@ from xml.etree.ElementTree import Element, ElementTree
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import exception_to_string
+from refinery.lib.types import ByteStr
 
 if TYPE_CHECKING:
     from typing import Self
+
+
+def is_xml(data: ByteStr, default=True):
+    """
+    Implements a heuristic check for whether the input is likely XML data.
+    """
+    _be = data[0:120:2]
+    _le = data[1:120:2]
+    if isinstance(data, memoryview):
+        _le = bytes(_le)
+        _be = bytes(_be)
+    if _le.count(0) > 100:
+        data = _be
+    if _be.count(0) > 100:
+        data = _le
+    if tag_match := re.search(BR'''(?x)
+        ^(?:            # at the very start of the document
+         \xef\xbb\xbf   # utf-8 byte order mark
+        |\xfe           # (utf-16be)
+        |\xff)?         # (utf-16le)
+        \s{0,10}        # allow for some leading white space
+        <               # a tag opens
+        ([?!]?          # allow for question or exclamation mark
+         [-:\w]{3,64})  # the tag name
+        \s{1,20}        # white space after tag name
+        (/?>            # the tag may end here, or:
+        |[-:\w]{3,32})  # we have an attribute.
+    ''', data):
+        tag = tag_match[1].lower()
+        end = tag_match[2].lower()
+        # <?xml...
+        if tag == B'?xml':
+            return True
+        # <HTML>
+        # <BODY>
+        if tag in (B'html', B'body'):
+            return False
+        # <!DOCTYPE html
+        if tag == '!doctype' and end == B'html':
+            return False
+        # <project xmlns:xsi=...
+        if end.startswith(b'xml'):
+            return True
+        # inconclusive, return default
+        return default
+    else:
+        return False
 
 
 def ForgivingParse(data: bytes, entities=None) -> ElementTree:

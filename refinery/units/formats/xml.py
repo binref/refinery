@@ -38,3 +38,7 @@ class xtxml(XMLToPathExtractorUnit):
                 yield from walk(child, *parts, path(child))
 
         yield from walk(root, path(root))
+
+    @classmethod
+    def handles(self, data):
+        return xml.is_xml(data)
