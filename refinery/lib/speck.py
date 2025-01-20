@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+This implementation of the SPECK cipher is based on the [SPECK Implementation Guide](https://nsacyber.github.io/simon-speck/implementations/ImplementationGuide1.1.pdf)
+by the authors of SPECK.
+"""
 import struct
 import sys
 
