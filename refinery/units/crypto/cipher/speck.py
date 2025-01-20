@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import List, Optional
+from typing import List, Optional, ClassVar, Dict
 
 from refinery.lib.speck import (
     speck_encrypt32,
@@ -36,6 +36,11 @@ class Speck(BlockCipher):
     _round_keys: List[int]
     _rounds: int
 
+    _ROUND_BY_BLOCK_AND_KEY_SIZE: ClassVar[Dict[int, Dict[int, int]]] = {
+        8: {12: 26, 16: 27},
+        16: {16: 32, 24: 33, 32: 34}
+    }
+
     @property
     def key(self):
         return self._key
@@ -45,23 +50,20 @@ class Speck(BlockCipher):
         self._key = key
         block_size = self.block_size
         key_length = len(key)
+        rounds = self._ROUND_BY_BLOCK_AND_KEY_SIZE[block_size][key_length]
+        self._rounds = rounds
         if block_size == 16:
             if key_length == 16:
                 self._round_keys = Speck128128KeySchedule(key)
-                self._rounds = 32
             elif key_length == 24:
                 self._round_keys = Speck128192KeySchedule(key)
-                self._rounds = 33
             elif key_length == 32:
                 self._round_keys = Speck128256KeySchedule(key)
-                self._rounds = 34
         elif block_size == 8:
             if key_length == 12:
                 self._round_keys = Speck6496KeySchedule(key)
-                self._rounds = 26
             elif key_length == 16:
                 self._round_keys = Speck64128KeySchedule(key)
-                self._rounds = 27
 
     def __init__(self, key: BufferType, mode: Optional[CipherMode], block_size: int = 16):
         self.block_size = block_size
