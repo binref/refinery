@@ -185,7 +185,7 @@ class PathExtractorUnit(Unit, abstract=True):
 
         def path_exists(p: str):
             try:
-                return os.path.exists(p)
+                return os.path.exists(p) and not os.path.isdir(p)
             except Exception:
                 return False
 
