@@ -83,6 +83,7 @@ class Speck(BlockCipher):
         else:
             return speck_encrypt32(block, self._round_keys, self._rounds)
 
+
 class speck(StandardBlockCipherUnit, cipher=BlockCipherFactory(Speck)):
     """
     SPECK encryption and decryption. It supports block sizes of 8 and 16 bytes.
