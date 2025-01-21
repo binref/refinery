@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-This implementation of the SPECK cipher is based on the [SPECK Implementation Guide](https://nsacyber.github.io/simon-speck/implementations/ImplementationGuide1.1.pdf)
-by the authors of SPECK.
+This implementation of the SPECK cipher is based on the
+[SPECK Implementation Guide](https://nsacyber.github.io/simon-speck/implementations/ImplementationGuide1.1.pdf) by the authors of SPECK.
 """
 import struct
-import sys
 
 from typing import Tuple, List
 
@@ -34,7 +33,7 @@ def make_qword(x: int) -> int:
     return x & 0xFFFFFFFFFFFFFFFF
 
 
-def words_to_bytes(words: List[int], word_size = 32) -> bytes:
+def words_to_bytes(words: List[int], word_size=32) -> bytes:
     numwords = len(words)
     if word_size == 32:
         bytes_out = struct.pack("<" + "I" * numwords, *words[::-1])
@@ -43,7 +42,7 @@ def words_to_bytes(words: List[int], word_size = 32) -> bytes:
     return bytes_out
 
 
-def bytes_to_words(bytes_in: bytes, word_size = 32) -> List[int]:
+def bytes_to_words(bytes_in: bytes, word_size=32) -> List[int]:
     numbytes = len(bytes_in)
     if word_size == 32:
         numwords = numbytes // 4
@@ -55,9 +54,9 @@ def bytes_to_words(bytes_in: bytes, word_size = 32) -> List[int]:
 
 
 def Speck6496KeySchedule(key: bytearray) -> List[int]:
-    '''
-        Calculate the round key rk for SPECK 64/96
-    '''
+    """
+    Calculate the round key rk for SPECK 64/96
+    """
     k = bytes_to_words(key)
     rk = []
     C = k[0]
@@ -72,9 +71,9 @@ def Speck6496KeySchedule(key: bytearray) -> List[int]:
 
 
 def Speck64128KeySchedule(key: bytearray) -> List[int]:
-    '''
-        Calculate the round key rk for SPECK 64/128
-    '''
+    """
+    Calculate the round key rk for SPECK 64/128
+    """
     k = bytes_to_words(key)
     rk = []
     D = k[0]
@@ -92,9 +91,9 @@ def Speck64128KeySchedule(key: bytearray) -> List[int]:
 
 
 def Speck128128KeySchedule(key: bytearray) -> List[int]:
-    '''
-        Calculate the round key rk for SPECK 128/128
-    '''
+    """
+    Calculate the round key rk for SPECK 128/128
+    """
     k = bytes_to_words(key, 64)
     rk = []
     B = k[0]
@@ -107,9 +106,9 @@ def Speck128128KeySchedule(key: bytearray) -> List[int]:
 
 
 def Speck128192KeySchedule(key: bytearray) -> List[int]:
-    '''
-        Calculate the round key rk for SPECK 128/192
-    '''
+    """
+    Calculate the round key rk for SPECK 128/192
+    """
     k = bytes_to_words(key, 64)
     rk = []
     C = k[0]
@@ -125,9 +124,9 @@ def Speck128192KeySchedule(key: bytearray) -> List[int]:
 
 
 def Speck128256KeySchedule(key: bytearray) -> List[int]:
-    '''
-        Calculate the round key rk for SPECK 128/256
-    '''
+    """
+    Calculate the round key rk for SPECK 128/256
+    """
     k = bytes_to_words(key, 64)
     rk = []
     D = k[0]
@@ -219,4 +218,3 @@ def speck_decrypt64(cipher: bytearray, rk: List[int], rounds: int) -> bytes:
     ct_words = bytes_to_words(cipher, 64)
     plaintext = _internal_speck_decrypt64(ct_words, rk, rounds)
     return words_to_bytes(plaintext, 64)
-
