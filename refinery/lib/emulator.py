@@ -351,6 +351,17 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         pass
 
+    def is_mapped(self, address: int, size: int = 1):
+        """
+        Can be used to test whether a certain amount of memory at a given address is already mapped.
+        """
+        self._map_update()
+        for interval in self._memorymap.overlap(address, address + size - 1):
+            interval: Interval
+            if address in range(interval.begin, interval.end + 1):
+                return True
+        return False
+
     def map(self, address: int, size: int, update_map=True):
         """
         Map memory of the given size at the given address. This function does not fail when part
