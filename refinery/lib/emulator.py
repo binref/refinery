@@ -351,31 +351,33 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         pass
 
-    def map(self, address: int, size: int):
+    def map(self, address: int, size: int, update_map=True):
         """
         Map memory of the given size at the given address. This function does not fail when part
         of the memory is already mapped; it will instead map only the missing pieces.
         """
         if size <= 0:
             return
-        self._map_update()
+        if update_map:
+            self._map_update()
         lower = address
         upper = address + size
-        for interval in self._memorymap.overlap(lower, upper):
+        for interval in self._memorymap.overlap(lower, upper - 1):
             interval: Interval
+            ivend = interval.end + 1
             a = interval.begin - lower
-            b = upper - interval.end - 1
+            b = upper - ivend
             if a >= 0 and b >= 0:
-                self.map(lower, a)
-                self.map(interval.end + 1, b)
+                self.map(lower, a, update_map=False)
+                self.map(ivend, b, update_map=False)
                 return
             if a >= 0:
                 upper = interval.begin
             if b >= 0:
-                lower = interval.end + 1
+                lower = ivend
             if lower >= upper:
                 return
-        self._memorymap.addi(lower, upper)
+        self._memorymap.addi(lower, upper - 1)
         self._map(lower, upper - lower)
 
     @property
