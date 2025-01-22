@@ -118,10 +118,15 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
             return None
 
     def hook_api_call(self, _, name: str, function, args: tuple[int, ...], **ka) -> bool:
+        def _repr(x):
+            stack = range(self.stack_base, self.stack_base + self.stack_size)
+            if isinstance(x, int) and (x in stack or x in self.exe):
+                return F'0x{x:X}'
+            return repr(x)
         module, dot, symbol = name.partition('.')
         if dot != '.':
             return
-        logged_args = [repr(a) for a in args]
+        logged_args = [_repr(a) for a in args]
         if symbol == 'connect':
             sockaddr = StructReader(self.mem_read(args[1], 8))
             if sockaddr.u16() == 2:
@@ -130,8 +135,19 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
                 host = '.'.join(map(str, sockaddr.read(4)))
                 self.state.synthesized.add(F'{host}:{port}'.encode(vstack.codec))
                 logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
-        vstack.log_info(self.state.log(F'{module}::{symbol}({", ".join(logged_args)})'))
-        return function(args)
+        vstack.log_info(F'{module}::{symbol}({", ".join(logged_args)})')
+        try:
+            retval = function(args)
+        except Exception as e:
+            if self.state.cfg.skip_calls > 1:
+                retval = self.malloc(self.alloc_size)
+                what = F'empty buffer at 0x{retval:X}'
+            else:
+                retval = 0
+                what = U'0'
+            vstack.log_debug(F'exception of type {e.__class__.__name__} while emulating api routine, returning {what}')
+            self.ip = self.pop()
+        return retval
 
     @inject_state_argument
     def hook_mem_read(self, _, access: int, address: int, size: int, value: int, state: EmuState):
