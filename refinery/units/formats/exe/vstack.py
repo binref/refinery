@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
+if True:
+    import colorama
+    colorama.init()
+    FG = colorama.Fore
+    RS = colorama.Style.RESET_ALL
+
 from typing import Any, Union, List, Dict, TYPE_CHECKING
 
 import enum
@@ -124,9 +131,11 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
             if isinstance(x, int) and (x in stack or x in self.exe):
                 return F'0x{x:X}'
             return repr(x)
+        self.state.last_api = self.ip
         module, dot, symbol = name.partition('.')
         if dot != '.':
             return
+        module, _, _ = module.lower().partition('.')
         logged_args = [_repr(a) for a in args]
         if symbol == 'connect':
             sockaddr = StructReader(self.mem_read(args[1], 8))
@@ -136,7 +145,8 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
                 host = '.'.join(map(str, sockaddr.read(4)))
                 self.state.synthesized.add(F'{host}:{port}'.encode(vstack.codec))
                 logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
-        vstack.log_info(F'{module}::{symbol}({", ".join(logged_args)})')
+        logged_args = [F'{FG.LIGHTCYAN_EX}{x}{RS}' for x in logged_args]
+        vstack.log_debug(F'{FG.LIGHTCYAN_EX}{module}{RS}::{FG.LIGHTYELLOW_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
         try:
             retval = function(args)
         except Exception as e:
