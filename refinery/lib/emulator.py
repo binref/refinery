@@ -64,6 +64,8 @@ try:
 except ImportError:
     uc = MissingModule('unicorn')
 try:
+    import speakeasy.profiler as se_profiler
+    import speakeasy.windows.objman as se_objman
     import speakeasy as se
 except ImportError:
     se = MissingModule('speakeasy-emulator')
@@ -970,10 +972,28 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 emu.stop()
             emu.add_code_hook(_terminate, end, end + 1)
 
-        if self.exe.blob:
-            return emu.run_shellcode(start)
-        else:
-            return emu.call(start)
+        inner = emu.emu
+        inner.stack_base, stack_addr = inner.alloc_stack(self.stack_size)
+        inner.set_func_args(inner.stack_base, inner.return_hook)
+        run = se_profiler.Run()
+        run.type = 'thread'
+        run.start_addr = start
+        run.instr_cnt = 0
+        run.args = ()
+        inner.add_run(run)
+        if not (p := inner.init_container_process()):
+            p = se_objman.Process(self)
+        inner.processes.append(p)
+        inner.curr_process = p
+        if mm := inner.get_address_map(start):
+            mm.set_process(inner.curr_process)
+        t = se_objman.Thread(inner, stack_base=inner.stack_base, stack_commit=self.stack_size)
+        inner.om.objects.update({t.address: t})
+        inner.curr_process.threads.append(t)
+        inner.curr_thread = t
+        peb = inner.alloc_peb(p)
+        inner.init_teb(t, peb)
+        inner.start()
 
     def halt(self):
         return self.speakeasy.stop()
