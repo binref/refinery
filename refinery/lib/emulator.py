@@ -354,13 +354,23 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         Map memory of the given size at the given address. This function does not fail when part
         of the memory is already mapped; it will instead map only the missing pieces.
         """
+        if size <= 0:
+            return
         self._map_update()
         lower = address
         upper = address + size
         for interval in self._memorymap.overlap(lower, upper):
             interval: Interval
-            lower = interval.begin if lower < interval.begin else interval.end
-            upper = interval.end if upper > interval.end else interval.begin
+            a = interval.begin - lower
+            b = upper - interval.end - 1
+            if a >= 0 and b >= 0:
+                self.map(lower, a)
+                self.map(interval.end + 1, b)
+                return
+            if a >= 0:
+                upper = interval.begin
+            if b >= 0:
+                lower = interval.end + 1
             if lower >= upper:
                 return
         self._memorymap.addi(lower, upper)
