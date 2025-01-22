@@ -327,8 +327,11 @@ class vstack(Unit):
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
-        engine: Arg.Option('-e', choices=_engine, metavar='E',
+        engine: Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
             help='The emulator engine. The default is {default}, options are: {choices}') = _engine.unicorn,
+        se: Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy') = False,
+        ic: Arg.Switch(group='EMU', help='Equivalent to --engine=icicle') = False,
+        uc: Arg.Switch(group='EMU', help='Equivalent to --engine=unicorn') = False,
         meta_registers: Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
             'the data will be mapped.')) = False,
@@ -354,6 +357,15 @@ class vstack(Unit):
         log_zero_overwrites: Arg.Switch('-Z', help='Log writes of zeros to memory that contained nonzero values.') = False,
         log_stack_cookies  : Arg.Switch('-E', help='Log writes that look like stack cookies.') = False,
     ):
+        if sum((se, uc, ic)) > 1:
+            raise ValueError('Too many emulators selected.')
+        elif se:
+            engine = _engine.speakeasy
+        elif ic:
+            engine = _engine.icicle
+        elif uc:
+            engine = _engine.unicorn
+
         super().__init__(
             address=address,
             stop=stop,
