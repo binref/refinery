@@ -82,6 +82,6 @@ class TestVStack(TestUnitBase):
             '1C00418A1400418614184188140041021418418A141041301149FFC148FFC975DB5F41FFE7586A00'
             '5949C7C2F0B5A256FFD5'
         )
-        unit = self.load(engine='se', arch='x64', log_writes_in_calls=True, wait='1G')
+        unit = self.load(engine='speakeasy', arch='x64', log_writes_in_calls=True, wait='1G')
         test = data | unit | []
         self.assertIn(B'10.25.44'B'.1:4444', test)
