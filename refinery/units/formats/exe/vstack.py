@@ -211,7 +211,7 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
         try:
             self.map(self.align(address, down=True), self.alloc_size)
         except Exception as error:
-            vstack.log_debug(F'error accessing memory at {state.fmt(address)}: {exception_to_string(error)}')
+            vstack.log_info(F'error accessing memory at {state.fmt(address)}: {exception_to_string(error)}')
         return True
 
     def hook_code_error(self, _, state: EmuState):
