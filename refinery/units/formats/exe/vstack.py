@@ -26,9 +26,9 @@ if TYPE_CHECKING:
 
 
 class _engine(enum.Enum):
-    speakeasy = SpeakeasyEmulator
-    icicle = IcicleEmulator
-    unicorn = UnicornEmulator
+    se = SpeakeasyEmulator
+    ic = IcicleEmulator
+    uc = UnicornEmulator
 
 
 @dataclass
@@ -327,8 +327,8 @@ class vstack(Unit):
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
         arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
-        engine: Arg.Option('-e', choices=_engine,
-            help='The emulator engine. The default is {default}, options are: {choices}') = _engine.unicorn,
+        engine: Arg.Option('-e', choices=_engine, metavar='E',
+            help='The emulator engine. The default is {default}, options are: {choices}') = _engine.uc,
         meta_registers: Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
             'the data will be mapped.')) = False,
@@ -387,7 +387,7 @@ class vstack(Unit):
         self.log_debug(F'attempting to use {engine.name}')
         getattr(self, F'_{engine.name}')
 
-        if engine is _engine.speakeasy:
+        if engine is _engine.se:
             flags |= Hook.ApiCall
 
         class Emu(engine.value, VStackEmulatorMixin):
