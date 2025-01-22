@@ -111,13 +111,9 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
     def stackrange(self):
         return Range(self.stack_base, self.stack_base + self.stack_size)
 
-    def disassemble(self, address: int, size: int):
-        ea = address - self.base + self.exe.base
+    def disassemble(self, address: int):
         try:
-            _cs = self.disassembler()
-            pos = self.exe.location_from_address(ea).physical.position
-            end = pos + size
-            return next(_cs.disasm(bytes(self.exe.data[pos:end]), address, 1))
+            return self.disassemble_instruction(address)
         except Exception:
             return None
 
@@ -277,7 +273,7 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
             state.waiting += 1
         state.expected_address += size
 
-        instruction = self.disassemble(address, size)
+        instruction = self.disassemble(address)
         if instruction:
             state.invalid_instructions = 0
             vstack.log_debug(state.log(F'{instruction.mnemonic} {instruction.op_str}'))
