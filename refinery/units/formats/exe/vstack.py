@@ -79,6 +79,7 @@ class EmuState:
     visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
     init_registers: List[int] = field(default_factory=list)
     last_read: Optional[int] = None
+    last_api: Optional[int] = None
 
     def log(self, msg: str) -> str:
         _width = len(str(self.cfg.wait))
@@ -224,10 +225,19 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
 
     @inject_state_argument
     def hook_mem_error(self, _, access: int, address: int, size: int, value: int, state: EmuState) -> bool:
-        try:
-            self.map(self.align(address, down=True), self.alloc_size)
-        except Exception as error:
-            vstack.log_info(F'error accessing memory at {state.fmt(address)}: {exception_to_string(error)}')
+        if address == self.state.last_api:
+            self.state.last_api = None
+            return True
+        msg = F'{state.fmt(address)}:{size:02X} memory error'
+        if self.is_mapped(address, size):
+            vstack.log_info(self.state.log(F'{msg}; fatal, this area was already mapped'))
+        else:
+            try:
+                self.map(self.align(address, down=True), self.alloc_size)
+            except Exception as error:
+                vstack.log_info(self.state.log(F'{msg}; fatal, {exception_to_string(error)}'))
+            else:
+                vstack.log_debug(self.state.log(F'{msg}; recovery, space mapped'))
         return True
 
     def hook_code_error(self, _, state: EmuState):
