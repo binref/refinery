@@ -433,7 +433,7 @@ class vstack(Unit):
             if isinstance(a, int):
                 return a
             a = a.decode(self.codec)
-            if m := re.fullmatch('(?i)([A-F0-9]+)H?', a):
+            if m := re.fullmatch('(?i)(?:sub_|fun_|0x)?([A-F0-9]+)H?', a):
                 return int(m[1], 16)
             try:
                 return PythonExpression.Evaluate(a, meta)
