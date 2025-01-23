@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from uuid import uuid4
 
+from refinery.lib.tools import NoLogging
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
@@ -11,8 +12,9 @@ class xtvba(PathExtractorUnit):
     """
     @PathExtractorUnit.Requires('oletools', 'formats', 'office', 'extended')
     def _olevba():
-        from oletools import olevba
-        return olevba
+        with NoLogging(NoLogging.Mode.ALL):
+            import oletools.olevba
+            return oletools.olevba
 
     def unpack(self, data):
         sentinel = uuid4()
