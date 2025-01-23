@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Maru hash implementation; originally written by Odzhan. This implementation matches the implementation in Donut.
+Maru hash implementation; it matches the C implementation found in Donut.
 """
 from ctypes import (
     Array,
