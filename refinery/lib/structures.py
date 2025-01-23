@@ -15,6 +15,7 @@ import struct
 import weakref
 
 from typing import (
+    overload,
     Any,
     ByteString,
     Dict,
@@ -647,11 +648,27 @@ class StructReader(MemoryFile[T]):
         finally:
             self.bigendian = _mode
 
+    @overload
+    def read_c_string(self) -> bytearray:
+        ...
+
+    @overload
+    def read_c_string(self, encoding: str) -> str:
+        ...
+
     def read_c_string(self, encoding=None) -> Union[str, bytearray]:
         data = self.read_terminated_array(B'\0')
         if encoding is not None:
             data = data.decode(encoding)
         return data
+
+    @overload
+    def read_w_string(self) -> bytearray:
+        ...
+
+    @overload
+    def read_w_string(self, encoding: str) -> str:
+        ...
 
     def read_w_string(self, encoding=None) -> Union[str, bytearray]:
         data = self.read_terminated_array(B'\0\0', 2)
