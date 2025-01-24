@@ -12,4 +12,4 @@ class TestJavaDisassembler(TestUnitBase):
 
         self.assertIn(B'lookupswitch    defaultjmp => 0x00000054', dasm)
         self.assertIn(B'tableswitch     defaultjmp => 0x00000058', dasm)
-        self.assertIn(B'invokestatic    org/jnativehook/keyboard/NativeKeyEvent::getKeyText', dasm)
+        self.assertIn(B'invokestatic    org.jnativehook.keyboard.NativeKeyEvent::getKeyText', dasm)
