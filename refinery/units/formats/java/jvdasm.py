@@ -5,9 +5,10 @@ Java disassembler. The main logic is implemented int `refinery.lib.java.JvOpCode
 """
 import re
 import io
+import collections
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.java import JvClassFile, JvCode, opc
+from refinery.lib.java import JvClassFile, JvClassMember, JvCode, opc
 
 
 def _parse_descriptor(descriptor: str):
@@ -52,9 +53,26 @@ class jvdasm(PathExtractorUnit):
         return sep.join(F'{x:02x}' for x in bytestring)
 
     def unpack(self, data):
+        def _name(method: JvClassMember):
+            name = method.name
+            if name == '<init>':
+                _, _, name = str(jc.this).rpartition('/')
+            elif m := re.fullmatch('<(.*?)>', name):
+                name = F'.{m[0]}'
+            return name
+
+        def _path(method: JvClassMember):
+            return F'{jc.this!s}/{_name(method)}'
+
         jc = JvClassFile(data)
-        tt = '  '
+        tab = '  '
+        namespace = '.'.join(str(jc.this).split('/'))
         opcw = self._OPC_STRLEN
+        path_counter = collections.defaultdict(int)
+        path_index = collections.defaultdict(int)
+
+        for method in jc.methods:
+            path_counter[_path(method)] += 1
         for method in jc.methods:
             for attribute in method.attributes:
                 if attribute.name == 'Code': break
@@ -65,7 +83,7 @@ class jvdasm(PathExtractorUnit):
             with io.StringIO() as display:
                 rv, args = _parse_descriptor(method.descriptor)
                 args = ', '.join(args)
-                print(F'{rv} {jc.this!s}::{method!s}({args})', file=display)
+                print(F'{rv} {namespace}::{_name(method)}({args})', file=display)
                 for op in code.disassembly:
                     olen = len(op.raw)
                     if op.table is None:
@@ -79,15 +97,15 @@ class jvdasm(PathExtractorUnit):
                             if key is None:
                                 continue
                             raw = self._hex(op.raw[olen + k * ow: olen + k * ow + ow], ' ')
-                            jmps.append(F'{tt}{raw!s:<{opcw + 15}} {key:#010x} => {jmp:#010x}')
+                            jmps.append(F'{tab}{raw!s:<{opcw + 15}} {key:#010x} => {jmp:#010x}')
                         args = '\n'.join((args, *jmps))
                     opch = self._hex(op.raw[:olen], ' ')
                     if len(opch) > 14:
-                        opch += F'\n{tt}{tt:<15}'
-                    print(F'{tt}{opch:<15}{op.code!r:<{opcw}} {args}', file=display)
-                name = method.name
-                if name.startswith('<'):
-                    this = jc.this.value.split('/')
-                    this = this[-1]
-                    name = F'{this}${name[1:-1]}'
-                yield UnpackResult(F'{name}.jd', display.getvalue().encode(self.codec))
+                        opch += F'\n{tab}{tab:<15}'
+                    print(F'{tab}{opch:<15}{op.code!r:<{opcw}} {args}', file=display)
+                path = _path(method)
+                if path_counter[path] > 1:
+                    k = path_index[path]
+                    path_index[path] = k + 1
+                    path = F'{path}[{k}]'
+                yield UnpackResult(path, display.getvalue().encode(self.codec))

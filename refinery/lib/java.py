@@ -418,6 +418,14 @@ class JvBaseType(IntEnum):
     def __repr__(self) -> str: return self.name
 
 
+class _new:
+    def __init__(self, object_path):
+        self._path = '.'.join(str(object_path).split('/'))
+
+    def __repr__(self):
+        return self._path
+
+
 class JvOpCode(Struct):
 
     OPC_ARGMAP = {
@@ -512,6 +520,8 @@ class JvOpCode(Struct):
                     self.arguments[0] = pool[self.arguments[0] - 1]
                 except (AttributeError, IndexError):
                     pass
+                if self.code == opc.new:
+                    self.arguments[0] = _new(self.arguments[0])
             elif self.code == opc.lookupswitch:
                 reader.byte_align(blocksize=4)
                 default, npairs = reader.read_struct('LL')
