@@ -10,6 +10,36 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.java import JvClassFile, JvCode, opc
 
 
+def _parse_descriptor(descriptor: str):
+    def parse_type_list(args: str):
+        while args:
+            suffix = ''
+            while args.startswith('['):
+                args = args[1:]
+                suffix += '[]'
+            code, args = args[0], args[1:]
+            if code == 'L':
+                spec, _, args = args.partition(';')
+                spec = spec.replace('/', '.')
+            else:
+                spec = {
+                    'Z': 'boolean',
+                    'B': 'byte',
+                    'S': 'short',
+                    'I': 'int',
+                    'J': 'long',
+                    'F': 'float',
+                    'D': 'double',
+                    'C': 'char',
+                    'V': 'void',
+                }[code]
+            yield spec + suffix
+
+    args, retval = re.match(R'^\((.*?)\)(.*?)$', descriptor).groups()
+    retval, = parse_type_list(retval)
+    return retval, tuple(parse_type_list(args))
+
+
 class jvdasm(PathExtractorUnit):
     """
     Disassembles the JVM bytecode instructions of methods of classes defined in Java class
@@ -33,8 +63,9 @@ class jvdasm(PathExtractorUnit):
                 continue
             code: JvCode = attribute.parse(JvCode)
             with io.StringIO() as display:
-                args, retval = re.match(R'^\((.*?)\)(.*?)$', method.descriptor).groups()
-                print(F'{jc.this!s}::{method!s}{method.descriptor}', file=display)
+                rv, args = _parse_descriptor(method.descriptor)
+                args = ', '.join(args)
+                print(F'{rv} {jc.this!s}::{method!s}({args})', file=display)
                 for op in code.disassembly:
                     olen = len(op.raw)
                     if op.table is None:

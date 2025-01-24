@@ -115,9 +115,11 @@ class JvString(_HasPoolAndTag):
         super().__init__(reader, **kwargs)
         self.value = reader.u16()
 
-    def __repr__(self): return repr(self.value)
+    def __repr__(self):
+        return repr(self.value)
 
-    def __str__(self): return self.value
+    def __str__(self):
+        return self.value
 
 
 class JvClassProperty(_HasPoolAndTag):
@@ -129,7 +131,10 @@ class JvClassProperty(_HasPoolAndTag):
         self.name = reader.u16()
         self.info = reader.u16()
 
-    def __repr__(self): return F'{self.name}::{self.info}'
+    def __repr__(self):
+        name: str = str(self.name)
+        name = '.'.join(name.split('/'))
+        return F'{name}::{self.info}'
 
 
 class JvMethodHandle(_HasPoolAndTag):
