@@ -8,10 +8,26 @@ import io
 import collections
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.java import JvClassFile, JvClassMember, JvCode, opc
+
+from refinery.lib.java import (
+    opc,
+    JvClassFile,
+    JvClassMember,
+    JvCode,
+    JvString,
+    JvClassProperty,
+    JvBaseType,
+    JvTypePath,
+)
 
 
-def _parse_descriptor(descriptor: str):
+def _parse_descriptor(
+    descriptor: str,
+    color_reset: str,
+    color_space: str,
+    color_types: str,
+    color_array: str,
+):
     def parse_type_list(args: str):
         while args:
             suffix = ''
@@ -21,7 +37,9 @@ def _parse_descriptor(descriptor: str):
             code, args = args[0], args[1:]
             if code == 'L':
                 spec, _, args = args.partition(';')
-                spec = spec.replace('/', '.')
+                *ns, t = spec.split('/')
+                ns = '.'.join([F'{color_space}{part}{color_reset}' for part in ns])
+                spec = F'{ns}.{color_types}{t}{color_reset}'
             else:
                 spec = {
                     'Z': 'boolean',
@@ -34,7 +52,8 @@ def _parse_descriptor(descriptor: str):
                     'C': 'char',
                     'V': 'void',
                 }[code]
-            yield spec + suffix
+                spec = F'{color_types}{spec}{color_reset}'
+            yield F'{spec}{color_array}{suffix}{color_reset}'
 
     args, retval = re.match(R'^\((.*?)\)(.*?)$', descriptor).groups()
     retval, = parse_type_list(retval)
@@ -52,6 +71,13 @@ class jvdasm(PathExtractorUnit):
     def _hex(self, bytestring, sep=''):
         return sep.join(F'{x:02x}' for x in bytestring)
 
+    def __init__(
+        self, *paths,
+        gray: PathExtractorUnit.Arg.Switch('-g', help='Disable colored output.') = False,
+        **keywords
+    ):
+        super().__init__(*paths, gray=gray, **keywords)
+
     def unpack(self, data):
         def _name(method: JvClassMember):
             name = method.name
@@ -63,9 +89,52 @@ class jvdasm(PathExtractorUnit):
 
         def _path(method: JvClassMember):
             return F'{jc.this!s}/{_name(method)}'
+        try:
+            if self.args.gray or not self.isatty:
+                raise ImportError
+            import colorama
+        except ImportError:
+            class _FG():
+                def __getattr__(self, _):
+                    return ''
+            FG = _FG()
+            RS = ''
+        else:
+            FG = colorama.Fore
+            RS = colorama.Style.RESET_ALL
+        finally:
+            c_none = RS
+            c_space = FG.LIGHTCYAN_EX
+            c_types = FG.LIGHTCYAN_EX
+            c_member = FG.LIGHTYELLOW_EX
+            c_kwd = FG.LIGHTYELLOW_EX
+            c_const = FG.LIGHTRED_EX
+            c_string = FG.LIGHTRED_EX
+            c_address = FG.LIGHTBLACK_EX
+            c_label = RS
+
+        def _color(arg, offset):
+            if isinstance(arg, (str, JvString)):
+                color = c_string
+            elif isinstance(arg, (JvClassProperty, JvTypePath)):
+                ns, dd, prop = str(arg).partition('::')
+                if not dd:
+                    return repr(arg)
+                ns = ns.split('.')
+                ns = '.'.join(F'{c_space}{p}{c_none}' for p in ns)
+                return F'{ns}{dd}{c_member}{prop}{c_none}'
+            elif isinstance(arg, int) and arg + offset in labels:
+                return F'{c_label}0x{arg + offset:08X}{c_none}'
+            elif isinstance(arg, (bool, int, float)):
+                color = c_const
+            elif isinstance(arg, JvBaseType):
+                color = c_kwd
+            else:
+                return repr(arg)
+            return F'{color}{arg!r}{c_none}'
 
         jc = JvClassFile(data)
-        tab = '  '
+        tab = ' '
         namespace = '.'.join(str(jc.this).split('/'))
         opcw = self._OPC_STRLEN
         path_counter = collections.defaultdict(int)
@@ -81,28 +150,58 @@ class jvdasm(PathExtractorUnit):
                 continue
             code: JvCode = attribute.parse(JvCode)
             with io.StringIO() as display:
-                rv, args = _parse_descriptor(method.descriptor)
+                rv, args = _parse_descriptor(method.descriptor, c_none, c_space, c_types, c_kwd)
                 args = ', '.join(args)
-                print(F'{rv} {namespace}::{_name(method)}({args})', file=display)
+                print(
+                    F'{c_types}{rv}{c_none} {c_space}{namespace}{c_none}'
+                    F'::{c_member}{method!s}{c_none}({args})', file=display)
+                offset = 0
+                labels = set()
+                addresses = set()
+
                 for op in code.disassembly:
+                    addresses.add(offset)
+                    if op.table:
+                        labels.update(offset + jmp for jmp in op.table.values())
+                    elif op.code in (opc.goto, opc.goto_w):
+                        labels.update(offset + arg for arg in op.arguments if isinstance(arg, int))
+                    offset += len(op.raw)
+
+                offset = 0
+                labels = labels & addresses
+
+                for op in code.disassembly:
+                    if offset in labels:
+                        label = F'{c_label}{offset:08X}{c_none}:'
+                    else:
+                        label = F'{c_address}{offset:08X}{c_none}:'
+                    addr = offset
                     olen = len(op.raw)
+                    offset += olen
                     if op.table is None:
-                        args = ', '.join(repr(a) for a in op.arguments)
+                        args = ', '.join(_color(a, addr) for a in op.arguments)
                     else:
                         ow = 4 if op.code is opc.tableswitch else 8
                         olen = olen - (len(op.table) - 1) * ow
-                        args = F'defaultjmp => {op.table[None]:#010x}'
+                        args = F'___default => {c_label}{op.table[None] + addr:#010x}{c_none}'
                         jmps = []
                         for k, (key, jmp) in enumerate(op.table.items()):
                             if key is None:
                                 continue
                             raw = self._hex(op.raw[olen + k * ow: olen + k * ow + ow], ' ')
-                            jmps.append(F'{tab}{raw!s:<{opcw + 15}} {key:#010x} => {jmp:#010x}')
+                            jmps.append(
+                                F'{label}{tab}'
+                                F'{raw!s:<{opcw + 15}} '
+                                F'{c_const}{key:#010x}{c_none} => '
+                                F'{c_label}{jmp + addr:#010x}{c_none}')
                         args = '\n'.join((args, *jmps))
                     opch = self._hex(op.raw[:olen], ' ')
                     if len(opch) > 14:
-                        opch += F'\n{tab}{tab:<15}'
-                    print(F'{tab}{opch:<15}{op.code!r:<{opcw}} {args}', file=display)
+                        opch += F'\n{tab}{label}{tab}{tab:<15}'
+                    print(
+                        F'{label}{tab}'
+                        F'{opch:<15}'
+                        F'{c_kwd}{op.code!r:<{opcw}}{c_none} {args}', file=display)
                 path = _path(method)
                 if path_counter[path] > 1:
                     k = path_index[path]
