@@ -418,7 +418,7 @@ class JvBaseType(IntEnum):
     def __repr__(self) -> str: return self.name
 
 
-class _new:
+class JvTypePath:
     def __init__(self, object_path):
         self._path = '.'.join(str(object_path).split('/'))
 
@@ -521,7 +521,7 @@ class JvOpCode(Struct):
                 except (AttributeError, IndexError):
                     pass
                 if self.code == opc.new:
-                    self.arguments[0] = _new(self.arguments[0])
+                    self.arguments[0] = JvTypePath(self.arguments[0])
             elif self.code == opc.lookupswitch:
                 reader.byte_align(blocksize=4)
                 default, npairs = reader.read_struct('LL')
@@ -686,7 +686,7 @@ class JvClassFile(Struct):
             i += 1
         return new_string.decode('utf8')
 
-    def _read_pool(self, reader):
+    def _read_pool(self, reader: StructReader):
         assert not self.pool, 'pool can only be read once.'
         size = reader.u16() - 1
         reserved_slot = False
