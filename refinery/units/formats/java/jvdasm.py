@@ -154,7 +154,7 @@ class jvdasm(PathExtractorUnit):
                 args = ', '.join(args)
                 print(
                     F'{c_types}{rv}{c_none} {c_space}{namespace}{c_none}'
-                    F'::{c_member}{method!s}{c_none}({args})', file=display)
+                    F'::{c_member}{_name(method)}{c_none}({args})', file=display)
                 offset = 0
                 labels = set()
                 addresses = set()
@@ -197,7 +197,7 @@ class jvdasm(PathExtractorUnit):
                         args = '\n'.join((args, *jmps))
                     opch = self._hex(op.raw[:olen], ' ')
                     if len(opch) > 14:
-                        opch += F'\n{tab}{label}{tab}{tab:<15}'
+                        opch += F'\n{label}{tab}{tab:<15}'
                     print(
                         F'{label}{tab}'
                         F'{opch:<15}'
