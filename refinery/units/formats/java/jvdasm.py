@@ -109,3 +109,7 @@ class jvdasm(PathExtractorUnit):
                     path_index[path] = k + 1
                     path = F'{path}[{k}]'
                 yield UnpackResult(path, display.getvalue().encode(self.codec))
+
+    @classmethod
+    def handles(self, data):
+        return data[:4] == B'\xCA\xFE\xBA\xBE'

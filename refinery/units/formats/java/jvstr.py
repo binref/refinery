@@ -12,3 +12,7 @@ class jvstr(Unit):
         jc = JvClassFile(data)
         for string in jc.strings:
             yield string.encode(self.codec)
+
+    @classmethod
+    def handles(self, data):
+        return data[:4] == B'\xCA\xFE\xBA\xBE'
