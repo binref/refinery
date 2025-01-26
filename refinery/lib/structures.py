@@ -6,6 +6,7 @@ Interfaces and classes to read structured data.
 from __future__ import annotations
 
 import contextlib
+import codecs
 import itertools
 import enum
 import functools
@@ -32,6 +33,8 @@ from typing import (
 
 T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
 C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
+R = TypeVar('R', bound=io.IOBase)
+
 UnpackType = Union[int, bool, float, bytes]
 
 
@@ -57,12 +60,12 @@ class EOF(EOFError):
         return bytes(self.rest)
 
 
-class StreamDetour:
+class StreamDetour(Generic[R]):
     """
     A stream detour is used as a context manager to temporarily read from a different location
     in the stream and then return to the original offset when the context ends.
     """
-    def __init__(self, stream: io.IOBase, offset: Optional[int] = None, whence: int = io.SEEK_SET):
+    def __init__(self, stream: R, offset: Optional[int] = None, whence: int = io.SEEK_SET):
         self.stream = stream
         self.offset = offset
         self.whence = whence
@@ -575,7 +578,7 @@ class StructReader(MemoryFile[T]):
                     elif part == 'u':
                         data.append(self.read_w_string())
                     elif part == 'w':
-                        data.append(self.read_w_string().decode('utf-16le'))
+                        data.append(codecs.decode(self.read_w_string(), 'utf-16le'))
                     elif part == 'E':
                         data.append(self.read_7bit_encoded_int())
                 continue
@@ -659,7 +662,7 @@ class StructReader(MemoryFile[T]):
     def read_c_string(self, encoding=None) -> Union[str, bytearray]:
         data = self.read_terminated_array(B'\0')
         if encoding is not None:
-            data = data.decode(encoding)
+            data = codecs.decode(data, encoding)
         return data
 
     @overload
@@ -673,7 +676,7 @@ class StructReader(MemoryFile[T]):
     def read_w_string(self, encoding=None) -> Union[str, bytearray]:
         data = self.read_terminated_array(B'\0\0', 2)
         if encoding is not None:
-            data = data.decode(encoding)
+            data = codecs.decode(data, encoding)
         return data
 
     def read_length_prefixed_ascii(self, prefix_size: int = 32):
@@ -686,11 +689,23 @@ class StructReader(MemoryFile[T]):
         block_size = 1 if bytecount else 2
         return self.read_length_prefixed(prefix_size, 'utf-16le', block_size)
 
+    @overload
+    def read_length_prefixed(self, prefix_size: int = 32, block_size: int = 1) -> T:
+        ...
+
+    @overload
+    def read_length_prefixed(self, prefix_size: int, encoding: str, block_size: int = 1) -> str:
+        ...
+
+    @overload
+    def read_length_prefixed(self, *, encoding: str, prefix_size: int = 32, block_size: int = 1) -> str:
+        ...
+
     def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> Union[T, str]:
         prefix = self.read_integer(prefix_size) * block_size
         data = self.read(prefix)
         if encoding is not None:
-            data = data.decode(encoding)
+            data = codecs.decode(data, encoding)
         return data
 
     def read_7bit_encoded_int(self, max_bits: int = 0) -> int:
