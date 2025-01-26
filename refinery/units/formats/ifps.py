@@ -576,7 +576,8 @@ class IFPSFile(Struct):
 
     Magic = B'IFPS'
 
-    def __init__(self, reader: StructReader[memoryview]):
+    def __init__(self, reader: StructReader[memoryview], codec: str):
+        self.codec = codec
         self.types: List[TType] = []
         self.functions: List[Function] = []
         self.variables: List[Variable] = []
@@ -663,8 +664,8 @@ class IFPSFile(Struct):
             TC.Single        : reader.f32,
             TC.Double        : reader.f64,
             TC.Extended      : lambda: extended(reader.read(10)),
-            TC.String        : reader.read_length_prefixed_ascii,
-            TC.PChar         : reader.read_length_prefixed_ascii,
+            TC.String        : lambda: reader.read_length_prefixed(encoding=self.codec),
+            TC.PChar         : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.WideString    : reader.read_length_prefixed_utf16,
             TC.UnicodeString : reader.read_length_prefixed_utf16,
             TC.Char          : lambda: chr(reader.u8()),
@@ -904,13 +905,22 @@ class IFPSFile(Struct):
         return output.getvalue()
 
 
-class ifps(Unit):
+class IFPSBase(Unit, abstract=True):
+    def __init__(
+        self,
+        codec: Unit.Arg.String(
+            help='Optionally specify the string encoding. The default is "{default}".') = 'cp1252'
+    ):
+        super().__init__(codec=codec)
+
+
+class ifps(IFPSBase):
     """
     Disassembles compiled Pascal script files that start with the magic sequence "IFPS". These
     scripts can be found, for example, when unpacking InnoSetup installers using innounp.
     """
     def process(self, data):
-        return str(IFPSFile(data)).encode(self.codec)
+        return str(IFPSFile(data, self.args.codec)).encode(self.codec)
 
     @classmethod
     def handles(self, data: bytearray) -> bool:

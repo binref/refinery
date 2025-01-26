@@ -8,7 +8,7 @@ import struct
 import json
 
 from refinery.units.formats import UnpackResult, PathExtractorUnit, Arg
-from refinery.units.formats.pe.pemeta import pemeta
+from refinery.lib.lcid import LCID
 from refinery.lib.structures import Struct, StructReader
 
 
@@ -125,7 +125,7 @@ class perc(PathExtractorUnit):
         except KeyError:
             return None
         lcid = pid.get(sid, 0)
-        return pemeta._LCID.get(lcid)
+        return LCID.get(lcid)
 
     def _handle_strings(self, pe: pefile.PE, parts: Tuple[RSRC, int, int], rva: int, size: int):
         def extract(pe=pe):
