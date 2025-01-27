@@ -52,7 +52,11 @@ _T = TypeVar('_T')
 
 
 class InvalidPassword(ValueError):
-    pass
+    def __init__(self, password: Optional[str] = None):
+        if password is None:
+            super().__init__('A password is required and none was given.')
+        else:
+            super().__init__('The given password is not correct.')
 
 
 class FileChunkOutOfBounds(LookupError):
@@ -1394,8 +1398,8 @@ class xtinno(ArchiveUnit):
             yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
 
         if encrypted_file is not None:
-            if password is not None:
-                raise RuntimeError(F'An encrypted test file was chosen even though a password was provided: {password!r}')
+            assert password is None, (
+                F'An encrypted test file was chosen even though a password was provided: {password!r}')
             self.log_info(F'guessing password using encrypted file: {encrypted_file.path}')
             try:
                 def _pwd(s: str):
@@ -1432,9 +1436,6 @@ class xtinno(ArchiveUnit):
 
         for file in files:
             if file.dupe:
-                continue
-            if file.encrypted and password is None:
-                self.log_warn(F'skipping encrypted file, a password is required: {file.path}')
                 continue
             yield self._pack(
                 file.path,
@@ -1486,7 +1487,7 @@ class xtinno(ArchiveUnit):
             if file.password_type == PasswordType.Nothing:
                 raise RuntimeError(F'File {file.path} is encrypted, but no password type was set.')
             if password is None:
-                raise InvalidPassword('Unable to extract without password.')
+                raise InvalidPassword
             if file.password_type == PasswordType.XChaCha20:
                 salt, iterations, nonce = struct.unpack('=16sI24s', file.password_salt)
                 key = password.encode('utf8') | pbkdf2(32, salt, iterations, 'SHA256') | bytes
@@ -1494,21 +1495,21 @@ class xtinno(ArchiveUnit):
                 test_nonce[2] = ~test_nonce[2]
                 test_nonce = struct.pack('6I', test_nonce)
                 if B'\0\0\0\0' | xchacha(key, nonce=test_nonce) | bytes != file.password_hash:
-                    raise InvalidPassword
+                    raise InvalidPassword(password)
                 decryptor = xchacha(key, nonce=nonce)
             else:
-                password = password.encode(
+                password_bytes = password.encode(
                     'utf-16le' if file.unicode else 'utf8')
                 algorithm = {
                     PasswordType.SHA1: sha1,
                     PasswordType.MD5 : md5,
                 }[file.password_type]
                 hash = algorithm(b'PasswordCheckHash' + file.password_salt)
-                hash.update(password)
+                hash.update(password_bytes)
                 if hash.digest() != file.password_hash:
-                    raise InvalidPassword
+                    raise InvalidPassword(password)
                 hash = algorithm(reader.read(8))
-                hash.update(password)
+                hash.update(password_bytes)
                 decryptor = rc4(hash.digest(), discard=1000)
 
         data = reader.read_exactly(length)
@@ -1534,7 +1535,7 @@ class xtinno(ArchiveUnit):
         except Exception as E:
             if not file.encrypted:
                 raise
-            raise InvalidPassword from E
+            raise InvalidPassword(password) from E
 
         return chunk
 
