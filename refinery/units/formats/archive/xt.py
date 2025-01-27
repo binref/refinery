@@ -28,6 +28,8 @@ class xt(ArchiveUnit):
         """
         Returns all archive handlers supported by the unit.
         """
+        from refinery.units.formats.archive.xtinno import xtinno
+        yield xtinno
         from refinery.units.formats.office.xtone import xtone
         yield xtone
         from refinery.units.formats.archive.xtgz import xtgz
