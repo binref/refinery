@@ -131,7 +131,7 @@ class base(Unit):
         if not base or self.args.strip_padding:
             bits = result.bit_length()
         else:
-            bits = (len(data) - 1) * math.log2(base) + math.log2(alphabet.index(data[0]) + 1)
+            bits = (len(data) - 1) * math.log2(base) + math.log2(max(alphabet.index(data[0]), 1))
             bits = math.ceil(bits)
         size, rest = divmod(bits, 8)
         size += int(bool(rest))
