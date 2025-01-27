@@ -1561,6 +1561,9 @@ class xtinno(ArchiveUnit):
             else:
                 data = self._filter_old(data)
 
+        if not self.leniency and not file.check(data):
+            raise ValueError('Invalid checksum. You can ignore this check with the -L flag.')
+
         return data
 
     @ArchiveUnit.Requires('numpy', 'speed', 'default', 'extended')
