@@ -5,6 +5,15 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.2
+- The `xtinno` unit was added to extracting files from InnoSetup installers.
+- Related; the `ifps` and `ifpsstr` units now accept a string encoding argument.
+- The `jvdasm` unit now has colored output.
+- Thanks to [@s3ven6][], the `speck` cipher and `maru` hash units were added.
+- The `dnarrays` unit was added for extracting hard-coded arrays from compiled .NET code.
+- The `iff` unit was extended with an `-ne` switch.
+- The `xjl` unit can now also collect the contents of one frame into a JSON list.
+
 ## Version 0.8.1 - bugfix release
 
 ## Version 0.8.0
@@ -175,7 +184,7 @@
 - The `--more` option was added to the `struct` unit to give access to unparsed rest data.
 - The `--length` option was added to the `snip` unit as a qualit of life feature.
 - The `btoi` handler can now receive a second argument that allows reading interlaced integers from a byte stream.
-- Thanks to [@alphillips-lab], the `dnsfx` unit was added for extracting .NET file bundles.
+- Thanks to [@alphillips-lab][], the `dnsfx` unit was added for extracting .NET file bundles.
 - The `pestrip` unit was renamed to `pedebloat` and `petrim` was renamed back to `pestrip`.
 
 ## Version 0.6.14
@@ -194,7 +203,7 @@
 - Adds the `blabla` cipher unit.
 
 ## Version 0.6.11
-- The `machometa` unit was added thanks to [@cxiao].
+- The `machometa` unit was added thanks to [@cxiao][].
 - The `pestrip` unit was extended with more features, and the unit `petrim` was introduced as a unit to simply remove overlays.
 - The `xtnuitka` unit was added to extract Nuitka archives.
 
@@ -783,6 +792,7 @@ Updates build system.
 [@alphillips-lab]: https://github.com/alphillips-lab
 [@lukaskuzmiak]: https://github.com/lukaskuzmiak
 [@cxiao]: https://github.com/cxiao
+[@s3ven6]: https://github.com/s3ven6
 [@EricFaehrmann]: https://github.com/EricFaehrmann
 [@larsborn]: https://github.com/larsborn
 [XLMMacroDeobfuscator]: https://github.com/DissectMalware/XLMMacroDeobfuscator
