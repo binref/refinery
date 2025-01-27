@@ -6,19 +6,19 @@ import re
 from refinery.units import Unit
 
 
-class b85(Unit):
+class a85(Unit):
     """
-    Base85 encoding and decoding.
+    Ascii85 encoding and decoding, the predecessor variant of Base85 with a different alphabet.
     """
     def reverse(self, data):
-        return base64.b85encode(data)
+        return base64.a85encode(data)
 
     def process(self, data):
         if re.search(BR'\s', data) is not None:
             data = re.sub(BR'\s+', B'', data)
-        return base64.b85decode(data)
+        return base64.a85decode(data)
 
     @classmethod
     def handles(self, data: bytearray):
         from refinery.lib.patterns import formats
-        return formats.spaced_b85.value.fullmatch(data)
+        return formats.spaced_a85.value.fullmatch(data)
