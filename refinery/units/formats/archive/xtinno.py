@@ -1563,27 +1563,83 @@ class xtinno(ArchiveUnit):
 
         return data
 
-    @staticmethod
-    def _filter_new(data: ByteStr, flip_high_byte=False):
+    @ArchiveUnit.Requires('numpy', 'speed', 'default', 'extended')
+    def _numpy():
+        import numpy
+        return numpy
+
+    def _filter_new(self, data: ByteStr, flip_high_byte=False):
+        try:
+            np = self._numpy
+        except ImportError:
+            return self._filter_new_fallback(data, flip_high_byte)
+        u08 = np.uint8
+        u32 = np.uint32
+        ab0 = bytearray()
+        ab1 = bytearray()
+        ab2 = bytearray()
+        ab3 = bytearray()
+        positions = []
+        if isinstance(data, bytearray):
+            out = data
+        else:
+            out = bytearray(data)
+        mem = memoryview(out)
+        for k in range(0, len(mem), 0x10000):
+            for match in re.finditer(B'(?s)[\xE8\xE9]....', mem[k:k + 0x10000], flags=re.DOTALL):
+                a = match.start() + k
+                top = mem[a + 4]
+                if top != 0x00 and top != 0xFF:
+                    continue
+                ab0.append(mem[a + 1])
+                ab1.append(mem[a + 2])
+                ab2.append(mem[a + 3])
+                ab3.append(top)
+                positions.append(a + 5)
+        ab0 = np.frombuffer(ab0, dtype=u08)
+        ab1 = np.frombuffer(ab1, dtype=u08)
+        low = np.frombuffer(ab2, dtype=u08).astype(u32)
+        msb = np.frombuffer(ab3, dtype=u08)
+        sub = np.fromiter(positions, dtype=u32)
+        low <<= 8
+        low += ab1
+        low <<= 8
+        low += ab0
+        low -= sub
+        low &= 0xFFFFFF
+        if flip_high_byte:
+            flips = low >> 23
+            keeps = 1 - flips
+            keeps *= msb
+            msb ^= 0xFF
+            msb *= flips
+            msb += keeps
+        low += (msb.astype(u32) << 24)
+        addresses = low.tobytes()
+        for k, offset in enumerate(positions):
+            out[offset - 4:offset] = addresses[k * 4:(k + 1) * 4]
+        return out
+
+    def _filter_new_fallback(self, data: ByteStr, flip_high_byte=False):
         block_size = 0x10000
-        res = bytearray(data)
+        out = bytearray(data)
         i = 0
         while len(data) - i >= 5:
-            c = res[i]
+            c = out[i]
             block_size_left = block_size - (i % block_size)
             i += 1
             if (c == 0xE8 or c == 0xE9) and block_size_left >= 5:
-                address = res[i:i + 4]
+                address = out[i:i + 4]
                 i += 4
                 if address[3] == 0 or address[3] == 0xFF:
                     rel = address[0] | address[1] << 8 | address[2] << 16
                     rel -= i & 0xFFFFFF
-                    res[i - 4] = rel & 0xFF
-                    res[i - 3] = (rel >> 8) & 0xFF
-                    res[i - 2] = (rel >> 16) & 0xFF
+                    out[i - 4] = rel & 0xFF
+                    out[i - 3] = (rel >> 8) & 0xFF
+                    out[i - 2] = (rel >> 16) & 0xFF
                     if flip_high_byte and (rel & 0x800000) != 0:
-                        res[i - 1] = (~res[i - 1]) & 0xFF
-        return res
+                        out[i - 1] = (~out[i - 1]) & 0xFF
+        return out
 
     @staticmethod
     def _filter_old(data: ByteStr):
