@@ -1563,7 +1563,7 @@ class TSetup(InnoStruct):
             self.Codec = _default_codec
         else:
             self.Codec = self.Languages[0].Codepage
-            if any(l.Codepage == _default_codec for l in self.Languages):
+            if any(language.Codepage == _default_codec for language in self.Languages):
                 self.Codec = _default_codec
 
         if version.ascii:
