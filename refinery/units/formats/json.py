@@ -37,7 +37,10 @@ class xtjson(PathExtractorUnit):
                     dumped = json.dumps(item, indent=4)
                 else:
                     dumped = str(item)
-                return dumped.encode('latin1')
+                try:
+                    return dumped.encode('latin1')
+                except UnicodeEncodeError:
+                    return dumped.encode('utf8')
 
             yield UnpackResult(path, extract, type=typename)
 
