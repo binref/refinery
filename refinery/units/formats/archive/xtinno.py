@@ -37,18 +37,17 @@ from refinery.units.crypto.cipher.rc4 import rc4
 from refinery.units.crypto.cipher.chacha import xchacha
 from refinery.units.crypto.keyderive.pbkdf2 import pbkdf2
 
-from typing import (
-    List,
-    Optional,
-    Type,
-    TypeVar,
-)
+from typing import TYPE_CHECKING, NamedTuple
 
-
-_DEFAULT_INNO_VERSION = (5, 0, 0)
-_FILE_TIME_1970_01_01 = 116444736000000000
-
-_T = TypeVar('_T')
+if TYPE_CHECKING:
+    from typing import (
+        List,
+        Optional,
+        Type,
+        TypeVar,
+    )
+    _T = TypeVar('_T')
+    _E = TypeVar('_T', bound=enum.IntEnum)
 
 
 class InvalidPassword(ValueError):
@@ -61,6 +60,321 @@ class InvalidPassword(ValueError):
 
 class FileChunkOutOfBounds(LookupError):
     pass
+
+
+class IVF(enum.IntFlag):
+    NoFlag   = 0b0000 # noqa
+    Legacy   = 0b0001 # noqa
+    Bits16   = 0b0010 # noqa
+    UTF_16   = 0b0100 # noqa
+    InnoSX   = 0b1000 # noqa
+    Legacy32 = 0b0001
+    Legacy16 = 0b0011
+    IsLegacy = 0b0011
+
+
+def _enum(options: Type[_E], value: int, default: _E):
+    try:
+        return options(value)
+    except ValueError:
+        return default
+
+
+class InnoVersion(NamedTuple):
+    major: int
+    minor: int
+    patch: int
+    build: int = 0
+    flags: IVF = IVF.NoFlag
+
+    @property
+    def unicode(self):
+        return self.flags & IVF.UTF_16 == IVF.UTF_16
+
+    @property
+    def ascii(self):
+        return self.flags & IVF.UTF_16 == IVF.NoFlag
+
+    @property
+    def isx(self):
+        return bool(self.flags & IVF.InnoSX)
+
+    @property
+    def bits(self):
+        return 0x10 if self.flags & IVF.Bits16 else 0x20
+
+    @classmethod
+    def ParseLegacy(cls, dfn: bytes):
+        v, s, _ = dfn.partition(B'\x1A')
+        if s and (m := re.fullmatch(BR'i(\d+)\.(\d+)\.(\d+)--(16|32)', v)):
+            major = int(m[1])
+            minor = int(m[2])
+            build = int(m[3])
+            flags = IVF.Legacy16 if m[3] == B'16' else IVF.Legacy32
+            return cls(major, minor, build, 0, flags)
+        raise ValueError(dfn)
+
+    @classmethod
+    def Parse(cls, dfn: bytes):
+        if m := re.match(RB'^(.*?)\((\d+\.\d+\.\d+)\)(?:\s{0,32}\(([uU])\))?', dfn):
+            sv = tuple(map(int, m.group(2).split(B'.')))
+            vf = IVF.UTF_16 if m.group(3) or sv >= (6, 3, 0) else IVF.NoFlag
+            return cls(*sv, 0, vf)
+        raise ValueError(dfn)
+
+    def __str__(self):
+        v = F'v{self.major}.{self.minor}.{self.patch:02d}.{self.build}'
+        u = 'u' if self.flags & IVF.UTF_16 else 'a'
+        v = F'{v}{u}'
+        if self.flags & IVF.InnoSX:
+            v = F'{v}x'
+        if b := {
+            IVF.Legacy16: '16',
+            IVF.Legacy32: '32',
+        }.get(self.flags & IVF.IsLegacy):
+            v = F'{v}/{b}'
+        return v
+
+
+_I = InnoVersion
+_FILE_TIME_1970_01_01 = 116444736000000000
+_DEFAULT_INNO_VERSION = _I(5, 0, 0, 0, IVF.UTF_16)
+
+_KNOWN_VERSIONS_LEGACY = {
+    _I(1, 2, 10, 0, IVF.Legacy16): B'i1.2.10--16\x1a',
+    _I(1, 2, 10, 0, IVF.Legacy32): B'i1.2.10--32\x1a',
+}
+
+_KNOWN_VERSIONS_LEGACY = {
+    _I(1, 3,  3, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (1.3.3)"),
+    _I(1, 3,  9, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (1.3.9)"),
+    _I(1, 3, 10, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (1.3.10)"),
+    _I(1, 3, 10, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (1.3.10) with ISX (1.3.10)"),
+    _I(1, 3, 12, 1, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (1.3.12) with ISX (1.3.12.1)"),
+    _I(1, 3, 21, 0, IVF.NoFlag): # noqa
+    (1, B"Inno Setup Setup Data (1.3.21)"),
+    _I(1, 3, 21, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (1.3.21) with ISX (1.3.17)"),
+    _I(1, 3, 24, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (1.3.24)"),
+    _I(1, 3, 24, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (1.3.21) with ISX (1.3.24)"),
+    _I(1, 3, 25, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (1.3.25)"),
+    _I(1, 3, 25, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (1.3.25) with ISX (1.3.25)"),
+    _I(2, 0,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.0)"),
+    _I(2, 0,  1, 0, IVF.NoFlag): # noqa
+    (1, B"Inno Setup Setup Data (2.0.1)"),
+    _I(2, 0,  2, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.2)"),
+    _I(2, 0,  5, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.5)"),
+    _I(2, 0,  6, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.6a)"),
+    _I(2, 0,  6, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (2.0.6a) with ISX (2.0.3)"),
+    _I(2, 0,  7, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.7)"),
+    _I(2, 0,  8, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.8)"),
+    _I(2, 0,  8, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (2.0.8) with ISX (2.0.3)"),
+    _I(2, 0, 10, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (2.0.8) with ISX (2.0.10)"),
+    _I(2, 0, 11, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.11)"),
+    _I(2, 0, 11, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (2.0.11) with ISX (2.0.11)"),
+    _I(2, 0, 17, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.17)"),
+    _I(2, 0, 17, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (2.0.17) with ISX (2.0.11)"),
+    _I(2, 0, 18, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (2.0.18)"),
+    _I(2, 0, 18, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (2.0.18) with ISX (2.0.11)"),
+    _I(3, 0,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (3.0.0a)"),
+    _I(3, 0,  1, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (3.0.1)"),
+    _I(3, 0,  1, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (3.0.1) with ISX (3.0.0)"),
+    _I(3, 0,  3, 0, IVF.NoFlag): # noqa
+    (1, B"Inno Setup Setup Data (3.0.3)"),
+    _I(3, 0,  3, 0, IVF.InnoSX): # noqa
+    (0, B"Inno Setup Setup Data (3.0.3) with ISX (3.0.3)"),
+    _I(3, 0,  4, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (3.0.4)"),
+    _I(3, 0,  4, 0, IVF.InnoSX): # noqa
+    (0, B"My Inno Setup Extensions Setup Data (3.0.4)"),
+    _I(3, 0,  5, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (3.0.5)"),
+    _I(3, 0,  6, 1, IVF.InnoSX): # noqa
+    (0, B"My Inno Setup Extensions Setup Data (3.0.6.1)"),
+    _I(4, 0,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.0.0a)"),
+    _I(4, 0,  1, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.0.1)"),
+    _I(4, 0,  3, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.0.3)"),
+    _I(4, 0,  5, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.0.5)"),
+    _I(4, 0,  9, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.0.9)"),
+    _I(4, 0, 10, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.0.10)"),
+    _I(4, 0, 11, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.0.11)"),
+    _I(4, 1,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.1.0)"),
+    _I(4, 1,  2, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.1.2)"),
+    _I(4, 1,  3, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.1.3)"),
+    _I(4, 1,  4, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.1.4)"),
+    _I(4, 1,  5, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.1.5)"),
+    _I(4, 1,  6, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.1.6)"),
+    _I(4, 1,  8, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.1.8)"),
+    _I(4, 2,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.2.0)"),
+    _I(4, 2,  1, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.2.1)"),
+    _I(4, 2,  2, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.2.2)"),
+    _I(4, 2,  3, 0, IVF.NoFlag): # noqa
+    (1, B"Inno Setup Setup Data (4.2.3)"),
+    _I(4, 2,  4, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.2.4)"),
+    _I(4, 2,  5, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.2.5)"),
+    _I(4, 2,  6, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (4.2.6)"),
+    _I(5, 0,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.0.0)"),
+    _I(5, 0,  1, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.0.1)"),
+    _I(5, 0,  3, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.0.3)"),
+    _I(5, 0,  4, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.0.4)"),
+    _I(5, 1,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.1.0)"),
+    _I(5, 1,  2, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.1.2)"),
+    _I(5, 1,  7, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.1.7)"),
+    _I(5, 1, 10, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.1.10)"),
+    _I(5, 1, 13, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.1.13)"),
+    _I(5, 2,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.2.0)"),
+    _I(5, 2,  1, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.2.1)"),
+    _I(5, 2,  3, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.2.3)"),
+    _I(5, 2,  5, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.2.5)"),
+    _I(5, 2,  5, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.2.5) (u)"),
+    _I(5, 3,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.0)"),
+    _I(5, 3,  0, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.3.0) (u)"),
+    _I(5, 3,  3, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.3)"),
+    _I(5, 3,  3, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.3.3) (u)"),
+    _I(5, 3,  5, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.5)"),
+    _I(5, 3,  5, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.3.5) (u)"),
+    _I(5, 3,  6, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.6)"),
+    _I(5, 3,  6, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.3.6) (u)"),
+    _I(5, 3,  7, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.7)"),
+    _I(5, 3,  7, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.3.7) (u)"),
+    _I(5, 3,  8, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.8)"),
+    _I(5, 3,  8, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.3.8) (u)"),
+    _I(5, 3,  9, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.9)"),
+    _I(5, 3,  9, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.3.9) (u)"),
+    _I(5, 3, 10, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.3.10)"),
+    _I(5, 3, 10, 0, IVF.UTF_16): # noqa
+    (1, B"Inno Setup Setup Data (5.3.10) (u)"),
+    _I(5, 3, 10, 1, IVF.NoFlag): # noqa
+    (0, B""),
+    _I(5, 3, 10, 1, IVF.UTF_16): # noqa
+    (0, B""),
+    _I(5, 4,  2, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.4.2)"),
+    _I(5, 4,  2, 0, IVF.UTF_16): # noqa
+    (1, B"Inno Setup Setup Data (5.4.2) (u)"),
+    _I(5, 4,  2, 1, IVF.NoFlag): # noqa
+    (0, B""),
+    _I(5, 4,  2, 1, IVF.UTF_16): # noqa
+    (0, B""),
+    _I(5, 5,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.5.0)"),
+    _I(5, 5,  0, 0, IVF.UTF_16): # noqa
+    (1, B"Inno Setup Setup Data (5.5.0) (u)"),
+    _I(5, 5,  0, 1, IVF.NoFlag): # noqa
+    (0, B""),
+    _I(5, 5,  0, 1, IVF.UTF_16): # noqa
+    (0, B""),
+    _I(5, 5,  6, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.5.6)"),
+    _I(5, 5,  6, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.5.6) (u)"),
+    _I(5, 5,  7, 0, IVF.NoFlag): # noqa
+    (1, B"Inno Setup Setup Data (5.5.7)"),
+    _I(5, 5,  7, 0, IVF.UTF_16): # noqa
+    (1, B"Inno Setup Setup Data (5.5.7) (u)"),
+    _I(5, 5,  7, 0, IVF.UTF_16): # noqa
+    (1, B"Inno Setup Setup Data (5.5.7) (U)"),
+    _I(5, 5,  7, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.5.8) (u)"),
+    _I(5, 5,  7, 1, IVF.NoFlag): # noqa
+    (1, B""),
+    _I(5, 5,  7, 1, IVF.UTF_16): # noqa
+    (1, B""),
+    _I(5, 6,  0, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.6.0)"),
+    _I(5, 6,  0, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.6.0) (u)"),
+    _I(5, 6,  2, 0, IVF.NoFlag): # noqa
+    (0, B"Inno Setup Setup Data (5.6.2)"),
+    _I(5, 6,  2, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (5.6.2) (u)"),
+    _I(6, 0,  0, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (6.0.0) (u)"),
+    _I(6, 1,  0, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (6.1.0) (u)"),
+    _I(6, 3,  0, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (6.3.0)"),
+    _I(6, 4,  0, 0, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (6.4.0)"),
+    _I(6, 4,  0, 1, IVF.UTF_16): # noqa
+    (0, B"Inno Setup Setup Data (6.4.0.1)"),
+}
 
 
 class JsonStruct(Struct):
@@ -83,6 +397,15 @@ class JsonStruct(Struct):
         }
 
 
+class InnoStruct(JsonStruct):
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, codec: str = 'latin1'):
+        if version.unicode:
+            self._read_string = functools.partial(
+                reader.read_length_prefixed_utf16, bytecount=True)
+        else:
+            self._read_string = lambda: codecs.decode(reader.read_length_prefixed(), codec)
+
+
 class CheckSumType(enum.IntEnum):
     Missing = 0 # noqa
     Adler32 = 1 # noqa
@@ -101,8 +424,11 @@ class Flags(enum.IntFlag):
     Uninstallable               = enum.auto() # noqa
     CreateAppDir                = enum.auto() # noqa
     DisableDirPage              = enum.auto() # noqa
+    DisableDirExistsWarning     = enum.auto() # noqa
     DisableProgramGroupPage     = enum.auto() # noqa
     AllowNoIcons                = enum.auto() # noqa
+    AlwaysRestart               = enum.auto() # noqa
+    BackSolid                   = enum.auto() # noqa
     AlwaysUsePersonalGroup      = enum.auto() # noqa
     WindowVisible               = enum.auto() # noqa
     WindowShowCaption           = enum.auto() # noqa
@@ -113,6 +439,9 @@ class Flags(enum.IntFlag):
     Password                    = enum.auto() # noqa
     AllowRootDirectory          = enum.auto() # noqa
     DisableFinishedPage         = enum.auto() # noqa
+    AdminPrivilegesRequired     = enum.auto() # noqa
+    AlwaysCreateUninstallIcon   = enum.auto() # noqa
+    OverwriteUninstRegEntries   = enum.auto() # noqa
     ChangesAssociations         = enum.auto() # noqa
     CreateUninstallRegKey       = enum.auto() # noqa
     UsePreviousAppDir           = enum.auto() # noqa
@@ -163,6 +492,10 @@ class AutoBool(enum.IntEnum):
     No = 1
     Yes = 2
 
+    @classmethod
+    def From(cls, b: bool):
+        return AutoBool.Yes if b else AutoBool.No
+
 
 class WizardStyle(enum.IntEnum):
     Classic = 0
@@ -187,10 +520,10 @@ class SetupStyle(enum.IntEnum):
 
 
 class PrivilegesRequired(enum.IntEnum):
-    NoPrivileges = 0
-    PowerUserPrivileges = 1
-    AdminPriviliges = 2
-    LowestPrivileges = 3
+    Nothing = 0
+    PowerUser = 1
+    Admin = 2
+    Lowest = 3
 
 
 class PrivilegesRequiredOverrideAllowed(enum.IntEnum):
@@ -266,8 +599,9 @@ class StreamCompressionMethod(enum.IntEnum):
     LZMA1 = 2
 
 
-class StreamHeader(JsonStruct):
-    def __init__(self, reader: StructReader[memoryview], name: str, version: tuple[int, int, int]):
+class StreamHeader(InnoStruct):
+    def __init__(self, reader: StructReader[memoryview], name: str, version: InnoVersion):
+        super().__init__(reader, version)
         self.Name = name
         self.HeaderCrc = reader.u32()
         self.CompressedSize = size = reader.u32()
@@ -322,8 +656,7 @@ class TSetupOffsets(Struct):
 @dataclasses.dataclass
 class InnoFile:
     reader: StructReader[ByteStr]
-    version: tuple[int, int, int]
-    unicode: bool
+    version: InnoVersion
     meta: SetupDataEntry
     path: str = ""
     dupe: bool = False
@@ -332,6 +665,10 @@ class InnoFile:
     password_hash: bytes = B''
     password_salt: bytes = B''
     password_type: PasswordType = PasswordType.Nothing
+
+    @property
+    def unicode(self):
+        return self.version.unicode
 
     @property
     def compression(self):
@@ -406,59 +743,62 @@ class InnoStream:
         return self.header.Name
 
 
-class InnoStruct(JsonStruct):
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        if version < (4, 0, 0):
-            a, b, c = version
-            raise ValueError(F'Unsupported version {a}.{b}.{c}')
-        if unicode:
-            self._read_string = functools.partial(
-                reader.read_length_prefixed_utf16, bytecount=True)
-        else:
-            self._read_string = reader.read_length_prefixed_ascii
-
-
-class SetupAllowedArchitectures(str, enum.Enum):
-    Unknown = 'Unknown'
-    x86 = 'x86'
-    x64 = 'x64'
-    Arm32 = 'Arm32'
-    Arm64 = 'Arm64'
+class InstallMode(enum.IntEnum):
+    Normal     = enum.auto() # noqa
+    Silent     = enum.auto() # noqa
+    VerySilent = enum.auto() # noqa
 
 
 class SetupHeader(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
         read_string = self._read_string
 
-        self.AppName = read_string()
-        self.AppVersionedName = read_string()
-        self.AppId = read_string()
-        self.AppCopyright = read_string()
-        self.AppPublisher = read_string()
-        self.AppPublisherUrl = read_string()
+        if version < (1, 3, 0):
+            # skip uncompressed size
+            reader.u32()
+
+        if True:
+            self.AppName = read_string()
+            self.AppVersionedName = read_string()
+        if version >= (1, 3, 0):
+            self.AppId = read_string()
+        if True:
+            self.AppCopyright = read_string()
+        if version >= (1, 3, 0):
+            self.AppPublisher = read_string()
+            self.AppPublisherUrl = read_string()
         if version >= (5, 1, 13):
             self.AppSupportPhone = read_string()
-        self.AppSupportUrl = read_string()
-        self.AppUpdatesUrl = read_string()
-        self.AppVersion = read_string()
-        self.DefaultDirName = read_string()
-        self.DefaultGroupName = read_string()
-        self.BaseFilename = read_string()
-        if version < (5, 2, 5):
+        if version >= (1, 3, 0):
+            self.AppSupportUrl = read_string()
+            self.AppUpdatesUrl = read_string()
+            self.AppVersion = read_string()
+        if True:
+            self.DefaultDirName = read_string()
+            self.DefaultGroupName = read_string()
+        if version < (3, 0, 0):
+            self.UninstallIconName = reader.read_length_prefixed(encoding='cp1252')
+        if True:
+            self.BaseFilename = read_string()
+        if (1, 3, 0) <= version < (5, 2, 5):
             self._license = read_string()
-            self.InfoBefore = read_string()
-            self.InfoAfter = read_string()
-        self.UninstallFilesDir = read_string()
-        self.UninstallName = read_string()
-        self.UninstallIcon = read_string()
-        self.AppMutex = read_string()
+            self.InfoHead = read_string()
+            self.InfoTail = read_string()
+        if version >= (1, 3, 3):
+            self.UninstallFilesDir = read_string()
+        if version >= (1, 3, 6):
+            self.UninstallName = read_string()
+            self.UninstallIcon = read_string()
+        if version >= (1, 3, 14):
+            self.AppMutex = read_string()
         if version >= (3, 0, 0):
             self.DefaultUsername = read_string()
             self.DefaultOrganisation = read_string()
-        self.DefaultSerial = read_string()
-        if version < (5, 2, 5):
+        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 6, 1):
+            self.DefaultSerial = read_string()
+        if (4, 0, 0) <= version < (5, 2, 5) or version.isx and version >= (1, 3, 24):
             self.CompiledCode = reader.read_length_prefixed()
         if version >= (4, 2, 4):
             self.AppReadmeFile = read_string()
@@ -477,32 +817,54 @@ class SetupHeader(InnoStruct):
             self.ChangesEnvironment = read_string()
             self.ChangesAssociations = read_string()
         if version >= (6, 3, 0):
-            self.ArchitecturesAllowed32 = SetupAllowedArchitectures(read_string())
-            self.ArchitecturesAllowed64 = SetupAllowedArchitectures(read_string())
+            self.ArchitecturesAllowed32 = read_string()
+            self.ArchitecturesAllowed64 = read_string()
         if version >= (5, 2, 5):
             self._license = reader.read_length_prefixed_ascii()
-            self.InfoBefore = reader.read_length_prefixed_ascii()
-            self.InfoAfter = reader.read_length_prefixed_ascii()
+            self.InfoHead = reader.read_length_prefixed_ascii()
+            self.InfoTail = reader.read_length_prefixed_ascii()
         if version >= (5, 2, 1) and version < (5, 3, 10):
             self.UninstallerSignature = reader.read_length_prefixed_ascii()
         if version >= (5, 2, 5):
             self.CompiledCode = reader.read_length_prefixed()
-            if self.CompiledCode and self.CompiledCode[:4] != B'IFPS':
-                raise ValueError('Invalid signature in compiled code.')
-        if not unicode:
-            self.Charset = reader.read(256 // 8)
 
-        self.LanguageCount = reader.u32()
+        if self.CompiledCode and self.CompiledCode[:4] != B'IFPS':
+            raise ValueError('Invalid signature in compiled code.')
+
+        if version >= (2, 0, 6) and version.ascii:
+            self.Charset = reader.read_flags(0x100)
+        else:
+            self.Charset = [False] * 0x100
+
+        if version >= (4, 0, 0):
+            self.LanguageCount = reader.u32()
+        elif version >= (2, 0, 1):
+            self.LanguageCount = 1
+        else:
+            self.LanguageCount = 0
 
         if version >= (4, 2, 1):
             self.MessageCount = reader.u32()
+        else:
+            self.MessageCount = 0
 
         if version >= (4, 1, 0):
             self.PermissionCount = reader.u32()
+        else:
+            self.PermissionCount = 0
 
-        self.TypeCount = reader.u32()
-        self.ComponentCount = reader.u32()
-        self.TaskCount = reader.u32()
+        if version >= (2, 0, 0) or version.isx:
+            self.TypeCount = reader.u32()
+            self.ComponentCount = reader.u32()
+        else:
+            self.TypeCount = 0
+            self.ComponentCount = 0
+
+        if version >= (2, 0, 0) or version.isx and version >= (1, 3, 17):
+            self.TaskCount = reader.u32()
+        else:
+            self.TaskCount = 0
+
         self.DirectoryCount = reader.u32()
         self.FileCount = reader.u32()
         self.DataEntryCount = reader.u32()
@@ -514,14 +876,20 @@ class SetupHeader(InnoStruct):
         self.RunEntryCount = reader.u32()
         self.UninstallRunEntryCount = reader.u32()
 
-        self.MinimumWindowsVersion = WindowsVersion(reader)
-        self.MaximumWindowsVersion = WindowsVersion(reader)
+        if version < (1, 3, 0):
+            _license_len = reader.u32()
+            _infhead_len = reader.u32()
+            _inftail_len = reader.u32()
 
-        self.BackColor1 = reader.u32()
-        self.BackColor2 = reader.u32()
+        self.MinimumWindowsVersion = WindowsVersion(reader, version)
+        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+
+        self.BackColor1 = reader.u32() if (0, 0, 0) <= version < (6, 4, 0, 1) else 0
+        self.BackColor2 = reader.u32() if (1, 3, 3) <= version < (6, 4, 0, 1) else 0
+
         if version < (5, 5, 7):
             self.ImageBackColor = reader.u32()
-        if version < (5, 0, 4):
+        if (2, 0, 0) <= version < (5, 0, 4) or version.isx:
             self.SmallImageBackColor = reader.u32()
         if version >= (6, 0, 0):
             self.WizardStyle = WizardStyle(reader.u8())
@@ -557,17 +925,49 @@ class SetupHeader(InnoStruct):
         else:
             self.PasswordSalt = None
 
-        self.ExtraDiskSpace = reader.i64()
-        self.SlicesPerDisk = reader.u32()
-        if version < (5, 0, 0):
-            self.InstallVerbosity = reader.u8()
-        self.UninstallLogMode = UninstallLogMode(reader.u8())
-        if version < (5, 0, 0):
+        if version >= (4, 0, 0):
+            self.ExtraDiskSpace = reader.i64()
+            self.SlicesPerDisk = reader.u32()
+        else:
+            self.ExtraDiskSpace = reader.u32()
+            self.SlicesPerDisk = 1
+
+        if (2, 0, 0) <= version < (5, 0, 0):
+            self.InstallMode = _enum(InstallMode, reader.u8(), InstallMode.Normal)
+        else:
+            self.InstallMode = InstallMode.Normal
+        if version >= (1, 3, 0):
+            self.UninstallLogMode = UninstallLogMode(reader.u8())
+        else:
+            self.UninstallLogMode = UninstallLogMode.New
+
+        if version >= (5, 0, 0):
+            self.SetupStyle = SetupStyle.Modern
+        elif (2, 0, 0) <= version or version.isx and version >= (1, 3, 13):
             self.SetupStyle = SetupStyle(reader.u8())
-        self.DirExistsWarning = AutoBool(reader.u8())
-        self.PrivilegesRequired = PrivilegesRequired(reader.u8())
+        else:
+            self.SetupStyle = SetupStyle.Classic
+
+        if version >= (1, 3, 6):
+            self.DirExistsWarning = AutoBool(reader.u8())
+        else:
+            self.DirExistsWarning = AutoBool.Auto
+        if version.isx or (2, 0, 10) <= version < (3, 0, 0):
+            self.CodeLineOffset = reader.u32()
+
+        self.Flags = Flags.Empty
+
+        if (3, 0, 0) <= version < (3, 0, 3):
+            val = AutoBool(reader.u8())
+            if val == AutoBool.Auto:
+                self.Flags |= Flags.RestartIfNeededByRun
+            elif val == AutoBool.Yes:
+                self.Flags |= Flags.AlwaysRestart
+
+        if version >= (5, 3, 7) or version.isx and version >= (3, 0, 3):
+            self.PrivilegesRequired = PrivilegesRequired(reader.u8())
         if version >= (5, 7, 0):
-            self.PriilegesRequiredOverrideAllowed = PrivilegesRequiredOverrideAllowed(reader.u8())
+            self.PrivilegesRequiredOverrideAllowed = PrivilegesRequiredOverrideAllowed(reader.u8())
         if version >= (4, 0, 10):
             self.ShowLanguageDialog = AutoBool(reader.u8())
             self.LanguageDetection = LanguageDetection(reader.u8())
@@ -592,7 +992,7 @@ class SetupHeader(InnoStruct):
             self.ArchitecturesAllowed = Architecture.All
             self.ArchitecturesInstalled64 = Architecture.All
 
-        if version >= (5, 2, 1) and version < (5, 3, 10):
+        if (5, 2, 1) <= version < (5, 3, 10):
             self.UninstallerOriginalSize = reader.u32()
             self.UninstallheaderCrc = reader.u32()
         if version >= (5, 3, 3):
@@ -602,6 +1002,9 @@ class SetupHeader(InnoStruct):
             self.UninstallDisplaySize = reader.u64()
         elif version >= (5, 3, 6):
             self.UninstallDisplaySize = reader.u32()
+        else:
+            self.UninstallDisplaySize = 0
+
         flags = []
         flags.append(Flags.DisableStartupPrompt)
         if version < (5, 3, 10):
@@ -609,8 +1012,15 @@ class SetupHeader(InnoStruct):
         flags.append(Flags.CreateAppDir)
         if version < (5, 3, 3):
             flags.append(Flags.DisableDirPage)
+        if version < (1, 3, 6):
+            flags.append(Flags.DisableDirExistsWarning)
+        if version < (5, 3, 3):
             flags.append(Flags.DisableProgramGroupPage)
         flags.append(Flags.AllowNoIcons)
+        if version < (3, 0, 0) or version >= (3, 0, 3):
+            flags.append(Flags.AlwaysRestart)
+        if version < (1, 3, 3):
+            flags.append(Flags.BackSolid)
         flags.append(Flags.AlwaysUsePersonalGroup)
         flags.append(Flags.WindowVisible)
         flags.append(Flags.WindowShowCaption)
@@ -622,10 +1032,20 @@ class SetupHeader(InnoStruct):
         flags.append(Flags.Password)
         flags.append(Flags.AllowRootDirectory)
         flags.append(Flags.DisableFinishedPage)
-        if version < (5, 6, 1):
-            flags.append(Flags.ChangesAssociations)
+
+        if version.bits > 16:
+            if version < (3, 0, 4):
+                flags.append(Flags.AdminPrivilegesRequired)
+            if version < (3, 0, 0):
+                flags.append(Flags.AlwaysCreateUninstallIcon)
+            if version < (1, 3, 6):
+                flags.append(Flags.OverwriteUninstRegEntries)
+            if version < (5, 6, 1):
+                flags.append(Flags.ChangesAssociations)
+
         if version < (5, 3, 8):
             flags.append(Flags.CreateUninstallRegKey)
+
         flags.append(Flags.UsePreviousAppDir)
         flags.append(Flags.BackColorHorizontal)
         flags.append(Flags.UsePreviousGroup)
@@ -662,7 +1082,7 @@ class SetupHeader(InnoStruct):
             flags.append(Flags.EncryptionUsed)
         if version >= (5, 0, 4) and version < (5, 6, 1):
             flags.append(Flags.ChangesEnvironment)
-        if version >= (5, 1, 7) and not unicode:
+        if version >= (5, 1, 7) and version.ascii:
             flags.append(Flags.ShowUndisplayableLanguages)
         if version >= (5, 1, 13):
             flags.append(Flags.SetupLogging)
@@ -687,25 +1107,48 @@ class SetupHeader(InnoStruct):
 
         flagsize, _r = divmod(len(flags), 8)
         flagsize += int(bool(_r))
-        bytecheck = reader.peek(flagsize + 1 + 4 + 1)
+        bytecheck = bytes(reader.peek(flagsize + 1 + 4 + 1))
 
         if bytecheck[0] == 0:
             if bytecheck[~0] != 0 or bytecheck[~3:~0] == B'\0\0\0':
                 reader.u8()
 
-        self.Flags = Flags.Empty
-
         for flag in flags:
             if reader.read_bit():
                 self.Flags |= flag
 
+        if version < (3, 0, 4):
+            self.PrivilegesRequired = PrivilegesRequired.Admin if (
+                self.Flags & Flags.AdminPrivilegesRequired
+            ) else PrivilegesRequired.Nothing
+
+        if version < (4, 0, 10):
+            self.ShowLanguageDialog = AutoBool.From(
+                self.Flags & Flags.ShowLanguageDialog)
+            self.LanguageDetection = LanguageDetection.Locale if (
+                self.Flags & Flags.DetectLanguageUsingLocale
+            ) else LanguageDetection.UI
+
         if version < (4, 1, 5):
-            if self.Flags & Flags.BzipUsed:
-                self.CompressionMethod = CompressionMethod.Bzip2
-            else:
-                self.CompressionMethod = CompressionMethod.ZLib
+            self.CompressionMethod = CompressionMethod.Bzip2 if (
+                self.Flags & Flags.BzipUsed
+            ) else CompressionMethod.ZLib
+
+        if version < (5, 3, 3):
+            self.DisableDirPage = AutoBool.From(self.Flags & Flags.DisableDirPage)
+            self.DisableProgramGroupPage = AutoBool.From(self.Flags & Flags.DisableProgramGroupPage)
+
+        if version < (1, 3, 0):
+            def _read_ascii(n: int):
+                return codecs.decode(reader.read(_license_len), 'cp1252')
+            self._license = _read_ascii(_license_len)
+            self.InfoHead = _read_ascii(_infhead_len)
+            self.InfoTail = _read_ascii(_inftail_len)
 
         reader.byte_align()
+
+        if flagsize == 3:
+            reader.u8()
 
     def get_license(self):
         return self._license
@@ -752,31 +1195,37 @@ class SetupHeader(InnoStruct):
                 setattr(self, coded_string_attribute, new)
 
 
-class Version(JsonStruct):
-    def __init__(self, reader: StructReader[memoryview]):
-        self.Build = reader.u16()
+class Version(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
+        self.Build = reader.u16() if version >= (1, 3, 19) else 0
         self.Minor = reader.u8()
         self.Major = reader.u8()
 
 
-class WindowsVersion(JsonStruct):
-    def __init__(self, reader: StructReader[memoryview]):
-        self.WindowsVersion = Version(reader)
-        self.NtVersion = Version(reader)
-        self.ServicePackMinor = reader.u8()
-        self.ServicePackMajor = reader.u8()
+class WindowsVersion(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
+        self.WindowsVersion = Version(reader, version)
+        self.NtVersion = Version(reader, version)
+        (
+            self.ServicePackMinor,
+            self.ServicePackMajor,
+        ) = reader.read_struct('BB') if version >= (1, 3, 19) else (0, 0)
 
 
 class LanguageId(JsonStruct):
     def __init__(self, reader: StructReader[memoryview]):
-        self.Value = reader.u32()
+        self.Value = reader.i32()
         self.Name = LCID.get(self.Value, None)
 
 
 class SetupLanguage(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, _: TSetup):
+        super().__init__(reader, version)
         read_string = self._read_string
 
         self.Name = read_string()
@@ -797,7 +1246,7 @@ class SetupLanguage(InnoStruct):
 
         if version < (4, 2, 2):
             self.Codepage = DEFAULT_CODEPAGE.get(self.LanguageId.Value, 'cp1252')
-        elif not unicode:
+        elif version.ascii:
             cp = reader.u32() or 1252
             self.Codepage = F'cp{cp}'
         else:
@@ -825,51 +1274,72 @@ class SetupLanguage(InnoStruct):
 
 class SetupMessage(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
-        read_string = self._read_string
-        self.EncodedName = read_string()
-        self.Value = read_string()
-        self.LanguageId = LanguageId(reader)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
+        self.EncodedName = self._read_string()
+        value = reader.read_length_prefixed()
+        language = reader.i32()
+        try:
+            codec = parent.Languages[language].Codepage
+        except IndexError:
+            pass
+        self.Value = codecs.decode(value, codec)
 
 
 class SetupType(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
         read_string = self._read_string
         self.Name = read_string()
         self.Description = read_string()
         if version >= (4, 0, 1):
             self.Languages = read_string()
-        self.Check = read_string()
-        self.MinimumWindowsVersion = WindowsVersion(reader)
-        self.MaximumWindowsVersion = WindowsVersion(reader)
-        self.TypeCode = reader.u8()
-        if version >= (4, 0, 1):
+        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
+            self.Check = read_string()
+        self.MinimumWindowsVersion = WindowsVersion(reader, version)
+        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+        self.CustsomTypeCode = reader.u8()
+        if version >= (4, 0, 3):
             self.SetupType = SetupTypeEnum(reader.u8())
-        self.Size = reader.u64()
+        else:
+            self.SetupType = SetupTypeEnum.User
+        if version >= (4, 0, 0):
+            self.Size = reader.u64()
+        else:
+            self.Size = reader.u32()
 
 
 class SetupComponent(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
         read_string = self._read_string
         self.Name = read_string()
         self.Description = read_string()
         self.Types = read_string()
         if version >= (4, 0, 1):
             self.Languages = read_string()
-        self.Check = read_string()
-        self.ExtraDiskSpace = reader.u64()
-        self.Level = reader.u32()
-        self.Used = reader.u8()
-        self.MinimumWindowsVersion = WindowsVersion(reader)
-        self.MaximumWindowsVersion = WindowsVersion(reader)
-        if version >= (4, 2, 3):
+        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
+            self.Check = read_string()
+        if version >= (4, 0, 0):
+            self.ExtraDiskSpace = reader.u64()
+        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
+            self.Level = reader.u32()
+        else:
+            self.Level = 0
+        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 4):
+            self.Used = bool(reader.u8())
+        else:
+            self.Used = True
+        if True:
+            self.MinimumWindowsVersion = WindowsVersion(reader, version)
+            self.MaximumWindowsVersion = WindowsVersion(reader, version)
             self.Flags = SetupFlags(reader.u8())
-        self.Size = reader.u64()
+        if version >= (4, 0, 0):
+            self.Size = reader.u64()
+        elif version >= (2, 0, 0) or version.isx and version >= (1, 3, 24):
+            self.Size = reader.u32()
 
 
 class SetupTaskFlags(enum.IntFlag):
@@ -883,32 +1353,43 @@ class SetupTaskFlags(enum.IntFlag):
 
 class SetupTask(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
         read_string = self._read_string
 
         self.Name = read_string()
         self.Description = read_string()
         self.GroupDescription = read_string()
         self.Components = read_string()
+
         if version >= (4, 0, 1):
             self.Languages = read_string()
-        self.Check = read_string()
-        self.Level = reader.u32()
-        self.Used = reader.u8()
-        self.MinimumWindowsVersion = WindowsVersion(reader)
-        self.MaximumWindowsVersion = WindowsVersion(reader)
+        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
+            self.Check = read_string()
+        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
+            self.Level = reader.u32()
+        else:
+            self.Level = 0
+        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 4):
+            self.Used = bool(reader.u8())
+        else:
+            self.Used = True
+        if True:
+            self.MinimumWindowsVersion = WindowsVersion(reader, version)
+            self.MaximumWindowsVersion = WindowsVersion(reader, version)
 
         self.Flags = SetupTaskFlags.Empty
 
         def flagbit(f):
             self.Flags |= f if reader.read_bit() else 0
 
-        flagbit(SetupTaskFlags.Exclusive)
-        flagbit(SetupTaskFlags.Unchecked)
-        flagbit(SetupTaskFlags.Restart)
-        flagbit(SetupTaskFlags.CheckedOne)
-
+        if True:
+            flagbit(SetupTaskFlags.Exclusive)
+            flagbit(SetupTaskFlags.Unchecked)
+        if version >= (2, 0, 5):
+            flagbit(SetupTaskFlags.Restart)
+        if version >= (2, 0, 6):
+            flagbit(SetupTaskFlags.CheckedOne)
         if version >= (4, 2, 3):
             flagbit(SetupTaskFlags.DontInheritCheck)
 
@@ -917,15 +1398,19 @@ class SetupTask(InnoStruct):
 
 class SetupCondition(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
         read_string = self._read_string
-
-        self.Components = read_string()
-        self.Tasks = read_string()
+        if version >= (2, 0, 0) or version.isx and version >= (1, 3, 8):
+            self.Components = read_string()
+        if version >= (2, 0, 0) or version.isx and version >= (1, 3, 17):
+            self.Tasks = read_string()
         if version >= (4, 0, 1):
             self.Languages = read_string()
-        self.Check = read_string()
+        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
+            self.Check = read_string()
+        else:
+            self.Check = None
         if version >= (4, 1, 0):
             self.AfterInstall = read_string()
             self.BeforeInstall = read_string()
@@ -942,17 +1427,24 @@ class SetupDirectoryFlags(enum.IntFlag):
 
 class SetupDirectory(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
         read_string = self._read_string
 
-        self.Name = read_string()
-        self.Condition = SetupCondition(reader, version, unicode)
-        if version >= (4, 0, 11) and version < (4, 1, 0):
+        if version < (1, 3, 0):
+            self.UncompressedSize = reader.u32()
+        if True:
+            self.Name = read_string()
+            self.Condition = SetupCondition(reader, version, parent)
+
+        if (4, 0, 11) <= version < (4, 1, 0):
             self.Permissions = read_string()
-        self.Attributes = reader.u32()
-        self.MinimumWindowsVersion = WindowsVersion(reader)
-        self.MaximumWindowsVersion = WindowsVersion(reader)
+        if version >= (2, 0, 11):
+            self.Attributes = reader.u32()
+
+        self.MinimumWindowsVersion = WindowsVersion(reader, version)
+        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+
         if version >= (4, 1, 0):
             self.Permissions = reader.u16()
 
@@ -960,20 +1452,18 @@ class SetupDirectory(InnoStruct):
 
         def flagbit(f):
             self.Flags |= f if reader.read_bit() else 0
-
         flagbit(SetupDirectoryFlags.NeverUninstall)
         flagbit(SetupDirectoryFlags.DeleteAfterInstall)
         flagbit(SetupDirectoryFlags.AlwaysUninstall)
         flagbit(SetupDirectoryFlags.SetNtfsCompression)
         flagbit(SetupDirectoryFlags.UnsetNtfsCompression)
-
         reader.byte_align()
 
 
 class SetupPermission(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
         self.Permission = reader.read_length_prefixed()
 
 
@@ -986,6 +1476,7 @@ class SetupFileFlags(enum.IntFlag):
     RegisterServer                     = enum.auto() # noqa
     RegisterTypeLib                    = enum.auto() # noqa
     SharedFile                         = enum.auto() # noqa
+    IsReadmeFile                       = enum.auto() # noqa
     CompareTimeStamp                   = enum.auto() # noqa
     FontIsNotTrueType                  = enum.auto() # noqa
     SkipIfSourceDoesntExist            = enum.auto() # noqa
@@ -1019,52 +1510,91 @@ class SetupFileType(enum.IntEnum):
     RegSvrExe = 2
 
 
+class SetupFileCopyMode(enum.IntEnum):
+	Normal                  = enum.auto() # noqa
+	IfDoesntExist           = enum.auto() # noqa
+	AlwaysOverwrite         = enum.auto() # noqa
+	AlwaysSkipIfSameOrOlder = enum.auto() # noqa
+
+
 class SetupFile(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.codec)
         read_string = self._read_string
 
-        self.Source = read_string()
-        self.Destination = read_string()
-        self.InstallFontName = read_string()
+        if version < (1, 3, 0):
+            self.UncompressedSize = reader.u32()
+        if True:
+            self.Source = read_string()
+            self.Destination = read_string()
+            self.InstallFontName = read_string()
         if version >= (5, 2, 5):
             self.StrongAssemblyName = read_string()
-        self.Condition = SetupCondition(reader, version, unicode)
-        self.MinimumWindowsVersion = WindowsVersion(reader)
-        self.MaximumWindowsVersion = WindowsVersion(reader)
+
+        self.Condition = SetupCondition(reader, version, parent)
+
+        self.MinimumWindowsVersion = WindowsVersion(reader, version)
+        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+
         self.Location = reader.u32()
         self.Attributes = reader.u32()
-        self.ExternalSize = reader.u64()
-        if version >= (4, 1, 0):
-            self.Permissions = reader.u16()
+        self.ExternalSize = reader.u64() if version >= (4, 0, 0) else reader.u32()
 
         self.Flags = SetupFileFlags.Empty
+
+        if version < (3, 0, 5):
+            copy = _enum(SetupFileCopyMode, reader.u8(), SetupFileCopyMode.Normal)
+            if copy == SetupFileCopyMode.AlwaysSkipIfSameOrOlder:
+                pass
+            elif copy == SetupFileCopyMode.Normal:
+                self.Flags |= SetupFileFlags.PromptIfOlder
+            elif copy == SetupFileCopyMode.IfDoesntExist:
+                self.Flags |= SetupFileFlags.OnlyIfDoesntExist | SetupFileFlags.PromptIfOlder
+            elif copy == SetupFileCopyMode.AlwaysOverwrite:
+                self.Flags |= SetupFileFlags.IgnoreVersion | SetupFileFlags.PromptIfOlder
+
+        if version >= (4, 1, 0):
+            self.Permissions = reader.u16()
 
         def flagbit(f):
             self.Flags |= f if reader.read_bit() else 0
 
-        flagbit(SetupFileFlags.ConfirmOverwrite)
-        flagbit(SetupFileFlags.NeverUninstall)
-        flagbit(SetupFileFlags.RestartReplace)
-        flagbit(SetupFileFlags.DeleteAfterInstall)
-        flagbit(SetupFileFlags.RegisterServer)
-        flagbit(SetupFileFlags.RegisterTypeLib)
-        flagbit(SetupFileFlags.SharedFile)
-        flagbit(SetupFileFlags.CompareTimeStamp)
-        flagbit(SetupFileFlags.FontIsNotTrueType)
-        flagbit(SetupFileFlags.SkipIfSourceDoesntExist)
-        flagbit(SetupFileFlags.OverwriteReadOnly)
-        flagbit(SetupFileFlags.OverwriteSameVersion)
-        flagbit(SetupFileFlags.CustomDestName)
-        flagbit(SetupFileFlags.OnlyIfDestFileExists)
-        flagbit(SetupFileFlags.NoRegError)
-        flagbit(SetupFileFlags.UninsRestartDelete)
-        flagbit(SetupFileFlags.OnlyIfDoesntExist)
-        flagbit(SetupFileFlags.IgnoreVersion)
-        flagbit(SetupFileFlags.PromptIfOlder)
-        flagbit(SetupFileFlags.DontCopy)
+        flagstart = reader.tell()
 
+        if True:
+            flagbit(SetupFileFlags.ConfirmOverwrite)
+            flagbit(SetupFileFlags.NeverUninstall)
+            flagbit(SetupFileFlags.RestartReplace)
+            flagbit(SetupFileFlags.DeleteAfterInstall)
+        if version.bits > 16:
+            flagbit(SetupFileFlags.RegisterServer)
+            flagbit(SetupFileFlags.RegisterTypeLib)
+            flagbit(SetupFileFlags.SharedFile)
+        if version < (2, 0, 0) and not version.isx:
+            flagbit(SetupFileFlags.IsReadmeFile)
+        if True:
+            flagbit(SetupFileFlags.CompareTimeStamp)
+            flagbit(SetupFileFlags.FontIsNotTrueType)
+        if version >= (1, 2, 5):
+            flagbit(SetupFileFlags.SkipIfSourceDoesntExist)
+        if version >= (1, 2, 6):
+            flagbit(SetupFileFlags.OverwriteReadOnly)
+        if version >= (1, 3, 21):
+            flagbit(SetupFileFlags.OverwriteSameVersion)
+            flagbit(SetupFileFlags.CustomDestName)
+        if version >= (1, 3, 25):
+            flagbit(SetupFileFlags.OnlyIfDestFileExists)
+        if version >= (2, 0, 5):
+            flagbit(SetupFileFlags.NoRegError)
+        if version >= (3, 0, 1):
+            flagbit(SetupFileFlags.UninsRestartDelete)
+        if version >= (3, 0, 5):
+            flagbit(SetupFileFlags.OnlyIfDoesntExist)
+            flagbit(SetupFileFlags.IgnoreVersion)
+            flagbit(SetupFileFlags.PromptIfOlder)
+        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 6, 1):
+            flagbit(SetupFileFlags.DontCopy)
         if version >= (4, 0, 5):
             flagbit(SetupFileFlags.UninsRemoveReadOnly)
         if version >= (4, 1, 8):
@@ -1088,21 +1618,25 @@ class SetupFile(InnoStruct):
             flagbit(SetupFileFlags.GacInstall)
 
         reader.byte_align()
+
+        if reader.tell() - flagstart == 3:
+            reader.u8()
+
         self.Type = SetupFileType(reader.u8())
 
 
 class TSetup(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
-        self.Header = h = SetupHeader(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
+        self.Header = h = SetupHeader(reader, version)
 
         def _array(count: int, parser: Type[_T]) -> List[_T]:
-            return [parser(reader, version, unicode) for _ in range(count)]
+            return [parser(reader, version, self) for _ in range(count)]
 
         self.Languages = _array(h.LanguageCount, SetupLanguage)
 
-        if not unicode:
+        if version.ascii:
             h.recode_strings(self.Languages[0].Codepage)
 
         # if version < INNO_VERSION(4, 0, 0):
@@ -1126,6 +1660,15 @@ class TSetup(InnoStruct):
 
         # if version >= INNO_VERSION(4, 0, 0):
         #  load_wizard_and_decompressor
+
+    @property
+    def codec(self):
+        try:
+            language = self.Languages[0]
+        except IndexError:
+            return 'latin1'
+        else:
+            return language.Codepage
 
 
 class SetupDataEntryFlags(enum.IntFlag):
@@ -1153,8 +1696,8 @@ class SetupSignMode(enum.IntEnum):
 
 class SetupDataEntry(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
         self.FirstSlice = reader.u32()
         self.LastSlice = reader.u32()
         self.ChunkOffset = reader.u32()
@@ -1229,11 +1772,11 @@ class SetupDataEntry(InnoStruct):
 
 class TData(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: tuple[int, int, int], unicode: bool):
-        super().__init__(reader, version, unicode)
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
         self.entries: list[SetupDataEntry] = []
         while not reader.eof:
-            self.entries.append(SetupDataEntry(reader, version, unicode))
+            self.entries.append(SetupDataEntry(reader, version))
 
 
 class xtinno(ArchiveUnit):
@@ -1267,24 +1810,25 @@ class xtinno(ArchiveUnit):
         inno.seek(meta.setup1)
         files_reader = StructReader(inno.read(files_len))
 
-        header = bytes(inno.read(64))
-        _magic = re.match(
-            RB'^(.*?)\((\d+\.\d+\.\d+)\)(?:\s{0,32}\((u)\))?',
-            header)
-        if _magic is None:
-            name, _, _rest = header.partition(b'\0')
-            if any(_rest):
-                name = header.hex()
-            error = F'unable to parse header identifier "{name}"'
-            if self.leniency < 1:
-                raise ValueError(error)
-            version = _DEFAULT_INNO_VERSION
-            unicode = True
-            _dotted = '.'.join(str(v) for v in version)
-            self.log_warn(F'{error}; attempting to parse as v{_dotted}u')
-        else:
-            version = tuple(map(int, _magic.group(2).split(B'.')))
-            unicode = bool(_magic.group(3))
+        header = bytes(inno.read(16))
+
+        try:
+            version = InnoVersion.ParseLegacy(header)
+        except ValueError:
+            header += bytes(inno.read(64 - 16))
+            try:
+                version = InnoVersion.Parse(header)
+            except ValueError:
+                name, _, _rest = header.partition(b'\0')
+                if any(_rest):
+                    name = header.hex()
+                error = F'unable to parse header identifier "{name}"'
+                if self.leniency < 1:
+                    raise ValueError(error)
+                version = _DEFAULT_INNO_VERSION
+                self.log_warn(F'{error}; attempting to parse as {version!s}')
+        finally:
+            self.log_debug(F'inno {version!s}')
 
         for name in self._STREAM_NAMES:
             stream = InnoStream(StreamHeader(inno, name, version))
@@ -1304,13 +1848,13 @@ class xtinno(ArchiveUnit):
         self.log_debug('parsing stream 1 (TData)')
         stream1 = self.read_stream(streams[1])
         yield self._pack(streams[1].name, None, stream1)
-        stream1 = TData(memoryview(stream1), version, unicode)
+        stream1 = TData(memoryview(stream1), version)
         with BytesAsStringEncoder as encoder:
             yield self._pack(F'{streams[1].name}.json', None,
                 encoder.dumps(stream1.json()).encode(self.codec))
 
         for file_metadata in stream1.entries:
-            file = InnoFile(files_reader, version, unicode, file_metadata)
+            file = InnoFile(files_reader, version, file_metadata)
             files.append(file)
             if password or not file.encrypted or not file.size:
                 continue
@@ -1320,7 +1864,7 @@ class xtinno(ArchiveUnit):
         self.log_debug('parsing stream 0 (TSetup)')
         stream0 = self.read_stream(streams[0])
         yield self._pack(streams[0].name, None, stream0)
-        stream0 = TSetup(memoryview(stream0), version, unicode)
+        stream0 = TSetup(memoryview(stream0), version)
         with BytesAsStringEncoder as encoder:
             yield self._pack(F'{streams[0].name}.json', None,
                 encoder.dumps(stream0.json()).encode(self.codec))
@@ -1375,11 +1919,10 @@ class xtinno(ArchiveUnit):
                 files[info.Location].path = F'{path}[{k}]'
 
         codec = stream0.Languages[0].Codepage
-        if unicode:
+        if version.unicode:
             codec = 'latin1'
-        a, b, c, d = *version, ("u" if unicode else "a")
         self.log_info(
-            F'inno v{a}.{b}.{c:02d}{d} '
+            F'inno {version!s} '
             F'compression:{stream0.Header.CompressionMethod.name} '
             F'codepage:{codec} '
             F'password:{stream0.Header.PasswordType.name} '

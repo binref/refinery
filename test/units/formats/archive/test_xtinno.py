@@ -27,3 +27,15 @@ class TestInnoExtractor(TestUnitBase):
             | str
         )
         self.assertEqual(test, 'Inno Download Plugin')
+
+    def test_v_6_3_00(self):
+        test = (
+            self.download_sample('eeafd3fe2280e065aac87ca8b210be5873be5fe1f51ca4156d12bcf4f0d1eb1e')
+            | self.load('script.bin')
+            | self.ldu('ifpsstr')
+                [ self.ldu('iffp', 'url')
+                | self.ldu('urlfix')
+                | self.ldu('dedup')
+            ]| str
+        )
+        self.assertEqual(test, 'ht''tps:''//mealkittens''.''cfd/exte.php')
