@@ -30,6 +30,8 @@ class xt(ArchiveUnit):
         """
         from refinery.units.formats.archive.xtinno import xtinno
         yield xtinno
+        from refinery.units.formats.winreg import winreg
+        yield winreg
         from refinery.units.formats.office.xtone import xtone
         yield xtone
         from refinery.units.formats.archive.xtgz import xtgz
