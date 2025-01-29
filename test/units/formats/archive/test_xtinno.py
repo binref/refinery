@@ -39,3 +39,20 @@ class TestInnoExtractor(TestUnitBase):
             ]| str
         )
         self.assertEqual(test, 'ht''tps:''//mealkittens''.''cfd/exte.php')
+
+    def test_v_5_2_01(self):
+        test = (
+            self.download_sample('0c9ffd51196d71bba19a708bb64224be87c8fceb0b22b71262080c1055b5a642')
+            | self.load('arrow.x')
+            | str
+        )
+        self.assertIn('6f0d123b-bad2-4167-a0d0-80224f25fabb', test)
+
+    def test_v_5_5_07(self):
+        test = (
+            self.download_sample('9271acdc528deb7d971f742c94d772b1f408b5db00ae949f79221a3545f41314')
+            | self.load('History.txt')
+            | str
+        )
+        self.assertIn('5, UltraISO 4.1 (July 28, 2002)', test)
+        

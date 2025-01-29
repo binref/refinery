@@ -58,6 +58,10 @@ class InvalidPassword(ValueError):
             super().__init__('The given password is not correct.')
 
 
+class IncorrectVersion(RuntimeError):
+    pass
+
+
 class FileChunkOutOfBounds(LookupError):
     pass
 
@@ -135,246 +139,139 @@ class InnoVersion(NamedTuple):
             v = F'{v}/{b}'
         return v
 
+    def __repr__(self):
+        return str(self)
+
+    def is_ambiguous(self):
+        try:
+            return _IS_AMBIGUOUS[self]
+        except KeyError:
+            return True
+
 
 _I = InnoVersion
+
 _FILE_TIME_1970_01_01 = 116444736000000000
 _DEFAULT_INNO_VERSION = _I(5, 0, 0, 0, IVF.UTF_16)
 
-_KNOWN_VERSIONS_LEGACY = {
-    _I(1, 2, 10, 0, IVF.Legacy16): B'i1.2.10--16\x1a',
-    _I(1, 2, 10, 0, IVF.Legacy32): B'i1.2.10--32\x1a',
+_IS_AMBIGUOUS = {
+    _I(1, 2, 10, 0, IVF.Legacy16): False,
+    _I(1, 2, 10, 0, IVF.Legacy32): False,
+    _I(1, 3,  3, 0, IVF.NoFlag): False, # noqa
+    _I(1, 3,  9, 0, IVF.NoFlag): False, # noqa
+    _I(1, 3, 10, 0, IVF.NoFlag): False, # noqa
+    _I(1, 3, 10, 0, IVF.InnoSX): False, # noqa
+    _I(1, 3, 12, 1, IVF.InnoSX): False, # noqa
+    _I(1, 3, 21, 0, IVF.NoFlag): True,  # noqa
+    _I(1, 3, 21, 0, IVF.InnoSX): True,  # noqa
+    _I(1, 3, 24, 0, IVF.NoFlag): False, # noqa
+    _I(1, 3, 24, 0, IVF.InnoSX): False, # noqa
+    _I(1, 3, 25, 0, IVF.NoFlag): False, # noqa
+    _I(1, 3, 25, 0, IVF.InnoSX): False, # noqa
+    _I(2, 0,  0, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0,  1, 0, IVF.NoFlag): True,  # noqa
+    _I(2, 0,  2, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0,  5, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0,  6, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0,  6, 0, IVF.InnoSX): False, # noqa
+    _I(2, 0,  7, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0,  8, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0,  8, 0, IVF.InnoSX): False, # noqa
+    _I(2, 0, 10, 0, IVF.InnoSX): False, # noqa
+    _I(2, 0, 11, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0, 11, 0, IVF.InnoSX): False, # noqa
+    _I(2, 0, 17, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0, 17, 0, IVF.InnoSX): False, # noqa
+    _I(2, 0, 18, 0, IVF.NoFlag): False, # noqa
+    _I(2, 0, 18, 0, IVF.InnoSX): False, # noqa
+    _I(3, 0,  0, 0, IVF.NoFlag): False, # noqa
+    _I(3, 0,  1, 0, IVF.NoFlag): False, # noqa
+    _I(3, 0,  1, 0, IVF.InnoSX): False, # noqa
+    _I(3, 0,  3, 0, IVF.NoFlag): True,  # noqa
+    _I(3, 0,  3, 0, IVF.InnoSX): True,  # noqa
+    _I(3, 0,  4, 0, IVF.NoFlag): False, # noqa
+    _I(3, 0,  4, 0, IVF.InnoSX): False, # noqa
+    _I(3, 0,  5, 0, IVF.NoFlag): False, # noqa
+    _I(3, 0,  6, 1, IVF.InnoSX): False, # noqa
+    _I(4, 0,  0, 0, IVF.NoFlag): False, # noqa
+    _I(4, 0,  1, 0, IVF.NoFlag): False, # noqa
+    _I(4, 0,  3, 0, IVF.NoFlag): False, # noqa
+    _I(4, 0,  5, 0, IVF.NoFlag): False, # noqa
+    _I(4, 0,  9, 0, IVF.NoFlag): False, # noqa
+    _I(4, 0, 10, 0, IVF.NoFlag): False, # noqa
+    _I(4, 0, 11, 0, IVF.NoFlag): False, # noqa
+    _I(4, 1,  0, 0, IVF.NoFlag): False, # noqa
+    _I(4, 1,  2, 0, IVF.NoFlag): False, # noqa
+    _I(4, 1,  3, 0, IVF.NoFlag): False, # noqa
+    _I(4, 1,  4, 0, IVF.NoFlag): False, # noqa
+    _I(4, 1,  5, 0, IVF.NoFlag): False, # noqa
+    _I(4, 1,  6, 0, IVF.NoFlag): False, # noqa
+    _I(4, 1,  8, 0, IVF.NoFlag): False, # noqa
+    _I(4, 2,  0, 0, IVF.NoFlag): False, # noqa
+    _I(4, 2,  1, 0, IVF.NoFlag): False, # noqa
+    _I(4, 2,  2, 0, IVF.NoFlag): False, # noqa
+    _I(4, 2,  3, 0, IVF.NoFlag): True,  # noqa
+    _I(4, 2,  4, 0, IVF.NoFlag): False, # noqa
+    _I(4, 2,  5, 0, IVF.NoFlag): False, # noqa
+    _I(4, 2,  6, 0, IVF.NoFlag): False, # noqa
+    _I(5, 0,  0, 0, IVF.NoFlag): False, # noqa
+    _I(5, 0,  1, 0, IVF.NoFlag): False, # noqa
+    _I(5, 0,  3, 0, IVF.NoFlag): False, # noqa
+    _I(5, 0,  4, 0, IVF.NoFlag): False, # noqa
+    _I(5, 1,  0, 0, IVF.NoFlag): False, # noqa
+    _I(5, 1,  2, 0, IVF.NoFlag): False, # noqa
+    _I(5, 1,  7, 0, IVF.NoFlag): False, # noqa
+    _I(5, 1, 10, 0, IVF.NoFlag): False, # noqa
+    _I(5, 1, 13, 0, IVF.NoFlag): False, # noqa
+    _I(5, 2,  0, 0, IVF.NoFlag): False, # noqa
+    _I(5, 2,  1, 0, IVF.NoFlag): False, # noqa
+    _I(5, 2,  3, 0, IVF.NoFlag): False, # noqa
+    _I(5, 2,  5, 0, IVF.NoFlag): False, # noqa
+    _I(5, 2,  5, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3,  0, 0, IVF.NoFlag): False, # noqa
+    _I(5, 3,  0, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3,  3, 0, IVF.NoFlag): False, # noqa
+    _I(5, 3,  3, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3,  5, 0, IVF.NoFlag): False, # noqa
+    _I(5, 3,  5, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3,  6, 0, IVF.NoFlag): False, # noqa
+    _I(5, 3,  6, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3,  7, 0, IVF.NoFlag): False, # noqa
+    _I(5, 3,  7, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3,  8, 0, IVF.NoFlag): False, # noqa
+    _I(5, 3,  8, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3,  9, 0, IVF.NoFlag): False, # noqa
+    _I(5, 3,  9, 0, IVF.UTF_16): False, # noqa
+    _I(5, 3, 10, 0, IVF.NoFlag): True,  # noqa
+    _I(5, 3, 10, 0, IVF.UTF_16): True,  # noqa
+    _I(5, 3, 10, 1, IVF.NoFlag): False, # noqa
+    _I(5, 3, 10, 1, IVF.UTF_16): False, # noqa
+    _I(5, 4,  2, 0, IVF.NoFlag): True,  # noqa
+    _I(5, 4,  2, 0, IVF.UTF_16): True,  # noqa
+    _I(5, 4,  2, 1, IVF.NoFlag): False, # noqa
+    _I(5, 4,  2, 1, IVF.UTF_16): False, # noqa
+    _I(5, 5,  0, 0, IVF.NoFlag): True,  # noqa
+    _I(5, 5,  0, 0, IVF.UTF_16): True,  # noqa
+    _I(5, 5,  0, 1, IVF.NoFlag): False, # noqa
+    _I(5, 5,  0, 1, IVF.UTF_16): False, # noqa
+    _I(5, 5,  6, 0, IVF.NoFlag): False, # noqa
+    _I(5, 5,  6, 0, IVF.UTF_16): False, # noqa
+    _I(5, 5,  7, 0, IVF.NoFlag): True,  # noqa
+    _I(5, 5,  7, 0, IVF.UTF_16): True,  # noqa
+    _I(5, 5,  7, 1, IVF.NoFlag): True,  # noqa
+    _I(5, 5,  7, 1, IVF.UTF_16): True,  # noqa
+    _I(5, 6,  0, 0, IVF.NoFlag): False, # noqa
+    _I(5, 6,  0, 0, IVF.UTF_16): False, # noqa
+    _I(5, 6,  2, 0, IVF.NoFlag): False, # noqa
+    _I(5, 6,  2, 0, IVF.UTF_16): False, # noqa
+    _I(6, 0,  0, 0, IVF.UTF_16): False, # noqa
+    _I(6, 1,  0, 0, IVF.UTF_16): False, # noqa
+    _I(6, 3,  0, 0, IVF.UTF_16): False, # noqa
+    _I(6, 4,  0, 0, IVF.UTF_16): False, # noqa
+    _I(6, 4,  0, 1, IVF.UTF_16): False, # noqa
 }
 
-_KNOWN_VERSIONS_LEGACY = {
-    _I(1, 3,  3, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (1.3.3)"),
-    _I(1, 3,  9, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (1.3.9)"),
-    _I(1, 3, 10, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (1.3.10)"),
-    _I(1, 3, 10, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (1.3.10) with ISX (1.3.10)"),
-    _I(1, 3, 12, 1, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (1.3.12) with ISX (1.3.12.1)"),
-    _I(1, 3, 21, 0, IVF.NoFlag): # noqa
-    (1, B"Inno Setup Setup Data (1.3.21)"),
-    _I(1, 3, 21, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (1.3.21) with ISX (1.3.17)"),
-    _I(1, 3, 24, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (1.3.24)"),
-    _I(1, 3, 24, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (1.3.21) with ISX (1.3.24)"),
-    _I(1, 3, 25, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (1.3.25)"),
-    _I(1, 3, 25, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (1.3.25) with ISX (1.3.25)"),
-    _I(2, 0,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.0)"),
-    _I(2, 0,  1, 0, IVF.NoFlag): # noqa
-    (1, B"Inno Setup Setup Data (2.0.1)"),
-    _I(2, 0,  2, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.2)"),
-    _I(2, 0,  5, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.5)"),
-    _I(2, 0,  6, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.6a)"),
-    _I(2, 0,  6, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (2.0.6a) with ISX (2.0.3)"),
-    _I(2, 0,  7, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.7)"),
-    _I(2, 0,  8, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.8)"),
-    _I(2, 0,  8, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (2.0.8) with ISX (2.0.3)"),
-    _I(2, 0, 10, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (2.0.8) with ISX (2.0.10)"),
-    _I(2, 0, 11, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.11)"),
-    _I(2, 0, 11, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (2.0.11) with ISX (2.0.11)"),
-    _I(2, 0, 17, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.17)"),
-    _I(2, 0, 17, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (2.0.17) with ISX (2.0.11)"),
-    _I(2, 0, 18, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (2.0.18)"),
-    _I(2, 0, 18, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (2.0.18) with ISX (2.0.11)"),
-    _I(3, 0,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (3.0.0a)"),
-    _I(3, 0,  1, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (3.0.1)"),
-    _I(3, 0,  1, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (3.0.1) with ISX (3.0.0)"),
-    _I(3, 0,  3, 0, IVF.NoFlag): # noqa
-    (1, B"Inno Setup Setup Data (3.0.3)"),
-    _I(3, 0,  3, 0, IVF.InnoSX): # noqa
-    (0, B"Inno Setup Setup Data (3.0.3) with ISX (3.0.3)"),
-    _I(3, 0,  4, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (3.0.4)"),
-    _I(3, 0,  4, 0, IVF.InnoSX): # noqa
-    (0, B"My Inno Setup Extensions Setup Data (3.0.4)"),
-    _I(3, 0,  5, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (3.0.5)"),
-    _I(3, 0,  6, 1, IVF.InnoSX): # noqa
-    (0, B"My Inno Setup Extensions Setup Data (3.0.6.1)"),
-    _I(4, 0,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.0.0a)"),
-    _I(4, 0,  1, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.0.1)"),
-    _I(4, 0,  3, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.0.3)"),
-    _I(4, 0,  5, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.0.5)"),
-    _I(4, 0,  9, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.0.9)"),
-    _I(4, 0, 10, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.0.10)"),
-    _I(4, 0, 11, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.0.11)"),
-    _I(4, 1,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.1.0)"),
-    _I(4, 1,  2, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.1.2)"),
-    _I(4, 1,  3, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.1.3)"),
-    _I(4, 1,  4, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.1.4)"),
-    _I(4, 1,  5, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.1.5)"),
-    _I(4, 1,  6, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.1.6)"),
-    _I(4, 1,  8, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.1.8)"),
-    _I(4, 2,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.2.0)"),
-    _I(4, 2,  1, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.2.1)"),
-    _I(4, 2,  2, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.2.2)"),
-    _I(4, 2,  3, 0, IVF.NoFlag): # noqa
-    (1, B"Inno Setup Setup Data (4.2.3)"),
-    _I(4, 2,  4, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.2.4)"),
-    _I(4, 2,  5, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.2.5)"),
-    _I(4, 2,  6, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (4.2.6)"),
-    _I(5, 0,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.0.0)"),
-    _I(5, 0,  1, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.0.1)"),
-    _I(5, 0,  3, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.0.3)"),
-    _I(5, 0,  4, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.0.4)"),
-    _I(5, 1,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.1.0)"),
-    _I(5, 1,  2, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.1.2)"),
-    _I(5, 1,  7, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.1.7)"),
-    _I(5, 1, 10, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.1.10)"),
-    _I(5, 1, 13, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.1.13)"),
-    _I(5, 2,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.2.0)"),
-    _I(5, 2,  1, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.2.1)"),
-    _I(5, 2,  3, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.2.3)"),
-    _I(5, 2,  5, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.2.5)"),
-    _I(5, 2,  5, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.2.5) (u)"),
-    _I(5, 3,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.0)"),
-    _I(5, 3,  0, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.3.0) (u)"),
-    _I(5, 3,  3, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.3)"),
-    _I(5, 3,  3, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.3.3) (u)"),
-    _I(5, 3,  5, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.5)"),
-    _I(5, 3,  5, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.3.5) (u)"),
-    _I(5, 3,  6, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.6)"),
-    _I(5, 3,  6, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.3.6) (u)"),
-    _I(5, 3,  7, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.7)"),
-    _I(5, 3,  7, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.3.7) (u)"),
-    _I(5, 3,  8, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.8)"),
-    _I(5, 3,  8, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.3.8) (u)"),
-    _I(5, 3,  9, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.9)"),
-    _I(5, 3,  9, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.3.9) (u)"),
-    _I(5, 3, 10, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.3.10)"),
-    _I(5, 3, 10, 0, IVF.UTF_16): # noqa
-    (1, B"Inno Setup Setup Data (5.3.10) (u)"),
-    _I(5, 3, 10, 1, IVF.NoFlag): # noqa
-    (0, B""),
-    _I(5, 3, 10, 1, IVF.UTF_16): # noqa
-    (0, B""),
-    _I(5, 4,  2, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.4.2)"),
-    _I(5, 4,  2, 0, IVF.UTF_16): # noqa
-    (1, B"Inno Setup Setup Data (5.4.2) (u)"),
-    _I(5, 4,  2, 1, IVF.NoFlag): # noqa
-    (0, B""),
-    _I(5, 4,  2, 1, IVF.UTF_16): # noqa
-    (0, B""),
-    _I(5, 5,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.5.0)"),
-    _I(5, 5,  0, 0, IVF.UTF_16): # noqa
-    (1, B"Inno Setup Setup Data (5.5.0) (u)"),
-    _I(5, 5,  0, 1, IVF.NoFlag): # noqa
-    (0, B""),
-    _I(5, 5,  0, 1, IVF.UTF_16): # noqa
-    (0, B""),
-    _I(5, 5,  6, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.5.6)"),
-    _I(5, 5,  6, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.5.6) (u)"),
-    _I(5, 5,  7, 0, IVF.NoFlag): # noqa
-    (1, B"Inno Setup Setup Data (5.5.7)"),
-    _I(5, 5,  7, 0, IVF.UTF_16): # noqa
-    (1, B"Inno Setup Setup Data (5.5.7) (u)"),
-    _I(5, 5,  7, 0, IVF.UTF_16): # noqa
-    (1, B"Inno Setup Setup Data (5.5.7) (U)"),
-    _I(5, 5,  7, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.5.8) (u)"),
-    _I(5, 5,  7, 1, IVF.NoFlag): # noqa
-    (1, B""),
-    _I(5, 5,  7, 1, IVF.UTF_16): # noqa
-    (1, B""),
-    _I(5, 6,  0, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.6.0)"),
-    _I(5, 6,  0, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.6.0) (u)"),
-    _I(5, 6,  2, 0, IVF.NoFlag): # noqa
-    (0, B"Inno Setup Setup Data (5.6.2)"),
-    _I(5, 6,  2, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (5.6.2) (u)"),
-    _I(6, 0,  0, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (6.0.0) (u)"),
-    _I(6, 1,  0, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (6.1.0) (u)"),
-    _I(6, 3,  0, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (6.3.0)"),
-    _I(6, 4,  0, 0, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (6.4.0)"),
-    _I(6, 4,  0, 1, IVF.UTF_16): # noqa
-    (0, B"Inno Setup Setup Data (6.4.0.1)"),
-}
+_VERSIONS = sorted(_IS_AMBIGUOUS)
 
 
 class JsonStruct(Struct):
@@ -390,6 +287,8 @@ class JsonStruct(Struct):
                 return [option.name for option in v.__class__ if v & option == option]
             if isinstance(v, enum.IntEnum):
                 return v.name
+            if isinstance(v, memoryview):
+                return codecs.decode(v, 'latin1')
             return v
         return {
             k: _json(v) for k, v in self.__dict__.items()
@@ -403,7 +302,14 @@ class InnoStruct(JsonStruct):
             self._read_string = functools.partial(
                 reader.read_length_prefixed_utf16, bytecount=True)
         else:
-            self._read_string = lambda: codecs.decode(reader.read_length_prefixed(), codec)
+            def _read():
+                data = reader.read_length_prefixed()
+                try:
+                    return codecs.decode(data, codec)
+                except (LookupError, UnicodeDecodeError):
+                    # TODO
+                    return codecs.decode(data, 'latin1')
+            self._read_string = _read
 
 
 class CheckSumType(enum.IntEnum):
@@ -660,11 +566,18 @@ class InnoFile:
     meta: SetupDataEntry
     path: str = ""
     dupe: bool = False
-    tags: SetupFileFlags = 0
+    setup: Optional[SetupFile] = None
     compression_method: Optional[CompressionMethod] = None
     password_hash: bytes = B''
     password_salt: bytes = B''
     password_type: PasswordType = PasswordType.Nothing
+
+    @property
+    def tags(self):
+        if s := self.setup:
+            return s.Flags
+        else:
+            return SetupFileFlags.Empty
 
     @property
     def unicode(self):
@@ -715,17 +628,17 @@ class InnoFile:
     def check(self, data: ByteStr):
         t = self.checksum_type
         if t == CheckSumType.Missing:
-            return True
+            return None
         if t == CheckSumType.Adler32:
-            return self.checksum == zlib.adler32(data) & 0xFFFFFFFF
+            return zlib.adler32(data) & 0xFFFFFFFF
         if t == CheckSumType.CRC32:
-            return self.checksum == zlib.crc32(data) & 0xFFFFFFFF
+            return zlib.crc32(data) & 0xFFFFFFFF
         if t == CheckSumType.MD5:
-            return self.checksum == md5(data).digest()
+            return md5(data).digest()
         if t == CheckSumType.SHA1:
-            return self.checksum == sha1(data).digest()
+            return sha1(data).digest()
         if t == CheckSumType.SHA256:
-            return self.checksum == sha256(data).digest()
+            return sha256(data).digest()
         raise ValueError(F'Unknown checksum type: {t!r}')
 
 
@@ -733,6 +646,7 @@ class InnoFile:
 class InnoStream:
     header: StreamHeader
     blocks: list[CrcCompressedBlock] = dataclasses.field(default_factory=list)
+    data: Optional[bytearray] = None
 
     @property
     def compression(self):
@@ -753,7 +667,9 @@ class SetupHeader(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
         super().__init__(reader, version)
-        read_string = self._read_string
+
+        def read_string():
+            return reader.read_length_prefixed()
 
         if version < (1, 3, 0):
             # skip uncompressed size
@@ -783,9 +699,9 @@ class SetupHeader(InnoStruct):
         if True:
             self.BaseFilename = read_string()
         if (1, 3, 0) <= version < (5, 2, 5):
-            self._license = read_string()
-            self.InfoHead = read_string()
-            self.InfoTail = read_string()
+            self._license = reader.read_length_prefixed_ascii()
+            self.InfoHead = reader.read_length_prefixed_ascii()
+            self.InfoTail = reader.read_length_prefixed_ascii()
         if version >= (1, 3, 3):
             self.UninstallFilesDir = read_string()
         if version >= (1, 3, 6):
@@ -799,7 +715,7 @@ class SetupHeader(InnoStruct):
         if version >= (4, 0, 0) or version.isx and version >= (3, 0, 6, 1):
             self.DefaultSerial = read_string()
         if (4, 0, 0) <= version < (5, 2, 5) or version.isx and version >= (1, 3, 24):
-            self.CompiledCode = reader.read_length_prefixed()
+            self.CompiledCode = read_string()
         if version >= (4, 2, 4):
             self.AppReadmeFile = read_string()
             self.AppContact = read_string()
@@ -824,15 +740,15 @@ class SetupHeader(InnoStruct):
             self.InfoHead = reader.read_length_prefixed_ascii()
             self.InfoTail = reader.read_length_prefixed_ascii()
         if version >= (5, 2, 1) and version < (5, 3, 10):
-            self.UninstallerSignature = reader.read_length_prefixed_ascii()
+            self.UninstallerSignature = read_string()
         if version >= (5, 2, 5):
-            self.CompiledCode = reader.read_length_prefixed()
+            self.CompiledCode = read_string()
 
         if self.CompiledCode and self.CompiledCode[:4] != B'IFPS':
             raise ValueError('Invalid signature in compiled code.')
 
         if version >= (2, 0, 6) and version.ascii:
-            self.Charset = reader.read_flags(0x100)
+            self.Charset = reader.read_integer(0x100)
         else:
             self.Charset = [False] * 0x100
 
@@ -952,7 +868,7 @@ class SetupHeader(InnoStruct):
             self.DirExistsWarning = AutoBool(reader.u8())
         else:
             self.DirExistsWarning = AutoBool.Auto
-        if version.isx or (2, 0, 10) <= version < (3, 0, 0):
+        if version.isx and (2, 0, 10) <= version < (3, 0, 0):
             self.CodeLineOffset = reader.u32()
 
         self.Flags = Flags.Empty
@@ -964,7 +880,7 @@ class SetupHeader(InnoStruct):
             elif val == AutoBool.Yes:
                 self.Flags |= Flags.AlwaysRestart
 
-        if version >= (5, 3, 7) or version.isx and version >= (3, 0, 3):
+        if version >= (3, 0, 4) or version.isx and version >= (3, 0, 3):
             self.PrivilegesRequired = PrivilegesRequired(reader.u8())
         if version >= (5, 7, 0):
             self.PrivilegesRequiredOverrideAllowed = PrivilegesRequiredOverrideAllowed(reader.u8())
@@ -1187,12 +1103,12 @@ class SetupHeader(InnoStruct):
             'UninstallName',
         ]:
             try:
-                old: str = getattr(self, coded_string_attribute)
+                value: bytes = getattr(self, coded_string_attribute)
             except AttributeError:
                 continue
-            else:
-                new = old.encode('latin1').decode(codec)
-                setattr(self, coded_string_attribute, new)
+            if not isinstance(value, (bytes, bytearray, memoryview)):
+                raise RuntimeError(F'Attempting to decode {coded_string_attribute} which was already decoded.')
+            setattr(self, coded_string_attribute, codecs.decode(value, codec))
 
 
 class Version(InnoStruct):
@@ -1275,7 +1191,7 @@ class SetupLanguage(InnoStruct):
 class SetupMessage(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         self.EncodedName = self._read_string()
         value = reader.read_length_prefixed()
         language = reader.i32()
@@ -1283,13 +1199,17 @@ class SetupMessage(InnoStruct):
             codec = parent.Languages[language].Codepage
         except IndexError:
             pass
-        self.Value = codecs.decode(value, codec)
+        try:
+            self.Value = codecs.decode(value, codec)
+        except LookupError:
+            # TODO: This is a fallback
+            self.Value = codecs.decode(value, 'latin1')
 
 
 class SetupType(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
         self.Name = read_string()
         self.Description = read_string()
@@ -1313,7 +1233,7 @@ class SetupType(InnoStruct):
 class SetupComponent(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
         self.Name = read_string()
         self.Description = read_string()
@@ -1354,7 +1274,7 @@ class SetupTaskFlags(enum.IntFlag):
 class SetupTask(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
 
         self.Name = read_string()
@@ -1399,7 +1319,7 @@ class SetupTask(InnoStruct):
 class SetupCondition(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
         if version >= (2, 0, 0) or version.isx and version >= (1, 3, 8):
             self.Components = read_string()
@@ -1428,7 +1348,7 @@ class SetupDirectoryFlags(enum.IntFlag):
 class SetupDirectory(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
 
         if version < (1, 3, 0):
@@ -1463,7 +1383,7 @@ class SetupDirectory(InnoStruct):
 class SetupPermission(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         self.Permission = reader.read_length_prefixed()
 
 
@@ -1520,7 +1440,7 @@ class SetupFileCopyMode(enum.IntEnum):
 class SetupFile(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
-        super().__init__(reader, version, parent.codec)
+        super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
 
         if version < (1, 3, 0):
@@ -1635,9 +1555,21 @@ class TSetup(InnoStruct):
             return [parser(reader, version, self) for _ in range(count)]
 
         self.Languages = _array(h.LanguageCount, SetupLanguage)
+        _default_codec = 'cp1252'
+
+        if version.unicode:
+            self.Codec = 'utf-16le'
+        elif not self.Languages:
+            self.Codec = _default_codec
+        else:
+            self.Codec = self.Languages[0].Codepage
+            if any(l.Codepage == _default_codec for l in self.Languages):
+                self.Codec = _default_codec
 
         if version.ascii:
-            h.recode_strings(self.Languages[0].Codepage)
+            h.recode_strings(self.Codec)
+        else:
+            h.recode_strings('latin1')
 
         # if version < INNO_VERSION(4, 0, 0):
         #  load_wizard_and_decompressor
@@ -1660,15 +1592,6 @@ class TSetup(InnoStruct):
 
         # if version >= INNO_VERSION(4, 0, 0):
         #  load_wizard_and_decompressor
-
-    @property
-    def codec(self):
-        try:
-            language = self.Languages[0]
-        except IndexError:
-            return 'latin1'
-        else:
-            return language.Codepage
 
 
 class SetupDataEntryFlags(enum.IntFlag):
@@ -1774,9 +1697,23 @@ class TData(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
         super().__init__(reader, version)
-        self.entries: list[SetupDataEntry] = []
+        self.DataEntries: list[SetupDataEntry] = []
         while not reader.eof:
-            self.entries.append(SetupDataEntry(reader, version))
+            self.DataEntries.append(SetupDataEntry(reader, version))
+
+
+class InnoParseResult(NamedTuple):
+    version: InnoVersion
+    streams: List[InnoStream]
+    files: List[InnoFile]
+    encrypted_file: Optional[InnoFile]
+    warnings: int
+    failures: List[str]
+    stream0: TSetup
+    stream1: TData
+
+    def ok(self):
+        return self.warnings == 0 and not self.failures
 
 
 class xtinno(ArchiveUnit):
@@ -1789,7 +1726,7 @@ class xtinno(ArchiveUnit):
     _LICENSE_NAME = 'meta/license.rtf'
     _OFFSETS_PATH = 'RCDATA/11111/0'
     _CHUNK_PREFIX = b'zlb\x1a'
-    _MAX_ATTEMPTS = 1_000_000
+    _MAX_ATTEMPTS = 200_000
 
     def unpack(self, data: bytearray):
         try:
@@ -1803,12 +1740,11 @@ class xtinno(ArchiveUnit):
         inno = StructReader(view[base:base + meta.total_size])
 
         self._decompressed = {}
-        streams: List[InnoStream] = []
         password = self.args.pwd or None
 
-        files_len = meta.setup0 - meta.setup1
+        blobsize = meta.setup0 - meta.setup1
         inno.seek(meta.setup1)
-        files_reader = StructReader(inno.read(files_len))
+        blobs = StructReader(inno.read(blobsize))
 
         header = bytes(inno.read(16))
 
@@ -1820,105 +1756,92 @@ class xtinno(ArchiveUnit):
                 version = InnoVersion.Parse(header)
             except ValueError:
                 name, _, _rest = header.partition(b'\0')
+                method = 'broken'
                 if any(_rest):
-                    name = header.hex()
-                error = F'unable to parse header identifier "{name}"'
+                    header = name.hex()
+                else:
+                    header = name.decode('latin1')
                 if self.leniency < 1:
-                    raise ValueError(error)
+                    raise ValueError(F'unable to parse header identifier "{header}"')
                 version = _DEFAULT_INNO_VERSION
-                self.log_warn(F'{error}; attempting to parse as {version!s}')
-        finally:
-            self.log_debug(F'inno {version!s}')
+            else:
+                header, _, _ = header.partition(B'\0')
+                header = header.decode('latin1')
+                method = 'modern'
+        else:
+            header, _, _ = header.partition(B'\x1A')
+            header = header.decode('latin1')
+            method = 'legacy'
 
-        for name in self._STREAM_NAMES:
-            stream = InnoStream(StreamHeader(inno, name, version))
-            streams.append(stream)
-            to_read = stream.header.StoredSize
-            while to_read > 4:
-                block = CrcCompressedBlock(inno, min(to_read - 4, 0x1000))
-                stream.blocks.append(block)
-                to_read -= len(block)
+        self.log_info(F'inno {version!s} via {method} header: {header}')
 
-        encrypted_file = None
-        files: list[InnoFile] = []
+        class _notok(object):
+            def __init__(self, e: Exception):
+                self.failures = [str(e)]
 
-        yield self._pack(
-            streams[2].name, None, lambda s=streams[2]: self.read_stream(s))
+            def ok(self):
+                return False
 
-        self.log_debug('parsing stream 1 (TData)')
-        stream1 = self.read_stream(streams[1])
-        yield self._pack(streams[1].name, None, stream1)
-        stream1 = TData(memoryview(stream1), version)
-        with BytesAsStringEncoder as encoder:
-            yield self._pack(F'{streams[1].name}.json', None,
-                encoder.dumps(stream1.json()).encode(self.codec))
+        def _parse(v: InnoVersion):
+            try:
+                inno.seekset(inno_start)
+                r = self._try_parse_as(inno, blobs, v, password)
+            except Exception as e:
+                raise
+                self.log_info(F'exception while parsing as {v!s}: {e!s}')
+                return _notok(e)
+            else:
+                results[v] = r
+                return r
 
-        for file_metadata in stream1.entries:
-            file = InnoFile(files_reader, version, file_metadata)
-            files.append(file)
-            if password or not file.encrypted or not file.size:
-                continue
-            if encrypted_file is None or file.size < encrypted_file.size:
-                encrypted_file = file
+        inno_start = inno.tell()
+        best_parse = None
+        best_score = 0
+        success = False
+        results: dict[InnoVersion, InnoParseResult] = {}
 
-        self.log_debug('parsing stream 0 (TSetup)')
-        stream0 = self.read_stream(streams[0])
-        yield self._pack(streams[0].name, None, stream0)
-        stream0 = TSetup(memoryview(stream0), version)
-        with BytesAsStringEncoder as encoder:
-            yield self._pack(F'{streams[0].name}.json', None,
-                encoder.dumps(stream0.json()).encode(self.codec))
-            yield self._pack(self._LICENSE_NAME, None,
-                stream0.Header.get_license().encode(self.codec))
+        if not version.is_ambiguous():
+            index = _VERSIONS.index(version)
+        else:
+            try:
+                index = max(k for k, v in enumerate(_VERSIONS) if v <= version)
+            except Exception:
+                index = 0
 
-        path_dedup: dict[str, list[SetupFile]] = {}
+        upper = index + 1
+        lower = index
 
-        for sf in stream0.Files:
-            sf: SetupFile
-            location = sf.Location
-            if location == 0xFFFFFFFF or sf.Type != SetupFileType.UserFile or sf.Source:
-                msg = F'skipping file: offset=0x{location:08X} type={sf.Type.name}'
-                if sf.Source:
-                    msg = F'{msg} src={sf.Source}'
-                self.log_debug(msg)
-                continue
-            if location >= len(files):
-                self.log_warn(F'parsed {len(file)} entries, ignoring invalid setup reference to entry {location + 1}')
-                continue
-            path = sf.Destination.replace('\\', '/')
-            if condition := sf.Condition.Check:
-                condition = condition.replace(' ', '-')
-                path = F'{condition}/{path}'
-            path = F'data/{path}'
-            path_dedup.setdefault(path, []).append(sf)
-            files[location].tags = sf.Flags
-            files[location].path = path
+        while lower > 0 and _IS_AMBIGUOUS[_VERSIONS[lower - 1]]:
+            lower -= 1
 
-        for path, infos in path_dedup.items():
-            if len(infos) == 1:
-                files[infos[0].Location].path = path
-                continue
-            bycheck = {}
-            for info in infos:
-                file = files[info.Location]
-                if not file.checksum_type.strong():
-                    bycheck.clear()
-                    break
-                dkey = (file.checksum, file.size)
-                if dkey in bycheck:
-                    self.log_debug(F'skipping exact duplicate: {path}')
-                    file.dupe = True
-                    continue
-                bycheck[dkey] = info
-            if bycheck:
-                if len(bycheck) == 1:
-                    file.path = path
-                    continue
-                infos = list(bycheck.values())
-            for k, info in enumerate(infos):
-                files[info.Location].path = F'{path}[{k}]'
+        versions = [version] + _VERSIONS[lower:index] + _VERSIONS[upper:] + _VERSIONS[:lower]
 
-        codec = stream0.Languages[0].Codepage
+        for v in versions:
+            result = _parse(v)
+            if success := result.ok():
+                break
+            if not result.failures and (best_parse is None or result.warnings < best_score):
+                best_score = best_score
+                best_parse = result
+
+        if not success:
+            if best_parse is not None:
+                result = best_parse
+                self.log_warn(F'using parse result for {result.version!s} with {result.warnings} warnings')
+            else:
+                result = min(results.values(), key=lambda result: len(result.failures))
+                self.log_warn(F'using parse result for {result.version!s} with {len(result.failures)} failures')
+                for k, failure in enumerate(result.failures, 1):
+                    self.log_info(F'failure {k}: {failure}')
+
+        version = result.version
+        codec = result.stream0.Codec
+        stream0 = result.stream0
+        stream1 = result.stream1
+        files = result.files
+        streams = result.streams
+        encrypted_file = result.encrypted_file
+
         if version.unicode:
             codec = 'latin1'
         self.log_info(
@@ -1927,12 +1850,6 @@ class xtinno(ArchiveUnit):
             F'codepage:{codec} '
             F'password:{stream0.Header.PasswordType.name} '
         )
-
-        for file in files:
-            file.compression_method = stream0.Header.CompressionMethod
-            file.password_hash = stream0.Header.PasswordHash
-            file.password_type = stream0.Header.PasswordType
-            file.password_salt = stream0.Header.PasswordSalt
 
         if stream0.Header.CompiledCode:
             from refinery.units.formats.ifps import ifps
@@ -1965,8 +1882,8 @@ class xtinno(ArchiveUnit):
                         total += 1
                         string = ''.join(parts)
                         try:
-                            plaintext = self._read_file(encrypted_file, password=string)
-                            if not encrypted_file.check(plaintext):
+                            plaintext = self._read_file_and_check(encrypted_file, password=string)
+                            if encrypted_file.check(plaintext) != encrypted_file.checksum:
                                 continue
                             password = string
                             break
@@ -1977,17 +1894,167 @@ class xtinno(ArchiveUnit):
             except Exception as e:
                 self.log_info(F'failed to extract strings from IFPS: {exception_to_string(e)}')
 
+        yield self._pack(
+            streams[2].name, None, lambda s=streams[2]: self._read_stream(s))
+
+        yield self._pack(streams[0].name, None, streams[0].data)
+
+        with BytesAsStringEncoder as encoder:
+            yield self._pack(F'{streams[0].name}.json', None,
+                encoder.dumps(stream0.json()).encode(self.codec))
+            yield self._pack(self._LICENSE_NAME, None,
+                stream0.Header.get_license().encode(self.codec))
+
+        yield self._pack(streams[1].name, None, streams[1].data)
+
+        with BytesAsStringEncoder as encoder:
+            yield self._pack(F'{streams[1].name}.json', None,
+                encoder.dumps(stream1.json()).encode(self.codec))
+
         for file in files:
             if file.dupe:
                 continue
             yield self._pack(
                 file.path,
                 file.date,
-                lambda f=file: self._read_file(f, password=password),
+                lambda f=file: self._read_file_and_check(f, password=password),
                 tags=[t.name for t in SetupFileFlags if t & file.tags],
             )
 
-    def read_stream(self, stream: InnoStream):
+    def _try_parse_as(
+        self,
+        inno: StructReader,
+        blobs: StructReader,
+        version: InnoVersion,
+        password: Optional[str] = None,
+        max_failures: int = 5
+    ):
+        streams: List[InnoStream] = []
+        files: List[InnoFile] = []
+        encrypted_file = None
+        warnings = 0
+
+        for name in self._STREAM_NAMES:
+            stream = InnoStream(StreamHeader(inno, name, version))
+            streams.append(stream)
+            to_read = stream.header.StoredSize
+            while to_read > 4:
+                block = CrcCompressedBlock(inno, min(to_read - 4, 0x1000))
+                stream.blocks.append(block)
+                to_read -= len(block)
+
+        self.log_debug(F'{version!s} parsing stream 1 (TData)')
+        stream1 = TData(memoryview(self._read_stream(streams[1])), version)
+
+        for meta in stream1.DataEntries:
+            file = InnoFile(blobs, version, meta)
+            files.append(file)
+            if password or not file.encrypted or not file.size:
+                continue
+            if encrypted_file is None or file.size < encrypted_file.size:
+                encrypted_file = file
+
+        self.log_debug(F'{version!s} parsing stream 0 (TSetup)')
+        stream0 = TSetup(memoryview(self._read_stream(streams[0])), version)
+        path_dedup: dict[str, list[SetupFile]] = {}
+
+        for file in files:
+            file.compression_method = stream0.Header.CompressionMethod
+            file.password_hash = stream0.Header.PasswordHash
+            file.password_type = stream0.Header.PasswordType
+            file.password_salt = stream0.Header.PasswordSalt
+
+        for sf in stream0.Files:
+            sf: SetupFile
+            location = sf.Location
+            if location == 0xFFFFFFFF or sf.Type != SetupFileType.UserFile or sf.Source:
+                msg = F'skipping file: offset=0x{location:08X} type={sf.Type.name}'
+                if sf.Source:
+                    msg = F'{msg} src={sf.Source}'
+                self.log_debug(msg)
+                continue
+            if location >= len(files):
+                self.log_warn(F'parsed {len(file)} entries, ignoring invalid setup reference to entry {location + 1}')
+                continue
+            path = sf.Destination.replace('\\', '/')
+            if condition := sf.Condition.Check:
+                condition = condition.replace(' ', '-')
+                path = F'{condition}/{path}'
+            path = F'data/{path}'
+            path_dedup.setdefault(path, []).append(sf)
+            files[location].setup = sf
+            files[location].path = path
+
+        for path, infos in path_dedup.items():
+            if len(infos) == 1:
+                files[infos[0].Location].path = path
+                continue
+            bycheck = {}
+            for info in infos:
+                file = files[info.Location]
+                if not file.checksum_type.strong():
+                    bycheck.clear()
+                    break
+                dkey = (file.checksum, file.size)
+                if dkey in bycheck:
+                    self.log_debug(F'skipping exact duplicate: {path}')
+                    file.dupe = True
+                    continue
+                bycheck[dkey] = info
+            if bycheck:
+                if len(bycheck) == 1:
+                    file.path = path
+                    continue
+                infos = list(bycheck.values())
+            for k, info in enumerate(infos):
+                files[info.Location].path = F'{path}[{k}]'
+
+        _width = len(str(len(files)))
+
+        for k, file in enumerate(files):
+            if file.dupe:
+                continue
+            if not file.path:
+                self.log_debug(F'file {k} does not have a path')
+                file.path = F'raw/FileData{k:0{_width}d}'
+
+        warnings = sum(1 for file in files if file.setup is None)
+        failures = []
+        nonempty = [f for f in files if f.size > 0]
+
+        self._decompressed.clear()
+
+        for file in nonempty:
+            if len(failures) >= max_failures:
+                break
+            if file.setup is None:
+                failures.append(F'file {file.path} had no associated metadata')
+                continue
+            if file.chunk_length < 0x10000:
+                try:
+                    data = self._read_file(file)
+                except InvalidPassword:
+                    continue
+                except Exception as e:
+                    failures.append(F'extraction error for {file.path}: {e!s}')
+                    continue
+                if file.check(data) != file.checksum:
+                    failures.append(F'invalid checksum for {file.path}')
+
+        return InnoParseResult(
+            version,
+            streams,
+            files,
+            encrypted_file,
+            warnings,
+            failures,
+            stream0,
+            stream1,
+        )
+
+    def _read_stream(self, stream: InnoStream):
+        if stream.data is not None:
+            return stream.data
         result = bytearray()
         it = iter(stream.blocks)
         if stream.compression == StreamCompressionMethod.Store:
@@ -2007,6 +2074,7 @@ class xtinno(ArchiveUnit):
             dec = zlib.decompressobj()
         for block in it:
             result.extend(dec.decompress(block.BlockData))
+        stream.data = result
         return result
 
     def _read_chunk(self, file: InnoFile, password: Optional[str] = None):
@@ -2060,6 +2128,9 @@ class xtinno(ArchiveUnit):
         if file.encrypted:
             data = data | decryptor | bytearray
 
+        if method is None:
+            return chunk
+
         try:
             if method == CompressionMethod.Store:
                 chunk = data
@@ -2105,8 +2176,23 @@ class xtinno(ArchiveUnit):
             else:
                 data = self._filter_old(data)
 
-        if not self.leniency and not file.check(data):
-            raise ValueError('Invalid checksum. You can ignore this check with the -L flag.')
+        return data
+
+    def _read_file_and_check(
+        self,
+        file: InnoFile,
+        password: Optional[str] = None,
+    ):
+        data = self._read_file(file, password)
+
+        if not self.leniency and (cs := file.check(data)) is not None and cs != file.checksum:
+            if isinstance(cs, int):
+                computed = F'{cs:08X}'
+                expected = F'{file.checksum:08X}'
+            else:
+                computed = cs.hex().upper()
+                expected = file.checksum.hex().upper()
+            raise ValueError(F'checksum error; computed:{computed} expected:{expected} [ignore this check with -L]')
 
         return data
 
