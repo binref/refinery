@@ -92,8 +92,16 @@ class InnoVersion(NamedTuple):
     flags: IVF = IVF.NoFlag
 
     @property
+    def semver(self):
+        return (self.major, self.minor, self.patch, self.build)
+
+    @property
     def unicode(self):
         return self.flags & IVF.UTF_16 == IVF.UTF_16
+
+    @property
+    def legacy(self):
+        return self.flags & IVF.Legacy
 
     @property
     def ascii(self):
@@ -120,18 +128,32 @@ class InnoVersion(NamedTuple):
 
     @classmethod
     def Parse(cls, dfn: bytes):
-        if m := re.match(RB'^(.*?)\((\d+\.\d+\.\d+)\)(?:\s{0,32}\(([uU])\))?', dfn):
-            sv = tuple(map(int, m.group(2).split(B'.')))
-            vf = IVF.UTF_16 if m.group(3) or sv >= (6, 3, 0) else IVF.NoFlag
-            return cls(*sv, 0, vf)
+        versions: List[InnoVersion] = []
+        for match in [m.groups() for m in re.finditer(rb'(.*?)\((\d+(?:\.\d+){2,3})(?:.*?\(([uU])\))?', dfn)]:
+            sv = tuple(map(int, match[1].split(B'.')))
+            sv = (sv + (0,))[:4]
+            vf = IVF.NoFlag
+            if sv >= (6, 3, 0) or match[2]:
+                vf |= IVF.UTF_16
+            if any(isx in match[0] for isx in (B'My Inno Setup Extensions', B'with ISX')):
+                vf |= IVF.InnoSX
+            versions.append(InnoVersion(*sv, vf))
+        if len(versions) == 1:
+            return versions[0]
+        if len(versions) == 2:
+            a, b = versions
+            return InnoVersion(*max(a.semver, b.semver), a.flags | b.flags)
         raise ValueError(dfn)
 
     def __str__(self):
         v = F'v{self.major}.{self.minor}.{self.patch:02d}.{self.build}'
-        u = 'u' if self.flags & IVF.UTF_16 else 'a'
-        v = F'{v}{u}'
+        a = R'a'
+        u = R'u'
         if self.flags & IVF.InnoSX:
+            a = R''
             v = F'{v}x'
+        t = u if self.flags & IVF.UTF_16 else a
+        v = F'{v}{t}'
         if b := {
             IVF.Legacy16: '16',
             IVF.Legacy32: '32',
@@ -1785,10 +1807,11 @@ class xtinno(ArchiveUnit):
         def _parse(v: InnoVersion):
             try:
                 inno.seekset(inno_start)
+                if v.legacy:
+                    inno.seekrel(-48)
                 r = self._try_parse_as(inno, blobs, v, password)
             except Exception as e:
-                raise
-                self.log_info(F'exception while parsing as {v!s}: {e!s}')
+                self.log_info(F'exception while parsing as {v!s}: {exception_to_string(e)}')
                 return _notok(e)
             else:
                 results[v] = r
