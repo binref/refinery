@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.3 - bugfix release
+
 ## Version 0.8.2
 - The `xtinno` unit was added to extracting files from InnoSetup installers.
 - Related; the `ifps` and `ifpsstr` units now accept a string encoding argument.
