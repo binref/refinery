@@ -33,6 +33,8 @@ class xttar(ArchiveUnit):
     @classmethod
     def handles(cls, data: bytearray) -> bool:
         ustar = data.find(B'ustar')
-        if ustar >= 0:
-            return ustar == 257 or data[ustar:ustar + 3] in (B'\x00\x30\x30', B'\x20\x20\x00')
-        return False
+        if ustar < 0:
+            return False
+        if ustar == 257:
+            return True
+        return data[ustar + 5:ustar + 8] in (B'\x00\x30\x30', B'\x20\x20\x00')
