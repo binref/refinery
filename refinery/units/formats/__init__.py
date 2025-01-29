@@ -63,7 +63,7 @@ class PathPattern:
             self.pattern = query
             return
         elif not self.regex:
-            self.stops = [stop for stop in re.split(R'(.*?[/*?])', query) if stop]
+            self.stops = re.split(R'([/*?]+)', query)
             query, _, _ = fnmatch.translate(query).partition(r'\Z')
         p1 = re.compile(query, **kw)
         p2 = re.compile(F'.*?{query}')
@@ -72,8 +72,8 @@ class PathPattern:
     def reach(self, path):
         if not any(self.stops):
             return True
-        for stop in self.stops:
-            if fnmatch.fnmatch(path, stop):
+        for stop in self.stops[0::2]:
+            if fnmatch.fnmatch(path, F'*{stop}'):
                 return True
         return False
 
@@ -82,7 +82,7 @@ class PathPattern:
         return self.matchers[fuzzy](path)
 
     def __repr__(self):
-        return F'<PathPattern:{"//".join(self.stops) or "RE"}>'
+        return F'<PathPattern:{"".join(self.stops) or "RE"}>'
 
 
 class PathExtractorUnit(Unit, abstract=True):

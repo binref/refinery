@@ -48,7 +48,10 @@ class winreg(PathExtractorUnit):
         for value in key.values():
             def raw(v: RegistryValue = value):
                 return v.raw_data()
-            vpath = F'{here}/{value.name()}'
+            vpath = here
+            vname = value.name()
+            if vname != '(default)':
+                vpath = F'{vpath}/{vname}'
             yield UnpackResult(vpath, raw)
         for subkey in key.subkeys():
             yield from winreg._walk(patterns, subkey, *path, subkey.name())
@@ -144,7 +147,9 @@ class winreg(PathExtractorUnit):
             self.log_debug(key)
             for value in config[key]:
                 name = next(iter(shlex.split(value)))
-                path = Path(key) / Path(name)
+                path = Path(key)
+                if name != '@':
+                    path = path / Path(name)
                 data = config[key][value]
                 decoded = list(self._decode_registry_export(data))
                 if len(decoded) == 1:
@@ -158,3 +163,11 @@ class winreg(PathExtractorUnit):
             yield from self._unpack_hive(data)
             return
         yield from self._unpack_file(data)
+
+    @classmethod
+    def handles(self, data):
+        if data[:4] == B'regf':
+            return True
+        if data[:31] == b'Windows Registry Editor Version':
+            return True
+        return False

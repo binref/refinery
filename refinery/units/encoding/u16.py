@@ -17,7 +17,9 @@ class u16(Unit):
     @classmethod
     def handles(self, data: bytearray):
         view = memoryview(data)
-        if not any(view[0::2]):
+        if len(view) % 2 != 0:
+            return False
+        if not any(view[1:0x100:2]):
             return True
-        if not any(view[1::2]):
-            return True
+        if not any(view[0:0x100:2]):
+            return any(view[:4])
