@@ -112,14 +112,37 @@ class dnarrays(Unit):
                 assert reader.read_byte() == 0x58
 
     def process(self, data):
+        def printable(name: str):
+            return name.replace('.', '').isidentifier()
+
         @functools.lru_cache(maxsize=None)
         def method(offset: int):
             rva = header.pe.get_rva_from_offset(offset)
             method = min(tables.MethodDef, key=lambda m: (m.RVA > rva, rva - m.RVA))
-            return method.Name
+            index = tables.MethodDef.index(method)
+            method_name = method.Name
+            if not printable(method_name):
+                method_name = F'method_{method.RVA:08X}'
+            for k, (methods, tr) in enumerate(zip(methods_of_type, tables.TypeDef)):
+                if index in methods:
+                    namespace = tr.TypeNamespace
+                    type_name = tr.TypeName
+                    if printable(type_name):
+                        spec = F'type{k}::{method_name}'
+                    else:
+                        spec = F'{type_name}::{method_name}'
+                    if printable(namespace):
+                        spec = F'{namespace}::{spec}'
+                    return spec
+            return method_name
 
         header = DotNetHeader(data)
         tables = header.meta.Streams.Tables
+
+        methods_of_type = [tr.MethodList.Index - 1 for tr in tables.TypeDef]
+        methods_of_type.append(len(tables.MethodDef))
+        methods_of_type = [range(*methods_of_type[k:k + 2]) for k in range(len(methods_of_type) - 1)]
+
         arrays = dict(itertools.chain(
             self._int_arrays(data, header, tables),
             self._str_arrays(data, header, tables),
