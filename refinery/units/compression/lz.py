@@ -92,9 +92,9 @@ class lzma(Unit):
             dc = LZMADecompressor()
             return self._decompress(data, dc, partial)
         except RefineryPartialResult as pe:
-            best_partial_result = pe
+            best = pe
         except Exception:
-            best_partial_result = None
+            best = None
             self.log_info('default LZMA decompressor failed, brute-forcing custom header')
         modes = [
             ('LZMA1', FILTER_LZMA1, 5),
@@ -102,15 +102,18 @@ class lzma(Unit):
         ]
         view = memoryview(data)
         for (name, mode, p), n, skipped in product(modes, range(16), range(16)):
+            if not view[n]:
+                continue
+            self.log_debug(F'trying {name} at {n:02d}, skipping {skipped:02d}')
             try:
                 fp = _decode_filter_properties(mode, view[n:n + p])
                 engine = LZMADecompressor(FORMAT_RAW, filters=[fp])
                 result = self._decompress(view[n + p + skipped:], engine, partial)
             except RefineryPartialResult as pe:
-                if best_partial_result is None:
-                    best_partial_result = pe
-                elif len(best_partial_result.partial) < len(pe.partial):
-                    best_partial_result = pe
+                if best is None:
+                    best = pe
+                elif len(best.partial) < len(pe.partial):
+                    best = pe
                 continue
             except Exception:
                 continue
@@ -118,8 +121,10 @@ class lzma(Unit):
                 continue
             self.log_info(F'detected properties for {name} at {n}, raw stream starting at offset {skipped}')
             return result
-        if partial and best_partial_result is not None:
-            raise best_partial_result
+        if partial and best is not None:
+            if len(best.partial) <= 0:
+                raise ValueError('unable to find an LZMA stream')
+            raise best
 
     def process(self, data: bytearray):
         if out := self._process(data):
