@@ -518,7 +518,7 @@ def LazyPythonExpression(expression: str, variables: Optional[dict] = None) -> M
         unit = match['unit'].upper()
         k = 'KMGTPE'.index(unit[0])
         return int(match['digits']) * (1000 ** k)
-    if variables:
+    if variables is not None:
         return PythonExpression.Evaluate(expression, variables)
     if (parser := PythonExpression.Lazy(expression)).variables:
         def evaluate(data: Chunk):
