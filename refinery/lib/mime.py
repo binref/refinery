@@ -180,6 +180,7 @@ FileTypeMap = {
     'image/x-quicktime': 'qtif',
     'image/x-tiff': 'tif',
     'image/x-windows-bmp': 'bmp',
+    'image/x-ms-bmp': 'bmp',
     'image/x-xpixmap': 'pm',
     'model/vrml': 'vrml',
     'multipart/x-gzip': 'gz',

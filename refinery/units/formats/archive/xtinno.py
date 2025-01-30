@@ -28,6 +28,7 @@ from hashlib import sha256, sha1, md5
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe.perc import perc
 from refinery.lib.structures import Struct, StructReader
+from refinery.lib.mime import FileMagicInfo as magic
 
 from refinery.lib.tools import exception_to_string, one
 from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
@@ -468,10 +469,10 @@ class LanguageDetection(enum.IntEnum):
 
 class CompressionMethod(enum.IntEnum):
     Store = 0
-    ZLib = 1
-    Bzip2 = 2
-    Lzma1 = 3
-    Lzma2 = 4
+    Flate = 1
+    BZip2 = 2
+    LZMA1 = 3
+    LZMA2 = 4
 
     def legacy_check(self, max: int, ver: str):
         if self.value > max:
@@ -524,7 +525,7 @@ class SetupFlags(enum.IntFlag):
 
 class StreamCompressionMethod(enum.IntEnum):
     Store = 0
-    ZLib = 1
+    Flate = 1
     LZMA1 = 2
 
 
@@ -541,7 +542,7 @@ class StreamHeader(InnoStruct):
             elif version >= (4, 1, 6):
                 self.Compression = StreamCompressionMethod.LZMA1
             else:
-                self.Compression = StreamCompressionMethod.ZLib
+                self.Compression = StreamCompressionMethod.Flate
         else:
             self.UncompresedSize = reader.u32()
             if size == 0xFFFFFFFF:
@@ -549,7 +550,7 @@ class StreamHeader(InnoStruct):
                 self.Compression = StreamCompressionMethod.Store
             else:
                 self.StoredSize = size
-                self.Compression = StreamCompressionMethod.ZLib
+                self.Compression = StreamCompressionMethod.Flate
             # Add the size of a CRC32 checksum for each 4KiB subblock
             block_count, _r = divmod(self.StoredSize, 4096)
             block_count += int(bool(_r))
@@ -681,7 +682,7 @@ class InnoStream:
 
 
 class InstallMode(enum.IntEnum):
-    Normal     = enum.auto() # noqa
+    Normal     = 0           # noqa
     Silent     = enum.auto() # noqa
     VerySilent = enum.auto() # noqa
 
@@ -809,19 +810,18 @@ class SetupHeader(InnoStruct):
         self.DataEntryCount = reader.u32()
         self.IconCount = reader.u32()
         self.IniEntryCount = reader.u32()
-        self.RegistryEntryCount = reader.u32()
-        self.DeleteEntryCount = reader.u32()
-        self.UninstallDeleteEntryCount = reader.u32()
-        self.RunEntryCount = reader.u32()
-        self.UninstallRunEntryCount = reader.u32()
+        self.RegistryCount = reader.u32()
+        self.DeleteCount = reader.u32()
+        self.UninstallDeleteCount = reader.u32()
+        self.RunCount = reader.u32()
+        self.UninstallRunCount = reader.u32()
 
         if version < (1, 3, 0):
             _license_len = reader.u32()
             _infhead_len = reader.u32()
             _inftail_len = reader.u32()
 
-        self.MinimumWindowsVersion = WindowsVersion(reader, version)
-        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+        self.WindowsVersion = WinVerRange(reader, version)
 
         self.BackColor1 = reader.u32() if (0, 0, 0) <= version < (6, 4, 0, 1) else 0
         self.BackColor2 = reader.u32() if (1, 3, 3) <= version < (6, 4, 0, 1) else 0
@@ -1069,9 +1069,9 @@ class SetupHeader(InnoStruct):
             ) else LanguageDetection.UI
 
         if version < (4, 1, 5):
-            self.CompressionMethod = CompressionMethod.Bzip2 if (
+            self.CompressionMethod = CompressionMethod.BZip2 if (
                 self.Flags & Flags.BzipUsed
-            ) else CompressionMethod.ZLib
+            ) else CompressionMethod.Flate
 
         if version < (5, 3, 3):
             self.DisableDirPage = AutoBool.From(self.Flags & Flags.DisableDirPage)
@@ -1147,12 +1147,20 @@ class WindowsVersion(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
         super().__init__(reader, version)
-        self.WindowsVersion = Version(reader, version)
-        self.NtVersion = Version(reader, version)
+        self.OS = Version(reader, version)
+        self.NT = Version(reader, version)
         (
             self.ServicePackMinor,
             self.ServicePackMajor,
         ) = reader.read_struct('BB') if version >= (1, 3, 19) else (0, 0)
+
+
+class WinVerRange(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
+        self.Min = WindowsVersion(reader, version)
+        self.Max = WindowsVersion(reader, version)
 
 
 class LanguageId(JsonStruct):
@@ -1240,8 +1248,7 @@ class SetupType(InnoStruct):
             self.Languages = read_string()
         if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
             self.Check = read_string()
-        self.MinimumWindowsVersion = WindowsVersion(reader, version)
-        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+        self.WindowsVersion = WinVerRange(reader, version)
         self.CustsomTypeCode = reader.u8()
         if version >= (4, 0, 3):
             self.SetupType = SetupTypeEnum(reader.u8())
@@ -1276,8 +1283,7 @@ class SetupComponent(InnoStruct):
         else:
             self.Used = True
         if True:
-            self.MinimumWindowsVersion = WindowsVersion(reader, version)
-            self.MaximumWindowsVersion = WindowsVersion(reader, version)
+            self.WindowsVersion = WinVerRange(reader, version)
             self.Flags = SetupFlags(reader.u8())
         if version >= (4, 0, 0):
             self.Size = reader.u64()
@@ -1318,8 +1324,7 @@ class SetupTask(InnoStruct):
         else:
             self.Used = True
         if True:
-            self.MinimumWindowsVersion = WindowsVersion(reader, version)
-            self.MaximumWindowsVersion = WindowsVersion(reader, version)
+            self.WindowsVersion = WinVerRange(reader, version)
 
         self.Flags = SetupTaskFlags.Empty
 
@@ -1385,8 +1390,7 @@ class SetupDirectory(InnoStruct):
         if version >= (2, 0, 11):
             self.Attributes = reader.u32()
 
-        self.MinimumWindowsVersion = WindowsVersion(reader, version)
-        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+        self.WindowsVersion = WinVerRange(reader, version)
 
         if version >= (4, 1, 0):
             self.Permissions = reader.u16()
@@ -1454,10 +1458,10 @@ class SetupFileType(enum.IntEnum):
 
 
 class SetupFileCopyMode(enum.IntEnum):
-	Normal                  = enum.auto() # noqa
-	IfDoesntExist           = enum.auto() # noqa
-	AlwaysOverwrite         = enum.auto() # noqa
-	AlwaysSkipIfSameOrOlder = enum.auto() # noqa
+    Normal                  = 0           # noqa
+    IfDoesntExist           = enum.auto() # noqa
+    AlwaysOverwrite         = enum.auto() # noqa
+    AlwaysSkipIfSameOrOlder = enum.auto() # noqa
 
 
 class SetupFile(InnoStruct):
@@ -1476,9 +1480,7 @@ class SetupFile(InnoStruct):
             self.StrongAssemblyName = read_string()
 
         self.Condition = SetupCondition(reader, version, parent)
-
-        self.MinimumWindowsVersion = WindowsVersion(reader, version)
-        self.MaximumWindowsVersion = WindowsVersion(reader, version)
+        self.WindowsVersion = WinVerRange(reader, version)
 
         self.Location = reader.u32()
         self.Attributes = reader.u32()
@@ -1568,6 +1570,283 @@ class SetupFile(InnoStruct):
         self.Type = SetupFileType(reader.u8())
 
 
+class SetupIconCloseSetting(enum.IntEnum):
+    NoSetting       = 0           # noqa
+    CloseOnExit     = enum.auto() # noqa
+    DontCloseOnExit = enum.auto() # noqa
+
+
+class SetupIconFlags(enum.IntFlag):
+    Empty                              = 0           # noqa
+    NeverUninstall                     = enum.auto() # noqa
+    RunMinimized                       = enum.auto() # noqa
+    CreateOnlyIfFileExists             = enum.auto() # noqa
+    UseAppPaths                        = enum.auto() # noqa
+    FolderShortcut                     = enum.auto() # noqa
+    ExcludeFromShowInNewInstall        = enum.auto() # noqa
+    PreventPinning                     = enum.auto() # noqa
+    HasAppUserModelToastActivatorCLSID = enum.auto() # noqa
+
+
+class SetupIcon(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.Codec)
+
+        if version < (1, 3, 0):
+            reader.u32()
+
+        self.Name = self._read_string()
+        self.FileName = self._read_string()
+        self.Parameters = self._read_string()
+        self.WorkingDir = self._read_string()
+        self.IconFile = self._read_string()
+        self.Comment = self._read_string()
+
+        self.Condition = SetupCondition(reader, version, parent)
+
+        if version >= (5, 3, 5):
+            self.AppUserModelId = self._read_string()
+        if version >= (6, 1, 0):
+            self.AppUserModelToastActivatorCLSID = reader.read_guid()
+
+        self.WindowsVersion = WinVerRange(reader, version)
+        self.IconIndex = reader.i32()
+
+        if version >= (1, 3, 24):
+            self.ShowCommand = reader.i32()
+        else:
+            self.ShowCommand = 1
+
+        if version >= (1, 3, 15):
+            self.CloseOnExit = _enum(SetupIconCloseSetting, reader.u8(), SetupIconCloseSetting.NoSetting)
+        else:
+            self.CloseOnExit = SetupIconCloseSetting.NoSetting
+
+        self.HotKey = reader.u16() if version >= (2, 0, 7) else 0
+
+        self.Flags = SetupIconFlags.Empty
+
+        def flagbit(f):
+            self.Flags |= f if reader.read_bit() else 0
+        if True:
+            flagbit(SetupIconFlags.NeverUninstall)
+        if version < (1, 3, 26):
+            flagbit(SetupIconFlags.RunMinimized)
+        if True:
+            flagbit(SetupIconFlags.CreateOnlyIfFileExists)
+        if version.bits > 16:
+            flagbit(SetupIconFlags.UseAppPaths)
+        if version >= (5, 0, 3) and version < (6, 3, 0):
+            flagbit(SetupIconFlags.FolderShortcut)
+        if version >= (5, 4, 2):
+            flagbit(SetupIconFlags.ExcludeFromShowInNewInstall)
+        if version >= (5, 5, 0):
+            flagbit(SetupIconFlags.PreventPinning)
+        if version >= (6, 1, 0):
+            flagbit(SetupIconFlags.HasAppUserModelToastActivatorCLSID)
+        reader.byte_align()
+
+
+class SetupIniFlags(enum.IntFlag):
+    Empty                     = 0           # noqa
+    CreateKeyIfDoesntExist    = enum.auto() # noqa
+    UninsDeleteEntry          = enum.auto() # noqa
+    UninsDeleteEntireSection  = enum.auto() # noqa
+    UninsDeleteSectionIfEmpty = enum.auto() # noqa
+    HasValue                  = enum.auto() # noqa
+
+
+class SetupIniEntry(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.Codec)
+
+        if version < (1, 3, 0):
+            reader.u8()
+
+        if not (IniFile := self._read_string()):
+            IniFile = '{windows}/WIN.INI'
+        self.IniFile = IniFile
+
+        self.Section = self._read_string()
+        self.Key = self._read_string()
+        self.Codepage = self._read_string()
+        self.Condition = SetupCondition(reader, version, parent)
+        self.WindowsVersion = WinVerRange(reader, version)
+        self.Flags = SetupIniFlags(reader.u8())
+
+
+class SetupRegistryType(enum.IntEnum):
+    Unset        = 0           # noqa
+    String       = enum.auto() # noqa
+    ExpandString = enum.auto() # noqa
+    DWord        = enum.auto() # noqa
+    Binary       = enum.auto() # noqa
+    MultiString  = enum.auto() # noqa
+    QWord        = enum.auto() # noqa
+
+
+class SetupRegistryFlags(enum.IntFlag):
+    Empty                       = 0           # noqa
+    CreateValueIfDoesntExist    = enum.auto() # noqa
+    UninsDeleteValue            = enum.auto() # noqa
+    UninsClearValue             = enum.auto() # noqa
+    UninsDeleteEntireKey        = enum.auto() # noqa
+    UninsDeleteEntireKeyIfEmpty = enum.auto() # noqa
+    PreserveStringType          = enum.auto() # noqa
+    DeleteKey                   = enum.auto() # noqa
+    DeleteValue                 = enum.auto() # noqa
+    NoError                     = enum.auto() # noqa
+    DontCreateKey               = enum.auto() # noqa
+    Bits32                      = enum.auto() # noqa
+    Bits64                      = enum.auto() # noqa
+
+
+class SetupRegistryEntry(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.Codec)
+
+        if version < (1, 3, 0):
+            reader.u32()
+
+        if True:
+            self.Key = self._read_string()
+        if version.bits > 16:
+            self.Name = self._read_string()
+        if True:
+            self.Value = reader.read_length_prefixed()
+            self.Condition = SetupCondition(reader, version, parent)
+        if (4, 0, 11) <= version < (4, 1, 0):
+            self.Permissions = reader.read_length_prefixed()
+
+        self.WindowsVersion = WinVerRange(reader, version)
+        self.Hive = reader.u32() & 0x7FFFFFFF if version.bits > 16 else None
+        self.Permissions = reader.u16() if version >= (4, 1, 0) else None
+        self.Type = SetupRegistryType(reader.u8())
+
+        self.Flags = SetupRegistryFlags.Empty
+
+        def flagbit(f):
+            self.Flags |= f if reader.read_bit() else 0
+
+        if version.bits > 16:
+            flagbit(SetupRegistryFlags.CreateValueIfDoesntExist)
+            flagbit(SetupRegistryFlags.UninsDeleteValue)
+        if True:
+            flagbit(SetupRegistryFlags.UninsClearValue)
+            flagbit(SetupRegistryFlags.UninsDeleteEntireKey)
+            flagbit(SetupRegistryFlags.UninsDeleteEntireKeyIfEmpty)
+        if version >= (1, 2, 6):
+            flagbit(SetupRegistryFlags.PreserveStringType)
+        if version >= (1, 3, 9):
+            flagbit(SetupRegistryFlags.DeleteKey)
+            flagbit(SetupRegistryFlags.DeleteValue)
+        if version >= (1, 3, 12):
+            flagbit(SetupRegistryFlags.NoError)
+        if version >= (1, 3, 16):
+            flagbit(SetupRegistryFlags.DontCreateKey)
+        if version >= (5, 1, 0):
+            flagbit(SetupRegistryFlags.Bits32)
+            flagbit(SetupRegistryFlags.Bits64)
+
+        reader.byte_align()
+
+
+class SetupDeleteType(enum.IntEnum):
+    Files           = 0           # noqa
+    FilesAndSubdirs = enum.auto() # noqa
+    DirIfEmpty      = enum.auto() # noqa
+
+
+class SetupDeleteEntry(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.Codec)
+        if version < (1, 3, 0):
+            reader.u32()
+        self.Name = self._read_string()
+        self.Condition = SetupCondition(reader, version, parent)
+        self.WindowsVersion = WinVerRange(reader, version)
+        self.Type = SetupDeleteType(reader.u8())
+
+
+class SetupRunWait(enum.IntEnum):
+    UntilTerminated = 0 # noqa
+    NoWait          = 1 # noqa
+    UntilIdle       = 2 # noqa
+
+
+class SetupRunFlags(enum.IntFlag):
+    Empty             = 0           # noqa
+    ShellExec         = enum.auto() # noqa
+    SkipIfDoesntExist = enum.auto() # noqa
+    PostInstall       = enum.auto() # noqa
+    Unchecked         = enum.auto() # noqa
+    SkipIfSilent      = enum.auto() # noqa
+    SkipIfNotSilent   = enum.auto() # noqa
+    HideWizard        = enum.auto() # noqa
+    Bits32            = enum.auto() # noqa
+    Bits64            = enum.auto() # noqa
+    RunAsOriginalUser = enum.auto() # noqa
+    DontLogParameters = enum.auto() # noqa
+    LogOutput         = enum.auto() # noqa
+
+
+class SetupRunEntry(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.Codec)
+        if version < (1, 3, 0):
+            reader.u8()
+        self.Name = self._read_string()
+        self.Parameters = self._read_string()
+        self.WorkingDir = self._read_string()
+
+        if version >= (1, 3, 9):
+            self.RunOnceId = self._read_string()
+        if version >= (2, 0, 2):
+            self.StatusMessage = self._read_string()
+        if version >= (5, 1, 13):
+            self.Verb = self._read_string()
+        if version >= (2, 0, 0) or version.isx:
+            self.Description = self._read_string()
+
+        self.Condition = SetupCondition(reader, version, parent)
+        self.WindowsVersion = WinVerRange(reader, version)
+        self.ShowCommand = reader.u32() if version >= (1, 3, 24) else 0
+        self.Wait = SetupRunWait(reader.u8())
+
+        self.Flags = SetupRunFlags.Empty
+
+        def flagbit(f):
+            self.Flags |= f if reader.read_bit() else 0
+
+        if version >= (1, 2, 3):
+            flagbit(SetupRunFlags.ShellExec)
+        if version >= (1, 3, 9) or version.isx and version >= (1, 3, 8):
+            flagbit(SetupRunFlags.SkipIfDoesntExist)
+        if version >= (2, 0, 0):
+            flagbit(SetupRunFlags.PostInstall)
+            flagbit(SetupRunFlags.Unchecked)
+            flagbit(SetupRunFlags.SkipIfSilent)
+            flagbit(SetupRunFlags.SkipIfNotSilent)
+        if version >= (2, 0, 8):
+            flagbit(SetupRunFlags.HideWizard)
+        if version >= (5, 1, 10):
+            flagbit(SetupRunFlags.Bits32)
+            flagbit(SetupRunFlags.Bits64)
+        if version >= (5, 2, 0):
+            flagbit(SetupRunFlags.RunAsOriginalUser)
+        if version >= (6, 1, 0):
+            flagbit(SetupRunFlags.DontLogParameters)
+        if version >= (6, 3, 0):
+            flagbit(SetupRunFlags.LogOutput)
+
+        reader.byte_align()
+
+
 class TSetup(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
@@ -1594,27 +1873,51 @@ class TSetup(InnoStruct):
         else:
             h.recode_strings('latin1')
 
-        # if version < INNO_VERSION(4, 0, 0):
-        #  load_wizard_and_decompressor
+        if version < (4, 0, 0):
+            self._load_wizard_and_decompressor(reader, version)
 
-        self.Messages    = _array(h.MessageCount,    SetupMessage)     # noqa
-        self.Permissions = _array(h.PermissionCount, SetupPermission)  # noqa
-        self.Types       = _array(h.TypeCount,       SetupType)        # noqa
-        self.Components  = _array(h.ComponentCount,  SetupComponent)   # noqa
-        self.Tasks       = _array(h.TaskCount,       SetupTask)        # noqa
-        self.Directories = _array(h.DirectoryCount,  SetupDirectory)   # noqa
-        self.Files       = _array(h.FileCount,       SetupFile)        # noqa
+        self.Messages               = _array(h.MessageCount,         SetupMessage)       # noqa
+        self.Permissions            = _array(h.PermissionCount,      SetupPermission)    # noqa
+        self.Types                  = _array(h.TypeCount,            SetupType)          # noqa
+        self.Components             = _array(h.ComponentCount,       SetupComponent)     # noqa
+        self.Tasks                  = _array(h.TaskCount,            SetupTask)          # noqa
+        self.Directories            = _array(h.DirectoryCount,       SetupDirectory)     # noqa
+        self.Files                  = _array(h.FileCount,            SetupFile)          # noqa
 
-        # self.Icons                  = _array(h.IconCount,                 SetupIcon)
-        # self.IniEntries             = _array(h.IniEntryCount,             SetupIniEntry)
-        # self.RegistryEntries        = _array(h.RegistryEntryCount,        SetupRegistryEntry)
-        # self.DeleteEntries          = _array(h.DeleteEntryCount,          SetupDeleteEntry)
-        # self.UninstallDeleteEntries = _array(h.UninstallDeleteEntryCount, SetupUninstallDeleteEntry)
-        # self.RunEntries             = _array(h.RunEntryCount,             SetupRunEntry)
-        # self.UninstallRunEntries    = _array(h.UninstallRunEntryCount,    SetupUninstallRunEntry)
+        self.DecompressDLL = None
+        self.DecryptionDLL = None
 
-        # if version >= INNO_VERSION(4, 0, 0):
-        #  load_wizard_and_decompressor
+        self.Icons                  = _array(h.IconCount,            SetupIcon)          # noqa
+        self.IniEntries             = _array(h.IniEntryCount,        SetupIniEntry)      # noqa
+        self.RegistryEntries        = _array(h.RegistryCount,        SetupRegistryEntry) # noqa
+        self.DeleteEntries          = _array(h.DeleteCount,          SetupDeleteEntry)   # noqa
+        self.UninstallDeleteEntries = _array(h.UninstallDeleteCount, SetupDeleteEntry)   # noqa
+        self.RunEntries             = _array(h.RunCount,             SetupRunEntry)      # noqa
+        self.UninstallRunEntries    = _array(h.UninstallRunCount,    SetupRunEntry)      # noqa
+
+        if version >= (4, 0, 0):
+            self._load_wizard_and_decompressor(reader, version)
+
+    def _load_wizard_and_decompressor(self, reader: StructReader[memoryview], version: InnoVersion):
+        if True:
+            self.WizardImagesLarge = self._load_wizard_images(reader, version)
+        if version >= (2, 0, 0) or version.isx:
+            self.WizardImagesSmall = self._load_wizard_images(reader, version)
+        method = self.Header.CompressionMethod
+        crypto = self.Header.Flags & Flags.EncryptionUsed and version < (6, 4, 0)
+        hasDLL = (
+            method == CompressionMethod.BZip2
+            or method == CompressionMethod.LZMA1 and version == (4, 1, 5)
+            or method == CompressionMethod.Flate and version >= (4, 2, 6))
+        self.DecompressDLL = reader.read_length_prefixed() if hasDLL else None
+        self.DecryptionDLL = reader.read_length_prefixed() if crypto else None
+
+    def _load_wizard_images(self, reader: StructReader[memoryview], version: InnoVersion):
+        count = reader.u32() if version >= (5, 6, 0) else 1
+        img = [reader.read_length_prefixed() for _ in range(count)]
+        if version < (5, 6, 0) and img and not img[0]:
+            img.clear()
+        return img
 
 
 class SetupDataEntryFlags(enum.IntFlag):
@@ -1743,10 +2046,9 @@ class xtinno(ArchiveUnit):
     """
     Extract files from InnoSetup archives.
     """
-
-    _STREAM_NAMES = 'meta/TSetup', 'meta/TData', 'meta/Uninstaller'
-    _ISCRIPT_NAME = 'meta/script'
-    _LICENSE_NAME = 'meta/license.rtf'
+    _STREAM_NAMES = 'meta/TSetup', 'meta/TData', 'embedded/uninstaller.exe'
+    _ISCRIPT_NAME = 'embedded/script'
+    _LICENSE_NAME = 'embedded/license.rtf'
     _OFFSETS_PATH = 'RCDATA/11111/0'
     _CHUNK_PREFIX = b'zlb\x1a'
     _MAX_ATTEMPTS = 200_000
@@ -1875,13 +2177,7 @@ class xtinno(ArchiveUnit):
             F'password:{stream0.Header.PasswordType.name} '
         )
 
-        if stream0.Header.CompiledCode:
-            from refinery.units.formats.ifps import ifps
-            script = stream0.Header.CompiledCode
-            yield self._pack(F'{self._ISCRIPT_NAME}.ps', None, script | ifps(codec) | bytes)
-            yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
-
-        if encrypted_file:
+        if (script := stream0.Header.CompiledCode) and encrypted_file:
             assert password is None, (
                 F'An encrypted test file was chosen even though a password was provided: {password!r}')
             self.log_info(F'guessing password using encrypted file: {encrypted_file.path}')
@@ -1937,22 +2233,40 @@ class xtinno(ArchiveUnit):
         if encrypted_file and password is None:
             self.log_warn('some files are password-protected and automatic password search failed')
 
-        yield self._pack(
-            streams[2].name, None, lambda s=streams[2]: self._read_stream(s))
-
         yield self._pack(streams[0].name, None, streams[0].data)
-
         with BytesAsStringEncoder as encoder:
             yield self._pack(F'{streams[0].name}.json', None,
                 encoder.dumps(stream0.json()).encode(self.codec))
-            yield self._pack(self._LICENSE_NAME, None,
-                stream0.Header.get_license().encode(self.codec))
 
         yield self._pack(streams[1].name, None, streams[1].data)
-
         with BytesAsStringEncoder as encoder:
             yield self._pack(F'{streams[1].name}.json', None,
                 encoder.dumps(stream1.json()).encode(self.codec))
+
+        yield self._pack(
+            streams[2].name, None, lambda s=streams[2]: self._read_stream(s))
+
+        if license := stream0.Header.get_license():
+            yield self._pack(self._LICENSE_NAME, None, license.encode(self.codec))
+
+        if script:
+            from refinery.units.formats.ifps import ifps
+            yield self._pack(F'{self._ISCRIPT_NAME}.ps', None, script | ifps(codec) | bytes)
+            yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
+
+        if dll := stream0.DecompressDLL:
+            yield self._pack(F'embedded/decompress.{magic(dll).extension}', None, dll)
+
+        if dll := stream0.DecryptionDLL:
+            yield self._pack(F'embedded/decryption.{magic(dll).extension}', None, dll)
+
+        for size, images in (
+            ('small', stream0.WizardImagesSmall),
+            ('large', stream0.WizardImagesLarge),
+        ):
+            _formatting = len(str(len(images) + 1))
+            for k, img in enumerate(images, 1):
+                yield self._pack(F'embedded/images/{size}{k:0{_formatting}d}.{magic(img).extension}', None, img)
 
         for file in files:
             if file.dupe:
@@ -2112,7 +2426,7 @@ class xtinno(ArchiveUnit):
             filter = lzma._decode_filter_properties(lzma.FILTER_LZMA1, prop)
             dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[filter])
             result.extend(dec.decompress(first))
-        elif stream.compression == StreamCompressionMethod.ZLib:
+        elif stream.compression == StreamCompressionMethod.Flate:
             import zlib
             dec = zlib.decompressobj()
         for block in it:
@@ -2177,17 +2491,17 @@ class xtinno(ArchiveUnit):
         try:
             if method == CompressionMethod.Store:
                 chunk = data
-            elif method == CompressionMethod.Lzma1:
+            elif method == CompressionMethod.LZMA1:
                 props = lzma._decode_filter_properties(lzma.FILTER_LZMA1, data[0:5])
                 dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
                 chunk = dec.decompress(data[5:])
-            elif method == CompressionMethod.Lzma2:
+            elif method == CompressionMethod.LZMA2:
                 props = lzma._decode_filter_properties(lzma.FILTER_LZMA2, data[0:1])
                 dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
                 chunk = dec.decompress(data[1:])
-            elif method == CompressionMethod.Bzip2:
+            elif method == CompressionMethod.BZip2:
                 chunk = bz2.decompress(data)
-            elif method == CompressionMethod.ZLib:
+            elif method == CompressionMethod.Flate:
                 chunk = zlib.decompress(data)
         except Exception as E:
             if not file.encrypted:
