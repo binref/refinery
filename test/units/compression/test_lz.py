@@ -28,3 +28,8 @@ class TestLZMA(TestUnitBase):
         goal = b"Binary Refinery Refines Evil Binaries And Benign Finery Alike"
         unit = self.load(alone=True)
         self.assertEqual(bytes(data | unit), goal)
+
+    def test_lzma2_with_size_prefix(self):
+        data = self.download_sample('331a59118a5bff2e096e4475cbf78636ab79b03c2f16a3e0c65c9a10366512be')
+        test = data | self.load() | bytes
+        self.assertIn(B'CGlobalIncludeLuaFile', test)
