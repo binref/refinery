@@ -97,12 +97,13 @@ def get_parent_processes():
     try:
         if not k32.Process32First(snap, ctypes.byref(entry)):
             raise RuntimeError('could not iterate processes')
-        processes = {
-            entry.th32ProcessID: (
-                entry.th32ParentProcessID,
-                bytes(FullPath()).decode('latin1')
-            ) for _ in iter(NextProcess, 0)
-        }
+        processes = {}
+        for _ in iter(NextProcess, 0):
+            cpid = entry.th32ProcessID
+            ppid = entry.th32ParentProcessID
+            if cpid == ppid:
+                continue
+            processes[cpid] = ppid, bytes(FullPath()).decode('latin1')
     finally:
         k32.CloseHandle(snap)
     pid = os.getpid()
@@ -110,9 +111,9 @@ def get_parent_processes():
     while pid in processes:
         if pid in loop_detection:
             break
+        loop_detection.add(pid)
         pid, path = processes[pid]
         yield path
-        loop_detection.add(pid)
 
 
 def shell_supports_binref() -> bool:
