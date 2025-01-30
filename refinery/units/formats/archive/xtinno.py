@@ -14,6 +14,7 @@ import enum
 import re
 import struct
 import functools
+import base64
 import dataclasses
 import codecs
 
@@ -1880,7 +1881,7 @@ class xtinno(ArchiveUnit):
             yield self._pack(F'{self._ISCRIPT_NAME}.ps', None, script | ifps(codec) | bytes)
             yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
 
-        if encrypted_file is not None:
+        if encrypted_file:
             assert password is None, (
                 F'An encrypted test file was chosen even though a password was provided: {password!r}')
             self.log_info(F'guessing password using encrypted file: {encrypted_file.path}')
@@ -1899,23 +1900,42 @@ class xtinno(ArchiveUnit):
                 strings = [s for s in strings if _pwd(s)]
                 total = 0
                 for k in range(1, 10):
+                    self.log_info(F'checking combinations of {k} strings as potential password')
+                    if total > self._MAX_ATTEMPTS:
+                        break
                     for parts in combinations(strings, k):
                         if total > self._MAX_ATTEMPTS:
                             break
-                        total += 1
                         string = ''.join(parts)
+                        tests = [string]
                         try:
-                            plaintext = self._read_file_and_check(encrypted_file, password=string)
-                            if encrypted_file.check(plaintext) != encrypted_file.checksum:
-                                continue
-                            password = string
-                            break
+                            tests.append(bytes.fromhex(string))
                         except Exception:
-                            continue
-                    if total > self._MAX_ATTEMPTS:
-                        break
+                            pass
+                        try:
+                            tests.append(base64.b64decode(string).decode(codec))
+                        except Exception:
+                            pass
+                        for pwd in tests:
+                            try:
+                                plaintext = self._read_file(encrypted_file, password=pwd)
+                                if not encrypted_file.check(plaintext):
+                                    continue
+                                password = pwd
+                                btw = F' (combination of {k} parts)' if k > 1 else ''
+                                self.log_info(F'found password{btw}: {pwd}')
+                                break
+                            except Exception:
+                                continue
+                            finally:
+                                total += 1
+                        if password is not None:
+                            break
             except Exception as e:
                 self.log_info(F'failed to extract strings from IFPS: {exception_to_string(e)}')
+
+        if encrypted_file and password is None:
+            self.log_warn('some files are password-protected and automatic password search failed')
 
         yield self._pack(
             streams[2].name, None, lambda s=streams[2]: self._read_stream(s))
