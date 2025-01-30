@@ -326,7 +326,7 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
     if not sliced or len(sliced) > 3:
         raise ArgumentTypeError(F'The expression "{expression}" is not a valid slice.')
     try:
-        sliced = [None if not t else PythonExpression.Evaluate(t, variables) for t in sliced]
+        sliced = [None if not t else LazyPythonExpression(t, variables) for t in sliced]
     except ParserVariableMissing:
         if final:
             raise
@@ -505,7 +505,7 @@ class DelayedArgumentDispatch:
         return _register
 
 
-def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
+def LazyPythonExpression(expression: str, variables: Optional[dict] = None) -> MaybeDelayedType[Any]:
     """
     Wraps the given expression for use as a `refinery.lib.argformats.multibin` expression. If it
     contains no variables, the expression is evaluated immediately, otherwise the function returns
@@ -518,6 +518,8 @@ def LazyPythonExpression(expression: str) -> MaybeDelayedType[Any]:
         unit = match['unit'].upper()
         k = 'KMGTPE'.index(unit[0])
         return int(match['digits']) * (1000 ** k)
+    if variables:
+        return PythonExpression.Evaluate(expression, variables)
     if (parser := PythonExpression.Lazy(expression)).variables:
         def evaluate(data: Chunk):
             try:
