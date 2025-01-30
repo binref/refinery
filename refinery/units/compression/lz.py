@@ -18,7 +18,6 @@ from lzma import (
 )
 
 from refinery.units import Arg, Unit, RefineryPartialResult
-from refinery.lib.types import ByteStr
 from refinery.lib.structures import MemoryFile
 
 __all__ = ['lzma']
