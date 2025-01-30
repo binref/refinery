@@ -6,12 +6,9 @@ from refinery.units.blockwise.xor import xor
 from refinery.units.misc.xkey import xkey
 
 
-class autoxor(xkey):
+class autoxor(xkey, extend_docs=True):
     """
-    Assumes a XOR-encoded input and automatically attempts to find the correct XOR key. The method
-    is based on the assumption that the plaintext input contains one letter that occurs with a much
-    higher frequency than all other letters; this is the case for the null byte in PEs, and also
-    for the space character in many text files.
+    Assumes a XOR-encoded input and automatically attempts to find the correct XOR key.
     """
     def process(self, data: bytearray):
         key = super().process(data)
