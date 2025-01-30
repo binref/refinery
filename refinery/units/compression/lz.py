@@ -75,18 +75,17 @@ class lzma(Unit):
     def _decompress(self, data: bytearray, lz: LZMADecompressor, partial: bool = False):
         temp = bytearray()
         sizes = repeat(1) if partial else [len(data)]
-        with (
-            MemoryFile(temp) as output,
-            MemoryFile(data) as stream,
-        ):
-            for size in sizes:
-                if stream.eof or stream.closed:
-                    break
-                try:
-                    offset = stream.tell()
-                    output.write(lz.decompress(stream.read(size)))
-                except (EOFError, LZMAError):
-                    raise RefineryPartialResult(F'compression failed at offset {offset}', temp)
+        with MemoryFile(temp) as output:
+            with MemoryFile(data) as stream:
+                for size in sizes:
+                    if stream.eof or stream.closed:
+                        break
+                    try:
+                        offset = stream.tell()
+                        output.write(lz.decompress(stream.read(size)))
+                    except (EOFError, LZMAError):
+                        raise RefineryPartialResult(
+                            F'compression failed at offset {offset}', temp)
         return temp
 
     def _process(self, data: bytearray, partial=False):
