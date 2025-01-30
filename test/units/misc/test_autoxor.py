@@ -16,7 +16,7 @@ class TestAutoXOR(TestUnitBase):
         })
 
     def test_real_world_02(self):
-        from refinery import sha256, xkey
+        from refinery import xkey
         data = self.download_sample('1664cb04cdbf4bebf2c6addb92a9ed1f09c6738b3901f1b7e8ae7405008f5039')
         self.assertEqual(data | xkey | bytes, b'Mlitqcfqr')
 
