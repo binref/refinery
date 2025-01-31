@@ -141,7 +141,7 @@ class lzma(Unit):
                 continue
             except Exception:
                 continue
-            if len(result) < min_original_size:
+            if len(result) < min_original_size[version]:
                 continue
             if len(result) * self._SEARCH_MAX_BLOW < len(data):
                 continue
