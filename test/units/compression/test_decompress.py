@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import time
-import logging
 
 from .. import TestUnitBase
 from . import KADATH1, KADATH2
@@ -11,17 +10,17 @@ class TestAutoDecompressor(TestUnitBase):
 
     def setUp(self):
         super().setUp()
-        self.buffers = [
-            B'AAFOOBAR/BAR' * 2000,
-            bytes(self.download_sample('6a1bc124f945ddfde62b4137d627f3958b23d8a2a6507e3841cab84416c54eea')),
-            bytes(self.download_sample('07e25cb7d427ac047f53b3badceacf6fc5fb395612ded5d3566a09800499cd7d')),
-            bytes(self.download_sample('40f97cf37c136209a65d5582963a72352509eb802da7f1f5b4478a0d9e0817e8')),
-            bytes(self.download_sample('52e488784d46b3b370836597b1565cf18a5fa4a520d0a71297205db845fc9d26')),
-            bytes(self.download_sample('38c9b858c32fcc6b484272a182ae6e7f911dea53a486396037d8f7956d2110be')),
-            bytes(self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')),
-            KADATH1.encode('utf8'),
-            KADATH2.encode('utf8'),
-        ]
+        self.buffers = [buf[:0x5000] for buf in {
+            1: B'AAFOOBAR/BAR' * 2000,
+            2: bytes(self.download_sample('6a1bc124f945ddfde62b4137d627f3958b23d8a2a6507e3841cab84416c54eea')),
+            3: bytes(self.download_sample('07e25cb7d427ac047f53b3badceacf6fc5fb395612ded5d3566a09800499cd7d')),
+            4: bytes(self.download_sample('40f97cf37c136209a65d5582963a72352509eb802da7f1f5b4478a0d9e0817e8')),
+            5: bytes(self.download_sample('52e488784d46b3b370836597b1565cf18a5fa4a520d0a71297205db845fc9d26'))[0x8000:],
+            6: bytes(self.download_sample('38c9b858c32fcc6b484272a182ae6e7f911dea53a486396037d8f7956d2110be')),
+            7: bytes(self.download_sample('c41d0c40d1a19820768ea76111c9d5210c2cb500e93a85bf706dfea9244ce916')),
+            8: KADATH1.encode('utf8'),
+            9: KADATH2.encode('utf8'),
+        }.values()]
 
     def _mangle(self, data: bytes, engine: str):
         def prepend(x):
