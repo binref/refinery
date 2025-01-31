@@ -35,13 +35,16 @@ def get_all_entry_points() -> Generator[Type[Unit], None, None]:
     """
     path = 'refinery.units'
     root = __import__(path).units
+    mark = root.Entry
 
     def iterate(parent: ModuleType, path: str, is_package: bool = True) -> Generator[Type[Unit], None, None]:
         for attr in dir(parent):
             item = getattr(parent, attr)
             if getattr(item, '__module__', None) != path:
                 continue
-            if isinstance(item, type) and issubclass(item, root.Entry) and item is not root.Entry:
+            if getattr(item, '__name__', '_').startswith('_'):
+                continue
+            if isinstance(item, type) and issubclass(item, mark) and item is not mark:
                 yield item
         if not is_package:
             return

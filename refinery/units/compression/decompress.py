@@ -12,7 +12,7 @@ from .blz import blz
 from .brotli import brotli
 from .bz2 import bz2
 from .jcalg import jcalg
-from .lz import lzma
+from .lz import _auto_decompress_lzma as lzma
 from .lz4 import lz4
 from .lzjb import lzjb
 from .lznt1 import lznt1
