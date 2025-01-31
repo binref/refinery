@@ -85,6 +85,7 @@ class _INF(metaclass=Singleton):
     def __truediv__(self, other): return self
     def __floordiv__(self, other): return self
     def __rrshift__(self, other): return 0
+    def __format__(self, *args): return str(self)
 
 
 INF = _INF
