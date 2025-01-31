@@ -4,7 +4,6 @@ from enum import IntFlag
 from itertools import repeat, product
 
 from lzma import (
-    _decode_filter_properties,
     FILTER_DELTA,
     FILTER_LZMA1,
     FILTER_LZMA2,
@@ -19,6 +18,7 @@ from lzma import (
 
 from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.structures import MemoryFile
+from refinery.lib.decompression import parse_lzma_properties
 
 __all__ = ['lzma']
 
@@ -85,6 +85,8 @@ class lzma(Unit):
                     except (EOFError, LZMAError):
                         raise RefineryPartialResult(
                             F'compression failed at offset {offset}', temp)
+        if n := len(lz.unused_data):
+            raise RefineryPartialResult(F'Data stream is truncated, {n} bytes unused.', temp)
         return temp
 
     def _process(self, data: bytearray, partial=False):
@@ -96,18 +98,22 @@ class lzma(Unit):
         except Exception:
             best = None
             self.log_info('default LZMA decompressor failed, brute-forcing custom header')
-        modes = [
-            ('LZMA1', FILTER_LZMA1, 5),
-            ('LZMA2', FILTER_LZMA2, 1),
-        ]
         view = memoryview(data)
-        for (name, mode, p), n, skipped in product(modes, range(16), range(16)):
-            if not view[n]:
+        for (version, p), n, skipped in product(((1, 5), (2, 1)), range(0x11), range(0x11)):
+            if n + skipped > p + 20:
+                # expect no more than a 20 byte header on top of the properties
+                # that would be enough for, e.g. compressed & uncompressed size
+                # each filling a full 64bit integer and 4 additional bytes.
                 continue
-            self.log_debug(F'trying {name} at {n:02d}, skipping {skipped:02d}')
             try:
-                fp = _decode_filter_properties(mode, view[n:n + p])
-                engine = LZMADecompressor(FORMAT_RAW, filters=[fp])
+                filter = parse_lzma_properties(
+                    view[n:n + p],
+                    version,
+                    min_dict=0x0001_0000,
+                    max_dict=0x1000_0000,
+                )
+                self.log_debug(F'attempt LZMA{version} at {n:02d}, skipping {skipped:02d}, filter: {filter!r}')
+                engine = LZMADecompressor(FORMAT_RAW, filters=[filter])
                 result = self._decompress(view[n + p + skipped:], engine, partial)
             except RefineryPartialResult as pe:
                 if best is None:
@@ -119,7 +125,7 @@ class lzma(Unit):
                 continue
             if len(result) * 1.2 < len(data):
                 continue
-            self.log_info(F'detected properties for {name} at {n}, raw stream starting at offset {skipped}')
+            self.log_info(F'success with LZMA{version} properties at {n} and raw stream starting at {skipped + n + p}')
             return result
         if partial and best is not None:
             if len(best.partial) <= 0:

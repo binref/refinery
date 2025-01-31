@@ -4,6 +4,8 @@ from typing import List, Optional, Union
 from collections import Counter
 from itertools import repeat
 
+import lzma
+
 from refinery.lib.structures import StructReader
 
 
@@ -211,3 +213,28 @@ def read_huffman_symbol(reader: BitBufferedReader, decode_table: List[int], tabl
         length = entry & DECODE_TABLE_LENGTH_MASK
     reader.read(length)
     return symbol
+
+
+def parse_lzma_properties(data: memoryview, version: int, min_dict: int = 0, max_dict: int = 0xFFFFFFFF):
+    pv = data[0]
+    if version == 1:
+        ds = int.from_bytes(data[1:5], 'little')
+        pv, lc = divmod(pv, 9)
+        pb, lp = divmod(pv, 5)
+        _valid = lc <= 8 and lp <= 4 and pb <= 4
+        if not _valid:
+            raise ValueError(F'Invalid LZMA1 properties {lc=} {lp=} {pb=}.')
+        df = dict(id=lzma.FILTER_LZMA1, lc=lc, pb=pb, lp=lp, dict_size=ds)
+    elif version == 2:
+        if pv > 40:
+            raise ValueError(F'Invalid LZMA2 encoded dictionary size {pv=}')
+        ph, pl = divmod(pv, 2)
+        ds = 0xFFFFFFFF if pv == 40 else (pl + 2) << (ph + 11)
+        df = dict(id=lzma.FILTER_LZMA2, dict_size=ds)
+    else:
+        raise ValueError(F'Invalid LZMA version {version}.')
+    if ds > max_dict:
+        raise ValueError(F'Dictionary size in excess of 0x{max_dict:08X}.')
+    if ds < min_dict:
+        raise ValueError(F'Dictionary size is less than 0x{min_dict:08X}.')
+    return df

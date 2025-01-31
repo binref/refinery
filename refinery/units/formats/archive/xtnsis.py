@@ -20,6 +20,7 @@ from refinery.lib.structures import MemoryFile, Struct, StructReader, StreamDeto
 
 from refinery.lib.thirdparty.pyflate import BZip2File, GZipFile
 from refinery.lib.tools import exception_to_string
+from refinery.lib.decompression import parse_lzma_properties
 
 from typing import (
     BinaryIO,
@@ -1267,15 +1268,8 @@ class NSArchive(Struct):
                 _format = None
                 _stream = self.LZMAFix(d)
             else:
-                pv = d.u8()
-                ds = max(self.lzma_options.dictionary_size, d.u32())
-                if (pv >= 225):
-                    raise ValueError('Unexpected LZMA properties; value exceeds 225.')
-                pv, lc = divmod(pv, 9)
-                pb, lp = divmod(pv, 5)
-                _filter = [
-                    dict(id=lzma.FILTER_X86),
-                    dict(id=lzma.FILTER_LZMA1, dict_size=ds, lc=lc, lp=lp, pb=pb)]
+                _filter = parse_lzma_properties(d.read(5), 1)
+                _filter = [dict(id=lzma.FILTER_X86), _filter]
                 _format = lzma.FORMAT_RAW
                 _stream = d
             return lzma.LZMAFile(_stream, filters=_filter, format=_format)

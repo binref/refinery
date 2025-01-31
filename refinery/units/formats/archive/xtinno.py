@@ -34,6 +34,7 @@ from refinery.lib.tools import exception_to_string, one
 from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
 from refinery.lib.types import ByteStr
 from refinery.lib.json import BytesAsStringEncoder
+from refinery.lib.decompression import parse_lzma_properties
 
 from refinery.units.crypto.cipher.rc4 import rc4
 from refinery.units.crypto.cipher.chacha import xchacha
@@ -2423,7 +2424,7 @@ class xtinno(ArchiveUnit):
             import lzma
             first = next(it).BlockData
             prop, first = first[:5], first[5:]
-            filter = lzma._decode_filter_properties(lzma.FILTER_LZMA1, prop)
+            filter = parse_lzma_properties(prop, 1)
             dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[filter])
             result.extend(dec.decompress(first))
         elif stream.compression == StreamCompressionMethod.Flate:
@@ -2492,11 +2493,11 @@ class xtinno(ArchiveUnit):
             if method == CompressionMethod.Store:
                 chunk = data
             elif method == CompressionMethod.LZMA1:
-                props = lzma._decode_filter_properties(lzma.FILTER_LZMA1, data[0:5])
+                props = parse_lzma_properties(data[0:5], 1)
                 dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
                 chunk = dec.decompress(data[5:])
             elif method == CompressionMethod.LZMA2:
-                props = lzma._decode_filter_properties(lzma.FILTER_LZMA2, data[0:1])
+                props = parse_lzma_properties(data[0:1], 2)
                 dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
                 chunk = dec.decompress(data[1:])
             elif method == CompressionMethod.BZip2:
