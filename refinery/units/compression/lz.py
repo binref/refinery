@@ -99,6 +99,11 @@ class lzma(Unit):
             best = None
             self.log_info('default LZMA decompressor failed, brute-forcing custom header')
         view = memoryview(data)
+        min_original_size = {
+            # https://sourceforge.net/p/sevenzip/discussion/45797/thread/b6bd62f8/
+            1: int((len(data) - 64_000) / 1.100), # noqa
+            2: int((len(data) -  1_000) / 1.001), # noqa
+        }
         for (version, p), n, skipped in product(((1, 5), (2, 1)), range(0x11), range(0x11)):
             if n + skipped > p + 20:
                 # expect no more than a 20 byte header on top of the properties
@@ -123,7 +128,7 @@ class lzma(Unit):
                 continue
             except Exception:
                 continue
-            if len(result) * 1.2 < len(data):
+            if len(result) < min_original_size:
                 continue
             self.log_info(F'success with LZMA{version} properties at {n} and raw stream starting at {skipped + n + p}')
             return result
