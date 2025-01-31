@@ -27,13 +27,14 @@ from .zstd import zstd
 
 
 class _R(IntFlag):
-    InvalidData = 0b0000  # noqa
-    ValidData   = 0b0001  # noqa
-    KnownFormat = 0b0010  # noqa
-    HadOutput   = 0b0100  # noqa
-    HadNoErrors = 0b1000  # noqa
-    Candidate   = 0b0011  # noqa
-    Successful  = 0b1100  # noqa
+    InvalidData = 0b00000  # noqa
+    NotMangled  = 0b00001  # noqa
+    ValidData   = 0b00010  # noqa
+    KnownFormat = 0b00100  # noqa
+    HadOutput   = 0b01000  # noqa
+    HadNoErrors = 0b10000  # noqa
+    Candidate   = 0b00110  # noqa
+    Successful  = 0b11000  # noqa
 
     @property
     def total(self):
@@ -159,9 +160,11 @@ class decompress(Unit):
         def best_current_rating():
             return max(best_by_rating, default=_R.InvalidData)
 
-        def decompress(engine: Unit, cutoff: int = 0, prefix: Optional[int] = None):
+        def decompress(engine: Unit, cutoff: int = 0, prefix: Optional[int] = None, careful: bool = False):
             ingest = data[cutoff:]
             rating = _R.ValidData
+            if cutoff == 0 and prefix is None and not careful:
+                rating |= _R.NotMangled
             if prefix is not None:
                 buffer[0] = prefix
                 ingest = buffer
@@ -206,7 +209,7 @@ class decompress(Unit):
                 if best and discard_if_too_good:
                     if q < 0.5:
                         return
-                    if new.failed:
+                    if new.rating & _R.Successful != _R.Successful:
                         return
                 self.log_info(lambda:
                     F'[switch] [{brief}] [q={q:07.4f}] compression ratio {ratio:07.4f}% with: {new!s}')
@@ -221,16 +224,18 @@ class decompress(Unit):
             for t in range(self.args.tolerance + 1):
                 if best_current_rating() >= _R.Successful and careful and t > 0:
                     break
-                update(decompress(engine, t), careful)
+                update(decompress(engine, t, None, careful), careful)
             if self.args.prepend and best_current_rating() < _R.Successful:
                 for p in range(0x100):
-                    update(decompress(engine, 0, p), careful)
+                    update(decompress(engine, 0, p, careful), careful)
 
         for r in sorted(best_by_rating, reverse=True):
             if dc := best_by_rating[r]:
                 if not dc.rating & _R.HadOutput:
                     continue
-                self.log_info(F'settling on {dc.method} decompression.')
+                self.log_info(F'settling on {dc.method} decompression, cutoff={dc.cutoff} and prefix={dc.prefix}.')
+                if dc.rating & _R.NotMangled:
+                    self.log_info('supporting evidence: no modifications to the buffer were necessary')
                 if dc.rating & _R.KnownFormat:
                     self.log_info('supporting evidence: found a known magic signature')
                 if dc.rating & _R.HadNoErrors:
