@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from pefile import PE, PEFormatError
 from struct import unpack
 
 from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 from refinery.units.formats.pe import get_pe_size
 from refinery.units.formats.pe.pemeta import pemeta
+from refinery.lib.mime import FileMagicInfo as magic
+from refinery.lib import lief
 
 
 class carve_pe(PathExtractorUnit):
@@ -48,8 +49,8 @@ class carve_pe(PathExtractorUnit):
                 self.log_debug(F'invalid NT header signature for candidate at 0x{offset:08X}')
                 continue
             try:
-                pe = PE(data=data[offset:], fast_load=True)
-            except PEFormatError as err:
+                pe = lief.load_pe_fast(mv[offset:])
+            except Exception as err:
                 self.log_debug(F'parsing of PE header at 0x{offset:08X} failed:', err)
                 continue
 
@@ -72,8 +73,7 @@ class carve_pe(PathExtractorUnit):
                 try:
                     path = info['ExportName']
                 except KeyError:
-                    extension = 'exe' if pe.is_exe() else 'dll' if pe.is_dll() else 'sys'
-                    path = F'carve-0x{offset:08X}.{extension}'
+                    path = F'carve-0x{offset:08X}.{magic(pedata).extension}'
 
             if offset > 0 or self.args.keep_root:
                 yield UnpackResult(path, pedata, offset=offset)
@@ -83,6 +83,6 @@ class carve_pe(PathExtractorUnit):
                 continue
 
             if not offset or self.args.recursive:
-                cursor += pe.OPTIONAL_HEADER.SizeOfHeaders
+                cursor += pe.optional_header.sizeof_headers
             else:
                 cursor += pesize - 2
