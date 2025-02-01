@@ -5,9 +5,9 @@ Parsing of the .NET header. The code is based on the description in [1].
 References:
   [1]: https://www.ntcore.com/files/dotnetformat.htm
 """
-import pefile
 from typing import List
 
+from refinery.lib import lief
 from refinery.lib.dotnet.types import (
     RawBytes,
     Box,
@@ -995,35 +995,16 @@ class NetResourceWithName(Struct):
 class DotNetHeader:
     def __init__(self, data, pe=None, parse_resources=True):
         try:
-            self.pe = pe or pefile.PE(data=data, fast_load=True)
-            self.head = NetDirectory(self.reader(
-                self.pe.OPTIONAL_HEADER.DATA_DIRECTORY[14]))
-        except IndexError:
-            if not data: raise
-            # this is a temporary fix for what should really be handled in pefile,
-            # see also: https://github.com/erocarrera/pefile/issues/264
-            import struct
-            count = self.pe.OPTIONAL_HEADER.NumberOfRvaAndSizes
-            delta = (self.pe.FILE_HEADER.SizeOfOptionalHeader
-                - (self.pe.OPTIONAL_HEADER.sizeof() + count * 8)) // 8
-            if delta > 0:
-                nt = self.pe.DOS_HEADER.e_lfanew
-                data = data[:nt + 0x74] + struct.pack('<I', count + delta) + data[nt + 0x78:]
-            self.pe = pefile.PE(data=data, fast_load=True)
-            self.head = NetDirectory(self.reader(
-                self.pe.OPTIONAL_HEADER.DATA_DIRECTORY[14]))
-        except pefile.PEFormatError:
-            raise InvalidDotNetHeader
-
+            self.pe = pe = pe or lief.load_pe(data)
+            self.data = data
+            self.head = NetDirectory(self.reader(pe.data_directory(lief.PE.DataDirectory.TYPES.CLR_RUNTIME_HEADER)))
+        except Exception as E:
+            raise InvalidDotNetHeader from E
         try:
             self.meta = NetMetaData(self.reader(self.head.MetaData))
-        except pefile.PEFormatError:
-            raise InvalidDotNetHeader
-
-        if not parse_resources:
-            self.resources = []
-        else:
-            self.parse_resources()
+        except Exception as E:
+            raise InvalidDotNetHeader from E
+        self.resources = self.parse_resources() if parse_resources else []
 
     def parse_resources(self):
         def parse(reader):
@@ -1040,7 +1021,12 @@ class DotNetHeader:
                         Name=entry.Name,
                         Data=B''
                     )
-        self.resources = list(parse(self.reader(self.head.Resources)))
+        return list(parse(self.reader(self.head.Resources)))
 
     def reader(self, obj):
-        return StreamReader(self.pe.get_data(obj.VirtualAddress, obj.Size))
+        rva, size = (obj.rva, obj.size) if (
+            isinstance(obj, lief.PE.DataDirectory)
+        ) else (obj.VirtualAddress, obj.Size)
+        start = self.pe.rva_to_offset(rva)
+        end = start + size
+        return StreamReader(self.data[start:end])
