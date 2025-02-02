@@ -2,24 +2,138 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Iterable, Dict, List, TYPE_CHECKING
+from typing import Iterable, Dict, List
 from hashlib import md5
+from enum import IntEnum
 
 import plistlib
+import itertools
 
 from refinery.units import Arg, Unit
 from refinery.units.formats.pe.pemeta import pemeta
 from refinery.units.sinks.ppjson import ppjson
-from refinery.lib.tools import NoLogging
-from refinery.lib.structures import MemoryFile
-
-if TYPE_CHECKING:
-    from ktool import Image
-    from ktool.loader import Symbol
-    from ktool.codesign import BlobIndex, SuperBlob
+from refinery.lib.structures import Struct, StructReader, StreamDetour
+from refinery.lib import lief
 
 
 CS_ADHOC = 0x0000_0002
+
+
+class BlobType(IntEnum):
+    CODEDIRECTORY                 = 0x00000 # noqa
+    INFOSLOT                      = 0x00001 # noqa
+    REQUIREMENTS                  = 0x00002 # noqa
+    RESOURCEDIR                   = 0x00003 # noqa
+    APPLICATION                   = 0x00004 # noqa
+    XML_ENTITLEMENTS              = 0x00005 # noqa
+    DER_ENTITLEMENTS              = 0x00007 # noqa
+    LAUNCH_CONSTRAINT_SELF        = 0x00008 # noqa
+    LAUNCH_CONSTRAINT_PARENT      = 0x00009 # noqa
+    LAUNCH_CONSTRAINT_RESPONSIBLE = 0x0000A # noqa
+    LIBRARY_CONSTRAINT            = 0x0000B # noqa
+    ALTERNATE_CODEDIRECTORIES     = 0x01000 # noqa
+    CMS_SIGNATURE                 = 0x10000 # noqa
+
+
+class BlobMagic(IntEnum):
+    OneRequirement      = 0xFADE0C00 # noqa
+    Requirements        = 0xFADE0C01 # noqa
+    CodeDirectory       = 0xFADE0C02 # noqa
+    Signature           = 0xFADE0CC0 # noqa
+    DetachedSignature   = 0xFADE0CC1 # noqa
+    BlobWrapper         = 0xFADE0B01 # noqa
+    SignatureOld        = 0xFADE0B02 # noqa
+    EntitlementsXML     = 0xFADE7171 # noqa
+    EntitlementsDER     = 0xFADE7172 # noqa
+    LaunchConstraint    = 0xFADE8181 # noqa
+
+
+class BlobIndex(Struct):
+    def __init__(self, reader: StructReader[memoryview]):
+        self.type = reader.u32()
+        self.offset = reader.u32()
+        with StreamDetour(reader, self.offset):
+            pos = reader.tell()
+            self.magic = reader.u32()
+            length = reader.u32()
+            self.data = reader.read(length - reader.tell() + pos)
+
+
+class SuperBlob(Struct):
+    def __init__(self, reader: StructReader[memoryview]):
+        magic = reader.read(4)
+        if magic == B'\xfa\xde\x0c\xc0':
+            reader.bigendian = True
+        elif magic != B'\xc0\x0c\xde\xfa':
+            raise ValueError
+        self.size = reader.u32()
+        count = reader.u32()
+        self.blobs = [BlobIndex(reader) for _ in range(count)]
+
+
+class CodeDirectoryBlob(Struct):
+    def __init__(self, reader: StructReader[memoryview]):
+        reader.bigendian = True
+        self.version = reader.u32()
+        self.flags = reader.u32()
+        self.hashOffset = reader.u32()
+        self.identOffset = reader.u32()
+        self.nSpecialSlots = reader.u32()
+        self.nCodeSlots = reader.u32()
+        self.codeLimit = reader.u32()
+        self.hashSize = reader.u8()
+        self.hashType = reader.u8()
+        self.platform = reader.u8()
+        self.pageSize = reader.u8()
+        self.spare2 = reader.u32()
+
+
+_CPU_SUBTYPES = {
+    lief.MachO.CPU_TYPES.x86: {
+        0x03: 'ALL',
+        0x04: 'ARCH1',
+    },
+    lief.MachO.CPU_TYPES.x86_64: {
+        0x03: 'ALL',
+        0x08: 'H',
+    },
+    lief.MachO.CPU_TYPES.POWERPC: {
+        0x00: 'ALL',
+        0x01: '601',
+        0x02: '602',
+        0x03: '603',
+        0x04: '603e',
+        0x05: '603ev',
+        0x06: '604',
+        0x07: '604e',
+        0x08: '620',
+        0x09: '750',
+        0x0A: '7400',
+        0x0B: '7450',
+        0x64: '970',
+    },
+    lief.MachO.CPU_TYPES.ARM: {
+        0x00: 'ALL',
+        0x05: 'V4T',
+        0x06: 'V6',
+        0x07: 'V5',
+        0x08: 'XSCALE',
+        0x09: 'V7',
+        0x0A: 'ARM_V7F',
+        0x0B: 'V7S',
+        0x0C: 'V7K',
+        0x0E: 'V6M',
+        0x0F: 'V7M',
+        0x10: 'V7EM',
+    },
+    lief.MachO.CPU_TYPES.ARM64: {
+        0x00: 'ALL',
+        0x02: 'ARM64E',
+    },
+    lief.MachO.CPU_TYPES.SPARC: {
+        0x00: 'ALL',
+    },
+}
 
 
 class machometa(Unit):
@@ -49,231 +163,194 @@ class machometa(Unit):
             tabular=tabular,
         )
 
-    @Unit.Requires('k2l>=2.0', 'all')
-    def _ktool():
-        import ktool
-        import ktool.macho
-        import ktool.codesign
-        return ktool
-
-    def compute_symhash(self, macho_image: Image) -> Dict:
-        def _symbols(symbols: Iterable[Symbol]):
+    def compute_symhash(self, macho: lief.MachO.Binary) -> Dict:
+        def _symbols(symbols: Iterable[lief.MachO.Symbol]):
             for sym in symbols:
-                if sym.types:
+                if sym.category != lief.MachO.Symbol.CATEGORY.UNDEFINED:
                     continue
-                yield sym.fullname
-        symbols = sorted(set(_symbols(macho_image.symbol_table.ext)))
+                yield lief.string(sym.name)
+        symbols = sorted(set(_symbols(macho.symbols)))
         symbols: str = ','.join(symbols)
         return md5(symbols.encode('utf8')).hexdigest()
 
-    def parse_macho_header(self, macho_image: Image, data=None) -> Dict:
+    def parse_macho_header(self, macho: lief.MachO.Binary, data=None) -> Dict:
         info = {}
-        macho_header = macho_image.macho_header
-        dyld_header = macho_image.macho_header.dyld_header
-        if dyld_header is not None:
-            info['Type'] = dyld_header.type_name
-            info['Magic'] = dyld_header.magic
-            info['CPUType'] = macho_image.slice.type.name
-            info['CPUSubType'] = macho_image.slice.subtype.name
-            info['FileType'] = macho_image.macho_header.filetype.name
-            info['LoadCount'] = dyld_header.loadcnt
-            info['LoadSize'] = dyld_header.loadsize
-            info['Flags'] = [flag.name for flag in macho_header.flags]
-            info['Reserved'] = dyld_header.reserved
+        if header := macho.header:
+            st = header.cpu_subtype & 0x7FFFFFFF
+            ht = 'mach_header_64' if header.magic in {
+                lief.MachO.MACHO_TYPES.CIGAM_64,
+                lief.MachO.MACHO_TYPES.MAGIC_64,
+            } else 'mach_header'
+            info['Type'] = ht
+            info['Magic'] = header.magic.value
+            info['CPUType'] = header.cpu_type.__name__.upper()
+            info['CPUSubType'] = _CPU_SUBTYPES.get(header.cpu_type, {}).get(st, st)
+            info['FileType'] = header.file_type.__name__
+            info['LoadCount'] = header.nb_cmds
+            info['LoadSize'] = header.sizeof_cmds
+            info['Flags'] = sorted(flag.__name__ for flag in header.flags_list)
+            info['Reserved'] = header.reserved
         return info
 
-    def parse_linked_images(self, macho_image: Image, data=None) -> Dict:
+    def parse_linked_images(self, macho: lief.MachO.Binary, data=None) -> Dict:
         load_command_images = {}
-        linked_images = macho_image.linked_images
-        LOAD_COMMAND = self._ktool.macho.LOAD_COMMAND
-        for linked_image in linked_images:
-            load_command_name = LOAD_COMMAND(linked_image.cmd.cmd).name
-            load_command_images.setdefault(load_command_name, []).append(linked_image.install_name)
+        load_commands: Iterable[lief.MachO.LoadCommand] = macho.commands
+        for load_command in load_commands:
+            if not isinstance(load_command, lief.MachO.DylibCommand):
+                continue
+            images: List[str] = load_command_images.setdefault(load_command.command.__name__, [])
+            images.append(load_command.name)
         return load_command_images
 
-    def parse_signature(self, macho_image: Image, data=None) -> Dict:
+    def parse_signature(self, macho_image: lief.MachO.Binary, data=None) -> Dict:
 
-        _km = self._ktool.macho
-        _kc = self._ktool.codesign
-
-        class CodeDirectoryBlob(_km.Struct):
-            FIELDS = {
-                'magic': _km.uint32_t,
-                'length': _km.uint32_t,
-                'version': _km.uint32_t,
-                'flags': _km.uint32_t,
-                'hashOffset': _km.uint32_t,
-                'identOffset': _km.uint32_t,
-                'nSpecialSlots': _km.uint32_t,
-                'nCodeSlots': _km.uint32_t,
-                'codeLimit': _km.uint32_t,
-                'hashSize': _km.uint8_t,
-                'hashType': _km.uint8_t,
-                'platform': _km.uint8_t,
-                'pageSize': _km.uint8_t,
-                'spare2': _km.uint32_t
-            }
-
-            def __init__(self, byte_order='little'):
-                super().__init__(byte_order=byte_order)
-                self.magic = 0
-                self.length = 0
-                self.version = 0
-                self.flags = 0
-                self.hashOffset = 0
-                self.identOffset = 0
-                self.nSpecialSlots = 0
-                self.nCodeSlots = 0
-                self.codeLimit = 0
-                self.hashSize = 0
-                self.hashType = 0
-                self.platform = 0
-                self.pageSize = 0
-                self.spare2 = 0
+        if not macho_image.has_code_signature:
+            return {}
 
         info = {}
-        if macho_image.codesign_info is not None:
-            superblob: SuperBlob = macho_image.codesign_info.superblob
+        reader = StructReader(macho_image.code_signature.content)
+        super_blob = SuperBlob(reader)
 
-            for blob in macho_image.codesign_info.slots:
-                blob: BlobIndex
-                # ktool does not include code for extracting Blobs of types
-                # CSSLOT_CODEDIRECTORY, CSSLOT_CMS_SIGNATURE
-                # so we must do it ourselves here.
-                if blob.type == _kc.CSSLOT_CODEDIRECTORY:
-                    start = superblob.off + blob.offset
-                    codedirectory_blob = macho_image.read_struct(start, CodeDirectoryBlob)
+        for blob in super_blob.blobs:
 
-                    # Ad-hoc signing
-                    flags = _kc.swap_32(codedirectory_blob.flags)
-                    if flags & CS_ADHOC != 0:
-                        info['AdHocSigned'] = True
-                    else:
-                        info['AdHocSigned'] = False
+            if blob.type == BlobType.CODEDIRECTORY:
+                codedirectory_blob = CodeDirectoryBlob(blob.data)
+                if codedirectory_blob.flags & CS_ADHOC != 0:
+                    info['AdHocSigned'] = True
+                else:
+                    info['AdHocSigned'] = False
+                reader.seekset(codedirectory_blob.identOffset + blob.offset)
+                info['SignatureIdentifier'] = reader.read_c_string('utf8')
+                continue
 
-                    # Signature identifier
-                    identifier_offset = _kc.swap_32(codedirectory_blob.identOffset)
-                    identifier_data = macho_image.read_cstr(start + identifier_offset)
-                    info['SignatureIdentifier'] = identifier_data
+            if blob.type == BlobType.CMS_SIGNATURE:
+                reader.seekset(blob.offset)
+                cms_signature = blob.data
+                if not cms_signature:
+                    continue
+                try:
+                    parsed_cms_signature = pemeta.parse_signature(bytearray(cms_signature))
+                    info['Signature'] = parsed_cms_signature
+                except ValueError as pkcs7_parse_error:
+                    self.log_warn(F'Could not parse the data in CSSLOT_CMS_SIGNATURE as valid PKCS7 data: {pkcs7_parse_error!s}')
+                continue
 
-                if blob.type == 0x10000:  # CSSLOT_CMS_SIGNATURE
-                    start = superblob.off + blob.offset
-                    blob_data = macho_image.read_struct(start, _kc.Blob)
-                    blob_data.magic = _kc.swap_32(blob_data.magic)
-                    blob_data.length = _kc.swap_32(blob_data.length)
-                    cms_signature = macho_image.read_bytearray(start + _kc.Blob.SIZE, blob_data.length - _kc.Blob.SIZE)
-
-                    if len(cms_signature) != 0:
-                        try:
-                            parsed_cms_signature = pemeta.parse_signature(bytearray(cms_signature))
-                            info['Signature'] = parsed_cms_signature
-                        except ValueError as pkcs7_parse_error:
-                            self.log_warn(F'Could not parse the data in CSSLOT_CMS_SIGNATURE as valid PKCS7 data: {pkcs7_parse_error!s}')
-
-            if macho_image.codesign_info.req_dat is not None:
+            if blob.type == BlobType.REQUIREMENTS:
                 # TODO: Parse the requirements blob,
                 # which is encoded according to the code signing requirements language:
-                # https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/RequirementLang/RequirementLang.html
-                info['Requirements'] = macho_image.codesign_info.req_dat.hex()
-            if macho_image.codesign_info.entitlements is not None:
-                entitlements: str = macho_image.codesign_info.entitlements
-                if entitlements:
-                    try:
-                        entitlements = plistlib.loads(entitlements.encode('utf8'))
-                    except Exception as error:
-                        self.log_warn(F'failed to parse entitlements: {error!s}')
-                    else:
-                        info['Entitlements'] = entitlements
+                # https://developer.apple.com/library/archive/documentation/Security
+                #        /Conceptual/CodeSigningGuide/RequirementLang/RequirementLang.html
+                info['Requirements'] = blob.data.hex()
+                continue
+
+            if blob.type == BlobType.XML_ENTITLEMENTS:
+                entitlements = bytes(blob.data)
+                if not entitlements:
+                    continue
+                try:
+                    entitlements = plistlib.loads(entitlements)
+                except Exception as error:
+                    self.log_warn(F'failed to parse entitlements: {error!s}')
+                else:
+                    info['Entitlements'] = entitlements
 
         return info
 
-    def parse_version(self, macho_image: Image, data=None) -> Dict:
+    def parse_version(self, macho: lief.MachO.Binary, data=None) -> Dict:
         info = {}
-        load_commands = macho_image.macho_header.load_commands
-
-        SVC = self._ktool.macho.source_version_command
-        BVC = self._ktool.macho.build_version_command
-
+        load_commands: Iterable[lief.MachO.LoadCommand] = macho.commands
         for load_command in load_commands:
-            if isinstance(load_command, SVC):
+            if load_command.command == lief.MachO.LOAD_COMMAND_TYPES.SOURCE_VERSION:
                 if 'SourceVersion' not in info:
-                    info['SourceVersion'] = load_command.version
+                    cmd: lief.MachO.SourceVersion = load_command
+                    info['SourceVersion'] = cmd.version[0]
                 else:
-                    self.log_warn('More than one load command of type source_version_command found; the MachO file is possibly malformed')
-            elif isinstance(load_command, BVC):
+                    self.log_warn('More than one load command of type SOURCE_VERSION found; the MachO file is possibly malformed')
+                continue
+            if load_command.command == lief.MachO.LOAD_COMMAND_TYPES.BUILD_VERSION:
                 if 'BuildVersion' not in info:
+                    cmd: lief.MachO.BuildVersion = load_command
                     info['BuildVersion'] = {}
-                    info['BuildVersion']['Platform'] = macho_image.platform.name
-                    info['BuildVersion']['MinOS'] = F'{macho_image.minos.x}.{macho_image.minos.y}.{macho_image.minos.z}'
-                    info['BuildVersion']['SDK'] = F'{macho_image.sdk_version.x}.{macho_image.sdk_version.y}.{macho_image.sdk_version.z}'
-                    info['BuildVersion']['Ntools'] = load_command.ntools
+                    info['BuildVersion']['Platform'] = cmd.platform.__name__
+                    info['BuildVersion']['MinOS'] = '.'.join((str(v) for v in cmd.minos))
+                    info['BuildVersion']['SDK'] = '.'.join((str(v) for v in cmd.sdk))
+                    info['BuildVersion']['Ntools'] = len(cmd.tools)
                 else:
-                    self.log_warn('More than one load command of type build_version_command found; the MachO file is possibly malformed')
+                    self.log_warn('More than one load command of type BUILD_VERSION found; the MachO file is possibly malformed')
+                continue
         return info
 
-    def parse_load_commands(self, macho_image: Image, data=None) -> List:
+    def parse_load_commands(self, macho: lief.MachO.Binary, data=None) -> List:
         info = []
-        load_commands = macho_image.macho_header.load_commands
+        load_commands: Iterable[lief.MachO.LoadCommand] = macho.commands
         for load_command in load_commands:
-            info.append(load_command.serialize())
+            info.append(dict(
+                Type=load_command.command.__name__,
+                Size=load_command.size,
+                Data=load_command.data.hex(),
+            ))
         return info
 
-    def parse_imports(self, macho_image: Image, data=None) -> List:
+    def parse_imports(self, macho: lief.MachO.Binary, data=None) -> List:
         info = []
-        for imp in macho_image.imports:
-            info.append(imp.name)
+        imports: Iterable[lief.MachO.Symbol] = macho.imported_symbols
+        for imp in imports:
+            info.append(lief.string(imp.name))
         return info
 
-    def parse_exports(self, macho_image: Image, data=None) -> List:
+    def parse_exports(self, macho: lief.MachO.Binary, data=None) -> List:
         info = []
-        for exp in macho_image.exports:
-            info.append(exp.name)
+        exports: Iterable[lief.MachO.Symbol] = macho.exported_symbols
+        for exp in exports:
+            info.append(lief.string(exp.name))
         return info
 
     def process(self, data: bytearray):
         result = {}
-        ktool = self._ktool
-        with NoLogging(NoLogging.Mode.ALL):
-            macho = ktool.load_macho_file(fp=MemoryFile(memoryview(data)), use_mmaped_io=False)
-        if macho.type is ktool.MachOFileType.FAT:
-            result['FileType'] = 'FAT'
-        elif macho.type is ktool.MachOFileType.THIN:
-            result['FileType'] = 'THIN'
-
         slices = []
+        macho = lief.load_macho(data)
+        macho_slices: List[lief.MachO.Binary] = []
 
-        for macho_slice in macho.slices:
+        for k in itertools.count():
+            if not (ms := macho.at(k)):
+                break
+            macho_slices.append(ms)
+
+        result['FileType'] = 'FAT' if len(macho_slices) > 1 else 'THIN'
+
+        for image in macho_slices:
             slice_result = {}
-            macho_image = ktool.load_image(fp=macho_slice)
 
             for switch, resolver, name in [
-                (self.args.header, self.parse_macho_header, 'Header'),
-                (self.args.linked_images, self.parse_linked_images, 'LinkedImages'),
-                (self.args.signatures, self.parse_signature, 'Signatures'),
-                (self.args.version, self.parse_version, 'Version'),
-                (self.args.load_commands, self.parse_load_commands, 'LoadCommands'),
-                (self.args.imports, self.parse_imports, 'Imports'),
-                (self.args.exports, self.parse_exports, 'Exports'),
+                (self.args.header,          self.parse_macho_header,  'Header'),       # noqa
+                (self.args.linked_images,   self.parse_linked_images, 'LinkedImages'), # noqa
+                (self.args.signatures,      self.parse_signature,     'Signatures'),   # noqa
+                (self.args.version,         self.parse_version,       'Version'),      # noqa
+                (self.args.load_commands,   self.parse_load_commands, 'LoadCommands'), # noqa
+                (self.args.imports,         self.parse_imports,       'Imports'),      # noqa
+                (self.args.exports,         self.parse_exports,       'Exports'),      # noqa
             ]:
                 if not switch:
                     continue
                 self.log_debug(F'parsing: {name}')
                 try:
-                    info = resolver(macho_image, data)
+                    info = resolver(image, data)
                 except Exception as E:
                     self.log_info(F'failed to obtain {name}: {E!s}')
                     continue
                 if info:
                     slice_result[name] = info
 
-            if macho_image.uuid is not None:
-                uuid: bytes = macho_image.uuid
+            if image.uuid is not None:
+                uuid = bytes(image.uuid.uuid)
                 slice_result['UUID'] = uuid.hex()
-            slice_result['SymHash'] = self.compute_symhash(macho_image)
-            slice_result['BaseName'] = macho_image.base_name
-            slice_result['InstallName'] = macho_image.install_name
+            slice_result['SymHash'] = self.compute_symhash(image)
+            if fileset_name := image.fileset_name:
+                slice_result['FilesetName'] = fileset_name
             slices.append(slice_result)
 
         if slices:
             result['Slices'] = slices
-            yield from ppjson(tabular=self.args.tabular)._pretty_output(result, indent=4, ensure_ascii=False)
+            yield from ppjson(
+                tabular=self.args.tabular
+            )._pretty_output(result, indent=4, ensure_ascii=False)
