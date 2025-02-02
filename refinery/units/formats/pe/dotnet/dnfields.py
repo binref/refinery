@@ -110,7 +110,7 @@ class dnfields(PathExtractorUnit):
                 ftype += F'[{guess.count}]'
             self.log_info(
                 F'field {k:0{iwidth}d}; token 0x{_index:06X}; RVA 0x{rv.RVA:04X}; count {guess.count}; type {guess.type}; name {fname}')
-            offset = header.pe.get_offset_from_rva(rv.RVA)
+            offset = header.pe.rva_to_offset(rv.RVA)
             yield UnpackResult(
                 F'{fname}.{ext}',
                 lambda t=offset, s=totalsize: data[t:t + s],
