@@ -2,23 +2,14 @@
 # -*- coding: utf-8 -*-
 import itertools
 import json
-import re
 
 from contextlib import suppress
 from importlib import resources
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from enum import Enum
 
-from pefile import (
-    DEBUG_TYPE,
-    DIRECTORY_ENTRY,
-    image_characteristics,
-    MACHINE_TYPE,
-    SUBSYSTEM_TYPE,
-    PE,
-)
-
+from refinery.lib import lief
 from refinery.lib.dotnet.header import DotNetHeader
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
@@ -27,6 +18,20 @@ from refinery.lib.tools import date_from_timestamp
 from refinery.lib.lcid import LCID
 
 from refinery import data
+
+
+def _FILETIME(value: int) -> datetime:
+    s, ns100 = divmod(value - 116444736000000000, 10000000)
+    return datetime.fromtimestamp(s, timezone.utc).replace(microsecond=(ns100 // 10))
+
+
+def _STRING(value: str | bytes, dll: bool = False) -> str:
+    if not isinstance(value, str):
+        value, _, _ = value.partition(B'\0')
+        value = value.decode('utf8')
+    if dll and value.lower().endswith('.dll'):
+        value = value[~3:]
+    return value
 
 
 class VIT(str, Enum):
@@ -298,123 +303,124 @@ class pemeta(Unit):
             return info
         return info
 
-    def _pe_characteristics(self, pe: PE):
-        return {name for name, mask in image_characteristics
-            if pe.FILE_HEADER.Characteristics & mask}
+    def _pe_characteristics(self, pe: lief.PE.Binary):
+        characteristics = {F'IMAGE_FILE_{flag.name}' for flag in lief.PE.Header.CHARACTERISTICS
+            if pe.header.characteristics & flag.value}
+        if pe.header.characteristics & 0x40:
+            # TODO: Missing from LIEF
+            characteristics.add('IMAGE_FILE_16BIT_MACHINE')
+        return characteristics
 
-    def _pe_address_width(self, pe: PE, default=16) -> int:
-        if 'IMAGE_FILE_16BIT_MACHINE' in self._pe_characteristics(pe):
+    def _pe_address_width(self, pe: lief.PE.Binary, default=16) -> int:
+        # TODO: missing from LIEF
+        IMAGE_FILE_16BIT_MACHINE = 0x40
+        if pe.header.characteristics & IMAGE_FILE_16BIT_MACHINE:
             return 4
-        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in ['IMAGE_FILE_MACHINE_I386']:
+        elif pe.header.machine == lief.PE.Header.MACHINE_TYPES.I386:
             return 8
-        elif MACHINE_TYPE[pe.FILE_HEADER.Machine] in [
-            'IMAGE_FILE_MACHINE_AMD64',
-            'IMAGE_FILE_MACHINE_IA64',
-        ]:
+        elif pe.header.machine in (
+            lief.PE.Header.MACHINE_TYPES.AMD64,
+            lief.PE.Header.MACHINE_TYPES.IA64,
+        ):
             return 16
         else:
             return default
 
-    def _vint(self, pe: PE, value: int):
+    def _vint(self, pe: lief.PE.Binary, value: int):
         if not self.args.tabular:
             return value
         aw = self._pe_address_width(pe)
         return F'0x{value:0{aw}X}'
 
-    def parse_version(self, pe: PE, data=None) -> dict:
+    def parse_version(self, pe: lief.PE.Binary, data=None) -> dict:
         """
         Extracts a JSON-serializable and human-readable dictionary with information about
         the version resource of an input PE file, if available.
         """
-        pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
-        string_table_entries = []
-        for FileInfo in pe.FileInfo:
-            for FileInfoEntry in FileInfo:
-                with suppress(AttributeError):
-                    for StringTableEntry in FileInfoEntry.StringTable:
-                        StringTableEntryParsed = self._parse_pedict(StringTableEntry.entries)
-                        with suppress(AttributeError):
-                            LangID = StringTableEntry.entries.get('LangID', None) or StringTableEntry.LangID
-                            LangID = int(LangID, 0x10) if not isinstance(LangID, int) else LangID
-                            LangHi = LangID >> 0x10
-                            LangLo = LangID & 0xFFFF
-                            Language = LCID.get(LangHi, 'Language Neutral')
-                            Charset = self._CHARSET.get(LangLo, 'Unknown Charset')
-                            StringTableEntryParsed.update(
-                                LangID=F'{LangID:08X}',
-                                Charset=Charset,
-                                Language=Language
-                            )
-                        for key in StringTableEntryParsed:
-                            if key.endswith('Version'):
-                                value = StringTableEntryParsed[key]
-                                separator = ', '
-                                if re.match(F'\\d+({re.escape(separator)}\\d+){{3}}', value):
-                                    StringTableEntryParsed[key] = '.'.join(value.split(separator))
-                        string_table_entries.append(StringTableEntryParsed)
-        if not string_table_entries:
+        version_info = {}
+        if not pe.resources_manager.has_version:
             return None
-        elif len(string_table_entries) == 1:
-            return string_table_entries[0]
-        else:
-            return string_table_entries
+        version = pe.resources_manager.version
 
-    def parse_exports(self, pe: PE, data=None, include_addresses=False) -> list:
-        pe.parse_data_directories(directories=[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
-        base = pe.OPTIONAL_HEADER.ImageBase
+        if info := version.string_file_info:
+            for lng in info.langcode_items:
+                version_info.update({
+                    k.replace(' ', ''): _STRING(v) for k, v in lng.items.items()
+                })
+                version_info.update(
+                    CodePage=lng.code_page.name,
+                    LangID=self._vint(pe, lng.lang << 0x10 | lng.sublang),
+                    Language=LCID.get(lng.lang, 'Language Neutral'),
+                    Charset=self._CHARSET.get(lng.sublang, 'Unknown Charset'),
+                )
+
+        def _to_version_string(hi: int, lo: int):
+            a = hi >> 0x10
+            b = hi & 0xFFFF
+            c = lo >> 0x10
+            d = lo & 0xFFFF
+            return F'{a}.{b}.{c}.{d}'
+
+        # TODO: Missing: Version.CompanyName
+        # TODO: Missing: Version.FileDescription
+        # TODO: Missing: Version.LegalCopyright
+        # TODO: Missing: Version.ProductName
+
+        if info := version.fixed_file_info:
+            version_info.update(
+                OSName=info.file_os.name,
+                FileType=info.file_type.name,
+            )
+            if (s := info.file_subtype).value:
+                version_info.update(FileSubType=s)
+            if t := info.file_date_MS << 32 | info.file_date_LS:
+                version_info.update(Timestamp=_FILETIME(t))
+            version_info.update(
+                ProductVersion=_to_version_string(info.product_version_MS, info.product_version_LS),
+                FileVersion=_to_version_string(info.file_version_MS, info.file_version_LS),
+            )
+
+        if info := version.var_file_info:
+            ...
+
+        return version_info or None
+
+    def parse_exports(self, pe: lief.PE.Binary, data=None, include_addresses=False) -> list:
+        base = pe.optional_header.imagebase
         info = []
-        for k, exp in enumerate(pe.DIRECTORY_ENTRY_EXPORT.symbols):
-            if not exp.name:
+        if not pe.has_exports:
+            return None
+        for k, exp in enumerate(pe.get_export().entries):
+            name = exp.demangled_name
+            if not name:
+                name = exp.name
+            if not name:
                 name = F'@{k}'
-            else:
-                name = exp.name.decode('ascii')
-            item = {'Name': name, 'Address': self._vint(pe, exp.address + base)} if include_addresses else name
+            if not isinstance(name, str):
+                name = name.decode('latin1')
+            item = {
+                'Name': name, 'Address': self._vint(pe, exp.address + base)
+            } if include_addresses else name
             info.append(item)
         return info
 
-    def parse_imports(self, pe: PE, data=None, include_addresses=False) -> list:
+    def parse_imports(self, pe: lief.PE.Binary, data=None, include_addresses=False) -> list:
         info = {}
-        dirs = []
-        for name in [
-            'DIRECTORY_ENTRY_IMPORT',
-            'DIRECTORY_ENTRY_DELAY_IMPORT',
-        ]:
-            pe.parse_data_directories(directories=[DIRECTORY_ENTRY[F'IMAGE_{name}']])
-            with suppress(AttributeError):
-                dirs.append(getattr(pe, name))
-        self.log_warn(dirs)
-        for idd in itertools.chain(*dirs):
-            dll: bytes = idd.dll
-            dll = dll.decode('ascii')
+        for idd in itertools.chain(pe.imports, pe.delay_imports):
+            dll = _STRING(idd.name)
             if dll.lower().endswith('.dll'):
                 dll = dll[:~3]
             imports: list[str] = info.setdefault(dll, [])
-            with suppress(AttributeError):
-                symbols = idd.imports
-            with suppress(AttributeError):
-                symbols = idd.entries
-            try:
-                for imp in symbols:
-                    name: bytes = imp.name
-                    name = name and name.decode('ascii') or F'@{imp.ordinal}'
-                    if not include_addresses:
-                        imports.append(name)
-                    else:
-                        imports.append(dict(Name=name, Address=self._vint(pe, imp.address)))
-            except Exception as e:
-                self.log_warn(F'error parsing {name}: {e!s}')
+            for imp in idd.entries:
+                name = _STRING(imp.name) or F'@{imp.ordinal}'
+                imports.append(dict(
+                    Name=name, Address=self._vint(pe, imp.value)
+                ) if include_addresses else name)
         return info
 
-    def parse_header(self, pe: PE, data=None) -> dict:
-        def format_macro_name(name: str, prefix, convert=True):
-            name = name.split('_')[prefix:]
-            if convert:
-                for k, part in enumerate(name):
-                    name[k] = part.upper() if len(part) <= 3 else part.capitalize()
-            return ' '.join(name)
-
-        major = pe.OPTIONAL_HEADER.MajorOperatingSystemVersion
-        minor = pe.OPTIONAL_HEADER.MinorOperatingSystemVersion
+    def parse_header(self, pe: lief.PE.Binary, data=None) -> dict:
+        major = pe.optional_header.major_operating_system_version
+        minor = pe.optional_header.minor_operating_system_version
         version = self._WINVER.get(major, {0: 'Unknown'})
 
         try:
@@ -422,34 +428,22 @@ class pemeta(Unit):
         except LookupError:
             MinimumOS = version[0]
         header_information = {
-            'Machine': format_macro_name(MACHINE_TYPE[pe.FILE_HEADER.Machine], 3, False),
-            'Subsystem': format_macro_name(SUBSYSTEM_TYPE[pe.OPTIONAL_HEADER.Subsystem], 2),
+            'Machine': pe.header.machine.name,
+            'Subsystem': pe.optional_header.subsystem.name,
             'MinimumOS': MinimumOS,
         }
+        if pe.has_exports:
+            export_name = _STRING(pe.get_export().name)
+            if export_name.isprintable():
+                header_information['ExportName'] = export_name
 
-        pe.parse_data_directories(directories=[
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
-        ])
-
-        try:
-            export_name = pe.DIRECTORY_ENTRY_EXPORT.name
-            if isinstance(export_name, bytes):
-                export_name = export_name.decode('utf8')
-            if not export_name.isprintable():
-                export_name = None
-        except Exception:
-            export_name = None
-        if export_name:
-            header_information['ExportName'] = export_name
-
-        rich_header = pe.parse_rich_header()
-        rich = []
-
-        if rich_header:
-            it = rich_header.get('values', [])
+        if pe.has_rich_header:
+            rich = []
             if self.args.tabular:
-                cw = max(len(F'{c:d}') for c in it[1::2])
-            for idv, count in zip(it[0::2], it[1::2]):
+                cw = max(len(F'{entry.count:d}') for entry in pe.rich_header.entries)
+            for entry in pe.rich_header.entries:
+                idv = entry.id
+                count = entry.count
                 info = get_rich_info(idv)
                 if not info:
                     continue
@@ -475,56 +469,45 @@ class pemeta(Unit):
             if flag in characteristics:
                 header_information['Type'] = typespec
 
-        base = pe.OPTIONAL_HEADER.ImageBase
+        base = pe.optional_header.imagebase
         header_information['ImageBase'] = self._vint(pe, base)
-        header_information['ImageSize'] = get_pe_size(pe)
+        header_information['ImageSize'] = self._vint(pe, pe.optional_header.sizeof_image)
+        header_information['ComputedSize'] = get_pe_size(pe)
         header_information['Bits'] = 4 * self._pe_address_width(pe, 16)
-        header_information['EntryPoint'] = self._vint(pe, pe.OPTIONAL_HEADER.AddressOfEntryPoint + base)
+        header_information['EntryPoint'] = self._vint(pe, pe.optional_header.addressof_entrypoint + base)
         return header_information
 
-    def parse_time_stamps(self, pe: PE, raw_time_stamps: bool, more_detail: bool) -> dict:
+    def parse_time_stamps(self, pe: lief.PE.Binary, raw_time_stamps: bool, more_detail: bool) -> dict:
         """
         Extracts time stamps from the PE header (link time), as well as from the imports,
         exports, debug, and resource directory. The resource time stamp is also parsed as
         a DOS time stamp and returned as the "Delphi" time stamp.
         """
-        if raw_time_stamps:
-            def dt(ts): return ts
-        else:
-            dt = date_from_timestamp
-
-        pe.parse_data_directories(directories=[
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DEBUG'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
-        ])
-
+        def _id(x): return x
+        dt = _id if raw_time_stamps else date_from_timestamp
         info = {}
 
         with suppress(AttributeError):
-            info.update(Linker=dt(pe.FILE_HEADER.TimeDateStamp))
+            info.update(Linker=dt(pe.header.time_date_stamps))
 
-        for dir_name, _dll, info_key in [
-            ('DIRECTORY_ENTRY_IMPORT',       'dll',  'Import'), # noqa
-            ('DIRECTORY_ENTRY_DELAY_IMPORT', 'dll',  'Symbol'), # noqa
-            ('DIRECTORY_ENTRY_BOUND_IMPORT', 'name', 'Module'), # noqa
+        import_timestamps = {}
+        for entry in pe.imports:
+            ts = entry.timedatestamp
+            if ts == 0 or ts == 0xFFFFFFFF:
+                continue
+            import_timestamps[_STRING(entry.name, True)] = dt(ts)
+
+        symbol_timestamps = {}
+        for entry in pe.delay_imports:
+            ts = entry.timestamp
+            if ts == 0 or ts == 0xFFFFFFFF:
+                continue
+            symbol_timestamps[_STRING(entry.name, True)] = dt(ts)
+
+        for key, impts in [
+            ('Import', import_timestamps),
+            ('Symbol', symbol_timestamps),
         ]:
-            impts = {}
-            for entry in getattr(pe, dir_name, []):
-                ts = 0
-                with suppress(AttributeError):
-                    ts = entry.struct.dwTimeDateStamp
-                with suppress(AttributeError):
-                    ts = entry.struct.TimeDateStamp
-                if ts == 0 or ts == 0xFFFFFFFF:
-                    continue
-                name = getattr(entry, _dll, B'').decode()
-                if name.lower().endswith('.dll'):
-                    name = name[:-4]
-                impts[name] = dt(ts)
             if not impts:
                 continue
             if not more_detail:
@@ -535,15 +518,14 @@ class pemeta(Unit):
                     small_delta = timedelta(seconds=small_delta)
                 if dmax - dmin < small_delta:
                     impts = dmin
-            info[info_key] = impts
+            info[key] = impts
 
-        with suppress(AttributeError):
-            Export = pe.DIRECTORY_ENTRY_EXPORT.struct.TimeDateStamp
-            if Export: info.update(Export=dt(Export))
+        if pe.has_exports and (ts := pe.get_export().timestamp):
+            info.update(Export=dt(ts))
 
-        with suppress(AttributeError):
-            res_timestamp = pe.DIRECTORY_ENTRY_RESOURCE.struct.TimeDateStamp
-            if res_timestamp:
+        if pe.has_resources and pe.resources.is_directory:
+            rsrc: lief.PE.ResourceDirectory = pe.resources
+            if res_timestamp := rsrc.time_date_stamp:
                 with suppress(ValueError):
                     from refinery.units.misc.datefix import datefix
                     dos = datefix.dostime(res_timestamp)
@@ -561,12 +543,12 @@ class pemeta(Unit):
 
         return {key: norm(value) for key, value in info.items()}
 
-    def parse_dotnet(self, pe: PE, data):
+    def parse_dotnet(self, pe: lief.PE.Binary, data):
         """
         Extracts a JSON-serializable and human-readable dictionary with information about
         the .NET metadata of an input PE file.
         """
-        header = DotNetHeader(data, pe=pe)
+        header = DotNetHeader(data, pe)
         tables = header.meta.Streams.Tables
         info = dict(
             RuntimeVersion=F'{header.head.MajorRuntimeVersion}.{header.head.MinorRuntimeVersion}',
@@ -589,7 +571,7 @@ class pemeta(Unit):
             )
 
         try:
-            entry = self._vint(pe, header.head.EntryPointToken + pe.OPTIONAL_HEADER.ImageBase)
+            entry = self._vint(pe, header.head.EntryPointToken + pe.optional_header.imagebase)
             info.update(EntryPoint=entry)
         except AttributeError:
             pass
@@ -600,26 +582,37 @@ class pemeta(Unit):
 
         return info
 
-    def parse_debug(self, pe: PE, data=None):
-        result = {}
-        pe.parse_data_directories(directories=[
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DEBUG']])
-        for dbg in pe.DIRECTORY_ENTRY_DEBUG:
-            if DEBUG_TYPE.get(dbg.struct.Type, None) != 'IMAGE_DEBUG_TYPE_CODEVIEW':
+    def parse_debug(self, pe: lief.PE.Binary, data=None):
+        result = []
+        if not pe.has_debug:
+            return None
+        for entry in pe.debug:
+            if entry.type != lief.PE.Debug.TYPES.CODEVIEW:
                 continue
-            with suppress(Exception):
-                pdb = dbg.entry.PdbFileName
-                if 0 in pdb:
-                    pdb = pdb[:pdb.index(0)]
-                result.update(
-                    PdbPath=pdb.decode(self.codec),
-                    PdbAge=dbg.entry.Age
-                )
+            try:
+                entry: lief.PE.CodeViewPDB
+                result.append(dict(
+                    PdbPath=_STRING(entry.filename),
+                    PdbGUID=entry.guid,
+                    PdbAge=entry.age,
+                ))
+            except AttributeError:
+                continue
+        if len(result) == 1:
+            result = result[0]
         return result
 
     def process(self, data):
         result = {}
-        pe = PE(data=data, fast_load=True)
+
+        pe = lief.load_pe(
+            data,
+            parse_exports=self.args.exports,
+            parse_imports=self.args.imports,
+            parse_rsrc=self.args.version,
+            parse_reloc=False,
+            parse_signature=self.args.timestamps or self.args.signatures,
+        )
 
         for switch, resolver, name in [
             (self.args.debug,   self.parse_debug,    'Debug'),    # noqa
