@@ -2,6 +2,7 @@
 requires = [
     "colorama",
     "defusedxml",
+    "lief",
     "macholib",
     "msgpack>=1.0.0",
     "pefile",
