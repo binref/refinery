@@ -50,7 +50,7 @@ class JavaEncoder(BytesAsStringEncoder):
                     isLocalInnerClass=cd.is_local_inner_class,
                     isStaticMemberClass=cd.is_static_member_class,
                     name=cd.name,
-                    fields={t.name: v for t, v in fd.items()}
+                    fields={t.name: self.default(v) for t, v in fd.items()}
                 )
             if isinstance(obj, dsjava._javaobj.beans.JavaField):
                 return obj.class_name
