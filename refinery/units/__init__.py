@@ -2103,14 +2103,17 @@ class Unit(UnitBase, abstract=True):
         self._chunks = None
         self.console = False
 
-        keywords.update(dict(
+        for key, value in dict(
             nesting=0,
             iff=0,
             reverse=False,
             squeeze=False,
             devnull=False,
+            verbose=0,
+            lenient=0,
             quiet=False,
-        ))
+        ).items():
+            keywords.setdefault(key, value)
         # Since Python 3.6, functions always preserve the order of the keyword
         # arguments passed to them (see PEP 468).
         self.args = DelayedArgumentProxy(Namespace(**keywords), list(keywords))
