@@ -185,7 +185,7 @@ class pemeta(Unit):
     @classmethod
     def _parse_pedict(cls, bin):
         return dict((
-            cls._ensure_string(key),
+            cls._ensure_string(key).replace(" ", ""),
             cls._ensure_string(val)
         ) for key, val in bin.items() if val)
 
