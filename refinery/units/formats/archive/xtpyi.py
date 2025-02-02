@@ -558,14 +558,7 @@ class xtpyi(ArchiveUnit):
         version = F'{A}.{B}.{C}'
         canonic = F'{A}.{B}'
         if version not in xdis.magics.canonic_python_version:
-            class opcode_dummy:
-                version = float(canonic)
-                def __init__(self, name): self.name = name
-                def __getattr__(self, key): return opcode_dummy(F'{self.name}.{key}')
-                def __call__(self, *a, **k): return None
-                def __str__(self): return self.name
-                def __repr__(self): return self.name
-            import importlib
+            import importlib.util
             magic = importlib.util.MAGIC_NUMBER
             xdis.magics.add_magic_from_int(xdis.magics.magic2int(magic), version)
             xdis.magics.by_magic.setdefault(magic, set()).add(version)
@@ -573,7 +566,8 @@ class xtpyi(ArchiveUnit):
             xdis.magics.magics[canonic] = magic
             xdis.magics.canonic_python_version[canonic] = canonic
             xdis.magics.add_canonic_versions(version, canonic)
-            xdis.op_imports.op_imports.setdefault(canonic, opcode_dummy('dummy'))
+            xdis.op_imports.op_imports.setdefault(canonic,
+                next(iter(reversed(xdis.op_imports.op_imports.values()))))
         del A, B, C, version
         import xdis.std
         return xdis
