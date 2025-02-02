@@ -117,7 +117,7 @@ class dnfields(PathExtractorUnit):
             fname = field.Name
             type = None
             signature: bytes = field.Signature
-            offset = header.pe.get_offset_from_rva(rv.RVA)
+            offset = header.pe.rva_to_offset(rv.RVA)
 
             if len(signature) == 2:
                 # Crude signature parser for non-array case. Reference:
