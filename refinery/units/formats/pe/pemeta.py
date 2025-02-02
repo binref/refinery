@@ -204,11 +204,22 @@ class pemeta(Unit):
 
         info = {}
 
-        def find_timestamps(entry):
+        def _value(doc: dict, require_type=None):
+            if require_type is not None:
+                if doc.get('type', None) != require_type:
+                    raise LookupError
+            value = doc.get('value', None)
+            value = [value] if value else doc.get('values', [])
+            if not value:
+                raise LookupError
+            return value[0]
+
+        def find_timestamps(entry) -> dict:
             if isinstance(entry, dict):
-                if set(entry.keys()) == {'type', 'value'}:
-                    if entry['type'] == 'signing_time':
-                        return {'Timestamp': entry['value']}
+                try:
+                    return {'Timestamp': _value(entry, 'signing_time')}
+                except LookupError:
+                    pass
                 for value in entry.values():
                     result = find_timestamps(value)
                     if result is None:
@@ -270,8 +281,9 @@ class pemeta(Unit):
                         continue
                     for attr in signer_info['signed_attrs']:
                         if attr['type'] == 'authenticode_info':
-                            info.update(ProgramName=attr['value']['programName'])
-                            info.update(MoreInfo=attr['value']['moreInfo'])
+                            auth = _value(attr)
+                            info.update(ProgramName=auth['programName'])
+                            info.update(MoreInfo=auth['moreInfo'])
                 except KeyError:
                     continue
             try:
