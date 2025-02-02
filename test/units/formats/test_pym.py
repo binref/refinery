@@ -46,12 +46,13 @@ class TestPyMarshal(TestUnitBase):
             self.assertEqual(marshal.dumps(t) | unit | bytes, t)
 
     def test_code(self):
+        import importlib.util
+        M = importlib.util.MAGIC_NUMBER
+
         def test_function():
             print('refine your binaries!')
 
-        from refinery.units.formats.pyc import pyc
-        from refinery.units.formats.pym import pym
-
         data = marshal.dumps(test_function.__code__)
-        test = data | pym | pyc | str
-        self.assertIn('refine your binaries!', test)
+        test = data | self.load() | bytes
+        self.assertIn(b'refine your binaries!', test)
+        self.assertEqual(test[:len(M)], M)
