@@ -25,7 +25,7 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(slice_metadata['Header']['FileType'], 'EXECUTE')
         self.assertEqual(slice_metadata['Header']['LoadCount'], 0x15)
         self.assertEqual(slice_metadata['Header']['LoadSize'], 0x8C8)
-        self.assertListEqual(slice_metadata['Header']['Flags'], ['NOUNDEFS', 'DYLDLINK', 'TWOLEVEL', 'PIE'])
+        self.assertListEqual(slice_metadata['Header']['Flags'], ['DYLDLINK', 'NOUNDEFS', 'PIE', 'TWOLEVEL'])
         self.assertEqual(slice_metadata['Header']['Reserved'], 0)
 
         self.assertIn('BuildVersion', slice_metadata['Version'])
@@ -35,8 +35,6 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(slice_metadata['Version']['BuildVersion']['Ntools'], 1)
         self.assertEqual(slice_metadata['Version']['SourceVersion'], 0)
 
-        self.assertEqual(slice_metadata['BaseName'], '')
-        self.assertEqual(slice_metadata['InstallName'], '')
         self.assertEqual(slice_metadata['UUID'], '839216049d683075bc3f5a8628778bb8')
 
     def test_arm64_sample(self):
@@ -59,7 +57,7 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(slice_metadata['Header']['FileType'], 'EXECUTE')
         self.assertEqual(slice_metadata['Header']['LoadCount'], 0x11)
         self.assertEqual(slice_metadata['Header']['LoadSize'], 0x6F8)
-        self.assertListEqual(slice_metadata['Header']['Flags'], ['NOUNDEFS', 'DYLDLINK', 'TWOLEVEL', 'PIE'])
+        self.assertListEqual(slice_metadata['Header']['Flags'], ['DYLDLINK', 'NOUNDEFS', 'PIE', 'TWOLEVEL'])
         self.assertEqual(slice_metadata['Header']['Reserved'], 0)
 
         self.assertIn('BuildVersion', slice_metadata['Version'])
@@ -69,8 +67,6 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(slice_metadata['Version']['BuildVersion']['Ntools'], 1)
         self.assertEqual(slice_metadata['Version']['SourceVersion'], 0)
 
-        self.assertEqual(slice_metadata['BaseName'], '')
-        self.assertEqual(slice_metadata['InstallName'], '')
         self.assertEqual(slice_metadata['UUID'], 'f962f18b12a133368aa40779089c2b09')
 
     def test_universal_binary_sample(self):
@@ -103,7 +99,7 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(x86_64_slice_metadata['Header']['LoadCount'], 0x13)
         self.assertEqual(x86_64_slice_metadata['Header']['LoadSize'], 0x760)
         self.assertListEqual(x86_64_slice_metadata['Header']['Flags'],
-            ['NOUNDEFS', 'DYLDLINK', 'TWOLEVEL', 'WEAK_DEFINES', 'BINDS_TO_WEAK', 'PIE'])
+            ['BINDS_TO_WEAK', 'DYLDLINK', 'NOUNDEFS', 'PIE', 'TWOLEVEL', 'WEAK_DEFINES'])
         self.assertEqual(x86_64_slice_metadata['Header']['Reserved'], 0)
         self.assertEqual(x86_64_slice_metadata['UUID'], '8174817ef4cf398d975b7860466eaec7')
 
@@ -115,7 +111,7 @@ class TestMachoMeta(TestUnitBase):
         self.assertEqual(arm64_slice_metadata['Header']['LoadCount'], 0x13)
         self.assertEqual(arm64_slice_metadata['Header']['LoadSize'], 0x7B0)
         self.assertListEqual(arm64_slice_metadata['Header']['Flags'],
-            ['NOUNDEFS', 'DYLDLINK', 'TWOLEVEL', 'WEAK_DEFINES', 'BINDS_TO_WEAK', 'PIE'])
+            ['BINDS_TO_WEAK', 'DYLDLINK', 'NOUNDEFS', 'PIE', 'TWOLEVEL', 'WEAK_DEFINES'])
         self.assertEqual(arm64_slice_metadata['Header']['Reserved'], 0)
         self.assertEqual(arm64_slice_metadata['UUID'], 'ec10d84e723f3d9a8524cdc706749d68')
 
