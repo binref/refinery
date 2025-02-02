@@ -143,7 +143,7 @@ def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = No
         return python.encode(main.codec)
     if not isinstance(buffer, Code):
         embedded = bytes(buffer | carve('printable', single=True))
-        if len(code) - len(embedded) < 0x20:
+        if len(buffer) - len(embedded) < 0x20:
             return embedded
     disassembly = MemoryFile()
     with io.TextIOWrapper(disassembly, main.codec, newline='\n') as output:
