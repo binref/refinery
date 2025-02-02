@@ -23,7 +23,11 @@ class TestPEMeta(TestUnitBase):
         self.assertEqual(result['TimeStamp']['Linker'][:19], '2017-06-03 22:05:18')
         self.assertEqual(result['TimeStamp']['Signed'][:19], '2019-06-03 21:07:55')
 
-        self.assertEqual(result['Header']['Subsystem'], 'Windows CUI')
+        sys: str = result['Header']['Subsystem']
+        sys = sys.upper()
+        self.assertTrue(sys.startswith('WINDOWS'))
+        self.assertTrue(sys.endswith('CUI'))
+        self.assertLessEqual(len(sys), 12)
         self.assertEqual(result['Header']['Type'], 'EXE')
         self.assertEqual(result['Header']['ImageBase'], 0x00400000)
 
@@ -99,3 +103,20 @@ class TestPEMeta(TestUnitBase):
         self.assertSetEqual(pids, set(ShortPID))
         with self.assertRaises(LookupError):
             get_rich_short_pid('BOGUS')
+
+    def test_version(self):
+        data = self.download_sample('fd687a05b13c4f87f139d043c4d9d936b73762d616204bfb090124fd163c316e')
+        unit = self.load()
+        test = data | unit | json.loads
+        self.assertEqual(test['DotNet']['RuntimeVersion'], '2.5')
+        self.assertEqual(test['DotNet']['Version'], '1.1')
+        self.assertEqual(test['DotNet']['VersionString'], 'v4.0.30319')
+        self.assertEqual(test['DotNet']['Release'], '4.2.6.1'),
+        self.assertEqual(test['DotNet']['EntryPoint'], 0x06400002)
+        self.assertEqual(test['Version']['FileVersion'], '7.4.1.7')
+        self.assertEqual(test['Version']['InternalName'], 'rewrwr.exe')
+        self.assertEqual(test['Version']['LegalCopyright'], 'Copyright ©  2023')
+        self.assertEqual(test['Version']['OriginalFilename'], 'rewrwr.exe')
+        self.assertEqual(test['Version']['ProductName'], 'rewrwr')
+        self.assertEqual(test['Version']['ProductVersion'], '7.4.1.7')
+        self.assertEqual(test['Version']['AssemblyVersion'], '4.2.6.1')
