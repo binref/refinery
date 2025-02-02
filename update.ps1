@@ -12,7 +12,9 @@ if (-not (Test-Path $env)) {
 
 python -m pip install --upgrade pip
 
-rm ./refinery/__init__.pkl
+try {
+    rm ./refinery/__init__.pkl
+} catch {}
 
 git pull --rebase --autostash
 pip uninstall -y binary-refinery
