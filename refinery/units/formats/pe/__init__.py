@@ -3,53 +3,49 @@
 """
 A package containing Portable Executable (PE) file related units.
 """
-from pefile import PE, DIRECTORY_ENTRY
 from typing import Union, ByteString
-
 from refinery.units import Arg, Unit
+from refinery.lib import lief
 
-IMAGE_DIRECTORY_ENTRY_SECURITY = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
 
-
-def get_pe_size(pe: Union[PE, ByteString], overlay=True, sections=True, directories=True, certificate=True, memdump=False) -> int:
+def get_pe_size(pe: Union[lief.PE.Binary, ByteString], overlay=True, sections=True, directories=True, certificate=True, memdump=False) -> int:
     """
-    This fuction determines the size of a PE file, optionally taking into account the
-    pefile module overlay computation, section information, data directory information,
-    and certificate entries.
+    This fuction determines the size of a PE file, optionally taking into account the PE overlay
+    computation, section information, data directory information, and certificate entries.
     """
-    if not isinstance(pe, PE):
-        pe = PE(data=pe, fast_load=True)
+    if not isinstance(pe, lief.PE.Binary):
+        pe = lief.load_pe(pe)
 
-    overlay_value = overlay and pe.get_overlay_data_start_offset() or 0
+    overlay_value = overlay and pe.overlay_offset or 0
 
     sections_value = sections and max((
-        s.PointerToRawData + s.SizeOfRawData
+        s.pointerto_raw_data + s.sizeof_raw_data
         for s in pe.sections
     ), default=0) or 0
 
     memdump_value = memdump and max((
-        s.VirtualAddress + s.Misc_VirtualSize
+        s.virtual_address + s.virtual_size
         for s in pe.sections
     ), default=0) or 0
 
     try:
-        cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[IMAGE_DIRECTORY_ENTRY_SECURITY]
-    except IndexError:
+        cert_entry = pe.data_directory(lief.PE.DataDirectory.TYPES.CERTIFICATE_TABLE)
+    except LookupError:
         cert_entry = None
         certificate = False
 
     if certificate:
         # The certificate overlay is given as a file offset
         # rather than a virtual address.
-        cert_value = cert_entry.VirtualAddress + cert_entry.Size
+        cert_value = cert_entry.rva + cert_entry.size
     else:
         cert_value = 0
 
     if directories:
         directories_value = max((
-            pe.get_offset_from_rva(d.VirtualAddress) + d.Size
-            for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
-            if d.name != 'IMAGE_DIRECTORY_ENTRY_SECURITY'
+            pe.rva_to_offset(d.rva) + d.size
+            for d in pe.data_directories
+            if d.type != lief.PE.DataDirectory.TYPES.CERTIFICATE_TABLE
         ), default=0)
         directories_value = max(directories_value, cert_value)
     else:
