@@ -95,29 +95,44 @@ class TestPipelines(TestUnitBase):
 class TestMetaProperties(TestUnitBase):
 
     def test_style_guide(self):
-        from flake8.api import legacy as flake8
-        from flake8.main.options import JobsArgument
-        logging.StreamHandler.terminator = '\n    '
+        import pycodestyle
+
+        class RespectFlake8NoQA(pycodestyle.StandardReport):
+            def error(self, lno, offset, text, check):
+                for line in self.lines[:5]:
+                    _, _, noqa = line.partition('flake8:')
+                    if noqa.lstrip().startswith('noqa'):
+                        return
+                line: str = self.lines[lno - 1]
+                _, _, comment = line.partition('#')
+                if comment.lower().strip().startswith('noqa'):
+                    return
+                super().error(lno, offset, text, check)
+
+        stylez = pycodestyle.StyleGuide(
+            ignore=[
+                'E128',  # A continuation line is under-indented for a visual indentation.
+                'E203',  # Colons should not have any space before them.
+                'E701',  # Multiple statements on one line (colon)
+                'E704',  # Multiple statements on one line (def)
+                'W503',  # Line break occurred before a binary operator
+                'F722',  # syntax error in forward annotation
+                'F821',  # undefined name
+                'E261',  # at least two spaces before inline comment
+            ],
+            max_line_length=140,
+            reporter=RespectFlake8NoQA,
+        )
+
         root = os.path.abspath(inspect.stack()[0][1])
         for _ in range(3):
             root = os.path.dirname(root)
 
-        rules = flake8.get_style_guide(ignore=[
-            'E128',  # A continuation line is under-indented for a visual indentation.
-            'E203',  # Colons should not have any space before them.
-            'E701',  # Multiple statements on one line (colon)
-            'E704',  # Multiple statements on one line (def)
-            'W503',  # Line break occurred before a binary operator
-            'F722',  # syntax error in forward annotation
-            'F821',  # undefined name
-            'E261',  # at least two spaces before inline comment
-        ], max_line_length=140, jobs=JobsArgument('1'))
-        report = rules.check_files(path for path in glob(
+        python_files = [path for path in glob(
             os.path.join(root, 'refinery', '**', '*.py'), recursive=True)
-            if 'thirdparty' not in path
-        )
-        self.assertEqual(report.total_errors, 0,
-            msg='Flake8 formatting errors were found.')
+            if 'thirdparty' not in path]
+        report = stylez.check_files(python_files)
+        self.assertEqual(report.total_errors, 0, 'PEP8 formatting errors were found.')
 
     def test_no_legacy_interfaces(self):
         for unit in get_all_entry_points():

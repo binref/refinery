@@ -31,9 +31,9 @@ class LZOFlags(IntFlag):
 
 
 class LZOMethod(IntEnum):
-	M_LZO1X_1    = 1 # noqa
-	M_LZO1X_1_15 = 2 # noqa
-	M_LZO1X_999  = 3 # noqa
+    M_LZO1X_1    = 1 # noqa
+    M_LZO1X_1_15 = 2 # noqa
+    M_LZO1X_999  = 3 # noqa
 
 
 class LZOChunk(Struct):
