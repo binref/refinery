@@ -45,7 +45,7 @@ class dncfx(Unit):
         ]
 
         for entry in header.meta.RVAs:
-            offset = header.pe.get_offset_from_rva(entry.RVA)
+            offset = header.pe.rva_to_offset(entry.RVA)
             index = struct.pack('<I', entry.Field.Index)
             strings_found = 0
             for match in re.finditer(self._PATTERN_ARRAY_INIT % re.escape(index[:3]), data, flags=re.DOTALL):
