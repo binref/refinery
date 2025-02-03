@@ -81,7 +81,7 @@ class EmuState:
     previous_address: int = 0
     callstack_ceiling: int = 0
     invalid_instructions: int = 0
-    synthesized: set[bytes] = field(default_factory=set)
+    synthesized: dict[bytes, str] = field(default_factory=dict)
     ticks: int = field(default_factory=lambda: INF)
     visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
     init_registers: List[int] = field(default_factory=list)
@@ -143,10 +143,10 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
                 sockaddr.bigendian = True
                 port = sockaddr.u16()
                 host = '.'.join(map(str, sockaddr.read(4)))
-                self.state.synthesized.add(F'{host}:{port}'.encode(vstack.codec))
+                self.state.synthesized[F'{host}:{port}'.encode(vstack.codec)] = F'{module}::{symbol}'
                 logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
         logged_args = [F'{FG.LIGHTCYAN_EX}{x}{RS}' for x in logged_args]
-        vstack.log_debug(F'{FG.LIGHTCYAN_EX}{module}{RS}::{FG.LIGHTYELLOW_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
+        vstack.log_info(F'{FG.LIGHTCYAN_EX}{module}{RS}::{FG.LIGHTYELLOW_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
         try:
             retval = function(args)
         except Exception as e:
@@ -549,7 +549,9 @@ class vstack(Unit):
             except EmulationError:
                 pass
 
-            yield from state.synthesized
+            for patch, api in state.synthesized.items():
+                chunk = self.labelled(patch, src=api)
+                yield chunk
 
             tree.merge_overlaps()
             it: Iterator[Interval] = iter(tree)
@@ -566,4 +568,5 @@ class vstack(Unit):
                 if not any(patch):
                     continue
                 self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
-                yield patch
+                chunk = self.labelled(patch, src=interval.begin)
+                yield chunk
