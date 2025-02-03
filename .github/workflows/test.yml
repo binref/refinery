@@ -38,39 +38,13 @@ jobs:
         with:
           py: ${{ matrix.python-version }}
           os: ${{ matrix.os }}
+      - name: Audit Dependencies
+        uses: pypa/gh-action-pip-audit@v1.1.0
       - name: Run Tests
         uses: ./.github/actions/test/
         with:
           py: ${{ matrix.python-version }}
           os: ${{ matrix.os }}
-
-  audit:
-    name: audit dependencies
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ['3.8', '3.12']
-        os: [windows-latest, macos-13, ubuntu-latest]
-    steps:
-      - name: Checkout Main Repository
-        uses: actions/checkout@v4
-        if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
-      - name: Clone PR Source Repository
-        uses: actions/checkout@v4
-        if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-      - name: Install Dependencies
-        uses: ./.github/actions/setup/
-        with:
-          py: ${{ matrix.python-version }}
-          os: ${{ matrix.os }}
-      - name: Audit Dependencies
-        uses: pypa/gh-action-pip-audit@v1.1.0
-
 
   preview:
     name: check forward compatibility
