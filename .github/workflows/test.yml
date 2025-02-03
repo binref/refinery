@@ -11,6 +11,8 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    env:
+      MALSHARE_API: ${{ secrets.MALSHARE_API }}
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +27,9 @@ jobs:
 
   preview:
     continue-on-error: true
+    runs-on: 'ubuntu-latest'
+    env:
+      MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
       - name: Run Tests
         uses: ./.github/workflows/test-template.yml

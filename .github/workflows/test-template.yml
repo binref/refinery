@@ -7,8 +7,6 @@ inputs:
   os:
     required: true
     description: "Target Operating System"
-env:
-  MALSHARE_API: ${{ secrets.MALSHARE_API }}
 runs:
   using: "composite"
   steps:
