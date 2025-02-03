@@ -76,10 +76,11 @@ class xlmdeobf(Unit):
 
     @Unit.Requires('XLMMacroDeobfuscator', 'formats', 'office')
     def _process_file():
-        from XLMMacroDeobfuscator.configs import settings
-        settings.SILENT = True
-        from XLMMacroDeobfuscator.deobfuscator import process_file
-        return process_file
+        with NoLogging(NoLogging.Mode.ALL):
+            from XLMMacroDeobfuscator.configs import settings
+            settings.SILENT = True
+            from XLMMacroDeobfuscator.deobfuscator import process_file
+            return process_file
 
     def process(self, data: bytearray):
         with VirtualFileSystem() as vfs, NoLogging():
