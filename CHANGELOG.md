@@ -5,12 +5,10 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
-## Version 0.8.4
+## Version 0.8.3
 - The `lzma` unit now supports a lot more (especially custom) LZMA formats.
 - The `xtinno` unit underwent further improvements and can now extract embedded images, as well as decompression and decryption libraries.
 - The `vstack` unit does again operate on `unicorn` version `2.0.1.post1`.
-
-## Version 0.8.3 - bugfix release
 
 ## Version 0.8.2
 - The `xtinno` unit was added to extracting files from InnoSetup installers.
