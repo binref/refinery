@@ -11,23 +11,7 @@ env:
   MALSHARE_API: ${{ secrets.MALSHARE_API }}
 runs:
   using: "composite"
-  runs-on: ${{ inputs.os }}
   steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ inputs.py }}
-    - name: Install dependencies
-      run: |
-        sudo apt-get install -y xclip xvfb || true
-        python -m pip install --upgrade pip
-        python -m pip install pycodestyle
-        pip install .[all]
-      shell: bash
-
-    steps:
     - name: Debug Logging
       run: |
         echo "event  = ${{ github.event_name }}"
