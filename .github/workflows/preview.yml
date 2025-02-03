@@ -1,5 +1,14 @@
 name: preview
 
+on:
+  workflow_call:
+    inputs:
+      python:
+        description: 'The Python version to test against.'
+        default: '3.13'
+        required: true
+        type: string
+
 jobs:
   preview:
     name: check forward compatibility
@@ -13,10 +22,10 @@ jobs:
       - name: Install Dependencies
         uses: ./.github/actions/setup/
         with:
-          py: '3.13'
+          py: ${{ inputs.python }}
           os: 'ubuntu-latest'
       - name: Run Tests
         uses: ./.github/actions/test/
         with:
-          py: '3.13'
+          py: ${{ inputs.python }}
           os: 'ubuntu-latest'
