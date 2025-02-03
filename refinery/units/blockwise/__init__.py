@@ -264,7 +264,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             if self._truncate < 1:
                 last_ops = [next(a) for a in args]
                 last_int = int.from_bytes(rest, self._byte_order_adjective)
-                dst_tail = self.operate(last_int, *last_ops)
+                dst_tail = self.operate(last_int, *last_ops) & self.fmask
                 dst_tail = dst_tail.to_bytes(self.blocksize, self._byte_order_adjective)
                 rest = dst_tail[:overlap]
             dst.extend(rest)
