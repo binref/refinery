@@ -1,0 +1,20 @@
+name: "Python Test"
+description: "Python Test Template"
+inputs:
+  py:
+    required: true
+    description: "Target Python Version"
+  os:
+    required: true
+    description: "Target Operating System"
+runs:
+  using: "composite"
+  steps:
+    - name: Unit Tests
+      if: ${{ !contains(inputs.os, 'ubuntu') }}
+      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
+      run: python -m unittest discover -p test_*.py
+    - name: Unit Tests
+      if: ${{  contains(inputs.os, 'ubuntu') }}
+      shell: bash
+      run: XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py

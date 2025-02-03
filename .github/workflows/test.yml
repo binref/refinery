@@ -19,6 +19,10 @@ jobs:
         python-version: ['3.8', '3.12']
         os: [windows-latest, macos-13, ubuntu-latest]
     steps:
+      - name: Debug Logging
+        run: |
+          echo "event  = ${{ github.event_name }}"
+          echo "action = ${{ github.event.action }}"
       - name: Checkout Main Repository
         uses: actions/checkout@v4
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
@@ -29,13 +33,42 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
+      - name: Install Dependencies
+        uses: ./.github/actions/setup/
+        with:
+          py: ${{ matrix.python-version }}
+          os: ${{ matrix.os }}
       - name: Run Tests
-        uses: ./.github/actions/template/
+        uses: ./.github/actions/test/
         with:
           py: ${{ matrix.python-version }}
           os: ${{ matrix.os }}
 
+  audit:
+    name: audit dependencies
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: Checkout Main Repository
+        uses: actions/checkout@v4
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+      - name: Clone PR Source Repository
+        uses: actions/checkout@v4
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+      - name: Install Dependencies
+        uses: ./.github/actions/setup/
+        with:
+          py: '3.13'
+          os: 'ubuntu-latest'
+      - name: Audit Dependencies
+        uses: pypa/gh-action-pip-audit@v1.1.0
+
+
   preview:
+    name: check forward compatibility
     continue-on-error: true
     runs-on: 'ubuntu-latest'
     env:
@@ -44,8 +77,20 @@ jobs:
       - name: Checkout Main Repository
         uses: actions/checkout@v4
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+      - name: Clone PR Source Repository
+        uses: actions/checkout@v4
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+      - name: Install Dependencies
+        uses: ./.github/actions/setup/
+        with:
+          py: '3.13'
+          os: 'ubuntu-latest'
       - name: Run Tests
-        uses: ./.github/actions/template/
+        uses: ./.github/actions/test/
         with:
           py: '3.13'
           os: 'ubuntu-latest'
@@ -53,7 +98,9 @@ jobs:
   coverage:
     if: ${{ github.repository_owner == 'binref' }}
     runs-on: ubuntu-latest
-    needs: test
+    needs: 
+      - test
+      - audit
     env:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:

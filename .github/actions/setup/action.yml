@@ -1,5 +1,5 @@
-name: "Python Test"
-description: "Python Test Template"
+name: "Python Setup"
+description: "Python Setup and Dependencies"
 inputs:
   py:
     required: true
@@ -10,11 +10,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Debug Logging
-      shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
-      run: |
-        echo "event  = ${{ github.event_name }}"
-        echo "action = ${{ github.event.action }}"
     - name: Set up Python ${{ inputs.py }}
       uses: actions/setup-python@v5
       with:
@@ -23,7 +18,7 @@ runs:
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: sudo apt-get install xclip xvfb
-    - name: MacOS-specific dependencies
+    - name: Install Dependencies (MacOS)
       if: ${{ contains(inputs.os, 'macos') }}
       shell: bash
       run: brew install libmagic
@@ -33,11 +28,3 @@ runs:
         python -m pip install --upgrade pip
         python -m pip install pycodestyle
         pip install .[all]
-    - name: Unit Tests
-      if: ${{ !contains(inputs.os, 'ubuntu') }}
-      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: python -m unittest discover -p test_*.py
-    - name: Unit Tests
-      if: ${{  contains(inputs.os, 'ubuntu') }}
-      shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py
