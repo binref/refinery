@@ -347,7 +347,7 @@ class vstack(Unit):
             import unicorn
             return unicorn
 
-    @Unit.Requires('speakeasy-emulator', 'extended')
+    @Unit.Requires('speakeasy @ git+https://github.com/binref/speakeasy@main', 'extended')
     def _speakeasy():
         import speakeasy
         return speakeasy
