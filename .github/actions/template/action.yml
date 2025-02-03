@@ -11,6 +11,7 @@ runs:
   using: "composite"
   steps:
     - name: Debug Logging
+      shell: ${{ contains(input.os, 'windows') && 'pwsh' || 'bash' }}
       run: |
         echo "event  = ${{ github.event_name }}"
         echo "action = ${{ github.event.action }}"
@@ -20,22 +21,23 @@ runs:
         python-version: ${{ inputs.py }}
     - name: Install Dependencies (Linux)
       if: ${{ contains(inputs.os, 'ubuntu') }}
-      run: |
-        sudo apt-get install xclip xvfb
+      shell: ${{ contains(input.os, 'windows') && 'cmd' || 'bash' }}
+      run: sudo apt-get install xclip xvfb
     - name: MacOS-specific dependencies
       if: ${{ contains(inputs.os, 'macos') }}
-      run: |
-        brew install libmagic
+      shell: bash
+      run: brew install libmagic
     - name: Install Dependencies
+      shell: ${{ contains(input.os, 'windows') && 'cmd' || 'bash' }}
       run: |
         python -m pip install --upgrade pip
         python -m pip install pycodestyle
         pip install .[all]
     - name: Unit Tests
       if: ${{ !contains(inputs.os, 'ubuntu') }}
-      run: |
-        python -m unittest discover -p test_*.py
+      shell: ${{ contains(input.os, 'windows') && 'cmd' || 'bash' }}
+      run: python -m unittest discover -p test_*.py
     - name: Unit Tests
       if: ${{  contains(inputs.os, 'ubuntu') }}
-      run: |
-        XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py
+      shell: bash
+      run: XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py
