@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+    branches: [ master ]
+    tags-ignore: '**'
+
+jobs:
+  preview:
+    name: check forward compatibility
+    continue-on-error: true
+    runs-on: 'ubuntu-latest'
+    env:
+      MALSHARE_API: ${{ secrets.MALSHARE_API }}
+    steps:
+      - name: Checkout Main Repository
+        uses: actions/checkout@v4
+      - name: Install Dependencies
+        uses: ./.github/actions/setup/
+        with:
+          py: '3.13'
+          os: 'ubuntu-latest'
+      - name: Run Tests
+        uses: ./.github/actions/test/
+        with:
+          py: '3.13'
+          os: 'ubuntu-latest'
