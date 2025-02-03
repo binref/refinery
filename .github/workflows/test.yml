@@ -19,8 +19,18 @@ jobs:
         python-version: ['3.8', '3.12']
         os: [windows-latest, macos-13, ubuntu-latest]
     steps:
+      - name: Checkout Main Repository
+        uses: actions/checkout@v4
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+      - name: Clone PR Source Repository
+        uses: actions/checkout@v4
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Run Tests
-        uses: ./.github/workflows/template/
+        uses: ./.github/actions/template/
         with:
           py: ${{ matrix.python-version }}
           os: ${{ matrix.os }}
@@ -31,8 +41,11 @@ jobs:
     env:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
+      - name: Checkout Main Repository
+        uses: actions/checkout@v4
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
       - name: Run Tests
-        uses: ./.github/workflows/template/
+        uses: ./.github/actions/template/
         with:
           py: '3.13'
           os: 'ubuntu-latest'

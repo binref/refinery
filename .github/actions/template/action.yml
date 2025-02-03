@@ -14,16 +14,6 @@ runs:
       run: |
         echo "event  = ${{ github.event_name }}"
         echo "action = ${{ github.event.action }}"
-    - name: Checkout Main Repository
-      uses: actions/checkout@v4
-      if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
-    - name: Clone PR Source Repository
-      uses: actions/checkout@v4
-      if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
-      with:
-        fetch-depth: 0
-        ref: ${{ github.event.pull_request.head.ref }}
-        repository: ${{ github.event.pull_request.head.repo.full_name }}
     - name: Set up Python ${{ inputs.py }}
       uses: actions/setup-python@v5
       with:
