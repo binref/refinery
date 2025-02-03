@@ -90,7 +90,8 @@ class TestVStack(TestUnitBase):
             arch='x64',
             log_writes_in_calls=True,
             wait='1G',
-            max_visits='100M',
+            max_visits=0,
+            timeout=500000,
         )
         test = data | unit | []
         self.assertIn(B'10.25.44'B'.1:4444', test)
