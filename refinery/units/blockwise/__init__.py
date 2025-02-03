@@ -33,10 +33,12 @@ class BlockTransformationBase(Unit, abstract=True):
     def __init__(
         self,
         bigendian: Arg.Switch('-E', help='Read chunks in big endian.') = False,
-        blocksize: Arg.Number('-B', help='The size of each block in bytes, default is 1.') = None,
+        blocksize: Arg.Number('-B', help=(
+            'The size of each block in bytes, default is 1.'
+        )) = None,
         precision: Arg.Number('-P', help=(
-            'The size of the variables used for computing the result. By default, this is equal to the block size. The value may be '
-            'zero, indicating that arbitrary precision is required.')) = None,
+            'The size of the variables used for computing the result. By default, this is equal to the block size. '
+            'The value may be zero, indicating that arbitrary precision is required.')) = None,
         _truncate: Arg.Delete() = 0,
         **keywords
     ):
@@ -316,15 +318,24 @@ class UnaryOperation(ArithmeticUnit, abstract=True):
 
 
 class BinaryOperation(ArithmeticUnit, abstract=True):
-    def __init__(self, argument: Arg.Delete(), bigendian=False, blocksize=None):
-        super().__init__(argument,
-            bigendian=bigendian, blocksize=blocksize)
+    def __init__(self, argument, bigendian=False, blocksize=None):
+        super().__init__(argument, bigendian=bigendian, blocksize=blocksize)
 
     def inplace(self, block, argument) -> None:
         super().inplace(block, argument)
 
 
 class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
+    def __init__(
+        self, argument, bigendian=False,
+        blocksize: Arg.Number(help=(
+            'The size of each block in bytes. It is chosen, by default, to be the smallest size that can '
+            'hold the provided argument without loss of precision. For example, passing the value 0x1234 '
+            'will result in a default block size of 2, while passing the value 12 will mean that the '
+            'default block size is 1.'
+        )) = None
+    ):
+        super().__init__(argument, bigendian=bigendian, blocksize=blocksize)
 
     def _argument_parse_hook(self, it):
         it, masked = super()._argument_parse_hook(it)
