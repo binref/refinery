@@ -1,10 +1,5 @@
 name: preview
 
-on:
-  push:
-    branches: [ master ]
-    tags-ignore: '**'
-
 jobs:
   preview:
     name: check forward compatibility
