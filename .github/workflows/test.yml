@@ -11,53 +11,26 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    env:
-      MALSHARE_API: ${{ secrets.MALSHARE_API }}
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.8', '3.12']
         os: [windows-latest, macos-13, ubuntu-latest]
     steps:
-    - name: Debug Logging
-      run: |
-        echo "event  = ${{ github.event_name }}"
-        echo "action = ${{ github.event.action }}"
-    - name: Checkout Main Repository
-      uses: actions/checkout@v4
-      if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
-    - name: Clone PR Source Repository
-      uses: actions/checkout@v4
-      if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
-      with:
-        fetch-depth: 0
-        ref: ${{ github.event.pull_request.head.ref }}
-        repository: ${{ github.event.pull_request.head.repo.full_name }}
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Linux-specific dependencies
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      run: |
-        sudo apt-get install xclip xvfb
-    - name: MacOS-specific dependencies
-      if: ${{ matrix.os == 'macos-13' }}
-      run: |
-        brew install libmagic
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install pycodestyle
-        pip install .[all]
-    - name: Unit tests
-      if: ${{ matrix.os != 'ubuntu-latest' }}
-      run: |
-        python -m unittest discover -p test_*.py
-    - name: Unit tests
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      run: |
-        XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py
+      - name: Run Tests
+        uses: ./.github/workflows/test-template.yml
+        with:
+          py: ${{ matrix.python-version }}
+          os: ${{ matrix.os }}
+
+  preview:
+    continue-on-error: true
+    steps:
+      - name: Run Tests
+        uses: ./.github/workflows/test-template.yml
+        with:
+          py: '3.13'
+          os: 'ubuntu-latest'
 
   coverage:
     if: ${{ github.repository_owner == 'binref' }}
