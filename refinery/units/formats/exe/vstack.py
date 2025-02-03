@@ -343,6 +343,7 @@ class vstack(Unit):
 
     @Unit.Requires('unicorn==2.0.1.post1', 'default', 'extended')
     def _unicorn():
+        import setuptools # noqa
         with NoLogging():
             import unicorn
             return unicorn
