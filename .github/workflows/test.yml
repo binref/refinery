@@ -66,8 +66,8 @@ jobs:
       - name: Install Dependencies
         uses: ./.github/actions/setup/
         with:
-          py: {{ matrix.python-version }}
-          os: {{ matrix.os }}
+          py: ${{ matrix.python-version }}
+          os: ${{ matrix.os }}
       - name: Audit Dependencies
         uses: pypa/gh-action-pip-audit@v1.1.0
 
