@@ -20,7 +20,7 @@ jobs:
         os: [windows-latest, macos-13, ubuntu-latest]
     steps:
       - name: Run Tests
-        uses: ./.github/workflows/test-template.yml
+        uses: ./.github/workflows/template/
         with:
           py: ${{ matrix.python-version }}
           os: ${{ matrix.os }}
@@ -32,7 +32,7 @@ jobs:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
       - name: Run Tests
-        uses: ./.github/workflows/template
+        uses: ./.github/workflows/template/
         with:
           py: '3.13'
           os: 'ubuntu-latest'
