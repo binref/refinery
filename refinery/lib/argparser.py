@@ -43,17 +43,19 @@ class LineWrapRawTextHelpFormatter(RawDescriptionHelpFormatter):
         if not action.option_strings:
             metavar, = self._metavar_formatter(action, action.dest)(1)
             return metavar
+        parts = []
+        if action.nargs == 0:
+            parts.extend(action.option_strings)
         else:
-            parts = []
-            if action.nargs == 0:
-                parts.extend(action.option_strings)
-            else:
-                default = action.dest.upper()
-                args_string = self._format_args(action, default)
-                for option_string in action.option_strings:
-                    parts.append(str(option_string))
-                parts[-1] += F' {args_string}'
-            return ', '.join(parts)
+            default = action.dest.upper()
+            args_string = self._format_args(action, default)
+            for option_string in action.option_strings:
+                parts.append(str(option_string))
+            parts[-1] += F' {args_string}'
+        switches = ', '.join(parts)
+        if all(opt.startswith('--') for opt in action.option_strings):
+            switches = '\x20' * 4 + switches
+        return switches
 
 
 class ArgumentParserWithKeywordHooks(ArgumentParser):
