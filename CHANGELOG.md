@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.4 - bugfix release
+
 ## Version 0.8.3
 - The `lzma` unit now supports a lot more (especially custom) LZMA formats.
 - The `xtinno` unit underwent further improvements and can now extract embedded images, as well as decompression and decryption libraries.
