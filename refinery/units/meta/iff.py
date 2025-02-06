@@ -30,9 +30,9 @@ class iff(ConditionalUnit, extend_docs=True):
             help='check that the expression contains {varname}') = None,
         ne: Arg('-ne', type=str, metavar='RHS', group='OP',
             help='check that the expression is equal to {varname}') = None,
-        iN: Arg('-in', '-i', type=str, metavar='RHS', group='OP',
+        iN: Arg('-in', type=str, metavar='RHS', group='OP',
             help='check that the expression is contained in {varname}') = None,
-        eq: Arg('-eq', '-e', type=str, metavar='RHS', group='OP',
+        eq: Arg('-eq', type=str, metavar='RHS', group='OP',
             help='check that the expression is equal to {varname}') = None,
         retain=False,
     ):
