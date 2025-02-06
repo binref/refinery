@@ -21,7 +21,7 @@ class snip(Unit):
             'Interpret the end of a slice as a length rather than as an offset.')) = False,
         stream: Arg.Switch('-s', help=(
             'After each slice, consider only the data that follows after it for subsequent '
-            'slicing.')) = False,
+            'slicing. This mode is incompatible with negative step sizes.')) = False,
         remove: Arg.Switch('-r', help=(
             'Remove the slices from the input rather than selecting them.')) = False,
     ):
@@ -29,33 +29,40 @@ class snip(Unit):
 
     def process(self, data: bytearray):
         slices: list[slice] = list(self.args.slices)
-        stream = self.args.stream
-        remove = self.args.remove
-        length = self.args.length
-        cursor = 0
+        opt_stream = self.args.stream
+        opt_remove = self.args.remove
+        opt_length = self.args.length
         view = memoryview(data)
+        offset = 0
+
+        if opt_stream and any(b.step or 1 < 0 for b in slices):
+            raise RuntimeError('Streaming is incompatible with negative step slices.')
 
         for k, bounds in enumerate(slices):
-            upper = bounds.stop
-            lower = bounds.start or 0
-            if upper is None:
-                upper = len(data)
-            else:
-                upper += cursor
-            if length:
-                upper += lower
-            bounds = slice(
-                lower + cursor, upper, bounds.step)
-            if stream:
-                cursor = upper
-            if not remove:
+            step = bounds.step or 1
+            stop = bounds.stop
+            start = bounds.start
+            if opt_length:
+                if stop is not None:
+                    if start is None:
+                        if step < 0:
+                            stop += len(data)
+                    else:
+                        stop += start
+            if opt_stream:
+                start = start or 0
+                stop = stop or len(data)
+                start += offset
+                stop += offset
+
+            bounds = slice(start, stop, bounds.step)
+
+            if not opt_remove:
                 temp = view[bounds]
             else:
-                if k + 1 >= len(slices):
-                    view.release()
-                    del view
-                    temp = data
-                else:
-                    temp = bytearray(data)
+                temp = bytearray(data)
                 del temp[bounds]
             yield temp
+
+            if opt_stream:
+                offset = stop

@@ -71,3 +71,28 @@ class TestSnip(TestUnitBase):
         unit = self.load(':280', ':900', ':', stream=True)
         test = data | unit | [bytes]
         self.assertListEqual(test, [a, b, c])
+
+    def test_snip_regression_01(self):
+        self.assertEqual(
+            bytes.fromhex('00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF') | self.load('--', '-5::-1') | bytes,
+            bytes.fromhex('BB AA 99 88 77 66 55 44 33 22 11 00'))
+
+    def test_snip_regression_02(self):
+        self.assertEqual(
+            bytes.fromhex('00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF') | self.load('5::-1') | bytes,
+            bytes.fromhex('55  44  33 22 11 00'))
+
+    def test_snip_regression_03(self):
+        self.assertEqual(
+            bytes.fromhex('00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF') | self.load(':-5:-1') | bytes,
+            bytes.fromhex('FF EE DD CC'))
+
+    def test_snip_regression_04(self):
+        self.assertEqual(
+            bytes.fromhex('00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF') | self.load(':5:-1') | bytes,
+            bytes.fromhex('FF EE DD CC BB AA 99 88 77 66'))
+
+    def test_remove_negative(self):
+        data = B'REFINERY'
+        self.assertEqual(data | self.load('--', '-2:-2:-1', length=True) | bytes, B'RE')
+        self.assertEqual(data | self.load('--', '-2:-4:-1', remove=True) | bytes, B'REFINY')
