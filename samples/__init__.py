@@ -21,16 +21,15 @@ class SampleStore:
         key = key or 'REFINERYTESTDATA'
         key = key.encode('latin1')
         sha256hash = sha256hash.lower()
-        req = urllib.request.Request(
-            F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true')
+        timeout = 60
+        req = F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true'
         try:
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 encoded_sample = tobytearray(response.read())
         except Exception:
             api = os.environ['MALSHARE_API']
-            req = urllib.request.Request(
-                F'https://malshare.com/api.php?api_key={api}&action=getfile&hash={sha256hash}')
-            with urllib.request.urlopen(req) as response:
+            req = F'https://malshare.com/api.php?api_key={api}&action=getfile&hash={sha256hash}'
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 result = tobytearray(response.read())
         else:
             result = encoded_sample | aes(mode='CBC', key=key) | bytearray
