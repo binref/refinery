@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.formats.ifps import IFPSBase, IFPSFile
+from refinery.lib.ifps import IFPSFile
+from refinery.units.formats.ifps import IFPSBase
 
 
 class ifpsstr(IFPSBase):

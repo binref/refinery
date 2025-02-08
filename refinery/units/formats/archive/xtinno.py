@@ -24,6 +24,7 @@ import bz2
 
 from datetime import datetime, timezone
 from hashlib import sha256, sha1, md5
+from itertools import combinations
 
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe.perc import perc
@@ -35,6 +36,7 @@ from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
 from refinery.lib.types import ByteStr
 from refinery.lib.json import BytesAsStringEncoder
 from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.ifps import IFPSFile
 
 from refinery.units.crypto.cipher.rc4 import rc4
 from refinery.units.crypto.cipher.chacha import xchacha
@@ -2178,7 +2180,12 @@ class xtinno(ArchiveUnit):
             F'password:{stream0.Header.PasswordType.name} '
         )
 
-        if (script := stream0.Header.CompiledCode) and encrypted_file:
+        if script := stream0.Header.CompiledCode:
+            ifps = IFPSFile(script, codec)
+        else:
+            ifps = None
+
+        if ifps and encrypted_file:
             assert password is None, (
                 F'An encrypted test file was chosen even though a password was provided: {password!r}')
             self.log_info(F'guessing password using encrypted file: {encrypted_file.path}')
@@ -2191,10 +2198,7 @@ class xtinno(ArchiveUnit):
                     if re.search(R'^\w{2,12}://', s):
                         return False
                     return True
-                from refinery.units.formats.ifpsstr import ifpsstr
-                from itertools import combinations
-                strings = script | ifpsstr(codec) | {str}
-                strings = [s for s in strings if _pwd(s)]
+                strings = [s for s in ifps.strings if _pwd(s)]
                 total = 0
                 for k in range(1, 10):
                     self.log_info(F'checking combinations of {k} strings as potential password')
@@ -2250,9 +2254,8 @@ class xtinno(ArchiveUnit):
         if license := stream0.Header.get_license():
             yield self._pack(self._LICENSE_NAME, None, license.encode(self.codec))
 
-        if script:
-            from refinery.units.formats.ifps import ifps
-            yield self._pack(F'{self._ISCRIPT_NAME}.ps', None, script | ifps(codec) | bytes)
+        if ifps:
+            yield self._pack(F'{self._ISCRIPT_NAME}.ps', None, ifps.disassembly().encode(self.codec))
             yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
 
         if dll := stream0.DecompressDLL:
