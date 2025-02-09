@@ -17,7 +17,8 @@ from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
 from refinery.lib.structures import Struct, StructReader, StreamDetour
 
-_CLS = TypeVar('_CLS')
+_ENM = TypeVar('_ENM', bound=Type[enum.Enum])
+_CLS = TypeVar('_CLS', bound=Type)
 _TAB = '\x20\x20'
 
 
@@ -45,13 +46,13 @@ def extended(_data: bytes):
     return sign * mantissa * (2 ** exponent)
 
 
-def rfix(cls: _CLS) -> _CLS:
+def represent(cls: _ENM) -> _ENM:
     cls.__repr__ = lambda self: F'{self.__class__.__name__}.{self.name}'
-    cls.__str__ = lambda self: self.name
+    cls. __str__ = lambda self: self.name
     return cls
 
 
-@rfix
+@represent
 class Op(enum.IntEnum):
     Assign       = 0x00  # noqa
     Calculate    = 0x01  # noqa
@@ -91,8 +92,39 @@ class Op(enum.IntEnum):
             return cls._INVALID
 
 
-@rfix
-class TC(int, enum.Enum):
+class AOp(enum.IntEnum):
+    Add = 0
+    Sub = 1
+    Mul = 2
+    Div = 3
+    Mod = 4
+    Shl = 5
+    Shr = 6
+    And = 7
+    BOr = 8
+    Xor = 9
+
+    def __str__(self):
+        glyph = ('+', '-', '*', '/', '%', '<<', '>>', '&', '|', '^')[self]
+        return F'{glyph}='
+
+
+class COp(enum.IntEnum):
+    GE = 0
+    LE = 1
+    GT = 2
+    LT = 3
+    NE = 4
+    EQ = 5
+    IN = 6
+    IS = 7
+
+    def __str__(self):
+        return ('>=', '<=', '>', '<', '!=', '==', 'in', 'is')[self]
+
+
+@represent
+class TC(enum.IntEnum):
     ReturnAddress       = 0x00  # noqa
     U08                 = 0x01  # noqa
     S08                 = 0x02  # noqa
@@ -115,7 +147,7 @@ class TC(int, enum.Enum):
     WideString          = 0x13  # noqa
     WideChar            = 0x14  # noqa
     ProcPtr             = 0x15  # noqa
-    Tuple               = 0x16  # noqa
+    StaticArray         = 0x16  # noqa
     Set                 = 0x17  # noqa
     Currency            = 0x18  # noqa
     Class               = 0x19  # noqa
@@ -330,6 +362,13 @@ class DeclSpecParam(NamedTuple):
     type: Optional[TGeneric] = None
 
 
+@represent
+class _calltype(str, enum.Enum):
+    symbol = 'symbol'
+    sub = 'sub'
+    function = 'function'
+
+
 @dataclass
 class DeclSpec:
 
@@ -366,7 +405,7 @@ class DeclSpec:
                 spec = F'__{self.calling_convention} {spec}'
             spec = F'{self.type} {spec}'
             args = self.parameters
-            args = args and ', '.join(pparam(*t) for t in enumerate(args)) or ''
+            args = args and ', '.join(pparam(*t) for t in enumerate(args, 1)) or ''
             spec = F'{spec}({args})'
             if self.return_type:
                 spec = F'{spec} -> {self.return_type.code.name}'
@@ -374,7 +413,7 @@ class DeclSpec:
 
     @property
     def type(self):
-        return 'sub' if self.void else 'function'
+        return _calltype.sub if self.void else _calltype.function
 
     def __repr__(self):
         return self.represent(self.name or '(*)')
@@ -447,7 +486,8 @@ class DeclSpec:
         return cls(void, parameters, return_type=return_type)
 
 
-class Function(NamedTuple):
+@dataclass
+class Function:
     name: str
     decl: Optional[DeclSpec]
     body: Optional[List[Instruction]] = None
@@ -464,10 +504,13 @@ class Function(NamedTuple):
             return F'symbol {self.name}'
         return self.decl.represent(self.name)
 
+    def __str__(self):
+        return self.reference()
+
     @property
     def type(self):
         if self.decl is None:
-            return 'symbol'
+            return _calltype.symbol
         return self.decl.type
 
 
@@ -481,18 +524,17 @@ class Variable(NamedTuple):
         return F'{self.name}: {self.type!s}'
 
 
-@rfix
+@represent
 class OperandType(enum.IntEnum):
     Variant = 0
     Value = 1
-    IndexedInt = 2
-    IndexedVar = 3
+    IndexedByInt = 2
+    IndexedByVar = 3
 
 
 class VariantType(str, enum.Enum):
     Global = 'GlobalVar'
-    ReturnValue = 'ReturnValue'
-    Variable = 'LocalVar'
+    Local = 'LocalVar'
     Argument = 'Argument'
 
     def __repr__(self):
@@ -507,6 +549,8 @@ class Variant(NamedTuple):
     type: VariantType
 
     def __repr__(self):
+        if self.index == 0 and self.type == VariantType.Argument:
+            return 'ReturnValue'
         return F'{self.type!s}{self.index}'
 
 
@@ -521,9 +565,9 @@ class Operand(NamedTuple):
             return str(self.value)
         if self.type is OperandType.Variant:
             return F'{self.variant}'
-        if self.type is OperandType.IndexedInt:
+        if self.type is OperandType.IndexedByInt:
             return F'{self.variant}[0x{self.index:02X}]'
-        if self.type is OperandType.IndexedVar:
+        if self.type is OperandType.IndexedByVar:
             return F'{self.variant}[{self.index!s}]'
         raise RuntimeError(F'Unexpected OperandType {self.type!r} in {self.__class__.__name__}')
 
@@ -535,38 +579,63 @@ _Op_Maxlen = max(len(op.name) for op in Op)
 class Instruction:
     offset: int
     opcode: Op
-    operands: List[Union[str, int, Operand, TGeneric]] = field(default_factory=list)
+    size: int = 0
+    operands: List[Union[str, int, Operand, TGeneric, Function]] = field(default_factory=list)
+    operator: Optional[Union[AOp, COp]] = None
     jumptarget: bool = False
 
-    def _oprep(self, fuse_index=None, is_jump=False):
-        if fuse_index is None:
-            operands = list(self.operands)
-        else:
-            rest = self.operands[fuse_index:]
-            rest = '\x20'.join((str(op) for op in rest))
-            operands = [*self.operands[:fuse_index], rest]
-        if is_jump:
-            operands[0] = F'0x{operands[0]:X}'
-        return ', '.join(str(op) for op in operands)
+    def op(self, index: int):
+        arg = self.operands[index]
+        if not isinstance(arg, Operand):
+            raise TypeError
+        return arg
 
-    def __repr__(self):
-        return F'{self.opcode.name}({self._oprep()})'
+    @property
+    def dst(self) -> Optional[Operand]:
+        return self.op(0)
 
-    def __str__(self):
-        fuse = None
-        if self.opcode is Op.Compare:
-            fuse = 1
-        if self.opcode is Op.Calculate:
-            fuse = 0
-        jmp = self.opcode in (
+    @property
+    def src(self) -> Optional[Operand]:
+        return self.op(1)
+
+    @property
+    def lhs(self) -> Optional[Operand]:
+        return self.op(1)
+
+    @property
+    def rhs(self) -> Optional[Operand]:
+        return self.op(2)
+
+    @property
+    def _oprep(self):
+        if self.opcode in (
             Op.Jump,
             Op.JumpFalse,
             Op.JumpTrue,
             Op.JumpFlag,
             Op.JumpPop1,
             Op.JumpPop2,
-        )
-        return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self._oprep(fuse, jmp)}'
+        ):
+            dst = self.operands[0]
+            var = [str(op) for op in self.operands[1:]]
+            return ', '.join((F'0x{dst:X}', *var))
+        elif self.opcode is Op.Compare:
+            dst, a, b = self.operands
+            return F'{dst!s} := {a!s} {self.operator!s} {b!s}'
+        elif self.opcode is Op.Calculate:
+            dst, src = self.operands
+            return F'{dst!s} {self.operator!s} {src!s}'
+        elif self.opcode is Op.Assign:
+            dst, src = self.operands
+            return F'{dst!s} := {src!s}'
+        else:
+            return ', '.join(str(op) for op in self.operands)
+
+    def __repr__(self):
+        return F'{self.opcode.name}({self._oprep})'
+
+    def __str__(self):
+        return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self._oprep}'
 
 
 class IFPSFile(Struct):
@@ -595,7 +664,7 @@ class IFPSFile(Struct):
         self.import_size = reader.u32()
         self.void = False
         if self.version not in range(self.MinVer, self.MaxVer + 1):
-            ifps.log_warn(
+            raise NotImplementedError(
                 F'This IFPS file has version {self.version}, which is not in the supported range '
                 F'[{self.MinVer},{self.MaxVer}].')
         self._load_types()
@@ -626,7 +695,7 @@ class IFPSFile(Struct):
                 t = TInterface(code, guid)
             elif code is TC.Set:
                 t = TSet(code, reader.u32())
-            elif code is TC.Tuple:
+            elif code is TC.StaticArray:
                 type = types[reader.u32()]
                 size = reader.u32()
                 offset = None if self.version <= 22 else reader.u32()
@@ -727,7 +796,7 @@ class IFPSFile(Struct):
             for instruction in function.body:
                 if instruction.opcode is Op.Call:
                     t: Function = self.functions[instruction.operands[0]]
-                    instruction.operands[0] = t.reference()
+                    instruction.operands[0] = t
 
     def _load_variables(self):
         reader = self.reader
@@ -744,16 +813,10 @@ class IFPSFile(Struct):
         if index < 0x40000000:
             return Variant(index, VariantType.Global)
         index -= 0x60000000
-        if index == -1 and not self.void:
-            type = VariantType.ReturnValue
         if index >= 0:
-            type = VariantType.Variable
-        else:
-            type = VariantType.Argument
-            index = -index
-            if self.void:
-                index -= 1
-        return Variant(index, type)
+            return Variant(index, VariantType.Local)
+        index = -index if self.void else ~index
+        return Variant(index, VariantType.Argument)
 
     def _read_operand(self, reader: StructReader) -> Operand:
         ot = OperandType(reader.u8())
@@ -762,10 +825,10 @@ class IFPSFile(Struct):
             kw.update(variant=self._read_variant(reader.u32()))
         if ot is OperandType.Value:
             kw.update(value=self._read_value(reader))
-        if ot >= OperandType.IndexedInt:
+        if ot >= OperandType.IndexedByInt:
             kw.update(variant=self._read_variant(reader.u32()))
             index = reader.u32()
-            if ot is OperandType.IndexedVar:
+            if ot is OperandType.IndexedByVar:
                 index = self._read_variant(index)
             kw.update(index=index)
         return Operand(ot, **kw)
@@ -802,11 +865,8 @@ class IFPSFile(Struct):
             elif code in (Op.Ret, Op.Nop, Op.Pop):
                 pass
             elif code is Op.Calculate:
-                infix = ['+', '-', '*', '/', '%', '<<', '>>', '&', '|', '^'][reader.u8()]
-                infix = F'{infix}='
-                a = self._read_operand(reader)
-                b = self._read_operand(reader)
-                args.extend((a, infix, b))
+                insn.operator = AOp(reader.u8())
+                arg(2)
             elif code in (Op.Push, Op.PushVar):
                 arg()
             elif code in (Op.Jump, Op.JumpFlag):
@@ -831,10 +891,8 @@ class IFPSFile(Struct):
             elif code is Op.PushType:
                 args.append(self.types[reader.u32()])
             elif code is Op.Compare:
-                infix = ['>=', '<=', '>', '<', '!=', '==', 'in', 'is'][reader.u8()]
-                arg(2)
-                args.append(infix)
-                arg(1)
+                insn.operator = COp(reader.u8())
+                arg(3)
             elif code is Op.SetFlag:
                 arg()
                 args.append(reader.u8())
@@ -846,6 +904,7 @@ class IFPSFile(Struct):
                 raise ValueError(F'Unsupported opcode: 0x{cval:02X}')
             else:
                 raise ValueError(F'Unhandled opcode: {code.name}')
+            insn.size = reader.tell() - addr
 
         for k, instruction in enumerate(disassembly.values()):
             if instruction.opcode in (
@@ -894,12 +953,12 @@ class IFPSFile(Struct):
         if self.functions:
             for function in self.functions:
                 if function.body is None:
-                    output.write(F'external {function!s};\n')
+                    output.write(F'external {function!r};\n')
             output.write('\n')
             for function in self.functions:
                 if function.body is None:
                     continue
-                output.write(F'begin {function!s}\n')
+                output.write(F'begin {function!r}\n')
                 for instruction in function.body:
                     output.write(F'{_TAB}0x{instruction.offset:0{width}X}{_TAB}{instruction!s}\n')
                 output.write(F'end {function.type}\n\n')
