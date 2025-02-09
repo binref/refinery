@@ -6,6 +6,9 @@
 """
 Murmur hash implementation, orignally written by Fredrik Kihlander and enhanced by Swapnil Gusani.
 """
+from refinery.lib import chunks
+
+from itertools import zip_longest
 from struct import unpack
 
 
@@ -58,7 +61,7 @@ def mmh32(key: bytes, seed=0) -> int:
     return fmix(h1 ^ length)
 
 
-def mmh32digest(key: bytes, seed: int = 0) -> bytes:
+def v3_mmh32digest(key: bytes, seed: int = 0) -> bytes:
     return mmh32(key, seed).to_bytes(4, 'big')
 
 
@@ -320,9 +323,167 @@ def mmh128x32(key: bytes, seed: int = 0) -> int:
     return (h1 << 96 | h2 << 64 | h3 << 32 | h4)
 
 
-def mmh128digest64(key: bytes, seed: int = 0) -> bytes:
+def v3_mmh128digest64(key: bytes, seed: int = 0) -> bytes:
     return mmh128x64(key, seed).to_bytes(0x10, 'big')
 
 
-def mmh128digest32(key: bytes, seed: int = 0) -> bytes:
+def v3_mmh128digest32(key: bytes, seed: int = 0) -> bytes:
     return mmh128x32(key, seed).to_bytes(0x10, 'big')
+
+
+# Begin MurmurHash v2 Implementation
+
+
+def v2_mmh32digest(data: bytearray, seed: int):
+    seed ^= len(data)
+    j = len(data) % 4
+    e = len(data) - j
+    view = memoryview(data)
+    body = view[:e]
+    tail = view[e:]
+    h = seed & 0xFFFFFFFF
+    for k in chunks.unpack(body, 4):
+        k *= 0x5BD1E995
+        k &= 0xFFFFFFFF
+        k ^= k >> 24
+        k *= 0x5BD1E995
+        k &= 0xFFFFFFFF
+        h *= 0x5BD1E995
+        h &= 0xFFFFFFFF
+        h ^= k
+    while j > 0:
+        j -= 1
+        h ^= tail[j] << (j << 3)
+    if tail:
+        h *= 0x5BD1E995
+        h &= 0xFFFFFFFF
+    h ^= h >> 13
+    h *= 0x5BD1E995
+    h &= 0xFFFFFFFF
+    h ^= h >> 15
+    return h.to_bytes(4, 'big')
+
+
+def v2_mmh64digestA(data: bytearray, seed: int):
+    seed ^= len(data) * 0xC6A4A7935BD1E995
+    j = len(data) % 8
+    e = len(data) - j
+    view = memoryview(data)
+    body = view[:e]
+    tail = view[e:]
+    mask = 0xFFFFFFFFFFFFFFFF
+    h = seed & mask
+    for k in chunks.unpack(body, 8):
+        k *= 0xC6A4A7935BD1E995
+        k &= 0xFFFFFFFFFFFFFFFF
+        k ^= k >> 47
+        k *= 0xC6A4A7935BD1E995
+        k &= 0xFFFFFFFFFFFFFFFF
+        h ^= k
+        h *= 0xC6A4A7935BD1E995
+        h &= 0xFFFFFFFFFFFFFFFF
+    while j > 0:
+        j -= 1
+        h ^= tail[j] << (j << 3)
+    if tail:
+        h *= 0xC6A4A7935BD1E995
+        h &= 0xFFFFFFFFFFFFFFFF
+    h ^= h >> 47
+    h *= 0xC6A4A7935BD1E995
+    h &= 0xFFFFFFFFFFFFFFFF
+    h ^= h >> 47
+    return h.to_bytes(8, 'big')
+
+
+def v2_mmh64digestB(data: bytearray, seed: int):
+    h1 = seed ^ len(data)
+    h2 = seed >> 32
+    h1 &= 0xFFFFFFFF
+    h2 &= 0xFFFFFFFF
+
+    view = memoryview(data)
+    j = len(data) % 4
+    m = len(data) - j
+    body = view[:m]
+    tail = view[m:]
+
+    it = iter(chunks.unpack(body, 4))
+
+    for k1, k2 in zip_longest(it, it):
+        k1 *= 0x5BD1E995
+        k1 &= 0xFFFFFFFF
+        k1 ^= k1 >> 24
+        k1 *= 0x5BD1E995
+        k1 &= 0xFFFFFFFF
+        h1 *= 0x5BD1E995
+        h1 &= 0xFFFFFFFF
+        h1 ^= k1
+
+        if k2 is None:
+            break
+
+        k2 *= 0x5BD1E995
+        k2 &= 0xFFFFFFFF
+        k2 ^= k2 >> 24
+        k2 *= 0x5BD1E995
+        k2 &= 0xFFFFFFFF
+        h2 *= 0x5BD1E995
+        h2 &= 0xFFFFFFFF
+        h2 ^= k2
+
+    while j > 0:
+        j -= 1
+        h2 ^= tail[j] << (j << 3)
+    if tail:
+        h2 *= 0x5BD1E995
+        h2 &= 0xFFFFFFFF
+
+    h1 ^= h2 >> 18
+    h1 *= 0x5BD1E995
+    h1 &= 0xFFFFFFFF
+    h2 ^= h1 >> 22
+    h2 *= 0x5BD1E995
+    h2 &= 0xFFFFFFFF
+    h1 ^= h2 >> 17
+    h1 *= 0x5BD1E995
+    h1 &= 0xFFFFFFFF
+    h2 ^= h1 >> 19
+    h2 *= 0x5BD1E995
+    h2 &= 0xFFFFFFFF
+    h = (h1 << 32) | h2
+    return h.to_bytes(8, 'big')
+
+
+def v2_mmh32digestA_mmix(h, k):
+    k *= 0x5BD1E995
+    k &= 0xFFFFFFFF
+    k ^= k >> 24
+    k *= 0x5BD1E995
+    k &= 0xFFFFFFFF
+    h *= 0x5BD1E995
+    h &= 0xFFFFFFFF
+    h ^= k
+    return (h, k)
+
+
+def v2_mmh32digestA(data: bytearray, seed: int):
+    n = len(data)
+    h = seed & 0xFFFFFFFF
+    j = len(data) % 4
+    e = len(data) - j
+    t = 0
+    view = memoryview(data)
+    body = view[:e]
+    tail = view[e:]
+    for k in chunks.unpack(body, 4):
+        h, k = v2_mmh32digestA_mmix(h, k)
+    while j > 0:
+        j -= 1
+        t ^= tail[j] << (j << 3)
+    h, t = v2_mmh32digestA_mmix(h, t)
+    h, n = v2_mmh32digestA_mmix(h, n)
+    h ^= h >> 13
+    h *= 0x5BD1E995
+    h &= 0xFFFFFFFF
+    h ^= h >> 15
+    return h.to_bytes(4, 'big')
