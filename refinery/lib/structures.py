@@ -194,6 +194,14 @@ class MemoryFileMethods(Generic[T]):
             self._cursor = end
         return result
 
+    def readif(self, value: bytes) -> bool:
+        size = len(value)
+        stop = self._cursor + size
+        mv = memoryview(self._data)
+        if match := mv[self._cursor:stop] == value:
+            self._cursor = stop
+        return match
+
     def peek(self, size: int = -1) -> memoryview:
         cursor = self._cursor
         mv = memoryview(self._data)
