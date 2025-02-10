@@ -18,6 +18,14 @@ class TestInnoExtractor(TestUnitBase):
         )
         self.assertEqual(test, 'http''s:/''/t.''me/+r1hwDlb8VAI5ZTQy')
 
+    def test_real_world_02_script(self):
+        test = (
+            self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')
+            | self.load('script.ps') | str
+        )
+        self.assertNotIn('LocalVar3 := Argument2', test)
+        self.assertIn   ('LocalVar3 := Argument1', test) # noqa
+
     def test_real_world_01_file(self):
         test = (
             self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')

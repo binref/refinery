@@ -634,6 +634,15 @@ class Instruction:
         return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self._oprep}'
 
 
+class FTag(enum.IntFlag):
+    External = 0b0001
+    Exported = 0b0010
+    HasAttrs = 0b0100
+
+    def check(self, v):
+        return bool(self & v)
+
+
 class IFPSFile(Struct):
     MinVer = 12
     MaxVer = 23
@@ -763,27 +772,26 @@ class IFPSFile(Struct):
             decl = None
             body = None
             name = F'F{k:0{width}X}'
-            function_flags = reader.u8()
+            tags = reader.u8()
             attributes = None
-            has_attributes = bool(function_flags & 4)
-            imported = bool(function_flags & 1)
-            exported = bool(function_flags & 2)
-            if imported:
+            exported = FTag.Exported.check(tags)
+            if FTag.External.check(tags):
                 name = reader.read_length_prefixed_ascii(8)
                 if exported:
                     read = StructReader(bytes(reader.read_length_prefixed()))
                     decl = DeclSpec.ParseF(read, self._load_flags)
             else:
                 offset = reader.u32()
-                size = reader.u32()
-                with StreamDetour(reader, offset):
-                    body = list(self._parse_bytecode(reader.read(size)))
-                self.void = False
+                length = reader.u32()
                 if exported:
                     name = reader.read_length_prefixed_ascii()
                     decl = DeclSpec.ParseE(bytes(reader.read_length_prefixed()), self)
                     self.void = decl.void
-            if has_attributes:
+                else:
+                    self.void = False
+                with reader.detour(offset):
+                    body = list(self._parse_bytecode(reader.read(length)))
+            if FTag.HasAttrs.check(tags):
                 attributes = list(self._read_attributes())
             self.functions.append(Function(name, decl, body, exported, attributes))
         for function in self.functions:
