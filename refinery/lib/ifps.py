@@ -484,17 +484,26 @@ class DeclSpec:
     @classmethod
     def ParseE(cls, data: bytes, ipfs: IFPSFile):
         decl = data.split(B'\x20')
-        return_type = int(decl.pop(0))
-        void = return_type == -1
+        try:
+            return_type = int(decl.pop(0))
+        except Exception:
+            void = True
+        else:
+            void = return_type < 0
         if not void:
             return_type = ipfs.types[return_type]
         else:
             return_type = None
         parameters = []
         for param in decl:
-            input = param[0] == B'@'[0]
-            ti = int(param[1:])
-            parameters.append(DeclSpecParam(input, ipfs.types[ti]))
+            try:
+                i = int(param[1:])
+            except Exception:
+                tv = None
+            else:
+                tv = ipfs.types[i]
+            parameters.append(
+                DeclSpecParam(param[:1] == B'@', tv))
         return cls(void, parameters, return_type=return_type)
 
 
