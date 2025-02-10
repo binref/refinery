@@ -448,7 +448,9 @@ class DeclSpec:
 
         if reader.readif(b'dll:'):
             reader.readif(B'files:')
-            properties.update(module=ascii())
+            if (module := ascii()).lower().endswith('.dll'):
+                module = module[:-4]
+            properties.update(module=module)
             name = ascii()
             properties.update(calling_convention=cc())
             if load_flags:
