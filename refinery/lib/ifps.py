@@ -358,7 +358,7 @@ class Attribute(NamedTuple):
 
 
 class DeclSpecParam(NamedTuple):
-    mode_in: bool
+    input: bool
     type: Optional[TGeneric] = None
 
 
@@ -371,7 +371,6 @@ class _calltype(str, enum.Enum):
 
 @dataclass
 class DeclSpec:
-
     void: bool
     parameters: List[DeclSpecParam]
     name: str = ''
@@ -380,6 +379,7 @@ class DeclSpec:
     module: Optional[str] = None
     classname: Optional[str] = None
     delay_load: bool = False
+    vtable_index: Optional[int] = None
     load_with_altered_search_path: bool = False
     is_property: bool = False
 
@@ -388,12 +388,14 @@ class DeclSpec:
             name = F'{VariantType.Argument!s}{k}'
             if p.type is not None:
                 name = F'{name}: {p.type!s}'
-            if not p.mode_in:
+            if not p.input:
                 name = F'*{name}'
             return name
         if self.name and name in self.name:
             name = self.name
         spec = name
+        if self.vtable_index is not None:
+            spec = F'{self.name}[{self.vtable_index}]'
         if self.classname:
             spec = F'{self.classname}.{spec}'
         if self.module:
@@ -434,40 +436,50 @@ class DeclSpec:
                 3: 'stdcall',
             }.get(reader.u8(), cls.calling_convention)
 
-        kw = {}
-        parameters = None
-        if reader.peek(4) == b'dll:':
-            reader.seekrel(4)
-            if reader.peek(6) == B'files:':
-                reader.seekrel(6)
-            kw.update(module=ascii(), name=ascii(), calling_convention=cc())
-            if load_flags:
-                kw.update(delay_load=boolean(), load_with_altered_search_path=boolean())
+        def read_parameters():
+            nonlocal void
             void = not boolean()
-        elif reader.peek(6) == b'class:':
-            reader.seekrel(6)
+            parameters.extend(DeclSpecParam(bool(b)) for b in reader.read())
+
+        void = True
+        name = None
+        properties = {}
+        parameters = []
+
+        if reader.readif(b'dll:'):
+            reader.readif(B'files:')
+            properties.update(module=ascii())
+            name = ascii()
+            properties.update(calling_convention=cc())
+            if load_flags:
+                properties.update(delay_load=boolean(), load_with_altered_search_path=boolean())
+            read_parameters()
+        elif reader.readif(b'class:'):
             if reader.remaining_bytes == 1:
-                rest = reader.peek(1)
+                spec = reader.peek(1)
                 void = False
-                parameters = [DeclSpecParam(False)]
-                kw.update(
-                    classname='Class',
-                    name={b'+': 'CastToType', B'-': 'SetNil'}.get(rest),
-                    calling_convention='pascal',
-                )
+                parameters.append(DeclSpecParam(False))
+                name = {
+                    b'+': 'CastToType',
+                    B'-': 'SetNil'
+                }.get(spec)
+                properties.update(classname='Class', calling_convention='pascal')
             else:
-                kw.update(classname=reader.read_terminated_array(b'|').decode('latin1'))
+                properties.update(classname=reader.read_terminated_array(b'|').decode('latin1'))
                 name = reader.read_terminated_array(b'|').decode('latin1')
                 if name[-1] == '@':
-                    kw.update(is_property=True)
+                    properties.update(is_property=True)
                     name = name[:-1]
-                kw.update(name=name, calling_convention=cc())
-                void = not reader.u8()
+                properties.update(calling_convention=cc())
+                read_parameters()
+        elif reader.readif(b'intf:.'):
+            name = 'CoInterface'
+            properties.update(vtable_index=reader.u32())
+            properties.update(calling_convention=cc())
+            read_parameters()
         else:
-            void = not reader.u8()
-        if parameters is not None:
-            parameters = [DeclSpecParam(bool(b)) for b in reader.read()]
-        return cls(void, parameters, **kw)
+            read_parameters()
+        return cls(void, parameters, name=name, **properties)
 
     @classmethod
     def ParseE(cls, data: bytes, ipfs: IFPSFile):
@@ -480,9 +492,9 @@ class DeclSpec:
             return_type = None
         parameters = []
         for param in decl:
-            mode_in = param[0] == B'@'[0]
+            input = param[0] == B'@'[0]
             ti = int(param[1:])
-            parameters.append(DeclSpecParam(mode_in, ipfs.types[ti]))
+            parameters.append(DeclSpecParam(input, ipfs.types[ti]))
         return cls(void, parameters, return_type=return_type)
 
 
@@ -589,22 +601,6 @@ class Instruction:
         if not isinstance(arg, Operand):
             raise TypeError
         return arg
-
-    @property
-    def dst(self) -> Optional[Operand]:
-        return self.op(0)
-
-    @property
-    def src(self) -> Optional[Operand]:
-        return self.op(1)
-
-    @property
-    def lhs(self) -> Optional[Operand]:
-        return self.op(1)
-
-    @property
-    def rhs(self) -> Optional[Operand]:
-        return self.op(2)
 
     @property
     def _oprep(self):
