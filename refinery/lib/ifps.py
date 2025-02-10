@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from collections import OrderedDict
 from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
-from refinery.lib.structures import Struct, StructReader, StreamDetour
+from refinery.lib.structures import Struct, StructReader
 
 _ENM = TypeVar('_ENM', bound=Type[enum.Enum])
 _CLS = TypeVar('_CLS', bound=Type)
@@ -516,6 +516,7 @@ class Function:
     body: Optional[List[Instruction]] = None
     exported: bool = False
     attributes: Optional[List[Attribute]] = None
+    _bbs: Optional[Dict[int, BasicBlock]] = None
 
     def reference(self) -> str:
         if self.decl is None:
@@ -535,6 +536,71 @@ class Function:
         if self.decl is None:
             return _calltype.symbol
         return self.decl.type
+
+    def get_basic_blocks(self) -> Dict[int, BasicBlock]:
+        if (bbs := self._bbs) is not None:
+            return bbs
+        if self.body is None:
+            bbs = self._bbs = {}
+            return bbs
+
+        bbs: Dict[int, BasicBlock] = {0: (bb := BasicBlock(0))}
+        self._bbs = bbs
+
+        for insn in self.body:
+            try:
+                bb = bbs[insn.offset]
+            except KeyError:
+                if insn.jumptarget:
+                    nb = bbs[insn.offset] = BasicBlock(insn.offset)
+                    nb.sources[bb.offset] = bb
+                    bb.targets[nb.offset] = nb
+                    bb = nb
+            bb.body.append(insn)
+            if not insn.branches:
+                continue
+            targets = [insn.operands[0]]
+            sequence = insn.offset + insn.size
+            if not insn.jumps and insn.opcode != Op.Ret:
+                targets.append(sequence)
+            for t in targets:
+                if not (bt := bbs.get(t)):
+                    bt = bbs[t] = BasicBlock(t)
+                bb.targets[t] = bt
+                bt.sources[bb.offset] = bb
+
+        for offset, bb in list(bbs.items()):
+            if bb.body:
+                continue
+            del bbs[offset]
+            for source in bb.sources.values():
+                source.targets.pop(offset, None)
+
+        visited: set[int] = set()
+        errored: set[int] = set()
+
+        def trace_stack(offset: int, stack: Optional[int]):
+            if offset in errored:
+                return
+            bb = bbs[offset]
+            if bb.stack is not None and stack != bb.stack:
+                stack = None
+            if stack is None:
+                errored.add(offset)
+            elif offset in visited:
+                return
+            else:
+                visited.add(offset)
+            bb.stack = stack
+            body = [] if stack is None else bb.body
+            for insn in body:
+                insn.stack = stack
+                stack += insn.stack_delta
+            for t in bb.targets:
+                trace_stack(t, stack)
+
+        trace_stack(0, 0)
+        return bbs
 
 
 class Variable(NamedTuple):
@@ -596,6 +662,14 @@ class Operand(NamedTuple):
 
 
 _Op_Maxlen = max(len(op.name) for op in Op)
+_Op_StackD = {
+    Op.Push     : +1,
+    Op.PushVar  : +1,
+    Op.PushType : +1,
+    Op.Pop      : -1,
+    Op.JumpPop1 : -1,
+    Op.JumpPop2 : -2,
+}
 
 
 @dataclass
@@ -603,7 +677,8 @@ class Instruction:
     offset: int
     opcode: Op
     size: int = 0
-    operands: List[Union[str, int, Operand, TGeneric, Function]] = field(default_factory=list)
+    stack: Optional[int] = None
+    operands: List[Union[str, bool, int, Operand, TGeneric, Function]] = field(default_factory=list)
     operator: Optional[Union[AOp, COp]] = None
     jumptarget: bool = False
 
@@ -614,18 +689,38 @@ class Instruction:
         return arg
 
     @property
-    def _oprep(self):
-        if self.opcode in (
+    def branches(self):
+        return self.opcode in (
             Op.Jump,
             Op.JumpFalse,
             Op.JumpTrue,
             Op.JumpFlag,
             Op.JumpPop1,
             Op.JumpPop2,
-        ):
+        )
+
+    @property
+    def jumps(self):
+        return self.opcode in (
+            Op.Jump,
+            Op.JumpPop1,
+            Op.JumpPop2,
+        )
+
+    @property
+    def stack_delta(self):
+        return _Op_StackD.get(self.opcode, 0)
+
+    def oprep(self, labels: Optional[dict[int, str]] = None):
+        if self.branches:
             dst = self.operands[0]
+            if not labels or not (label := labels.get(dst)):
+                label = F'0x{dst:X}'
             var = [str(op) for op in self.operands[1:]]
-            return ', '.join((F'0x{dst:X}', *var))
+            return ', '.join((label, *var))
+        elif self.opcode is Op.SetFlag:
+            rep, negated = self.operands
+            return F'!{rep}' if negated else str(rep)
         elif self.opcode is Op.Compare:
             dst, a, b = self.operands
             return F'{dst!s} := {a!s} {self.operator!s} {b!s}'
@@ -638,11 +733,31 @@ class Instruction:
         else:
             return ', '.join(str(op) for op in self.operands)
 
+    def pretty(self, labels: Optional[dict[int, str]] = None):
+        return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self.oprep(labels)}'.strip()
+
     def __repr__(self):
-        return F'{self.opcode.name}({self._oprep})'
+        return F'{self.opcode.name}({self.oprep()})'
 
     def __str__(self):
-        return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self._oprep}'
+        return self.pretty()
+
+
+@dataclass
+class BasicBlock:
+    offset: int
+    stack: Optional[int] = None
+    body: List[Instruction] = field(default_factory=list)
+    sources: Dict[int, BasicBlock] = field(default_factory=dict)
+    targets: Dict[int, BasicBlock] = field(default_factory=dict)
+
+    @property
+    def stack_delta(self):
+        return sum(insn.stack_delta for insn in self.body)
+
+    @property
+    def size(self):
+        return sum(insn.size for insn in self.body)
 
 
 class FTag(enum.IntFlag):
@@ -910,7 +1025,7 @@ class IFPSFile(Struct):
                 arg(3)
             elif code is Op.SetFlag:
                 arg()
-                args.append(reader.u8())
+                args.append(bool(reader.u8()))
             elif code is Op.PushEH:
                 args.extend(reader.u32() for _ in range(4))
             elif code is Op.PopEH:
@@ -922,22 +1037,16 @@ class IFPSFile(Struct):
             insn.size = reader.tell() - addr
 
         for k, instruction in enumerate(disassembly.values()):
-            if instruction.opcode in (
-                Op.Jump,
-                Op.JumpTrue,
-                Op.JumpFalse,
-                Op.JumpFlag,
-                Op.JumpPop1,
-                Op.JumpPop2,
-            ):
-                target = instruction.operands[0]
-                try:
-                    disassembly[target].jumptarget = True
-                except KeyError as K:
-                    raise RuntimeError(
-                        F'The jump target of instruction {k} at 0x{instruction.offset:X} is invalid; '
-                        F'the invalid instruction is a {instruction.opcode.name} to 0x{target:X}.'
-                    ) from K
+            if not instruction.branches:
+                continue
+            target = instruction.operands[0]
+            try:
+                disassembly[target].jumptarget = True
+            except KeyError as K:
+                raise RuntimeError(
+                    F'The jump target of instruction {k} at 0x{instruction.offset:X} is invalid; '
+                    F'the invalid instruction is a {instruction.opcode.name} to 0x{target:X}.'
+                ) from K
 
         yield from disassembly.values()
 
@@ -945,13 +1054,21 @@ class IFPSFile(Struct):
         return self.disassembly()
 
     def disassembly(self) -> str:
+        for function in self.functions:
+            function.get_basic_blocks()
+
         output = io.StringIO()
         _omax = max((
             max(insn.offset for insn in fn.body)
             for fn in self.functions if fn.body
         ), default=0)
+        _smax = max((
+            max(insn.stack for insn in fn.body if insn.stack is not None)
+            for fn in self.functions if fn.body
+        ), default=0)
         _omax = max(len(self.types), len(self.variables), _omax)
-        width = len(F'{_omax:X}')
+        _omax = len(F'{_omax:X}')
+        _smax = len(F'{_smax:d}')
 
         if self.types:
             for type in self.types:
@@ -974,8 +1091,17 @@ class IFPSFile(Struct):
                 if function.body is None:
                     continue
                 output.write(F'begin {function!r}\n')
+                labels = [insn.offset for insn in function.body if insn.jumptarget]
+                labelw = max(len(str(len(labels))), 2)
+                labeld = {v: F'JumpDestination{k:0{labelw}d}' for k, v in enumerate(labels, 1)}
+                labelc = 0
                 for instruction in function.body:
-                    output.write(F'{_TAB}0x{instruction.offset:0{width}X}{_TAB}{instruction!s}\n')
+                    stack = instruction.stack
+                    stack = '?' * _smax if stack is None else F'{stack:>{_smax}d}'
+                    if instruction.jumptarget:
+                        output.write(F'{labeld[labels[labelc]]}:\n')
+                        labelc += 1
+                    output.write(F'{_TAB}0x{instruction.offset:0{_omax}X}{_TAB}{stack}{_TAB}{instruction.pretty(labeld)}\n')
                 output.write(F'end {function.type}\n\n')
 
         return output.getvalue()
