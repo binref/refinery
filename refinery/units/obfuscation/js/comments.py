@@ -15,6 +15,6 @@ class deob_js_comments(Deobfuscator):
         @strings.outside
         def remove(_): return ''
 
-        data = re.sub(R'/\*.*?\*/', remove, data)
+        data = re.sub(R'/\*.*?\*/', remove, data, flags=re.DOTALL)
         data = re.sub(R'(?m)//.*$', remove, data)
         return data
