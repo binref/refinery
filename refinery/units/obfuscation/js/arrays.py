@@ -3,7 +3,7 @@
 import re
 
 from refinery.lib.patterns import formats
-from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation import Deobfuscator, StringLiterals
 
 
 class deob_js_arrays(Deobfuscator):
@@ -12,8 +12,10 @@ class deob_js_arrays(Deobfuscator):
     """
 
     def deobfuscate(self, data):
+        strlit = StringLiterals(formats.string, data)
 
-        def litpick(match):
+        @strlit.outside
+        def litpick(match: re.Match[str]):
             try:
                 array = match[1]
                 index = int(match[2])

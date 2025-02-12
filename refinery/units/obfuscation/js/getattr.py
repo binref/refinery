@@ -3,7 +3,7 @@
 import re
 
 from refinery.lib.patterns import formats
-from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation import Deobfuscator, StringLiterals
 
 
 class deob_js_getattr(Deobfuscator):
@@ -12,9 +12,13 @@ class deob_js_getattr(Deobfuscator):
     """
 
     def deobfuscate(self, data):
-        def dottify(match):
+        strlit = StringLiterals(formats.string, data)
+
+        @strlit.outside
+        def dottify(match: re.Match[str]):
             name = match[2][1:-1]
             if name.isidentifier():
                 return F'{match[1]}.{name}'
             return match[0]
+
         return re.sub(FR'(\w+)\[({formats.string})\]', dottify, data)
