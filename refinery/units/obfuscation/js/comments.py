@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import re
+
+from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator, StringLiterals
+
+
+class deob_js_comments(Deobfuscator):
+    """
+    JavaScript deobfuscator that removes comments from the script.
+    """
+    def deobfuscate(self, data):
+        strings = StringLiterals(formats.string, data)
+        @strings.outside
+        def remove(_): return ''
+
+        data = re.sub(R'/\*.*?\*/', remove, data)
+        data = re.sub(R'(?m)//.*$', remove, data)
+        return data
