@@ -9,6 +9,7 @@ from refinery.units import Unit
 from refinery.units.compression.lz import lzma
 from refinery.lib import chunks
 from refinery.lib.dotnet.header import DotNetHeader, StreamReader, StringPrimitive, UInt32, ParserEOF
+from refinery.lib.dotnet import integer_from_ldc
 
 
 class dncfx(Unit):
@@ -17,11 +18,11 @@ class dncfx(Unit):
     Each decrypted string is returned as a single output.
     """
     _PATTERN_ARRAY_INIT = (
-        BR'(\x1F.|\x20....)'      # load size of a chunk
-        BR'\x8D.\x00\x00\x01'     # create a UInt32 array
-        BR'\x25'                  # dup
-        BR'\xD0%s\x04'            # ldtoken: RVA of array data
-        BR'\x28.\x00\x00.'        # call to InitializeArray
+        BR'(\x1F.|\x20....|[\x17-\x1E])'  # load size of a chunk
+        BR'\x8D.\x00\x00\x01'             # create a UInt32 array
+        BR'\x25'                          # dup
+        BR'\xD0%s\x04'                    # ldtoken: RVA of array data
+        BR'\x28.\x00\x00.'                # call to InitializeArray
     )
 
     def process(self, data):
@@ -32,12 +33,6 @@ class dncfx(Unit):
             def __init__(self, match):
                 self.offset = match.start()
                 self.value, = struct.unpack('<I', match[1])
-
-        def get_size(match):
-            ins = match[1]
-            fmt = '<B' if ins[0] == 0x1F else '<I'
-            result, = struct.unpack(fmt, ins[-struct.calcsize(fmt):])
-            return result
 
         potential_seeds = [
             IntegerAssignment(m)
@@ -59,7 +54,7 @@ class dncfx(Unit):
                         weight += 2000
                     return weight
 
-                size = get_size(match)
+                size = integer_from_ldc(match)
 
                 if size % 0x10 or size > 10000:
                     continue
