@@ -13,8 +13,13 @@ from refinery.units.crypto.hash import HashUnit, Arg
 
 
 class MurMurHash(HashUnit, abstract=True):
-    def __init__(self, seed: Arg.Number(help='Optional seed value, defaults to {default}.') = 0, text=False):
-        super().__init__(seed=seed, text=text)
+    def __init__(
+        self,
+        seed: Arg.Number(help='Optional seed value, defaults to {default}.') = 0,
+        reps=1,
+        text=False,
+    ):
+        super().__init__(seed=seed, text=text, reps=reps)
 
 
 class m2h(MurMurHash):

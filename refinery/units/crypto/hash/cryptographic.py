@@ -12,7 +12,7 @@ from refinery.units.crypto.hash import HashUnit
 class _CDome(Executable):
     def __new__(cls, name: str, bases, namespace: dict):
         def _algorithm(self, data):
-            return getattr(__import__(F'Cryptodome.Hash.{algo}').Hash, algo).new(data)
+            return getattr(__import__(F'Cryptodome.Hash.{algo}').Hash, algo).new(data).digest()
         algo = name.upper()
         namespace['_algorithm'] = _algorithm
         return Executable.__new__(cls, name, bases, namespace)
@@ -21,7 +21,7 @@ class _CDome(Executable):
 class _PyLib(Executable):
     def __new__(cls, name: str, bases, namespace: dict):
         def _algorithm(self, data):
-            return getattr(hashlib, name)(data)
+            return getattr(hashlib, name)(data).digest()
         namespace['_algorithm'] = _algorithm
         return Executable.__new__(cls, name, bases, namespace)
 

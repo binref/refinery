@@ -16,4 +16,4 @@ class xxh(HashUnit):
         super().__init__(text, seed=seed)
 
     def _algorithm(self, data):
-        return xxhash(data, self.args.seed)
+        return xxhash(data, self.args.seed).digest()

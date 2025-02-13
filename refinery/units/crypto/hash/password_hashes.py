@@ -12,4 +12,4 @@ class ntlm(HashUnit):
     """
     def _algorithm(self, data: bytes) -> bytes:
         from Cryptodome.Hash import MD4
-        return MD4.new(data.decode(self.codec).encode('utf-16le'))
+        return MD4.new(data.decode(self.codec).encode('utf-16le')).digest()
