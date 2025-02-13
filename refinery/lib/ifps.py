@@ -6,19 +6,38 @@ The code is based on the logic implemented in IFPSTools:
 """
 from __future__ import annotations
 
+import abc
 import enum
 import io
-import uuid
 
-from typing import Callable, Dict, Generator, List, NamedTuple, Optional, Tuple, Type, TypeVar, Union
+from typing import (
+    overload,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    NamedTuple,
+    Sequence,
+    Generic,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
+
+from uuid import UUID
 from dataclasses import dataclass, field
 from collections import OrderedDict
 from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
 from refinery.lib.structures import Struct, StructReader
+from refinery.lib.types import AST, INF, NoMask
 
-_ENM = TypeVar('_ENM', bound=Type[enum.Enum])
-_CLS = TypeVar('_CLS', bound=Type)
+_T = TypeVar('_T')
+_E = TypeVar('_E', bound=Type[enum.Enum])
+_C = TypeVar('_C', bound=Type)
+
 _TAB = '\x20\x20'
 
 
@@ -46,7 +65,7 @@ def extended(_data: bytes):
     return sign * mantissa * (2 ** exponent)
 
 
-def represent(cls: _ENM) -> _ENM:
+def represent(cls: _E) -> _E:
     cls.__repr__ = lambda self: F'{self.__class__.__name__}.{self.name}'
     cls. __str__ = lambda self: self.name
     return cls
@@ -69,13 +88,13 @@ class Op(enum.IntEnum):
     Compare      = 0x0C  # noqa
     CallVar      = 0x0D  # noqa
     SetPtr       = 0x0E  # noqa
-    LogicalNot   = 0x0F  # noqa
+    BooleanNot   = 0x0F  # noqa
     Neg          = 0x10  # noqa
     SetFlag      = 0x11  # noqa
     JumpFlag     = 0x12  # noqa
     PushEH       = 0x13  # noqa
     PopEH        = 0x14  # noqa
-    Not          = 0x15  # noqa
+    IntegerNot   = 0x15  # noqa
     SetCopyPtr   = 0x16  # noqa
     Inc          = 0x17  # noqa
     Dec          = 0x18  # noqa
@@ -199,20 +218,55 @@ class _OptionsMixin:
 
 
 @dataclass
-class _TypeBase:
+class IFPSType(abc.ABC):
     code: TC
+
+    def simple(self, nested=False):
+        return True
+
+    def indexed(self):
+        return self.code in (
+            TC.StaticArray,
+            TC.Array,
+            TC.Record,
+        )
 
     def display(self, indent=0):
         return indent * _TAB + self.code.name
 
-    def simple(self, nested=False):
-        return True
+    @abc.abstractmethod
+    def py_type(self, key: Optional[int] = None) -> Optional[type]:
+        ...
+
+    @abc.abstractmethod
+    def default(self, key: Optional[int] = None):
+        ...
+
+    @property
+    def primitive(self) -> bool:
+        return self.code not in {
+            TC.Class,
+            TC.ProcPtr,
+            TC.Interface,
+            TC.Set,
+            TC.StaticArray,
+            TC.Array,
+            TC.Record,
+        }
+
+    @property
+    def container(self) -> bool:
+        return self.code in {
+            TC.StaticArray,
+            TC.Array,
+            TC.Record,
+        }
 
     def __str__(self):
         return self.display(0)
 
 
-def optionals(cls: _CLS) -> Union[_CLS, Type[_OptionsMixin]]:
+def optionals(cls: _C) -> Union[_C, Type[_OptionsMixin]]:
     class _mixed(_OptionsMixin, cls):
         ...
     assigned = set(WRAPPER_ASSIGNMENTS) - {'__annotations__'}
@@ -222,24 +276,78 @@ def optionals(cls: _CLS) -> Union[_CLS, Type[_OptionsMixin]]:
 
 @optionals
 @dataclass
-class TGeneric(_TypeBase):
-    pass
+class TPrimitive(IFPSType):
+
+    def py_type(self, key: Optional[int] = None) -> Optional[type]:
+        return {
+            TC.ReturnAddress       : int,
+            TC.U08                 : int,
+            TC.S08                 : int,
+            TC.U16                 : int,
+            TC.S16                 : int,
+            TC.U32                 : int,
+            TC.S32                 : int,
+            TC.Single              : float,
+            TC.Double              : float,
+            TC.Extended            : float,
+            TC.String              : str,
+            TC.Pointer             : Variable,
+            TC.PChar               : str,
+            TC.ResourcePointer     : Variable,
+            TC.Variant             : Variable,
+            TC.S64                 : int,
+            TC.Char                : str,
+            TC.WideString          : str,
+            TC.WideChar            : str,
+            TC.Currency            : float,
+            TC.UnicodeString       : str,
+            TC.Enum                : int,
+            TC.Type                : IFPSType,
+        }.get(self.code)
+
+    def default(self, *_):
+        tc = self.py_type()
+        if issubclass(tc, (int, float, str)):
+            return tc()
+
 
 
 @optionals
 @dataclass
-class TProcPtr(_TypeBase):
-    body: bytes
+class TProcPtr(IFPSType):
+    void: bool
+    args: List[DeclSpecParam]
+
+    def py_type(self, *_):
+        return None
+
+    def default(self, *_):
+        return None
 
     def display(self, indent=0):
-        display = super().display(indent)
-        return F'{display}({self.body.hex()})'
+        name = super().display(indent)
+        args = []
+        for k, spec in enumerate(self.args, 1):
+            arg = F'Arg{k}'
+            if not spec.input:
+                arg = F'*{arg}'
+            if spec.type is not None:
+                arg = F'{spec.type!s} {arg}'
+            args.append(arg)
+        args = ', '.join(args)
+        return F'{name}({args})'
 
 
 @optionals
 @dataclass
-class TInterface(_TypeBase):
-    uuid: uuid.UUID
+class TInterface(IFPSType):
+    uuid: UUID
+
+    def py_type(self, *_):
+        return UUID
+
+    def default(self, *_):
+        return UUID(int=0)
 
     def display(self, indent=0):
         display = super().display(indent)
@@ -248,18 +356,26 @@ class TInterface(_TypeBase):
 
 @optionals
 @dataclass
-class TClass(_TypeBase):
+class TClass(IFPSType):
     name: str
 
-    def display(self, indent=0):
-        display = super().display(indent)
-        return F'{display}({self.name})'
+    def py_type(self, *_):
+        return None
+
+    def default(self, *_):
+        return None
 
 
 @optionals
 @dataclass
-class TSet(_TypeBase):
+class TSet(IFPSType):
     size: int
+
+    def py_type(self, *_):
+        return int
+
+    def default(self, *_):
+        return 0
 
     @property
     def size_in_bytes(self):
@@ -273,8 +389,14 @@ class TSet(_TypeBase):
 
 @optionals
 @dataclass
-class TArray(_TypeBase):
-    type: TGeneric
+class TArray(IFPSType):
+    type: TPrimitive
+
+    def py_type(self, *_):
+        return self.type.py_type()
+
+    def default(self, *_):
+        return self.type.default()
 
     def display(self, indent=0):
         display = F'{_TAB * indent}{self.type!s}'
@@ -286,10 +408,16 @@ class TArray(_TypeBase):
 
 @optionals
 @dataclass
-class TTuple(_TypeBase):
-    type: TGeneric
+class TStaticArray(IFPSType):
+    type: TPrimitive
     size: int
     offset: Optional[int] = None
+
+    def py_type(self, *_):
+        return self.type.py_type()
+
+    def default(self, *_):
+        return self.type.default()
 
     def display(self, indent=0):
         display = F'{_TAB * indent}{self.type!s}'
@@ -301,8 +429,14 @@ class TTuple(_TypeBase):
 
 @optionals
 @dataclass
-class TRecord(_TypeBase):
-    members: Tuple[TGeneric, ...]
+class TRecord(IFPSType):
+    members: Tuple[TPrimitive, ...]
+
+    def py_type(self, key: int):
+        return self.members[key].py_type()
+
+    def default(self, key: int):
+        return self.members[key].default()
 
     def simple(self, nested=False):
         if nested:
@@ -329,12 +463,15 @@ class TRecord(_TypeBase):
         return output.getvalue()
 
 
-TType = Union[TRecord, TTuple, TArray, TSet, TProcPtr, TClass, TInterface, TGeneric]
-
-
 class Value(NamedTuple):
-    type: TGeneric
-    value: Union[str, int, float, bytes]
+    type: IFPSType
+    value: Union[str, int, float, bytes, Function]
+
+    def convert(self, *_):
+        return self.type.py_type()
+
+    def default(self, *_):
+        return self.type.default()
 
     def __repr__(self):
         value = self.value
@@ -343,7 +480,10 @@ class Value(NamedTuple):
         return F'{self.type.code.name}({value!r})'
 
     def __str__(self):
-        return repr(self.value)
+        v = self.value
+        if isinstance(v, Function):
+            return F'&{v!s}'
+        return repr(v)
 
 
 class Attribute(NamedTuple):
@@ -359,14 +499,14 @@ class Attribute(NamedTuple):
 
 class DeclSpecParam(NamedTuple):
     input: bool
-    type: Optional[TGeneric] = None
+    type: Optional[TPrimitive] = None
 
 
 @represent
-class _calltype(str, enum.Enum):
-    symbol = 'symbol'
-    sub = 'sub'
-    function = 'function'
+class CallType(str, enum.Enum):
+    Symbol = 'Symbol'
+    Sub = 'Sub'
+    Function = 'Function'
 
 
 @dataclass
@@ -375,7 +515,7 @@ class DeclSpec:
     parameters: List[DeclSpecParam]
     name: str = ''
     calling_convention: Optional[str] = None
-    return_type: Optional[TGeneric] = None
+    return_type: Optional[IFPSType] = None
     module: Optional[str] = None
     classname: Optional[str] = None
     delay_load: bool = False
@@ -415,7 +555,7 @@ class DeclSpec:
 
     @property
     def type(self):
-        return _calltype.sub if self.void else _calltype.function
+        return CallType.Sub if self.void else CallType.Function
 
     def __repr__(self):
         return self.represent(self.name or '(*)')
@@ -439,7 +579,7 @@ class DeclSpec:
         def read_parameters():
             nonlocal void
             void = not boolean()
-            parameters.extend(DeclSpecParam(bool(b)) for b in reader.read())
+            parameters.extend(DeclSpecParam(not b) for b in reader.read())
 
         void = True
         name = None
@@ -514,7 +654,6 @@ class Function:
     name: str
     decl: Optional[DeclSpec]
     body: Optional[List[Instruction]] = None
-    exported: bool = False
     attributes: Optional[List[Attribute]] = None
     _bbs: Optional[Dict[int, BasicBlock]] = None
 
@@ -534,7 +673,7 @@ class Function:
     @property
     def type(self):
         if self.decl is None:
-            return _calltype.symbol
+            return CallType.Symbol
         return self.decl.type
 
     def get_basic_blocks(self) -> Dict[int, BasicBlock]:
@@ -600,17 +739,180 @@ class Function:
                 trace_stack(t, stack)
 
         trace_stack(0, 0)
+
+        for insn in self.body:
+            if (stack := insn.stack) is None:
+                continue
+            for k, op in enumerate(insn.operands):
+                if not isinstance(op, Operand):
+                    continue
+                if not (v := op.variant) or v.type != VariantType.Local:
+                    continue
+                if v.index <= stack:
+                    continue
+                raise IndexError(
+                    F'Instruction {op!s} at offset 0x{insn.offset:X} in function {self.name} has '
+                    F'variant operand {k} whose index {v.index} exceeds the stack depth {stack}.')
+
         return bbs
 
 
-class Variable(NamedTuple):
-    index: int
-    flags: int
-    type: TGeneric
-    name: str
+class Variable(Generic[_T]):
+    type: Union[
+        IFPSType,
+        TRecord,
+        TStaticArray,
+        TArray,
+        TSet,
+        TProcPtr,
+        TClass,
+        TInterface,
+        TPrimitive,
+    ]
+    spec: Variant
+    data: Dict[Optional[int], _T]
+
+    def __init__(self, type: IFPSType, spec: Variant):
+        self.type = type
+        self.spec = spec
+        self.data = {}
+        if not type.container and (default := type.default()) is not None:
+            self.data[None] = default
+        if isinstance(type, TRecord):
+            self._keyrange = range(len(type.members))
+        elif isinstance(type, TArray):
+            self._keyrange = range(0x100000000)
+        elif isinstance(type, TStaticArray):
+            self._keyrange = range(type.size)
+        else:
+            self._keyrange = {None}
+        self._int_size = _size = {
+            TC.U08: +1,
+            TC.U16: +1,
+            TC.U32: +1,
+            TC.S08: -1,
+            TC.S16: -1,
+            TC.S32: -1,
+            TC.S64: -1,
+        }.get((code := type.code), 0) * code.width
+        if _size:
+            bits = abs(_size) * 8
+            umax = (1 << bits)
+            self._int_bits = bits
+            self._int_mask = umax - 1
+            if _size < 0:
+                self._int_good = range(-(umax >> 1), (umax >> 1))
+            else:
+                self._int_good = range(umax)
+        else:
+            self._int_mask = NoMask
+            self._int_bits = INF
+            self._int_good = AST
+
+    def _wrap(self, value: _T) -> _T:
+        if s := self._int_size and value not in self._int_good:
+            mask = self._int_mask
+            value &= mask
+            if s < 0 and (value >> (self._int_bits - 1)):
+                value = -(-value & mask)
+        return value
+
+    @overload
+    def _cast(self, key: Optional[int], value: _T) -> _T:
+        ...
+
+    @overload
+    def _cast(self, key: Optional[int]) -> None:
+        ...
+
+    def _cast(self, key: Optional[int] = None, value: Optional[_T] = None) -> Optional[_T]:
+        if key not in self._keyrange:
+            raise IndexError(F'Invalid index {key!r} for type {self.type}.')
+        if value is not None:
+            if isinstance(value, Value):
+                value = value.value
+            if (t := self.type.py_type(key)) and not isinstance(value, t):
+                if issubclass(t, int) and isinstance(value, str) and len(value) == 1:
+                    return ord(value[0])
+                if issubclass(t, str) and isinstance(value, int):
+                    return chr(value)
+                raise TypeError(F'Assigning value {value!r} to variable of type {self.type}.')
+            return value
+
+    def set(self, value: Union[_T, Sequence[_T]], key: Optional[int] = None) -> None:
+        if key is None and self.type.container:
+            # set the entire container
+            for k, element in enumerate(iter(value)):
+                self.set(element, k)
+            return
+        if self.type.code == TC.Set:
+            if key is None:
+                if isinstance(value, Value):
+                    value = value.value
+                if not isinstance(value, int):
+                    raise TypeError('Set must be initialized with integer bitmask.')
+                self.data = value
+            else:
+                if not isinstance(key, int):
+                    raise TypeError
+                if not isinstance(value, bool):
+                    raise TypeError
+                if key not in range(self.type.size):
+                    raise IndexError
+                if value is True:
+                    self.data |= 1 << key
+                elif self.data >> key & 1:
+                    self.data ^= 1 << key
+        else:
+            self.data[key] = value = self._wrap(self._cast(key, value))
+
+    def get(self, key: Optional[int] = None) -> Union[_T, List[_T]]:
+        if key is None and self.type.container:
+            # get the entire container
+            type = self.type
+            data = self.data
+            size = max(data)
+            return [data.get(k, type.default(k)) for k in range(size)]
+        if self.type.code == TC.Set:
+            if key is None:
+                setspec: int = self.data
+                return setspec
+            else:
+                if not isinstance(key, int):
+                    raise TypeError
+                if key not in range(self.type.size):
+                    raise IndexError
+                return bool(self.data >> key & 1)
+        self._cast(key)
+        return self.data[key]
+
+    def copy(self) -> Variable[_T]:
+        return Variable(self.type, self.spec)
+
+    def __str__(self):
+        return F'{self.spec}: {self.type!s}'
 
     def __repr__(self):
-        return F'{self.name}: {self.type!s}'
+        rep = str(self)
+        if not self.data:
+            return rep
+        val = self.data
+        val = val.get(None, val)
+        if self.type.code is TC.Set:
+            val = F'{val:b}'
+        elif self.type.code == TC.Pointer:
+            return F'{rep} -> {val!r}'
+        elif isinstance(val, (int, float)):
+            val = str(val)
+        elif isinstance(val, str):
+            if len(val) > 85:
+                val = F'{val[:82]}...'
+            val = F'{val!r}'
+        else:
+            val = repr(val)
+        if len(val) > 100:
+            val = val.__class__.__name__
+        return F'{rep} = {val}'
 
 
 @represent
@@ -619,6 +921,22 @@ class OperandType(enum.IntEnum):
     Value = 1
     IndexedByInt = 2
     IndexedByVar = 3
+
+
+@represent
+class EHType(enum.IntEnum):
+    Try = 0
+    Finally = 1
+    Catch = 2
+    SecondFinally = 3
+
+
+@represent
+class NewEH(enum.IntEnum):
+    Finally = 0
+    CatchAt = 1
+    SecondFinally = 2
+    End = 3
 
 
 class VariantType(str, enum.Enum):
@@ -650,14 +968,20 @@ class Operand(NamedTuple):
     index: Optional[Union[Variant, int]] = None
 
     def __repr__(self):
+        return self.__tostring(repr)
+
+    def __str__(self):
+        return self.__tostring(str)
+
+    def __tostring(self, converter):
         if self.type is OperandType.Value:
-            return str(self.value)
+            return converter(self.value)
         if self.type is OperandType.Variant:
-            return F'{self.variant}'
+            return converter(self.variant)
         if self.type is OperandType.IndexedByInt:
-            return F'{self.variant}[0x{self.index:02X}]'
+            return F'{converter(self.variant)}[0x{self.index:02X}]'
         if self.type is OperandType.IndexedByVar:
-            return F'{self.variant}[{self.index!s}]'
+            return F'{converter(self.variant)}[{self.index!s}]'
         raise RuntimeError(F'Unexpected OperandType {self.type!r} in {self.__class__.__name__}')
 
 
@@ -678,7 +1002,7 @@ class Instruction:
     opcode: Op
     size: int = 0
     stack: Optional[int] = None
-    operands: List[Union[str, bool, int, Operand, TGeneric, Function]] = field(default_factory=list)
+    operands: List[Union[str, bool, int, float, Operand, IFPSType, Function, None]] = field(default_factory=list)
     operator: Optional[Union[AOp, COp]] = None
     jumptarget: bool = False
 
@@ -718,6 +1042,15 @@ class Instruction:
                 label = F'0x{dst:X}'
             var = [str(op) for op in self.operands[1:]]
             return ', '.join((label, *var))
+        elif self.opcode is Op.PushEH:
+            ops = []
+            for op, name in reversed(list(zip(self.operands, NewEH))):
+                if op is None:
+                    continue
+                ops.append(F'{name}:0x{op:X}')
+            return '\x20'.join(ops)
+        elif self.opcode is Op.PopEH:
+            return F'End{EHType(self.operands[0])}'
         elif self.opcode is Op.SetFlag:
             rep, negated = self.operands
             return F'!{rep}' if negated else str(rep)
@@ -727,7 +1060,7 @@ class Instruction:
         elif self.opcode is Op.Calculate:
             dst, src = self.operands
             return F'{dst!s} {self.operator!s} {src!s}'
-        elif self.opcode is Op.Assign:
+        elif self.opcode in (Op.Assign, Op.SetPtr):
             dst, src = self.operands
             return F'{dst!s} := {src!s}'
         else:
@@ -775,9 +1108,9 @@ class IFPSFile(Struct):
 
     Magic = B'IFPS'
 
-    def __init__(self, reader: StructReader[memoryview], codec: str):
+    def __init__(self, reader: StructReader[memoryview], codec: str = 'utf8'):
         self.codec = codec
-        self.types: List[TType] = []
+        self.types: List[IFPSType] = []
         self.functions: List[Function] = []
         self.variables: List[Variable] = []
         self.strings: List[str] = []
@@ -817,12 +1150,15 @@ class IFPSFile(Struct):
                 code = TC(typecode)
             except ValueError as V:
                 raise ValueError(F'Unknown type code value 0x{typecode:02X}.') from V
-            if code is TC.Class:
+            if code in (TC.Class, TC.ExtClass):
                 t = TClass(code, reader.read_length_prefixed_ascii())
             elif code is TC.ProcPtr:
-                t = TProcPtr(code, reader.read_length_prefixed())
+                spec = reader.read_length_prefixed()
+                void = bool(spec[0])
+                args = [DeclSpecParam(not b) for b in spec[1:]]
+                t = TProcPtr(code, void, args)
             elif code is TC.Interface:
-                guid = uuid.UUID(bytes=bytes(reader.read(0x10)))
+                guid = UUID(bytes=bytes(reader.read(0x10)))
                 t = TInterface(code, guid)
             elif code is TC.Set:
                 t = TSet(code, reader.u32())
@@ -830,7 +1166,7 @@ class IFPSFile(Struct):
                 type = types[reader.u32()]
                 size = reader.u32()
                 offset = None if self.version <= 22 else reader.u32()
-                t = TTuple(code, type, size, offset)
+                t = TStaticArray(code, type, size, offset)
             elif code is TC.Array:
                 t = TArray(code, types[reader.u32()])
             elif code is TC.Record:
@@ -838,7 +1174,7 @@ class IFPSFile(Struct):
                 members = tuple(types[reader.u32()] for _ in range(length))
                 t = TRecord(code, members, symbol=F'RECORD{k}')
             else:
-                t = TGeneric(code, symbol=code.name)
+                t = TPrimitive(code, symbol=code.name)
             if exported:
                 t.symbol = reader.read_length_prefixed_ascii()
                 if self.version <= 21:
@@ -869,8 +1205,8 @@ class IFPSFile(Struct):
             TC.UnicodeString : reader.read_length_prefixed_utf16,
             TC.Char          : lambda: chr(reader.u8()),
             TC.WideChar      : lambda: chr(reader.u16()),
-            TC.ProcPtr       : reader.u32,
-            TC.Set           : lambda: bytes(reader.read(type.size_in_bytes)),
+            TC.ProcPtr       : lambda: self.functions[reader.u32()],
+            TC.Set           : lambda: int.from_bytes(reader.read(type.size_in_bytes), 'little'),
             TC.Currency      : lambda: reader.u64() / 10_000,
         }.get(type.code, None)
         if processor is not None:
@@ -930,14 +1266,12 @@ class IFPSFile(Struct):
 
     def _load_variables(self):
         reader = self.reader
-        width = len(str(self.count_variables))
         for index in range(self.count_variables):
-            tcode = reader.u32()
-            flags = reader.u8()
-            name = F'{VariantType.Global!s}{index:0{width}}'
-            if flags & 1:
-                name = reader.read_length_prefixed_ascii()
-            self.variables.append(Variable(index, flags, self.types[tcode], name))
+            code = reader.u32()
+            spec = Variant(index, VariantType.Global)
+            if reader.u8() & 1:
+                spec = reader.read_length_prefixed_ascii()
+            self.variables.append(Variable(self.types[code], spec))
 
     def _read_variant(self, index: int) -> Variant:
         if index < 0x40000000:
@@ -972,9 +1306,9 @@ class IFPSFile(Struct):
             Op.CallVar: 1,
             Op.Dec: 1,
             Op.Inc: 1,
-            Op.LogicalNot: 1,
+            Op.BooleanNot: 1,
             Op.Neg: 1,
-            Op.Not: 1,
+            Op.IntegerNot: 1,
             Op.SetCopyPtr: 2,
             Op.SetPtr: 2,
         }
@@ -1027,7 +1361,9 @@ class IFPSFile(Struct):
                 arg()
                 args.append(bool(reader.u8()))
             elif code is Op.PushEH:
-                args.extend(reader.u32() for _ in range(4))
+                args.extend(reader.i32() for _ in range(4))
+                for k, a in enumerate(args):
+                    args[k] = a + reader.tell() if a >= 0 else None
             elif code is Op.PopEH:
                 args.append(reader.u8())
             elif code is Op._INVALID:
@@ -1071,26 +1407,35 @@ class IFPSFile(Struct):
         _smax = len(F'{_smax:d}')
 
         if self.types:
+            breakline = False
             for type in self.types:
-                if type.code is not TC.Record:
+                if isinstance(type, TClass):
+                    breakline = True
+                    output.write(F'external Class {type.name}\n')
+            if breakline:
+                output.write('\n')
+            for type in self.types:
+                if type.code != TC.Record and (symbol := type.symbol) in (type.code.name, None):
                     continue
-                output.write(F'typedef {type.symbol} = {type.display()}\n')
+                if isinstance(type, TClass):
+                    continue
+                output.write(F'typedef {symbol} = {type.display()}\n')
             output.write('\n')
 
         if self.variables:
             for variable in self.variables:
-                output.write(F'{variable!s};\n')
+                output.write(F'global {variable!s}\n')
             output.write('\n')
 
         if self.functions:
             for function in self.functions:
                 if function.body is None:
-                    output.write(F'external {function!r};\n')
+                    output.write(F'external {function!r}\n')
             output.write('\n')
             for function in self.functions:
                 if function.body is None:
                     continue
-                output.write(F'begin {function!r}\n')
+                output.write(F'Begin {function!r}\n')
                 labels = [insn.offset for insn in function.body if insn.jumptarget]
                 labelw = max(len(str(len(labels))), 2)
                 labeld = {v: F'JumpDestination{k:0{labelw}d}' for k, v in enumerate(labels, 1)}
@@ -1102,6 +1447,6 @@ class IFPSFile(Struct):
                         output.write(F'{labeld[labels[labelc]]}:\n')
                         labelc += 1
                     output.write(F'{_TAB}0x{instruction.offset:0{_omax}X}{_TAB}{stack}{_TAB}{instruction.pretty(labeld)}\n')
-                output.write(F'end {function.type}\n\n')
+                output.write(F'End {function.type}\n\n')
 
-        return output.getvalue()
+        return output.getvalue().strip()
