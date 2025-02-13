@@ -1205,7 +1205,7 @@ class IFPSFile(Struct):
             TC.UnicodeString : reader.read_length_prefixed_utf16,
             TC.Char          : lambda: chr(reader.u8()),
             TC.WideChar      : lambda: chr(reader.u16()),
-            TC.ProcPtr       : lambda: self.functions[reader.u32()],
+            TC.ProcPtr       : lambda: self.functions[reader.u32() - 1],
             TC.Set           : lambda: int.from_bytes(reader.read(type.size_in_bytes), 'little'),
             TC.Currency      : lambda: reader.u64() / 10_000,
         }.get(type.code, None)
@@ -1415,11 +1415,11 @@ class IFPSFile(Struct):
             if breakline:
                 output.write('\n')
             for type in self.types:
-                if type.code != TC.Record and (symbol := type.symbol) in (type.code.name, None):
+                if type.code != TC.Record and type.symbol in (type.code.name, None):
                     continue
                 if isinstance(type, TClass):
                     continue
-                output.write(F'typedef {symbol} = {type.display()}\n')
+                output.write(F'typedef {type.symbol} = {type.display()}\n')
             output.write('\n')
 
         if self.variables:

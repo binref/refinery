@@ -12,7 +12,7 @@ class TestIPFS(TestUnitBase):
             R"""typedef TWINDOWSVERSION = struct {U32, U32, U32, U32, U32, BOOLEAN, U08, U16}""",
             R"""typedef TFILETIME = struct {U32, U32}""",
             R"""  0x0373   5  Assign      LocalVar5 := 'WinHttp.WinHttpRequest.5.1'""",
-            R"""begin sub PAGEDOWNLOADCANCELBUTTONCLICK(Argument1: TWIZARDPAGE, *Argument2: BOOLEAN, *Argument3: BOOLEAN)"""
+            R"""Begin Sub PAGEDOWNLOADCANCELBUTTONCLICK(Argument1: TWIZARDPAGE, *Argument2: BOOLEAN, *Argument3: BOOLEAN)"""
         ):
             self.assertIn(line, disassembly)
 
@@ -51,4 +51,4 @@ class TestIFPSStrings(TestUnitBase):
     def test_issue_70(self):
         data = self.download_sample('dd4b75e1045c32756de639404b1d9644394891dfb53adc8b701c7a5c2a4b650c')
         test = data | self.load() | self.ldu('resplit') | [str]
-        self.assertIn('WIZARDFORM: Class;', test)
+        self.assertIn('global WIZARDFORM: Class', test)
