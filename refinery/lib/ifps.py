@@ -311,7 +311,6 @@ class TPrimitive(IFPSType):
             return tc()
 
 
-
 @optionals
 @dataclass
 class TProcPtr(IFPSType):
