@@ -3,16 +3,7 @@
 """
 Implements various hashing algorithms.
 """
-from __future__ import annotations
-from typing import TYPE_CHECKING
-
 from refinery.units import Arg, Unit, abc
-
-if TYPE_CHECKING:
-    from typing import Protocol, Union
-
-    class _Hash(Protocol):
-        def digest(self) -> bytes: ...
 
 
 class HashUnit(Unit, abstract=True):
