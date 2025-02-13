@@ -83,7 +83,8 @@ class pcap(Unit):
     @Unit.Requires('pypcapkit[scapy]>=1.3', 'all')
     def _pcapkit():
         with NoLogging():
-            import scapy.layers.tls.session # noqa
+            import importlib
+            importlib.import_module('scapy.layers.tls.session')
             import pcapkit
             return pcapkit
 

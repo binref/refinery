@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from refinery.units import Arg, Unit
-from refinery.lib.decorators import unicoded
 
 
 class ppjscript(Unit):
