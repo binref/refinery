@@ -26,5 +26,5 @@ runs:
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: |
         python -m pip install --upgrade pip
-        python -m pip install pycodestyle
+        python -m pip install pycodestyle pyflakes
         pip install .[all]

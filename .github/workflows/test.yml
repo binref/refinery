@@ -90,7 +90,7 @@ jobs:
       run: |
         sudo apt-get install xclip xvfb
         python -m pip install --upgrade pip
-        python -m pip install pycodestyle pytest pytest-cov
+        python -m pip install pycodestyle pyflakes pytest pytest-cov
         pip install .[all]
     - name: Run tests and collect coverage
       run: |

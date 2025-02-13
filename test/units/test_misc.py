@@ -94,6 +94,44 @@ class TestPipelines(TestUnitBase):
 
 class TestMetaProperties(TestUnitBase):
 
+    def test_happy_flakes(self):
+        import pyflakes.api
+        import pyflakes.reporter
+        import io
+
+        root = os.path.abspath(inspect.stack()[0][1])
+        for _ in range(3):
+            root = os.path.dirname(root)
+
+        python_files = [path for path in glob(
+            os.path.join(root, 'refinery', '**', '*.py'), recursive=True)
+            if 'thirdparty' not in path]
+
+        with (
+            io.StringIO() as alerts,
+            io.StringIO() as errors,
+        ):
+            for path in python_files:
+                with open(path, 'r', encoding='utf8') as stream:
+                    code = stream.read()
+                pyflakes.api.check(code, path, pyflakes.reporter.Reporter(alerts, errors))
+            error_log = errors.getvalue().strip().splitlines(False)
+            alert_log = alerts.getvalue().strip().splitlines(False)
+
+        error_log.extend(line for line in alert_log if not any(
+            ignore in line for ignore in [
+                ': undefined name',
+                ': syntax error in forward annotation',
+            ]
+        ))
+
+        if error_log:
+            print()
+        for error in error_log:
+            print(error)
+
+        self.assertListEqual(error_log, [])
+
     def test_style_guide(self):
         import pycodestyle
 
