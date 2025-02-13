@@ -54,7 +54,7 @@ class dncfx(Unit):
                         weight += 2000
                     return weight
 
-                size = integer_from_ldc(match)
+                size = integer_from_ldc(match[1])
 
                 if size % 0x10 or size > 10000:
                     continue
