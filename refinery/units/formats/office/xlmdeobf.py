@@ -83,7 +83,7 @@ class xlmdeobf(Unit):
             return process_file
 
     def process(self, data: bytearray):
-        with VirtualFileSystem() as vfs, NoLogging():
+        with VirtualFileSystem() as vfs, NoLogging(NoLogging.Mode.ALL):
             result = self._process_file(
                 file=vfs.new(data),
                 noninteractive=True,
