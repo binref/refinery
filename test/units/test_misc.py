@@ -107,16 +107,16 @@ class TestMetaProperties(TestUnitBase):
             os.path.join(root, 'refinery', '**', '*.py'), recursive=True)
             if 'thirdparty' not in path]
 
-        with (
-            io.StringIO() as alerts,
-            io.StringIO() as errors,
-        ):
-            for path in python_files:
-                with open(path, 'r', encoding='utf8') as stream:
-                    code = stream.read()
-                pyflakes.api.check(code, path, pyflakes.reporter.Reporter(alerts, errors))
-            error_log = errors.getvalue().strip().splitlines(False)
-            alert_log = alerts.getvalue().strip().splitlines(False)
+        alerts = io.StringIO()
+        errors = io.StringIO()
+
+        for path in python_files:
+            with open(path, 'r', encoding='utf8') as stream:
+                code = stream.read()
+            pyflakes.api.check(code, path, pyflakes.reporter.Reporter(alerts, errors))
+
+        error_log = errors.getvalue().strip().splitlines(False)
+        alert_log = alerts.getvalue().strip().splitlines(False)
 
         error_log.extend(line for line in alert_log if not any(
             ignore in line for ignore in [
