@@ -3,9 +3,10 @@
 import re
 import struct
 
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Dict, Tuple
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.lib.dotnet import integer_from_ldc
 from refinery.lib.dotnet.header import DotNetHeader
 
 
@@ -13,7 +14,6 @@ class FieldInfo(NamedTuple):
     type: str
     count: int
     size: int
-    name: Optional[str]
 
 
 class dnfields(PathExtractorUnit):
@@ -32,22 +32,25 @@ class dnfields(PathExtractorUnit):
         if not fields:
             return
 
-        icache = {}
+        icache: Dict[bytes, FieldInfo] = {}
+        memory = memoryview(data)
 
-        def _guess_field_info(t: int, signature: bytes, sizemap: dict = {
+        def _guess_field_info(t: int, signature: bytes, field_name: Optional[str] = None, sizemap: dict = {
             '^s?byte$'       : 1,
             '^s?char$'       : 2,
             '^[us]?int.?16$' : 2,
             '^[us]?int.?32$' : 4,
             '^[us]?int.?64$' : 8,
-        }) -> FieldInfo:
+        }) -> Tuple[Optional[str], FieldInfo]:
             try:
-                return icache[signature]
+                info = icache[signature]
             except KeyError:
-                pass
-
+                info = None
+            else:
+                if field_name is not None:
+                    return field_name, info
             pattern = (
-                BR'(\x20....|\x1F.)'                # ldc.i4  count
+                BR'(\x20....|\x1F.|[\x17-\x1E])'    # ldc.i4  count
                 BR'\x8D(...)([\x01\x02])'           # newarr  col|row
                 BR'\x25'                            # dup
                 BR'\xD0\x%02x\x%02x\x%02x\x04'      # ldtoken t
@@ -58,12 +61,17 @@ class dnfields(PathExtractorUnit):
                     (t >> 0x10) & 0xFF
                 )
             )
-            for match in re.finditer(pattern, data, flags=re.DOTALL):
-                count, j, r, name = match.groups()
-                count, j, r = struct.unpack('<LLB', B'%s%s\0%s' % (count[1:].ljust(4, B'\0'), j, r))
-                element = tables[r][j - 1]
+            for match in re.finditer(pattern, memory, flags=re.DOTALL):
+                if info is None:
+                    count, j, r, name = match.groups()
+                    count = integer_from_ldc(count)
+                    j, r = struct.unpack('<LB', B'%s\0%s' % (j, r))
+                    typename = tables[r][j - 1].TypeName
+                else:
+                    name = match.group(4)
+                    typename = info.type
                 for pattern, size in sizemap.items():
-                    if not re.match(pattern, element.TypeName, flags=re.IGNORECASE):
+                    if not re.match(pattern, typename, flags=re.IGNORECASE):
                         continue
                     if name:
                         try:
@@ -73,8 +81,14 @@ class dnfields(PathExtractorUnit):
                         except Exception as E:
                             self.log_info(F'attempt to parse field name failed: {E!s}')
                             name = None
-                    i = icache[signature] = FieldInfo(element.TypeName, count, size, name)
-                    return i
+                    if name is None:
+                        name = field_name
+                    if info is None:
+                        info = FieldInfo(typename, count, size)
+                    icache[signature] = info
+                    return name, info
+            else:
+                return None, None
 
         iwidth = len(str(len(fields)))
         rwidth = max(len(F'{field.RVA:X}') for field in fields)
@@ -88,45 +102,40 @@ class dnfields(PathExtractorUnit):
             fname = field.Name
             ftype = None
             signature: bytes = field.Signature
+            offset = header.pe.get_offset_from_rva(rv.RVA)
+
             if len(signature) == 2:
                 # Crude signature parser for non-array case. Reference:
                 # https://www.codeproject.com/Articles/42649/NET-File-Format-Signatures-Under-the-Hood-Part-1
                 # https://www.codeproject.com/Articles/42655/NET-file-format-Signatures-under-the-hood-Part-2
                 guess = {
-                    0x03: FieldInfo('Char',   1, 1, None),  # noqa
-                    0x04: FieldInfo('SByte',  1, 1, None),  # noqa
-                    0x05: FieldInfo('Byte',   1, 1, None),  # noqa
-                    0x06: FieldInfo('Int16',  1, 2, None),  # noqa
-                    0x07: FieldInfo('UInt16', 1, 2, None),  # noqa
-                    0x08: FieldInfo('Int32',  1, 4, None),  # noqa
-                    0x09: FieldInfo('UInt32', 1, 4, None),  # noqa
-                    0x0A: FieldInfo('Int64',  1, 8, None),  # noqa
-                    0x0B: FieldInfo('UInt64', 1, 8, None),  # noqa
-                    0x0C: FieldInfo('Single', 1, 4, None),  # noqa
-                    0x0D: FieldInfo('Double', 1, 8, None),  # noqa
+                    0x03: FieldInfo('Char',   1, 1),  # noqa
+                    0x04: FieldInfo('SByte',  1, 1),  # noqa
+                    0x05: FieldInfo('Byte',   1, 1),  # noqa
+                    0x06: FieldInfo('Int16',  1, 2),  # noqa
+                    0x07: FieldInfo('UInt16', 1, 2),  # noqa
+                    0x08: FieldInfo('Int32',  1, 4),  # noqa
+                    0x09: FieldInfo('UInt32', 1, 4),  # noqa
+                    0x0A: FieldInfo('Int64',  1, 8),  # noqa
+                    0x0B: FieldInfo('UInt64', 1, 8),  # noqa
+                    0x0C: FieldInfo('Single', 1, 4),  # noqa
+                    0x0D: FieldInfo('Double', 1, 8),  # noqa
                 }.get(signature[1], None)
             else:
-                guess = _guess_field_info(_index, signature)
+                fname, guess = _guess_field_info(_index, signature, fname)
+
             if guess is None:
-                self.log_debug(lambda: F'field {k:0{iwidth}d} with signature {field.Signature.hex()}: unable to guess type information')
+                self.log_warn(lambda: F'field {k:0{iwidth}d} with signature {field.Signature.hex()}: unable to guess type information')
                 continue
-            totalsize = guess.count * guess.size
-            if guess.name is not None:
-                fname = guess.name
             if not fname.isprintable():
                 fname = F'F{rv.RVA:0{rwidth}X}'
             ext = ftype = guess.type.lower()
             if guess.count > 1:
                 ftype += F'[{guess.count}]'
-            self.log_info(
+            self.log_debug(
                 F'field {k:0{iwidth}d}; token 0x{_index:06X}; RVA 0x{rv.RVA:04X}; count {guess.count}; type {guess.type}; name {fname}')
-            offset = header.pe.get_offset_from_rva(rv.RVA)
-            yield UnpackResult(
-                F'{fname}.{ext}',
-                lambda t=offset, s=totalsize: data[t:t + s],
-                name=fname,
-                type=ftype,
-            )
+            end = offset + guess.count * guess.size
+            yield UnpackResult(F'{fname}.{ext}', memory[offset:end], name=fname, type=ftype)
 
         for _index in remaining_field_indices:
             field = tables.Field[_index]
