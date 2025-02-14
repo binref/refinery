@@ -7,7 +7,7 @@ The code is based on the logic implemented in IFPSTools:
 from __future__ import annotations
 
 from refinery.units.formats import Unit
-from refinery.lib.ifps import IFPSFile
+from refinery.lib.inno.ifps import IFPSFile
 
 
 class IFPSBase(Unit, abstract=True):

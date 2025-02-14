@@ -36,7 +36,7 @@ from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
 from refinery.lib.types import ByteStr
 from refinery.lib.json import BytesAsStringEncoder
 from refinery.lib.decompression import parse_lzma_properties
-from refinery.lib.ifps import IFPSFile
+from refinery.lib.inno.ifps import IFPSFile
 
 from refinery.units.crypto.cipher.rc4 import rc4
 from refinery.units.crypto.cipher.chacha import xchacha
@@ -2054,7 +2054,7 @@ class xtinno(ArchiveUnit):
     _LICENSE_NAME = 'embedded/license.rtf'
     _OFFSETS_PATH = 'RCDATA/11111/0'
     _CHUNK_PREFIX = b'zlb\x1a'
-    _MAX_ATTEMPTS = 200_000
+    _MAX_ATTEMPTS = 10_000
 
     def unpack(self, data: bytearray):
         try:
@@ -2068,6 +2068,8 @@ class xtinno(ArchiveUnit):
         inno = StructReader(view[base:base + meta.total_size])
 
         self._decompressed = {}
+        self._passwd_guess = None
+
         password = self.args.pwd or None
 
         blobsize = meta.setup0 - meta.setup1
@@ -2255,7 +2257,8 @@ class xtinno(ArchiveUnit):
             yield self._pack(self._LICENSE_NAME, None, license.encode(self.codec))
 
         if ifps:
-            yield self._pack(F'{self._ISCRIPT_NAME}.ps', None, ifps.disassembly().encode(self.codec))
+            yield self._pack(F'{self._ISCRIPT_NAME}.ps', None,
+                lambda i=ifps: i.disassembly().encode(self.codec))
             yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
 
         if dll := stream0.DecompressDLL:

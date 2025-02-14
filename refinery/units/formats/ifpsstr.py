@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.lib.ifps import IFPSFile
+from refinery.lib.inno.ifps import IFPSFile
 from refinery.units.formats.ifps import IFPSBase
 
 
