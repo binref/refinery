@@ -66,6 +66,8 @@ class xt(ArchiveUnit):
         yield xttar
         from refinery.units.formats.archive.xtiss import xtiss
         yield xtiss
+        from refinery.units.formats.office.xtdoc import xtdoc
+        yield xtdoc
         from refinery.units.formats.archive.xtzip import xtzip
         yield xtzip
         from refinery.units.formats.archive.xt7z import xt7z
@@ -76,8 +78,6 @@ class xt(ArchiveUnit):
         yield xtmacho
         from refinery.units.formats.archive.xtnuitka import xtnuitka
         yield xtnuitka
-        from refinery.units.formats.office.xtdoc import xtdoc
-        yield xtdoc
         from refinery.units.formats.json import xtjson
         yield xtjson
         from refinery.units.formats.exe.vsect import vsect
