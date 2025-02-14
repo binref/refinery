@@ -155,15 +155,10 @@ class Workbook:
             return unit._pyxlsb2.open_workbook(MemoryFile(data))
 
         def xlrd():
-            with io.StringIO() as logfile:
-                vb = max(unit.log_level.verbosity - 1, 0)
-                wb = unit._xlrd.open_workbook(file_contents=data, logfile=logfile, verbosity=vb, on_demand=True)
-                logfile.seek(0)
-                for entry in logfile:
-                    entry = entry.strip()
-                    if re.search(R'^[A-Z]+:', entry) or '***' in entry:
-                        unit.log_info(entry)
-                return wb
+            verbose = max(unit.log_level.verbosity - 1, 0)
+            log = unit._get_logger_io()
+            return unit._xlrd.open_workbook(
+                file_contents=data, logfile=log, verbosity=verbose, on_demand=True)
 
         exception = None
 
@@ -267,6 +262,19 @@ class _ExcelUnit(Unit, abstract=True):
         import pyxlsb2
         return pyxlsb2
 
+    def _get_logger_io(self):
+        class logger(io.TextIOBase):
+            unit = self
+
+            def write(self, string: str):
+                string = string.strip()
+                if not string or '\n' in string:
+                    return
+                if re.search(R'^[A-Z]+:', string) or '***' in string:
+                    self.unit.log_debug(string)
+
+        return logger()
+
 
 class xlxtr(_ExcelUnit):
     """
@@ -296,7 +304,12 @@ class xlxtr(_ExcelUnit):
             for k, name in enumerate(wb.sheets()):
                 if not ref.match(k, name):
                     continue
-                for r, row in enumerate(wb.get_sheet_data(name), 1):
+                try:
+                    data = wb.get_sheet_data(name)
+                except Exception as error:
+                    self.log_info(F'error reading sheet {name}:', error)
+                    continue
+                for r, row in enumerate(data, 1):
                     for c, value in enumerate(row, 1):
                         if (r, c) not in ref:
                             continue
