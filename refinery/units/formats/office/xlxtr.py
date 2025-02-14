@@ -64,7 +64,7 @@ class SheetReference:
                     sheet = sheet[1:~1]
         return sheet, token
 
-    def _parse_range(self, token):
+    def _parse_range(self, token: str):
         try:
             start, end = token.split(':')
             return start, end
@@ -72,7 +72,7 @@ class SheetReference:
             return token, token
 
     @staticmethod
-    def _parse_token(token):
+    def _parse_token(token: str):
         try:
             row, col = _ref2rc(token)
         except ValueError:
