@@ -2192,8 +2192,8 @@ class InnoArchive:
         files: List[InnoFile] = []
         warnings = 0
 
-        for name in self._STREAM_NAMES:
-            stream = InnoStream(StreamHeader(inno, name, version))
+        for _ in range(3):
+            stream = InnoStream(StreamHeader(inno, version))
             streams.append(stream)
             to_read = stream.header.StoredSize
             while to_read > 4:
@@ -2438,14 +2438,14 @@ class InnoArchive:
     ):
         data = self.read_file(file, password)
 
-        if not self.leniency and (cs := file.check(data)) is not None and cs != file.checksum:
+        if (cs := file.check(data)) is not None and cs != file.checksum:
             if isinstance(cs, int):
                 computed = F'{cs:08X}'
                 expected = F'{file.checksum:08X}'
             else:
                 computed = cs.hex().upper()
                 expected = file.checksum.hex().upper()
-            raise ValueError(F'checksum error; computed:{computed} expected:{expected} [ignore this check with -L]')
+            raise ValueError(F'checksum error; computed:{computed} expected:{expected}')
 
         return data
 

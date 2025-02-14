@@ -65,12 +65,17 @@ class xtinno(ArchiveUnit):
         for file in inno.files:
             if file.dupe:
                 continue
-            yield self._pack(
-                file.path,
-                file.date,
-                lambda i=inno, f=file: i.read_file_and_check(f, password=password),
-                tags=[t.name for t in SetupFileFlags if t & file.tags],
-            )
+            if self.leniency > 0:
+                def _read(i=inno, f=file, p=password):
+                    return i.read_file(f, p)
+            else:
+                def _read(i=inno, f=file, p=password):
+                    try:
+                        return i.read_file_and_check(f, p)
+                    except Exception as E:
+                        raise ValueError(F'{E!s} [ignore this check with -L]') from E
+            yield self._pack(file.path, file.date, _read,
+                tags=[t.name for t in SetupFileFlags if t & file.tags])
 
     @classmethod
     def handles(self, data):
