@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Union, Iterable, List, TYPE_CHECKING
 from fnmatch import fnmatch
 
 import re
@@ -18,7 +18,11 @@ from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
 
 if TYPE_CHECKING:
-    from pyxlsb2.records import SheetRecord
+    from pyxlsb2.records import SheetRecord as XlsbSheet
+    from pyxlsb2 import Workbook as XlsbWorkbook
+    from xlrd2 import Book as XlrdWorkbook
+    from openpyxl import Workbook as PyxlWorkbook
+    from openpyxl.worksheet.worksheet import Worksheet as PyxlSheet
 
 
 defusedxml.defuse_stdlib()
@@ -136,6 +140,8 @@ class SheetReference:
 
 class Workbook:
 
+    workbook: Union[XlsbWorkbook, XlrdWorkbook, PyxlWorkbook]
+
     class _xlmode(enum.IntEnum):
         openpyxl = 1
         xlrd = 2
@@ -180,15 +186,17 @@ class Workbook:
 
     def sheets(self):
         if self.mode is self._xlmode.openpyxl:
-            yield from self.workbook.sheetnames
+            pyxl: PyxlWorkbook = self.workbook
+            yield from pyxl.sheetnames
             return
         if self.mode is self._xlmode.xlrd:
-            yield from self.workbook.sheet_names()
+            xlrd: XlrdWorkbook = self.workbook
+            yield from xlrd.sheet_names()
             return
-        assert self.mode is self._xlmode.pyxlsb2
-        for rec in self.workbook.sheets:
-            rec: SheetRecord
-            yield rec.name
+        if self.mode is self._xlmode.pyxlsb2:
+            xlsb: XlsbWorkbook = self.workbook
+            it: Iterable[XlsbSheet] = xlsb.sheets
+            yield from (rec.name for rec in it)
 
     def get_sheet_data(self, name: str):
         def _sanitize(value):
@@ -209,27 +217,30 @@ class Workbook:
                 return value.isoformat(' ', 'seconds')
             return str(value)
 
-        def _padded(data):
+        def _padded(data: List[List[str]]):
             ncols = max((len(row) for row in data), default=0)
             for row in data:
                 row.extend([None] * (ncols - len(row)))
             return data
 
         if self.mode is self._xlmode.openpyxl:
-            sheet = self.workbook[name]
+            pyxl_wbook: PyxlWorkbook = self.workbook
+            pyxl_sheet: PyxlSheet = pyxl_wbook[name]
             with NoLogging():
-                data = _padded(_sanitize(sheet.iter_rows(values_only=True)))
+                data = _padded(_sanitize(pyxl_sheet.iter_rows(values_only=True)))
         elif self.mode is self._xlmode.pyxlsb2:
-            sheet = self.workbook.get_sheet_by_name(name)
-            data = _padded(_sanitize(sheet.rows()))
+            xlsb_wbook: XlsbWorkbook = self.workbook
+            xlsb_sheet = xlsb_wbook.get_sheet_by_name(name)
+            data = _padded(_sanitize(xlsb_sheet.rows()))
         elif self.mode is self._xlmode.xlrd:
-            sheet = self.workbook.sheet_by_name(name)
+            xlrd_wbook: XlrdWorkbook = self.workbook
+            xlrd_sheet = xlrd_wbook.sheet_by_name(name)
             data = []
-            for r in range(sheet.nrows):
+            for r in range(xlrd_sheet.nrows):
                 row = []
-                for c in range(sheet.ncols):
+                for c in range(xlrd_sheet.ncols):
                     try:
-                        row.append(_sanitize(sheet.cell_value(r, c)))
+                        row.append(_sanitize(xlrd_sheet.cell_value(r, c)))
                     except IndexError:
                         row.append(None)
                 data.append(row)
@@ -276,7 +287,10 @@ class xlxtr(_ExcelUnit):
         super().__init__(references=references)
 
     def process(self, data):
-        wb = Workbook(data, self)
+        try:
+            wb = Workbook(data, self)
+        except Exception as E:
+            raise ValueError('Input not recognized as Excel document.') from E
         for ref in self.args.references:
             ref: SheetReference
             for k, name in enumerate(wb.sheets()):
