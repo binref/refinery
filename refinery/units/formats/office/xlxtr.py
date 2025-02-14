@@ -297,6 +297,8 @@ class xlxtr(_ExcelUnit):
     def process(self, data):
         try:
             wb = Workbook(data, self)
+        except ImportError:
+            raise
         except Exception as E:
             raise ValueError('Input not recognized as Excel document.') from E
         for ref in self.args.references:
