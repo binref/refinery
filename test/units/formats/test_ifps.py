@@ -12,14 +12,14 @@ class TestIPFS(TestUnitBase):
             R"""typedef TWINDOWSVERSION = struct {U32, U32, U32, U32, U32, BOOLEAN, U08, U16}""",
             R"""typedef TFILETIME = struct {U32, U32}""",
             R"""  0x0373   5  Assign      LocalVar5 := 'WinHttp.WinHttpRequest.5.1'""",
-            R"""Begin Sub PAGEDOWNLOADCANCELBUTTONCLICK(Argument1: TWIZARDPAGE, *Argument2: BOOLEAN, *Argument3: BOOLEAN)"""
+            R"""procedure PAGEDOWNLOADCANCELBUTTONCLICK(Argument1: TWIZARDPAGE, *Argument2: BOOLEAN, *Argument3: BOOLEAN)"""
         ):
             self.assertIn(line, disassembly)
 
     def test_regression_01(self):
         data = self.download_sample('2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd')
         test = data | self.load() | str
-        self.assertIn('external symbol GETARRAYLENGTH', test)
+        self.assertIn('external function GetArrayLength', test)
 
     def test_regression_02(self):
         data = self.download_sample('24e78242889d836eb31e2e7d39c7c87f97dcd35f15282813aad5f02978b5bf3b')

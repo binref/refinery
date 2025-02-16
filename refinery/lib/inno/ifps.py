@@ -11,14 +11,11 @@ import enum
 import io
 
 from typing import (
-    overload,
     Callable,
     Dict,
     Generator,
     List,
     NamedTuple,
-    Sequence,
-    Generic,
     Optional,
     Tuple,
     Type,
@@ -32,9 +29,8 @@ from collections import OrderedDict
 from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
 from refinery.lib.structures import Struct, StructReader
-from refinery.lib.types import AST, INF, NoMask
+from refinery.lib.inno.symbols import IFPS_SYMBOLS
 
-_T = TypeVar('_T')
 _E = TypeVar('_E', bound=Type[enum.Enum])
 _C = TypeVar('_C', bound=Type)
 
@@ -291,10 +287,10 @@ class TPrimitive(IFPSType):
             TC.Double              : float,
             TC.Extended            : float,
             TC.String              : str,
-            TC.Pointer             : Variable,
+            TC.Pointer             : VariableBase,
             TC.PChar               : str,
-            TC.ResourcePointer     : Variable,
-            TC.Variant             : Variable,
+            TC.ResourcePointer     : VariableBase,
+            TC.Variant             : VariableBase,
             TC.S64                 : int,
             TC.Char                : str,
             TC.WideString          : str,
@@ -328,7 +324,7 @@ class TProcPtr(IFPSType):
         args = []
         for k, spec in enumerate(self.args, 1):
             arg = F'Arg{k}'
-            if not spec.input:
+            if not spec.const:
                 arg = F'*{arg}'
             if spec.type is not None:
                 arg = F'{spec.type!s} {arg}'
@@ -496,22 +492,26 @@ class Attribute(NamedTuple):
         return name
 
 
-class DeclSpecParam(NamedTuple):
-    input: bool
+@dataclass
+class DeclSpecParam:
+    const: bool
     type: Optional[TPrimitive] = None
+    name: Optional[str] = None
 
 
-@represent
 class CallType(str, enum.Enum):
-    Symbol = 'Symbol'
-    Sub = 'Sub'
-    Function = 'Function'
+    Symbol = 'symbol'
+    Procedure = 'procedure'
+    Function = 'function'
+
+    def __str__(self):
+        return self.value
 
 
 @dataclass
 class DeclSpec:
     void: bool
-    parameters: List[DeclSpecParam]
+    parameters: List[DeclSpecParam] = field(default_factory=list)
     name: str = ''
     calling_convention: Optional[str] = None
     return_type: Optional[IFPSType] = None
@@ -524,10 +524,10 @@ class DeclSpec:
 
     def represent(self, name: str, ref: bool = False):
         def pparam(k: int, p: DeclSpecParam):
-            name = F'{VariantType.Argument!s}{k}'
+            name = p.name or F'{VariantType.Argument!s}{k}'
             if p.type is not None:
                 name = F'{name}: {p.type!s}'
-            if not p.input:
+            if not p.const:
                 name = F'*{name}'
             return name
         if self.name and name in self.name:
@@ -549,12 +549,12 @@ class DeclSpec:
             args = args and ', '.join(pparam(*t) for t in enumerate(args, 1)) or ''
             spec = F'{spec}({args})'
             if self.return_type:
-                spec = F'{spec} -> {self.return_type.code.name}'
+                spec = F'{spec}: {self.return_type.code.name}'
         return spec
 
     @property
     def type(self):
-        return CallType.Sub if self.void else CallType.Function
+        return CallType.Procedure if self.void else CallType.Function
 
     def __repr__(self):
         return self.represent(self.name or '(*)')
@@ -756,162 +756,16 @@ class Function:
         return bbs
 
 
-class Variable(Generic[_T]):
-    type: Union[
-        IFPSType,
-        TRecord,
-        TStaticArray,
-        TArray,
-        TSet,
-        TProcPtr,
-        TClass,
-        TInterface,
-        TPrimitive,
-    ]
+class VariableBase:
+    type: IFPSType
     spec: Variant
-    data: Dict[Optional[int], _T]
 
     def __init__(self, type: IFPSType, spec: Variant):
         self.type = type
         self.spec = spec
-        self.data = {}
-        if not type.container and (default := type.default()) is not None:
-            self.data[None] = default
-        if isinstance(type, TRecord):
-            self._keyrange = range(len(type.members))
-        elif isinstance(type, TArray):
-            self._keyrange = range(0x100000000)
-        elif isinstance(type, TStaticArray):
-            self._keyrange = range(type.size)
-        else:
-            self._keyrange = {None}
-        self._int_size = _size = {
-            TC.U08: +1,
-            TC.U16: +1,
-            TC.U32: +1,
-            TC.S08: -1,
-            TC.S16: -1,
-            TC.S32: -1,
-            TC.S64: -1,
-        }.get((code := type.code), 0) * code.width
-        if _size:
-            bits = abs(_size) * 8
-            umax = (1 << bits)
-            self._int_bits = bits
-            self._int_mask = umax - 1
-            if _size < 0:
-                self._int_good = range(-(umax >> 1), (umax >> 1))
-            else:
-                self._int_good = range(umax)
-        else:
-            self._int_mask = NoMask
-            self._int_bits = INF
-            self._int_good = AST
-
-    def _wrap(self, value: _T) -> _T:
-        if s := self._int_size and value not in self._int_good:
-            mask = self._int_mask
-            value &= mask
-            if s < 0 and (value >> (self._int_bits - 1)):
-                value = -(-value & mask)
-        return value
-
-    @overload
-    def _cast(self, key: Optional[int], value: _T) -> _T:
-        ...
-
-    @overload
-    def _cast(self, key: Optional[int]) -> None:
-        ...
-
-    def _cast(self, key: Optional[int] = None, value: Optional[_T] = None) -> Optional[_T]:
-        if key not in self._keyrange:
-            raise IndexError(F'Invalid index {key!r} for type {self.type}.')
-        if value is not None:
-            if isinstance(value, Value):
-                value = value.value
-            if (t := self.type.py_type(key)) and not isinstance(value, t):
-                if issubclass(t, int) and isinstance(value, str) and len(value) == 1:
-                    return ord(value[0])
-                if issubclass(t, str) and isinstance(value, int):
-                    return chr(value)
-                raise TypeError(F'Assigning value {value!r} to variable of type {self.type}.')
-            return value
-
-    def set(self, value: Union[_T, Sequence[_T]], key: Optional[int] = None) -> None:
-        if key is None and self.type.container:
-            # set the entire container
-            for k, element in enumerate(iter(value)):
-                self.set(element, k)
-            return
-        if self.type.code == TC.Set:
-            if key is None:
-                if isinstance(value, Value):
-                    value = value.value
-                if not isinstance(value, int):
-                    raise TypeError('Set must be initialized with integer bitmask.')
-                self.data = value
-            else:
-                if not isinstance(key, int):
-                    raise TypeError
-                if not isinstance(value, bool):
-                    raise TypeError
-                if key not in range(self.type.size):
-                    raise IndexError
-                if value is True:
-                    self.data |= 1 << key
-                elif self.data >> key & 1:
-                    self.data ^= 1 << key
-        else:
-            self.data[key] = value = self._wrap(self._cast(key, value))
-
-    def get(self, key: Optional[int] = None) -> Union[_T, List[_T]]:
-        if key is None and self.type.container:
-            # get the entire container
-            type = self.type
-            data = self.data
-            size = max(data)
-            return [data.get(k, type.default(k)) for k in range(size)]
-        if self.type.code == TC.Set:
-            if key is None:
-                setspec: int = self.data
-                return setspec
-            else:
-                if not isinstance(key, int):
-                    raise TypeError
-                if key not in range(self.type.size):
-                    raise IndexError
-                return bool(self.data >> key & 1)
-        self._cast(key)
-        return self.data[key]
-
-    def copy(self) -> Variable[_T]:
-        return Variable(self.type, self.spec)
 
     def __str__(self):
         return F'{self.spec}: {self.type!s}'
-
-    def __repr__(self):
-        rep = str(self)
-        if not self.data:
-            return rep
-        val = self.data
-        val = val.get(None, val)
-        if self.type.code is TC.Set:
-            val = F'{val:b}'
-        elif self.type.code == TC.Pointer:
-            return F'{rep} -> {val!r}'
-        elif isinstance(val, (int, float)):
-            val = str(val)
-        elif isinstance(val, str):
-            if len(val) > 85:
-                val = F'{val[:82]}...'
-            val = F'{val!r}'
-        else:
-            val = repr(val)
-        if len(val) > 100:
-            val = val.__class__.__name__
-        return F'{rep} = {val}'
 
 
 @represent
@@ -1111,7 +965,7 @@ class IFPSFile(Struct):
         self.codec = codec
         self.types: List[IFPSType] = []
         self.functions: List[Function] = []
-        self.variables: List[Variable] = []
+        self.globals: List[VariableBase] = []
         self.strings: List[str] = []
         self.reader = reader
         if reader.remaining_bytes < 28:
@@ -1131,6 +985,7 @@ class IFPSFile(Struct):
                 F'This IFPS file has version {self.version}, which is not in the supported range '
                 F'[{self.MinVer},{self.MaxVer}].')
         self._load_types()
+        self.types_by_name = {str(t).casefold(): t for t in self.types}
         self._load_functions()
         self._load_variables()
 
@@ -1254,7 +1109,24 @@ class IFPSFile(Struct):
                     body = list(self._parse_bytecode(reader.read(length)))
             if FTag.HasAttrs.check(tags):
                 attributes = list(self._read_attributes())
+
+            if sig := IFPS_SYMBOLS.get(name.casefold()):
+                if decl is None:
+                    decl = DeclSpec(True)
+                decl.void = sig.void
+                op = decl.parameters
+                if len(sig.parameters) != len(op):
+                    decl.parameters = op = [DeclSpecParam(True) for _ in range(len(sig.parameters))]
+                for old, new in zip(op, sig.parameters):
+                    old.type = self.types_by_name.get(new.type.casefold(), old.type)
+                    old.name = new.name or old.name
+                    old.const = new.const
+                name = sig.name
+                if rt := sig.return_type:
+                    decl.return_type = self.types_by_name.get(rt.casefold(), decl.return_type)
+
             self.functions.append(Function(name, decl, body, exported, attributes))
+
         for function in self.functions:
             if function.body is None:
                 continue
@@ -1270,7 +1142,7 @@ class IFPSFile(Struct):
             spec = Variant(index, VariantType.Global)
             if reader.u8() & 1:
                 spec = reader.read_length_prefixed_ascii()
-            self.variables.append(Variable(self.types[code], spec))
+            self.globals.append(VariableBase(self.types[code], spec))
 
     def _read_variant(self, index: int) -> Variant:
         if index < 0x40000000:
@@ -1401,7 +1273,7 @@ class IFPSFile(Struct):
             max(insn.stack for insn in fn.body if insn.stack is not None)
             for fn in self.functions if fn.body
         ), default=0)
-        _omax = max(len(self.types), len(self.variables), _omax)
+        _omax = max(len(self.types), len(self.globals), _omax)
         _omax = len(F'{_omax:X}')
         _smax = len(F'{_smax:d}')
 
@@ -1421,8 +1293,8 @@ class IFPSFile(Struct):
                 output.write(F'typedef {type.symbol} = {type.display()}\n')
             output.write('\n')
 
-        if self.variables:
-            for variable in self.variables:
+        if self.globals:
+            for variable in self.globals:
                 output.write(F'global {variable!s}\n')
             output.write('\n')
 
@@ -1434,7 +1306,7 @@ class IFPSFile(Struct):
             for function in self.functions:
                 if function.body is None:
                     continue
-                output.write(F'Begin {function!r}\n')
+                output.write(F'{function!r};\nbegin\n')
                 labels = [insn.offset for insn in function.body if insn.jumptarget]
                 labelw = max(len(str(len(labels))), 2)
                 labeld = {v: F'JumpDestination{k:0{labelw}d}' for k, v in enumerate(labels, 1)}
@@ -1446,6 +1318,6 @@ class IFPSFile(Struct):
                         output.write(F'{labeld[labels[labelc]]}:\n')
                         labelc += 1
                     output.write(F'{_TAB}0x{instruction.offset:0{_omax}X}{_TAB}{stack}{_TAB}{instruction.pretty(labeld)}\n')
-                output.write(F'End {function.type}\n\n')
+                output.write('end;\n\n')
 
         return output.getvalue().strip()
