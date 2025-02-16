@@ -522,7 +522,7 @@ class DeclSpec:
     load_with_altered_search_path: bool = False
     is_property: bool = False
 
-    def represent(self, name: str, ref: bool = False):
+    def represent(self, name: str, ref: bool = False, rel: bool = False):
         def pparam(k: int, p: DeclSpecParam):
             name = p.name or F'{VariantType.Argument!s}{k}'
             if p.type is not None:
@@ -535,9 +535,9 @@ class DeclSpec:
         spec = name
         if self.vtable_index is not None:
             spec = F'{self.name}[{self.vtable_index}]'
-        if self.classname:
+        if not rel and self.classname:
             spec = F'{self.classname}.{spec}'
-        if self.module:
+        if not rel and self.module:
             spec = F'{self.module}::{spec}'
         if not ref:
             if self.delay_load:
@@ -656,10 +656,10 @@ class Function:
     attributes: Optional[List[Attribute]] = None
     _bbs: Optional[Dict[int, BasicBlock]] = None
 
-    def reference(self) -> str:
+    def reference(self, rel: bool = False) -> str:
         if self.decl is None:
             return self.name
-        return self.decl.represent(self.name, ref=True)
+        return self.decl.represent(self.name, ref=True, rel=rel)
 
     def __repr__(self):
         if self.decl is None:
@@ -1261,8 +1261,33 @@ class IFPSFile(Struct):
         return self.disassembly()
 
     def disassembly(self) -> str:
+        def sortkey(f: Function):
+            d = (d.module or '', d.classname or '', d.void) if (d := f.decl) else ('', '', True)
+            return (*d, f.name)
+
         for function in self.functions:
             function.get_basic_blocks()
+
+        classes: dict[str, dict[str, Function]] = {}
+        external: list[Function] = []
+        internal: list[Function] = []
+
+        for t in self.types:
+            if isinstance(t, TClass):
+                classes[t.name] = {}
+
+        for function in self.functions:
+            if (decl := function.decl) and (name := decl.classname):
+                try:
+                    members = classes[name]
+                except KeyError:
+                    members = classes[name] = {}
+                members[decl.name] = function
+                continue
+            dl = internal if function.body else external
+            dl.append(function)
+
+        external.sort(key=sortkey)
 
         output = io.StringIO()
         _omax = max((
@@ -1277,14 +1302,22 @@ class IFPSFile(Struct):
         _omax = len(F'{_omax:X}')
         _smax = len(F'{_smax:d}')
 
+        if classes:
+            for name, members in classes.items():
+                if not members:
+                    output.write(F'external class {name};\n')
+            output.write('\n')
+            for name, members in classes.items():
+                if not members:
+                    continue
+                output.write(F'external class {name}')
+                if members:
+                    for spec in members.values():
+                        output.write(F'\n{_TAB}{spec.decl.represent(spec.name, rel=True)}')
+                    output.write('\nend')
+                output.write(';\n\n')
+
         if self.types:
-            breakline = False
-            for type in self.types:
-                if isinstance(type, TClass):
-                    breakline = True
-                    output.write(F'external Class {type.name}\n')
-            if breakline:
-                output.write('\n')
             for type in self.types:
                 if type.code != TC.Record and type.symbol in (type.code.name, None):
                     continue
@@ -1298,14 +1331,13 @@ class IFPSFile(Struct):
                 output.write(F'global {variable!s}\n')
             output.write('\n')
 
-        if self.functions:
-            for function in self.functions:
-                if function.body is None:
-                    output.write(F'external {function!r}\n')
+        if external:
+            for function in external:
+                output.write(F'external {function!r}\n')
             output.write('\n')
-            for function in self.functions:
-                if function.body is None:
-                    continue
+
+        if internal:
+            for function in internal:
                 output.write(F'{function!r};\nbegin\n')
                 labels = [insn.offset for insn in function.body if insn.jumptarget]
                 labelw = max(len(str(len(labels))), 2)
