@@ -736,7 +736,7 @@ class SetupHeader(InnoStruct):
         if version >= (4, 0, 0) or version.isx and version >= (3, 0, 6, 1):
             self.DefaultSerial = read_string()
         if (4, 0, 0) <= version < (5, 2, 5) or version.isx and version >= (1, 3, 24):
-            self.CompiledCode = read_string()
+            self._CompiledCode = read_string()
         if version >= (4, 2, 4):
             self.AppReadmeFile = read_string()
             self.AppContact = read_string()
@@ -763,9 +763,9 @@ class SetupHeader(InnoStruct):
         if version >= (5, 2, 1) and version < (5, 3, 10):
             self.UninstallerSignature = read_string()
         if version >= (5, 2, 5):
-            self.CompiledCode = read_string()
+            self._CompiledCode = read_string()
 
-        if self.CompiledCode and self.CompiledCode[:4] != B'IFPS':
+        if self._CompiledCode and self._CompiledCode[:4] != B'IFPS':
             raise ValueError('Invalid signature in compiled code.')
 
         if version >= (2, 0, 6) and version.ascii:
@@ -1088,6 +1088,9 @@ class SetupHeader(InnoStruct):
 
     def get_license(self):
         return self._license
+
+    def get_script(self):
+        return self._CompiledCode
 
     def recode_strings(self, codec: str):
         for coded_string_attribute in [
@@ -1881,8 +1884,8 @@ class TSetup(InnoStruct):
         self.Directories            = _array(h.DirectoryCount,       SetupDirectory)     # noqa
         self.Files                  = _array(h.FileCount,            SetupFile)          # noqa
 
-        self.DecompressDLL = None
-        self.DecryptionDLL = None
+        self._DecompressDLL = None
+        self._DecryptionDLL = None
 
         self.Icons                  = _array(h.IconCount,            SetupIcon)          # noqa
         self.IniEntries             = _array(h.IniEntryCount,        SetupIniEntry)      # noqa
@@ -1895,19 +1898,31 @@ class TSetup(InnoStruct):
         if version >= (4, 0, 0):
             self._load_wizard_and_decompressor(reader, version)
 
+    def get_wizard_images_large(self):
+        return self._WizardImagesLarge
+
+    def get_wizard_images_small(self):
+        return self._WizardImagesSmall
+
+    def get_decompress_dll(self):
+        return self._DecompressDLL
+
+    def get_decryption_dll(self):
+        return self._DecryptionDLL
+
     def _load_wizard_and_decompressor(self, reader: StructReader[memoryview], version: InnoVersion):
         if True:
-            self.WizardImagesLarge = self._load_wizard_images(reader, version)
+            self._WizardImagesLarge = self._load_wizard_images(reader, version)
         if version >= (2, 0, 0) or version.isx:
-            self.WizardImagesSmall = self._load_wizard_images(reader, version)
+            self._WizardImagesSmall = self._load_wizard_images(reader, version)
         method = self.Header.CompressionMethod
         crypto = self.Header.Flags & Flags.EncryptionUsed and version < (6, 4, 0)
         hasDLL = (
             method == CompressionMethod.BZip2
             or method == CompressionMethod.LZMA1 and version == (4, 1, 5)
             or method == CompressionMethod.Flate and version >= (4, 2, 6))
-        self.DecompressDLL = reader.read_length_prefixed() if hasDLL else None
-        self.DecryptionDLL = reader.read_length_prefixed() if crypto else None
+        self._DecompressDLL = reader.read_length_prefixed() if hasDLL else None
+        self._DecryptionDLL = reader.read_length_prefixed() if crypto else None
 
     def _load_wizard_images(self, reader: StructReader[memoryview], version: InnoVersion):
         count = reader.u32() if version >= (5, 6, 0) else 1
@@ -2062,9 +2077,9 @@ class InnoArchive:
             raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
 
         leniency = unit.leniency if unit else 0
-        self._log_verbose = lambda *_: None if unit is None else unit.log_debug
-        self._log_comment = lambda *_: None if unit is None else unit.log_info
-        self._log_warning = lambda *_: None if unit is None else unit.log_warn
+        self._log_verbose = (lambda *_: None) if unit is None else unit.log_debug
+        self._log_comment = (lambda *_: None) if unit is None else unit.log_info
+        self._log_warning = (lambda *_: None) if unit is None else unit.log_warn
 
         self.meta = meta = TSetupOffsets(file_metadata)
         self.view = view = memoryview(data)
@@ -2141,13 +2156,13 @@ class InnoArchive:
             except Exception:
                 index = 0
 
-        upper = index + 1
         lower = index
-
         while lower > 0 and _IS_AMBIGUOUS[_VERSIONS[lower - 1]]:
             lower -= 1
 
-        versions = [version] + _VERSIONS[lower:index] + _VERSIONS[upper:] + _VERSIONS[:lower]
+        versions = [version] + _VERSIONS[lower:index] + _VERSIONS[index + 1:] + _VERSIONS[:lower]
+
+        self._log_comment(F'inno {_VERSIONS[lower]!s} via {method} header: {header}')
 
         for v in versions:
             result = _parse(v)
@@ -2177,7 +2192,7 @@ class InnoArchive:
 
     @cached_property
     def ifps(self):
-        if script := self.setup_info.Header.CompiledCode:
+        if script := self.setup_info.Header.get_script():
             return IFPSFile(script, self.script_codec)
 
     def _try_parse_as(
@@ -2310,7 +2325,7 @@ class InnoArchive:
         result = bytearray()
         it = iter(stream.blocks)
         if stream.compression == StreamCompressionMethod.Store:
-            class _dummy(self):
+            class _dummy:
                 def decompress(self, b):
                     return b
             dec = _dummy()
@@ -2338,7 +2353,7 @@ class InnoArchive:
         if offset + length > len(reader):
             span = F'0x{offset:X}-0x{offset + length:X}'
             raise LookupError(
-                F'File data spans 0x{len(file.reader):X} bytes, but the file {file.path} is located at {span}.')
+                F'Chunk spans 0x{len(file.reader):X} bytes; data is located at {span}.')
 
         reader.seek(offset)
         prefix = reader.read(4)

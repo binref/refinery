@@ -7,8 +7,8 @@ import re
 from refinery.units.formats.archive import ArchiveUnit
 
 from refinery.lib.mime import FileMagicInfo as magic
-from refinery.lib.json import BytesAsStringEncoder
-from refinery.lib.inno.archive import InnoArchive, SetupFileFlags
+from refinery.lib.json import BytesAsArrayEncoder
+from refinery.lib.inno.archive import InnoArchive, InvalidPassword, SetupFileFlags
 
 
 class xtinno(ArchiveUnit):
@@ -23,19 +23,18 @@ class xtinno(ArchiveUnit):
         inno = InnoArchive(data, self)
 
         password: bytes = self.args.pwd
-        if password is not None:
-            password = password and password.decode(self.codec)
+        password = password.decode(self.codec) if password else ''
 
         if any(file.encrypted for file in inno.files) and password is None:
             self.log_info('some files are password-protected and no password was given')
 
         yield self._pack(self._STREAM_NAMES[0], None, inno.streams.TSetup.data)
-        with BytesAsStringEncoder as encoder:
+        with BytesAsArrayEncoder as encoder:
             yield self._pack(F'{self._STREAM_NAMES[0]}.json', None,
                 encoder.dumps(inno.setup_info.json()).encode(self.codec))
 
         yield self._pack(self._STREAM_NAMES[1], None, inno.streams.TData.data)
-        with BytesAsStringEncoder as encoder:
+        with BytesAsArrayEncoder as encoder:
             yield self._pack(F'{self._STREAM_NAMES[1]}.json', None,
                 encoder.dumps(inno.setup_data.json()).encode(self.codec))
 
@@ -46,20 +45,20 @@ class xtinno(ArchiveUnit):
         if license := inno.setup_info.Header.get_license():
             yield self._pack(self._LICENSE_NAME, None, license.encode(self.codec))
 
-        if script := inno.setup_info.Header.CompiledCode:
+        if script := inno.setup_info.Header.get_script():
             yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
             yield self._pack(F'{self._ISCRIPT_NAME}.ps', None,
                 lambda i=inno: i.ifps.disassembly().encode(self.codec))
 
-        if dll := inno.setup_info.DecompressDLL:
+        if dll := inno.setup_info.get_decompress_dll():
             yield self._pack(F'embedded/decompress.{magic(dll).extension}', None, dll)
 
-        if dll := inno.setup_info.DecryptionDLL:
+        if dll := inno.setup_info.get_decryption_dll():
             yield self._pack(F'embedded/decryption.{magic(dll).extension}', None, dll)
 
         for size, images in (
-            ('small', inno.setup_info.WizardImagesSmall),
-            ('large', inno.setup_info.WizardImagesLarge),
+            ('small', inno.setup_info.get_wizard_images_small()),
+            ('large', inno.setup_info.get_wizard_images_large()),
         ):
             _formatting = len(str(len(images) + 1))
             for k, img in enumerate(images, 1):
@@ -68,15 +67,17 @@ class xtinno(ArchiveUnit):
         for file in inno.files:
             if file.dupe:
                 continue
-            if self.leniency > 0:
-                def _read(i=inno, f=file, p=password):
+
+            def _read(i=inno, f=file, p=password):
+                if self.leniency > 0:
                     return i.read_file(f, p)
-            else:
-                def _read(i=inno, f=file, p=password):
-                    try:
-                        return i.read_file_and_check(f, p)
-                    except Exception as E:
-                        raise ValueError(F'{E!s} [ignore this check with -L]') from E
+                try:
+                    return i.read_file_and_check(f, p)
+                except InvalidPassword:
+                    raise
+                except Exception as E:
+                    raise ValueError(F'{E!s} [ignore this check with -L]') from E
+
             yield self._pack(file.path, file.date, _read,
                 tags=[t.name for t in SetupFileFlags if t & file.tags])
 
