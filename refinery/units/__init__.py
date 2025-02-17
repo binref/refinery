@@ -98,7 +98,7 @@ be as similar as possible:
   objects that can be connected to a pipeline from the right using `|` for
   various different output options. See below for details.
 
-If you want to use frames in code, simply omit any pipe before a square bracked.
+If you want to use frames in code, simply omit any pipe before a square bracket.
 For example, the first example from the `refinery.lib.frame` documentation
 translates to the following Python code:
 
