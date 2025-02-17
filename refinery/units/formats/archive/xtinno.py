@@ -21,7 +21,10 @@ class xtinno(ArchiveUnit):
 
     def unpack(self, data: bytearray):
         inno = InnoArchive(data, self)
-        password = self.args.pwd or None
+
+        password: bytes = self.args.pwd
+        if password is not None:
+            password = password and password.decode(self.codec)
 
         if any(file.encrypted for file in inno.files) and password is None:
             self.log_info('some files are password-protected and no password was given')
