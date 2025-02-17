@@ -119,6 +119,7 @@ from refinery.lib.frame import Chunk
 from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier, exception_to_string
 from refinery.lib.types import NoMask, RepeatedInteger
 from refinery.lib.meta import is_valid_variable_name, metavars, Percentage
+from refinery.lib.patterns import formats
 
 if TYPE_CHECKING:
     from refinery import Unit
@@ -514,10 +515,18 @@ def LazyPythonExpression(expression: str, variables: Optional[dict] = None) -> M
     expression = expression.strip()
     if match := re.fullmatch(R'([1-9][0-9]?)%', expression):
         return Percentage(int(match[1]) / 100)
-    if match := re.fullmatch(R'(?i)(?P<digits>[1-9][0-9]*|0)(?P<unit>[KMGTPE]B?)', expression):
+    if match := re.fullmatch(RF'''(?ix)
+        (?: (?P<flt>{formats.float!s})
+          | (?P<int>{formats.integer!s})
+        ) (?P<unit>[KMGTPE]B?)
+    ''', expression):
         unit = match['unit'].upper()
-        k = 'KMGTPE'.index(unit[0])
-        return int(match['digits']) * (1000 ** k)
+        step = 'KMGTPE'.index(unit[0]) + 1
+        if n := match['flt']:
+            base = float(n)
+        if n := match['int']:
+            base = int(n, 0)
+        return int(base * (1000 ** step))
     if variables is not None:
         return PythonExpression.Evaluate(expression, variables)
     if (parser := PythonExpression.Lazy(expression)).variables:
