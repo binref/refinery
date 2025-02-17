@@ -29,7 +29,8 @@ from collections import OrderedDict
 from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
 from refinery.lib.structures import Struct, StructReader
-from refinery.lib.inno.symbols import IFPS_SYMBOLS
+from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents
+from refinery.lib.types import CaseInsensitiveDict
 
 _E = TypeVar('_E', bound=Type[enum.Enum])
 _C = TypeVar('_C', bound=Type)
@@ -150,7 +151,7 @@ class TC(enum.IntEnum):
     Single              = 0x07  # noqa
     Double              = 0x08  # noqa
     Extended            = 0x09  # noqa
-    String              = 0x0A  # noqa
+    AnsiString          = 0x0A  # noqa
     Record              = 0x0B  # noqa
     Array               = 0x0C  # noqa
     Pointer             = 0x0D  # noqa
@@ -188,7 +189,7 @@ class TC(enum.IntEnum):
             TC.Interface     : 0x04,
             TC.Class         : 0x04,
             TC.PChar         : 0x04,
-            TC.String        : 0x04,
+            TC.AnsiString    : 0x04,
             TC.Single        : 0x04,
             TC.S32           : 0x04,
             TC.U32           : 0x04,
@@ -286,7 +287,7 @@ class TPrimitive(IFPSType):
             TC.Single              : float,
             TC.Double              : float,
             TC.Extended            : float,
-            TC.String              : str,
+            TC.AnsiString          : str,
             TC.Pointer             : VariableBase,
             TC.PChar               : str,
             TC.ResourcePointer     : VariableBase,
@@ -522,6 +523,10 @@ class DeclSpec:
     load_with_altered_search_path: bool = False
     is_property: bool = False
 
+    @property
+    def argc(self):
+        return len(self.parameters)
+
     def represent(self, name: str, ref: bool = False, rel: bool = False):
         def pparam(k: int, p: DeclSpecParam):
             name = p.name or F'{VariantType.Argument!s}{k}'
@@ -549,7 +554,7 @@ class DeclSpec:
             args = args and ', '.join(pparam(*t) for t in enumerate(args, 1)) or ''
             spec = F'{spec}({args})'
             if self.return_type:
-                spec = F'{spec}: {self.return_type.code.name}'
+                spec = F'{spec}: {self.return_type!s}'
         return spec
 
     @property
@@ -650,21 +655,28 @@ class DeclSpec:
 
 @dataclass
 class Function:
-    name: str
+    symbol: str
     decl: Optional[DeclSpec]
     body: Optional[List[Instruction]] = None
     attributes: Optional[List[Attribute]] = None
     _bbs: Optional[Dict[int, BasicBlock]] = None
 
+    @property
+    def name(self):
+        symbol = self.symbol
+        if (decl := self.decl) and (name := decl.name) and (symbol in name):
+            symbol = name
+        return symbol
+
     def reference(self, rel: bool = False) -> str:
         if self.decl is None:
-            return self.name
-        return self.decl.represent(self.name, ref=True, rel=rel)
+            return self.symbol
+        return self.decl.represent(self.symbol, ref=True, rel=rel)
 
     def __repr__(self):
         if self.decl is None:
-            return F'symbol {self.name}'
-        return self.decl.represent(self.name)
+            return F'symbol {self.symbol}'
+        return self.decl.represent(self.symbol)
 
     def __str__(self):
         return self.reference()
@@ -980,20 +992,59 @@ class IFPSFile(Struct):
         self.entry = reader.u32()
         self.import_size = reader.u32()
         self.void = False
+
         if self.version not in range(self.MinVer, self.MaxVer + 1):
             raise NotImplementedError(
                 F'This IFPS file has version {self.version}, which is not in the supported range '
                 F'[{self.MinVer},{self.MaxVer}].')
+
+        self._known_type_names = {
+            TC.U08   : {'Byte', 'Boolean'},
+            TC.S08   : {'ShortInt'},
+            TC.U16   : {'Word'},
+            TC.S16   : {'SmallInt'},
+            TC.S32   : {'Integer', 'LongInt'},
+            TC.U32   : {'LongWord', 'Cardinal'},
+            TC.Char  : {'AnsiChar'},
+            TC.PChar : {'PAnsiChar'},
+            TC.S64   : {'Int64'},
+        }
+
         self._load_types()
-        self.types_by_name = {str(t).casefold(): t for t in self.types}
+        self._name_types()
         self._load_functions()
         self._load_variables()
+
+        del self._known_type_names
 
     @property
     def _load_flags(self):
         return self.version >= 23
 
+    def _name_types(self, finalize=False):
+        self.types_by_name = td = CaseInsensitiveDict()
+        self.types_by_code = tc = {}
+        conflicts = 0
+        for t in self.types:
+            name = str(t)
+            code = t.code
+            known = self._known_type_names.get(code)
+            if name in td:
+                conflicts += 1
+            if known:
+                known.discard(name)
+            td[name] = t
+            tc[code] = t
+        if finalize:
+            for code, names in self._known_type_names.items():
+                for name in names:
+                    if t := tc.get(code):
+                        td[name] = t
+        return conflicts
+
     def _load_types(self):
+        def _normalize(n: str):
+            return IFPSClasses.Types.get(n.casefold(), n)
         reader = self.reader
         types = self.types
         for k in range(self.count_types):
@@ -1005,7 +1056,7 @@ class IFPSFile(Struct):
             except ValueError as V:
                 raise ValueError(F'Unknown type code value 0x{typecode:02X}.') from V
             if code in (TC.Class, TC.ExtClass):
-                t = TClass(code, reader.read_length_prefixed_ascii())
+                t = TClass(code, _normalize(reader.read_length_prefixed_ascii()))
             elif code is TC.ProcPtr:
                 spec = reader.read_length_prefixed()
                 void = bool(spec[0])
@@ -1030,9 +1081,9 @@ class IFPSFile(Struct):
             else:
                 t = TPrimitive(code, symbol=code.name)
             if exported:
-                t.symbol = reader.read_length_prefixed_ascii()
+                t.symbol = _normalize(reader.read_length_prefixed_ascii())
                 if self.version <= 21:
-                    t.name = reader.read_length_prefixed_ascii()
+                    t.name = _normalize(reader.read_length_prefixed_ascii())
             types.append(t)
             if self.version >= 21:
                 t.attributes = list(self._read_attributes())
@@ -1053,7 +1104,7 @@ class IFPSFile(Struct):
             TC.Single        : reader.f32,
             TC.Double        : reader.f64,
             TC.Extended      : lambda: extended(reader.read(10)),
-            TC.String        : lambda: reader.read_length_prefixed(encoding=self.codec),
+            TC.AnsiString    : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.PChar         : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.WideString    : reader.read_length_prefixed_utf16,
             TC.UnicodeString : reader.read_length_prefixed_utf16,
@@ -1082,6 +1133,13 @@ class IFPSFile(Struct):
             yield Attribute(name, fields)
 
     def _load_functions(self):
+        def _signature(name: str, decl: Optional[DeclSpec]):
+            signature = IFPSAPI.get(name, IFPSEvents.get(name)) if name else None
+            if decl and decl.classname and (ic := IFPSClasses.Classes.get(decl.classname)):
+                signature = ic.members.get(decl.name, signature)
+                decl.classname = ic.name
+            return signature
+
         reader = self.reader
         width = len(F'{self.count_functions:X}')
         for k in range(self.count_functions):
@@ -1110,22 +1168,35 @@ class IFPSFile(Struct):
             if FTag.HasAttrs.check(tags):
                 attributes = list(self._read_attributes())
 
-            if sig := IFPS_SYMBOLS.get(name.casefold()):
-                if decl is None:
-                    decl = DeclSpec(True)
-                decl.void = sig.void
-                op = decl.parameters
-                if len(sig.parameters) != len(op):
-                    decl.parameters = op = [DeclSpecParam(True) for _ in range(len(sig.parameters))]
-                for old, new in zip(op, sig.parameters):
-                    old.type = self.types_by_name.get(new.type.casefold(), old.type)
+            if (signature := _signature(name, decl)) and decl and signature.argc == decl.argc:
+                for old, new in zip(decl.parameters, signature.parameters):
+                    if t := old.type:
+                        t.symbol = new.type
+                if (sr := signature.return_type) and (dr := decl.return_type):
+                    dr.symbol = sr
+
+            fn = Function(name, decl, body, exported, attributes)
+            self.functions.append(fn)
+
+        self.type_name_conflicts = self._name_types(True)
+
+        for function in self.functions:
+            decl = function.decl
+            if signature := _signature(function.name, decl):
+                decl = decl or DeclSpec(True)
+                decl.void = signature.void
+                parameters = decl.parameters
+                if signature.argc != len(parameters):
+                    decl.parameters = parameters = [DeclSpecParam(True) for _ in range(signature.argc)]
+                for old, new in zip(parameters, signature.parameters):
+                    if old.type is None:
+                        old.type = self.types_by_name.get(new.type)
                     old.name = new.name or old.name
                     old.const = new.const
-                name = sig.name
-                if rt := sig.return_type:
-                    decl.return_type = self.types_by_name.get(rt.casefold(), decl.return_type)
-
-            self.functions.append(Function(name, decl, body, exported, attributes))
+                function.symbol = decl.name = signature.name
+                if (rt := signature.return_type) and (decl.return_type is None):
+                    decl.return_type = self.types_by_name.get(rt, decl.return_type)
+                function.decl = decl
 
         for function in self.functions:
             if function.body is None:
@@ -1313,7 +1384,7 @@ class IFPSFile(Struct):
                 output.write(F'external class {name}')
                 if members:
                     for spec in members.values():
-                        output.write(F'\n{_TAB}{spec.decl.represent(spec.name, rel=True)}')
+                        output.write(F'\n{_TAB}{spec.decl.represent(spec.symbol, rel=True)}')
                     output.write('\nend')
                 output.write(';\n\n')
 
@@ -1338,7 +1409,7 @@ class IFPSFile(Struct):
 
         if internal:
             for function in internal:
-                output.write(F'{function!r};\nbegin\n')
+                output.write(F'{function!r}\nbegin\n')
                 labels = [insn.offset for insn in function.body if insn.jumptarget]
                 labelw = max(len(str(len(labels))), 2)
                 labeld = {v: F'JumpDestination{k:0{labelw}d}' for k, v in enumerate(labels, 1)}
