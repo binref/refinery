@@ -48,6 +48,8 @@ class xt(ArchiveUnit):
         yield xtzpaq
         from refinery.units.formats.pe.dotnet.dnsfx import dnsfx
         yield dnsfx
+        from refinery.units.formats.archive.xtiso import xtiso
+        yield xtiso
         from refinery.units.formats.archive.xtnsis import xtnsis
         yield xtnsis
         from refinery.units.formats.archive.xtnode import xtnode
@@ -58,8 +60,6 @@ class xt(ArchiveUnit):
         yield xtcab
         from refinery.units.formats.archive.xtcpio import xtcpio
         yield xtcpio
-        from refinery.units.formats.archive.xtiso import xtiso
-        yield xtiso
         from refinery.units.formats.archive.xtpyi import xtpyi
         yield xtpyi
         from refinery.units.formats.archive.xttar import xttar
