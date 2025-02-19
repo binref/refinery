@@ -232,7 +232,7 @@ class xkey(Unit):
             patches = [view[j::keylen] for j in range(keylen)]
             histograms = [Counter(p) for p in patches]
 
-            if not self.args.no_alph:
+            if self.args.alph:
                 hlc = Counter(len(h) for h in histograms)
                 base, coverage = hlc.most_common(1)[0]
 
