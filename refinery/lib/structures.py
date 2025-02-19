@@ -574,7 +574,7 @@ class StructReader(MemoryFile[T]):
         current_cursor = self.tell()
 
         # reserved struct characters: xcbB?hHiIlLqQnNefdspP
-        for k, part in enumerate(re.split('(\\d*[auwgE])', spec)):
+        for k, part in enumerate(re.split('(\\d*[auwgk])', spec)):
             if k % 2 == 1:
                 count = 1 if len(part) == 1 else int(part[:~0])
                 part = part[~0]
@@ -587,7 +587,7 @@ class StructReader(MemoryFile[T]):
                         data.append(self.read_w_string())
                     elif part == 'w':
                         data.append(codecs.decode(self.read_w_string(), 'utf-16le'))
-                    elif part == 'E':
+                    elif part == 'k':
                         data.append(self.read_7bit_encoded_int())
                 continue
             else:

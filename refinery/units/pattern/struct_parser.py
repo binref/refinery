@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import string
 import itertools
+import re
 
 from refinery.units import Arg, Unit, Chunk
 
@@ -15,7 +18,7 @@ def identity(x):
     return x
 
 
-_SHARP = '#'
+_REST_MARKER = '#'
 
 
 class struct(Unit):
@@ -56,7 +59,7 @@ class struct(Unit):
     the field `bar`. Variables used in the output expression are not included as meta variables. As
     format fields in the output expression, one can also use `{1}`, `{2}` or `{-1}` to access
     extracted fields by index. The value `{0}` represents the entire chunk of structured data. By
-    default, the output format `{#}` is used, which represents either the last byte string field
+    default, the output format `{%s}` is used, which represents either the last byte string field
     that was extracted, or the entire chunk of structured data if none of the fields were extracted.
 
     Reverse `refinery.lib.argformats.multibin` expressions can be used to post-process the fields
@@ -74,23 +77,29 @@ class struct(Unit):
         *outputs: Arg(metavar='output', type=str, help='Output format as explained above.'),
         multi: Arg.Switch('-m', help=(
             'Read as many pieces of structured data as possible intead of just one.')) = False,
-        count: Arg.Number('-n', help=(
+        count: Arg.Number('-c', help=(
             'A limit on the number of chunks to read in multi mode; default is {default}.')) = INF,
         until: Arg('-u', metavar='E', type=str, help=(
             'An expression evaluated on each chunk in multi mode. New chunks will be parsed '
             'only if the result is nonzero.')) = None,
-        field: Arg.String('-f', help=(
+        format: Arg.String('-f', metavar='F', help=(
             'Optionally specify a format string expression to auto-name extracted fields without a '
-            'given name based on their position.')) = None,
-        more : Arg.Switch('-M', help=(
+            'given name. The format string accepts the field {{c}} for the type code and {{n}} for '
+            'the variable index.')) = None,
+        name: Arg.String('-n', metavar='VAR', group='FIELDS', help=(
+            U'Equivalent to --format=VAR{{n}}.')) = None,
+        more: Arg.Switch('-M', help=(
             'After parsing the struct, emit one chunk that contains the data that was left '
             'over in the buffer. If no data was left over, this chunk will be empty.')) = False
     ):
-        outputs = outputs or [F'{{{_SHARP}}}']
-        super().__init__(spec=spec, outputs=outputs, until=until, field=field, count=count, multi=multi, more=more)
+        if name:
+            format = format or F'{name}{{n}}'
+        outputs = outputs or [F'{{{_REST_MARKER}}}']
+        super().__init__(spec=spec, outputs=outputs, until=until, format=format, count=count, multi=multi, more=more)
 
     def process(self, data: Chunk):
         formatter = string.Formatter()
+        field_format: str | None = self.args.format
         until = self.args.until
         until = until and PythonExpression(until, all_variables_allowed=True)
         reader = StructReader(memoryview(data))
@@ -112,6 +121,7 @@ class struct(Unit):
         it = itertools.count() if self.args.multi else (0,)
         for index in it:
 
+            field_counter = 0
             checkpoint = reader.tell()
 
             if reader.eof:
@@ -133,23 +143,37 @@ class struct(Unit):
                     spec: str = spec and spec.strip()
                     if prefix:
                         fields = reader.read_struct(fixorder(prefix))
-                        if fmt := self.args.field:
-                            for k, field in enumerate(fields, len(args)):
-                                meta[fmt.format(k)] = field
+                        if field_format is not None:
+                            codes = re.findall('[?cbBhHiIlLqQnNefdspPauwgk]', prefix)
+                            if len(codes) != len(fields):
+                                codes = 'v' * len(fields)
+                            for code, field in zip(codes, fields):
+                                code = 'b' if code == '?' else code.lower()
+                                v = field_format.format_map({'c': code, 'n': field_counter})
+                                meta[v] = field
+                                field_counter += 1
                         args.extend(fields)
+
                     if name is None:
                         continue
+
+                    field_counter += 1
+
                     if name and not name.isdecimal():
                         check_variable_name(name)
+
                     if conversion:
                         _aa = reader.tell()
                         reader.byte_align(PythonExpression.Evaluate(conversion, meta))
                         _ab = reader.tell()
                         if _aa != _ab:
                             self.log_info(F'aligned from 0x{_aa:X} to 0x{_ab:X}')
+
                     spec, _, pipeline = spec.partition(':')
+
                     if spec:
                         spec = meta.format_str(spec, self.codec, args)
+
                     if spec:
                         try:
                             _exp = PythonExpression.Evaluate(spec, meta)
@@ -157,6 +181,7 @@ class struct(Unit):
                             pass
                         else:
                             spec = _exp
+
                     if spec == '':
                         last = value = reader.read()
                     elif isinstance(spec, int):
@@ -179,8 +204,8 @@ class struct(Unit):
                         value = numseq(pipeline, reverse=True, seed=value)
                     args.append(value)
 
-                    if name == _SHARP:
-                        raise ValueError('Extracting a field with name # is forbidden.')
+                    if name == _REST_MARKER:
+                        raise ValueError(F'Extracting a field with name {_REST_MARKER} is forbidden.')
                     elif name.isdecimal():
                         index = int(name)
                         limit = len(args) - 1
@@ -203,7 +228,7 @@ class struct(Unit):
 
                 outputs = []
                 symbols = dict(meta)
-                symbols[_SHARP] = last
+                symbols[_REST_MARKER] = last
 
                 for template in self.args.outputs:
                     used = set()
@@ -232,3 +257,6 @@ class struct(Unit):
         else:
             leftover = repr(SizeInt(leftover)).strip()
             self.log_info(F'discarding {leftover} left in buffer')
+
+
+struct.__doc__ %= _REST_MARKER
