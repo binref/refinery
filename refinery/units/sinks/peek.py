@@ -231,7 +231,7 @@ class peek(HexViewer):
             if self.args.escape:
                 lines = self._trydecode(data, None, txtsize, metrics.line_count)
             if self.args.decode > 0:
-                for codec in ('utf8', 'utf-16le', 'utf-16', 'utf-16be'):
+                for codec in ('utf8', 'cp1251', 'cp1252', 'utf-16le', 'utf-16', 'utf-16be'):
                     lines = self._trydecode(data, codec, txtsize, metrics.line_count)
                     if lines:
                         codec = codec
