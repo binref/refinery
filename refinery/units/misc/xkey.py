@@ -38,7 +38,7 @@ def _S(options: bytes):
 class xkey(Unit):
     """
     The unit expects encrypted input which was encrypted byte-wise with a polyalphabetic key. It
-    attempts do determine this key by three methods:
+    can attempt do determine this key by three methods:
 
     1. Known plaintext cribs: The unit contains a library of file signatures that are expected to
        occur at specific offsets. It uses these to attempt a known-plaintext attack against the
@@ -51,6 +51,10 @@ class xkey(Unit):
        very high frequency, i.e. zero padding in PE or ELF files, and the space character in text.
        Based on this assumption, the unit computes the most likely key. This method will work best
        on uncompressed files that were encrypted with a short key.
+
+    When no option is set, the unit uses all the above methods by default. When at least one of
+    the methods is selected, it will attempt only selected methods. When a custom plaintext is given,
+    the other methods are disabled by default.
     """
 
     _CRIBS: dict[range, dict[str, bytes | tuple[bytes | tuple[bytes, ...], ...]]] = {
@@ -141,10 +145,24 @@ class xkey(Unit):
     def __init__(
         self,
         range: Arg.Bounds(help='range of length values to try in Python slice syntax, the default is {default}.') = slice(1, 32),
-        no_alph: Arg.Switch('-na', '--no-alph', help='disables search for keys via known encoder alphabets') = False,
-        no_crib: Arg.Switch('-nc', '--no-crib', help='disables search for keys via known plaintext cribs') = False,
+        plaintext: Arg.Binary('-p', help='Provide a buffer of known plaintext.') = None,
+        searchpos: Arg.Bounds('-s', metavar='S:E', help=(
+            'Only used when a known plaintext buffer is provided; In this case it narrows the search range '
+            'for the offset of that data to between S and E.')) = slice(0, None),
+        alph: Arg.Switch('-a', help='enable search for keys via known encoder alphabets') = False,
+        crib: Arg.Switch('-c', help='enable search for keys via known plaintext cribs') = False,
+        freq: Arg.Switch('-f', help='enable search for keys via frequency analysis') = False,
     ):
-        super().__init__(range=range, no_alph=no_alph, no_crib=no_crib)
+        if not any((alph, crib, freq)) and plaintext is None:
+            alph = crib = freq = True
+        super().__init__(
+            range=range,
+            plaintext=plaintext,
+            searchpos=searchpos,
+            alph=alph,
+            crib=crib,
+            freq=freq,
+        )
 
     def process(self, data: bytearray):
         score = 0
@@ -170,28 +188,35 @@ class xkey(Unit):
             step = 1
 
         self.log_debug(F'received input range [{bounds.start}:{bounds.stop}:{bounds.step}], using [{start}:{stop}:{step}]')
+        criblist: list[tuple[range, dict[str, bytes | tuple[bytes | tuple[bytes, ...], ...]]]] = []
 
-        if not self.args.no_crib:
-            for offsets, cribs_by_type in self._CRIBS.items():
-                for name, cribs in cribs_by_type.items():
-                    cribs = _generate_cribs(cribs)
-                    for offset, crib in product(offsets, cribs):
-                        if len(crib) < start:
-                            continue
-                        if len(crib) > stop:
-                            continue
-                        if (len(crib) - start) % step != 0:
-                            continue
-                        test = view[offset:offset + len(crib)]
-                        if len(test) != len(crib):
+        if p := self.args.plaintext:
+            pos: slice = self.args.searchpos
+            end = len(data) - len(p) if pos.stop is None else pos.stop
+            criblist.append((range(pos.start or 0, end + 1), {'Plaintext': p}))
+        if self.args.crib:
+            criblist.extend(self._CRIBS.items())
+
+        for offsets, cribs_by_type in criblist:
+            for name, cribs in cribs_by_type.items():
+                for crib in _generate_cribs(cribs):
+                    cn = len(crib)
+                    if cn < start:
+                        continue
+                    if (cn - start) % step != 0:
+                        continue
+                    self.log_debug(F'searching the crib for {name}:', crib, clip=True)
+                    for offset in offsets:
+                        test = view[offset:offset + cn]
+                        if len(test) != cn:
                             continue
                         key = _cyclic_base(strxor(test, crib))
                         if key is not None:
-                            self.log_info(F'found key via crib for {name}:', crib)
+                            self.log_info(F'found key via crib for {name}:', crib, clip=True)
                             shift = -offset % len(key)
                             return key[shift:] + key[:shift]
 
-        if not self.args.no_alph:
+        if self.args.alph:
             alphabets: dict[int, list[bytes]] = {}
             for alphabet in self._ENC_ALPHABETS:
                 for suffix in (B'', B'\x20', B'\x0A', B'\x20\x0A'):
@@ -199,6 +224,9 @@ class xkey(Unit):
                     alphabets.setdefault(len(a), []).append(a)
 
             alphabets[len(self._WSH_ALPHABET)] = self._WSH_ALPHABET
+
+        if not self.args.freq:
+            return None
 
         for keylen in range(start, stop + 1, step):
             patches = [view[j::keylen] for j in range(keylen)]
