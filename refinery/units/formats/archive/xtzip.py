@@ -37,8 +37,12 @@ class xtzip(ArchiveUnit):
             if password:
                 archive.setpassword(password)
             try:
-                info = min(archive.infolist(), key=lambda info: info.file_size)
-                archive.read(info.filename)
+                files = (t for t in archive.infolist() if not t.is_dir())
+                info = min(files, key=lambda info: info.file_size)
+                self.log_debug('testing password against:', info.filename)
+                with archive.open(info.filename, "r") as test:
+                    while test.read(1024):
+                        pass
             except NotImplementedError:
                 if fallback:
                     raise
