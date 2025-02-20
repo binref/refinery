@@ -113,8 +113,8 @@ class xkey(Unit):
             'Ace'           : (B'**ACE**'),
         },
         range(0x40, 0x60): {
-            'PEDelphiStub'  : (B'This program cannot be run in DOS mode.'),
-            'PEStub'        : (B'This program must be run under Win', (B'32', B'64')),
+            'PEStub'        : (B'This program cannot be run in DOS mode.'),
+            'PEDelphiStub'  : (B'This program must be run under Win', (B'32', B'64')),
         },
         range(0xD0, 0xD1): {
             'Tar'           : (B'\x00' * 0x30 + B'ustar', (B'\x20\x20\x00', B'\x00\x30\x30')),
