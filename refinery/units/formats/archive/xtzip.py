@@ -30,19 +30,26 @@ class xtzip(ArchiveUnit):
         return carve_zip
 
     def unpack(self, data: bytearray):
-        from zipfile import ZipInfo, ZipFile
+        from zipfile import ZipInfo, ZipFile, BadZipFile
 
         def password_invalid(password: Optional[bytes]):
             nonlocal archive, fallback
             if password:
                 archive.setpassword(password)
             try:
+                archive.testzip()
                 files = (t for t in archive.infolist() if not t.is_dir())
-                info = min(files, key=lambda info: info.file_size)
-                self.log_debug('testing password against:', info.filename)
-                with archive.open(info.filename, "r") as test:
-                    while test.read(1024):
-                        pass
+                files = sorted(files, key=lambda info: info.file_size)
+                for info in files:
+                    self.log_debug('testing password against:', info.filename)
+                    try:
+                        with archive.open(info.filename, "r") as test:
+                            while test.read(1024):
+                                pass
+                    except BadZipFile:
+                        continue
+                    else:
+                        break
             except NotImplementedError:
                 if fallback:
                     raise
