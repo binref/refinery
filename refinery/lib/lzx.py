@@ -7,6 +7,7 @@ logic and few Python-specific optimizations have been implemented.
 from __future__ import annotations
 
 from refinery.lib.array import make_array
+from refinery.lib.types import INF
 
 
 _NUM_PAIR_LEN_BITS = 4
@@ -31,8 +32,8 @@ _LVL_TABLE_SIZE = 20
 _NUM_LEVEL_BITS = 4
 _LEVEL_SYM_ZERO = 17
 _LEVEL_SYM_SAME = 19
-_LEVEL_SYM_ZERO1_START = 4
-_LEVEL_SYM_ZERO1_NUM_BITS = 4
+_LEVEL_SYM_ZERO_START = 4
+_LEVEL_SYM_ZERO_NUM_BITS = 4
 _LEVEL_SYM_SAME_NUM_BITS = 1
 _LEVEL_SYM_SAME_START = 4
 _NUM_DICT_BITS_MIN = 15
@@ -43,6 +44,30 @@ _NUM_POWER_POS_SLOTS = 38
 
 def uint32array(n: int):
     return make_array(4, n, unsigned=True, fill=0)
+
+
+class OutOfBounds(RuntimeError):
+    def __init__(self, where: str, what: str, value: int, limit: int):
+        super().__init__(
+            F'While {where}: '
+            F'The {what} {value} exceeded the maximum value {limit}.')
+
+
+class HuffmanStartOutOfBounds(OutOfBounds):
+    def __init__(self, value, limit):
+        super().__init__('building Huffman table', 'start position', value, limit)
+
+
+class BitsReaderEOF(EOFError):
+    def __init__(self, when: str = ''):
+        if when:
+            when = F' while {when}'
+        super().__init__(F'The bits reader went out of bounds{when}.')
+
+
+class NonZeroSkippedByte(RuntimeError):
+    def __init__(self):
+        super().__init__('A skipped byte was nonzero.')
 
 
 class HuffmanDecoder:
@@ -75,7 +100,7 @@ class HuffmanDecoder:
             count = counts[i]
             start_pos += count << (num_bits_max - i)
             if start_pos > max_value:
-                return False
+                raise HuffmanStartOutOfBounds(start_pos, max_value)
             self._limits[i] = start_pos
             counts[i] = count_sum
             self._poses[i] = count_sum
@@ -147,7 +172,7 @@ class HuffmanDecoder7b:
             count = counts[i]
             start_pos += count << (num_bits_max - i)
             if start_pos > max_value:
-                return False
+                raise HuffmanStartOutOfBounds(start_pos, max_value)
             limits[i] = start_pos
             counts[i] = count_sum
             _poses[i] = count_sum
@@ -185,29 +210,28 @@ class HuffmanDecoder7b:
 
 class BitDecoder:
 
+    __slots__ = '_bitpos', '_value', '_buf', '_pos', 'overflow'
+
     def __init__(self):
         self._bitpos = 0
         self._value = 0
         self._buf = None
         self._pos = 0
-        self._overflow = 0
+        self.overflow = 0
 
     def initialize(self, data: bytearray):
         self._buf = data
         self._pos = 0
         self._bitpos = 0
-        self._overflow = 0
+        self.overflow = 0
 
     def get_remaining_bytes(self):
         return len(self._buf) - self._pos
 
-    def was_extra_read_error(self):
-        return self._overflow > 4
-
     def was_finished_ok(self):
         if self._pos != len(self._buf):
             return False
-        if (self._bitpos >> 4) * 2 != self._overflow:
+        if (self._bitpos >> 4) * 2 != self.overflow:
             return False
         num_bits = self._bitpos & 15
         return not ((self._value >> (self._bitpos - num_bits)) & ((1 << num_bits) - 1))
@@ -219,7 +243,7 @@ class BitDecoder:
         buf = self._buf
         if pos >= len(buf) - 1:
             val = 0xFFFF
-            self._overflow += 2
+            self.overflow += 2
         else:
             val = int.from_bytes(buf[pos:pos + 2], 'little')
             self._pos += 2
@@ -250,8 +274,8 @@ class BitDecoder:
         return val
 
     def prepare_uncompressed(self) -> bool:
-        if self._overflow != 0:
-            return False
+        if self.overflow > 0:
+            raise BitsReaderEOF
         num_bits = self._bitpos - 16
         if ((self._value >> 16) & ((1 << num_bits) - 1)):
             return False
@@ -272,13 +296,13 @@ class BitDecoder:
         dest[:size] = self._buf[pos:end]
 
     def is_one_direct_byte_left(self) -> bool:
-        return self._pos == len(self._buf) - 1 and self._overflow == 0
+        return self._pos == len(self._buf) - 1 and self.overflow == 0
 
     def direct_read_byte(self):
         pos = self._pos
         buf = self._buf
         if pos >= len(buf):
-            self._overflow += 1
+            self.overflow += 1
             return 0xFF
         else:
             value = buf[pos]
@@ -364,7 +388,7 @@ class LzxDecoder:
                 if not self._x86_buf:
                     chunk_size = 1 << 15
                     if cur_size > chunk_size:
-                        return False
+                        raise OutOfBounds('flushing input', 'remaining size', cur_size, chunk_size)
                     self._x86_buf = bytearray(chunk_size)
                 x86 = memoryview(self._x86_buf)
                 x86[:cur_size] = win[self._write_pos:self._pos]
@@ -374,15 +398,14 @@ class LzxDecoder:
             self._x86_processed_size += cur_size
             if self._x86_processed_size >= (1 << 30):
                 self._x86_translate_size = 0
-        return True
 
     def read_table(self, levels: memoryview, num_symbols: int):
         lvls = bytearray(_LVL_TABLE_SIZE)
         bits = self._bits
+        log_phase = 'reading table'
         for i in range(_LVL_TABLE_SIZE):
             lvls[i] = bits.read_bits_small(_NUM_LEVEL_BITS)
-        if not self._level_decoder.build(lvls):
-            return False
+        self._level_decoder.build(lvls)
         i = 0
         while i < num_symbols:
             sym = self._level_decoder.decode(bits)
@@ -396,42 +419,40 @@ class LzxDecoder:
                 continue
             if sym < _LEVEL_SYM_SAME:
                 sym -= _LEVEL_SYM_ZERO
-                num += bits.read_bits_small(_LEVEL_SYM_ZERO1_NUM_BITS + sym)
-                num += _LEVEL_SYM_ZERO1_START
-                num += (sym << _LEVEL_SYM_ZERO1_NUM_BITS)
+                num += bits.read_bits_small(_LEVEL_SYM_ZERO_NUM_BITS + sym)
+                num += _LEVEL_SYM_ZERO_START
+                num += (sym << _LEVEL_SYM_ZERO_NUM_BITS)
                 symbol = 0
             elif sym == _LEVEL_SYM_SAME:
                 num += _LEVEL_SYM_SAME_START
                 num += bits.read_bits_small(_LEVEL_SYM_SAME_NUM_BITS)
                 sym = self._level_decoder.decode(bits)
                 if sym > _NUM_HUFFMAN_BITS:
-                    return False
+                    raise OutOfBounds(log_phase, 'bit count', sym, _NUM_HUFFMAN_BITS)
                 delta = levels[i] - sym
                 if delta < 0:
                     delta += _NUM_HUFFMAN_BITS + 1
                 symbol = delta
             else:
-                return False
-
-            limit = i + num
-            if limit > num_symbols:
-                return False
+                raise OutOfBounds(log_phase, 'symbol', sym, _LEVEL_SYM_SAME)
+            idx = i + num
+            if idx > num_symbols:
+                raise OutOfBounds(log_phase, 'table index', idx, num_symbols)
             while True:
                 levels[i] = symbol
                 i += 1
-                if i >= limit:
+                if i >= idx:
                     break
-        return True
 
     def read_tables(self):
         bits = self._bits
         if self._skip_byte:
             if bits.direct_read_byte() != 0:
-                return False
+                raise NonZeroSkippedByte
         bits.normalize_big()
         block_type = bits.read_bits_small(_BLOCK_TYPE_NUM_BITS)
         if block_type > _BLOCK_TYPE_UNCOMPRESSED:
-            return False
+            raise RuntimeError(F'Unknown block type {block_type}.')
         self._unpack_block_size = 1 << 15
         if not self._wim_mode or bits.read_bits_small(1) == 0:
             self._unpack_block_size = bits.read_bits_small(16)
@@ -444,13 +465,13 @@ class LzxDecoder:
         if self._is_uncompressed_block:
             self._skip_byte = bool(self._unpack_block_size & 1)
             if not bits.prepare_uncompressed():
-                return False
+                raise RuntimeError('Invalid data before uncompressed block.')
             if bits.get_remaining_bytes() < _NUM_REPS * 4:
-                return False
+                raise EOFError('Not enough space left in buffer to read table reps.')
             for i in range(_NUM_REPS):
                 rep = bits.read_int32()
                 if rep > self._win_size:
-                    return False
+                    raise OutOfBounds('reading table reps', 'rep value', rep, self._win_size)
                 self._reps[i] = rep
             return True
         elif block_type == _BLOCK_TYPE_ALIGNED:
@@ -458,23 +479,19 @@ class LzxDecoder:
             self._num_align_bits = _NUM_ALIGN_BITS
             for i in range(_ALIGN_TABLE_SIZE):
                 levels[i] = bits.read_bits_small(_NUM_ALIGN_LEVEL_BITS)
-            if not self._align_decoder.build(levels):
-                return False
+            self._align_decoder.build(levels)
         else:
             self._num_align_bits = 64
 
         lvl = memoryview(self._lzx_levels)
-        if not self.read_table(lvl, 256):
-            return False
-        if not self.read_table(lvl[256:], self._num_pos_len_slots):
-            return False
-        end = 256 + self._num_pos_len_slots
+        end = 0
+        for t in (256, self._num_pos_len_slots):
+            self.read_table(lvl[end:], t)
+            end += t
         _memzap(lvl[end:_LZX_TABLE_SIZE])
-        if not self._lzx_decoder.build(self._lzx_levels):
-            return False
-        if not self.read_table(self._len_levels, _NUM_LEN_SYMBOLS):
-            return False
-        return self._len_decoder.build(self._len_levels)
+        self._lzx_decoder.build(self._lzx_levels)
+        self.read_table(self._len_levels, _NUM_LEN_SYMBOLS)
+        self._len_decoder.build(self._len_levels)
 
     def _decompress(self, cur_size: int):
         win = memoryview(self._win)
@@ -498,18 +515,26 @@ class LzxDecoder:
             self._reps[0] = 1
             self._reps[1] = 1
             self._reps[2] = 1
+
+        if cur_size == 0:
+            cur_size = INF
+            eof_halt = True
+        else:
+            eof_halt = False
+
         while cur_size > 0:
-            if bits.was_extra_read_error():
-                return False
+            if bits.overflow > 4:
+                raise BitsReaderEOF
             if self._unpack_block_size == 0:
-                if not self.read_tables():
-                    return False
+                self.read_tables()
                 continue
             next = min(self._unpack_block_size, cur_size)
             if self._is_uncompressed_block:
                 rem = bits.get_remaining_bytes()
                 if rem == 0:
-                    return False
+                    if eof_halt:
+                        return
+                    return BitsReaderEOF('reading an uncompressed block')
                 if next > rem:
                     next = rem
                 bits.copy_to(win[self._pos:], next)
@@ -519,14 +544,17 @@ class LzxDecoder:
                 if self._skip_byte and self._unpack_block_size == 0 and cur_size == 0 and bits.is_one_direct_byte_left():
                     self._skip_byte = False
                     if bits.direct_read_byte() != 0:
-                        return False
+                        raise NonZeroSkippedByte
                 continue
+            log_phase = 'reading compressed block'
             cur_size -= next
             self._unpack_block_size -= next
             while next > 0:
-                if bits.was_extra_read_error():
-                    return False
+                if bits.overflow > 4:
+                    raise BitsReaderEOF
                 sym = self._lzx_decoder.decode(bits)
+                if eof_halt and bits.overflow > 2:
+                    return
                 if sym < 256:
                     win[self._pos] = sym
                     next -= 1
@@ -534,13 +562,13 @@ class LzxDecoder:
                     continue
                 sym -= 256
                 if sym >= self._num_pos_len_slots:
-                    return False
+                    raise OutOfBounds(log_phase, 'huffman length slot', sym, self._num_pos_len_slots)
                 pos_slot, len_slot = divmod(sym, _NUM_LEN_SLOTS)
                 len = _MATCH_MIN_LEN + len_slot
                 if len_slot == _NUM_LEN_SLOTS - 1:
                     len_temp = self._len_decoder.decode(bits)
                     if len_temp >= _NUM_LEN_SYMBOLS:
-                        return False
+                        raise OutOfBounds(log_phase, 'huffman length symbol', len_temp, _NUM_LEN_SYMBOLS)
                     len = _MATCH_MIN_LEN + _NUM_LEN_SLOTS - 1 + len_temp
                 if pos_slot < _NUM_REPS:
                     dist = self._reps[pos_slot]
@@ -558,7 +586,7 @@ class LzxDecoder:
                         dist += bits.read_bits_small(num_direct_bits - _NUM_ALIGN_BITS) << _NUM_ALIGN_BITS
                         align_temp = self._align_decoder.decode(bits)
                         if align_temp >= _ALIGN_TABLE_SIZE:
-                            return False
+                            raise OutOfBounds(log_phase, 'align symbol', align_temp, _ALIGN_TABLE_SIZE)
                         dist += align_temp
                     else:
                         dist += bits.read_bits_big(num_direct_bits)
@@ -567,9 +595,9 @@ class LzxDecoder:
                     self._reps[1] = self._reps[0]
                     self._reps[0] = dist
                 if len > next:
-                    return False
+                    raise OutOfBounds(log_phase, 'replay data length', len, next)
                 if dist > self._pos and not self._over_dict:
-                    return False
+                    raise OutOfBounds(log_phase, 'replay data distance', dist, self._pos)
                 mask = self._win_size
                 next -= len
                 dst_pos = self._pos
@@ -583,10 +611,12 @@ class LzxDecoder:
         return bits.was_finished_ok()
 
     def get_output_data(self):
-        view = memoryview(self._unpacked_data)
-        return view[:self._pos - self._write_pos]
+        data = self._unpacked_data
+        if data is not None:
+            view = memoryview(data)
+            return view[:self._pos - self._write_pos]
 
-    def decompress(self, data: memoryview, expected_output_size: int):
+    def decompress(self, data: memoryview, expected_output_size: int = 0):
         if not self.keep_history:
             self._pos = 0
             self._over_dict = False
@@ -597,15 +627,22 @@ class LzxDecoder:
         self._write_pos = self._pos
         self._unpacked_data = win[self._pos:]
         if expected_output_size > self._win_size - self._pos:
-            return False
+            raise OutOfBounds(
+                'preparing to decompress',
+                'expected output size',
+                expected_output_size,
+                self._win_size - self._pos
+            )
         self._bits.initialize(data)
-        res1 = self._decompress(expected_output_size)
-        res2 = self._flush()
-        return res1 and res2
+        self._decompress(expected_output_size)
+        self._flush()
+        return self.get_output_data()
 
     def set_params(self, num_dict_bits: int):
         if num_dict_bits < _NUM_DICT_BITS_MIN or num_dict_bits > _NUM_DICT_BITS_MAX:
-            raise ValueError(num_dict_bits)
+            raise ValueError(
+                F'Invalid window size {num_dict_bits}, must be in range '
+                F'[{_NUM_DICT_BITS_MIN};{_NUM_DICT_BITS_MAX}].')
         self._num_dict_bits = num_dict_bits
         num_pos_slots = num_dict_bits * 2 if num_dict_bits < 20 else 34 + (1 << (num_dict_bits - 17))
         self._num_pos_len_slots = num_pos_slots * _NUM_LEN_SLOTS
