@@ -9,6 +9,7 @@ import array
 import itertools
 
 from refinery.lib.crypto import rotr32
+from refinery.lib.array import make_array
 from refinery.units.crypto.cipher import StreamCipherUnit, Arg
 
 
@@ -39,14 +40,7 @@ class HC256(Iterator[int]):
             raise ValueError('invalid key length')
         if len(iv) != 0x20:
             raise ValueError('invalid iv length')
-        for t in array.typecodes:
-            if not t.isupper():
-                continue
-            w = array.array(t)
-            if w.itemsize == 4:
-                break
-        else:
-            raise ValueError('no matching array type found')
+        w = make_array(4)
         w.frombytes(key)
         w.frombytes(iv)
         w.extend(itertools.repeat(0, 0xA00 - len(w)))

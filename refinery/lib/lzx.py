@@ -6,8 +6,8 @@ logic and few Python-specific optimizations have been implemented.
 """
 from __future__ import annotations
 
-import itertools
-import array
+from refinery.lib.array import make_array
+
 
 _NUM_PAIR_LEN_BITS = 4
 _PAIR_LEN_MASK = (1 << _NUM_PAIR_LEN_BITS) - 1
@@ -42,7 +42,7 @@ _NUM_POWER_POS_SLOTS = 38
 
 
 def uint32array(n: int):
-    return array.array('I', itertools.repeat(0, n))
+    return make_array(4, n, unsigned=True, fill=0)
 
 
 class HuffmanDecoder:
