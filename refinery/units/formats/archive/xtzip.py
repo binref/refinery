@@ -38,7 +38,7 @@ class xtzip(ArchiveUnit):
                 archive.setpassword(password)
             try:
                 archive.testzip()
-                files = (t for t in archive.infolist() if not t.is_dir())
+                files = (t for t in archive.infolist() if t.filename and not t.is_dir())
                 files = sorted(files, key=lambda info: info.file_size)
                 for info in files:
                     self.log_debug('testing password against:', info.filename)
