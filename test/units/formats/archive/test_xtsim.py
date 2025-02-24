@@ -10,9 +10,9 @@ class TestSmartInstallMakerExtractor(TestUnitBase):
         test = data | self.load() | {'path': ...}
         test = {str(key): value for key, value in test.items()}
         path = [
-            '$SystemDrive/Intel/Платежное поручение № 131.pdf',
-            '$SystemDrive/Intel/curl.exe',
-            '$SystemDrive/Intel/AnyDesk/bat.lnk',
+            'content/$SystemDrive/Intel/Платежное поручение № 131.pdf',
+            'content/$SystemDrive/Intel/curl.exe',
+            'content/$SystemDrive/Intel/AnyDesk/bat.lnk',
         ]
         for p in path:
             self.assertIn(p, test)
