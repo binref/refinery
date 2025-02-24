@@ -5,6 +5,12 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.5
+- Adds the `xtsim` unit to extract smart install maker archives.
+- Adds the `lzx` unit for LZX decompression.
+- Adds LZX support to the `xtcab` unit. 
+- The `xtcab` unit now also suports multi-disk cabinet archives.
+
 ## Version 0.8.4 - bugfix release
 
 ## Version 0.8.3
