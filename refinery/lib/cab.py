@@ -71,9 +71,11 @@ class NFolderIndex(IntFlag):
 
 class CabFolder(Struct):
 
-    def __init__(self, reader: StructReader[memoryview], parent: CabDisk, compute_checksums: bool):
+    def __init__(self, reader: StructReader[memoryview], parent: CabDisk, compute_checksums: bool, no_magic: bool):
         start = reader.u32()
         count = reader.u16()
+        if no_magic:
+            start -= 4
         self.method = (reader.u8(), reader.u8())
         self.compression = CabMethod(self.method[0] & 0xF)
         reader.seekrel(parent.skip_per_fldr)
@@ -235,14 +237,19 @@ class CabRef(NamedTuple):
 class CabDisk(Struct):
     MAGIC = B'MSCF'
 
-    def __init__(self, reader: StructReader[memoryview], compute_checksums: bool):
+    def __init__(self, reader: StructReader[memoryview], compute_checksums: bool, no_magic: bool):
+        if no_magic:
+            self.signature = self.MAGIC
+        else:
+            self.signature = reader.read(4)
 
         self._reserved = []
-        self.signature = reader.read(4)
         self._reserved.append(reader.u32())
         self.size = reader.u32()
         self._reserved.append(reader.u32())
         self.file_offset = reader.u32()
+        if no_magic:
+            self.file_offset -= 4
         self._reserved.append(reader.u32())
 
         self.version = (reader.u8(), reader.u8())
@@ -273,7 +280,7 @@ class CabDisk(Struct):
         ) if self.flags & CabFlags.HasNext else None
 
         self.folders = [
-            CabFolder(reader, self, compute_checksums) for _ in range(self.nr_of_folders)]
+            CabFolder(reader, self, compute_checksums, no_magic) for _ in range(self.nr_of_folders)]
 
         reader.seekset(self.file_offset)
         self.files = [CabFile(reader) for _ in range(self.nr_of_files)]
@@ -297,11 +304,20 @@ class Cabinet:
     files: dict[int, list[CabFile]]
     disks: dict[int, list[CabDisk]]
 
-    def __init__(self, *disks: memoryview, compute_checksums: bool = True):
+    def __init__(self, *disks: memoryview, compute_checksums: bool = True, no_magic: bool = False):
         self.disks = {}
         self.files = {}
         self.compute_checksums = compute_checksums
+        self.no_magic = no_magic
         self.extend(disks)
+
+    def get_files(self, id: Optional[int] = None):
+        if id is None:
+            if len(self.files) != 1:
+                raise LookupError
+            return next(iter(self.files.values()))
+        else:
+            return self.files[id]
 
     def __bool__(self):
         return bool(self.disks)
@@ -311,7 +327,7 @@ class Cabinet:
 
     def extend(self, disks: Iterable[memoryview]):
         for d in disks:
-            disk = CabDisk(memoryview(d), self.compute_checksums)
+            disk = CabDisk(memoryview(d), self.compute_checksums, self.no_magic)
             byid = self.disks.setdefault(disk.id, [])
             byid.append(disk)
         for byid in self.disks.values():
@@ -325,7 +341,6 @@ class Cabinet:
             files = self.files[id] = []
             partial: Optional[CabFolder] = None
             folders: list[CabFolder] = []
-
             for disk in disks:
                 folders.clear()
                 for folder in disk.folders:
@@ -345,6 +360,7 @@ class Cabinet:
                         partial = file.folder
                     else:
                         files.append(file)
+        return self
 
     def needs_more_disks(self):
         if not self.disks:
