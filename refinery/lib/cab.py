@@ -37,7 +37,7 @@ def cab_data_checksum(content: memoryview, checksum: int = 0) -> int:
     for chunk in chunks.unpack(content, 4):
         checksum ^= chunk
     if k := len(content) % 4:
-        checksum ^= int.from_bytes(content[-k:])
+        checksum ^= int.from_bytes(content[-k:], 'big')
     return checksum
 
 
