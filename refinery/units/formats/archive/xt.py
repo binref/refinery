@@ -28,6 +28,8 @@ class xt(ArchiveUnit):
         """
         Returns all archive handlers supported by the unit.
         """
+        from refinery.units.formats.archive.xtsim import xtsim
+        yield xtsim
         from refinery.units.formats.archive.xtinno import xtinno
         yield xtinno
         from refinery.units.formats.winreg import winreg
