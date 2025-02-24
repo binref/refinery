@@ -98,14 +98,17 @@ class CabFolder(Struct):
             for block in it:
                 dst.extend(block.data)
         elif cm == CabMethod.Deflate:
-            decompress = zlib.decompressobj(-zlib.MAX_WBITS)
+            zdict = B''
             for block in it:
                 if block.data[:2] != B'CK':
                     raise ValueError('Corrupted MSZip block with invalid header.')
                 try:
-                    dst.extend(decompress.decompress(block.data[2:]))
+                    inflate = zlib.decompressobj(-zlib.MAX_WBITS, zdict)
+                    zdict = inflate.decompress(block.data[2:]) + inflate.flush()
                 except zlib.error:
-                    raise ValueError('Failed to decompress using deflate.')
+                    raise RuntimeError('Failed to inflate CAB data block.')
+                else:
+                    dst.extend(zdict)
         elif cm == CabMethod.LZX:
             lzx = LzxDecoder(False)
             lzx.set_params_and_alloc(self.method[1])
