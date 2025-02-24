@@ -1,5 +1,5 @@
 include requirements.txt
 include README.md
-include LICENSE
+include LICENSE.md
 include refinery/__init__.pkl
 include refinery/data/rich.json

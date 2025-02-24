@@ -60,7 +60,7 @@ On top of that, I collect additional resources (including some produced by third
 ## License
 
 The Binary Refinery is (c) 2019 Jesko Hüttenhain, and published under a [3-Clause BSD License][license].
-This repository also contains [a copy of the full license text](LICENSE). 
+This repository also contains [a copy of the full license text](LICENSE.md). 
 If you want to do something with it that's not covered by this license, please feel free to contact the author.
 
 ## Warnings & Advice
