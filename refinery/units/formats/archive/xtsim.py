@@ -213,7 +213,7 @@ class xtsim(ArchiveUnit):
         if unknown_marker:
             tables['unknown_marker'] = decode(unknown_marker, codec)
 
-        yield self._pack('tables.json', None,
+        yield self._pack('setup.json', None,
             json.dumps(tables, indent=4).encode(self.codec))
 
         def runtime_path(name: str):
@@ -234,14 +234,15 @@ class xtsim(ArchiveUnit):
                 yield self._pack(path, None, runtime.read(size))
             check_empty_reader(runtime, 'runtime')
 
+        def no_abs_path(p: str):
+            drive, d, rest = p.partition(':\\')
+            if d and len(drive) == 1:
+                return F'$Drive{drive.upper()}\\{rest}'
+            return p
+
         if len_chunks + chunk_rest == 0:
-            def fixpath(p: str):
-                drive, d, rest = p.partition(':\\')
-                if d and len(drive) == 1:
-                    return F'$Drive{drive.upper()}\\{rest}'
-                return p
             for file in tables['filenames']:
-                path = fixpath(file[1])
+                path = no_abs_path(file[1])
                 content.u32() # unknown
                 size = content.u32()
                 content.u32() # unknown
@@ -258,7 +259,8 @@ class xtsim(ArchiveUnit):
                 try:
                     path = tables['filenames'][int(file.name)][1]
                 except Exception:
-                    path = F'data/{file.name}'
+                    path = file.name
+                path = F'content/{no_abs_path(path)}'
                 yield self._pack(path, file.timestamp, lambda f=file: f.decompress())
 
         check_empty_reader(content, 'content')
