@@ -2188,7 +2188,7 @@ class InnoArchive:
         self.setup_data = result.setup_data
         self.files = result.files
         self.streams = InnoStreams(*result.streams)
-        self.script_codec = 'utf8' if version.unicode else codec
+        self.script_codec = 'latin1' if version.unicode else codec
 
     @cached_property
     def ifps(self):

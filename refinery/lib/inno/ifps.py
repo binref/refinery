@@ -9,6 +9,7 @@ from __future__ import annotations
 import abc
 import enum
 import io
+import itertools
 
 from typing import (
     Callable,
@@ -204,7 +205,7 @@ class TC(enum.IntEnum):
 
 
 @dataclass
-class _OptionsMixin:
+class IFPSTypeMixin:
     symbol: Optional[str] = None
     attributes: Optional[List[Attribute]] = None
 
@@ -215,7 +216,7 @@ class _OptionsMixin:
 
 
 @dataclass
-class IFPSType(abc.ABC):
+class IFPSTypeBase(abc.ABC):
     code: TC
 
     def simple(self, nested=False):
@@ -263,19 +264,18 @@ class IFPSType(abc.ABC):
         return self.display(0)
 
 
-def optionals(cls: _C) -> Union[_C, Type[_OptionsMixin]]:
-    class _mixed(_OptionsMixin, cls):
-        ...
+def ifpstype(cls: _C) -> Union[_C, Type[IFPSTypeMixin]]:
+    cls = dataclass(cls)
+    mix = type(cls.__qualname__, (IFPSTypeMixin, cls), {})
     assigned = set(WRAPPER_ASSIGNMENTS) - {'__annotations__'}
-    update_wrapper(_mixed, cls, assigned=assigned, updated=())
-    return dataclass(_mixed)
+    update_wrapper(mix, cls, assigned=assigned, updated=())
+    return dataclass(mix)
 
 
-@optionals
-@dataclass
-class TPrimitive(IFPSType):
+@ifpstype
+class TPrimitive(IFPSTypeBase):
 
-    def py_type(self, key: Optional[int] = None) -> Optional[type]:
+    def py_type(self, *_) -> Optional[type]:
         return {
             TC.ReturnAddress       : int,
             TC.U08                 : int,
@@ -308,9 +308,8 @@ class TPrimitive(IFPSType):
             return tc()
 
 
-@optionals
-@dataclass
-class TProcPtr(IFPSType):
+@ifpstype
+class TProcPtr(IFPSTypeBase):
     void: bool
     args: List[DeclSpecParam]
 
@@ -334,9 +333,8 @@ class TProcPtr(IFPSType):
         return F'{name}({args})'
 
 
-@optionals
-@dataclass
-class TInterface(IFPSType):
+@ifpstype
+class TInterface(IFPSTypeBase):
     uuid: UUID
 
     def py_type(self, *_):
@@ -350,9 +348,8 @@ class TInterface(IFPSType):
         return F'{display}({self.uuid!s})'
 
 
-@optionals
-@dataclass
-class TClass(IFPSType):
+@ifpstype
+class TClass(IFPSTypeBase):
     name: str
 
     def py_type(self, *_):
@@ -362,9 +359,8 @@ class TClass(IFPSType):
         return None
 
 
-@optionals
-@dataclass
-class TSet(IFPSType):
+@ifpstype
+class TSet(IFPSTypeBase):
     size: int
 
     def py_type(self, *_):
@@ -383,15 +379,18 @@ class TSet(IFPSType):
         return F'{display}({self.size})'
 
 
-@optionals
-@dataclass
-class TArray(IFPSType):
+@ifpstype
+class TArray(IFPSTypeBase):
     type: TPrimitive
 
-    def py_type(self, *_):
+    def py_type(self, key: Optional[int] = None):
+        if key is None:
+            return list
         return self.type.py_type()
 
-    def default(self, *_):
+    def default(self, key: Optional[int] = None):
+        if key is None:
+            return []
         return self.type.default()
 
     def display(self, indent=0):
@@ -402,17 +401,20 @@ class TArray(IFPSType):
         return self.type.simple(nested)
 
 
-@optionals
-@dataclass
-class TStaticArray(IFPSType):
+@ifpstype
+class TStaticArray(IFPSTypeBase):
     type: TPrimitive
     size: int
     offset: Optional[int] = None
 
-    def py_type(self, *_):
-        return self.type.py_type()
+    def py_type(self, key: Optional[int] = None):
+        if key is None:
+            return list
+        return self.type.py_type(key)
 
-    def default(self, *_):
+    def default(self, key: Optional[int] = None):
+        if key is None:
+            return [self.type.default() for _ in range(self.size)]
         return self.type.default()
 
     def display(self, indent=0):
@@ -423,15 +425,22 @@ class TStaticArray(IFPSType):
         return self.type.simple(nested)
 
 
-@optionals
-@dataclass
-class TRecord(IFPSType):
+@ifpstype
+class TRecord(IFPSTypeBase):
     members: Tuple[TPrimitive, ...]
 
-    def py_type(self, key: int):
+    @property
+    def size(self):
+        return len(self.members)
+
+    def py_type(self, key: Optional[int] = None):
+        if key is None:
+            return list
         return self.members[key].py_type()
 
-    def default(self, key: int):
+    def default(self, key: Optional[int] = None):
+        if key is None:
+            return [member.default() for member in self.members]
         return self.members[key].default()
 
     def simple(self, nested=False):
@@ -457,6 +466,18 @@ class TRecord(IFPSType):
                 output.write(F'\n{_TAB * indent}')
         output.write('}')
         return output.getvalue()
+
+
+IFPSType = Union[
+    TRecord,
+    TStaticArray,
+    TArray,
+    TSet,
+    TProcPtr,
+    TClass,
+    TInterface,
+    TPrimitive,
+]
 
 
 class Value(NamedTuple):
@@ -660,6 +681,7 @@ class Function:
     body: Optional[List[Instruction]] = None
     attributes: Optional[List[Attribute]] = None
     _bbs: Optional[Dict[int, BasicBlock]] = None
+    _ins: Optional[Dict[int, Instruction]] = None
 
     @property
     def name(self):
@@ -667,6 +689,13 @@ class Function:
         if (decl := self.decl) and (name := decl.name) and (symbol in name):
             symbol = name
         return symbol
+
+    @property
+    def code(self):
+        if code := self._ins:
+            return code
+        self._ins = code = {i.offset: i for i in self.body}
+        return code
 
     def reference(self, rel: bool = False) -> str:
         if self.decl is None:
@@ -973,7 +1002,7 @@ class IFPSFile(Struct):
 
     Magic = B'IFPS'
 
-    def __init__(self, reader: StructReader[memoryview], codec: str = 'utf8'):
+    def __init__(self, reader: StructReader[memoryview], codec: str = 'latin1'):
         self.codec = codec
         self.types: List[IFPSType] = []
         self.functions: List[Function] = []
@@ -1169,11 +1198,17 @@ class IFPSFile(Struct):
                 attributes = list(self._read_attributes())
 
             if (signature := _signature(name, decl)) and decl and signature.argc == decl.argc:
-                for old, new in zip(decl.parameters, signature.parameters):
-                    if t := old.type:
+                for old, new in itertools.zip_longest(decl.parameters, signature.parameters):
+                    if not new:
+                        break
+                    if old and (t := old.type):
                         t.symbol = new.type
-                if (sr := signature.return_type) and (dr := decl.return_type):
-                    dr.symbol = sr
+                        continue
+                    if t := self.types_by_name.get(new.type):
+                        t.symbol = new.type
+                if sr := signature.return_type:
+                    if (dr := decl.return_type) or (dr := self.types_by_name.get(sr)):
+                        dr.symbol = sr
 
             fn = Function(name, decl, body, exported, attributes)
             self.functions.append(fn)
