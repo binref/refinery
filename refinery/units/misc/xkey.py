@@ -87,7 +87,7 @@ class xkey(Unit):
             'MachO/BE'      : (B'\xCA\xFE\xBA\xBE'),
             'MachO/LE'      : (B'\xBE\xBA\xFE\xCA'),
             'MSCF'          : (B'\x0A\x51\xE5\xC0'),
-            'OleDocument'   : (B'\xD0\xCF\x11\xE0'),
+            'OleDocument'   : (B'\xD0\xCF\x11\xE0', (B'', B'\xA1\xB1\x1A\xE1'), (B'', B'\0\0\0\0\0\0\0\0')),
             'PdfDocument'   : (B'%PDF-', _S(B'12'), (B'.'), _S(B'0123456789'), _S(B'\r\n')),
             'SQLite'        : (B'SQLite format 3\0'),
             'GIF'           : (B'GIF87a', B'GIF89a'),
@@ -114,29 +114,30 @@ class xkey(Unit):
         range(0x10, 0x11): {
             'ASAR'          : (B'{"files":{"'),
         },
-        range(0x40): {
-            'DocTypeLower'  : (B'<!doctype'),
-            'DocTypeUpper'  : (B'<!DOCTYPE'),
+        range(0x10): {
+            'DocTypeLower'  : (B'<!doctype\x20'),
+            'DocTypeUpper'  : (B'<!DOCTYPE\x20'),
             'HTMLLower'     : (B'<html>'),
             'HTMLUpper'     : (B'<HTML>'),
             'XML'           : (B'<?xml version="'),
             'Ace'           : (B'**ACE**'),
         },
-        range(0x40, 0x60): {
-            'PEStub'        : (B'This program cannot be run in DOS mode.'),
+        range(0x3F, 0x40): {
+            'PEStub': (
+                B'\0\x0E\x1F\xBA\x0E\x00\xB4\x09\xCD\x21\xB8\x01\x4C\xCD\x21'
+                B'This program cannot be run in DOS mode.\r'
+            )
+        },
+        range(0x48, 0x60): {
+            'PEStubMsg'     : B'This program cannot be run in DOS mode.\r',
             'PEDelphiStub'  : (B'This program must be run under Win', (B'32', B'64')),
         },
         range(0xD0, 0xD1): {
             'Tar'           : (B'\x00' * 0x30 + B'ustar', (B'\x20\x20\x00', B'\x00\x30\x30')),
         },
-        range(0x200): {
-            'EmailReceived' : (B'\nReceived:\x20from'),
-            'EmailSubject'  : (B'\nSubject:\x20'),
-            'EmailFrom'     : (B'\nFrom:\x20'),
-            'EmailTo'       : (B'\nTo:\x20'),
-            'PESectionData' : (B'.data\0\0\0'),
-            'PESectionText' : (B'.text\0\0\0'),
-        },
+        # range(0x300): {
+        #     'EmailReceived' : (B'\nReceived:\x20from\x20'),
+        # },
     }
 
     _ENC_ALPHABETS = [
