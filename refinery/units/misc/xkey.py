@@ -20,15 +20,23 @@ def _generate_cribs(cribs: bytes | tuple[bytes | tuple[bytes, ...], ...]):
         yield B''.join(p)
 
 
-def _cyclic_base(string: bytes):
-    n = len(string)
-    for p in range(1, n // 2 + 1):
-        q = n // p + 1
-        k = string[:p]
-        t = q * k
-        if t.startswith(string):
-            return k
-    return None
+def _cyclic_base(data: bytes, min_repeat: int = 2):
+    if len(data) < min_repeat:
+        return None
+    repeat = 0
+    length = 1
+    n = len(data)
+    for k in range(1, n):
+        if data[k] == data[repeat]:
+            repeat = (repeat + 1) % length
+        else:
+            m = k + 1
+            if m * min_repeat > n:
+                return None
+            else:
+                repeat = 0
+                length = m
+    return data[:length]
 
 
 def _S(options: bytes):
