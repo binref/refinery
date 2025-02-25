@@ -22,9 +22,19 @@ class TestAutoXOR(TestUnitBase):
 
     def test_very_short_input(self):
         pl = self.load_pipeline('emit A B C "" [| autoxor ]')
-        self.assertEqual(pl(), B'\0\0\0')
+        self.assertEqual(pl(), B'ABC')
 
     def test_chunk_scope_regression(self):
         data = self.generate_random_buffer(2000)
         pl = self.load_pipeline('autoxor [| nop ]')
         self.assertEqual(len(data), data | pl | len)
+
+    def test_b64_encoded_and_encrypted(self):
+        from refinery.units import Chunk
+        data = Chunk(self.generate_random_buffer(4000))
+        key = self.generate_random_buffer(10)
+        pl = self.load_pipeline(F'b64 -R | add h:{key.hex()} | autoxor | b64')
+        test = next(data | pl)
+        self.assertEqual(test['method'], 'sub')
+        self.assertEqual(test['key'], key)
+        self.assertEqual(test, data)

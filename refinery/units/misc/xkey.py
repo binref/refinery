@@ -2,14 +2,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from typing import Callable, NamedTuple, Optional
+
 from itertools import product
 from collections import Counter
-from refinery import Unit, Arg
 
-try:
-    from Crypto.Util.strxor import strxor
-except ImportError:
-    def strxor(a, b): return bytes(x ^ y for x, y in zip(a, b))
+import operator
+import enum
+
+from refinery.units import Unit, Arg
+from refinery.lib.loader import get_entry_point
 
 
 def _generate_cribs(cribs: bytes | tuple[bytes | tuple[bytes, ...], ...]):
@@ -45,8 +47,8 @@ def _S(options: bytes):
 
 class xkey(Unit):
     """
-    The unit expects encrypted input which was encrypted byte-wise with a polyalphabetic key. It
-    can attempt do determine this key by three methods:
+    The unit expects encrypted input which was encrypted byte-wise with a polyalphabetic key. For
+    both bit-wise and byte-wise addition, it can attempt do determine this key by three methods:
 
     1. Known plaintext cribs: The unit contains a library of file signatures that are expected to
        occur at specific offsets. It uses these to attempt a known-plaintext attack against the
@@ -150,6 +152,21 @@ class xkey(Unit):
 
     _WSH_ALPHABET = bytes(set(range(0x20, 0x80)) - {0x3C, 0x3E} | {0x09})
 
+    _METHODS = {
+        'sub': operator.sub,
+        'xor': operator.xor,
+    }
+
+    class _rt(enum.IntEnum):
+        crib = 0
+        alph = 1
+        freq = 2
+
+    class _result(NamedTuple):
+        key: memoryview
+        attack: xkey._rt
+        cipher: Optional[str] = None
+
     def __init__(
         self,
         range: Arg.Bounds(help='range of length values to try in Python slice syntax, the default is {default}.') = slice(1, 32),
@@ -173,29 +190,38 @@ class xkey(Unit):
         )
 
     def process(self, data: bytearray):
-        score = 0
-        guess = None
+        for result in self._attack(data):
+            out = result.key
+            if how := result.cipher:
+                out = self.labelled(out, method=how)
+            return out
+
+    def _method(self, name: str) -> type[Unit]:
+        return get_entry_point(str(name))
+
+    def _attack(self, data: bytearray):
         bounds: slice = self.args.range
         view = memoryview(data)
+        length = len(view)
 
-        n = len(view)
+        if length <= 1:
+            return
 
-        if n <= 1:
-            return view
-        if n >= 0x100:
+        if length >= 0x100:
             view = view[:-4]
 
         start = bounds.start or 1
-        stop = min(bounds.stop or n, n)
+        stop = min(bounds.stop or length, length)
 
-        if bounds.step is not None:
-            step = bounds.step
-            if bounds.start is None:
-                start *= step
-        else:
+        if (step := bounds.step) is None:
             step = 1
+        elif bounds.start is None:
+            start *= step
 
-        self.log_debug(F'received input range [{bounds.start}:{bounds.stop}:{bounds.step}], using [{start}:{stop}:{step}]')
+        self.log_debug(
+            F'received input range [{bounds.start}:{bounds.stop}:{bounds.step}], '
+            F'using [{start}:{stop}:{step}]')
+
         criblist: list[tuple[range, dict[str, bytes | tuple[bytes | tuple[bytes, ...], ...]]]] = []
 
         if p := self.args.plaintext:
@@ -205,54 +231,93 @@ class xkey(Unit):
         if self.args.crib:
             criblist.extend(self._CRIBS.items())
 
-        for offsets, cribs_by_type in criblist:
-            for name, cribs in cribs_by_type.items():
-                for crib in _generate_cribs(cribs):
-                    cn = len(crib)
-                    if cn < start:
-                        continue
-                    if (cn - start) % step != 0:
-                        continue
-                    self.log_debug(F'searching the crib for {name}:', crib, clip=True)
-                    for offset in offsets:
-                        test = view[offset:offset + cn]
-                        if len(test) != cn:
-                            continue
-                        key = _cyclic_base(strxor(test, crib))
-                        if key is not None:
-                            self.log_info(F'found key via crib for {name}:', crib, clip=True)
-                            shift = -offset % len(key)
-                            return key[shift:] + key[:shift]
-
         if self.args.alph:
             alphabets: dict[int, list[bytes]] = {}
             for alphabet in self._ENC_ALPHABETS:
                 for suffix in (B'', B'\x20', B'\x0A', B'\x20\x0A'):
                     a = alphabet + suffix
                     alphabets.setdefault(len(a), []).append(a)
-
             alphabets[len(self._WSH_ALPHABET)] = self._WSH_ALPHABET
+        else:
+            alphabets = None
 
-        if not self.args.freq:
-            return None
+        for name in self._METHODS:
+            if key := self._process_crib(view, name, criblist):
+                yield self._result(key, self._rt.crib, name)
+
+        hist = {}
+
+        for name, op in self._METHODS.items():
+            result = self._process_freq(view, (start, stop, step), alphabets, op, hist)
+            if result is None:
+                continue
+            key, alph = result
+            if key is None:
+                continue
+            if alph:
+                yield self._result(key, self._rt.alph, name)
+        if key is not None:
+            yield self._result(key, self._rt.freq)
+
+    def _process_crib(
+        self,
+        view: memoryview,
+        unit: str,
+        criblist: list[tuple[range, dict[str, bytes | tuple[bytes | tuple[bytes, ...], ...]]]]
+    ):
+        method = self._method(unit)
+        for offsets, cribs_by_type in criblist:
+            for name, cribs in cribs_by_type.items():
+                for crib in _generate_cribs(cribs):
+                    cn = len(crib)
+                    self.log_debug(F'searching for {unit}, via crib {name}:', crib, clip=True)
+                    for offset in offsets:
+                        test = view[offset:offset + cn]
+                        if len(test) != cn:
+                            continue
+                        key = _cyclic_base(next(test | method(crib)))
+                        if key is not None:
+                            self.log_info(F'found key for {unit}, via crib {name}:', crib, clip=True)
+                            shift = -offset % len(key)
+                            return key[shift:] + key[:shift]
+
+    def _process_freq(
+        self,
+        view: memoryview,
+        bounds: tuple[int, int, int],
+        alphabets: dict[int, list[bytes]] | None,
+        op: Callable[[int, int], int],
+        hist: dict[int, tuple[list[bytes], list[Counter]]],
+    ):
+        n = len(view)
+        start, stop, step = bounds
+        score = 0
+        guess = None
+        first = not hist
 
         for keylen in range(start, stop + 1, step):
-            patches = [view[j::keylen] for j in range(keylen)]
-            histograms = [Counter(p) for p in patches]
+            try:
+                cached = hist[keylen]
+            except KeyError:
+                patches = [view[j::keylen] for j in range(keylen)]
+                histograms = [Counter(p) for p in patches]
+                hist[keylen] = patches, histograms
+            else:
+                patches, histograms = cached
 
-            if self.args.alph:
+            if alphabets is not None:
                 hlc = Counter(len(h) for h in histograms)
                 base, coverage = hlc.most_common(1)[0]
 
                 if coverage * 2 > keylen and base in alphabets:
-                    self.log_info(F'detected potential plaintext alphabet of size 0x{base:02X} at {keylen}')
+                    self.log_debug(F'solving for potential plaintext alphabet of size 0x{base:02X} at {keylen}')
                     keys: dict[bytes, bytes] = {}
                     for alphabet in alphabets[base]:
                         key = bytearray(keylen)
                         for k, patch in enumerate(patches):
                             keybyte = set(range(0x100))
-                            for x in patch:
-                                keybyte &= {y ^ x for y in alphabet}
+                            for c in patch:
+                                keybyte &= {op(c, p) & 0xFF for p in alphabet}
                                 if len(keybyte) == 1:
                                     key[k] = next(iter(keybyte))
                                     break
@@ -262,8 +327,12 @@ class xkey(Unit):
                         if key is not None:
                             keys[alphabet] = key
                     if len(keys) == 1:
+                        self.log_debug(F'discovered plaintext alphabet of size 0x{base:02X} at {keylen}')
                         alphabet, key = keys.popitem()
-                        return key
+                        return key, True
+
+            if not first:
+                continue
 
             _guess = [h.most_common(1)[0] for h in histograms]
             _score = sum(letter_count for _, letter_count in _guess) / n
@@ -271,7 +340,7 @@ class xkey(Unit):
             # conducted to derive it; there might be plenty of room for improvement here.
             _score = _score * ((n - keylen) / (n - 1)) ** keylen
 
-            logmsg = F'got score {_score * 100:5.2f}% for length {keylen}'
+            logmsg = F'got score {_score * 100:05.2f}% for length {keylen}'
             if _score > score:
                 self.log_info(logmsg)
                 score = _score
@@ -279,4 +348,4 @@ class xkey(Unit):
             else:
                 self.log_debug(logmsg)
 
-        return guess
+        return guess, False

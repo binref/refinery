@@ -44,7 +44,6 @@ FileTypeMap = {
     'application/msdos-windows': 'exe',
     'application/mspowerpoint': 'ppt',
     'application/msword': 'doc',
-    'application/octet-stream': 'bin',
     'application/ogg': 'ogg',
     'application/pdf': 'pdf',
     'application/plain': 'text',
@@ -268,6 +267,9 @@ class FileMagicInfo:
             extension = FileTypeMap[self.mime]
         except KeyError:
             extension = default
+            self.blob = True
+        else:
+            self.blob = False
         if self.description == 'Microsoft OOXML':
             extension = 'docx'
         if extension == 'exe':
