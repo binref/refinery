@@ -247,6 +247,7 @@ class xkey(Unit):
                 yield self._result(key, self._rt.crib, name)
 
         hist = {}
+        keys = set()
 
         for name, op in self._METHODS.items():
             result = self._process_freq(view, (start, stop, step), alphabets, op, hist)
@@ -257,8 +258,10 @@ class xkey(Unit):
                 continue
             if alph:
                 yield self._result(key, self._rt.alph, name)
-        if key is not None:
-            yield self._result(key, self._rt.freq)
+            keys.add(key)
+
+        if keys:
+            yield self._result(next(iter(keys)), self._rt.freq)
 
     def _process_crib(
         self,
@@ -330,9 +333,9 @@ class xkey(Unit):
                     if len(keys) == 1:
                         self.log_debug(F'discovered plaintext alphabet of size 0x{base:02X} at {keylen}')
                         alphabet, key = keys.popitem()
-                        return key, True
+                        return bytes(key), True
 
-            if not first:
+            if not first or not self.args.freq:
                 continue
 
             _guess = [h.most_common(1)[0] for h in histograms]
@@ -345,7 +348,7 @@ class xkey(Unit):
             if _score > score:
                 self.log_info(logmsg)
                 score = _score
-                guess = bytearray(value for value, _ in _guess)
+                guess = bytes(value for value, _ in _guess)
             else:
                 self.log_debug(logmsg)
 
