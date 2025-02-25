@@ -20,7 +20,7 @@ class vbapc(Unit):
 
     @Unit.Requires('oletools', 'formats', 'office', 'extended')
     def _pcodedmp():
-        with NoLogging():
+        with NoLogging(NoLogging.Mode.ALL):
             import pcodedmp.pcodedmp
             return pcodedmp.pcodedmp
 
