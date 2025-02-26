@@ -187,7 +187,7 @@ class xkey(Unit):
     def process(self, data: bytearray):
         for result in self._attack(data):
             out = result.key
-            if how := result.cipher:
+            if how := result.how:
                 out = self.labelled(out, method=how)
             return out
 
