@@ -11,7 +11,7 @@ class TestXKey(TestUnitBase):
         for length in (3, 7, 12, 25, 112):
             key = self.generate_random_buffer(length)
             encrypted, = data | self.ldu('xor', key)
-            recovered, = encrypted | self.load(slice(1, 128))
+            recovered, = encrypted | self.load(slice(1, 128), freq=True)
             self.assertEqual(recovered, key, F'failure for length={length}')
 
     def test_blocksize_4(self):
@@ -20,7 +20,7 @@ class TestXKey(TestUnitBase):
             key = self.generate_random_buffer(4 * length)
             arg = struct.unpack(F'<{length}L', key)
             encrypted, = data | self.ldu('add', arg, blocksize=4)
-            recovered, = encrypted | self.load(':80:4')
+            recovered, = encrypted | self.load(':80:4', freq=True)
             self.assertEqual(recovered, key, F'failure for length={length}')
 
     def test_early_abort(self):
