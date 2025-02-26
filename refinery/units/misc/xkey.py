@@ -2,16 +2,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Callable, NamedTuple, Optional
+from typing import NamedTuple, Optional
 
 from itertools import product
 from collections import Counter
+from Cryptodome.Util.strxor import strxor
 
-import operator
 import enum
 
 from refinery.units import Unit, Arg
-from refinery.lib.loader import get_entry_point
 
 
 def _generate_cribs(cribs: bytes | tuple[bytes | tuple[bytes, ...], ...]):
@@ -153,11 +152,6 @@ class xkey(Unit):
 
     _WSH_ALPHABET = bytes(set(range(0x20, 0x80)) - {0x3C, 0x3E} | {0x09})
 
-    _METHODS = {
-        'sub': operator.sub,
-        'xor': operator.xor,
-    }
-
     class _rt(enum.IntEnum):
         crib = 0
         alph = 1
@@ -165,8 +159,8 @@ class xkey(Unit):
 
     class _result(NamedTuple):
         key: memoryview
-        attack: xkey._rt
-        cipher: Optional[str] = None
+        how: xkey._rt
+        xor: Optional[bool] = None
 
     def __init__(
         self,
@@ -197,9 +191,6 @@ class xkey(Unit):
                 out = self.labelled(out, method=how)
             return out
 
-    def _method(self, name: str) -> type[Unit]:
-        return get_entry_point(str(name))
-
     def _attack(self, data: bytearray):
         bounds: slice = self.args.range
         view = memoryview(data)
@@ -228,9 +219,14 @@ class xkey(Unit):
         if p := self.args.plaintext:
             pos: slice = self.args.searchpos
             end = len(data) - len(p) if pos.stop is None else pos.stop
-            criblist.append((range(pos.start or 0, end + 1), {'Plaintext': p}))
+            criblist.append((range(pos.start or 0, end + 1), {'Plaintext': [p]}))
         if self.args.crib:
-            criblist.extend(self._CRIBS.items())
+            for r, byname in self._CRIBS.items():
+                compiled = {
+                    name: list(_generate_cribs(cribs))
+                    for name, cribs in byname.items()
+                }
+                criblist.append((r, compiled))
 
         if self.args.alph:
             alphabets: dict[int, list[bytes]] = {}
@@ -242,22 +238,22 @@ class xkey(Unit):
         else:
             alphabets = None
 
-        for name in self._METHODS:
-            if key := self._process_crib(view, name, criblist):
-                yield self._result(key, self._rt.crib, name)
+        for xor in (True, False):
+            if key := self._process_crib(view, xor, criblist):
+                yield self._result(key, self._rt.crib, xor)
 
         hist = {}
         keys = set()
 
-        for name, op in self._METHODS.items():
-            result = self._process_freq(view, (start, stop, step), alphabets, op, hist)
+        for xor in (True, False):
+            result = self._process_freq(view, (start, stop, step), alphabets, xor, hist)
             if result is None:
                 continue
-            key, alph = result
+            key, via_alphabet = result
             if key is None:
                 continue
-            if alph:
-                yield self._result(key, self._rt.alph, name)
+            if via_alphabet:
+                yield self._result(key, self._rt.alph, xor)
             keys.add(key)
 
         if keys:
@@ -266,22 +262,21 @@ class xkey(Unit):
     def _process_crib(
         self,
         view: memoryview,
-        unit: str,
-        criblist: list[tuple[range, dict[str, bytes | tuple[bytes | tuple[bytes, ...], ...]]]]
+        xor: bool,
+        criblist: list[tuple[range, dict[str, list[bytes]]]]
     ):
-        method = self._method(unit)
         for offsets, cribs_by_type in criblist:
             for name, cribs in cribs_by_type.items():
-                for crib in _generate_cribs(cribs):
+                for crib in cribs:
                     cn = len(crib)
-                    self.log_debug(F'searching for {unit}, via crib {name}:', crib, clip=True)
                     for offset in offsets:
                         test = view[offset:offset + cn]
                         if len(test) != cn:
                             continue
-                        key = _cyclic_base(next(test | method(crib)))
-                        if key is not None:
-                            self.log_info(F'found key for {unit}, via crib {name}:', crib, clip=True)
+                        key = strxor(test, crib) if xor else bytes(
+                            a - b & 0xFF for a, b in zip(test, crib))
+                        if key := _cyclic_base(key):
+                            self.log_info(F'found key via crib {name}:', crib, clip=True)
                             shift = -offset % len(key)
                             return key[shift:] + key[:shift]
 
@@ -290,7 +285,7 @@ class xkey(Unit):
         view: memoryview,
         bounds: tuple[int, int, int],
         alphabets: dict[int, list[bytes]] | None,
-        op: Callable[[int, int], int],
+        xor: bool,
         hist: dict[int, tuple[list[bytes], list[Counter]]],
     ):
         n = len(view)
@@ -321,7 +316,11 @@ class xkey(Unit):
                         for k, patch in enumerate(patches):
                             keybyte = set(range(0x100))
                             for c in patch:
-                                keybyte &= {op(c, p) & 0xFF for p in alphabet}
+                                keybyte &= (
+                                    {c ^ p & 0xFF for p in alphabet}
+                                ) if xor else (
+                                    {c - p & 0xFF for p in alphabet}
+                                )
                                 if len(keybyte) == 1:
                                     key[k] = next(iter(keybyte))
                                     break

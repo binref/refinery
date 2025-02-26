@@ -4,6 +4,7 @@ import re
 
 from refinery.units.misc.xkey import xkey
 from refinery.lib.mime import FileMagicInfo as magic
+from refinery.lib.loader import get_entry_point
 
 
 class autoxor(xkey, extend_docs=True):
@@ -16,7 +17,11 @@ class autoxor(xkey, extend_docs=True):
     def process(self, data: bytearray):
         for result in self._attack(data):
             key = result.key
-            names = [how] if (how := result.cipher) else list(self._METHODS)
+            names = []
+            if result.xor is not False:
+                names.append('xor')
+            if result.xor is not True:
+                names.append('sub')
             break
         else:
             self.log_warn('No key was found; returning original data.')
@@ -26,7 +31,7 @@ class autoxor(xkey, extend_docs=True):
 
         for name in names:
 
-            unit = self._method(name)
+            unit = get_entry_point(name)
             bin, = data | unit(key)
             space = B'\0' | unit(0x20) | bytes
 

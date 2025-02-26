@@ -12,6 +12,16 @@ class NoMagicAvailable(ModuleNotFoundError):
     pass
 
 
+FileTypeBlob = {
+    'application/dos-exe',
+    'application/exe',
+    'application/msdos-windows',
+    'application/octet-stream',
+    'application/x-dosexec',
+    'application/x-exe',
+    'application/x-msdos-program',
+}
+
 FileTypeMap = {
     'application/x-setupscript': 'ini',
     'applicaiton/x-bytecode.python': 'pyc',
@@ -269,7 +279,7 @@ class FileMagicInfo:
             extension = default
             self.blob = True
         else:
-            self.blob = False
+            self.blob = self.mime in FileTypeBlob
         if self.description == 'Microsoft OOXML':
             extension = 'docx'
         if extension == 'exe':
