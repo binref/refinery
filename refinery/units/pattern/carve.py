@@ -63,11 +63,11 @@ class carve(PatternExtractor):
             from ..encoding.b32 import b32
             decoder = b32()
         elif self.args.format is formats.ps1str:
-            from ..encoding.ps1str import ps1str
-            decoder = ps1str()
+            from ..encoding.escps import escps
+            decoder = escps()
         elif self.args.format is formats.vbastr:
-            from ..encoding.ps1str import ps1str
-            decoder = ps1str()
+            from ..encoding.escps import escps
+            decoder = escps()
         elif self.args.format is formats.hexarray:
             from ..blockwise.pack import pack
             decoder = pack(0x10)

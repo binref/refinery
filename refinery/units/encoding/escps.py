@@ -6,7 +6,7 @@ from refinery.lib.decorators import unicoded
 from refinery.units import Unit
 
 
-class ps1str(Unit):
+class escps(Unit):
     """
     Escapes and unescapes PowerShell strings.
     """
@@ -68,5 +68,5 @@ class ps1str(Unit):
     def reverse(self, data):
         def escaper(match):
             char = match[0]
-            return ps1str.ESCAPE.get(char, char)
+            return escps.ESCAPE.get(char, char)
         return '"{}"'.format(re.sub(R'''[\x00\x07-\x0D`$'"]''', escaper, data))

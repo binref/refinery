@@ -4,13 +4,13 @@ import re
 
 from refinery.lib.patterns import formats
 from refinery.units.obfuscation import StringLiterals
-from refinery.units.encoding.ps1str import ps1str
+from refinery.units.encoding.escps import escps
 
 
 def dq_unescape(string):
     def unescape(match):
         char = match[0]
-        return ps1str.UNESCAPE.get(char, char[1:])
+        return escps.UNESCAPE.get(char, char[1:])
 
     def splitvars(string):
         backtick = False
@@ -80,7 +80,7 @@ def string_unquote(string: str):
 def string_quote(parts, quote=True):
     def escaper(match):
         char = match[0]
-        return ps1str.ESCAPE.get(char, char)
+        return escps.ESCAPE.get(char, char)
 
     if isinstance(parts, str):
         parts = [parts]
