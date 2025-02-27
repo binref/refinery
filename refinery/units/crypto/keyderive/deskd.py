@@ -57,16 +57,17 @@ class deskd(KeyDerivation):
         from Cryptodome.Cipher import DES
         from Cryptodome.Util.strxor import strxor
 
+        password = bytes(password)
         key = bytearray(8)
 
-        for i, j in enumerate(password):
+        for i, p in enumerate(password):
             if ((i % 16) < 8):
-                key[i % 8] ^= (j << 1) & 0xFF
+                key[i % 8] ^= (p << 1) & 0xFF
             else:
-                j = (((j << 4) & 0xf0) | ((j >> 4) & 0x0f))
-                j = (((j << 2) & 0xcc) | ((j >> 2) & 0x33))
-                j = (((j << 1) & 0xaa) | ((j >> 1) & 0x55))
-                key[7 - (i % 8)] ^= j
+                p = (((p << 4) & 0xf0) | ((p >> 4) & 0x0f))
+                p = (((p << 2) & 0xcc) | ((p >> 2) & 0x33))
+                p = (((p << 1) & 0xaa) | ((p >> 1) & 0x55))
+                key[7 - (i % 8)] ^= p
 
         des_set_odd_parity(key)
 
