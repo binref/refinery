@@ -3,7 +3,7 @@
 from .. import TestUnitBase
 
 
-class TestPS1String(TestUnitBase):
+class TestEscPS(TestUnitBase):
 
     def test_unicode_with_quotes(self):
         unit = self.load()
