@@ -17,7 +17,7 @@ class xtvba(PathExtractorUnit):
             return oletools.olevba
 
     def unpack(self, data):
-        sentinel = uuid4()
+        sentinel = str(uuid4())
         try:
             parser = self._olevba.VBA_Parser(sentinel, data=bytes(data), relaxed=True)
         except self._olevba.FileOpenError:

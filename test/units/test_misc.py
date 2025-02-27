@@ -405,3 +405,25 @@ class TestScoping(TestUnitBase):
             test = next(data | unit)
             self.assertEqual(test.scope, scope)
             self.assertEqual(test['tv'], 7)
+
+    def test_pipeline(self):
+        data = self.download_sample('a322353cfc0360dbd8dcceb3e472a47848e50ca6578ef3834b152285b0030017')
+        pipe = self.load_pipeline(r'''
+            push [[
+                     | docmeta
+                     | jamv {path}
+                     | pop
+                ]| xtvba [
+                     | sep
+                ]| push [
+                     | rex CustomDocumentProperties.((??string)) {1:escvb}
+                     | pop keymap
+                ]| resplit '\b[A-Z0-9]{5,}\(((??ps1str))\)'
+                 | scope 1::2
+                 | escvb
+                 | rex '(.*?)IDWTOQ(.*)' {1:map[{2},v:keymap]:escvb[-R]}
+            ]| xtp url
+        ''')
+        test = data | pipe | str
+        self.assertEqual(test,
+            'https'':/''/raw.githubusercontent''.com/rhonda113/solid-broccoli/refs/heads/main/solidbroccoli.txt')

@@ -794,10 +794,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     expression = self.format(modifier, codec, args, symb, True, False, used)
                     output = DelayedNumSeqArgument(
                         expression.decode(codec), reverse=True, seed=converted)
-                    try:
-                        output = output()
-                    except Exception:
-                        output = output(Chunk(value, meta=self))
+                    output = output(Chunk(value, meta=self))
 
                 if output is None:
                     output = converted
