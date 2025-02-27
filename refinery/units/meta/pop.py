@@ -114,7 +114,7 @@ class pop(Unit):
                 done = True
 
         if not done:
-            raise ValueError('Not all variables could be assigned.')
+            self.log_warn('not all variables could be assigned.')
 
         nesting = self.args.nesting
 
