@@ -1462,27 +1462,33 @@ class DelayedRegexpArgument(DelayedArgument):
     @DelayedArgumentDispatch.Inherit(DelayedArgument)
     def handler(self, expression: str) -> bytes:
         """
-        The default handler encodes the input expression as latin-1 to return a binary
-        string regular expression.
-        Furthermore, the use of named patterns from `refinery.lib.patterns.formats` and
-        `refinery.lib.patterns.indicators` is possible by means of the extension format
-        `(??name)`. For example, the pattern `e:((??url)\\x00){4}` will match a sequence
-        of four URL strings which are all terminated with a null character.
+        The default handler encodes the input expression as latin-1 to return a binary string regular
+        expression. Two additional syntax features have been added:
+
+        - The use of named patterns from `refinery.lib.patterns.formats` and `refinery.lib.patterns.indicators`
+          is possible by means of the extension format `(??name)`. For example, the pattern `((??url)\\x00){4}`
+          will match a sequence of four URL strings which are all terminated with a null character.
+        - The syntax `(?/var=PATTERN)` is equivalent to `(?P<var>PATTERN)`.
         """
-        if '(??' in expression:
+        if '(?' in expression:
             from refinery.lib.patterns import formats, indicators
 
-            def replace(match):
+            def replace_known_pattern(match):
                 name = match[1]
                 return '(?:{})'.format(formats.get(
                     name, indicators.get(name, match[0])))
 
+            def replace_variable_assignment(match):
+                return F'(?P<{match[1]}>'
+
+            expression = re.sub(R'\(\?/(\w+)=',
+                replace_variable_assignment, expression)
             expression = re.sub(
                 R'\(\?\?({}|{})\)'.format(
                     '|'.join(p.name for p in formats),
                     '|'.join(p.name for p in indicators)
                 ),
-                replace,
+                replace_known_pattern,
                 expression
             )
 
