@@ -981,15 +981,12 @@ class DelayedArgument(LazyEvaluation):
             return obj
         raise ArgumentTypeError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion is known.')
 
-    @handler.register('v', 'var')
-    def var(self, name: str | bytes) -> bytes:
+    @handler.register('v', 'var', final=True)
+    def var(self, name: str) -> bytes:
         """
-        The handler `var:name` contains the value of the meta variable `name`.
+        The final handler `var:name` contains the value of the meta variable `name`.
         The variable remains attached to the chunk.
         """
-        if not isinstance(name, str):
-            name = name.decode()
-
         def extract(data: Chunk):
             meta = metavars(data)
             try:
@@ -997,26 +994,21 @@ class DelayedArgument(LazyEvaluation):
             except KeyError:
                 raise VariableMissing(name)
             return self._interpret_variable(name, result)
-
         return extract
 
-    @handler.register('eat')
-    def eat(self, name: str | bytes) -> bytes:
+    @handler.register('eat', final=True)
+    def eat(self, name: str) -> bytes:
         """
         The final handler `eat:name` contains the value of the meta variable `name`.
         The variable is removed from the chunk and no longer available to subsequent
         units.
         """
-        if not isinstance(name, str):
-            name = name.decode()
-
         def extract(data: Chunk):
             try:
                 result = data.meta.pop(name)
             except KeyError as K:
                 raise VariableMissing(name) from K
             return self._interpret_variable(name, result)
-
         return extract
 
     @handler.register('e', 'E', 'eval')
