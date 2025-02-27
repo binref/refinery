@@ -981,35 +981,44 @@ class DelayedArgument(LazyEvaluation):
             return obj
         raise ArgumentTypeError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion is known.')
 
+    def _var(self, name: str, eat: bool) -> bytes:
+        if not name.isidentifier():
+            name = multibin(name)
+
+        def extract(data: Chunk):
+            var = name(data) if callable(name) else name
+            if not isinstance(var, str):
+                if not isinstance(var, bytes):
+                    var = bytes(var)
+                var = var.decode()
+            meta = metavars(data)
+            try:
+                if eat:
+                    result = meta.pop(var)
+                else:
+                    result = meta[var]
+            except KeyError as KE:
+                raise VariableMissing(var) from KE
+            return self._interpret_variable(name, result)
+
+        return extract
+
     @handler.register('v', 'var', final=True)
     def var(self, name: str) -> bytes:
         """
-        The final handler `var:name` contains the value of the meta variable `name`.
-        The variable remains attached to the chunk.
+        The handler `var:name` contains the value of the meta variable `name`. This handler is semi-final;
+        if the provided argument is an identifier, it is read directly as a variable name. If it is not an
+        identifier, it will be interpreted as a multibin expression to compute the name.
         """
-        def extract(data: Chunk):
-            meta = metavars(data)
-            try:
-                result = meta[name]
-            except KeyError:
-                raise VariableMissing(name)
-            return self._interpret_variable(name, result)
-        return extract
+        return self._var(name, eat=False)
 
     @handler.register('eat', final=True)
     def eat(self, name: str) -> bytes:
         """
-        The final handler `eat:name` contains the value of the meta variable `name`.
-        The variable is removed from the chunk and no longer available to subsequent
-        units.
+        The handler `eat:name` works exactly like `var:name` with the exception that the variable is removed
+        from the chunk after evaluation.
         """
-        def extract(data: Chunk):
-            try:
-                result = data.meta.pop(name)
-            except KeyError as K:
-                raise VariableMissing(name) from K
-            return self._interpret_variable(name, result)
-        return extract
+        return self._var(name, eat=True)
 
     @handler.register('e', 'E', 'eval')
     def eval(self, expression) -> Any:
