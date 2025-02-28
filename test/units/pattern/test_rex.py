@@ -79,5 +79,5 @@ class TestRex(TestUnitBase):
     def test_input_forward(self):
         data = B'HELLO WORLD'
         unit = self.load('L', '{.}')
-        test = data | unit | bytes
-        self.assertEqual(test, data)
+        test = data | unit | [bytes]
+        self.assertEqual(test, [data, data, data])
