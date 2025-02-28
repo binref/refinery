@@ -7,6 +7,8 @@ from refinery.lib.meta import metavars
 from refinery.units.pattern import Arg, SingleRegexUnit, PatternExtractor
 from refinery.units import Chunk
 
+_FORWARD_VAR = '.'
+
 
 class rex(SingleRegexUnit, PatternExtractor):
     """
@@ -18,7 +20,8 @@ class rex(SingleRegexUnit, PatternExtractor):
         {match-group:pipeline}
 
     where `:pipeline` is an optional pipeline of refinery commands as it would be specified on
-    the command line. The value of the corresponding match is post-processed with this command.
+    the command line. The value of the corresponding match is post-processed with this command. The
+    unit also supports the special output format `{%s}` which represents the input data.
     """
     def __init__(
         self, regex,
@@ -67,8 +70,10 @@ class rex(SingleRegexUnit, PatternExtractor):
                 for key, value in symb.items():
                     if value is None:
                         symb[key] = B''
+                symb[_FORWARD_VAR] = data
                 item = meta.format(s, self.codec, args, symb, True, True, used)
                 used.update(key for key, value in symb.items() if not value)
+                used.add(_FORWARD_VAR)
                 for variable in used:
                     symb.pop(variable, None)
                 symb.update(offset=match.start())
@@ -78,3 +83,6 @@ class rex(SingleRegexUnit, PatternExtractor):
                 return chunk
             transformations.append(transformation)
         yield from self.matches_filtered(memoryview(data), self.regex, *transformations)
+
+
+rex.__doc__ %= _FORWARD_VAR

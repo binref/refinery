@@ -75,3 +75,9 @@ class TestRex(TestUnitBase):
     def test_auto_batch(self):
         pl = L(R'emit Foo12Bar336 | rex (\\w+?)(\\d+) {2} {1} [[| pop k:eval | cfmt {k:x}{} ]]')
         self.assertEqual(pl(), B'cFoo150Bar')
+
+    def test_input_forward(self):
+        data = B'HELLO WORLD'
+        unit = self.load('L', '{.}')
+        test = data | unit | bytes
+        self.assertEqual(test, data)
