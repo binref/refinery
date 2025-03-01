@@ -12,3 +12,8 @@ class dnblob(Unit):
         header = DotNetHeader(data, parse_resources=False)
         for blob in header.meta.Streams.Blob.values():
             yield blob
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.id import is_likely_pe_dotnet
+        return is_likely_pe_dotnet(data)

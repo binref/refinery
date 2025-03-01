@@ -24,6 +24,11 @@ class dnfields(PathExtractorUnit):
     the data and additional heuristics are used to guess the size of the data
     type.
     """
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.id import is_likely_pe_dotnet
+        return is_likely_pe_dotnet(data)
+
     def unpack(self, data):
         header = DotNetHeader(data, parse_resources=False)
         tables = header.meta.Streams.Tables

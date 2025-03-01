@@ -20,3 +20,8 @@ class dnrc(PathExtractorUnit):
 
         for resource in header.resources:
             yield UnpackResult(resource.Name, resource.Data)
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.id import is_likely_pe_dotnet
+        return is_likely_pe_dotnet(data)

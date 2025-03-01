@@ -6,8 +6,7 @@ from refinery.lib.dotnet.header import DotNetHeader
 
 class dnstr(Unit):
     """
-    Extracts all strings defined in the `#Strings` and `#US` streams of .NET
-    executables.
+    Extracts all strings defined in the `#Strings` and `#US` streams of .NET executables.
     """
 
     def __init__(
@@ -27,3 +26,8 @@ class dnstr(Unit):
         if self.args.user:
             for string in header.meta.Streams.US.values():
                 yield string.encode(self.codec)
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.id import is_likely_pe_dotnet
+        return is_likely_pe_dotnet(data)

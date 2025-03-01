@@ -27,3 +27,8 @@ class dnhdr(JSONEncoderUnit):
             dn['RSRC'] = dn.resources
 
         return self.to_json(dn)
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.id import is_likely_pe_dotnet
+        return is_likely_pe_dotnet(data)

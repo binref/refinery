@@ -153,3 +153,8 @@ class dnarrays(Unit):
 
         result = {m: {F'v{k}': v for k, v in enumerate(t, 1)} for m, t in result.items()}
         return json.dumps(result, indent=4).encode(self.codec)
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.id import is_likely_pe_dotnet
+        return is_likely_pe_dotnet(data)

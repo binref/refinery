@@ -43,3 +43,8 @@ class dnmr(PathExtractorUnit):
                 elif isbuffer(entry.Value):
                     data = entry.Value
             yield UnpackResult(entry.Name, data)
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.id import is_likely_pe_dotnet
+        return is_likely_pe_dotnet(data)
