@@ -23,3 +23,15 @@ class TestBase64(TestUnitBase):
         encoded = data | self.load(reverse=True, urlsafe=True) | bytes
         decoded = encoded | self.load() | bytes
         self.assertEqual(data, decoded)
+
+    def test_b64_handles(self):
+        import base64
+        data = self.generate_random_buffer(500)
+        unit = self.unit()
+        for name, encoding, test in [
+            ('base16', base64.b16encode, self.assertFalse),
+            ('base32', base64.b32encode, self.assertFalse),
+            ('base64', base64.b64encode, self.assertTrue),
+            ('base85', base64.b85encode, self.assertFalse),
+        ]:
+            test(unit.handles(encoding(data)), msg=F'handler test for {name} failed')
