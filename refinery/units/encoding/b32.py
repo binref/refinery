@@ -26,3 +26,10 @@ class b32(Unit):
             self.log_info(F'detected incorrect padding: removed {-missing} padding characters')
             data[padding_size + before_padding:] = []
         return base64.b32decode(data, casefold=True)
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.patterns import formats
+        if not formats.b32.value.fullmatch(data):
+            return False
+        return not formats.hex.value.fullmatch(data)
