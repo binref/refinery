@@ -6,9 +6,21 @@ import importlib
 import functools
 
 from .. import refinery, TestBase, NameUnknownException
-from refinery.units import requirement, Unit, RefineryImportMissing, Entry, LogLevel
+from refinery.units import requirement, RefineryImportMissing, Entry, LogLevel
 
 __all__ = ['refinery', 'TestUnitBase', 'NameUnknownException']
+
+
+class MissingRequirement(property):
+
+    def __init__(self, name):
+        def broken(*a, **k):
+            raise RefineryImportMissing(name)
+        super().__init__(broken)
+        self.name = name
+
+    def __get__(self, unit, tp=None):
+        raise RefineryImportMissing(self.name)
 
 
 class TestUnitBaseMeta(type):
@@ -32,12 +44,11 @@ class TestUnitBaseMeta(type):
                     restoration = {}
                     for base in unit.mro():
                         for name, getter in base.__dict__.items():
+                            if name in restoration:
+                                continue
                             if isinstance(getter, requirement):
-                                def broken(*a, **k):
-                                    raise RefineryImportMissing(broken.dependency)
-                                broken.dependency = getter.dependency
                                 restoration[name] = getter
-                                setattr(unit, name, property(broken))
+                                setattr(unit, name, MissingRequirement(name))
                     try:
                         r = __wrapped_method(self, *args, **kwargs)
                     except ImportError:
