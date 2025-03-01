@@ -136,7 +136,7 @@ class wshenc(Unit):
         for byte in data:
             if byte < 128:
                 index += 1
-            if (byte == 9 or 31 < byte < 128) and byte != 60 and byte != 62 and byte != 64:
+            if byte == 9 or byte in range(32, 128) and byte not in (60, 62, 64):
                 byte = cls._chunk(byte, index)
             yield byte
 
@@ -161,3 +161,12 @@ class wshenc(Unit):
                 raise ValueError('Encoded script marker was not found.')
             data = match[0][12:-12]
         return bytearray(self._decoded(self._unescape(data)))
+
+    @classmethod
+    def handles(cls, data: bytearray):
+        view = memoryview(data)
+        if not re.search(BR'#@~\^[!-~]{6}==', view[:+64]):
+            return None
+        if not re.search(BR'[!-~]{6}==\^#~@', view[-64:]):
+            return None
+        return True
