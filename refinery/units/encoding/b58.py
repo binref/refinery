@@ -10,3 +10,12 @@ class b58(base):
     """
     def __init__(self):
         super().__init__(b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz')
+
+    @classmethod
+    def handles(cls, data):
+        from refinery.lib.patterns import formats
+        return (
+            formats.b58.value.fullmatch(data)
+            and not formats.hex.value.fullmatch(data)
+            and not formats.b32.value.fullmatch(data)
+        )

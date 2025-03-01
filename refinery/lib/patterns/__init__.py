@@ -329,6 +329,10 @@ class formats(PatternEnum):
     "Sequences of alpha-numeric characters"
     b32 = pattern('[A-Z2-7]+|[a-z2-7+]')
     "Base32 encoded strings"
+    b58 = alphabet(R'(?:[1-9A-HJ-NP-Za-km-z]')
+    "Base58 encoded strings"
+    b62 = alphabet(R'(?:[0-9A-Za-z]')
+    "Base62 encoded strings"
     b64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', postfix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?')
     "Base64 encoded strings"
     b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]')
