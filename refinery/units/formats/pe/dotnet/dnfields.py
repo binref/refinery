@@ -4,8 +4,10 @@ import re
 import struct
 
 from typing import NamedTuple, Optional, Dict, Tuple
+from collections import Counter
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats.pe.dotnet import CodePath
 from refinery.lib.dotnet import integer_from_ldc
 from refinery.lib.dotnet.header import DotNetHeader
 
@@ -14,6 +16,7 @@ class FieldInfo(NamedTuple):
     type: str
     count: int
     size: int
+    offset: int
 
 
 class dnfields(PathExtractorUnit):
@@ -33,6 +36,7 @@ class dnfields(PathExtractorUnit):
         header = DotNetHeader(data, parse_resources=False)
         tables = header.meta.Streams.Tables
         fields = tables.FieldRVA
+        cpaths = CodePath(header)
 
         if not fields:
             return
@@ -89,7 +93,7 @@ class dnfields(PathExtractorUnit):
                     if name is None:
                         name = field_name
                     if info is None:
-                        info = FieldInfo(typename, count, size)
+                        info = FieldInfo(typename, count, size, match.start())
                     icache[signature] = info
                     return name, info
             else:
@@ -100,12 +104,18 @@ class dnfields(PathExtractorUnit):
         rwidth = max(rwidth, 4)
         remaining_field_indices = set(range(len(tables.Field)))
 
+        unpack = []
+        name_count = Counter(tables.Field[rv.Field.Index - 1].Name for rv in fields)
+        name_width = len(str(len(fields)))
+
         for k, rv in enumerate(fields):
             _index = rv.Field.Index
             field = tables.Field[_index - 1]
             remaining_field_indices.discard(_index - 1)
+            if not field.Flags.HasFieldRVA:
+                continue
             fname = field.Name
-            ftype = None
+            type = None
             signature: bytes = field.Signature
             offset = header.pe.get_offset_from_rva(rv.RVA)
 
@@ -114,17 +124,17 @@ class dnfields(PathExtractorUnit):
                 # https://www.codeproject.com/Articles/42649/NET-File-Format-Signatures-Under-the-Hood-Part-1
                 # https://www.codeproject.com/Articles/42655/NET-file-format-Signatures-under-the-hood-Part-2
                 guess = {
-                    0x03: FieldInfo('Char',   1, 1),  # noqa
-                    0x04: FieldInfo('SByte',  1, 1),  # noqa
-                    0x05: FieldInfo('Byte',   1, 1),  # noqa
-                    0x06: FieldInfo('Int16',  1, 2),  # noqa
-                    0x07: FieldInfo('UInt16', 1, 2),  # noqa
-                    0x08: FieldInfo('Int32',  1, 4),  # noqa
-                    0x09: FieldInfo('UInt32', 1, 4),  # noqa
-                    0x0A: FieldInfo('Int64',  1, 8),  # noqa
-                    0x0B: FieldInfo('UInt64', 1, 8),  # noqa
-                    0x0C: FieldInfo('Single', 1, 4),  # noqa
-                    0x0D: FieldInfo('Double', 1, 8),  # noqa
+                    0x03: FieldInfo('Char',   1, 1, 0),  # noqa
+                    0x04: FieldInfo('SByte',  1, 1, 0),  # noqa
+                    0x05: FieldInfo('Byte',   1, 1, 0),  # noqa
+                    0x06: FieldInfo('Int16',  1, 2, 0),  # noqa
+                    0x07: FieldInfo('UInt16', 1, 2, 0),  # noqa
+                    0x08: FieldInfo('Int32',  1, 4, 0),  # noqa
+                    0x09: FieldInfo('UInt32', 1, 4, 0),  # noqa
+                    0x0A: FieldInfo('Int64',  1, 8, 0),  # noqa
+                    0x0B: FieldInfo('UInt64', 1, 8, 0),  # noqa
+                    0x0C: FieldInfo('Single', 1, 4, 0),  # noqa
+                    0x0D: FieldInfo('Double', 1, 8, 0),  # noqa
                 }.get(signature[1], None)
             else:
                 fname, guess = _guess_field_info(_index, signature, fname)
@@ -132,15 +142,16 @@ class dnfields(PathExtractorUnit):
             if guess is None:
                 self.log_warn(lambda: F'field {k:0{iwidth}d} with signature {field.Signature.hex()}: unable to guess type information')
                 continue
-            if not fname.isprintable():
-                fname = F'F{rv.RVA:0{rwidth}X}'
-            ext = ftype = guess.type.lower()
+            if not fname.isprintable() or name_count[fname] > 1:
+                fname = F'Field{k + 1:0{name_width}d}'
+            type = guess.type.lower()
             if guess.count > 1:
-                ftype += F'[{guess.count}]'
+                type += F'[{guess.count}]'
             self.log_debug(
                 F'field {k:0{iwidth}d}; token 0x{_index:06X}; RVA 0x{rv.RVA:04X}; count {guess.count}; type {guess.type}; name {fname}')
             end = offset + guess.count * guess.size
-            yield UnpackResult(F'{fname}.{ext}', memory[offset:end], name=fname, type=ftype)
+            path = cpaths.method_path(guess.offset) if guess.offset else ''
+            unpack.append(UnpackResult(F'{path}/{fname}', memory[offset:end], name=fname, type=type))
 
         for _index in remaining_field_indices:
             field = tables.Field[_index]
@@ -149,7 +160,7 @@ class dnfields(PathExtractorUnit):
             if field.Flags.HasFieldRVA:
                 self.log_warn(F'field {name} has RVA flag set, but no RVA was found')
             token = index.to_bytes(3, 'little')
-            values = set()
+            values = {}
             for match in re.finditer((
                 BR'\x72(?P<token>...)\x70'          # ldstr
                 BR'(?:\x6F(?P<function>...)\x0A)?'  # call GetBytes
@@ -164,13 +175,13 @@ class dnfields(PathExtractorUnit):
                         self.log_info(F'skipping string assignment passing through call to {fn_name}')
                         continue
                 k = int.from_bytes(md['token'], 'little')
-                values.add(header.meta.Streams.US[k].encode(self.codec))
+                values[match.start()] = header.meta.Streams.US[k].encode(self.codec)
             if not values:
                 continue
             if len(values) == 1:
-                yield UnpackResult(
-                    F'{name}.str',
-                    next(iter(values)),
-                    name=name,
-                    type='string'
-                )
+                offset, value = values.popitem()
+                path = cpaths.method_path(offset)
+                unpack.append(UnpackResult(F'{path}/{name}', value, name=name, type='string'))
+
+        unpack.sort(key=lambda u: u.path)
+        yield from unpack
