@@ -73,7 +73,7 @@ jobs:
 
   coverage:
     if: ${{ github.repository_owner == 'binref' }}
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     needs: 
       - test
       - audit
@@ -82,19 +82,14 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+    - name: Install Dependencies
+      uses: ./.github/actions/setup/
       with:
-        python-version: '3.12'
-    - name: Install dependencies
-      run: |
-        sudo apt-get install xclip xvfb
-        python -m pip install --upgrade pip
-        python -m pip install pycodestyle pyflakes pytest pytest-cov
-        pip install .[all]
+        py: '3.12'
+        os: windows-latest
     - name: Run tests and collect coverage
-      run: |
-        XDG_SESSION_TYPE=x11 xvfb-run pytest --cov-config=.coveragerc --cov refinery test/
+      run: pytest --cov-config=.coveragerc --cov refinery test/
+      shell: powershell
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
       with:
