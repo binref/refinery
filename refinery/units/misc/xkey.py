@@ -121,7 +121,7 @@ class xkey(Unit):
             'XML'           : (B'<?xml version="'),
             'Ace'           : (B'**ACE**'),
         },
-        range(0x3F, 0x40): {
+        range(0x3C, 0x41): {
             'PEStub': (
                 B'\0\x0E\x1F\xBA\x0E\x00\xB4\x09\xCD\x21\xB8\x01\x4C\xCD\x21'
                 B'This program cannot be run in DOS mode.\r'
