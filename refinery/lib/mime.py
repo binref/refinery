@@ -12,16 +12,6 @@ class NoMagicAvailable(ModuleNotFoundError):
     pass
 
 
-FileTypeBlob = {
-    'application/dos-exe',
-    'application/exe',
-    'application/msdos-windows',
-    'application/octet-stream',
-    'application/x-dosexec',
-    'application/x-exe',
-    'application/x-msdos-program',
-}
-
 FileTypeMap = {
     'application/x-setupscript': 'ini',
     'applicaiton/x-bytecode.python': 'pyc',
@@ -265,6 +255,10 @@ class FileMagicInfo:
     _GZIP_PEEK_MINIMUM = 64
     _GZIP_DC_CHUNK_LEN = 16
 
+    @property
+    def blob(self):
+        return self.description.lower() == 'data'
+
     def __init__(self, data, default='bin', decompress=True):
         if not magic:
             raise NoMagicAvailable
@@ -272,14 +266,12 @@ class FileMagicInfo:
             data = bytes(data)
         mime = magicparse(data, mime=True)
         self.mime = mime.split(';')[0].lower()
-        self.description = magicparse(data)
+        description = magicparse(data).strip()
+        self.description = description
         try:
             extension = FileTypeMap[self.mime]
         except KeyError:
             extension = default
-            self.blob = True
-        else:
-            self.blob = self.mime in FileTypeBlob
         if self.description == 'Microsoft OOXML':
             extension = 'docx'
         if extension == 'exe':
