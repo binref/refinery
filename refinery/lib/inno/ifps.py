@@ -291,7 +291,7 @@ class TPrimitive(IFPSTypeBase):
             TC.Pointer             : VariableBase,
             TC.PChar               : str,
             TC.ResourcePointer     : VariableBase,
-            TC.Variant             : VariableBase,
+            TC.Variant             : object,
             TC.S64                 : int,
             TC.Char                : str,
             TC.WideString          : str,
@@ -338,10 +338,10 @@ class TInterface(IFPSTypeBase):
     uuid: UUID
 
     def py_type(self, *_):
-        return UUID
+        return object
 
     def default(self, *_):
-        return UUID(int=0)
+        return None
 
     def display(self, indent=0):
         display = super().display(indent)
