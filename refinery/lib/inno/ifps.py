@@ -93,7 +93,7 @@ class Op(enum.IntEnum):
     PushEH       = 0x13  # noqa
     PopEH        = 0x14  # noqa
     IntegerNot   = 0x15  # noqa
-    SetCopyPtr   = 0x16  # noqa
+    SetPtrToCopy = 0x16  # noqa
     Inc          = 0x17  # noqa
     Dec          = 0x18  # noqa
     JumpPop1     = 0x19  # noqa
@@ -395,7 +395,7 @@ class TArray(IFPSTypeBase):
 
     def display(self, indent=0):
         display = F'{_TAB * indent}{self.type!s}'
-        return F'{display}[]'
+        return F'array of {display}'
 
     def simple(self, nested=False):
         return self.type.simple(nested)
@@ -954,7 +954,7 @@ class Instruction:
         elif self.opcode is Op.Calculate:
             dst, src = self.operands
             return F'{dst!s} {self.operator!s} {src!s}'
-        elif self.opcode in (Op.Assign, Op.SetPtr):
+        elif self.opcode in (Op.Assign, Op.SetPtr, Op.SetPtrToCopy):
             dst, src = self.operands
             return F'{dst!s} := {src!s}'
         else:
@@ -1286,7 +1286,7 @@ class IFPSFile(Struct):
             Op.BooleanNot: 1,
             Op.Neg: 1,
             Op.IntegerNot: 1,
-            Op.SetCopyPtr: 2,
+            Op.SetPtrToCopy: 2,
             Op.SetPtr: 2,
         }
 
