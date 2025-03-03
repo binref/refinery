@@ -440,12 +440,23 @@ def _parse_class_reference(cls) -> IFPSClassReference:
         for member in body:
             kind, _, decl = member.lstrip().rstrip(';').partition(' ')
             modifier = None
+            writable = None
             if kind == 'property':
                 decl, _, attributes = decl.partition(';')
                 attributes = attributes.strip().split()
                 if len(attributes) == 1:
                     modifier = F'__{attributes[0]}_only'
+                writable = 'write' in attributes
             sig = parse_decl(decl, kind, modifier=modifier)
+            if writable is True and not sig.parameters and sig.return_type:
+                sig = IFPSSignature(
+                    sig.name,
+                    sig.kind,
+                    [IFPSParam('NewValue', sig.return_type, True)],
+                    sig.return_type,
+                    sig.void,
+                    sig.modifier
+                )
             add_types(sig.parameters)
             members[sig.name] = sig
         classes[name] = IFPSClass(name, members)
