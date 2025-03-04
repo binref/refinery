@@ -2148,25 +2148,28 @@ class InnoArchive:
         success = False
         results: dict[InnoVersion, InnoParseResult] = {}
 
+        VER = _VERSIONS
+        AMB = _IS_AMBIGUOUS
+
         if not version.is_ambiguous():
-            index = _VERSIONS.index(version)
+            index = VER.index(version)
         else:
             try:
-                index = max(k for k, v in enumerate(_VERSIONS) if v <= version)
+                index = max(k for k, v in enumerate(VER) if v <= version)
             except Exception:
                 index = 0
 
         lower = index
-        while lower > 0 and _IS_AMBIGUOUS[_VERSIONS[lower - 1]]:
+        upper = index + 1
+        while lower > 0 and AMB[VER[lower - 1]] or VER[lower - 1].semver == VER[lower].semver:
             lower -= 1
 
-        versions = [version] + _VERSIONS[lower:index] + _VERSIONS[index + 1:] + _VERSIONS[:lower]
-
-        self._log_comment(F'inno {_VERSIONS[lower]!s} via {method} header: {header}')
+        versions = [version] + VER[lower:upper] + VER[upper:] + VER[:lower]
 
         for v in versions:
-            result = _parse(v)
-            if success := result.ok():
+            if success := (result := _parse(v)).ok():
+                if v != version:
+                    self._log_comment(F'inno {v!s} via closest match: {header}')
                 break
             if not result.failures and (best_parse is None or result.warnings < best_score):
                 best_score = best_score
