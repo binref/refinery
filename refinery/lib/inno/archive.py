@@ -2347,7 +2347,7 @@ class InnoArchive:
         stream.data = result
         return result
 
-    def read_chunk(self, file: InnoFile, password: Optional[str] = None):
+    def read_chunk(self, file: InnoFile, password: Optional[str] = None, check_only: bool = False):
         reader = file.reader
         offset = file.chunk_offset
         length = file.chunk_length
@@ -2371,7 +2371,7 @@ class InnoArchive:
                 raise InvalidPassword
             if file.password_type == PasswordType.XChaCha20:
                 salt, iterations, nonce = struct.unpack('=16sI24s', file.password_salt)
-                key = password.encode('utf8') | pbkdf2(32, salt, iterations, 'SHA256') | bytes
+                key = password.encode(self.script_codec) | pbkdf2(32, salt, iterations, 'SHA256') | bytes
                 test_nonce = list(struct.unpack('6I', nonce))
                 test_nonce[2] = ~test_nonce[2]
                 test_nonce = struct.pack('6I', test_nonce)
@@ -2380,7 +2380,7 @@ class InnoArchive:
                 decryptor = xchacha(key, nonce=nonce)
             else:
                 password_bytes = password.encode(
-                    'utf-16le' if file.unicode else 'utf8')
+                    'utf-16le' if file.unicode else self.script_codec)
                 algorithm = {
                     PasswordType.SHA1: sha1,
                     PasswordType.MD5 : md5,
@@ -2392,6 +2392,9 @@ class InnoArchive:
                 hash = algorithm(reader.read(8))
                 hash.update(password_bytes)
                 decryptor = rc4(hash.digest(), discard=1000)
+
+        if check_only:
+            return
 
         data = reader.read_exactly(length)
 
