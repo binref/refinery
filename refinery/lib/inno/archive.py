@@ -2196,7 +2196,7 @@ class InnoArchive:
     @cached_property
     def ifps(self):
         if script := self.setup_info.Header.get_script():
-            return IFPSFile(script, self.script_codec)
+            return IFPSFile(script, self.script_codec, self.version.unicode)
 
     def _try_parse_as(
         self,

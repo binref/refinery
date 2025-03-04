@@ -176,6 +176,26 @@ class TC(enum.IntEnum):
     ExtClass            = 0x83  # noqa
 
     @property
+    def primitive(self) -> bool:
+        return self not in {
+            TC.Class,
+            TC.ProcPtr,
+            TC.Interface,
+            TC.Set,
+            TC.StaticArray,
+            TC.Array,
+            TC.Record,
+        }
+
+    @property
+    def container(self) -> bool:
+        return self in {
+            TC.StaticArray,
+            TC.Array,
+            TC.Record,
+        }
+
+    @property
     def width(self):
         return {
             TC.Variant       : 0x10,
@@ -242,23 +262,11 @@ class IFPSTypeBase(abc.ABC):
 
     @property
     def primitive(self) -> bool:
-        return self.code not in {
-            TC.Class,
-            TC.ProcPtr,
-            TC.Interface,
-            TC.Set,
-            TC.StaticArray,
-            TC.Array,
-            TC.Record,
-        }
+        return self.code.primitive
 
     @property
     def container(self) -> bool:
-        return self.code in {
-            TC.StaticArray,
-            TC.Array,
-            TC.Record,
-        }
+        return self.code.container
 
     def __str__(self):
         return self.display(0)
@@ -311,7 +319,7 @@ class TPrimitive(IFPSTypeBase):
 @ifpstype
 class TProcPtr(IFPSTypeBase):
     void: bool
-    args: List[DeclSpecParam]
+    args: tuple[DeclSpecParam, ...]
 
     def py_type(self, *_):
         return None
@@ -867,6 +875,10 @@ class Operand(NamedTuple):
     def __str__(self):
         return self.__tostring(str)
 
+    @property
+    def immediate(self):
+        return self.type == OperandType.Value
+
     def __tostring(self, converter):
         if self.type is OperandType.Value:
             return converter(self.value)
@@ -1002,8 +1014,9 @@ class IFPSFile(Struct):
 
     Magic = B'IFPS'
 
-    def __init__(self, reader: StructReader[memoryview], codec: str = 'latin1'):
+    def __init__(self, reader: StructReader[memoryview], codec: str = 'latin1', unicode: bool = True):
         self.codec = codec
+        self.unicode = unicode
         self.types: List[IFPSType] = []
         self.functions: List[Function] = []
         self.globals: List[VariableBase] = []
@@ -1033,7 +1046,7 @@ class IFPSFile(Struct):
             TC.U16   : {'Word'},
             TC.S16   : {'SmallInt'},
             TC.S32   : {'Integer', 'LongInt'},
-            TC.U32   : {'LongWord', 'Cardinal'},
+            TC.U32   : {'LongWord', 'Cardinal', 'HWND', 'TSetupProcessorArchitecture'},
             TC.Char  : {'AnsiChar'},
             TC.PChar : {'PAnsiChar'},
             TC.S64   : {'Int64'},
@@ -1050,26 +1063,100 @@ class IFPSFile(Struct):
     def _load_flags(self):
         return self.version >= 23
 
-    def _name_types(self, finalize=False):
-        self.types_by_name = td = CaseInsensitiveDict()
-        self.types_by_code = tc = {}
-        conflicts = 0
+    def _name_types(self, missing_types: Optional[set[str]] = None):
+        tbn: dict[str, IFPSType] = CaseInsensitiveDict()
+        self.types_by_name = tbn
         for t in self.types:
             name = str(t)
             code = t.code
             known = self._known_type_names.get(code)
-            if name in td:
-                conflicts += 1
             if known:
                 known.discard(name)
-            td[name] = t
-            tc[code] = t
-        if finalize:
+            tbn[name] = t
+
+        if missing_types:
+            def add_type(name: str, type: IFPSType):
+                tbn[name] = type
+                self.types.append(type)
+                return type
+
+            def make_string(name: str = 'String'):
+                try:
+                    return tbn[name]
+                except KeyError:
+                    pass
+                for type in tbn.values():
+                    if type.code in (
+                        TC.AnsiString,
+                        TC.WideString,
+                        TC.UnicodeString,
+                    ):
+                        break
+                else:
+                    code = TC.WideString if self.unicode else TC.AnsiString
+                    type = TPrimitive(code, symbol=name)
+                return add_type(name, type)
+
+            for name in tbn:
+                missing_types.discard(name)
+
+            if 'TGUID' in missing_types:
+                missing_types |= {'LongWord', 'Word', 'Byte'}
+
+            for code in TC:
+                name = code.name
+                if name not in missing_types:
+                    continue
+                missing_types.discard(name)
+                add_type(name, TPrimitive(code, symbol=name))
+
             for code, names in self._known_type_names.items():
                 for name in names:
-                    if t := tc.get(code):
-                        td[name] = t
-        return conflicts
+                    if name not in missing_types:
+                        continue
+                    missing_types.discard(name)
+                    add_type(name, TPrimitive(code, symbol=name))
+
+            for name in [
+                'TVarType',
+                'TInputQueryWizardPage',
+                'TInputOptionWizardPage',
+                'TInputDirWizardPage',
+                'TInputFileWizardPage',
+                'TOutputMsgWizardPage',
+                'TOutputMsgMemoWizardPage',
+                'TOutputProgressWizardPage',
+                'TOutputMarqueeProgressWizardPage',
+                'TDownloadWizardPage',
+                'ExtractionWizardPage',
+                'TWizardPage',
+                'TSetupForm',
+                'TComponent',
+                'TNewNotebookPage',
+            ]:
+                if name not in missing_types:
+                    continue
+                add_type(name, TClass(TC.Class, name, symbol=name))
+
+            if (name := 'String') in missing_types:
+                make_string(name)
+
+            if (name := 'AnyString') in missing_types:
+                make_string(name)
+
+            if (name := 'TArrayOfString') in missing_types:
+                add_type(name, TArray(TC.Array, make_string()))
+
+            if (name := 'IUnknown') in missing_types:
+                add_type(name, TInterface(TC.Interface, UUID('{00000000-0000-0000-C000-000000000046}')))
+
+            if (name := 'TGUID') in missing_types:
+                add_type(name, TRecord(TC.Record, (
+                    tbn['LongWord'],
+                    tbn['Word'],
+                    tbn['Word'],
+                    TStaticArray(tbn['Byte'], 8)
+                ), symbol=name))
 
     def _load_types(self):
         def _normalize(n: str):
@@ -1089,7 +1176,7 @@ class IFPSFile(Struct):
             elif code is TC.ProcPtr:
                 spec = reader.read_length_prefixed()
                 void = bool(spec[0])
-                args = [DeclSpecParam(not b) for b in spec[1:]]
+                args = tuple(DeclSpecParam(not b) for b in spec[1:])
                 t = TProcPtr(code, void, args)
             elif code is TC.Interface:
                 guid = UUID(bytes=bytes(reader.read(0x10)))
@@ -1171,6 +1258,8 @@ class IFPSFile(Struct):
 
         reader = self.reader
         width = len(F'{self.count_functions:X}')
+        missing_types = set()
+
         for k in range(self.count_functions):
             decl = None
             body = None
@@ -1206,14 +1295,18 @@ class IFPSFile(Struct):
                         continue
                     if t := self.types_by_name.get(new.type):
                         t.symbol = new.type
+                    else:
+                        missing_types.add(new.type)
                 if sr := signature.return_type:
                     if (dr := decl.return_type) or (dr := self.types_by_name.get(sr)):
                         dr.symbol = sr
+                    else:
+                        missing_types.add(sr)
 
             fn = Function(name, decl, body, exported, attributes)
             self.functions.append(fn)
 
-        self.type_name_conflicts = self._name_types(True)
+        self.type_name_conflicts = self._name_types(missing_types)
 
         for function in self.functions:
             decl = function.decl
