@@ -85,5 +85,5 @@ class carve_zip(Unit):
             rev.append((start, end + len(end_marker)))
             end = start
         for start, end in reversed(rev):
-            zip = mem[start:end + len(end_marker)]
+            zip = mem[start:end]
             yield self.labelled(zip, offset=start)
