@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.7 - bugfix release
+
 ## Version 0.8.6
 - The unit `ps1str` has been renamed to `escps` to match it's partner unit `esc`.
 - The unit `escvb` was added to escape and unescape VB strings.
