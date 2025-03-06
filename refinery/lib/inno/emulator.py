@@ -1103,6 +1103,10 @@ class IFPSEmulator:
     def CreateOleObject(name: str) -> OleObject:
         return OleObject(name)
 
+    @external
+    def FindWindowByClassName(name: str) -> int:
+        return 0
+
     del external
 
 
