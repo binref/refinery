@@ -530,6 +530,7 @@ class IFPSEmulator:
 
         ip: int = 0
         sp: int = len(self.stack) - 1
+        pending_exception = None
         exceptions = []
 
         while True:
@@ -570,27 +571,36 @@ class IFPSEmulator:
                             args[k] = var.get()
                     if not handler.static:
                         args.insert(0, self)
-                    return_value = handler.call(*args)
-                    if not handler.void:
-                        self.stack[-1].set(return_value)
+                    try:
+                        return_value = handler.call(*args)
+                    except BaseException as b:
+                        pending_exception = b
+                    else:
+                        if not handler.void:
+                            self.stack[-1].set(return_value)
                 if not callstack:
-                    return
+                    if pending_exception is None:
+                        return
+                    raise pending_exception
                 function, ip, sp, exceptions = callstack.pop()
                 continue
 
             while insn := function.code.get(ip, None):
-                opc = insn.opcode
-                ip += insn.size
-                cycle += 1
-
                 if 0 < self.config.max_seconds < process_time() - exec_start:
                     raise EmulatorTimeout
                 if 0 < self.config.max_opcodes < cycle:
                     raise EmulatorExecutionLimit
                 if 0 < self.config.max_data_stack < len(self.stack):
                     raise EmulatorMaxStack
-
                 try:
+                    if pe := pending_exception:
+                        pending_exception = None
+                        raise pe
+
+                    opc = insn.opcode
+                    ip += insn.size
+                    cycle += 1
+
                     if opc == Op.Nop:
                         continue
                     elif opc == Op.Assign:
