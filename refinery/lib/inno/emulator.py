@@ -610,7 +610,10 @@ class IFPSEmulator:
                         }[insn.operator]
                         src = insn.op(1)
                         dst = insn.op(0)
-                        setval(dst, calculate(getval(dst), getval(src)))
+                        try:
+                            setval(dst, calculate(getval(dst), getval(src)))
+                        except ArithmeticError as AE:
+                            raise IFPSException from AE
                     elif opc == Op.Push:
                         # TODO: I do not actually know how this works
                         self.stack.append(getval(insn.op(0)))
