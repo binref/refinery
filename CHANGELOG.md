@@ -5,6 +5,12 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.6
+- The unit `ps1str` has been renamed to `escps` to match it's partner unit `esc`.
+- The unit `escvb` was added to escape and unescape VB strings.
+- An input forward format character was added to `rex` to support this common use case better.
+- The `dnfields` unit was reworked to extract prettier paths based on the method, type, and namespace.
+
 ## Version 0.8.5
 - Adds the `xtsim` unit to extract smart install maker archives.
 - Adds the `lzx` unit for LZX decompression.
