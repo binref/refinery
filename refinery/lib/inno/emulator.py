@@ -93,10 +93,18 @@ class Variable(VariableBase, Generic[_T]):
         return True
 
     def __getitem__(self, key: int):
-        return self.get(key)
+        var = self.deref()
+        if var.container:
+            return var.at(key).get()
+        else:
+            return var.data[key]
 
     def __setitem__(self, key: int, v: _T):
-        self.set(v, key)
+        var = self.deref()
+        if var.container:
+            var.at(key).set(v)
+        else:
+            var.data[key] = var._wrap(v)
 
     def __index__(self):
         data = self.data
@@ -211,62 +219,27 @@ class Variable(VariableBase, Generic[_T]):
     def set(
         self,
         value: Union[_T, Sequence[_T]],
-        key: Optional[int] = None,
     ) -> None:
         if isinstance(value, (Enum, Value)):
             value = value.value
         if self.pointer:
-            ptr: Variable = self.data
-            if ptr is None:
-                raise NullPointer(self)
-            return ptr.set(value, key)
+            return self.deref().set(value)
         elif self.container:
-            if key is None:
-                if not isinstance(value, (list, tuple)):
-                    raise TypeError
-                self.resize(len(value))
-                for k, v in enumerate(value):
-                    self.data[k].set(v)
-            elif not isinstance(key, int):
-                raise TypeError(key)
-            else:
-                self.data[key].set(value)
-        elif key is not None:
-            if self.type.code == TC.Set:
-                if not isinstance(key, int):
-                    raise TypeError(key)
-                if not isinstance(value, bool):
-                    raise TypeError(value)
-                if key not in range(self.type.size):
-                    raise IndexError
-                if value is True:
-                    self.data |= 1 << key
-                elif self.data >> key & 1:
-                    self.data ^= 1 << key
-            else:
-                raise InvalidIndex(self, key)
+            if not isinstance(value, (list, tuple)):
+                raise TypeError
+            self.resize(len(value))
+            for k, v in enumerate(value):
+                self.data[k].set(v)
         else:
             self.data = self._wrap(value)
 
-    def get(self, key: Optional[int] = None) -> Union[_T, List[_T]]:
+    def get(self) -> Union[_T, List[_T]]:
         if self.pointer:
-            ptr: Variable = self.data
-            if ptr is None:
-                raise NullPointer(self)
-            return ptr.get(key)
-        elif self.container:
+            return self.deref().get()
+        if self.container:
             data: List[Variable[_T]] = self.data
-            if key is None:
-                return [v.get() for v in data]
-            if not isinstance(key, int):
-                raise TypeError(key)
-            return data[key].get()
-        elif key is None:
-            return self.data
-        try:
-            return self.data[key]
-        except Exception as E:
-            raise InvalidIndex(self, key) from E
+            return [v.get() for v in data]
+        return self.data
 
     @property
     def name(self):
@@ -498,24 +471,15 @@ class IFPSEmulator:
                 var = var.at(k)
             return var
 
-        def access(op: Operand, new=None):
-            if op.type is OperandType.Value:
-                if new is not None:
-                    raise RuntimeError('attempt to assign to an immediate')
-                return op.value.value
-            i = op.index
-            v = getvar(op.variant)
-            if op.type is OperandType.IndexedByVar:
-                i = getvar(i).get()
-                if not isinstance(i, int):
-                    raise RuntimeError(F'Variable {op} accessed with non-integer {i!r} as index.')
-            return v.get(i) if new is None else v.set(new, i)
-
         def getval(op: Operand):
-            return access(op)
+            if op.immediate:
+                return op.value.value
+            return getvar(op).get()
 
         def setval(op: Operand, new):
-            return access(op, new=new)
+            if op.immediate:
+                raise RuntimeError('attempt to assign to an immediate')
+            getvar(op).set(new)
 
         class CallState(NamedTuple):
             fn: Function
@@ -604,6 +568,8 @@ class IFPSEmulator:
                     if opc == Op.Nop:
                         continue
                     elif opc == Op.Assign:
+                        dst = insn.op(0)
+                        src = insn.op(1)
                         setval(insn.op(0), getval(insn.op(1)))
                     elif opc == Op.Calculate:
                         calculate = {
