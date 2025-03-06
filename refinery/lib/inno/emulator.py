@@ -62,6 +62,11 @@ class InvalidIndex(TypeError):
         super().__init__(F'Assigning to {v.spec}[{key!r}]; type {v.type} does not support indexing.')
 
 
+class NullPointer(RuntimeError):
+    def __init__(self, v: Variable):
+        super().__init__(F'Trying to access uninitialized pointer value {v.spec}.')
+
+
 class OleObject:
     def __init__(self, name):
         self.name = name
@@ -76,6 +81,10 @@ class Variable(VariableBase, Generic[_T]):
     @property
     def container(self):
         return self.type.container
+
+    @property
+    def pointer(self):
+        return self.type.code == TC.Pointer
 
     def __len__(self):
         return len(self.data)
@@ -94,6 +103,9 @@ class Variable(VariableBase, Generic[_T]):
         if isinstance(data, str) and len(data) == 1:
             data = ord(data)
         return data
+
+    def at(self, k: int):
+        return self.deref().data[k]
 
     def deref(var):
         while True:
@@ -187,17 +199,11 @@ class Variable(VariableBase, Generic[_T]):
         for k in range(m):
             self.data.append(Variable(t.type, self.spec, (*self.path, k)))
 
-    def setptr(self, value: Variable, index: Optional[int], copy: bool = False):
-        if self.type.code != TC.Pointer:
+    def setptr(self, var: Variable, copy: bool = False):
+        if not self.pointer:
             raise TypeError
-        while value.type.code == TC.Pointer:
-            value = value.data
-        if not isinstance(value, Variable):
+        if not isinstance(var, Variable):
             raise TypeError
-        if index is not None:
-            var = value.data[index]
-        else:
-            var = value
         if copy:
             var = Variable(var.type, data=var.get())
         self.data = var
@@ -209,9 +215,11 @@ class Variable(VariableBase, Generic[_T]):
     ) -> None:
         if isinstance(value, (Enum, Value)):
             value = value.value
-        if self.type.code == TC.Pointer:
-            data: Variable = self.data
-            return data.set(value, key)
+        if self.pointer:
+            ptr: Variable = self.data
+            if ptr is None:
+                raise NullPointer(self)
+            return ptr.set(value, key)
         elif self.container:
             if key is None:
                 if not isinstance(value, (list, tuple)):
@@ -241,9 +249,11 @@ class Variable(VariableBase, Generic[_T]):
             self.data = self._wrap(value)
 
     def get(self, key: Optional[int] = None) -> Union[_T, List[_T]]:
-        if self.type.code == TC.Pointer:
-            data: Variable = self.data
-            return data.get(key)
+        if self.pointer:
+            ptr: Variable = self.data
+            if ptr is None:
+                raise NullPointer(self)
+            return ptr.get(key)
         elif self.container:
             data: List[Variable[_T]] = self.data
             if key is None:
@@ -273,7 +283,7 @@ class Variable(VariableBase, Generic[_T]):
             return rep
         if self.type.code is TC.Set:
             val = F'{val:b}'
-        elif self.type.code == TC.Pointer:
+        elif self.pointer:
             val: Variable
             return F'{rep} -> {val.name}'
         elif isinstance(val, (str, int, float, list)):
@@ -462,21 +472,31 @@ class IFPSEmulator:
         def operator_in(a, b):
             return a in b
 
-        def getvar(v: Union[Variant, Operand]) -> Variable:
-            if isinstance(v, Operand):
-                if v.type is OperandType.Value:
-                    raise TypeError('Attempting to retrieve variable for an immediate operand.')
-                v = v.variant
+        def getvar(op: Union[Variant, Operand]) -> Variable:
+            if not isinstance(op, Operand):
+                v = op
+                k = None
+            elif op.type is OperandType.Value:
+                raise TypeError('Attempting to retrieve variable for an immediate operand.')
+            else:
+                v = op.variant
+                k = op.index
+                if op.type is OperandType.IndexedByVar:
+                    k = getvar(k).get()
             t, i = v.type, v.index
             if t is VariantType.Argument:
                 if function.decl.void:
                     i -= 1
-                return self.stack[sp - i]
-            if t is VariantType.Global:
-                return self.globals[i]
-            if t is VariantType.Local:
-                return self.stack[sp + i]
-            raise TypeError
+                var = self.stack[sp - i]
+            elif t is VariantType.Global:
+                var = self.globals[i]
+            elif t is VariantType.Local:
+                var = self.stack[sp + i]
+            else:
+                raise TypeError
+            if k is not None:
+                var = var.at(k)
+            return var
 
         def access(op: Operand, new=None):
             if op.type is OperandType.Value:
@@ -651,18 +671,9 @@ class IFPSEmulator:
                         copy = False
                         if opc == Op.SetPtrToCopy:
                             copy = True
-                        dst = insn.op(0)
-                        src = insn.op(1)
-                        si = src.index
-                        di = dst.index
-                        dv = getvar(dst)
-                        if src.type == OperandType.IndexedByVar:
-                            si = getvar(si).get()
-                        if dst.type != OperandType.Variant:
-                            if dst.type == OperandType.IndexedByVar:
-                                di = getvar(di).get()
-                            dv = dv.data[di]
-                        dv.setptr(getvar(src), si, copy)
+                        dst = getvar(insn.op(0))
+                        src = getvar(insn.op(1))
+                        dst.setptr(src, copy=copy)
                     elif opc == Op.BooleanNot:
                         setval(a := insn.op(0), not getval(a))
                     elif opc == Op.IntegerNot:
@@ -1156,7 +1167,7 @@ class InnoSetupEmulator(IFPSEmulator):
             rc = 0
         for k in range(rc, rc + len(decl.parameters)):
             ptr: Variable[Variable] = self.stack[-k]
-            if ptr.type.code != TC.Pointer:
+            if not ptr.pointer:
                 continue
             var = ptr.deref()
             if var.container:
