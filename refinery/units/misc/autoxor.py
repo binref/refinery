@@ -39,7 +39,6 @@ class autoxor(xkey, extend_docs=True):
                 self.log_info(F'method {name} resulted in {m.mime} data; returning buffer')
                 return self.labelled(bin, key=key, method=name)
             if fallback is None:
-                self.log_warn(m.blob, m.mime, m.description)
                 fallback = name, key, bin, m.blob
             if not any(bin):
                 continue
