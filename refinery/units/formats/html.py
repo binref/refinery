@@ -59,7 +59,20 @@ class HTMLTreeParser(HTMLParser):
         super().__init__(convert_charrefs=False)
         self.root = self.tos = HTMLNode(_HTML_DATA_ROOT_TAG)
 
+    def parse_starttag(self, i):
+        end = super().parse_starttag(i)
+        tag, eq, method = self.lasttag.partition('=')
+        if eq != '=':
+            return end
+        if tag == 'macro' or tag == 'func' and 'exec' in method:
+            self.lasttag = tag
+            self.set_cdata_mode(tag)
+            return end
+        else:
+            return end
+
     def handle_starttag(self, tag: str, attributes):
+        tag, _, _ = tag.partition('=')
         if tag in self._SELF_CLOSING_TAGS:
             return
         node = HTMLNode(tag, None, self.tos, self.get_starttag_text(), attributes={
@@ -141,8 +154,13 @@ class xthtml(XMLToPathExtractorUnit):
         )
 
     def unpack(self, data):
+        try:
+            text = data.decode(self.codec)
+        except UnicodeDecodeError:
+            text = data.decode('latin1')
+
         html = HTMLTreeParser()
-        html.feed(data.decode(self.codec))
+        html.feed(text)
         root = html.tos
         root.reindex()
 

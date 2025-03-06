@@ -71,3 +71,11 @@ class TestHTMLExtractor(TestUnitBase):
             data | pipe | str,
             'http'':/''/198.46.178''.''151/65/seethebesthtingswithmewhichgivegreatoutputofmegood.tIF'
         )
+
+    def test_html_esque_file(self):
+        data = self.download_sample('6c2d7ceefc1d5518e2807525a815be7b1798552792ec9649bf10d8fb1c0d9e8e')
+        test = data | self.load() | {'path': ...}
+        path = max(test, key=len)
+        self.assertEqual(str(path),
+            'html/alertset/20/alertdisplay/daid/html/body/a/form/1/select/option/option/option/option/option/option')
+        self.assertEqual(len(test), 1007)
