@@ -746,6 +746,8 @@ class SetupHeader(InnoStruct):
             self.CreateUninstallRegistryKey = read_string()
         if version >= (5, 3, 10):
             self.Uninstallable = read_string()
+        else:
+            self.Uninstallable = B''
         if version >= (5, 5, 0):
             self.CloseApplicationsFilter = read_string()
         if version >= (5, 5, 6):
@@ -1871,7 +1873,9 @@ class TSetup(InnoStruct):
         if version.ascii:
             h.recode_strings(self.Codec)
         else:
-            h.recode_strings('latin1')
+
+        if h.Uninstallable == 'yes':
+            h.Flags |= Flags.Uninstallable
 
         if version < (4, 0, 0):
             self._load_wizard_and_decompressor(reader, version)
