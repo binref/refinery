@@ -1873,6 +1873,7 @@ class TSetup(InnoStruct):
         if version.ascii:
             h.recode_strings(self.Codec)
         else:
+            h.recode_strings('utf-16le')
 
         if h.Uninstallable == 'yes':
             h.Flags |= Flags.Uninstallable
