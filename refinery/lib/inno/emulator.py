@@ -587,7 +587,7 @@ class IFPSEmulator:
             if function.body is None:
                 decl = function.decl
                 name = function.name
-                tcls = decl.classname if decl else None
+                tcls = decl and (decl.classname or decl.module)
                 tcls = tcls or ''
                 registry: dict[str, IFPSEmulatedFunction] = self.external_symbols.get(tcls, {})
                 handler = registry.get(name)
@@ -884,6 +884,18 @@ class IFPSEmulator:
         if value:
             self.passwords.add(value)
         return value
+
+    @external
+    def kernel32__GetTickCount() -> int:
+        return time.monotonic_ns()
+
+    @external
+    def user32__GetSystemMetrics(index: int) -> int:
+        if index == 80:
+            return 1
+        if index == 43:
+            return 2
+        return 0
 
     @external
     def IsX86Compatible() -> bool:
