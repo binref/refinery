@@ -577,8 +577,13 @@ class IFPSEmulator:
                     void = True
                     argc = 0
 
-                rpos = 0 if void else 1
-                args = [self.stack[~k] for k in range(rpos, argc + rpos)]
+                try:
+                    rpos = 0 if void else 1
+                    args = [self.stack[~k] for k in range(rpos, argc + rpos)]
+                except IndexError:
+                    raise EmulatorException(
+                        F'Cannot call {function!s}; {argc} arguments + {rpos} return values expected,'
+                        F' but stack size is only {len(self.stack)}.')
 
                 if self.config.trace_calls:
                     self.trace.append(IFPSCall(str(function), tuple(a.get() for a in args)))
@@ -828,7 +833,10 @@ class IFPSEmulator:
             if not static:
                 next(specs)
             for spec in specs:
-                hint = eval(spec.annotation)
+                try:
+                    hint = eval(spec.annotation)
+                except Exception as E:
+                    raise RuntimeError(F'Invalid signature: {signature}') from E
                 if not isinstance(hint, type):
                     hint = get_origin(hint)
                 parameters.append(issubclass(hint, Variable))
