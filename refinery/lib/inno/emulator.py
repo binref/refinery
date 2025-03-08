@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-An emulator for Inno Setup executables.
+An emulator for Inno Setup executables. The implementation is unlikely to be 100% correct as it
+was engineered by making various malicious scripts execute reasonably well, not by implementing
+an exact copy of [the (only) reference implementation][PS]. This is grew and grew as I wrote it
+and seems mildly insane in hindsight.
+
+[PS]: https://github.com/remobjects/pascalscript
 """
 from __future__ import annotations
 
