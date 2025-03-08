@@ -1061,10 +1061,6 @@ class IFPSFile(Struct):
 
         del self._known_type_names
 
-    @property
-    def _load_flags(self):
-        return self.version >= 23
-
     def _name_types(self, missing_types: Optional[set[str]] = None):
         tbn: dict[str, IFPSType] = CaseInsensitiveDict()
         self.types_by_name = tbn
@@ -1259,35 +1255,69 @@ class IFPSFile(Struct):
             return signature
 
         reader = self.reader
+        rewind = reader.tell()
         width = len(F'{self.count_functions:X}')
         missing_types = set()
+        load_flags = (self.version >= 23)
 
-        for k in range(self.count_functions):
-            decl = None
-            body = None
-            name = F'F{k:0{width}X}'
-            tags = reader.u8()
-            attributes = None
-            exported = FTag.Exported.check(tags)
-            if FTag.External.check(tags):
-                name = reader.read_length_prefixed_ascii(8)
-                if exported:
-                    read = StructReader(bytes(reader.read_length_prefixed()))
-                    decl = DeclSpec.ParseF(read, self._load_flags)
-            else:
-                offset = reader.u32()
-                length = reader.u32()
-                if exported:
-                    name = reader.read_length_prefixed_ascii()
-                    decl = DeclSpec.ParseE(bytes(reader.read_length_prefixed()), self)
-                    self.void = decl.void
+        reparsed = False
+        all_void = True
+        all_long = True
+        has_dll_imports = False
+
+        while True:
+            for k in range(self.count_functions):
+                decl = None
+                body = None
+                name = F'F{k:0{width}X}'
+                tags = reader.u8()
+                attributes = None
+                exported = FTag.Exported.check(tags)
+                if FTag.External.check(tags):
+                    name = reader.read_length_prefixed_ascii(8)
+                    if exported:
+                        read = StructReader(bytes(reader.read_length_prefixed()))
+                        decl = DeclSpec.ParseF(read, load_flags)
+                        if not reparsed and decl.module is not None:
+                            has_dll_imports = True
+                            # inno: 0d13564460b4cca289ac60221e86ca5719d7217a8eb76671b4b2a8407c2af6b4
+                            # ifps: 6c211c02652317903b23c827cbc311a258fcd6197eec6a3d2f91986bd8accb0e
+                            # This script reports version 22 and therefore, load_flags starts as False.
+                            # However, it should be true; the reasons are unclear. The code below is
+                            # an attempt to identify incorrect load_flags values heuristically. When
+                            # there are no __delay_load functions present, reading them with load_flags
+                            # set to False will result in only procedures (void=True) with at least
+                            # 2 arguments.
+                            if not decl.void:
+                                all_void = False
+                            if len(decl.parameters) < 2:
+                                all_long = False
                 else:
-                    self.void = False
-                with reader.detour(offset):
-                    body = list(self._parse_bytecode(reader.read(length)))
-            if FTag.HasAttrs.check(tags):
-                attributes = list(self._read_attributes())
+                    offset = reader.u32()
+                    length = reader.u32()
+                    if exported:
+                        name = reader.read_length_prefixed_ascii()
+                        decl = DeclSpec.ParseE(bytes(reader.read_length_prefixed()), self)
+                        self.void = decl.void
+                    else:
+                        self.void = False
+                    with reader.detour(offset):
+                        body = list(self._parse_bytecode(reader.read(length)))
+                if FTag.HasAttrs.check(tags):
+                    attributes = list(self._read_attributes())
+                fn = Function(name, decl, body, exported, attributes)
+                self.functions.append(fn)
+            if has_dll_imports and all_long and all_void and not reparsed:
+                load_flags = True
+                reparsed = True
+                reader.seekset(rewind)
+                self.functions.clear()
+            else:
+                break
 
+        for function in self.functions:
+            name = function.symbol
+            decl = function.decl
             if (signature := _signature(name, decl)) and decl and signature.argc == decl.argc:
                 for old, new in itertools.zip_longest(decl.parameters, signature.parameters):
                     if not new:
@@ -1304,9 +1334,6 @@ class IFPSFile(Struct):
                         dr.symbol = sr
                     else:
                         missing_types.add(sr)
-
-            fn = Function(name, decl, body, exported, attributes)
-            self.functions.append(fn)
 
         self.type_name_conflicts = self._name_types(missing_types)
 

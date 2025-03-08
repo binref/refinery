@@ -28,6 +28,12 @@ class TestIPFS(TestUnitBase):
         self.assertEqual(test.count('https://aka.ms/vs/16/release/vc_redist.x64.exe'), 1)
         self.assertEqual(test.count('https://aka.ms/vs/16/release/vc_redist.x86.exe'), 1)
 
+    def test_load_flags_version_22(self):
+        data = self.download_sample('6c211c02652317903b23c827cbc311a258fcd6197eec6a3d2f91986bd8accb0e')
+        test = data | self.load() | str
+        self.assertContains(test, 'kernel32::CloseHandle(Argument1)')
+        self.assertContains(test, 'idp::idpFilesDownloaded()')
+
 
 class TestIFPSStrings(TestUnitBase):
 
