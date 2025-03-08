@@ -237,6 +237,23 @@ class Variable(VariableBase, Generic[_T]):
     def set(
         self,
         value: Union[_T, Sequence, Variable],
+    ):
+        if isinstance(value, Variable):
+            if value.container:
+                dst = self.deref()
+                if not dst.container:
+                    raise TypeError(F'Attempting to assign container type {value.type} to non-container {self.type}.')
+                dst.resize(len(value))
+                for k, v in enumerate(value.data):
+                    dst.data[k].set(v)
+                return
+            if value.pointer:
+                if self.pointer:
+                    self.data = value.data
+                else:
+                    self.set(value.deref())
+                return
+            value = value.get()
         if isinstance(value, (Enum, Value)):
             value = value.value
         if self.pointer:
@@ -631,9 +648,12 @@ class IFPSEmulator:
                     if opc == Op.Nop:
                         continue
                     elif opc == Op.Assign:
-                        dst = insn.op(0)
+                        dst = getvar(insn.op(0))
                         src = insn.op(1)
-                        setval(insn.op(0), getval(insn.op(1)))
+                        if src.immediate:
+                            dst.set(src.value)
+                        else:
+                            dst.set(getvar(src))
                     elif opc == Op.Calculate:
                         calculate = {
                             AOp.Add: operator.add,
@@ -718,10 +738,10 @@ class IFPSEmulator:
                             COp.IN: operator_in,
                             COp.IS: operator.is_,
                         }[insn.operator]
-                        d = insn.op(0)
-                        a = insn.op(1)
-                        b = insn.op(2)
-                        setval(d, compare(getval(a), getval(b)))
+                        d = getvar(insn.op(0))
+                        a = getval(insn.op(1))
+                        b = getval(insn.op(2))
+                        d.set(compare(a, b))
                     elif opc == Op.CallVar:
                         pfn = getval(insn.op(0))
                         if isinstance(pfn, int):
