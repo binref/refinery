@@ -93,7 +93,7 @@ class OleObject:
 class Variable(VariableBase, Generic[_T]):
     type: IFPSType
     spec: Optional[Variant]
-    data: Optional[Union[List[Variable[_T]], _T]]
+    data: Optional[Union[List[Variable], _T]]
     path: tuple[int]
 
     @property
@@ -145,7 +145,7 @@ class Variable(VariableBase, Generic[_T]):
         type: IFPSType,
         spec: Optional[Variant] = None,
         path: tuple[int] = (),
-        data: Optional[Union[_T, List[_T]]] = None
+        data: Optional[Union[_T, List]] = None
     ):
         super().__init__(type, spec)
         self.path = path
@@ -236,8 +236,7 @@ class Variable(VariableBase, Generic[_T]):
 
     def set(
         self,
-        value: Union[_T, Sequence[_T]],
-    ) -> None:
+        value: Union[_T, Sequence, Variable],
         if isinstance(value, (Enum, Value)):
             value = value.value
         if self.pointer:
@@ -251,11 +250,11 @@ class Variable(VariableBase, Generic[_T]):
         else:
             self.data = self._wrap(value)
 
-    def get(self) -> Union[_T, List[_T]]:
+    def get(self) -> _T:
         if self.pointer:
             return self.deref().get()
         if self.container:
-            data: List[Variable[_T]] = self.data
+            data: List[Variable] = self.data
             return [v.get() for v in data]
         return self.data
 
