@@ -18,6 +18,7 @@ from typing import (
     Dict,
     Generic,
     List,
+    Tuple,
     NamedTuple,
     Optional,
     Sequence,
@@ -99,7 +100,7 @@ class Variable(VariableBase, Generic[_T]):
     type: IFPSType
     spec: Optional[Variant]
     data: Optional[Union[List[Variable], _T]]
-    path: tuple[int]
+    path: Tuple[int, ...]
 
     @property
     def container(self):
@@ -149,7 +150,7 @@ class Variable(VariableBase, Generic[_T]):
         self,
         type: IFPSType,
         spec: Optional[Variant] = None,
-        path: tuple[int] = (),
+        path: Tuple[int, ...] = (),
         data: Optional[Union[_T, List]] = None
     ):
         super().__init__(type, spec)
@@ -372,8 +373,8 @@ class IFPSEmulatedFunction(NamedTuple):
 class IFPSEmulatorConfig:
     x64: bool = True
     admin: bool = True
-    windows_os_version: tuple[int, int, int] = (10, 0, 10240)
-    windows_sp_version: tuple[int, int] = (2, 0)
+    windows_os_version: Tuple[int, int, int] = (10, 0, 10240)
+    windows_sp_version: Tuple[int, int] = (2, 0)
     throw_abort: bool = False
     trace_calls: bool = False
     log_passwords: bool = True
@@ -383,7 +384,7 @@ class IFPSEmulatorConfig:
     sleep_scale: float = 0.0
     max_data_stack: int = 1_000_000
     max_call_stack: int = 4096
-    environment: dict[str, str] = field(default_factory=dict)
+    environment: Dict[str, str] = field(default_factory=dict)
     user_name: str = 'Frank'
     host_name: str = 'Frank-PC'
     inno_name: str = 'ThisInstall'
@@ -486,11 +487,11 @@ class IFPSEmulator:
         self.globals = [Variable(v.type, v.spec) for v in ifps.globals]
         self.stack: List[Variable] = []
         self.trace: List[IFPSCall] = []
-        self.passwords: set[str] = set()
+        self.passwords: Set[str] = set()
         self.jumpflag = False
         self.fpucw = FPUControl(0)
-        self.mutexes: set[str] = set()
-        self.symbols: dict[str, Function] = CaseInsensitiveDict()
+        self.mutexes: Set[str] = set()
+        self.symbols: Dict[str, Function] = CaseInsensitiveDict()
         for pfn in ifps.functions:
             self.symbols[pfn.name] = pfn
 
@@ -589,7 +590,7 @@ class IFPSEmulator:
                 name = function.name
                 tcls = decl and (decl.classname or decl.module)
                 tcls = tcls or ''
-                registry: dict[str, IFPSEmulatedFunction] = self.external_symbols.get(tcls, {})
+                registry: Dict[str, IFPSEmulatedFunction] = self.external_symbols.get(tcls, {})
                 handler = registry.get(name)
 
                 if handler:
@@ -1253,14 +1254,14 @@ class IFPSEmulator:
             raise IFPSException(F'Custom message with name {msg_name} not found.')
 
     @external
-    def FmtMessage(fmt: str, args: list[str]) -> str:
+    def FmtMessage(fmt: str, args: List[str]) -> str:
         fmt = fmt.replace('{', '{{')
         fmt = fmt.replace('}', '}}')
         fmt = '%'.join(re.sub('%(\\d+)', '{\\1}', p) for p in fmt.split('%%'))
         return fmt.format(*args)
 
     @external
-    def Format(fmt: str, args: list[str | int | float]) -> str:
+    def Format(fmt: str, args: List[Union[str, int, float]]) -> str:
         try:
             formatted = fmt % tuple(args)
         except Exception:
@@ -1510,11 +1511,11 @@ class IFPSEmulator:
         return string.rstrip()
 
     @external
-    def StringJoin(sep: str, values: list[str]) -> str:
+    def StringJoin(sep: str, values: List[str]) -> str:
         return sep.join(values)
 
     @external
-    def StringSplitEx(string: str, separators: list[str], quote: str, how: TSplitType) -> list[str]:
+    def StringSplitEx(string: str, separators: List[str], quote: str, how: TSplitType) -> List[str]:
         if not quote:
             parts = [string]
         else:
@@ -1537,7 +1538,7 @@ class IFPSEmulator:
         return out
 
     @external(static=False)
-    def StringSplit(self, string: str, separators: list[str], how: TSplitType) -> list[str]:
+    def StringSplit(self, string: str, separators: List[str], how: TSplitType) -> List[str]:
         return self.StringSplitEx(string, separators, None, how)
 
     @external(alias='StrToInt64')
