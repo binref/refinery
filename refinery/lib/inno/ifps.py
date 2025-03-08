@@ -311,6 +311,8 @@ class TPrimitive(IFPSTypeBase):
         }.get(self.code)
 
     def default(self, *_):
+        if self.code in (TC.Char, TC.WideChar, TC.PChar):
+            return '\0'
         tc = self.py_type()
         if issubclass(tc, (int, float, str)):
             return tc()
