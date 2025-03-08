@@ -104,6 +104,8 @@ def parse_function(symbol: str) -> IFPSSignature:
 def _parse_api_functions(cls):
     sym: dict[str, IFPSSignature] = CaseInsensitiveDict()
     for line in inspect.cleandoc(inspect.getdoc(cls)).splitlines(False):
+        if not line.strip():
+            continue
         sig = parse_function(line)
         sym[sig.name] = sig
     return sym
@@ -112,6 +114,10 @@ def _parse_api_functions(cls):
 @_parse_api_functions
 class IFPSAPI:
     """
+    procedure Inc(var P: Pointer);
+    procedure Dec(var P: Pointer);
+    function SizeOf(var P: Variant): Integer;
+
     property WizardForm:  TWizardForm;
     property UninstallProgressForm:  TUninstallProgressForm;
     function GetCmdTail: String;
