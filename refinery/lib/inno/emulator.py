@@ -868,7 +868,8 @@ class IFPSEmulator:
                     raise RuntimeError(F'Invalid signature: {signature}') from E
                 if not isinstance(hint, type):
                     hint = get_origin(hint)
-                parameters.append(issubclass(hint, Variable))
+                var = isinstance(hint, type) and issubclass(hint, Variable)
+                parameters.append(var)
             registry[name] = e = IFPSEmulatedFunction(pfn, parameters, static, void)
             aliases = kwargs.get('alias', [])
             if isinstance(aliases, str):
