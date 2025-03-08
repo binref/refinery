@@ -489,6 +489,9 @@ class IFPSEmulator:
         for pfn in ifps.functions:
             self.symbols[pfn.name] = pfn
 
+    def __repr__(self):
+        return self.__class__.__name__
+
     def unimplemented(self, function: Function):
         raise NeedSymbol(function.name)
 
@@ -618,7 +621,7 @@ class IFPSEmulator:
                     try:
                         return_value = handler.call(*args)
                     except BaseException as b:
-                        pending_exception = IFPSException(F'Error calling {function.name}.', b)
+                        pending_exception = IFPSException(F'Error calling {function.name}: {b!s}', b)
                     else:
                         if not handler.void:
                             self.stack[-1].set(return_value)
