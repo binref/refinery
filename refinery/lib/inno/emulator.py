@@ -1351,7 +1351,7 @@ class IFPSEmulator:
                 return str(now.hour)
             if spec == 'n':
                 return str(now.minute)
-            if spec == 'n':
+            if spec == 's':
                 return str(now.second)
             if spec == 'H':
                 return now.strftime('%I').lstrip('0') + suffix
