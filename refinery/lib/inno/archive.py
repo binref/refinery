@@ -1226,17 +1226,20 @@ class SetupMessage(InnoStruct):
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
         self.EncodedName = self._read_string()
-        value = reader.read_length_prefixed()
-        language = reader.i32()
+        self.RawValue = reader.read_length_prefixed()
+        self.LngIndex = reader.i32()
         try:
-            codec = parent.Languages[language].Codepage
+            self.Language = parent.Languages[self.LngIndex]
         except IndexError:
-            pass
+            self.Language = None
+            codec = 'latin1'
+        else:
+            codec = self.Language.Codepage
         try:
-            self.Value = codecs.decode(value, codec)
+            self.Value = codecs.decode(self.RawValue, codec)
         except LookupError:
             # TODO: This is a fallback
-            self.Value = codecs.decode(value, 'latin1')
+            self.Value = codecs.decode(self.RawValue, 'latin1')
 
 
 class SetupType(InnoStruct):
