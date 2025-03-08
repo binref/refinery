@@ -481,7 +481,7 @@ class IFPSEmulator:
             self.ifps = ifps = archive.ifps
         else:
             self.inno = None
-            self.ifps = archive
+            self.ifps = ifps = archive
         self.config = options or IFPSEmulatorConfig(**more)
         self.globals = [Variable(v.type, v.spec) for v in ifps.globals]
         self.stack: List[Variable] = []
