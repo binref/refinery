@@ -11,7 +11,8 @@ class TestIPFS(TestUnitBase):
         for line in (
             R"""typedef TWindowsVersion = struct {U32, U32, U32, U32, U32, Boolean, U08, U16}""",
             R"""typedef TFILETIME = struct {U32, U32}""",
-            R"""  0x0373   5  Assign      LocalVar5 := 'WinHttp.WinHttpRequest.5.1'""",
+            R"""  0x0373   5  Assign""",
+            R"""LocalVar5 := 'WinHttp.WinHttpRequest.5.1'""",
             R"""procedure PAGEDOWNLOADCANCELBUTTONCLICK(Argument1: TWizardPage, *Argument2: Boolean, *Argument3: Boolean)"""
         ):
             self.assertIn(line, disassembly)
