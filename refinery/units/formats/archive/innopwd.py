@@ -11,7 +11,9 @@ from refinery.lib.inno.ifps import IFPSFile
 
 class innopwd(Unit):
     """
-    Extract files from InnoSetup archives.
+    This unit emulates an InnoSetup installer in an attempt to determine the installer password.
+    This works only when the password is contained within the script, but several malware samples
+    are known to use this technique.
     """
     def process(self, data: bytearray):
         if data.startswith(IFPSFile.Magic):
