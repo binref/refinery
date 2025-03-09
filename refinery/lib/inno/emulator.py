@@ -34,6 +34,7 @@ from pathlib import Path
 from string import Formatter
 from time import process_time
 from urllib.parse import unquote
+from datetime import datetime, timedelta
 
 from refinery.lib.tools import cached_property
 from refinery.lib.types import CaseInsensitiveDict
@@ -361,6 +362,8 @@ class IFPSEmulatorConfig:
     wizard_silent: bool = True
     max_opcodes: int = 0
     max_seconds: int = 60
+    start_time: datetime = field(default_factory=datetime.now)
+    milliseconds_per_instruction: float = 0.001
     sleep_scale: float = 0.0
     max_data_stack: int = 1_000_000
     max_call_stack: int = 4096
@@ -470,6 +473,8 @@ class IFPSEmulator:
         self.passwords: Set[str] = set()
         self.jumpflag = False
         self.fpucw = FPUControl(0)
+        self.clock = 0
+        self.seconds_slept = 0.0
         self.mutexes: Set[str] = set()
         self.symbols: Dict[str, Function] = CaseInsensitiveDict()
         for pfn in ifps.functions:
@@ -553,7 +558,6 @@ class IFPSEmulator:
 
         callstack: List[CallState] = []
 
-        cycle = 0
         exec_start = process_time()
 
         ip: int = 0
@@ -621,7 +625,7 @@ class IFPSEmulator:
             while insn := function.code.get(ip, None):
                 if 0 < self.config.max_seconds < process_time() - exec_start:
                     raise EmulatorTimeout
-                if 0 < self.config.max_opcodes < cycle:
+                if 0 < self.config.max_opcodes < self.clock:
                     raise EmulatorExecutionLimit
                 if 0 < self.config.max_data_stack < len(self.stack):
                     raise EmulatorMaxStack
@@ -632,7 +636,7 @@ class IFPSEmulator:
 
                     opc = insn.opcode
                     ip += insn.size
-                    cycle += 1
+                    self.clock += 1
 
                     if opc == Op.Nop:
                         continue
@@ -896,9 +900,11 @@ class IFPSEmulator:
     def IsAdmin(self) -> bool:
         return self.config.admin
 
-    @external(static=False)
-    def Sleep(self, ms: int):
-        time.sleep(ms * self.config.sleep_scale / 1000.0)
+    @external(static=False, alias='Sleep')
+    def kernel32__Sleep(self, ms: int):
+        seconds = ms / 1000.0
+        self.seconds_slept += seconds
+        time.sleep(seconds * self.config.sleep_scale)
 
     @external
     def Random(top: int) -> int:
@@ -1318,14 +1324,19 @@ class IFPSEmulator:
     def Get8087CW(self) -> int:
         return self.fpucw.value
 
-    @external
+    @external(static=False)
     def GetDateTimeString(
+        self,
         fmt: str,
         date_separator: str,
         time_separator: str,
     ) -> str:
-        from datetime import datetime
-        now = datetime.now()
+
+        now = self.config.start_time
+        now = now + timedelta(
+            milliseconds=(self.config.milliseconds_per_instruction * self.clock))
+        now = now + timedelta(seconds=self.seconds_slept)
+
         date_separator = date_separator.lstrip('\0')
         time_separator = time_separator.lstrip('\0')
 
