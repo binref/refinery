@@ -1714,7 +1714,8 @@ class IFPSEmulator:
 
     @external(static=False)
     def GetWindowsVersion(self) -> int:
-        version = int.from_bytes(struct.pack('>BBH', *self.config.windows_os_version))
+        version = int.from_bytes(
+            struct.pack('>BBH', *self.config.windows_os_version), 'big')
         return version
 
     @external(static=False)
