@@ -2069,7 +2069,8 @@ class InnoStreams(NamedTuple):
 
 class InnoArchive:
     """
-    Extract files from InnoSetup archives.
+    This class represents an InnoSetup archive. Optionally, a `refinery.units.Unit` can be
+    passed to the class as a parameter to use its logger.
     """
     OffsetsPath: ClassVar[str] = 'RCDATA/11111/0'
     ChunkPrefix: ClassVar[bytes] = b'zlb\x1a'
@@ -2083,6 +2084,9 @@ class InnoArchive:
             file_metadata = one(data | perc(self.OffsetsPath))
         except Exception as E:
             raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
+
+        self._password = None
+        self._password_guessed = False
 
         leniency = unit.leniency if unit else 0
         self._log_verbose = (lambda *_: None) if unit is None else unit.log_debug
@@ -2203,8 +2207,46 @@ class InnoArchive:
 
     @cached_property
     def ifps(self):
+        """
+        An `refinery.lib.inno.ifps.IFPSFile` representing the embedded IFPS script, if it exists.
+        """
         if script := self.setup_info.Header.get_script():
             return IFPSFile(script, self.script_codec, self.version.unicode)
+
+    def guess_password(self, timeout: int) -> bool:
+        """
+        Attempt to guess the password by emulating the setup script.
+        """
+        if self._password_guessed:
+            return self._password is not None
+        self._password_guessed = True
+        if file := self.get_encrypted_sample():
+            from refinery.lib.inno.emulator import InnoSetupEmulator, IFPSEmulatorConfig
+            self._log_verbose('attempting to automatically determine password from the embedded script')
+            emu = InnoSetupEmulator(self, IFPSEmulatorConfig(max_seconds=timeout))
+            try:
+                emu.emulate_installation()
+            except Exception as error:
+                self._log_comment('emuluation failed:', error)
+            else:
+                for p in emu.passwords:
+                    if self.check_password(file, p):
+                        self._log_comment('found password via emulation:', p)
+                        self._password = p
+                        return True
+                else:
+                    self._log_comment('no valid password found via emulation')
+                    return False
+        else:
+            self._password = ''
+            return True
+
+    def get_encrypted_sample(inno) -> Optional[InnoFile]:
+        """
+        If the archive has a password, this function returns the smallest encrypted file record.
+        """
+        file = min(inno.files, key=lambda f: (not f.encrypted, f.size))
+        return file if file.encrypted else None
 
     def _try_parse_as(
         self,
@@ -2331,6 +2373,9 @@ class InnoArchive:
         )
 
     def read_stream(self, stream: InnoStream):
+        """
+        Decompress and read the input stream.
+        """
         if stream.data is not None:
             return stream.data
         result = bytearray()
@@ -2355,11 +2400,30 @@ class InnoArchive:
         stream.data = result
         return result
 
+    def check_password(self, file: InnoFile, password: str):
+        """
+        Returns `True` if the given password correctly decrypts the given file.
+        """
+        try:
+            self.read_chunk(file, password, check_only=True)
+        except InvalidPassword:
+            return False
+        else:
+            return True
+
     def read_chunk(self, file: InnoFile, password: Optional[str] = None, check_only: bool = False):
+        """
+        Decompress and read the chunk containing the given file. If the chunk is encrypted, the
+        function requires the correct password. If the `check_only` parameter is set, then only
+        a password check is performed, but the chunk is not actually decompressed.
+        """
         reader = file.reader
         offset = file.chunk_offset
         length = file.chunk_length
         method = file.compression
+
+        if password is None:
+            password = self._password
 
         if offset + length > len(reader):
             span = F'0x{offset:X}-0x{offset + length:X}'
@@ -2439,6 +2503,10 @@ class InnoArchive:
         file: InnoFile,
         password: Optional[str] = None,
     ):
+        """
+        Read the contents of the given file record from the archive without performing any checks.
+        See also `refinery.lib.inno.InnoArchive.read_file_and_check`.
+        """
         offset = file.chunk_offset
         length = file.chunk_length
 
@@ -2464,6 +2532,10 @@ class InnoArchive:
         file: InnoFile,
         password: Optional[str] = None,
     ):
+        """
+        Read the contents of the given file record from the archive. Raises a `ValueError` if the
+        checksum is invalid.
+        """
         data = self.read_file(file, password)
 
         if (cs := file.check(data)) is not None and cs != file.checksum:

@@ -23,7 +23,7 @@ class xtinno(ArchiveUnit):
         inno = InnoArchive(data, self)
 
         password: bytes = self.args.pwd
-        password = password.decode(self.codec) if password else ''
+        password = password.decode(self.codec) if password else None
 
         if any(file.encrypted for file in inno.files) and password is None:
             self.log_info('some files are password-protected and no password was given')
@@ -68,11 +68,13 @@ class xtinno(ArchiveUnit):
             if file.dupe:
                 continue
 
-            def _read(i=inno, f=file, p=password):
+            def _read(inno=inno, file=file, pwd=password):
+                if pwd is None:
+                    inno.guess_password(10)
                 if self.leniency > 0:
-                    return i.read_file(f, p)
+                    return inno.read_file(file, pwd)
                 try:
-                    return i.read_file_and_check(f, p)
+                    return inno.read_file_and_check(file, pwd)
                 except InvalidPassword:
                     raise
                 except Exception as E:

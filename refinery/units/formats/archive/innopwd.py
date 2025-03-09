@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from refinery.units import Unit
 
-from refinery.lib.inno.archive import InnoArchive, InvalidPassword
+from refinery.lib.inno.archive import InnoArchive
 from refinery.lib.inno.emulator import InnoSetupEmulator
 from refinery.lib.inno.ifps import IFPSFile
 
@@ -19,30 +19,26 @@ class innopwd(Unit):
         if data.startswith(IFPSFile.Magic):
             inno = IFPSFile(data)
             self.log_info('running in script-only mode; cannot check passwords')
-            can_check = False
+            file = None
         else:
             inno = InnoArchive(data, self)
-            file = min(inno.files, key=lambda f: (not f.encrypted, f.size))
-            if not file.encrypted:
+            file = inno.get_encrypted_sample()
+            if file is None:
                 self.log_info('the archive is not password-protected, password is empty')
                 return None
             self.log_info('password type:', file.password_type.name)
             self.log_info('password hash:', file.password_hash)
             self.log_info('password salt:', file.password_salt)
-            can_check = True
 
-        iemu = InnoSetupEmulator(inno)
+        iemu = InnoSetupEmulator(inno, trace_calls=True)
         iemu.emulate_installation()
 
         for password in iemu.passwords:
-            if can_check:
-                try:
-                    inno.read_chunk(file, password, check_only=True)
-                except InvalidPassword:
-                    self.log_info('discarding password:', password)
-                    continue
+            if file and not inno.check_password(file, password):
+                self.log_info('discarding password:', password)
+                continue
             yield password.encode(self.codec)
-            if can_check:
+            if file:
                 break
 
     @classmethod
