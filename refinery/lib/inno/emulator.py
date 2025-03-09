@@ -1181,8 +1181,8 @@ class IFPSEmulator:
     @external
     def GetSpaceOnDisk64(
         path: str,
-        avail: int,
-        space: int,
+        avail: Variable[int],
+        space: Variable[int],
     ) -> bool:
         avail.set(3_000_000_000)
         space.set(5_000_000_000)
