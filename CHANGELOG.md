@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.8
+- The `innopwd` unit was added. It can emulate an Inno Setup installer in order to extract passwords that are encoded within the IFPS script.
+
 ## Version 0.8.7 - bugfix release
 
 ## Version 0.8.6
