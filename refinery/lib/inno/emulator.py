@@ -889,7 +889,7 @@ class IFPSEmulator:
 
     @external
     def kernel32__GetTickCount() -> int:
-        return time.monotonic_ns()
+        return time.monotonic_ns() // 1_000_000
 
     @external
     def user32__GetSystemMetrics(index: int) -> int:
