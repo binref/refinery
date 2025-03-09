@@ -16,6 +16,7 @@ from typing import (
     Callable,
     ClassVar,
     Dict,
+    Set,
     Generic,
     List,
     Tuple,
@@ -75,16 +76,6 @@ import time
 _T = TypeVar('_T')
 
 
-class InvalidIndex(TypeError):
-    def __init__(self, v: Variable, key):
-        super().__init__(F'Assigning to {v.spec}[{key!r}]; type {v.type} does not support indexing.')
-
-
-class NullPointer(RuntimeError):
-    def __init__(self, v: Variable):
-        super().__init__(F'Trying to access uninitialized pointer value {v.spec}.')
-
-
 class OleObject:
     def __init__(self, name):
         self.name = name
@@ -129,12 +120,6 @@ class Variable(VariableBase, Generic[_T]):
             var.at(key).set(v)
         else:
             var.data[key] = var._wrap(v)
-
-    def __index__(self):
-        data = self.data
-        if isinstance(data, str) and len(data) == 1:
-            data = ord(data)
-        return data
 
     def at(self, k: int):
         return self.deref().data[k]
@@ -342,11 +327,6 @@ class EmulatorMaxStack(MemoryError):
 
 class EmulatorMaxCalls(MemoryError):
     pass
-
-
-class IFPS_NotAnArray(RuntimeError):
-    def __init__(self, v: Variable):
-        super().__init__(F'Attempting an array operation on non-array variable {v}.')
 
 
 @dataclass
