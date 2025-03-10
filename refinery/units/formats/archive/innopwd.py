@@ -30,7 +30,7 @@ class innopwd(Unit):
             self.log_info('password hash:', file.password_hash)
             self.log_info('password salt:', file.password_salt)
 
-        iemu = InnoSetupEmulator(inno, trace_calls=True)
+        iemu = InnoSetupEmulator(inno)
         iemu.emulate_installation()
 
         for password in iemu.passwords:
