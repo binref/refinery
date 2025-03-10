@@ -1260,7 +1260,7 @@ class IFPSEmulator:
         by_language = {}
         for msg in self.inno.setup_info.Messages:
             if msg.EncodedName == msg_name:
-                lng = msg.Language.Name
+                lng = msg.get_language_value().Name
                 if lng == self.config.language:
                     return msg.Value
                 by_language[lng] = msg.Value
