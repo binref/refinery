@@ -2214,6 +2214,24 @@ class InnoArchive:
         self.streams = InnoStreams(*result.streams)
         self.script_codec = 'latin1' if version.unicode else codec
 
+        for file in self.files:
+            file.path = self.emulator.reset().expand_constant(file.path)
+
+    @cached_property
+    def emulator(self):
+        from refinery.lib.inno.emulator import (
+            InnoSetupEmulator,
+            IFPSEmulatorConfig,
+        )
+        return InnoSetupEmulator(self, IFPSEmulatorConfig(
+            temp_path='{tmp}',
+            user_name='{user}',
+            host_name='{host}',
+            inno_name='{name}',
+            executable='{exe}',
+            install_to='{app}',
+        ))
+
     @cached_property
     def ifps(self):
         """
@@ -2307,13 +2325,20 @@ class InnoArchive:
                 self._log_warning(F'parsed {len(file)} entries, ignoring invalid setup reference to entry {location + 1}')
                 continue
             path = sf.Destination.replace('\\', '/')
-            if condition := sf.Condition.Check:
-                condition = condition.replace(' ', '-')
-                path = F'{condition}/{path}'
             path = F'data/{path}'
             path_dedup.setdefault(path, []).append(sf)
             files[location].setup = sf
             files[location].path = path
+
+        for path, infos in list(path_dedup.items()):
+            if len(infos) == 1:
+                continue
+            del path_dedup[path]
+            for sf in infos:
+                if condition := sf.Condition.Check:
+                    condition = re.sub('\\s+', '-', condition)
+                    np = F'{condition}/{path}'
+                    path_dedup.setdefault(np, []).append(sf)
 
         for path, infos in path_dedup.items():
             if len(infos) == 1:

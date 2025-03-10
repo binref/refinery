@@ -368,7 +368,7 @@ class IFPSEmulatorConfig:
     log_passwords: bool = True
     wizard_silent: bool = True
     max_opcodes: int = 0
-    max_seconds: int = 60
+    max_seconds: int = 10
     start_time: datetime = field(default_factory=datetime.now)
     milliseconds_per_instruction: float = 0.001
     sleep_scale: float = 0.0
@@ -376,6 +376,7 @@ class IFPSEmulatorConfig:
     max_call_stack: int = 4096
     environment: Dict[str, str] = field(default_factory=dict)
     user_name: str = 'Frank'
+    temp_path: str = ''
     host_name: str = 'Frank-PC'
     inno_name: str = 'ThisInstall'
     language: str = 'en'
@@ -986,8 +987,11 @@ class IFPSEmulator:
 
     @cached_property
     def constant_map(self) -> dict[str, str]:
-        tmp = random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ', k=5)
         cfg = self.config
+        tmp = cfg.temp_path
+        if not tmp:
+            tmp = ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ', k=5))
+            tmp = RF'C:\Windows\Temp\IS-{tmp}'
         map = {
             'app'               : cfg.install_to,
             'win'               : R'C:\Windows',
@@ -997,7 +1001,7 @@ class IFPSEmulator:
             'sd'                : R'C:',
             'commonpf'          : R'C:\Program Files',
             'commoncf'          : R'C:\Program Files\Common Files',
-            'tmp'               : RF'C:\Windows\Temp\IS-{tmp}',
+            'tmp'               : tmp,
             'commonfonts'       : R'C:\Windows\Fonts',
             'dao'               : R'C:\Program Files\Common Files\Microsoft Shared\DAO',
             'dotnet11'          : R'C:\Windows\Microsoft.NET\Framework\v1.1.4322',
@@ -1151,6 +1155,15 @@ class IFPSEmulator:
                     # {ini:Filename,Section,Key|DefaultValue}
                     _, _, default = modifier.partition('|')
                     value = expand(default)
+                elif spec == 'code':
+                    # {code:FunctionName|Param}
+                    symbol, _, param = modifier.partition('|')
+                    param = expand(param)
+                    try:
+                        function = self.symbols[symbol]
+                    except KeyError as KE:
+                        raise IFPSException(F'String formatter references missing function {symbol}.', KE) from KE
+                    value = str(self.emulate_function(function, param))
                 elif spec == 'cm':
                     # {cm:LaunchProgram,Inno Setup}
                     # The example above translates to "Launch Inno Setup" if English is the active language.
