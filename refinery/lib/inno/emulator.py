@@ -166,21 +166,28 @@ class Variable(VariableBase, Generic[_T]):
             self._int_good = AST
 
         if data is None:
-            def default(type: IFPSType, *sub_path):
-                if isinstance(type, TRecord):
-                    return [Variable(t, spec, (*path, *sub_path, k)) for k, t in enumerate(type.members)]
-                if isinstance(type, TStaticArray):
-                    t = type.type
-                    return [Variable(t, spec, (*path, *sub_path, k)) for k in range(type.size)]
-                if isinstance(type, TArray):
-                    return []
-                if sub_path:
-                    return Variable(type, spec, (*path, *sub_path))
-                else:
-                    return type.default()
-            self.data = default(type)
+            self.setdefault()
         else:
             self.set(data)
+
+    def setdefault(self):
+        spec = self.spec
+        path = self.path
+
+        def default(type: IFPSType, *sub_path):
+            if isinstance(type, TRecord):
+                return [Variable(t, spec, (*path, *sub_path, k)) for k, t in enumerate(type.members)]
+            if isinstance(type, TStaticArray):
+                t = type.type
+                return [Variable(t, spec, (*path, *sub_path, k)) for k in range(type.size)]
+            if isinstance(type, TArray):
+                return []
+            if sub_path:
+                return Variable(type, spec, (*path, *sub_path))
+            else:
+                return type.default()
+
+        self.data = default(self.type)
 
     def _wrap(self, value: Union[Value, _T], key: Optional[int] = None) -> _T:
         if (t := self.type.py_type(key)) and not isinstance(value, t):
@@ -471,17 +478,26 @@ class IFPSEmulator:
         self.stack: List[Variable] = []
         self.trace: List[IFPSCall] = []
         self.passwords: Set[str] = set()
-        self.jumpflag = False
-        self.fpucw = FPUControl(0)
-        self.clock = 0
-        self.seconds_slept = 0.0
         self.mutexes: Set[str] = set()
         self.symbols: Dict[str, Function] = CaseInsensitiveDict()
+        self.reset()
         for pfn in ifps.functions:
             self.symbols[pfn.name] = pfn
 
     def __repr__(self):
         return self.__class__.__name__
+
+    def reset(self):
+        self.seconds_slept = 0.0
+        self.clock = 0
+        self.fpucw = FPUControl.MaxPrecision | FPUControl.RoundTowardZero
+        self.jumpflag = False
+        self.mutexes.clear()
+        self.trace.clear()
+        self.stack.clear()
+        for v in self.globals:
+            v.setdefault()
+        return self
 
     def unimplemented(self, function: Function):
         raise NeedSymbol(function.name)
