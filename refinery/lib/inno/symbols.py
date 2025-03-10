@@ -26,7 +26,11 @@ class IFPSSignature(NamedTuple):
     parameters: tuple[IFPSParam]
     return_type: Optional[str]
     void: bool
-    modifier: Optional[str] = None
+    readable: Optional[bool] = None
+    writable: Optional[bool] = None
+
+    def is_property(self):
+        return self.kind == 'property'
 
     @property
     def argc(self):
@@ -49,7 +53,7 @@ class ParsingError(RuntimeError):
         super().__init__(F'{what}: {symbol}')
 
 
-def parse_decl(decl: str, kind: str, void: Optional[bool] = None, modifier: Optional[str] = None):
+def parse_decl(decl: str, kind: str, void: Optional[bool] = None, **kwargs):
     def try_type(type: str):
         if not type:
             return None
@@ -60,6 +64,11 @@ def parse_decl(decl: str, kind: str, void: Optional[bool] = None, modifier: Opti
             return type[0]
         elif type[0] == 'array':
             return 'TArray'
+        elif len(t := set(type)) == 1:
+            t = next(iter(t))
+            return F'TStaticArray[{t}]'
+        else:
+            return F'TRecord[{",".join(type)}]'
 
     bo, bc = '[]' if kind == 'property' else '()'
     parts = re.fullmatch(r'''(?x)
@@ -89,7 +98,7 @@ def parse_decl(decl: str, kind: str, void: Optional[bool] = None, modifier: Opti
             for part in group.split(','):
                 args.append(IFPSParam(part.strip(), try_type(at), kind != 'var'))
 
-    return IFPSSignature(name, kind, tuple(args), type, void, modifier)
+    return IFPSSignature(name, kind, tuple(args), type, void, **kwargs)
 
 
 def parse_function(symbol: str) -> IFPSSignature:
@@ -445,26 +454,35 @@ def _parse_class_reference(cls) -> IFPSClassReference:
         members = CaseInsensitiveDict()
         for member in body:
             kind, _, decl = member.lstrip().rstrip(';').partition(' ')
-            modifier = None
-            writable = None
+            kwargs = {}
             if kind == 'property':
                 decl, _, attributes = decl.partition(';')
                 attributes = attributes.strip().split()
-                if len(attributes) == 1:
-                    modifier = F'__{attributes[0]}_only'
-                writable = 'write' in attributes
-            sig = parse_decl(decl, kind, modifier=modifier)
-            if writable is True and not sig.parameters and sig.return_type:
-                sig = IFPSSignature(
-                    sig.name,
-                    sig.kind,
-                    [IFPSParam('NewValue', sig.return_type, True)],
-                    sig.return_type,
-                    sig.void,
-                    sig.modifier
-                )
-            add_types(sig.parameters)
+                kwargs.update(
+                    writable=('write' in attributes),
+                    readable=(u'read' in attributes))
+            sig = parse_decl(decl, kind, **kwargs)
+
+            if kind == 'property':
+                parameters = sig.parameters
+                this = IFPSParam('This', name, True)
+                if kwargs['writable']:
+                    setter_name = F'Set{sig.name}'
+                    setter_args = (this, *parameters, IFPSParam('Value', sig.return_type, True))
+                    setter = IFPSSignature(setter_name, 'setter', setter_args, None, True)
+                    members[setter_name] = setter
+                if kwargs['readable']:
+                    if not sig.return_type or sig.void:
+                        raise RuntimeError(F'Readable property {sig.name} had no type.')
+                    getter_name = F'Get{sig.name}'
+                    getter_args = (this, *parameters)
+                    rt = sig.return_type
+                    getter = IFPSSignature(getter_name, 'getter', getter_args, rt, False)
+                    members[getter_name] = getter
+
             members[sig.name] = sig
+            add_types(sig.parameters)
+
         classes[name] = IFPSClass(name, members)
 
     return IFPSClassReference(types, classes)

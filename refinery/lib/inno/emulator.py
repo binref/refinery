@@ -570,11 +570,20 @@ class IFPSEmulator:
                 raise EmulatorMaxCalls
 
             if function.body is None:
-                decl = function.decl
+                namespace = ''
+
+                if decl := function.decl:
+                    if decl.is_property:
+                        if self.stack[-1].type.code == TC.Class:
+                            function = function.setter
+                        else:
+                            function = function.getter
+                        decl = function.decl
+                    namespace = (
+                        decl.classname or decl.module or '')
+
                 name = function.name
-                tcls = decl and (decl.classname or decl.module)
-                tcls = tcls or ''
-                registry: Dict[str, IFPSEmulatedFunction] = self.external_symbols.get(tcls, {})
+                registry: Dict[str, IFPSEmulatedFunction] = self.external_symbols.get(namespace, {})
                 handler = registry.get(name)
 
                 if handler:
@@ -865,8 +874,16 @@ class IFPSEmulator:
             return pfn
         return decorator(args[0]) if args else decorator
 
+    @external
+    def TInputDirWizardPage__GetValues(this: object, k: int) -> str:
+        return F'$InputDir{k}'
+
+    @external
+    def TInputFileWizardPage__GetValues(this: object, k: int) -> str:
+        return F'$InputFile{k}'
+
     @external(static=False)
-    def TPasswordEdit__Text(self, value: str) -> str:
+    def TPasswordEdit__SetText(self, this: object, value: str):
         if value:
             self.passwords.add(value)
         return value

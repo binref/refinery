@@ -535,6 +535,7 @@ class CallType(str, enum.Enum):
     Symbol = 'symbol'
     Procedure = 'procedure'
     Function = 'function'
+    Property = 'property'
 
     def __str__(self):
         return self.value
@@ -553,6 +554,7 @@ class DeclSpec:
     vtable_index: Optional[int] = None
     load_with_altered_search_path: bool = False
     is_property: bool = False
+    is_accessor: bool = False
 
     @property
     def argc(self):
@@ -578,19 +580,27 @@ class DeclSpec:
         if not ref:
             if self.delay_load:
                 spec = F'__delay_load {spec}'
-            if self.calling_convention:
+            if self.calling_convention and not self.is_property:
                 spec = F'__{self.calling_convention} {spec}'
             spec = F'{self.type} {spec}'
             args = self.parameters
             args = args and ', '.join(pparam(*t) for t in enumerate(args, 1)) or ''
-            spec = F'{spec}({args})'
+            if self.is_property:
+                if args:
+                    spec = F'{spec}[{args}]'
+            else:
+                spec = F'{spec}({args})'
             if self.return_type:
                 spec = F'{spec}: {self.return_type!s}'
         return spec
 
     @property
     def type(self):
-        return CallType.Procedure if self.void else CallType.Function
+        if self.is_property:
+            return CallType.Property
+        if self.void:
+            return CallType.Procedure
+        return CallType.Function
 
     def __repr__(self):
         return self.represent(self.name or '(*)')
@@ -686,12 +696,21 @@ class DeclSpec:
 
 @dataclass
 class Function:
-    symbol: str
-    decl: Optional[DeclSpec]
+    symbol: str = ''
+    decl: Optional[DeclSpec] = None
     body: Optional[List[Instruction]] = None
     attributes: Optional[List[Attribute]] = None
     _bbs: Optional[Dict[int, BasicBlock]] = None
     _ins: Optional[Dict[int, Instruction]] = None
+    getter: Optional[Function] = None
+    setter: Optional[Function] = None
+
+    @property
+    def is_property(self):
+        if decl := self.decl:
+            return decl.is_property
+        else:
+            return False
 
     @property
     def name(self):
@@ -1250,6 +1269,8 @@ class IFPSFile(Struct):
         def _signature(name: str, decl: Optional[DeclSpec]):
             signature = IFPSAPI.get(name, IFPSEvents.get(name)) if name else None
             if decl and decl.classname and (ic := IFPSClasses.Classes.get(decl.classname)):
+                if ic.name not in self.types_by_name:
+                    missing_types.add(ic.name)
                 signature = ic.members.get(decl.name, signature)
                 decl.classname = ic.name
             return signature
@@ -1315,20 +1336,46 @@ class IFPSFile(Struct):
             else:
                 break
 
+        byfqn: Dict[str, List[Function]] = {}
+
+        for function in self.functions:
+            key = str(function)
+            fqn = byfqn.setdefault(key, []).append(function)
+
+        for fqn, functions in byfqn.items():
+            if len(functions) != 2:
+                continue
+            getter, setter = functions
+            if not (s_decl := setter.decl):
+                continue
+            if not (g_decl := getter.decl):
+                continue
+            if setter.decl.is_property:
+                setter, getter = getter, setter
+                s_decl, g_decl = g_decl, s_decl
+            if s_decl.is_property:
+                continue
+            if not g_decl.is_property:
+                continue
+            g_decl.is_property = False
+            g_decl.name = F'Get{g_decl.name}'
+            s_decl.name = F'Set{s_decl.name}'
+
         for function in self.functions:
             name = function.symbol
             decl = function.decl
-            if (signature := _signature(name, decl)) and decl and signature.argc == decl.argc:
-                for old, new in itertools.zip_longest(decl.parameters, signature.parameters):
-                    if not new:
-                        break
-                    if old and (t := old.type):
-                        t.symbol = new.type
-                        continue
-                    if t := self.types_by_name.get(new.type):
-                        t.symbol = new.type
-                    else:
-                        missing_types.add(new.type)
+            if (signature := _signature(name, decl)) and decl:
+                if signature.argc == decl.argc:
+                    for old, new in itertools.zip_longest(decl.parameters, signature.parameters):
+                        if not new:
+                            break
+                        if old and (t := old.type):
+                            t.symbol = new.type
+                            continue
+                        if t := self.types_by_name.get(new.type):
+                            t.symbol = new.type
+                        else:
+                            missing_types.add(new.type)
                 if sr := signature.return_type:
                     if (dr := decl.return_type) or (dr := self.types_by_name.get(sr)):
                         dr.symbol = sr
@@ -1356,6 +1403,33 @@ class IFPSFile(Struct):
                 function.decl = decl
 
         for function in self.functions:
+            if (decl := function.decl) and decl.is_property:
+                classname = decl.classname
+                this = DeclSpecParam(True, self.types_by_name.get(classname), 'This')
+                nval = DeclSpecParam(True, decl.return_type, 'NewValue')
+                info = IFPSClasses.Classes.get(classname)
+                info = info and info.members.get(decl.name)
+                if not info or info.writable:
+                    function.setter = Function(decl=DeclSpec(
+                        True,
+                        [this, *decl.parameters, nval],
+                        F'Set{decl.name}',
+                        None,
+                        None,
+                        classname=classname,
+                        is_accessor=True
+                    ))
+                if not info or info.readable:
+                    function.getter = Function(decl=DeclSpec(
+                        False,
+                        [this, *decl.parameters],
+                        F'Get{decl.name}',
+                        None,
+                        decl.return_type,
+                        classname=classname,
+                        is_accessor=True
+                    ))
+
             if function.body is None:
                 continue
             for instruction in function.body:
@@ -1541,6 +1615,8 @@ class IFPSFile(Struct):
                 output.write(F'external class {name}')
                 if members:
                     for spec in members.values():
+                        if spec.decl.is_accessor:
+                            continue
                         output.write(F'\n{_TAB}{spec.decl.represent(spec.symbol, rel=True)}')
                     output.write('\nend')
                 output.write(';\n\n')
