@@ -209,8 +209,8 @@ class DataUnaligned(ValueError):
     """
     Raised when input data is unexpectedly unaligned to the current block size.
     """
-    def __init__(self) -> None:
-        super().__init__('Data not aligned to block size.')
+    def __init__(self, b: int, k: int) -> None:
+        super().__init__(F'Data not aligned to block size {b}, with {k} missing bytes to complete the block.')
 
 
 class StatefulCipherMode(CipherMode):
@@ -624,8 +624,8 @@ class BlockCipher(CipherInterface, ABC):
     def _apply_blockwise(self, operation: Operation, data: BufferType) -> BufferType:
         block_size = self.block_size
         mode = self.mode
-        if len(data) % block_size != 0 and mode.aligned:
-            raise DataUnaligned
+        if (k := -len(data) % block_size) and mode.aligned:
+            raise DataUnaligned(block_size, k)
         dst = src = memoryview(data)
         if dst.readonly:
             dst = bytearray(src)
