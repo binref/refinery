@@ -129,9 +129,9 @@ class ClipBoard:
     def paste(self):
         hg = GetClipboardData(self.mode.value)
         if self.mode is CF.TEXT or self.mode is CF.OEMTEXT:
-            return ctypes.c_char_p(hg).value
+            return ptr.value if (ptr := ctypes.c_char_p(hg)) else B''
         if self.mode is CF.UNICODETEXT:
-            return ctypes.c_wchar_p(hg).value.encode('utf8')
+            return ptr.value.encode('utf8') if (ptr := ctypes.c_wchar_p(hg)) else B''
         if self.mode is CF.DIB:
             def get_pixel_data_offset_for_packed_dib(header: BITMAPINFOHEADER) -> int:
                 extra = 0
