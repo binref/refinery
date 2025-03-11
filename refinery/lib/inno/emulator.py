@@ -421,7 +421,7 @@ class EmulatorMaxStack(MemoryError):
 class EmulatorMaxCalls(MemoryError):
     """
     The emulation was aborted because the call stack limit given in the configuration was exceeded.
-    """   
+    """
     pass
 
 
@@ -1026,7 +1026,7 @@ class IFPSEmulator:
                     raise
                 except Exception as RE:
                     raise EmulatorException(
-                        F'In {function.symbol} at 0x{insn.offset:X} (cycle {cycle}), '
+                        F'In {function.symbol} at 0x{insn.offset:X} (cycle {self.clock}), '
                         F'emulation of {insn!r} failed: {RE!s}')
             if ip is None:
                 raise RuntimeError(F'Instruction pointer moved out of bounds to 0x{ip:X}.')
