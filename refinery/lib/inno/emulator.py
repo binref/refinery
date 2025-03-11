@@ -107,7 +107,13 @@ class Variable(VariableBase, Generic[_T]):
     base variable given via `spec`.
     """
 
-    __slots__ = 'data', 'path'
+    __slots__ = (
+        'data',
+        'path',
+        '_int_mask',
+        '_int_bits',
+        '_int_good',
+    )
 
     @property
     def container(self):
