@@ -8,7 +8,14 @@ from refinery.units import Arg, Unit
 from refinery.lib import lief
 
 
-def get_pe_size(pe: Union[lief.PE.Binary, ByteString], overlay=True, sections=True, directories=True, certificate=True, memdump=False) -> int:
+def get_pe_size(
+    pe: Union[lief.PE.Binary, ByteString],
+    overlay=True,
+    sections=True,
+    directories=True,
+    certificate=True,
+    memdump=False,
+) -> int:
     """
     This fuction determines the size of a PE file, optionally taking into account the PE overlay
     computation, section information, data directory information, and certificate entries.
