@@ -934,7 +934,7 @@ class Function:
                     continue
                 raise IndexError(
                     F'Instruction {op!s} at offset 0x{insn.offset:X} in function {self.name} has '
-                    F'variant operand {k} whose index {v.index} exceeds the stack depth {stack}.')
+                    F'variable operand {k} whose index {v.index} exceeds the stack depth {stack}.')
 
         return bbs
 
@@ -1598,7 +1598,7 @@ class IFPSFile(Struct):
                 spec = reader.read_length_prefixed_ascii()
             self.globals.append(VariableBase(self.types[code], spec))
 
-    def _read_variant(self, index: int) -> VariableSpec:
+    def _read_variable_spec(self, index: int) -> VariableSpec:
         if index < 0x40000000:
             return VariableSpec(index, VariableType.Global)
         index -= 0x60000000
@@ -1611,14 +1611,14 @@ class IFPSFile(Struct):
         ot = OperandType(reader.u8())
         kw = {}
         if ot is OperandType.Variable:
-            kw.update(variant=self._read_variant(reader.u32()))
+            kw.update(variable=self._read_variable_spec(reader.u32()))
         if ot is OperandType.Value:
             kw.update(value=self._read_value(reader))
         if ot >= OperandType.IndexedByInt:
-            kw.update(variant=self._read_variant(reader.u32()))
+            kw.update(variable=self._read_variable_spec(reader.u32()))
             index = reader.u32()
             if ot is OperandType.IndexedByVar:
-                index = self._read_variant(index)
+                index = self._read_variable_spec(index)
             kw.update(index=index)
         return Operand(ot, **kw)
 
@@ -1675,7 +1675,7 @@ class IFPSFile(Struct):
                 target = reader.i32()
                 args.append(reader.tell() + target)
             elif code is Op.StackType:
-                args.append(self._read_variant(reader.u32()))
+                args.append(self._read_variable_spec(reader.u32()))
                 args.append(reader.u32())
             elif code is Op.PushType:
                 args.append(self.types[reader.u32()])
