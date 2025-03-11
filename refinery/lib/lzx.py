@@ -43,7 +43,7 @@ _NUM_POWER_POS_SLOTS = 38
 
 
 def uint32array(n: int):
-    return make_array(4, n, unsigned=True, fill=0)
+    return make_array(4, n, unsigned=True, init=0)
 
 
 class OutOfBounds(RuntimeError):

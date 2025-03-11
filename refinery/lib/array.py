@@ -7,6 +7,7 @@ architecture. This module is a small wrapper around the standard library module 
 to create arrays with a given block length.
 """
 from __future__ import annotations
+from typing import Iterable, Union
 
 import array
 
@@ -20,7 +21,12 @@ for code in array.typecodes:
     _TCMAP[unsigned, itemsize] = code
 
 
-def make_array(itemsize: int, length: int = 0, unsigned: bool = True, fill: int = 0):
+def make_array(
+    itemsize: int,
+    length: int = 0,
+    unsigned: bool = True,
+    init: Union[int, Iterable[int]] = 0
+) -> array.array[int]:
     """
     Create an array of the given length and itemsize. Optionally specify whether it should
     contain (un)signed integers and what initial value each cell should have.
@@ -30,9 +36,10 @@ def make_array(itemsize: int, length: int = 0, unsigned: bool = True, fill: int 
     except KeyError as KE:
         un = 'un' if unsigned else ''
         raise LookupError(F'Cannot build array of {un}signed integers of width {itemsize}.') from KE
-    if length > 0:
-        fill = (fill & ((1 << (itemsize * 8)) - 1))
+    if isinstance(init, int) and length > 0:
+        fill = (init & ((1 << (itemsize * 8)) - 1))
         init = (fill for _ in range(length))
+    if init:
         return array.array(code, init)
     else:
         return array.array(code)
