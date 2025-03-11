@@ -116,7 +116,7 @@ class CodePath:
         ranges = self.ranges
         tables = self.tables
         header = self.header
-        rva = header.pe.get_rva_from_offset(offset)
+        rva = header.pe.offset_to_virtual_address(offset) - header.pe.imagebase
         method = min(tables.MethodDef, key=lambda m: (m.RVA > rva, rva - m.RVA))
         index = tables.MethodDef.index(method)
         method_name = method.Name
