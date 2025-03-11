@@ -110,6 +110,7 @@ class Variable(VariableBase, Generic[_T]):
     __slots__ = (
         'data',
         'path',
+        '_int_size',
         '_int_mask',
         '_int_bits',
         '_int_good',
