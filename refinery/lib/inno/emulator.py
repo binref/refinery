@@ -3,7 +3,7 @@
 """
 An emulator for Inno Setup executables. The implementation is unlikely to be 100% correct as it
 was engineered by making various malicious scripts execute reasonably well, not by implementing
-an exact copy of [the (only) reference implementation][PS]. This is grew and grew as I wrote it
+an exact copy of [the (only) reference implementation][PS]. This grew and grew as I wrote it,
 and seems mildly insane in hindsight.
 
 [PS]: https://github.com/remobjects/pascalscript
@@ -58,8 +58,8 @@ from refinery.lib.inno.ifps import (
     TStaticArray,
     Value,
     VariableBase,
-    Variant,
-    VariantType,
+    VariableSpec,
+    VariableType,
 )
 
 import fnmatch
@@ -78,6 +78,10 @@ _T = TypeVar('_T')
 
 
 class OleObject:
+    """
+    A dummy object representing an OLE interface created by an IFPS script. All it does so far is
+    to remember the name of the object that was requested.
+    """
     def __init__(self, name):
         self.name = name
 
@@ -89,17 +93,34 @@ class OleObject:
 
 
 class Variable(VariableBase, Generic[_T]):
-    type: IFPSType
-    spec: Optional[Variant]
+    """
+    This class represents a global or stack variable in the IFPS runtime.
+    """
     data: Optional[Union[List[Variable], _T]]
+    """
+    The variable's value. This is a list of `refinery.lib.inno.emulator.Variable`s for container
+    types, a `refinery.lib.inno.emulator.Variable` for pointer types, and a basic type otherwise.
+    """
     path: Tuple[int, ...]
+    """
+    A tuple of integers that specify the seuqnce of indices required to access it, relative to the
+    base variable given via `spec`.
+    """
+
+    __slots__ = 'data', 'path'
 
     @property
     def container(self):
+        """
+        A boolean indicating whether the given variable is a container.
+        """
         return self.type.container
 
     @property
     def pointer(self):
+        """
+        A boolean indicating whether the given variable is a pointer.
+        """
         return self.type.code == TC.Pointer
 
     def __len__(self):
@@ -123,9 +144,17 @@ class Variable(VariableBase, Generic[_T]):
             var.data[key] = var._wrap(v)
 
     def at(self, k: int):
+        """
+        Provides index access for the variable. If the variable is a pointer, it is dereferenced
+        before accessing the data.
+        """
         return self.deref().data[k]
 
     def deref(var):
+        """
+        Dereferences the variable until it is no longer a pointer and returns the result. If the
+        variable is not a pointer, this function returns the variable itself.
+        """
         while True:
             val = var.data
             if not isinstance(val, Variable):
@@ -135,7 +164,7 @@ class Variable(VariableBase, Generic[_T]):
     def __init__(
         self,
         type: IFPSType,
-        spec: Optional[Variant] = None,
+        spec: Optional[VariableSpec] = None,
         path: Tuple[int, ...] = (),
         data: Optional[Union[_T, List]] = None
     ):
@@ -171,6 +200,10 @@ class Variable(VariableBase, Generic[_T]):
             self.set(data)
 
     def setdefault(self):
+        """
+        Set this variable's data to the default value for its type. This also initializes the
+        values of any contained variables recursively.
+        """
         spec = self.spec
         path = self.path
 
@@ -210,6 +243,10 @@ class Variable(VariableBase, Generic[_T]):
         return value
 
     def resize(self, n: int):
+        """
+        This function is only valid for container type variables. It re-sizes the data list to
+        ensure that the container stores exactly `n` sub-variables.
+        """
         t = self.type
         m = n - len(self.data)
         if t.code != TC.Array:
@@ -225,6 +262,11 @@ class Variable(VariableBase, Generic[_T]):
             self.data.append(Variable(t.type, self.spec, (*self.path, k)))
 
     def setptr(self, var: Variable, copy: bool = False):
+        """
+        This method is used to point a pointer variable to a target. This is different from calling
+        the `refinery.lib.inno.emulator.Variable.set` method as the latter would try to dereference
+        the pointer and assign to its target; this method sets the value of the pointer itself.
+        """
         if not self.pointer:
             raise TypeError
         if not isinstance(var, Variable):
@@ -233,10 +275,11 @@ class Variable(VariableBase, Generic[_T]):
             var = Variable(var.type, data=var.get())
         self.data = var
 
-    def set(
-        self,
-        value: Union[_T, Sequence, Variable],
-    ):
+    def set(self, value: Union[_T, Sequence, Variable]):
+        """
+        Assign a new value to the variable. This can either be an immediate value or a variable.
+        For container types, it can also be a sequence of those.
+        """
         if isinstance(value, Variable):
             if value.container:
                 dst = self.deref()
@@ -267,6 +310,11 @@ class Variable(VariableBase, Generic[_T]):
             self.data = self._wrap(value)
 
     def get(self) -> _T:
+        """
+        Return a representation of this variable that consists only of base types. For example, the
+        result for a container type will not be a list of `refinery.lib.inno.emulator.Variable`s,
+        but a list of their contents.
+        """
         if self.pointer:
             return self.deref().get()
         if self.container:
@@ -276,6 +324,9 @@ class Variable(VariableBase, Generic[_T]):
 
     @property
     def name(self):
+        """
+        Return the name of the variable as given by its spec.
+        """
         if self.spec is None:
             return 'Unbound'
         name = F'{self.spec!s}'
@@ -300,65 +351,138 @@ class Variable(VariableBase, Generic[_T]):
 
 
 class NeedSymbol(NotImplementedError):
+    """
+    An exception raised by `refinery.lib.inno.emulator.IFPSEmulator` if the runtime calls out to
+    an external symbol that is not implemented.
+    """
     pass
 
 
 class OpCodeNotImplemented(NotImplementedError):
+    """
+    An exception raised by `refinery.lib.inno.emulator.IFPSEmulator` if an unsupported opcode is
+    encountered during emulation.
+    """
     pass
 
 
 class EmulatorException(RuntimeError):
+    """
+    A generic exception representing any error that occurs during emulation.
+    """
     pass
 
 
 class AbortEmulation(Exception):
+    """
+    This exception can be raised by an external function handler to signal the emulator that script
+    execution should be aborted.
+    """
     pass
 
 
 class IFPSException(RuntimeError):
+    """
+    This class represents an exception within the IFPS runtime, i.e. an exception that is subject
+    to IFPS exception handling.
+    """
     def __init__(self, msg: str, parent: Optional[BaseException] = None):
         super().__init__(msg)
         self.parent = parent
 
 
 class EmulatorTimeout(TimeoutError):
+    """
+    The emulation timed out based on the given time limit in the configuration.
+    """
     pass
 
 
 class EmulatorExecutionLimit(TimeoutError):
+    """
+    The emulation timed out based on the given execution limit in the configuration.
+    """
     pass
 
 
 class EmulatorMaxStack(MemoryError):
+    """
+    The emulation was aborted because the stack limit given in the configuration was exceeded.
+    """
     pass
 
 
 class EmulatorMaxCalls(MemoryError):
+    """
+    The emulation was aborted because the call stack limit given in the configuration was exceeded.
+    """   
     pass
 
 
 @dataclass
 class ExceptionHandler:
+    """
+    This class represents an exception handler within the IFPS runtime.
+    """
     finally_one: Optional[int]
+    """
+    Code offset of the first finally handler.
+    """
     catch_error: Optional[int]
+    """
+    Code offset of the catch handler.
+    """
     finally_two: Optional[int]
+    """
+    Code offset of the second finally handler.
+    """
     handler_end: int
+    """
+    Code offset of the first instruction that is no longer covered.
+    """
     current: EHType = EHType.Try
+    """
+    Represents the current state of this exception handler.
+    """
 
 
 class IFPSEmulatedFunction(NamedTuple):
+    """
+    Represents an emulated external symbol.
+    """
     call: Callable
+    """
+    The actual callable function that implements the symbol.
+    """
     spec: List[bool]
+    """
+    A list of boolean values, one for each parameter of the function. Each boolean indicates
+    whether the parameter at that index is passed by reference.
+    """
     static: bool
+    """
+    Indicates whether the handler is static. If this value is `False`, the callable expects an
+    additional `self` parameter of type `refinery.lib.inno.emulator.IFPSEmulator`.
+    """
     void: bool = False
+    """
+    Indicates whether the handler implements a procedure rather than a function in the IFPS
+    runtime.
+    """
 
     @property
     def argc(self):
+        """
+        The argument count for this handler.
+        """
         return len(self.spec)
 
 
 @dataclass
 class IFPSEmulatorConfig:
+    """
+    The configuration for `refinery.lib.inno.emulator.IFPSEmulator`s.
+    """
     x64: bool = True
     admin: bool = True
     windows_os_version: Tuple[int, int, int] = (10, 0, 10240)
@@ -390,6 +514,9 @@ class IFPSEmulatorConfig:
 
 
 class TSetupStep(int, Enum):
+    """
+    An IFPS enumeration that classifies different setup steps.
+    """
     ssPreInstall = 0
     ssInstall = auto()
     ssPostInstall = auto()
@@ -397,12 +524,18 @@ class TSetupStep(int, Enum):
 
 
 class TSplitType(int, Enum):
+    """
+    An IFPS enumeration that classifies different strategies for splitting strings.
+    """
     stAll = 0
     stExcludeEmpty = auto()
     stExcludeLastEmpty = auto()
 
 
 class TUninstallStep(int, Enum):
+    """
+    An IFPS enumeration that classifies uninstaller steps.
+    """
     usAppMutexCheck = 0
     usUninstall = auto()
     usPostUninstall = auto()
@@ -410,6 +543,9 @@ class TUninstallStep(int, Enum):
 
 
 class TSetupProcessorArchitecture(int, Enum):
+    """
+    An IFPS enumeration that classifies different processor architectures.
+    """
     paUnknown = 0
     paX86 = auto()
     paX64 = auto()
@@ -418,6 +554,9 @@ class TSetupProcessorArchitecture(int, Enum):
 
 
 class PageID(int, Enum):
+    """
+    An IFPS enumeration that classifies the different installer pages.
+    """
     wpWelcome = 1
     wpLicense = auto()
     wpPassword = auto()
@@ -435,11 +574,17 @@ class PageID(int, Enum):
 
 
 class IFPSCall(NamedTuple):
+    """
+    An entry in the call trace of an `refinery.lib.inno.emulator.IFPSEmulator`.
+    """
     name: str
     args: tuple
 
 
 class FPUControl(IntFlag):
+    """
+    An integer flag representing FPU control words.
+    """
     InvalidOperation    = 0b0_00_0_00_00_00_000001 # noqa
     DenormalizedOperand = 0b0_00_0_00_00_00_000010 # noqa
     ZeroDivide          = 0b0_00_0_00_00_00_000100 # noqa
@@ -461,6 +606,9 @@ class FPUControl(IntFlag):
 
 
 class IFPSEmulator:
+    """
+    The core IFPS emulator.
+    """
 
     def __init__(
         self,
@@ -489,6 +637,10 @@ class IFPSEmulator:
         return self.__class__.__name__
 
     def reset(self):
+        """
+        Reset the emulator timing, FPU word, mutexes, trace, and stack. All global variables are
+        set to their default values.
+        """
         self.seconds_slept = 0.0
         self.clock = 0
         self.fpucw = FPUControl.MaxPrecision | FPUControl.RoundTowardZero
@@ -501,9 +653,18 @@ class IFPSEmulator:
         return self
 
     def unimplemented(self, function: Function):
+        """
+        The base IFPS emulator raises `refinery.lib.inno.emulator.NeedSymbol` when an external
+        symbol is unimplemented. Child classes can override this function to handle the missing
+        symbol differently.
+        """
         raise NeedSymbol(function.name)
 
     def emulate_function(self, function: Function, *args):
+        """
+        Emulate a function call to the given function, passing the given arguments. The method
+        returns the return value of the emulated function call if it is not a procedure.
+        """
         self.stack.clear()
         decl = function.decl
         if decl is None:
@@ -512,12 +673,12 @@ class IFPSEmulator:
             raise ValueError(
                 F'Function {function!s} expects {n} arguments, only {m} were given.')
         for index, (argument, parameter) in enumerate(zip(args, decl.parameters), 1):
-            variable = Variable(parameter.type, Variant(index, VariantType.Local))
+            variable = Variable(parameter.type, VariableSpec(index, VariableType.Local))
             variable.set(argument)
             self.stack.append(variable)
         self.stack.reverse()
         if not decl.void:
-            result = Variable(decl.return_type, Variant(0, VariantType.Argument))
+            result = Variable(decl.return_type, VariableSpec(0, VariableType.Argument))
             self.stack.append(result)
         self.call(function)
         self.stack.clear()
@@ -525,31 +686,35 @@ class IFPSEmulator:
             return result.get()
 
     def call(self, function: Function):
+        """
+        Begin emulating at the start of the given function.
+        """
+
         def operator_div(a, b):
             return a // b if isinstance(a, int) and isinstance(b, int) else a / b
 
         def operator_in(a, b):
             return a in b
 
-        def getvar(op: Union[Variant, Operand]) -> Variable:
+        def getvar(op: Union[VariableSpec, Operand]) -> Variable:
             if not isinstance(op, Operand):
                 v = op
                 k = None
             elif op.type is OperandType.Value:
                 raise TypeError('Attempting to retrieve variable for an immediate operand.')
             else:
-                v = op.variant
+                v = op.variable
                 k = op.index
                 if op.type is OperandType.IndexedByVar:
                     k = getvar(k).get()
             t, i = v.type, v.index
-            if t is VariantType.Argument:
+            if t is VariableType.Argument:
                 if function.decl.void:
                     i -= 1
                 var = self.stack[sp - i]
-            elif t is VariantType.Global:
+            elif t is VariableType.Global:
                 var = self.globals[i]
-            elif t is VariantType.Local:
+            elif t is VariableType.Local:
                 var = self.stack[sp + i]
             else:
                 raise TypeError
@@ -574,16 +739,20 @@ class IFPSEmulator:
             eh: List[ExceptionHandler]
 
         callstack: List[CallState] = []
-
         exec_start = process_time()
+        stack = self.stack
+        _cfg_max_call_stack = self.config.max_call_stack
+        _cfg_max_data_stack = self.config.max_data_stack
+        _cfg_max_seconds = self.config.max_seconds
+        _cfg_max_opcodes = self.config.max_opcodes
 
         ip: int = 0
-        sp: int = len(self.stack) - 1
+        sp: int = len(stack) - 1
         pending_exception = None
         exceptions = []
 
         while True:
-            if 0 < self.config.max_data_stack < len(callstack):
+            if 0 < _cfg_max_call_stack < len(callstack):
                 raise EmulatorMaxCalls
 
             if function.body is None:
@@ -591,7 +760,7 @@ class IFPSEmulator:
 
                 if decl := function.decl:
                     if decl.is_property:
-                        if self.stack[-1].type.code == TC.Class:
+                        if stack[-1].type.code == TC.Class:
                             function = function.setter
                         else:
                             function = function.getter
@@ -615,11 +784,11 @@ class IFPSEmulator:
 
                 try:
                     rpos = 0 if void else 1
-                    args = [self.stack[~k] for k in range(rpos, argc + rpos)]
+                    args = [stack[~k] for k in range(rpos, argc + rpos)]
                 except IndexError:
                     raise EmulatorException(
                         F'Cannot call {function!s}; {argc} arguments + {rpos} return values expected,'
-                        F' but stack size is only {len(self.stack)}.')
+                        F' but stack size is only {len(stack)}.')
 
                 if self.config.trace_calls:
                     self.trace.append(IFPSCall(str(function), tuple(a.get() for a in args)))
@@ -640,7 +809,7 @@ class IFPSEmulator:
                         pending_exception = IFPSException(F'Error calling {function.name}: {b!s}', b)
                     else:
                         if not handler.void:
-                            self.stack[-1].set(return_value)
+                            stack[-1].set(return_value)
                 if not callstack:
                     if pending_exception is None:
                         return
@@ -649,11 +818,11 @@ class IFPSEmulator:
                 continue
 
             while insn := function.code.get(ip, None):
-                if 0 < self.config.max_seconds < process_time() - exec_start:
+                if 0 < _cfg_max_seconds < process_time() - exec_start:
                     raise EmulatorTimeout
-                if 0 < self.config.max_opcodes < self.clock:
+                if 0 < _cfg_max_opcodes < self.clock:
                     raise EmulatorExecutionLimit
-                if 0 < self.config.max_data_stack < len(self.stack):
+                if 0 < _cfg_max_data_stack < len(stack):
                     raise EmulatorMaxStack
                 try:
                     if pe := pending_exception:
@@ -713,16 +882,16 @@ class IFPSEmulator:
                         setval(dst, result)
                     elif opc == Op.Push:
                         # TODO: I do not actually know how this works
-                        self.stack.append(getval(insn.op(0)))
+                        stack.append(getval(insn.op(0)))
                     elif opc == Op.PushVar:
-                        self.stack.append(getvar(insn.op(0)))
+                        stack.append(getvar(insn.op(0)))
                     elif opc == Op.Pop:
-                        self.temp = self.stack.pop()
+                        self.temp = stack.pop()
                     elif opc == Op.Call:
                         callstack.append(CallState(function, ip, sp, exceptions))
                         function = insn.operands[0]
                         ip = 0
-                        sp = len(self.stack) - 1
+                        sp = len(stack) - 1
                         exceptions = []
                         break
                     elif opc == Op.Jump:
@@ -734,7 +903,7 @@ class IFPSEmulator:
                         if not getval(insn.op(1)):
                             ip = insn.operands[0]
                     elif opc == Op.Ret:
-                        del self.stack[sp + 1:]
+                        del stack[sp + 1:]
                         if not callstack:
                             return
                         function, ip, sp, exceptions = callstack.pop()
@@ -742,9 +911,9 @@ class IFPSEmulator:
                     elif opc == Op.StackType:
                         raise OpCodeNotImplemented(str(opc))
                     elif opc == Op.PushType:
-                        self.stack.append(Variable(
+                        stack.append(Variable(
                             insn.operands[0],
-                            Variant(len(self.stack) - sp, VariantType.Local)
+                            VariableSpec(len(stack) - sp, VariableType.Local)
                         ))
                     elif opc == Op.Compare:
                         compare = {
@@ -762,11 +931,16 @@ class IFPSEmulator:
                         b = getval(insn.op(2))
                         d.set(compare(a, b))
                     elif opc == Op.CallVar:
-                        pfn = getval(insn.op(0))
-                        if isinstance(pfn, int):
-                            pfn = self.ifps.functions[pfn]
-                        if isinstance(pfn, Function):
-                            self.call(pfn)
+                        call = getval(insn.op(0))
+                        if isinstance(call, int):
+                            call = self.ifps.functions[call]
+                        if isinstance(call, Function):
+                            callstack.append(CallState(function, ip, sp, exceptions))
+                            function = call
+                            ip = 0
+                            sp = len(stack) - 1
+                            exceptions = []
+                            break
                     elif opc in (Op.SetPtr, Op.SetPtrToCopy):
                         copy = False
                         if opc == Op.SetPtrToCopy:
@@ -812,11 +986,11 @@ class IFPSEmulator:
                     elif opc == Op.Dec:
                         setval(a := insn.op(0), getval(a) - 1)
                     elif opc == Op.JumpPop1:
-                        self.stack.pop()
+                        stack.pop()
                         ip = insn.operands[0]
                     elif opc == Op.JumpPop2:
-                        self.stack.pop()
-                        self.stack.pop()
+                        stack.pop()
+                        stack.pop()
                         ip = insn.operands[0]
                     else:
                         raise RuntimeError(F'Function contains invalid opcode at 0x{ip:X}.')
@@ -844,10 +1018,10 @@ class IFPSEmulator:
                     raise
                 except EmulatorException:
                     raise
-                # except Exception as RE:
-                #     raise EmulatorException(
-                #         F'In {function.symbol} at 0x{insn.offset:X} (cycle {cycle}), '
-                #         F'emulation of {insn!r} failed: {RE!s}')
+                except Exception as RE:
+                    raise EmulatorException(
+                        F'In {function.symbol} at 0x{insn.offset:X} (cycle {cycle}), '
+                        F'emulation of {insn!r} failed: {RE!s}')
             if ip is None:
                 raise RuntimeError(F'Instruction pointer moved out of bounds to 0x{ip:X}.')
 
@@ -866,6 +1040,11 @@ class IFPSEmulator:
             classname, _, name = name.rpartition(csep)
             if (registry := __reg.get(classname)) is None:
                 registry = __reg[classname] = CaseInsensitiveDict()
+
+            docs = F'{classname}::{name}' if classname else name
+            docs = F'An emulated handler for the external symbol {docs}.'
+            pfn.__doc__ = docs
+
             void = kwargs.get('void', signature.return_annotation == signature.empty)
             parameters: List[bool] = []
             specs = iter(signature.parameters.values())
@@ -1797,8 +1976,16 @@ class IFPSEmulator:
 
 
 class InnoSetupEmulator(IFPSEmulator):
+    """
+    A specialized `refinery.lib.emulator.IFPSEmulator` that can emulate the InnoSetup installation
+    with a focus on continuing execution as much as possible.
+    """
 
     def emulate_installation(self, password=''):
+        """
+        To the best of the author's knowledge, this function emulates the sequence of calls into
+        the script that the IFPS runtime would make during a setup install.
+        """
 
         class SetupDispatcher:
 
@@ -1843,6 +2030,11 @@ class InnoSetupEmulator(IFPSEmulator):
         Setup.DeinitializeSetup()
 
     def unimplemented(self, function: Function):
+        """
+        Any unimplemented function is essentially skipped. Any arguments passed by reference and
+        all return values that are of type integer are set to `1` in an attempt to indicate success
+        wherever possible.
+        """
         decl = function.decl
         if decl is None:
             return

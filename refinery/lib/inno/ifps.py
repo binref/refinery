@@ -40,6 +40,9 @@ _TAB = '\x20\x20'
 
 
 def extended(_data: bytes):
+    """
+    A helper function to parse 10 bytes into an extended type float value within the IFPS runtime.
+    """
     if len(_data) != 10:
         raise ValueError
     data = int.from_bytes(_data, 'little')
@@ -64,6 +67,10 @@ def extended(_data: bytes):
 
 
 def represent(cls: _E) -> _E:
+    """
+    A decorator for various IFPS integer enumeration classes to change the default string
+    representation.
+    """
     cls.__repr__ = lambda self: F'{self.__class__.__name__}.{self.name}'
     cls. __str__ = lambda self: self.name
     return cls
@@ -71,6 +78,9 @@ def represent(cls: _E) -> _E:
 
 @represent
 class Op(enum.IntEnum):
+    """
+    An enumeration of all known IFPS opcodes.
+    """
     Assign       = 0x00  # noqa
     Calculate    = 0x01  # noqa
     Push         = 0x02  # noqa
@@ -110,6 +120,9 @@ class Op(enum.IntEnum):
 
 
 class AOp(enum.IntEnum):
+    """
+    An enumeration of all known IFPS arithmetic opcodes.
+    """
     Add = 0
     Sub = 1
     Mul = 2
@@ -127,6 +140,9 @@ class AOp(enum.IntEnum):
 
 
 class COp(enum.IntEnum):
+    """
+    An enumeration of all known IFPS comparison opcodes.
+    """
     GE = 0
     LE = 1
     GT = 2
@@ -142,6 +158,9 @@ class COp(enum.IntEnum):
 
 @represent
 class TC(enum.IntEnum):
+    """
+    An enumeration of all known IFPS type codes.
+    """
     ReturnAddress       = 0x00  # noqa
     U08                 = 0x01  # noqa
     S08                 = 0x02  # noqa
@@ -177,6 +196,9 @@ class TC(enum.IntEnum):
 
     @property
     def primitive(self) -> bool:
+        """
+        Indicates whether the code represents a primitive type.
+        """
         return self not in {
             TC.Class,
             TC.ProcPtr,
@@ -189,6 +211,9 @@ class TC(enum.IntEnum):
 
     @property
     def container(self) -> bool:
+        """
+        Indicates whether the code represents a container type.
+        """
         return self in {
             TC.StaticArray,
             TC.Array,
@@ -197,6 +222,9 @@ class TC(enum.IntEnum):
 
     @property
     def width(self):
+        """
+        For primitive types, this gives the size of an immediate of this type in bytes.
+        """
         return {
             TC.Variant       : 0x10,
             TC.Char          : 0x01,
@@ -226,8 +254,11 @@ class TC(enum.IntEnum):
 
 @dataclass
 class IFPSTypeMixin:
+    """
+    A helper class to mix additional properties into various IFPS type classes.
+    """
     symbol: Optional[str] = None
-    attributes: Optional[List[Attribute]] = None
+    attributes: Optional[List[FunctionAttribute]] = None
 
     def __str__(self):
         if self.symbol is not None:
@@ -237,35 +268,51 @@ class IFPSTypeMixin:
 
 @dataclass
 class IFPSTypeBase(abc.ABC):
+    """
+    The base class for any IFPS type.
+    """
     code: TC
 
     def simple(self, nested=False):
+        """
+        Indicate whether the type requires more than one line to pretty print.
+        """
         return True
 
-    def indexed(self):
-        return self.code in (
-            TC.StaticArray,
-            TC.Array,
-            TC.Record,
-        )
-
     def display(self, indent=0):
+        """
+        Compute a display string that can be used to represent the type in disassembly.
+        """
         return indent * _TAB + self.code.name
 
     @abc.abstractmethod
     def py_type(self, key: Optional[int] = None) -> Optional[type]:
+        """
+        If possible, provide a Python type equivalent for this IFPS type. The optional key argument
+        is required only for the `refinery.lib.inno.ifps.TRecord` class.
+        """
         ...
 
     @abc.abstractmethod
     def default(self, key: Optional[int] = None):
+        """
+        Compute the default value for this type. The optional key argument is required only for the
+        `refinery.lib.inno.ifps.TRecord` class.
+        """
         ...
 
     @property
     def primitive(self) -> bool:
+        """
+        Indicates whether the type is primitive.
+        """
         return self.code.primitive
 
     @property
     def container(self) -> bool:
+        """
+        Indicates whether the type is a container.
+        """
         return self.code.container
 
     def __str__(self):
@@ -273,6 +320,10 @@ class IFPSTypeBase(abc.ABC):
 
 
 def ifpstype(cls: _C) -> Union[_C, Type[IFPSTypeMixin]]:
+    """
+    A decorator for IFPS types to mix the `refinery.lib.inno.ifps.IFPSTypeMixin` into the dataclass
+    definition.
+    """
     cls = dataclass(cls)
     mix = type(cls.__qualname__, (IFPSTypeMixin, cls), {})
     assigned = set(WRAPPER_ASSIGNMENTS) - {'__annotations__'}
@@ -282,7 +333,9 @@ def ifpstype(cls: _C) -> Union[_C, Type[IFPSTypeMixin]]:
 
 @ifpstype
 class TPrimitive(IFPSTypeBase):
-
+    """
+    A primitive IFPS type.
+    """
     def py_type(self, *_) -> Optional[type]:
         return {
             TC.ReturnAddress       : int,
@@ -320,6 +373,9 @@ class TPrimitive(IFPSTypeBase):
 
 @ifpstype
 class TProcPtr(IFPSTypeBase):
+    """
+    The procedure pointer IFPS type.
+    """
     void: bool
     args: tuple[DeclSpecParam, ...]
 
@@ -345,6 +401,9 @@ class TProcPtr(IFPSTypeBase):
 
 @ifpstype
 class TInterface(IFPSTypeBase):
+    """
+    An IFPS type representing a COM interface.
+    """
     uuid: UUID
 
     def py_type(self, *_):
@@ -360,6 +419,9 @@ class TInterface(IFPSTypeBase):
 
 @ifpstype
 class TClass(IFPSTypeBase):
+    """
+    An IFPS type representing an IFPS class.
+    """
     name: str
 
     def py_type(self, *_):
@@ -371,6 +433,9 @@ class TClass(IFPSTypeBase):
 
 @ifpstype
 class TSet(IFPSTypeBase):
+    """
+    An IFPS type representing a bit vector.
+    """
     size: int
 
     def py_type(self, *_):
@@ -391,6 +456,9 @@ class TSet(IFPSTypeBase):
 
 @ifpstype
 class TArray(IFPSTypeBase):
+    """
+    An IFPS type representing a dynamic array.
+    """
     type: TPrimitive
 
     def py_type(self, key: Optional[int] = None):
@@ -413,6 +481,9 @@ class TArray(IFPSTypeBase):
 
 @ifpstype
 class TStaticArray(IFPSTypeBase):
+    """
+    An IFPS type representing a static array (i.e. a tuple).
+    """
     type: TPrimitive
     size: int
     offset: Optional[int] = None
@@ -437,6 +508,9 @@ class TStaticArray(IFPSTypeBase):
 
 @ifpstype
 class TRecord(IFPSTypeBase):
+    """
+    An IFPS type representing a structure.
+    """
     members: Tuple[TPrimitive, ...]
 
     @property
@@ -488,9 +562,24 @@ IFPSType = Union[
     TInterface,
     TPrimitive,
 ]
+"""
+Represents any of the possible IFPS data types:
+
+- `refinery.lib.inno.ifps.TRecord`
+- `refinery.lib.inno.ifps.TStaticArray`
+- `refinery.lib.inno.ifps.TArray`
+- `refinery.lib.inno.ifps.TSet`
+- `refinery.lib.inno.ifps.TProcPtr`
+- `refinery.lib.inno.ifps.TClass`
+- `refinery.lib.inno.ifps.TInterface`
+- `refinery.lib.inno.ifps.TPrimitive`
+"""
 
 
 class Value(NamedTuple):
+    """
+    A value of the given type within the IFPS runtime.
+    """
     type: IFPSType
     value: Union[str, int, float, bytes, Function]
 
@@ -513,7 +602,10 @@ class Value(NamedTuple):
         return repr(v)
 
 
-class Attribute(NamedTuple):
+class FunctionAttribute(NamedTuple):
+    """
+    A function attribute.
+    """
     name: str
     fields: Tuple[Value, ...]
 
@@ -526,12 +618,27 @@ class Attribute(NamedTuple):
 
 @dataclass
 class DeclSpecParam:
+    """
+    A function parameter specification.
+    """
     const: bool
+    """
+    True if this parameter is passed by value, not by reference.
+    """
     type: Optional[TPrimitive] = None
+    """
+    The type of this parameter.
+    """
     name: Optional[str] = None
+    """
+    The name of this parameter.
+    """
 
 
 class CallType(str, enum.Enum):
+    """
+    This enumeration classifies the different call types.
+    """
     Symbol = 'symbol'
     Procedure = 'procedure'
     Function = 'function'
@@ -543,6 +650,9 @@ class CallType(str, enum.Enum):
 
 @dataclass
 class DeclSpec:
+    """
+    This class captures the declaration info of a function symbol.
+    """
     void: bool
     parameters: List[DeclSpecParam] = field(default_factory=list)
     name: str = ''
@@ -562,7 +672,7 @@ class DeclSpec:
 
     def represent(self, name: str, ref: bool = False, rel: bool = False):
         def pparam(k: int, p: DeclSpecParam):
-            name = p.name or F'{VariantType.Argument!s}{k}'
+            name = p.name or F'{VariableType.Argument!s}{k}'
             if p.type is not None:
                 name = F'{name}: {p.type!s}'
             if not p.const:
@@ -696,10 +806,13 @@ class DeclSpec:
 
 @dataclass
 class Function:
+    """
+    Represents a function in the IFPS runtime.
+    """
     symbol: str = ''
     decl: Optional[DeclSpec] = None
     body: Optional[List[Instruction]] = None
-    attributes: Optional[List[Attribute]] = None
+    attributes: Optional[List[FunctionAttribute]] = None
     _bbs: Optional[Dict[int, BasicBlock]] = None
     _ins: Optional[Dict[int, Instruction]] = None
     getter: Optional[Function] = None
@@ -815,7 +928,7 @@ class Function:
             for k, op in enumerate(insn.operands):
                 if not isinstance(op, Operand):
                     continue
-                if not (v := op.variant) or v.type != VariantType.Local:
+                if not (v := op.variable) or v.type != VariableType.Local:
                     continue
                 if v.index <= stack:
                     continue
@@ -827,10 +940,24 @@ class Function:
 
 
 class VariableBase:
+    """
+    This class represents a variable within the IFPS runtime. This is primarily a base class for
+    the more sophisticated `refinery.lib.inno.emulator.Variable`.
+    """
     type: IFPSType
-    spec: Variant
+    """
+    The type of the variable, see `refinery.lib.inno.ifps.IFPSType`.
+    """
+    spec: Optional[VariableSpec]
+    """
+    A `refinery.lib.inno.ifps.VariableSpec` that uniquely identifies the base variable. If this
+    property is `None`, the variable is unbound: The `refinery.lib.inno.ifps.Op.SetPtrToCopy`
+    opcode can create such variables.
+    """
 
-    def __init__(self, type: IFPSType, spec: Variant):
+    __slots__ = 'type', 'spec'
+
+    def __init__(self, type: IFPSType, spec: VariableSpec):
         self.type = type
         self.spec = spec
 
@@ -840,7 +967,10 @@ class VariableBase:
 
 @represent
 class OperandType(enum.IntEnum):
-    Variant = 0
+    """
+    Classifies the type of an `refinery.lib.inno.ifps.Operand`.
+    """
+    Variable = 0
     Value = 1
     IndexedByInt = 2
     IndexedByVar = 3
@@ -848,6 +978,9 @@ class OperandType(enum.IntEnum):
 
 @represent
 class EHType(enum.IntEnum):
+    """
+    This enumeration lists the possible types of code region covered by an exception handler.
+    """
     Try = 0
     Finally = 1
     Catch = 2
@@ -856,13 +989,18 @@ class EHType(enum.IntEnum):
 
 @represent
 class NewEH(enum.IntEnum):
+    """
+    This enumeration gives names to the 4 arguments of the opcode responsible for registering a new
+    exception handler. The first argument specifies the location of a finally, the second argument
+    specifies the location of a catch handler, and so on.
+    """
     Finally = 0
     CatchAt = 1
     SecondFinally = 2
     End = 3
 
 
-class VariantType(str, enum.Enum):
+class VariableType(str, enum.Enum):
     Global = 'GlobalVar'
     Local = 'LocalVar'
     Argument = 'Argument'
@@ -874,21 +1012,35 @@ class VariantType(str, enum.Enum):
         return self.value
 
 
-class Variant(NamedTuple):
+class VariableSpec(NamedTuple):
+    """
+    Represents a reference to a variable within the IFPS runtime. There are three variable types:
+    Locals, globals, and function arguments; see `refinery.lib.inno.ifps.VariableType`. A variable
+    is then uniquely defined by its type and index within the (localized) list of such variables.
+    The function argument of index zero is the return value of a function.
+    """
     index: int
-    type: VariantType
+    type: VariableType
 
     def __repr__(self):
-        if self.index == 0 and self.type == VariantType.Argument:
+        if self.index == 0 and self.type == VariableType.Argument:
             return 'ReturnValue'
         return F'{self.type!s}{self.index}'
 
 
 class Operand(NamedTuple):
+    """
+    Represends an operand to an IFPS opcode. An operand can either contain a value, which is an
+    immediate that is encoded into the opcode, or a reference to a variable. A variable is given
+    by its `refinery.lib.inno.ifps.VariableSpec`. Additionally, the operand can specify an index
+    for this variable which can either be given by an immediate, or by another variable. In the
+    latter case, the encoded index is also a `refinery.lib.inno.ifps.VariableSpec`. The type of
+    operand is encoded as an `refinery.lib.inno.ifps.OperandType`.
+    """
     type: OperandType
-    variant: Optional[Variant] = None
+    variable: Optional[VariableSpec] = None
     value: Optional[Value] = None
-    index: Optional[Union[Variant, int]] = None
+    index: Optional[Union[VariableSpec, int]] = None
 
     def __repr__(self):
         return self.__tostring(repr)
@@ -903,12 +1055,12 @@ class Operand(NamedTuple):
     def __tostring(self, converter):
         if self.type is OperandType.Value:
             return converter(self.value)
-        if self.type is OperandType.Variant:
-            return converter(self.variant)
+        if self.type is OperandType.Variable:
+            return converter(self.variable)
         if self.type is OperandType.IndexedByInt:
-            return F'{converter(self.variant)}[0x{self.index:02X}]'
+            return F'{converter(self.variable)}[0x{self.index:02X}]'
         if self.type is OperandType.IndexedByVar:
-            return F'{converter(self.variant)}[{self.index!s}]'
+            return F'{converter(self.variable)}[{self.index!s}]'
         raise RuntimeError(F'Unexpected OperandType {self.type!r} in {self.__class__.__name__}')
 
 
@@ -1257,13 +1409,13 @@ class IFPSFile(Struct):
             self.strings.append(data)
         return Value(type, data)
 
-    def _read_attributes(self) -> Generator[Attribute, None, None]:
+    def _read_attributes(self) -> Generator[FunctionAttribute, None, None]:
         reader = self.reader
         count = reader.u32()
         for _ in range(count):
             name = reader.read_length_prefixed_ascii()
             fields = tuple(self._read_value() for _ in range(reader.u32()))
-            yield Attribute(name, fields)
+            yield FunctionAttribute(name, fields)
 
     def _load_functions(self):
         def _signature(name: str, decl: Optional[DeclSpec]):
@@ -1441,24 +1593,24 @@ class IFPSFile(Struct):
         reader = self.reader
         for index in range(self.count_variables):
             code = reader.u32()
-            spec = Variant(index, VariantType.Global)
+            spec = VariableSpec(index, VariableType.Global)
             if reader.u8() & 1:
                 spec = reader.read_length_prefixed_ascii()
             self.globals.append(VariableBase(self.types[code], spec))
 
-    def _read_variant(self, index: int) -> Variant:
+    def _read_variant(self, index: int) -> VariableSpec:
         if index < 0x40000000:
-            return Variant(index, VariantType.Global)
+            return VariableSpec(index, VariableType.Global)
         index -= 0x60000000
         if index >= 0:
-            return Variant(index, VariantType.Local)
+            return VariableSpec(index, VariableType.Local)
         index = -index if self.void else ~index
-        return Variant(index, VariantType.Argument)
+        return VariableSpec(index, VariableType.Argument)
 
     def _read_operand(self, reader: StructReader) -> Operand:
         ot = OperandType(reader.u8())
         kw = {}
-        if ot is OperandType.Variant:
+        if ot is OperandType.Variable:
             kw.update(variant=self._read_variant(reader.u32()))
         if ot is OperandType.Value:
             kw.update(value=self._read_value(reader))
