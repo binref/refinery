@@ -89,15 +89,15 @@ class CodeDirectoryBlob(Struct):
 
 
 _CPU_SUBTYPES = {
-    lief.MachO.CPU_TYPES.x86: {
+    lief.MachO.Header.CPU_TYPE.X86: {
         0x03: 'ALL',
         0x04: 'ARCH1',
     },
-    lief.MachO.CPU_TYPES.x86_64: {
+    lief.MachO.Header.CPU_TYPE.X86_64: {
         0x03: 'ALL',
         0x08: 'H',
     },
-    lief.MachO.CPU_TYPES.POWERPC: {
+    lief.MachO.Header.CPU_TYPE.POWERPC: {
         0x00: 'ALL',
         0x01: '601',
         0x02: '602',
@@ -112,7 +112,7 @@ _CPU_SUBTYPES = {
         0x0B: '7450',
         0x64: '970',
     },
-    lief.MachO.CPU_TYPES.ARM: {
+    lief.MachO.Header.CPU_TYPE.ARM: {
         0x00: 'ALL',
         0x05: 'V4T',
         0x06: 'V6',
@@ -126,11 +126,11 @@ _CPU_SUBTYPES = {
         0x0F: 'V7M',
         0x10: 'V7EM',
     },
-    lief.MachO.CPU_TYPES.ARM64: {
+    lief.MachO.Header.CPU_TYPE.ARM64: {
         0x00: 'ALL',
         0x02: 'ARM64E',
     },
-    lief.MachO.CPU_TYPES.SPARC: {
+    lief.MachO.Header.CPU_TYPE.SPARC: {
         0x00: 'ALL',
     },
 }
@@ -260,14 +260,14 @@ class machometa(Unit):
         info = {}
         load_commands: Iterable[lief.MachO.LoadCommand] = macho.commands
         for load_command in load_commands:
-            if load_command.command == lief.MachO.LOAD_COMMAND_TYPES.SOURCE_VERSION:
+            if load_command.command == lief.MachO.LoadCommand.TYPE.SOURCE_VERSION:
                 if 'SourceVersion' not in info:
                     cmd: lief.MachO.SourceVersion = load_command
                     info['SourceVersion'] = cmd.version[0]
                 else:
                     self.log_warn('More than one load command of type SOURCE_VERSION found; the MachO file is possibly malformed')
                 continue
-            if load_command.command == lief.MachO.LOAD_COMMAND_TYPES.BUILD_VERSION:
+            if load_command.command == lief.MachO.LoadCommand.TYPE.BUILD_VERSION:
                 if 'BuildVersion' not in info:
                     cmd: lief.MachO.BuildVersion = load_command
                     info['BuildVersion'] = {}
