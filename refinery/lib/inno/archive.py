@@ -647,6 +647,7 @@ class TSetupOffsets(Struct):
                     if view[ip:][:len(issd)] == issd:
                         return self
 
+
 @dataclasses.dataclass
 class InnoFile:
     reader: StructReader[ByteStr]
