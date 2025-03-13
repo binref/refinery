@@ -49,3 +49,9 @@ class TestInnoExtractor(TestUnitBase):
         pwds = data | unit | {str}
         self.assertContains(pwds, r'5D97BF9AEC584AAF4B7C0AEDF46CF882A5B1645392F958545AB2A7FC8FF8963F8')
  
+    def test_mw_script_07(self):
+        # 258ecd1cb153a2a450ad5404f7c55a7dea44edb54da650ffa1165d7158dee94b
+        data = self.download_sample('fb0fc2e3c2059e6159540920a4ff7f75f92212639b318da7eb7fadece4a46ecc')
+        unit = self.load()
+        pwds = data | unit | {str}
+        self.assertContains(pwds, r'A1ADB8BE8E677894E')

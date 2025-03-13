@@ -804,7 +804,14 @@ class IFPSEmulator:
                     self.unimplemented(function)
                 else:
                     if decl and (decl.void != handler.void or decl.argc != handler.argc):
-                        raise RuntimeError(F'Handler for {function!s} does not match the declaration.')
+                        ok = False
+                        if 1 + decl.argc - decl.void == 1 + handler.argc - handler.void:
+                            if decl.void and not decl.parameters[0].const:
+                                ok = True
+                            elif handler.void and handler.spec[0]:
+                                ok = True
+                        if not ok:
+                            raise RuntimeError(F'Handler for {function!s} is incompatible with declaration.')
                     for k, (var, byref) in enumerate(zip(args, handler.spec)):
                         if not byref:
                             args[k] = var.get()
