@@ -1774,12 +1774,16 @@ class IFPSFile(Struct):
                 output.write(';\n\n')
 
         if self.types:
+            typedefs = []
             for type in self.types:
                 if type.code != TC.Record and type.symbol in (type.code.name, None):
                     continue
                 if isinstance(type, TClass):
                     continue
-                output.write(F'typedef {type.symbol} = {type.display()}\n')
+                typedefs.append((type.symbol, type.display()))
+            typedefs.sort()
+            for symbol, display in typedefs:
+                output.write(F'typedef {symbol} = {display}\n')
             output.write('\n')
 
         if self.globals:
