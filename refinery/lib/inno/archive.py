@@ -564,25 +564,88 @@ class CrcCompressedBlock(JsonStruct):
         self.BlockData = reader.read(size)
 
 
+_TSetupMagicToVersion = {
+    B'rDlPtS02\x87eVx'          : _I(1, 2, 10), # noqa
+    B'rDlPtS04\x87eVx'          : _I(4, 0,  0), # noqa
+    B'rDlPtS05\x87eVx'          : _I(4, 0,  3), # noqa
+    B'rDlPtS06\x87eVx'          : _I(4, 0, 10), # noqa
+    B'rDlPtS07\x87eVx'          : _I(4, 1,  6), # noqa
+    B'rDlPtS\xcd\xe6\xd7{\x0b*' : _I(5, 1,  5), # noqa
+    B'nS5W7dT\x83\xaa\x1b\x0fj' : _I(5, 1,  5), # noqa
+}
+
+
 class TSetupOffsets(Struct):
     def __init__(self, reader: StructReader[memoryview]):
-        self.id = reader.read(12)
-        self.version = reader.u32()
+        start = reader.tell()
+        check = reader.peek()
+
+        self.id = bytes(reader.read(12))
+        self.iv = iv = _TSetupMagicToVersion.get(self.id)
+
+        if iv is None:
+            iv = _VERSIONS[-1]
+
+        self.revision = reader.u32() if iv >= (5, 1, 5) else None
         self.total_size = reader.u32()
+
         self.exe_offset = reader.u32()
+        self.exe_compressed_size = None if iv >= (4, 1, 6) else reader.u32()
         self.exe_uncompressed_size = reader.u32()
-        self.exe_crc = reader.u32()
-        self.setup0_offset = reader.u32()
-        self.setup1_offset = reader.u32()
-        self.offsets_crc = reader.u32()
+
+        if iv >= (4, 0, 3):
+            self.exe_checksum_type = CheckSumType.CRC32
+        else:
+            self.exe_checksum_type = CheckSumType.Adler32
+        self.exe_checksum = reader.u32()
+
+        self.messages = reader.u32() if iv < (4, 0, 0) else None
+        self.info_abs_offset = reader.u32()
+        self.data_abs_offset = reader.u32()
+
+        check = check[:reader.tell() - start]
+        self.computed_checksum = zlib.crc32(check)
+        self.expected_checksum = reader.u32() if (
+            iv >= (4, 0, 10)
+        ) else self.computed_checksum
+
         self.base = min(
             self.exe_offset,
-            self.setup0_offset,
-            self.setup1_offset,
+            self.info_abs_offset,
+            self.data_abs_offset,
         )
-        self.setup0 = self.setup0_offset - self.base
-        self.setup1 = self.setup1_offset - self.base
 
+        self.info_offset = self.info_abs_offset - self.base
+        self.data_offset = self.data_abs_offset - self.base
+
+    def Checked(self):
+        if (_c := self.computed_checksum) != (_e := self.expected_checksum):
+            raise ValueError(F'Invalid checksum; computed {_c:08X}, header value is {_e:08X}.')
+        if self.exe_uncompressed_size < 0x100:
+            raise ValueError(R'The EXE uncompressed size value is too low.')
+        if self.info_offset < self.data_offset:
+            raise ValueError(R'TData offset is beyond TSetup offset.')
+        return self
+
+    @classmethod
+    def Try(Cls, view: memoryview):
+        try:
+            return Cls(view).Checked()
+        except ValueError:
+            return None
+
+    @classmethod
+    def FindInBinary(Cls, data):
+        issd = B'Inno Setup Setup Data'
+        view = memoryview(data)
+        if len(view) < 0x1000:
+            return None
+        for magic in _TSetupMagicToVersion:
+            for match in re.finditer(re.escape(magic), view):
+                if self := Cls.Try(view[match.start():]):
+                    ip = self.base + self.info_offset
+                    if view[ip:][:len(issd)] == issd:
+                        return self
 
 @dataclasses.dataclass
 class InnoFile:
@@ -2089,10 +2152,13 @@ class InnoArchive:
         data: bytearray,
         unit: Optional[Unit] = None,
     ):
-        try:
-            file_metadata = one(data | perc(self.OffsetsPath))
-        except Exception as E:
-            raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
+        if not (meta := TSetupOffsets.FindInBinary(data)):
+            try:
+                _meta = one(data | perc(self.OffsetsPath))
+            except Exception as E:
+                raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
+            else:
+                meta = TSetupOffsets(_meta)
 
         self._password = None
         self._password_guessed = False
@@ -2102,7 +2168,7 @@ class InnoArchive:
         self._log_comment = (lambda *_: None) if unit is None else unit.log_info
         self._log_warning = (lambda *_: None) if unit is None else unit.log_warn
 
-        self.meta = meta = TSetupOffsets(file_metadata)
+        self.meta = meta
         self.view = view = memoryview(data)
 
         base = meta.base
@@ -2110,8 +2176,8 @@ class InnoArchive:
 
         self._decompressed = {}
 
-        blobsize = meta.setup0 - meta.setup1
-        inno.seek(meta.setup1)
+        blobsize = meta.info_offset - meta.data_offset
+        inno.seek(meta.data_offset)
         self.blobs = blobs = StructReader(inno.read(blobsize))
 
         header = bytes(inno.read(16))
