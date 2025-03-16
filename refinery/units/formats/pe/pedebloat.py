@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Generator, Iterable, Optional
+from typing import Generator, Iterable, Optional, TYPE_CHECKING
 
 from refinery.units.formats.pe import OverlayUnit, Arg
 from refinery.units.formats.pe.perc import RSRC
@@ -12,7 +12,10 @@ from refinery.lib.meta import TerseSizeInt as TI, SizeInt
 import zlib
 
 from fnmatch import fnmatch
-from pefile import PE, Structure, SectionStructure, DIRECTORY_ENTRY
+
+if TYPE_CHECKING:
+    from pefile import PE, Structure, SectionStructure
+
 
 _KB = 1000
 _MB = _KB * _KB
@@ -75,6 +78,11 @@ class pedebloat(OverlayUnit):
             trim_code=trim_code,
             names=names,
         )
+
+    @OverlayUnit.Requires('pefile', 'default', 'extended')
+    def _pefile():
+        import pefile
+        return pefile
 
     def _right_strip_data(self, data: memoryview, alignment=1, block_size=_MB) -> int:
         if not data:
@@ -167,6 +175,7 @@ class pedebloat(OverlayUnit):
                 setattr(structure, attribute, new_value)
 
         it: Iterable[Structure] = iter(pe.__structures__)
+        structure_class = self._pefile.SectionStructure
         remove = []
 
         for index, structure in enumerate(it):
@@ -178,7 +187,7 @@ class pedebloat(OverlayUnit):
                     self.log_debug(F'removing structure {structure.name}; starts inside removed region')
                     remove.append(index)
                     continue
-                if isinstance(structure, SectionStructure) and new_offset % alignment != 0:
+                if isinstance(structure, structure_class) and new_offset % alignment != 0:
                     raise RuntimeError(
                         F'structure {structure.name} would be moved to offset 0x{new_offset:X}, '
                         F'violating section alignment value 0x{alignment:X}.')
@@ -288,7 +297,7 @@ class pedebloat(OverlayUnit):
                     continue
                 yield name, struct
 
-        RSRC_INDEX = DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
+        RSRC_INDEX = self._pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
         pe.parse_data_directories(directories=[RSRC_INDEX])
 
         try:
@@ -327,7 +336,7 @@ class pedebloat(OverlayUnit):
                 data = data[:body_size]
         if not self.args.resources and not self.args.sections:
             return data
-        pe = PE(data=data, fast_load=True)
+        pe = self._pefile.PE(data=data, fast_load=True)
         total = len(data)
         trimmed = 0
         view = pe.__data__
