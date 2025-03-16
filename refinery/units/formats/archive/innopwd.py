@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from threading import Thread
+from queue import SimpleQueue, Empty
+
 from refinery.units import Unit
 
 from refinery.lib.inno.archive import InnoArchive
@@ -30,16 +33,43 @@ class innopwd(Unit):
             self.log_info('password hash:', file.password_hash)
             self.log_info('password salt:', file.password_salt)
 
-        iemu = InnoSetupEmulator(inno)
-        iemu.emulate_installation()
+        passwords: SimpleQueue[str] = SimpleQueue()
 
-        for password in iemu.passwords:
+        class Emulator(InnoSetupEmulator):
+            def log_password(self, password):
+                passwords.put_nowait(password)
+
+        class Emulation(Thread):
+            error = None
+
+            def run(self):
+                try:
+                    Emulator(inno).emulate_installation()
+                except BaseException as error:
+                    self.error = error
+
+        emulation = Emulation(daemon=True)
+        emulation.start()
+
+        while True:
+            try:
+                password = passwords.get(block=True, timeout=0.01)
+            except Empty:
+                if emulation.is_alive():
+                    continue
+                elif error := emulation.error:
+                    raise error
+                else:
+                    return
             if file and not inno.check_password(file, password):
                 self.log_info('discarding password:', password)
                 continue
+
             yield password.encode(self.codec)
+
             if file:
-                break
+                self.log_info('aborting emulation after validating password')
+                return
 
     @classmethod
     def handles(self, data):

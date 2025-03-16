@@ -659,6 +659,9 @@ class IFPSEmulator:
             v.setdefault()
         return self
 
+    def log_password(self, password: str):
+        self.passwords.add(password)
+
     def unimplemented(self, function: Function):
         """
         The base IFPS emulator raises `refinery.lib.inno.emulator.NeedSymbol` when an external
@@ -1095,7 +1098,7 @@ class IFPSEmulator:
     @external(static=False)
     def TPasswordEdit__SetText(self, this: object, value: str):
         if value:
-            self.passwords.add(value)
+            self.log_password(value)
         return value
 
     @external
