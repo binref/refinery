@@ -1492,7 +1492,7 @@ class IFPSFile(Struct):
 
         for function in self.functions:
             key = str(function)
-            fqn = byfqn.setdefault(key, []).append(function)
+            byfqn.setdefault(key, []).append(function)
 
         for fqn, functions in byfqn.items():
             if len(functions) != 2:
@@ -1553,6 +1553,8 @@ class IFPSFile(Struct):
                 if (rt := signature.return_type) and (decl.return_type is None):
                     decl.return_type = self.types_by_name.get(rt, decl.return_type)
                 function.decl = decl
+            elif decl and decl.is_property and decl.argc >= (k := decl.void + 1):
+                del decl.parameters[:k]
 
         for function in self.functions:
             if (decl := function.decl) and decl.is_property:
