@@ -12,45 +12,44 @@ The provided interface is the same for all executables. It powers the following 
 from __future__ import annotations
 
 import sys
-import re
 import itertools
 
-from typing import (
-    Callable,
-    cast,
-    Generator,
-    ClassVar,
-    Iterable,
-    List,
-    NamedTuple,
-    Optional,
-    ParamSpec,
-    TYPE_CHECKING,
-    Type,
-    TypeVar,
-    Union,
-)
+from typing import NamedTuple, TYPE_CHECKING
 
-from os import devnull as DEVNULL
 from abc import ABC, abstractmethod
 from enum import Enum
-from functools import lru_cache
 from uuid import uuid4
 
-try:
-    from refinery.lib import lief
-except ImportError:
-    from macholib.MachO import MachO, MachOHeader
-    from pefile import PE as PEFile, SectionStructure, MACHINE_TYPE, DIRECTORY_ENTRY
-    from elftools.elf.elffile import ELFFile, SymbolTableSection
-
-from refinery.lib.structures import MemoryFile
+from refinery.lib import lief
 from refinery.lib.types import INF, ByteStr
 
 if TYPE_CHECKING:
-    from macholib.MachO import load_command
+    from lief.ELF import Binary as ELFBinary
+    from lief.MachO import Binary as MachOBinary
+    from lief.MachO import FatBinary as MachOFatBinary
+    from lief.PE import Binary as PEBinary
+
+    from typing import (
+        ClassVar,
+        Generator,
+        Iterable,
+        List,
+        Optional,
+        ParamSpec,
+        Type,
+        TypeVar,
+        Union,
+    )
+
     _T = TypeVar('_T')
     _P = ParamSpec('_P')
+
+    AnyLIEF = Union[
+        MachOBinary,
+        MachOFatBinary,
+        ELFBinary,
+        PEBinary,
+    ]
 
 
 class ParsingFailure(ValueError):
@@ -59,22 +58,6 @@ class ParsingFailure(ValueError):
     """
     def __init__(self, kind):
         super().__init__(F'unable to parse input as {kind} file')
-
-
-_MACHO_ARCHS = {
-    1        : 'VAX',
-    6        : 'MC680x0',
-    7        : 'X86',
-    16777223 : 'X86_64',
-    10       : 'MC98000',
-    11       : 'HPPA',
-    12       : 'ARM',
-    13       : 'MC88000',
-    14       : 'SPARC',
-    15       : 'I860',
-    18       : 'POWERPC',
-    16777234 : 'POWERPC64',
-}
 
 
 def align(alignment: int, value: int, down=False) -> int:
@@ -91,48 +74,6 @@ def align(alignment: int, value: int, down=False) -> int:
             else:
                 value -= incomplete_chunk_count
     return value
-
-
-def exeroute(
-    data           : bytearray,
-    handler_elf    : Callable[_P, _T],
-    handler_macho  : Callable[_P, _T],
-    handler_pe     : Callable[_P, _T],
-    *args,
-    **kwargs
-) -> _T:
-    """
-    Given some input `data` representing the raw bytes of an `refinery.lib.executable.Executable`,
-    route this data to one of three handlers for the ELF, MachO, or PE format. All additional
-    (keyword) arguments are forwarded to the handler. The function checks for well-known signature
-    bytes and magic numbers to route the data.
-    """
-    if data[:2] == B'MZ':
-        try:
-            parsed = PEFile(data=data, fast_load=True)
-        except Exception as E:
-            raise ParsingFailure('PE') from E
-        else:
-            return handler_pe(parsed, *args, **kwargs)
-    if data[:4] == B'\x7FELF':
-        try:
-            parsed = ELFFile(MemoryFile(data))
-        except Exception as E:
-            raise ParsingFailure('ELF') from E
-        else:
-            return handler_elf(parsed, *args, **kwargs)
-    if set(data[:4]) <= {0xFE, 0xED, 0xFA, 0xCE, 0xCF}:
-        class InMemoryMachO(MachO):
-            def __init__(self): super().__init__(DEVNULL)
-            def load(self, _): return super().load(MemoryFile(data))
-        try:
-            parsed = InMemoryMachO()
-            assert parsed.headers
-        except Exception as E:
-            raise ParsingFailure('MachO') from E
-        else:
-            return handler_macho(parsed, *args, **kwargs)
-    raise ValueError('Unknown executable format')
 
 
 class Range(NamedTuple):
@@ -347,7 +288,7 @@ class Executable(ABC):
     """
 
     _data: ByteStr
-    _head: Union[PEFile, ELFFile, MachO]
+    _head: AnyLIEF
     _base: Optional[int]
     _type: ET
 
@@ -367,7 +308,7 @@ class Executable(ABC):
             raise ValueError('LIEF was unable to parse the input.')
         return LIEF(parsed, data, base)
 
-    def __init__(self, head: Union[PEFile, ELFFile, MachO], data: ByteStr, base: Optional[int] = None):
+    def __init__(self, head: AnyLIEF, data: ByteStr, base: Optional[int] = None):
         self._data = data
         self._head = head
         self._base = base
@@ -653,7 +594,7 @@ class ExecutableCodeBlob(Executable):
 
 class LIEF(Executable):
 
-    _head: Union[lief.MachO.Binary, lief.MachO.FatBinary, lief.ELF.Binary, lief.PE.Binary]
+    _head: AnyLIEF
     _type: Union[ET.PE, ET.ELF, ET.MachO]
 
     @property
@@ -661,7 +602,7 @@ class LIEF(Executable):
         return self._first_header.abstract
 
     @property
-    def _first_header(self) -> Union[lief.MachO.Binary, lief.ELF.Binary, lief.PE.Binary]:
+    def _first_header(self) -> Union[MachOBinary, ELFBinary, PEBinary]:
         head = self._head
         if isinstance(self._head, lief.MachO.FatBinary):
             head = head.at(0)
@@ -725,7 +666,8 @@ class LIEF(Executable):
 
     def _symbols(self) -> Generator[Symbol, None, None]:
         yield Symbol(self._lh.entrypoint, is_entry=True)
-        for symbol in cast(Iterable[lief.Symbol], self._lh.symbols):
+        it: Iterable[lief.Symbol] = self._lh.symbols
+        for symbol in it:
             yield Symbol(symbol.value, symbol.name, size=symbol.size)
 
     def _convert_section(self, section: lief.Section, segment_name: Optional[str] = None) -> Section:
@@ -766,7 +708,7 @@ class LIEF(Executable):
 
     def _sections(self) -> Generator[Section, None, None]:
         if self.is_pe:
-            it = cast(Iterable[lief.Section], self._lh.sections)
+            it: Iterable[lief.Section] = self._lh.sections
             for section in it:
                 if section.size == 0:
                     continue
@@ -789,10 +731,10 @@ class LIEF(Executable):
             for section in self.sections():
                 yield section.as_segment(populate_sections)
         else:
-            it = cast(Iterable[Union[
+            it: Iterable[Union[
                 lief.ELF.Segment,
                 lief.MachO.SegmentCommand
-            ]], self._first_header.segments)
+            ]] = self._first_header.segments
             for segment in it:
                 p_lower = segment.file_offset
                 try:
@@ -813,343 +755,3 @@ class LIEF(Executable):
                 else:
                     sections = [self._convert_section(section, name) for section in segment.sections]
                 yield Segment(Range(p_lower, p_upper), Range(v_lower, v_upper), sections, name)
-
-
-class ExecutablePE(Executable):
-    """
-    A Windows Portable Executable (PE) file.
-    """
-
-    _head: PEFile
-    _type = ET.PE
-
-    def image_defined_base(self) -> int:
-        return self._head.OPTIONAL_HEADER.ImageBase
-
-    def image_defined_size(self, overlay=True, sections=True, directories=True, certificate=True, memdump=False) -> int:
-        """
-        This fuction determines the size of a PE file, optionally taking into account the
-        pefile module overlay computation, section information, data directory information,
-        and certificate entries.
-        """
-        pe = self._head
-
-        overlay_value = overlay and pe.get_overlay_data_start_offset() or 0
-        sections_value = sections and super().image_defined_size() or 0
-        memdump_value = memdump and self.image_defined_address_space().upper or 0
-        cert_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']]
-
-        if directories:
-            directories_value = max((
-                pe.get_offset_from_rva(d.VirtualAddress) + d.Size
-                for d in pe.OPTIONAL_HEADER.DATA_DIRECTORY
-                if d.name != 'IMAGE_DIRECTORY_ENTRY_SECURITY'
-            ), default=0)
-            if certificate:
-                # The certificate overlay is given as a file offset
-                # rather than a virtual address.
-                cert_value = cert_entry.VirtualAddress + cert_entry.Size
-            else:
-                cert_value = 0
-            directories_value = max(directories_value, cert_value)
-        else:
-            directories_value = 0
-
-        return max(
-            overlay_value,
-            sections_value,
-            directories_value,
-            memdump_value
-        )
-
-    def _sections(self) -> Generator[Section, None, None]:
-        sections: Iterable[SectionStructure] = iter(self._head.sections)
-        ib = self.image_defined_base()
-        for section in sections:
-            p_lower = section.PointerToRawData
-            p_upper = p_lower + section.SizeOfRawData
-            v_lower = section.VirtualAddress + ib
-            v_lower = self.rebase_img_to_usr(v_lower)
-            v_upper = v_lower + section.Misc_VirtualSize
-            p = Range(p_lower, p_upper)
-            v = Range(v_lower, v_upper)
-            yield Section(self.ascii(section.Name), p, v, False)
-
-    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
-        for section in self.sections():
-            yield section.as_segment(populate_sections)
-
-    def arch(self) -> Arch:
-        arch = self._head.FILE_HEADER.Machine
-        arch = MACHINE_TYPE[arch]
-        try:
-            return {
-                'IMAGE_FILE_MACHINE_I386'   : Arch.X32,
-                'IMAGE_FILE_MACHINE_AMD64'  : Arch.X64,
-                'IMAGE_FILE_MACHINE_ARM'    : Arch.ARM32,
-                'IMAGE_FILE_MACHINE_THUMB'  : Arch.ARM32,
-                'IMAGE_FILE_MACHINE_ARMNT'  : Arch.ARM64,
-                'IMAGE_FILE_MACHINE_MIPS16' : Arch.MIPS16,
-            }[arch]
-        except KeyError:
-            raise LookupError(F'Unsupported architecture: {arch}')
-
-    def byte_order(self) -> BO:
-        return BO.LE
-
-    def _symbols(self) -> Generator[Symbol, None, None]:
-        base = self.image_defined_base()
-        head = self._head
-
-        yield Symbol(head.OPTIONAL_HEADER.AddressOfEntryPoint + base, is_entry=True)
-
-        head.parse_data_directories(directories=[
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT'],
-            DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_TLS'],
-        ])
-
-        try:
-            tls = head.DIRECTORY_ENTRY_TLS
-        except AttributeError:
-            pass
-        else:
-            callback_array_rva = tls.struct.AddressOfCallBacks - base
-            ps = self.pointer_size // 8
-            for k in itertools.count():
-                if 0 == (cb := int.from_bytes(head.get_data(callback_array_rva + ps * k, ps), self.byte_order())):
-                    break
-                yield Symbol(cb, F'TlsCallback{k}', tls_index=k)
-
-        try:
-            exports = head.DIRECTORY_ENTRY_EXPORT.symbols
-        except AttributeError:
-            return
-        for exp in exports:
-            name = exp.name
-            if not name:
-                continue
-            yield Symbol(exp.address + base, name.decode('ascii'))
-
-        for itype in ['IMPORT', 'DELAY_IMPORT']:
-            try:
-                imports = getattr(head, F'DIRECTORY_ENTRY_{itype}').imports
-            except AttributeError:
-                continue
-            for idd in imports:
-                dll: str = idd.dll.decode('ascii')
-                if dll.lower().endswith('.dll'):
-                    dll = dll[:-4]
-                for imp in idd.imports:
-                    if name := imp.name:
-                        name = name.decode('ascii')
-                        yield Symbol(imp.address, name, exported=False)
-
-
-class ExecutableELF(Executable):
-    """
-    A file in Executable and Linkable Format (ELF).
-    """
-
-    _head: ELFFile
-    _type = ET.ELF
-
-    @lru_cache(maxsize=1)
-    def image_defined_base(self) -> int:
-        return min(self._pt_load(), default=0)
-
-    @lru_cache(maxsize=1)
-    def _pt_load(self):
-        PT_LOAD = {}
-        if not self._head.num_segments():
-            raise LookupError('The elftools parser did not find any segments in this file.')
-        for segment in self._head.iter_segments():
-            if segment.header.p_type == 'PT_LOAD':
-                PT_LOAD[segment.header.p_vaddr] = segment
-        if not PT_LOAD:
-            raise LookupError('Could not find any PT_LOAD segment.')
-        return PT_LOAD
-
-    def _convert_section(self, section) -> Section:
-        p_lower = section['sh_offset']
-        v_lower = section['sh_addr']
-        v_lower = self.rebase_img_to_usr(v_lower)
-        v_upper = v_lower + align(section['sh_addralign'], section.data_size)
-        p_upper = p_lower + section.data_size
-        return Section(self.ascii(section.name), Range(p_lower, p_upper), Range(v_lower, v_upper), False)
-
-    def _sections(self) -> Generator[Section, None, None]:
-        for section in self._head.iter_sections():
-            if section.is_null():
-                continue
-            yield self._convert_section(section)
-
-    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
-        for segment in self._head.iter_segments():
-            header = segment.header
-            p_lower = header.p_offset
-            v_lower = header.p_vaddr
-            v_lower = self.rebase_img_to_usr(v_lower)
-            p_upper = p_lower + header.p_filesz
-            v_upper = v_lower + header.p_memsz
-            if not populate_sections:
-                sections = None
-            else:
-                sections = [
-                    self._convert_section(section)
-                    for section in self._head.iter_sections()
-                    if segment.section_in_segment(section)
-                ]
-            yield Segment(Range(p_lower, p_upper), Range(v_lower, v_upper), sections)
-
-    def arch(self) -> Arch:
-        arch = self._head.header['e_machine']
-        try:
-            return {
-                'EM_SPARC'   : Arch.SPARC32,
-                'EM_SPARCV9' : Arch.SPARC64,
-                'EM_386'     : Arch.X32,
-                'EM_X86_64'  : Arch.X64,
-                'EM_MIPS'    : Arch.MIPS32,
-                'EM_PPC'     : Arch.PPC32,
-                'EM_PPC64'   : Arch.PPC64,
-                'EM_ARM'     : Arch.ARM32,
-            }[arch]
-        except KeyError:
-            raise LookupError(F'Unsupported architecture: {arch}')
-
-    def byte_order(self) -> BO:
-        return BO.LE if self.head.little_endian else BO.BE
-
-    def _symbols(self) -> Generator[Symbol, None, None]:
-        ee = self._head.header['e_entry']
-        symbols = {ee: Symbol(ee, is_entry=True)}
-        try:
-            sections = list(self._head.iter_sections())
-        except Exception:
-            return
-        for section in sections:
-            if not isinstance(section, SymbolTableSection):
-                continue
-            if section['sh_entsize'] == 0:
-                continue
-            for sym in section.iter_symbols():
-                st_name = sym.name
-                if sym['st_info']['type'] == 'STT_SECTION' and sym['st_shndx'] < len(sections) and sym['st_name'] == 0:
-                    try:
-                        st_name = self._head.get_section(sym['st_shndx']).name
-                    except Exception:
-                        pass
-                st_addr = sym['st_value']
-                st_name = re.sub('[\x01-\x1f]+', '', st_name)
-                st_type = sym['st_info']['type']
-                st_bind = sym['st_info']['bind']
-                st_size = sym['st_size']
-                insert = False
-                try:
-                    prev = symbols[st_addr]
-                except KeyError:
-                    insert = True
-                else:
-                    insert = prev.name is None or len(prev.name) < len(st_name)
-                if insert:
-                    symbols[st_addr] = Symbol(
-                        st_addr,
-                        st_name,
-                        st_type == 'STT_FUNC',
-                        st_bind == 'STB_GLOBAL',
-                        size=st_size,
-                        type_name=st_type,
-                        bind_name=st_bind,
-                    )
-        for addr in sorted(symbols):
-            yield symbols[addr]
-
-
-class ExecutableMachO(Executable):
-    """
-    A MachO-executable.
-    """
-
-    _head: MachO
-    _type = ET.MachO
-
-    def _symbols(self) -> Generator[Symbol, None, None]:
-        raise NotImplementedError
-
-    @lru_cache(maxsize=1)
-    def image_defined_base(self) -> int:
-        return min(seg.vmaddr for seg, _ in self._macho_segments() if seg.vmaddr > 0)
-
-    def _macho_segments(self):
-        headers: List[MachOHeader] = self._head.headers
-        for header in headers:
-            for cmd, segment, sections in header.commands:
-                cmd: load_command
-                if not cmd.get_cmd_name().startswith('LC_SEGMENT'):
-                    continue
-                if segment.filesize <= 0:
-                    continue
-                yield segment, sections
-
-    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
-        for segment, sections in self._macho_segments():
-            v_lower = segment.vmaddr
-            v_lower = self.rebase_img_to_usr(v_lower)
-            p_lower = segment.fileoff
-            v_upper = v_lower + segment.vmsize
-            p_upper = p_lower + segment.filesize
-            segment_name = self.ascii(segment.segname)
-            if not populate_sections:
-                sections = None
-            else:
-                sections = [
-                    self._convert_section(section, segment_name)
-                    for section in sections
-                ]
-            yield Segment(
-                Range(p_lower, p_upper),
-                Range(v_lower, v_upper),
-                sections,
-                segment_name
-            )
-
-    def _sections(self) -> Generator[Section, None, None]:
-        for segment in self.segments(populate_sections=True):
-            yield segment.as_section()
-            yield from segment.sections
-
-    def _convert_section(self, section, segment: str) -> Section:
-        name = self.ascii(section.sectname)
-        p_lower = section.offset
-        v_lower = section.addr
-        v_lower = self.rebase_img_to_usr(v_lower)
-        p_upper = p_lower + section.size
-        v_upper = v_lower + align(section.align, section.size)
-        return Section(F'{segment}/{name}', Range(p_lower, p_upper), Range(v_lower, v_upper), False)
-
-    def arch(self) -> Arch:
-        cputype = self._head.headers[0].header.cputype
-        try:
-            arch = _MACHO_ARCHS[cputype]
-        except KeyError:
-            arch = F'UNKNOWN(0x{cputype:X})'
-        try:
-            return {
-                'X86'       : Arch.X32,
-                'X86_64'    : Arch.X64,
-                'ARM'       : Arch.ARM32,
-                'SPARC'     : Arch.SPARC32,
-                'POWERPC'   : Arch.PPC32,
-                'POWERPC64' : Arch.PPC64,
-            }[arch]
-        except KeyError:
-            raise LookupError(F'Unsupported architecture: {arch}')
-
-    def byte_order(self) -> BO:
-        headers: List[MachOHeader] = self._head.headers
-        return {
-            '<': BO.LE,
-            '>': BO.BE,
-        }[headers[0].endian]
