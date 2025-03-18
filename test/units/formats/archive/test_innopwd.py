@@ -62,3 +62,10 @@ class TestInnoExtractor(TestUnitBase):
         unit = self.load()
         pwds = data | unit | {str}
         self.assertContains(pwds, r'Zet0')
+
+    def test_double_curly_brace_regression(self):
+        # 89f37f929f8c75c2a851f1d331bd5872cfe41d14c73d722fb5db5f0f3e016e85
+        data = self.download_sample('a30a12d725e20c7ec403676710b3a2df41bb395fcc80539a28c0da09f5906ee6')
+        unit = self.load()
+        pwds = data | unit | {str}
+        self.assertContains(pwds, r'LD6DQAUT2FQRBGKMXKET7K6PBBBP6TMDUKQ6K4S995HKIGIYFUDCFLU')

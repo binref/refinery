@@ -1318,6 +1318,7 @@ class IFPSEmulator:
     ):
         config = self.config
         expand = partial(self.expand_constant, unescape=True)
+        string = re.sub(r'(\{\{.*?\}(?!\}))', '\\1}', string)
 
         with io.StringIO() as result:
             constants = self.constant_map
