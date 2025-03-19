@@ -867,22 +867,26 @@ class Function:
 
         bbs: Dict[int, BasicBlock] = {0: (bb := BasicBlock(0))}
         self._bbs = bbs
+        jump = False
 
         for insn in self.body:
             try:
                 bb = bbs[insn.offset]
             except KeyError:
-                if insn.jumptarget:
+                if jump or insn.jumptarget:
                     nb = bbs[insn.offset] = BasicBlock(insn.offset)
-                    nb.sources[bb.offset] = bb
-                    bb.targets[nb.offset] = nb
+                    if not jump:
+                        nb.sources[bb.offset] = bb
+                        bb.targets[nb.offset] = nb
                     bb = nb
             bb.body.append(insn)
             if not insn.branches:
+                jump = False
                 continue
             targets = [insn.operands[0]]
             sequence = insn.offset + insn.size
-            if not insn.jumps and insn.opcode != Op.Ret:
+            jump = insn.jumps
+            if not jump and insn.opcode != Op.Ret:
                 targets.append(sequence)
             for t in targets:
                 if not (bt := bbs.get(t)):
