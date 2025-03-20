@@ -622,6 +622,8 @@ class IFPSEmulator:
         if isinstance(archive, InnoArchive):
             self.inno = archive
             self.ifps = ifps = archive.ifps
+            if ifps is None:
+                raise ValueError('The input archive does not contain a script.')
         else:
             self.inno = None
             self.ifps = ifps = archive
