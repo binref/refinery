@@ -296,12 +296,8 @@ class Variable(VariableBase, Generic[_T]):
                 for k, v in enumerate(value.data):
                     dst.data[k].set(v)
                 return
-            if value.pointer:
-                if self.pointer:
-                    self.data = value.data
-                else:
-                    self.set(value.deref())
-                return
+            elif value.pointer:
+                return self.set(value.deref())
             value = value.get()
         if isinstance(value, (Enum, Value)):
             value = value.value
