@@ -288,18 +288,8 @@ class Variable(VariableBase, Generic[_T]):
         For container types, it can also be a sequence of those.
         """
         if isinstance(value, Variable):
-            if value.container:
-                dst = self.deref()
-                if not dst.container:
-                    raise TypeError(F'Attempting to assign container type {value.type} to non-container {self.type}.')
-                dst.resize(len(value))
-                for k, v in enumerate(value.data):
-                    dst.data[k].set(v)
-                return
-            elif value.pointer:
-                return self.set(value.deref())
             value = value.get()
-        if isinstance(value, (Enum, Value)):
+        elif isinstance(value, (Enum, Value)):
             value = value.value
         if self.pointer:
             return self.deref().set(value)
