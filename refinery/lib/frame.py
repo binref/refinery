@@ -640,13 +640,17 @@ class Framed:
 
         chunks = iter(self.unpack)
         header = list(itertools.islice(chunks, 0, 2))
-        if header:
+        if not header:
+            return
+        elif len(header) > 1:
             chunks = itertools.chain(header, chunks)
-            if len(header) > 1:
-                chunks = autoindex(chunks)
-            if header[0].scopable:
-                chunks = self.filter(chunks)
-            yield from chunks
+            chunks = autoindex(chunks)
+        else:
+            header[0].meta.update_index(0)
+            chunks = iter(header)
+        if header[0].scopable:
+            chunks = self.filter(chunks)
+        yield from chunks
 
         if not self.unpack.eol:  # filter did not consume the iterable
             self.unpack.abort()

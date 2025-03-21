@@ -168,3 +168,9 @@ class TestFraming(TestBase):
         self.assertEqual(data.scope, 1)
         test = data | chop(2) | [str]
         self.assertEqual(test, ['He', 'll', 'o'])
+
+    def test_auto_index_regression(self):
+        pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | cfmt {index} ]')
+        self.assertEqual(0 | pipe | int, 0)
+        pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| put k index | max k | cfmt {k} ]')
+        self.assertEqual(0 | pipe | int, 5)
