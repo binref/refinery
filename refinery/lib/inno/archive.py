@@ -2282,7 +2282,12 @@ class InnoArchive:
         self.script_codec = 'latin1' if version.unicode else codec
 
         for file in self.files:
-            file.path = self.emulator.reset().expand_constant(file.path)
+            path = self.emulator.reset().expand_constant(file.path)
+            path = path.replace('\\', '/')
+            drive, colon, path = path.rpartition(':/')
+            if colon and len(drive) == 1:
+                path = F'{drive}/{path}'
+            file.path = F'data/{path}'
 
     @cached_property
     def emulator(self):
@@ -2394,7 +2399,6 @@ class InnoArchive:
                 self._log_warning(F'parsed {len(file)} entries, ignoring invalid setup reference to entry {location + 1}')
                 continue
             path = sf.Destination.replace('\\', '/')
-            path = F'data/{path}'
             path_dedup.setdefault(path, []).append(sf)
             files[location].setup = sf
             files[location].path = path
