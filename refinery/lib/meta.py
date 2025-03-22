@@ -156,6 +156,8 @@ class CustomStringRepresentation(abc.ABC):
     def __repr__(self): ...
 
 
+_INDEX = 'index'
+
 _PRINT_SAFE = set(string.printable.encode('latin1')) - set(b'|<>&\t\n\r\x0B\x0B')
 if os.name == 'nt':
     _PRINT_SAFE -= set(b'^"')
@@ -314,7 +316,7 @@ def check_variable_name(name: Optional[str], allow_derivations=False) -> None:
     elif not name.isidentifier():
         error = 'not an identifier.'
     elif not allow_derivations:
-        if name == 'index' or name in LazyMetaOracle.derivations:
+        if name == _INDEX or name in LazyMetaOracle.derivations:
             error = 'reserved for a derived property.'
     if error:
         raise ValueError(F'The variable name "{name}" is invalid; it is {error}')
@@ -429,6 +431,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         self.updated = {}
         self.rescope = {}
         if seed is not None:
+            seed.pop(_INDEX, None)
             for key, stack in seed.items():
                 if not isinstance(stack, list):
                     raise TypeError(F'Encountered history item of type {typename(stack)}, this should be a list.')
@@ -461,7 +464,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             self[key] = value
 
     def update_index(self, index: int):
-        self['index'] = index
+        self[_INDEX] = index
 
     def inherit(self, parent: LazyMetaOracle):
         """
@@ -471,11 +474,15 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             self.history = parent.history
         elif self.history is not parent.history:
             for key in parent.current.keys():
+                if key == _INDEX:
+                    continue
                 if key not in self.current:
                     self.current[key] = parent.current[key]
                     self.history[key] = parent.history[key]
         self.scope = parent.scope
         for key in parent.keys():
+            if key == _INDEX:
+                continue
             try:
                 derivation = self.derivations[key]
             except KeyError:
