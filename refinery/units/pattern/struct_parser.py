@@ -131,7 +131,7 @@ class struct(Unit):
 
             meta = metavars(data)
             meta.ghost = True
-            meta.update_index(index)
+            meta.index = index
 
             args = []
             last = None

@@ -201,7 +201,7 @@ class dump(Unit):
                     if self._has_format(path):
                         meta = metavars(chunk)
                         meta.ghost = True
-                        meta.update_index(index)
+                        meta.index = index
                         path = meta.format_str(path, self.codec, [chunk])
                     self.stream = self._open(path)
             yield chunk

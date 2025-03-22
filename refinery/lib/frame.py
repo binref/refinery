@@ -635,7 +635,7 @@ class Framed:
 
         def autoindex(it: Iterable[Chunk]):
             for k, chunk in enumerate(it):
-                chunk.meta.update_index(k)
+                chunk.meta.index = k
                 yield chunk
 
         chunks = iter(self.unpack)
@@ -646,7 +646,7 @@ class Framed:
             chunks = itertools.chain(header, chunks)
             chunks = autoindex(chunks)
         else:
-            header[0].meta.update_index(0)
+            header[0].meta.index = 0
             chunks = iter(header)
         if header[0].scopable:
             chunks = self.filter(chunks)

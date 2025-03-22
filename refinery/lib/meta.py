@@ -416,6 +416,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     ghost: bool
     chunk: ByteString
     cache: Dict[str, Union[str, int, float]]
+    index: Optional[int]
 
     history: Dict[str, List[Tuple[bool, Any]]]
     current: Dict[str, Any]
@@ -462,9 +463,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             return
         for key, value in other.items():
             self[key] = value
-
-    def update_index(self, index: int):
-        self.index = index
 
     def inherit(self, parent: LazyMetaOracle):
         """
