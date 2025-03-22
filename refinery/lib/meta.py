@@ -578,18 +578,22 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         return serializable
 
     def items(self):
+        yield (_INDEX, self.index)
         yield from self.tempval.items()
         yield from self.current.items()
 
     def keys(self):
+        yield _INDEX
         yield from self.tempval.keys()
         yield from self.current.keys()
 
     def variable_names(self):
+        yield _INDEX
         yield from self.current.keys()
 
     def values(self):
-        return (v for _, v in self.items())
+        yield self.index
+        yield from (v for _, v in self.items())
 
     __iter__ = keys
 
@@ -822,9 +826,10 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     def __contains__(self, key):
         return (
-            key in self.current or # noqa
-            key in self.tempval or # noqa
-            key in self.derivations
+            key == _INDEX
+            or key in self.current
+            or key in self.tempval
+            or key in self.derivations
         )
 
     def __len__(self):
