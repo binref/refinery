@@ -2297,6 +2297,9 @@ class InnoArchive:
             inno_name='{name}',
             executable='{exe}',
             install_to='{app}',
+            log_mutexes=False,
+            log_opcodes=False,
+            log_passwords=True,
         ))
 
     @cached_property
@@ -2315,15 +2318,12 @@ class InnoArchive:
             return self._password is not None
         self._password_guessed = True
         if file := self.get_encrypted_sample():
-            from refinery.lib.inno.emulator import InnoSetupEmulator, IFPSEmulatorConfig
+            from refinery.lib.inno.emulator import NewPassword
             self._log_verbose('attempting to automatically determine password from the embedded script')
-            emu = InnoSetupEmulator(self, IFPSEmulatorConfig(max_seconds=timeout))
             try:
-                emu.emulate_installation()
-            except Exception as error:
-                self._log_comment('emuluation failed:', error)
-            else:
-                for p in emu.passwords:
+                for p in self.emulator.reset().emulate_installation():
+                    if not isinstance(p, NewPassword):
+                        continue
                     if self.check_password(file, p):
                         self._log_comment('found password via emulation:', p)
                         self._password = p
@@ -2331,6 +2331,8 @@ class InnoArchive:
                 else:
                     self._log_comment('no valid password found via emulation')
                     return False
+            except Exception as error:
+                self._log_comment('emuluation failed:', error)
         else:
             self._password = ''
             return True

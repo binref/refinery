@@ -2,13 +2,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from threading import Thread
-from queue import SimpleQueue, Empty
-
 from refinery.units import Unit
 
 from refinery.lib.inno.archive import InnoArchive
-from refinery.lib.inno.emulator import InnoSetupEmulator
+from refinery.lib.inno.emulator import InnoSetupEmulator, NewPassword
 from refinery.lib.inno.ifps import IFPSFile
 
 
@@ -33,41 +30,16 @@ class innopwd(Unit):
             self.log_info('password hash:', file.password_hash)
             self.log_info('password salt:', file.password_salt)
 
-        passwords: SimpleQueue[str] = SimpleQueue()
+        emulator = InnoSetupEmulator(inno)
 
-        class Emulator(InnoSetupEmulator):
-            def log_password(self, password):
-                passwords.put_nowait(password)
-
-        class Emulation(Thread):
-            error = None
-
-            def run(self):
-                try:
-                    Emulator(inno).emulate_installation()
-                except BaseException as error:
-                    self.error = error
-
-        emulation = Emulation(daemon=True)
-        emulation.start()
-
-        while True:
-            try:
-                password = passwords.get(block=True, timeout=0.01)
-            except Empty:
-                if emulation.is_alive():
-                    continue
-                elif error := emulation.error:
-                    raise error
-                else:
-                    return
+        for password in emulator.emulate_installation():
+            if not isinstance(password, NewPassword):
+                continue
             if file and not inno.check_password(file, password):
                 self.log_info('discarding password:', password)
                 continue
-
             yield password.encode(self.codec)
-
-            if file:
+            if file is not None:
                 self.log_info('aborting emulation after validating password')
                 return
 
