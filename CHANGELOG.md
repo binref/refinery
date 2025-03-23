@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.13 - bugfix release
+
 ## Version 0.8.12 - bugfix release
 
 ## Version 0.8.11 - bugfix release
