@@ -46,5 +46,4 @@ class dnmr(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data):
-        from refinery.lib.id import is_likely_pe_dotnet
-        return is_likely_pe_dotnet(data)
+        return data[:4] == b'\xCE\xCA\xEF\xBE'
