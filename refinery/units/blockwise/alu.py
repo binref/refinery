@@ -110,10 +110,7 @@ class alu(ArithmeticUnit):
         seed = self.args.seed
         fbits = self.fbits
         fmask = self.fmask
-        if isinstance(seed, str):
-            seed = PythonExpression(seed, 'N', constants=metavars(data), mask=fmask)
-        if callable(seed):
-            seed = seed(context, N=len(data))
+
         self._index.init(self.fmask)
 
         def _expression(definition: str):
@@ -148,7 +145,6 @@ class alu(ArithmeticUnit):
 
         context.update(
             N=len(data),
-            S=seed,
             I=cast_signed,
             U=cast_unsigned,
             R=rotate_r,
@@ -156,6 +152,21 @@ class alu(ArithmeticUnit):
             X=negate_bits,
             M=mask_to_bits,
         )
+        args = [
+            self._infinitize_argument(*self._argument_parse_hook(a))
+            for a in self.args.argument]
+        if args:
+            args = [next(iter(a)) for a in args]
+            context['A'] = args[0]
+            context['V'] = args
+
+        if isinstance(seed, str):
+            seed = PythonExpression(seed, 'IAMNVRLX', constants=context, mask=fmask)
+        if callable(seed):
+            seed = seed(context, N=len(data))
+
+        self._index.init(self.fmask)
+        context.update(S=seed)
 
         def operate(block, index, *args):
             context.update(K=index, B=block, E=block, V=args)
