@@ -14,3 +14,10 @@ class TestLNK(TestUnitBase):
         self.assertEqual(result['header']['accessed_time'], '2022-06-03 12:49:55+00:00')
         self.assertEqual(result['header']['modified_time'], '2021-12-26 21:31:16+00:00')
         self.assertEqual(result['data']['command_line_arguments'], '019338921.dll,DllInstall')
+        result = data | self.load(tabular=True) | [str]
+        result = [entry.partition(':') for entry in result]
+        result = {k.strip(): v.strip() for k, _, v in result}
+        self.assertEqual(result['header.creation_time'], '2021-12-26 21:31:16+00:00')
+        self.assertEqual(result['header.accessed_time'], '2022-06-03 12:49:55+00:00')
+        self.assertEqual(result['header.modified_time'], '2021-12-26 21:31:16+00:00')
+        self.assertEqual(result['data.command_line_arguments'], '019338921.dll,DllInstall')

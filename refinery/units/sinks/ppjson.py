@@ -24,8 +24,9 @@ class ppjson(Unit):
         return super().__init__(indent=indent, tabular=tabular)
 
     def _pretty_output(self, parsed, **kwargs):
+        encoded = json.dumps(parsed, **kwargs)
         if self.args.tabular:
-            table = list(flattened(parsed))
+            table = list(flattened(json.loads(encoded)))
             width = max(len(key) for key, _ in table)
             tsize = get_terminal_size(80) - width - 4
             for key, value in table:
@@ -40,7 +41,7 @@ class ppjson(Unit):
                 for wrap in it:
                     yield F'{"":<{width + 3}}{wrap}'.encode(self.codec)
         else:
-            yield json.dumps(parsed, **kwargs).encode(self.codec)
+            yield encoded.encode(self.codec)
 
     def process(self, data):
         if self._TRAILING_COMMA.search(data):
