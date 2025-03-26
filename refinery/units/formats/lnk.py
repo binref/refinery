@@ -18,12 +18,37 @@ class lnk(Unit):
         import LnkParse3
         return LnkParse3
 
-    def __init__(self, tabular: Unit.Arg('-t', help='Print information in a table rather than as JSON') = False):
-        super().__init__(tabular=tabular)
+    _PATHS = {
+        'data': ...,
+        'header': {'creation_time', 'accessed_time', 'modified_time', 'windowstyle'},
+        'link_info': {'local_base_path', 'location'},
+    }
+
+    def __init__(
+        self,
+        tabular: Unit.Arg('-t', help='Print information in a table rather than as JSON.') = False,
+        details: Unit.Arg('-d', help='Print all details; some properties are hidden by default.') = False,
+    ):
+        super().__init__(tabular=tabular, details=details)
 
     def process(self, data):
         with NoLogging():
             parsed = self._LnkParse3.lnk_file(MemoryFile(data)).get_json()
+        if not self.args.details:
+            paths = self._PATHS
+            noise = [key for key in parsed if key not in paths]
+            for key in noise:
+                del parsed[key]
+            for path, scope in paths.items():
+                if scope is (...):
+                    continue
+                try:
+                    section = parsed[path]
+                except KeyError:
+                    continue
+                noise = [key for key in section if key not in scope]
+                for key in noise:
+                    del section[key]
         with JSONEncoderEx as encoder:
             pp = ppjson(tabular=self.args.tabular)
             yield from pp._pretty_output(
