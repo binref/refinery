@@ -95,3 +95,18 @@ class TestVStack(TestUnitBase):
         )
         test = data | unit | []
         self.assertIn(B'10.25.44'B'.1:4444', test)
+
+    def test_x(self):
+        data = bytes.fromhex(
+            'c6 44 24 f8 72'            # mov  BYTE PTR [esp-8], 'r'
+            'c6 44 24 f9 65'            # mov  BYTE PTR [esp-7], 'e'
+            'c6 44 24 fa 66'            # mov  BYTE PTR [esp-6], 'f'
+            'c6 44 24 fb 69'            # mov  BYTE PTR [esp-5], 'i'
+            'c6 44 24 fc 6e'            # mov  BYTE PTR [esp-4], 'n'
+            'c6 44 24 fd 65'            # mov  BYTE PTR [esp-3], 'e'
+            'c6 44 24 fe 72'            # mov  BYTE PTR [esp-2], 'r'
+            'c6 44 24 ff 79'            # mov  BYTE PTR [esp-1], 'y'
+            'c7 44 24 f8 00 00 00 00'   # mov DWORD PTR [esp-8], 0
+            'c7 44 24 fc 00 00 00 00'   # mov DWORD PTR [esp-4], 0
+        )
+        self.assertEqual(data | self.load() | str, 'refinery')

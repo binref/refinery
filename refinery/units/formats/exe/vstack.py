@@ -10,6 +10,7 @@ if True:
 
 from typing import Any, Union, List, Dict, TYPE_CHECKING
 
+import bisect
 import enum
 import functools
 import re
@@ -71,7 +72,6 @@ class EmuConfig:
 @dataclass
 class EmuState:
     cfg: EmuConfig
-    writes: IntervalTree
     expected_address: int
     address_width: int
     waiting: int = 0
@@ -84,6 +84,8 @@ class EmuState:
     synthesized: dict[bytes, str] = field(default_factory=dict)
     ticks: int = field(default_factory=lambda: INF)
     visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    memory: Dict[int, bytearray] = field(default_factory=dict)
+    base_addresses: List[int] = field(default_factory=list)
     init_registers: List[int] = field(default_factory=list)
     last_read: Optional[int] = None
     last_api: Optional[int] = None
@@ -92,6 +94,49 @@ class EmuState:
         _width = len(str(self.cfg.wait))
         _depth = len(self.callstack)
         return F'[wait={self.waiting:0{_width}d}] [depth={_depth}] {self.fmt(self.previous_address)}: {msg}'
+
+    def _memory(self, address: int, incoming: Optional[bytes] = None):
+        bases = self.base_addresses
+        memory = self.memory
+        append = 1 if incoming else 0
+        stop = bisect.bisect_right(self.base_addresses, address)
+        slot = None
+        base = None
+        data = None
+        for k in range(stop):
+            base = bases[k]
+            data = memory[base]
+            if address in range(base, base + len(data) + append):
+                slot = k
+                break
+        ok = slot is not None
+        if incoming is None:
+            return ok
+        elif not ok:
+            base = address
+            data = memory[base] = bytearray()
+            slot = stop
+            self.base_addresses.insert(slot, base)
+        rva = address - base
+        end = rva + len(incoming)
+        data[rva:end] = incoming
+        try:
+            successor = bases[m := slot + 1]
+        except IndexError:
+            pass
+        else:
+            diff = base + len(data) - successor
+            if diff >= 0:
+                bases.pop(m)
+                view = memoryview(memory.pop(successor))
+                data.extend(view[diff:])
+        return base
+
+    def contains(self, address: int):
+        return self._memory(address)
+
+    def write(self, address: int, data: bytes):
+        self._memory(address, data)
 
     def fmt(self, address: int) -> str:
         return F'0x{address:0{self.address_width}X}'
@@ -207,8 +252,8 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
         if (
             not skipped
             and unsigned_value == 0
-            and state.writes.at(address) is not None
             and state.cfg.log_zero_overwrites is False
+            and state.contains(address)
         ):
             try:
                 if any(self.mem_read(address, size)):
@@ -217,7 +262,7 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
                 pass
 
         if not skipped:
-            state.writes.addi(address, address + size + 1)
+            state.write(address, unsigned_value.to_bytes(size, 'little'))
             state.waiting = 0
 
         def info():
@@ -512,9 +557,8 @@ class vstack(Unit):
                     addresses.append(symbol.address)
                     break
 
-        for address in addresses:
-            tree = self._intervaltree.IntervalTree()
-            state = EmuState(cfg, tree, address, emu.exe.pointer_size // 4, stop=args.stop)
+        for cursor in addresses:
+            state = EmuState(cfg, cursor, emu.exe.pointer_size // 4, stop=args.stop)
             emu.reset(state)
 
             for reg in emu.general_purpose_registers():
@@ -529,9 +573,9 @@ class vstack(Unit):
                 if isinstance(value, str):
                     value = value.encode()
                 if isbuffer(value):
-                    base = emu.malloc(len(value))
-                    emu.mem_write(base, bytes(value))
-                    emu.set_register(reg, base)
+                    start = emu.malloc(len(value))
+                    emu.mem_write(start, bytes(value))
+                    emu.set_register(reg, start)
                     self.log_info(F'setting {var} to mapped buffer of size 0x{len(value):X}')
                     continue
                 _tn = value.__class__.__name__
@@ -547,7 +591,7 @@ class vstack(Unit):
                 state.ticks = timeout
 
             try:
-                emu.emulate(address, args.stop)
+                emu.emulate(cursor, args.stop)
             except EmulationError:
                 pass
 
@@ -555,20 +599,10 @@ class vstack(Unit):
                 chunk = self.labelled(patch, src=api)
                 yield chunk
 
-            tree.merge_overlaps()
-            it: Iterator[Interval] = iter(tree)
-            for interval in it:
-                size = interval.end - interval.begin - 1
-                if size not in bounds[args.patch_range]:
+            valid = bounds[args.patch_range]
+            for base, patch in state.memory.items():
+                if len(patch) not in valid or not any(patch):
                     continue
-                try:
-                    patch = emu.mem_read(interval.begin, size)
-                except Exception as error:
-                    width = emu.exe.pointer_size // 4
-                    self.log_info(F'error reading 0x{interval.begin:0{width}X}:{size}: {error!s}')
-                    continue
-                if not any(patch):
-                    continue
-                self.log_info(F'memory patch at {state.fmt(interval.begin)} of size {size}')
-                chunk = self.labelled(patch, src=interval.begin)
+                self.log_info(F'memory patch at {state.fmt(base)} of size {len(patch)}')
+                chunk = self.labelled(patch, src=base)
                 yield chunk
