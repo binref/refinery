@@ -96,7 +96,7 @@ class TestVStack(TestUnitBase):
         test = data | unit | []
         self.assertIn(B'10.25.44'B'.1:4444', test)
 
-    def test_x(self):
+    def test_zero_overwrites_are_not_logged(self):
         data = bytes.fromhex(
             'c6 44 24 f8 72'            # mov  BYTE PTR [esp-8], 'r'
             'c6 44 24 f9 65'            # mov  BYTE PTR [esp-7], 'e'
