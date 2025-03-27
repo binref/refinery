@@ -121,14 +121,15 @@ class EmuState:
         end = rva + len(incoming)
         data[rva:end] = incoming
         try:
-            successor = bases[m := slot + 1]
+            next_slot = slot + 1
+            next_base = bases[next_slot]
         except IndexError:
             pass
         else:
-            diff = base + len(data) - successor
+            diff = base + len(data) - next_base
             if diff >= 0:
-                bases.pop(m)
-                view = memoryview(memory.pop(successor))
+                bases.pop(next_slot)
+                view = memoryview(memory.pop(next_base))
                 data.extend(view[diff:])
         return base
 
