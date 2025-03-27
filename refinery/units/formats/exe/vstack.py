@@ -28,8 +28,7 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 
 if TYPE_CHECKING:
-    from typing import Optional, Iterator, TypeVar
-    from intervaltree import IntervalTree, Interval
+    from typing import Optional, TypeVar
     FN = TypeVar('FN')
 
 
@@ -376,12 +375,6 @@ class vstack(Unit):
     However, if you want to initialize certain registers differently, you can set an environment
     variable to the desired value.
     """
-
-    @Unit.Requires('intervaltree', 'default', 'extended')
-    def _intervaltree():
-        import intervaltree
-        return intervaltree
-
     @Unit.Requires('capstone', 'default', 'extended')
     def _capstone():
         import capstone
