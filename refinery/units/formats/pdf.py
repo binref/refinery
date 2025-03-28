@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Optional, Set, TYPE_CHECKING, cast
 from itertools import islice
 
+import re
+
 if TYPE_CHECKING:
     from pypdf.generic import EncodedStreamObject
 
@@ -45,6 +47,9 @@ class xtpdf(PathExtractorUnit):
         except Exception:
             pass
         else:
+            def unhex(match):
+                return bytes.fromhex(match[1]).decode('latin1')
+            name = re.sub('#([0-9a-fA-F]{2})', unhex, name)
             path = *path[:-1], F'/{name}'
         try:
             def extract():

@@ -13,7 +13,7 @@ class TestPDF(TestUnitBase):
             B'Metadata',
             B'OpenAction/JS',
             B'Pages/Kids/0/Annots/0/NM',
-            B'Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fq#4dB#67#7a#6f#4dV#75t#7a#4ew#6b.#73#77#66',
+            B'Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fqMBgzoMVutzNwk.swf',
         })
 
         unit = self.load('Pages/*')
@@ -21,5 +21,5 @@ class TestPDF(TestUnitBase):
         self.assertEqual(name, B'fqMBgzoMVutzNwk.swf')
         self.assertEqual(swf[:3], B'CWS')
 
-        unit = self.load('4dB') | self.ldu('sha256', text=True)
+        unit = self.load('fqMBgzoMVutzNwk') | self.ldu('sha256', text=True)
         self.assertEqual(str(data | unit), 'c2b666a3ef4c191b77b78c037656e50477b8ba3d35fd61ae843a3a1f4d41c5c1')
