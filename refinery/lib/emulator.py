@@ -4,7 +4,7 @@
 This module implements an emulator abstraction layer.
 """
 from __future__ import annotations
-from typing import Dict, List, Any, Generic, TypeVar, Optional, Iterator, Union
+from typing import Dict, List, Any, Generic, TypeVar, Optional, Union
 from typing import TYPE_CHECKING
 
 from abc import ABC, abstractmethod
@@ -14,6 +14,7 @@ from functools import lru_cache, cached_property, partial
 from refinery.lib.executable import align, Arch, ET, BO, Executable, ExecutableCodeBlob
 from refinery.lib.tools import NoLogging
 from refinery.lib.vfs import VirtualFileSystem
+from refinery.lib.intervals import IntIntervalUnion
 from refinery.units import RefineryImportMissing
 
 if TYPE_CHECKING:
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
     from speakeasy.memmgr import MemMap
     from unicorn import Uc
     from icicle import Icicle as Ic
-    from intervaltree import Interval
 else:
     class Cs: pass
     class Uc: pass
@@ -53,14 +53,6 @@ class MissingModule:
 try:
     with NoLogging():
         import unicorn as uc
-    # import unicorn.x86_const
-    # import unicorn.arm64_const
-    # import unicorn.mips_const
-    # import unicorn.sparc_const
-    # try:
-    #     import unicorn.ppc_const
-    # except ImportError:
-    #     pass
 except ImportError:
     uc = MissingModule('unicorn')
 try:
@@ -77,10 +69,6 @@ try:
     import capstone as cs
 except ImportError:
     cs = MissingModule('capstone')
-try:
-    import intervaltree
-except ImportError:
-    intervaltree = MissingModule('intervaltree')
 
 
 class EmulationError(Exception):
@@ -221,7 +209,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         requested hooks.
         """
         self._resetonce = True
-        self._memorymap = intervaltree.IntervalTree()
+        self._memorymap = IntIntervalUnion()
         self.state = state
         self._reset()
 
@@ -356,9 +344,8 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         Can be used to test whether a certain amount of memory at a given address is already mapped.
         """
         self._map_update()
-        for interval in self._memorymap.overlap(address, address + size - 1):
-            interval: Interval
-            if address in range(interval.begin, interval.end + 1):
+        for interval in self._memorymap.overlap(address, size):
+            if sum(interval) >= address + size:
                 return True
         return False
 
@@ -373,23 +360,22 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             self._map_update()
         lower = address
         upper = address + size
-        for interval in self._memorymap.overlap(lower, upper - 1):
-            interval: Interval
-            ivend = interval.end + 1
-            a = interval.begin - lower
-            b = upper - ivend
+        for start, value in self._memorymap.overlap(address, size):
+            pivot = start + value
+            a = start - lower
+            b = upper - pivot
             if a >= 0 and b >= 0:
                 self.map(lower, a, update_map=False)
-                self.map(ivend, b, update_map=False)
+                self.map(pivot, b, update_map=False)
                 return
             if a >= 0:
-                upper = interval.begin
+                upper = start
             if b >= 0:
-                lower = ivend
+                lower = pivot
             if lower >= upper:
                 return
-        self._memorymap.addi(lower, upper - 1)
         self._map(lower, upper - lower)
+        self._memorymap.addi(address, size)
 
     @property
     def sp(self):
@@ -627,17 +613,16 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
     def _map_segments(self):
         exe = self.exe
         img = exe.data
-        mem = intervaltree.IntervalTree()
+        mem = IntIntervalUnion()
         for segment in exe.segments():
             if not segment.virtual:
                 continue
-            mem.addi(
-                self.align(segment.virtual.lower, down=True),
-                self.align(segment.virtual.upper))
-        mem.merge_overlaps()
-        it: Iterator[Interval] = iter(mem)
+            base = self.align(segment.virtual.lower, down=True)
+            size = self.align(segment.virtual.upper) - base
+            mem.addi(base, size)
+        it = iter(mem)
         for interval in it:
-            self.map(interval.begin, interval.end - interval.begin)
+            self.map(*interval)
         for segment in exe.segments():
             pm = segment.physical
             vm = segment.virtual
@@ -955,7 +940,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     def _map_update(self):
         self._memorymap.clear()
         for a, b, _ in self.speakeasy.emu.emu_eng.emu.mem_regions():
-            self._memorymap.addi(a, b)
+            self._memorymap.addi(a, b - a + 1)
 
     def malloc(self, size: int) -> int:
         return self.speakeasy.mem_alloc(size)

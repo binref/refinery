@@ -10,7 +10,6 @@ if True:
 
 from typing import Any, Union, List, Dict, TYPE_CHECKING
 
-import bisect
 import enum
 import functools
 import re
@@ -21,6 +20,7 @@ from refinery.lib.types import bounds, INF
 from refinery.lib.meta import metavars
 from refinery.lib.tools import isbuffer, exception_to_string, NoLogging
 from refinery.lib.emulator import Emulator, SpeakeasyEmulator, UnicornEmulator, IcicleEmulator, Hook, EmulationError
+from refinery.lib.intervals import MemoryIntervalUnion
 from refinery.lib.argformats import PythonExpression, ParserVariableMissing
 from refinery.lib.structures import StructReader
 
@@ -83,8 +83,7 @@ class EmuState:
     synthesized: dict[bytes, str] = field(default_factory=dict)
     ticks: int = field(default_factory=lambda: INF)
     visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
-    memory: Dict[int, bytearray] = field(default_factory=dict)
-    base_addresses: List[int] = field(default_factory=list)
+    memory: MemoryIntervalUnion = field(default_factory=MemoryIntervalUnion)
     init_registers: List[int] = field(default_factory=list)
     last_read: Optional[int] = None
     last_api: Optional[int] = None
@@ -94,49 +93,11 @@ class EmuState:
         _depth = len(self.callstack)
         return F'[wait={self.waiting:0{_width}d}] [depth={_depth}] {self.fmt(self.previous_address)}: {msg}'
 
-    def _memory(self, address: int, incoming: Optional[bytes] = None):
-        bases = self.base_addresses
-        memory = self.memory
-        append = 1 if incoming else 0
-        stop = bisect.bisect_right(self.base_addresses, address)
-        slot = None
-        base = None
-        data = None
-        for k in range(stop):
-            base = bases[k]
-            data = memory[base]
-            if address in range(base, base + len(data) + append):
-                slot = k
-                break
-        ok = slot is not None
-        if incoming is None:
-            return ok
-        elif not ok:
-            base = address
-            data = memory[base] = bytearray()
-            slot = stop
-            self.base_addresses.insert(slot, base)
-        rva = address - base
-        end = rva + len(incoming)
-        data[rva:end] = incoming
-        try:
-            next_slot = slot + 1
-            next_base = bases[next_slot]
-        except IndexError:
-            pass
-        else:
-            diff = base + len(data) - next_base
-            if diff >= 0:
-                bases.pop(next_slot)
-                view = memoryview(memory.pop(next_base))
-                data.extend(view[diff:])
-        return base
-
     def contains(self, address: int):
-        return self._memory(address)
+        return self.memory.overlaps(address)
 
     def write(self, address: int, data: bytes):
-        self._memory(address, data)
+        self.memory.addi(address, data)
 
     def fmt(self, address: int) -> str:
         return F'0x{address:0{self.address_width}X}'
@@ -594,7 +555,7 @@ class vstack(Unit):
                 yield chunk
 
             valid = bounds[args.patch_range]
-            for base, patch in state.memory.items():
+            for base, patch in state.memory:
                 if len(patch) not in valid or not any(patch):
                     continue
                 self.log_info(F'memory patch at {state.fmt(base)} of size {len(patch)}')
