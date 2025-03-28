@@ -63,8 +63,9 @@ class IntervalUnion(ABC, Generic[Value]):
     ) -> Value:
         """
         This function extends the interval given by `(start;value)` with the data from the interval
-        `(new_start;new_value)`. Instead of `new_start`, a parameter `new_delta` is given which is
-        computed as `refinery.lib.intervals.IntervalUnion.endof``(start)` - `new_start`.
+        `(new_start;new_value)`. Instead of `new_start`, however, the function expects the parameter
+        `new_delta` which is computed as subtracting `new_start` from the result of calling the
+        method `refinery.lib.intervals.IntervalUnion.endof` for the interval `(start;value)`.
         """
 
     def endof(self, start: int, value: Optional[Value] = None):
