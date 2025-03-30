@@ -6,15 +6,17 @@ A commandline script to search for binary refinery units based on keywords.
 import re
 import argparse
 
+from typing import Type
+
 from refinery.lib.tools import documentation, terminalfit, get_terminal_size
-from refinery.units import ArgparseError
+from refinery.units import Unit, ArgparseError
 from refinery.lib.argparser import RawDescriptionHelpFormatter
 
 import refinery
 import refinery.units
 
 
-def highlight(text, expression, color):
+def highlight(text: str, expression: str, color: str):
     """
     Uses ANSI color codes to highlight matches of the given regular `expression`
     in `text`.
@@ -25,14 +27,14 @@ def highlight(text, expression, color):
     )
 
 
-def highlight_word(text, word, color):
+def highlight_word(text: str, word: str, color: str):
     """
     Uses ANSI color codes to highlight matches of the string `word` in `text`.
     """
     return highlight(text, re.compile('(?i)' + re.escape(word)), color)
 
 
-def get_help_string(unit, brief=False, width=None, remove_generic=False):
+def get_help_string(unit: Type[Unit], brief: bool = False, width: int = 0, remove_generic: bool = False):
     """
     Retrieves the help string from a given refinery unit.
     """
@@ -40,9 +42,10 @@ def get_help_string(unit, brief=False, width=None, remove_generic=False):
         return terminalfit(documentation(unit), width=width)
     else:
         from io import StringIO
-        from refinery.lib.environment import environment
-        _ts = environment.term_size.value
-        environment.term_size.value = width
+        if width > 0:
+            from refinery.lib.environment import environment
+            _ts = environment.term_size.value
+            environment.term_size.value = width
         try:
             argp = unit.argparser()
         except ArgparseError as fail:
@@ -55,10 +58,11 @@ def get_help_string(unit, brief=False, width=None, remove_generic=False):
                 info, _, _ = info.partition('\ngeneric options:\n')
             return info.strip()
         finally:
-            environment.term_size.value = _ts
+            if width > 0:
+                environment.term_size.value = _ts
 
 
-def explorer(keyword_color='91', unit_color='93'):
+def explorer(keyword_color: str = '91', unit_color: str = '93'):
     """
     Main routine of the Binary Refinery Explorer.
     """
