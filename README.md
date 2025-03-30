@@ -32,6 +32,12 @@ Run units with `-h` to learn how they work, grep through the [docs][] or use the
 Watch [the latest video][VOD3] if you want to see it in action.
 But also, read the rest of this readme.
 
+## Release Schedule
+
+There is no release schedule, but releases happen very frequently and it is recommended to update periodically.
+Bugfixes are not documented outside of GIT, but all other changes (i.e. new features) are documented in the [changelog](CHANGELOG.md).
+Follow me on <a rel="me" href="https://infosec.exchange/@rattle">Mastodon</a> for updates about particularly impactful releases.
+
 
 ## Documentation
 
