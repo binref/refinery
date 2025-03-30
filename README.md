@@ -36,7 +36,7 @@ But also, read the rest of this readme.
 
 There is no release schedule, but releases happen very frequently and it is recommended to update periodically.
 Bugfixes are not documented outside of GIT, but all other changes (i.e. new features) are documented in the [changelog](CHANGELOG.md).
-Follow me on <a rel="me" href="https://infosec.exchange/@rattle">Mastodon</a> for updates about particularly impactful releases.
+Follow me on [Mastodon][] for updates about particularly impactful releases.
 
 
 ## Documentation
@@ -340,6 +340,7 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [JB]: https://bin.re/
 [MH]: https://www.youtube.com/@MalwareAnalysisForHedgehogs
 [CY]: https://www.youtube.com/@jstrosch
+[Mastodon]: https://infosec.exchange/@rattle
 
 [BLOG]: https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/
 [VOD1]: https://www.youtube.com/watch?v=4gTaGfFyMK4
