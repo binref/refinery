@@ -138,7 +138,7 @@ def iterspread(
     @apply_node_transformation
     class _(NodeTransformer):
         def visit_FunctionDef(self, node: FunctionDef):
-            nonlocal function_name, context
+            nonlocal function_name
             if node is not function_head:
                 return node
             function_body = []

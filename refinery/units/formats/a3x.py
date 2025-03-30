@@ -682,7 +682,7 @@ def a3x_decrypt_current(data: memoryview, key: int) -> bytearray:
         b = (b + 1) % 17
 
     def _decrypted():
-        nonlocal a, b, t
+        nonlocal a, b
         for v in data:
             x = t[a]
             y = t[b]
@@ -709,7 +709,6 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
         t.append(key)
 
     def _refactor_state():
-        nonlocal t
         for i in range(0, 0xe3):
             x = t[i] ^ t[i + 1]
             x &= 0x7FFFFFFE
@@ -748,7 +747,7 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
         t[0x18c + 0xe3] = y
 
     def _decrypted():
-        nonlocal a, b, t
+        nonlocal a, b
         for v in data:
             a -= 1
             b += 1

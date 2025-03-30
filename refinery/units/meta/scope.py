@@ -39,7 +39,7 @@ class scope(FrameSlicer):
                 yield consumed.popleft()
 
         def shift(offset, default):
-            nonlocal consumed, it, size
+            nonlocal consumed, size
             if offset is None:
                 return default
             if offset >= 0:
