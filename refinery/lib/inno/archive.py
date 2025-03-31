@@ -837,7 +837,7 @@ class SetupHeader(InnoStruct):
         if version >= (2, 0, 6) and version.ascii:
             self.Charset = reader.read_integer(0x100)
         else:
-            self.Charset = [False] * 0x100
+            self.Charset = 0
 
         if version >= (4, 0, 0):
             self.LanguageCount = reader.u32()
