@@ -125,6 +125,7 @@ class xtp(PatternExtractor):
         'globalsign.com'          : 1,
         'globalsign.net'          : 1,
         'godaddy.com'             : 1,
+        'golang.org'              : 1,
         'google.com'              : 4,
         'googleapis.com'          : 5,
         'googleusercontent.com'   : 5,
@@ -134,6 +135,7 @@ class xtp(PatternExtractor):
         'intel.com'               : 1,
         'jquery.com'              : 1,
         'jsdelivr.net'            : 2,
+        'libssh.org'              : 1,
         'live.com'                : 1,
         'microsoft.com'           : 1,
         'msdn.com'                : 1,
@@ -143,6 +145,7 @@ class xtp(PatternExtractor):
         'office.com'              : 1,
         'office365.com'           : 2,
         'openssl.org'             : 1,
+        'openssh.com'             : 1,
         'openxmlformats.org'      : 1,
         'oracle.com'              : 1,
         'purl.org'                : 1,
@@ -188,10 +191,10 @@ class xtp(PatternExtractor):
     ]:
         _LEGITIMATE_HOSTS[_ext] = 4
 
-    _DOMAIN_WHITELIST = [
+    _DOMAIN_WHITELIST = {
         'system.net',
         'wscript.shell',
-    ]
+    }
 
     _BRACKETING = {
         B"'"[0]: B"'",
@@ -202,8 +205,21 @@ class xtp(PatternExtractor):
         B'<'[0]: B'>',
     }
 
+    def _check_host(self, host: str, text: str):
+        hl = host.lower()
+        if hl in self._DOMAIN_WHITELIST:
+            self.log_info(F'excluding indicator because domain {hl} is forcefully ignored: {text}')
+            return False
+        for white, level in self._LEGITIMATE_HOSTS.items():
+            if self.args.filter >= level and (hl == white or hl.endswith(F'.{white}')):
+                self.log_info(F'excluding indicator because domain {hl} is whitelisted: {text}', clip=True)
+                self.log_debug(F'reduce level below {level} to allow, current level is {self.args.filter}')
+                return False
+        return True
+
     def _check_match(self, data: Union[memoryview, bytearray], pos: int, name: str, value: bytes):
         term = self._BRACKETING.get(data[pos - 1], None)
+        text = value.decode(self.codec)
         if term:
             pos = value.find(term)
             if pos > 0:
@@ -230,7 +246,7 @@ class xtp(PatternExtractor):
             ):
                 if B'version' in area.lower():
                     return None
-            ip = ip_address(value.decode(self.codec))
+            ip = ip_address(text)
             if not ip.is_global:
                 if self.args.filter >= 3 or not ip.is_private:
                     return None
@@ -243,21 +259,18 @@ class xtp(PatternExtractor):
         }:
             if self.args.filter >= 2:
                 if LetterWeights.IOC(value) < 0.6:
-                    self.log_info(F'excluding indicator because with low score: {value}', clip=True)
+                    self.log_info(F'excluding indicator because with low score: {text}', clip=True)
                     return None
                 if name != indicators.url.name and len(value) > 0x100:
-                    self.log_info(F'excluding indicator because it is too long: {value}', clip=True)
+                    self.log_info(F'excluding indicator because it is too long: {text}', clip=True)
                     return None
-            ioc = value.decode(self.codec)
-            if '://' not in ioc: ioc = F'tcp://{ioc}'
+            ioc = text
+            if '://' not in ioc:
+                ioc = F'tcp://{ioc}'
             parts = urlparse(ioc)
             host, _, _ = parts.netloc.partition(':')
-            hl = host.lower()
-            for white, level in self._LEGITIMATE_HOSTS.items():
-                if self.args.filter >= level and (hl == white or hl.endswith(F'.{white}')):
-                    self.log_info(F'excluding indicator because domain {hl} is whitelisted via {white}: {value}', clip=True)
-                    self.log_debug(F'reduce level below {level} to allow, current level is {self.args.filter}')
-                    return None
+            if not self._check_host(host, text):
+                return None
             if name == indicators.url.name:
                 scheme = parts.scheme.lower()
                 for p in ('http', 'https', 'ftp', 'file', 'mailto'):
@@ -265,9 +278,6 @@ class xtp(PatternExtractor):
                         pos = scheme.find(p)
                         value = value[pos:]
                         break
-            if any(hl == w for w in self._DOMAIN_WHITELIST):
-                self.log_info(F'excluding indicator because domain {hl} is whitelisted: {value}')
-                return None
             if name in {
                 indicators.hostname.name,
                 indicators.domain.name,
@@ -278,11 +288,11 @@ class xtp(PatternExtractor):
                 hostparts = host.split('.')
                 if self.args.filter >= 2:
                     if not all(p.isdigit() for p in hostparts) and all(len(p) < 4 for p in hostparts):
-                        self.log_info(F'excluding host with too many short parts: {value}')
+                        self.log_info(F'excluding host with too many short parts: {text}')
                         return None
                 if self.args.filter >= 3:
                     if len(hostparts) <= sum(3 for p in hostparts if p != p.lower() and p != p.upper()):
-                        self.log_info(F'excluding host with too many mixed case parts: {value}')
+                        self.log_info(F'excluding host with too many mixed case parts: {text}')
                         return None
                 # These heuristics attempt to filter out member access to variables in
                 # scripts which can be mistaken for domains because of the TLD inflation
@@ -292,26 +302,30 @@ class xtp(PatternExtractor):
                 if lowercase and uppercase:
                     caseratio = uppercase / lowercase
                     if 0.1 < caseratio < 0.9:
-                        self.log_info(F'excluding indicator with too much uppercase letters: {value}')
+                        self.log_info(F'excluding indicator with too much uppercase letters: {text}')
                         return None
                 if all(x.isidentifier() for x in hostparts):
                     if len(hostparts) == 2 and hostparts[0] in ('this', 'self'):
-                        self.log_info(F'excluding host that looks like a code snippet: {value}')
+                        self.log_info(F'excluding host that looks like a code snippet: {text}')
                         return None
                     if len(hostparts[-2]) < 3:
-                        self.log_info(F'excluding host with too short root domain name: {value}')
+                        self.log_info(F'excluding host with too short root domain name: {text}')
                         return None
                     if any(x.startswith('_') for x in hostparts):
-                        self.log_info(F'excluding host with underscores: {value}')
+                        self.log_info(F'excluding host with underscores: {text}')
                         return None
                     if len(hostparts[-1]) > 3:
                         prefix = '.'.join(hostparts[:-1])
                         seen_before = len(set(re.findall(
                             R'{}(?:\.\w+)+'.format(prefix).encode('ascii'), data)))
                         if seen_before > 2:
-                            self.log_debug(F'excluding indicator that was already seen: {value}')
+                            self.log_debug(F'excluding indicator that was already seen: {text}')
                             return None
         elif name == indicators.email.name:
+            _, _, host = value.partition(B'@')
+            host = host.decode(self.codec)
+            if not self._check_host(host, text):
+                return None
             at = value.find(B'@')
             ix = 0
             while value[ix] not in self._ALPHABETIC:
@@ -323,13 +337,13 @@ class xtp(PatternExtractor):
             indicators.nixpath.name,
         ):
             if len(value) < 8:
-                self.log_info(F'excluding path because it is too short: {value}')
+                self.log_info(F'excluding path because it is too short: {text}')
                 return None
             if len(value) > 16 and len(re.findall(RB'\\x\d\d', value)) > len(value) // 10:
-                self.log_info(F'excluding long path containign hex: {value}', clip=True)
+                self.log_info(F'excluding long path containign hex: {text}', clip=True)
                 return None
             try:
-                path_string = value.decode(self.codec)
+                path_string = text
             except Exception:
                 self.log_debug(F'excluding path which did not decode: {value!r}', clip=True)
                 return None
@@ -346,7 +360,7 @@ class xtp(PatternExtractor):
                 (2, path_string[1:3] == ':\\'),
             ] if x)
             if 2 + path_likeness < min(self.args.filter, 2):
-                self.log_info(F'excluding long path because it has no characteristic parts: {value}')
+                self.log_info(F'excluding long path because it has no characteristic parts: {text}')
                 return None
             bad_parts = 0
             all_parts = len(path.parts)
@@ -355,7 +369,7 @@ class xtp(PatternExtractor):
                     for t in ['yyyy', 'yy', 'mm', 'dd', 'hh', 'ss']
                     if t in path.parts or t.upper() in path.parts)
                 if len(value) < 20 and date_likeness >= all_parts - 1:
-                    self.log_info(F'excluding path that looks like a date format: {value}', clip=True)
+                    self.log_info(F'excluding path that looks like a date format: {text}', clip=True)
                     return None
             if self.args.filter >= 2:
                 for k, part in enumerate(path.parts):
@@ -376,7 +390,7 @@ class xtp(PatternExtractor):
             for filter_limit in (2, 3, 4):
                 bad_ratio = 2 ** (filter_limit - 1)
                 if self.args.filter >= filter_limit and bad_parts * bad_ratio >= all_parts:
-                    self.log_info(F'excluding path with bad parts: {value}', clip=True)
+                    self.log_info(F'excluding path with bad parts: {text}', clip=True)
                     return None
         return value
 
