@@ -1435,8 +1435,16 @@ class IFPSEmulator:
                 elif spec == 'cm':
                     # {cm:LaunchProgram,Inno Setup}
                     # The example above translates to "Launch Inno Setup" if English is the active language.
-                    name, _, args = modifier.partition(',')
+                    name, _, placeholders = modifier.partition(',')
                     value = self.CustomMessage(expand(name))
+                    if placeholders:
+                        def _placeholder(match: re.Match[str]):
+                            try:
+                                return placeholders[int(match[1])]
+                            except Exception:
+                                return match[0]
+                        placeholders = [ph.strip() for ph in placeholders.split(',')]
+                        value = re.sub('(?<!%)%([1-9]\\d*)', _placeholder, value)
                 elif spec == 'reg':
                     # {reg:HKXX\SubkeyName,ValueName|DefaultValue}
                     _, _, default = modifier.partition('|')
