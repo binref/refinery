@@ -13,13 +13,28 @@ from refinery.lib.inno.archive import InnoArchive, InvalidPassword, SetupFileFla
 
 class xtinno(ArchiveUnit):
     """
-    Extract files from InnoSetup archives.
-    """
-    _STREAM_NAMES = 'meta/TSetup', 'meta/TData', 'embedded/uninstaller.exe'
-    _ISCRIPT_NAME = 'embedded/script'
-    _LICENSE_NAME = 'embedded/license.rtf'
+    Extract files from InnoSetup archives. The unit extracts the following synthetic metadata files
+    under the "meta" directory:
 
+    - `setup.bin` contains the raw bytes for the setup metadata
+    - `setup.template` contains the raw and unprocessed metadata in JSON format
+    - `setup.json` contains the setup metadata with all format fields expanded
+
+    Similarly, there are `files.bin`, `files.template`, and `files.json` that contain the metadata
+    of the archived files. The files that are extracted under the "embedded" directory are usually
+    parts of the InnoSetup installer and not user data. All archived files are extracted within the
+    directory named "data".
+    """
     def unpack(self, data: bytearray):
+        def post_process_json(doc):
+            if isinstance(doc, dict):
+                return {key: post_process_json(val) for key, val in doc.items()}
+            if isinstance(doc, list):
+                return [post_process_json(entry) for entry in doc]
+            if isinstance(doc, str):
+                return inno.emulator.reset().expand_constant(doc)
+            return doc
+
         inno = InnoArchive(data, self)
 
         password: bytes = self.args.pwd
@@ -28,26 +43,30 @@ class xtinno(ArchiveUnit):
         if any(file.encrypted for file in inno.files) and password is None:
             self.log_info('some files are password-protected and no password was given')
 
-        yield self._pack(self._STREAM_NAMES[0], None, inno.streams.TSetup.data)
         with BytesAsArrayEncoder as encoder:
-            yield self._pack(F'{self._STREAM_NAMES[0]}.json', None,
-                encoder.dumps(inno.setup_info.json()).encode(self.codec))
+            yield self._pack('meta/setup.bin', None, inno.streams.TSetup.data)
+            doc = inno.setup_info.json()
+            yield self._pack('meta/setup.template', None, encoder.dumps(doc).encode(self.codec))
+            doc = post_process_json(doc)
+            yield self._pack('meta/setup.json', None, encoder.dumps(doc).encode(self.codec))
 
-        yield self._pack(self._STREAM_NAMES[1], None, inno.streams.TData.data)
         with BytesAsArrayEncoder as encoder:
-            yield self._pack(F'{self._STREAM_NAMES[1]}.json', None,
-                encoder.dumps(inno.setup_data.json()).encode(self.codec))
+            yield self._pack('meta/files.bin', None, inno.streams.TData.data)
+            doc = inno.setup_data.json()
+            yield self._pack('meta/files.template', None, encoder.dumps(doc).encode(self.codec))
+            doc = post_process_json(doc)
+            yield self._pack('meta/files.json', None, encoder.dumps(doc).encode(self.codec))
 
         def _uninstaller(i=inno):
             return i.read_stream(i.streams.Uninstaller)
-        yield self._pack(self._STREAM_NAMES[2], None, _uninstaller)
+        yield self._pack('embedded/uninstaller.exe', None, _uninstaller)
 
         if license := inno.setup_info.Header.get_license():
-            yield self._pack(self._LICENSE_NAME, None, license.encode(self.codec))
+            yield self._pack('embedded/license.rtf', None, license.encode(self.codec))
 
         if script := inno.setup_info.Header.get_script():
-            yield self._pack(F'{self._ISCRIPT_NAME}.bin', None, script)
-            yield self._pack(F'{self._ISCRIPT_NAME}.ps', None,
+            yield self._pack('embedded/script.bin', None, script)
+            yield self._pack('embedded/script.ps', None,
                 lambda i=inno: i.ifps.disassembly().encode(self.codec))
 
         if dll := inno.setup_info.get_decompress_dll():

@@ -1440,7 +1440,7 @@ class IFPSEmulator:
                     if placeholders:
                         def _placeholder(match: re.Match[str]):
                             try:
-                                return placeholders[int(match[1])]
+                                return placeholders[int(match[1]) - 1]
                             except Exception:
                                 return match[0]
                         placeholders = [ph.strip() for ph in placeholders.split(',')]

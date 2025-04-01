@@ -1208,6 +1208,9 @@ class Version(InnoStruct):
         self.Minor = reader.u8()
         self.Major = reader.u8()
 
+    def json(self):
+        return F'{self.Major:d}.{self.Minor:d}.{self.Build:04d}'
+
 
 class WindowsVersion(InnoStruct):
 
@@ -1248,7 +1251,7 @@ class SetupLanguage(InnoStruct):
         self.TitleFont = read_string()
         self.WelcomeFont = read_string()
         self.CopyrightFont = read_string()
-        self.Data = reader.read_length_prefixed()
+        self._data = reader.read_length_prefixed()
 
         if version >= (4, 0, 1):
             self.LicenseText = reader.read_length_prefixed_ascii()
@@ -1283,6 +1286,9 @@ class SetupLanguage(InnoStruct):
 
         if version >= (5, 2, 3):
             self.RightToLeft = reader.u8()
+
+    def get_data(self):
+        return self._data
 
 
 class SetupMessage(InnoStruct):
