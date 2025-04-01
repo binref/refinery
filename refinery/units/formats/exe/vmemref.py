@@ -55,11 +55,14 @@ class vmemref(Unit):
             return int.from_bytes(exe[address:address + pointer_size], exe.byte_order().value)
 
         pointer_size = exe.pointer_size // 8
-        instructions = {op.offset for op in function.getInstructions()}
 
-        for op in function.getInstructions():
+        with NoLogging():
+            instructions = {op.offset: op for op in function.getInstructions()}
+
+        for op in instructions.values():
             try:
-                refs = list(op.getDataRefs())
+                with NoLogging():
+                    refs = list(op.getDataRefs())
             except Exception:
                 continue
             for address in refs:
@@ -120,7 +123,7 @@ class vmemref(Unit):
         fmt = exe.pointer_size // 4
         addresses = self.args.address
 
-        self.log_info(R'disassembling and exploring call graph using smda')
+        self.log_info('disassembling and exploring call graph using smda')
         with NoLogging():
             cfg = smda.Disassembler.SmdaConfig()
             cfg.CALCULATE_SCC = False
