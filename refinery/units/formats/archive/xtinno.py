@@ -31,9 +31,12 @@ class xtinno(ArchiveUnit):
                 return {key: post_process_json(val) for key, val in doc.items()}
             if isinstance(doc, list):
                 return [post_process_json(entry) for entry in doc]
-            if isinstance(doc, str):
+            if not isinstance(doc, str):
+                return doc
+            try:
                 return inno.emulator.reset().expand_constant(doc)
-            return doc
+            except Exception:
+                return doc
 
         inno = InnoArchive(data, self)
 

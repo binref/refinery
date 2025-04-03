@@ -1394,7 +1394,11 @@ class IFPSEmulator:
             constants = self.constant_map
             formatter = Formatter()
             backslash = False
-            for prefix, spec, modifier, conversion in formatter.parse(string):
+            try:
+                parsed = list(formatter.parse(string))
+            except ValueError as VE:
+                raise IFPSException(F'invalid format string: {string!r}', VE) from VE
+            for prefix, spec, modifier, conversion in parsed:
                 if backslash and prefix[:1] == '\\':
                     prefix = prefix[1:]
                 if unescape:

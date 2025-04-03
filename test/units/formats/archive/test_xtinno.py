@@ -63,4 +63,3 @@ class TestInnoExtractor(TestUnitBase):
             | str
         )
         self.assertIn('5, UltraISO 4.1 (July 28, 2002)', test)
-        
