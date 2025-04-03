@@ -263,6 +263,10 @@ class xtmsi(xtdoc):
                 continue
             processed = []
             info = list(table.values())
+            keys = list(table.keys())
+            temp = [k.strip('_') for k in keys]
+            if len(set(keys)) == len(set(temp)):
+                keys = temp
             for r, row in enumerate(stream_to_rows(stream(stream_name), column_formats(table))):
                 values = []
                 for index, value in enumerate(row):
@@ -284,8 +288,8 @@ class xtmsi(xtdoc):
                     tbl_properties[values[0]] = values[2]
                 if table_name == 'Component':
                     tbl_properties[values[0]] = F'%{values[2]}%'
-                entry = dict(zip(table, values))
-                einfo = {t: i for t, i in zip(table, info)}
+                entry = dict(zip(keys, values))
+                einfo = {t: i for t, i in zip(keys, info)}
                 if table_name == 'MsiFileHash':
                     entry['Hash'] = struct.pack(
                         '<IIII',
