@@ -29,6 +29,7 @@ class HexDumpMetrics:
     txt_separator: str = '  '
     hex_char_prefix: str = ''
     hex_char_spacer: str = ' '
+    txt_char_spacer: str = ' '
     hex_addr_spacer: str = ': '
 
     @property
@@ -38,6 +39,10 @@ class HexDumpMetrics:
     @property
     def hex_column_width(self):
         return len(self.hex_char_format.format(0)) + len(self.hex_char_spacer)
+
+    @property
+    def txt_column_width(self):
+        return self.block_size + (self.block_size > 1) * len(self.txt_char_spacer)
 
     def get_max_width(self):
         width = self.max_width
@@ -53,7 +58,7 @@ class HexDumpMetrics:
             padding += self.address_width + len(self.hex_addr_spacer)
         width_max = width or self.get_max_width()
         width_available_for_hexdump = width_max - padding
-        width_required_per_column = self.hex_column_width + self.block_size
+        width_required_per_column = self.hex_column_width + self.txt_column_width
         limit, r = divmod(width_available_for_hexdump, width_required_per_column)
         if r + len(self.hex_char_spacer) >= width_required_per_column:
             limit += 1
@@ -65,16 +70,17 @@ class HexDumpMetrics:
 
     @property
     def hexdump_width(self):
-        width = (self.hex_columns * (self.hex_column_width + self.block_size))
+        width = self.hex_columns * (self.hex_column_width + self.txt_column_width)
         width -= len(self.hex_char_spacer)
         width += len(self.txt_separator)
         if self.address_width:
             width += self.address_width + len(self.hex_addr_spacer)
-        return width
+        return width - 1
 
 
 def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterable[str]:
-    separator = metrics.hex_char_spacer
+    hex_separator = metrics.hex_char_spacer
+    txt_separator = metrics.txt_char_spacer
     hex_width = metrics.hex_column_width
     addr_width = metrics.address_width
     columns = metrics.hex_columns
@@ -120,10 +126,15 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
 
         if not colorize:
             color_prefix = ''
-            dump = separator.join(hexformat.format(b) for b in blocks)
+            dump = hex_separator.join(hexformat.format(b) for b in blocks)
             ascii_preview = re.sub(B'[^!-~]', B'.', chunk).decode('ascii')
+            if (bs := metrics.block_size) > 1:
+                temp = []
+                for k in range(0, len(ascii_preview), bs):
+                    temp.append(ascii_preview[k:k + bs])
+                ascii_preview = txt_separator.join(temp)
             line = (
-                F'{dump:<{hex_width * columns - len(separator)}}'
+                F'{dump:<{hex_width * columns - len(hex_separator)}}'
                 F'{metrics.txt_separator}{ascii_preview:<{columns}}'
             )
         else:
@@ -140,12 +151,14 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
             with io.StringIO() as _hex, io.StringIO() as _asc:
                 block_size = metrics.block_size
                 prefix = metrics.hex_char_prefix
-                remaining_hex_width = hex_width * columns - len(separator)
+                remaining_hex_width = hex_width * columns - len(hex_separator)
                 for k, b in enumerate(chunk):
                     if k % block_size == 0:
+                        if block_size > 1 and k != 0:
+                            _asc.write(txt_separator)
                         if k != 0:
-                            _hex.write(separator)
-                            remaining_hex_width -= len(separator)
+                            _hex.write(hex_separator)
+                            remaining_hex_width -= len(hex_separator)
                         if prefix:
                             _hex.write(prefix)
                             remaining_hex_width -= len(prefix)
