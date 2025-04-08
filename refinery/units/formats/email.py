@@ -73,17 +73,17 @@ class xtmail(PathExtractorUnit):
         def make_message(name, msg: Message):
             bodies = msg.detectedBodies
             BT = self._extract_msg.enums.BodyTypes
-            if bodies % BT.HTML:
+            if bodies & BT.HTML:
                 def htm(msg=msg):
                     with suppress(Exception), NoLogging():
                         return ensure_bytes(msg.htmlBody)
                 yield UnpackResult(F'{name}.htm', htm)
-            if bodies % BT.PLAIN:
+            if bodies & BT.PLAIN:
                 def txt(msg=msg):
                     with suppress(Exception), NoLogging():
                         return ensure_bytes(msg.body)
                 yield UnpackResult(F'{name}.txt', txt)
-            if bodies % BT.RTF:
+            if bodies & BT.RTF:
                 def rtf(msg=msg):
                     with suppress(Exception), NoLogging():
                         return ensure_bytes(msg.rtfBody)
