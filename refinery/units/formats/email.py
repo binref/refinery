@@ -101,7 +101,7 @@ class xtmail(PathExtractorUnit):
                     if key.endswith('_open'):
                         return False
                     raise AttributeError(key)
-            msg = ForgivingMessage(bytes(data), overrideEncoding=self.codec)
+            msg = ForgivingMessage(bytes(data))
 
         yield from self._get_headparts(msg.header.items())
         yield from make_message('body', msg)
