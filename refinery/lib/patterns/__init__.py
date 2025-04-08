@@ -158,7 +158,7 @@ _pattern_defanged_domain = _format_defanged_domain.format(repeat='{0,20}', tlds=
 _pattern_subdomain = _format_serrated_domain.format(repeat='{1,20}', tlds=_TLDS)
 
 _pattern_octet = R'(?:1\d\d|2[0-4]\d|25[0-5]|[1-9]?\d)'
-_pattern_serrated_ipv4 = R'(?<!\.|\d)(?:{o}\.){{3}}{o}(?![\d\.])'.format(o=_pattern_octet)
+_pattern_serrated_ipv4 = R'(?<![0-9])(?:{o}\.){{3}}{o}(?![0-9])'.format(o=_pattern_octet)
 _pattern_defanged_ipv4 = R'(?:{o}{d}){{3}}{o}'.format(o=_pattern_octet, d=R'(?:\[\.\]|\.)')
 
 # Taken from: https://stackoverflow.com/a/17871737/9130824

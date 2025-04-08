@@ -219,3 +219,12 @@ class TestPatternExtractor(TestUnitBase):
         self.assertIn(
             R'Software\Microsoft\Windows Messaging Subsystem\Profiles\9375CFF0413111d3B88A00104B2A6676', test
         )
+
+    def test_ipv4_among_dots(self):
+        data = b'..12.56.104.12.....49.56.250.80.....90.18.112.77..'
+        iocs = data | self.load() | [str]
+        self.assertListEqual(iocs, [
+            '12.56.104.12',
+            '49.56.250.80',
+            '90.18.112.77',
+        ])
