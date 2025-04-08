@@ -75,7 +75,9 @@ class HexDumpMetrics:
         width += len(self.txt_separator)
         if self.address_width:
             width += self.address_width + len(self.hex_addr_spacer)
-        return width - 1
+        if self.block_size > 1:
+            width -= 1
+        return width
 
 
 def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterable[str]:
