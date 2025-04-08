@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import json
 import re
 
+from typing import TYPE_CHECKING
 from email.parser import Parser
 from functools import partial
 from collections import defaultdict
+from contextlib import suppress
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.pattern.mimewords import mimewords
@@ -13,52 +17,82 @@ from refinery.lib.mime import file_extension
 from refinery.lib.tools import NoLogging, isbuffer
 
 
+if TYPE_CHECKING:
+    from extract_msg import Message
+
+
+def _unwrap(method):
+    while True:
+        try:
+            method = method.__wrapped__
+        except AttributeError:
+            return method
+
+
 class xtmail(PathExtractorUnit):
     """
     Extract files and body from EMail messages. The unit supports both the Outlook message format
     and regular MIME documents.
     """
-    def _get_headparts(self, head):
+    def _get_headparts(self, head: dict[str, str]):
         mw = mimewords()
-        mw = partial(mw.process.__wrapped__.__wrapped__, mw)
-        jh = defaultdict(list)
+        mw = partial(_unwrap(mw.process), mw)
+        jh: dict[str, list[str]] = defaultdict(list)
         for key, value in head:
-            jh[key].append(mw(''.join(t.lstrip() for t in value.splitlines(False))))
+            jh[key].append(mw(''.join(re.sub(R'\A\s+', '\x20', t) for t in value.splitlines(False))))
         jh = {k: v[0] if len(v) == 1 else [t for t in v if t] for k, v in jh.items()}
         yield UnpackResult('headers.txt',
             lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h).encode(self.codec))
+        received = []
+        for recv in jh.get('Received', []):
+            if not recv.startswith('from '):
+                received = None
+                break
+            recv = recv[5:]
+            src, _, rest = recv.partition(' by ')
+            dst, _, rest = rest.partition(' with ')
+            received.append({
+                'Target': src.partition('\x20')[0],
+                'Source': dst.partition('\x20')[0],
+            })
+        if received:
+            received.reverse()
+            jh['ReceivedTrace'] = received
         yield UnpackResult('headers.json',
             lambda jsn=jh: json.dumps(jsn, indent=4).encode(self.codec))
 
-    @PathExtractorUnit.Requires('extract-msg<=0.41.0', 'formats', 'office', 'default', 'extended')
+    @PathExtractorUnit.Requires('extract-msg<=0.54.0', 'formats', 'office', 'default', 'extended')
     def _extract_msg():
-        import extract_msg.message
         import extract_msg.enums
         return extract_msg
 
     def _get_parts_outlook(self, data):
-        def ensure_bytes(data):
+        def ensure_bytes(data: bytes | str):
             return data if isinstance(data, bytes) else data.encode(self.codec)
 
-        def make_message(name, msg):
-            with NoLogging():
-                try:
-                    htm = msg.htmlBody
-                except Exception:
-                    htm = None
-                try:
-                    txt = msg.body
-                except Exception:
-                    txt = None
-            if txt:
-                yield UnpackResult(F'{name}.txt', ensure_bytes(txt))
-            if htm:
-                yield UnpackResult(F'{name}.htm', ensure_bytes(htm))
+        def make_message(name, msg: Message):
+            bodies = msg.detectedBodies
+            BT = self._extract_msg.enums.BodyTypes
+            if bodies % BT.HTML:
+                def htm(msg=msg):
+                    with suppress(Exception), NoLogging():
+                        return ensure_bytes(msg.htmlBody)
+                yield UnpackResult(F'{name}.htm', htm)
+            if bodies % BT.PLAIN:
+                def txt(msg=msg):
+                    with suppress(Exception), NoLogging():
+                        return ensure_bytes(msg.body)
+                yield UnpackResult(F'{name}.txt', txt)
+            if bodies % BT.RTF:
+                def rtf(msg=msg):
+                    with suppress(Exception), NoLogging():
+                        return ensure_bytes(msg.rtfBody)
+                yield UnpackResult(F'{name}.rtf', rtf)
 
         msgcount = 0
 
         with NoLogging():
-            class ForgivingMessage(self._extract_msg.message.Message):
+            class ForgivingMessage(self._extract_msg.Message):
                 """
                 If parsing the input bytes fails early, the "__open" private attribute may not
                 yet exist. This hack prevents an exception to occur in the destructor.
@@ -67,7 +101,7 @@ class xtmail(PathExtractorUnit):
                     if key.endswith('_open'):
                         return False
                     raise AttributeError(key)
-            msg = ForgivingMessage(bytes(data))
+            msg = ForgivingMessage(bytes(data), overrideEncoding=self.codec)
 
         yield from self._get_headparts(msg.header.items())
         yield from make_message('body', msg)
