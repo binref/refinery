@@ -259,6 +259,6 @@ class ef(Unit):
                         elif self.args.read:
                             yield from self._read_chunks(stream)
                         else:
-                            data = stream.read()
-                            self.log_info(lambda: F'reading: {path!s} ({len(data)} bytes)')
-                            yield self.labelled(data, path=path.as_posix(), **kwargs)
+                            contents = stream.read()
+                            self.log_info(lambda: F'reading: {path!s} ({len(contents)} bytes)')
+                            yield self.labelled(contents, path=path.as_posix(), **kwargs)
