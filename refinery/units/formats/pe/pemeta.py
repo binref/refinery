@@ -177,6 +177,10 @@ class pemeta(Unit):
         )
 
     @classmethod
+    def handles(self, data):
+        return data[:2] == B'MZ'
+
+    @classmethod
     def _ensure_string(cls, x):
         if not isinstance(x, str):
             x = repr(x) if not isinstance(x, bytes) else x.decode(cls.codec, 'backslashreplace')
