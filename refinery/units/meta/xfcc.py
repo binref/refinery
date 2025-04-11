@@ -13,9 +13,11 @@ class xfcc(Unit):
     each item occurs in each of them. It converts a frame tree of depth 2 into a new frame tree of depth 2
     where the parent of every leaf has this leaf as its only child. The leaves of this tree have been
     enriched with a meta variable containing the number of times the corresponding chunk has occurred in
-    the input frame tree. This unit can be used to compute set intersections across frames as follows:
+    the input frame tree. The variable that stores this information is scoped at the first layer of this
+    subtree, which means that a frame can be closed once after invocation of xfcc and the variable remains
+    accessible. This unit can be used to compute set intersections across frames as follows:
 
-        (1) [| (2) [| dedup | xfcc -r t | iff t==1 ]| (3) ]
+        (1) [| (2) [| dedup | xfcc -r t ]| iff t==1 | (3) ]
 
     A sequence of chunks is emitted at (1), each of which has chunks extracted at (2). It is then important
     to use dedup before calling xfcc, since xfcc performs an absolute count. The frame at (3) contains the
@@ -41,6 +43,7 @@ class xfcc(Unit):
             chunk.path[-2] = 0
             chunk.path[-1] = index
             chunk.meta[vn] = count
+            chunk.meta.set_scope(vn, chunk.scope - 1)
             yield chunk
         self._store.clear()
 
