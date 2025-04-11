@@ -8,30 +8,27 @@ from refinery.lib.decorators import linewise
 from refinery.lib.tools import date_from_timestamp
 
 
+_FORMATS = [
+    '%m/%d/%Y',
+    '%a %b %d %Y %H:%M:%S',
+    '%Y:%m:%d %H:%M:%S',
+]
+for comma in (',', ''):
+    _FORMATS.append(F'%m/%d/%Y{comma} %H:%M:%S')
+    for month_name in ('%B', '%b'):
+        for suffix in ('st', 'nd', 'rd', 'th'):
+            _FORMATS.append(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S')
+            _FORMATS.append(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S (UTC)')
+            _FORMATS.append(F'{month_name} %d{comma} %Y')
+for timesep in ('T', ' '):
+    for millisecs in ('Z%f', '.%f', ''):
+        _FORMATS.append(F'%Y-%m-%d{timesep}%H:%M:%S{millisecs}')
+
+
 class datefix(Unit):
     """
     Parses all kinds of date formats and unifies them into the same format.
     """
-
-    _FORMATS = [
-        '%B %dth %Y %H:%M:%S (UTC)',  # November 27th 2019 17:37:02 (UTC)
-        '%B %dnd %Y %H:%M:%S (UTC)',  # November 22nd 2019 17:37:02 (UTC)
-        '%B %dst %Y %H:%M:%S (UTC)',  # November 21st 2019 17:37:02 (UTC)
-        '%B %dth %Y, %H:%M:%S',       # November 27th 2019, 17:37:02
-        '%B %dnd %Y, %H:%M:%S',       # November 22nd 2019, 17:37:02
-        '%B %dst %Y, %H:%M:%S',       # November 21st 2019, 17:37:02
-        '%Y-%m-%dT%H:%M:%S',          # 2010-03-15T06:27:50
-        '%Y-%m-%d %H:%M:%S',          # iso (2010-03-15 06:27:50.000000)
-        '%Y-%m-%d %H:%M:%SZ%f',
-        '%Y-%m-%dT%H:%M:%S.%f',
-        '%Y-%m-%dT%H:%M:%SZ%f',
-        '%a %b %d %Y %H:%M:%S',       # Thu Apr 24 2014 12:32:21
-        '%m/%d/%Y %H:%M:%S',
-        '%m/%d/%Y, %H:%M:%S',
-        '%m/%d/%Y',
-        '%Y:%m:%d %H:%M:%S',          # ExifTool Output
-    ]
-
     _TIMEZONE_REGEXES = [re_compile(p) for p in [
         R'([+-])(\d{2})(\d{2})$',           # Thu Apr 24 2014 12:32:21 GMT-0700
         R'([+-])(\d{2}):(\d{2})$',          # 2017:09:11 23:47:22+02:00
@@ -116,7 +113,7 @@ class datefix(Unit):
 
         data, time_delta = self._extract_timezone(data)
 
-        for f in self._FORMATS:
+        for f in _FORMATS:
             try:
                 dt = datetime.strptime(data, f)
             except ValueError:
