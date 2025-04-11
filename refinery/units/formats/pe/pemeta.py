@@ -620,6 +620,9 @@ class pemeta(Unit):
             parse_signature=self.args.timestamps or self.args.signatures,
         )
 
+        if pe is None:
+            raise ValueError('Input not recognized as a PE file.')
+
         for switch, resolver, name in [
             (self.args.debug,   self.parse_debug,    'Debug'),    # noqa
             (self.args.dotnet,  self.parse_dotnet,   'DotNet'),   # noqa
