@@ -198,6 +198,48 @@ _pattern_number = (
     '(?(fp1)(?:[eE][-+]?[0-9]+)?|(?(fp2)(?:[eE][-+]?[0-9]+)?|(?=[uU]?[iI]\\d{1,2}|[LlHh]|[^a-zA-Z0-9]|$)))'
 )
 
+
+_pattern_date_elements = {
+    'B': '(?:{})'.format('|'.join([
+        '[jJ]an(?:uary)?',
+        '[fF]eb(?:ruary)?',
+        '[mM]ar(?:ch)?',
+        '[aA]pr(?:il)?',
+        '[mM]ay',
+        '[jJ]un(?:e)?',
+        '[jJ]ul(?:y)?',
+        '[aA]ug(?:ust)?',
+        '[sS]ep(?:tember)?',
+        '[oO]ct(?:ober)?',
+        '[nN]ov(?:ember)?',
+        '[dD]ec(?:ember)?',
+    ])),
+    'D': '(?:[23]?(?:1st|2nd|3rd|[4-9]th)|20th|30th)',
+    'd': '(?:0?[1-9]|[12][0-9]|3[01])',
+    'm': '(?:0[1-9]|1[012])',
+    'I': '(?:0[1-9]|1[0-2])',
+    'p': '(?:[ap]m|[AP]M)',
+    'H': '(?:[01][0-9]|2[0-3])',
+    'M': '(?:[0-5][0-9])',
+    'S': '(?:[0-5][0-9])',
+    'z': '(?:[-+](?:[0-9]{2}){1,3}(?:\\.[0-9]{6})?)',
+    'y': '(?:[0-9]{2})',
+    'Y': '(?:[0-9]{4})',
+    'c': '(?:[,;]|\\s|[,;]\\s)',
+}
+
+_pattern_time = r'(?:{H}:{M}(?::{S})?|{I}:{M}(?::{S})?{c}?\(?{p}\)?)'.format_map(_pattern_date_elements)
+_pattern_date_elements['T'] = _pattern_time
+
+_pattern_date_list = [
+    R'{B}\s(?:{d}|{D}){c}{Y}(?:\s{T})?',
+    R'{Y}[-:]{m}[-:]{d}(?:[T\x20]{H}:{M}(?::{S})?(?:[Z.][0-9]{{6}}){z}?)',
+    R'{m}/{d}/{Y}(?:{c}{T})?',
+]
+
+_pattern_date = '|'.join(
+    _p.format_map(_pattern_date_elements) for _p in _pattern_date_list)
+
 _pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
 _pattern_ps1str = R'''(?:(?:@"\s*?[\r\n].*?[\r\n]"@)|(?:@'\s*?[\r\n].*?[\r\n]'@)|(?:"(?:`.|""|[^"\n])*")|(?:'(?:''|[^'\n])*'))'''
 _pattern_vbastr = R'''"(?:""|[^"])*"'''
@@ -414,6 +456,8 @@ class indicators(PatternEnum):
     "Email addresses"
     guid = pattern(_pattern_guid)
     "Windows GUID strings"
+    date = pattern(_pattern_date)
+    "A date or timestamp value in a common format"
     ipv4 = pattern(_pattern_serrated_ipv4)
     "String representations of IPv4 addresses"
     ipv6 = pattern(_pattern_ipv6)
