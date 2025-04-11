@@ -647,6 +647,19 @@ class pemeta(Unit):
                 from refinery.units.formats.pe.pesig import pesig
                 signature = self.parse_signature(next(data | pesig))
 
+        if signature:
+            try:
+                verification = pe.verify_signature()
+            except Exception:
+                pass
+            else:
+                from lief.PE import Signature
+                if verification == Signature.VERIFICATION_FLAGS.OK:
+                    signature['Match'] = True
+                else:
+                    signature['Match'] = False
+                    signature['Flags'] = [flag.name for flag in verification]
+
         if self.args.timestamps:
             ts = self.parse_time_stamps(pe, self.args.timeraw, self.args.timestamps > 1)
             with suppress(KeyError):
