@@ -234,3 +234,13 @@ class TestCarve(TestUnitBase):
         goal = 'af2d4e6bc8'
         test = data | self.load('hex') | str
         self.assertEqual(goal, test)
+
+    def test_longest_carve(self):
+        data = B'\xFFa\xFFbb\xFFccc\xFF'
+        test = data | self.load('printable', longest=True) | []
+        self.assertListEqual(test, [b'ccc', b'bb', b'a'])
+
+    def test_longest_carve_take(self):
+        data = B'\xFFa\xFFbb\xFFccc\xFF'
+        test = data | self.load('printable', take=2, longest=True) | []
+        self.assertListEqual(test, [b'bb', b'ccc'])

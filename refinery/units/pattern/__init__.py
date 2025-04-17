@@ -23,13 +23,17 @@ class PatternExtractorBase(Unit, abstract=True):
 
     def __init__(
         self,
-        min        : Arg.Number('-n', help='Matches must have length at least N.') = 1,
-        max        : Arg.Number('-m', help='Matches must have length at most N.') = None,
-        len        : Arg.Number('-e', help='Matches must be of length N.') = None,
+        min: Arg.Number('-n', help='Matches must have length at least N.') = 1,
+        max: Arg.Number('-m', help='Matches must have length at most N.') = None,
+        len: Arg.Number('-e', help='Matches must be of length N.') = None,
         stripspace : Arg.Switch('-x', help='Strip all whitespace from input data.') = False,
         duplicates : Arg.Switch('-r', help='Yield every (transformed) Match, even when it was found before.') = False,
-        longest    : Arg.Switch('-l', help='Sort results by length.') = False,
-        take       : Arg.Number('-t', help='Return only the first N occurrences in order of appearance.') = None,
+        longest: Arg.Switch('-l', help=(
+            'Pick longer results first. The output will be sorted by length unless the --take option is specified, '
+            'in which case the longest K results will be returned in order of appearance.')) = False,
+        take: Arg.Number('-t', metavar='K', help=(
+            'Return only the first K occurrences in order of appearance. If --longest is specified, the K longest '
+            'results will be returned in order of appearance within the input.')) = None,
         **keywords
     ):
         keywords.setdefault('ascii', True)
