@@ -1210,7 +1210,6 @@ class IFPSFile(Struct):
         self.count_variables = reader.u32()
         self.entry = reader.u32()
         self.import_size = reader.u32()
-        self.void = False
 
         if self.version not in range(self.MinVer, self.MaxVer + 1):
             raise NotImplementedError(
@@ -1475,9 +1474,6 @@ class IFPSFile(Struct):
                     if exported:
                         name = reader.read_length_prefixed_ascii()
                         decl = DeclSpec.ParseE(bytes(reader.read_length_prefixed()), self)
-                        self.void = decl.void
-                    else:
-                        self.void = False
                     with reader.detour(offset):
                         body = reader.read(length)
                 if FTag.HasAttrs.check(tags):
@@ -1498,7 +1494,7 @@ class IFPSFile(Struct):
             key = str(function)
             byfqn.setdefault(key, []).append(function)
             if body := function.body:
-                function.body = list(self._parse_bytecode(body))
+                function.body = list(self._parse_bytecode(body, function.decl.void))
 
         for functions in byfqn.values():
             if len(functions) != 2:
@@ -1606,31 +1602,31 @@ class IFPSFile(Struct):
                 spec = reader.read_length_prefixed_ascii()
             self.globals.append(VariableBase(self.types[code], spec))
 
-    def _read_variable_spec(self, index: int) -> VariableSpec:
+    def _read_variable_spec(self, index: int, void: bool) -> VariableSpec:
         if index < 0x40000000:
             return VariableSpec(index, VariableType.Global)
         index -= 0x60000000
         if index >= 0:
             return VariableSpec(index, VariableType.Local)
-        index = -index if self.void else ~index
+        index = -index if void else ~index
         return VariableSpec(index, VariableType.Argument)
 
-    def _read_operand(self, reader: StructReader) -> Operand:
+    def _read_operand(self, reader: StructReader, void: bool) -> Operand:
         ot = OperandType(reader.u8())
         kw = {}
         if ot is OperandType.Variable:
-            kw.update(variable=self._read_variable_spec(reader.u32()))
+            kw.update(variable=self._read_variable_spec(reader.u32(), void))
         if ot is OperandType.Value:
             kw.update(value=self._read_value(reader))
         if ot >= OperandType.IndexedByInt:
-            kw.update(variable=self._read_variable_spec(reader.u32()))
+            kw.update(variable=self._read_variable_spec(reader.u32(), void))
             index = reader.u32()
             if ot is OperandType.IndexedByVar:
-                index = self._read_variable_spec(index)
+                index = self._read_variable_spec(index, void)
             kw.update(index=index)
         return Operand(ot, **kw)
 
-    def _parse_bytecode(self, data: memoryview) -> Generator[Instruction, None, None]:
+    def _parse_bytecode(self, data: memoryview, void: bool) -> Generator[Instruction, None, None]:
         disassembly: Dict[int, Instruction] = OrderedDict()
         reader = StructReader(data)
 
@@ -1649,7 +1645,7 @@ class IFPSFile(Struct):
         while not reader.eof:
             def arg(k=1):
                 for _ in range(k):
-                    args.append(self._read_operand(reader))
+                    args.append(self._read_operand(reader, void))
             addr = reader.tell()
             cval = reader.u8()
             code = Op.FromInt(cval)
@@ -1673,7 +1669,7 @@ class IFPSFile(Struct):
                 args.append(reader.u32())
             elif code in (Op.JumpTrue, Op.JumpFalse):
                 target = reader.i32()
-                val = self._read_operand(reader)
+                val = self._read_operand(reader, void)
                 args.append(reader.tell() + target)
                 args.append(val)
             elif code is Op.JumpPop1:
@@ -1683,7 +1679,7 @@ class IFPSFile(Struct):
                 target = reader.i32()
                 args.append(reader.tell() + target)
             elif code is Op.StackType:
-                args.append(self._read_variable_spec(reader.u32()))
+                args.append(self._read_variable_spec(reader.u32(), void))
                 args.append(reader.u32())
             elif code is Op.PushType:
                 args.append(self.types[reader.u32()])
