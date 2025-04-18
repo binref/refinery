@@ -1494,7 +1494,8 @@ class IFPSFile(Struct):
             key = str(function)
             byfqn.setdefault(key, []).append(function)
             if body := function.body:
-                function.body = list(self._parse_bytecode(body, function.decl.void))
+                void = decl.void if (decl := function.decl) else False
+                function.body = list(self._parse_bytecode(body, void))
 
         for functions in byfqn.values():
             if len(functions) != 2:
