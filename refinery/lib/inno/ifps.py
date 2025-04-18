@@ -1399,7 +1399,7 @@ class IFPSFile(Struct):
             TC.UnicodeString : reader.read_length_prefixed_utf16,
             TC.Char          : lambda: chr(reader.u8()),
             TC.WideChar      : lambda: chr(reader.u16()),
-            TC.ProcPtr       : lambda: self.functions[reader.u32() - 1],
+            TC.ProcPtr       : lambda: self.functions[reader.u32()],
             TC.Set           : lambda: int.from_bytes(reader.read(type.size_in_bytes), 'little'),
             TC.Currency      : lambda: reader.u64() / 10_000,
         }.get(type.code, None)
@@ -1479,7 +1479,7 @@ class IFPSFile(Struct):
                     else:
                         self.void = False
                     with reader.detour(offset):
-                        body = list(self._parse_bytecode(reader.read(length)))
+                        body = reader.read(length)
                 if FTag.HasAttrs.check(tags):
                     attributes = list(self._read_attributes())
                 fn = Function(name, decl, body, exported, attributes)
@@ -1497,8 +1497,10 @@ class IFPSFile(Struct):
         for function in self.functions:
             key = str(function)
             byfqn.setdefault(key, []).append(function)
+            if body := function.body:
+                function.body = list(self._parse_bytecode(body))
 
-        for fqn, functions in byfqn.items():
+        for functions in byfqn.values():
             if len(functions) != 2:
                 continue
             getter, setter = functions

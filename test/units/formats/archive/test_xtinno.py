@@ -63,3 +63,8 @@ class TestInnoExtractor(TestUnitBase):
             | str
         )
         self.assertIn('5, UltraISO 4.1 (July 28, 2002)', test)
+
+    def test_proc_ptr_parsing(self):
+        data = self.download_sample('cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c')
+        ifps = data | self.load('script.ps') | str
+        self.assertIn('LocalVar3 := &RADIOBUTTONQUICKONCLICK', ifps)
