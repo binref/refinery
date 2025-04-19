@@ -5,6 +5,13 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.14
+- The `rtfc` unit was added.
+- A regular expression pattern named `date` was added and is now available in `xtp`.
+- The output of the `lnk` unit was limited to essential information by default.
+- The `csb` and `csd` shortcuts for `carve` can now use the `--stripspace` argument.
+- Grouping into blocks in `hexload` and `peek` will now add separators in the ASCII preview.
+
 ## Version 0.8.13 - bugfix release
 
 ## Version 0.8.12 - bugfix release
