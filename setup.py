@@ -17,7 +17,6 @@ __author__ = 'Jesko Huettenhain'
 __slogan__ = 'A toolkit to transform and refine (mostly) binary data.'
 __topics__ = [
     'Development Status :: 3 - Alpha',
-    'License :: OSI Approved :: BSD License',
     'Operating System :: OS Independent',
     'Programming Language :: Python :: 3 :: Only',
     'Topic :: Security',
