@@ -62,7 +62,7 @@ class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
         super().__init__(key, iv, padding, mode, raw, swap=swap, block_size=block_size)
 
     def _prepare_block(self, data: bytes):
-        if self.args.block_size < 2:
+        if self.args.block_size <= 1:
             blocks, remainder = divmod(len(data), 4)
             if remainder:
                 blocks += 1
@@ -79,5 +79,5 @@ class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
         return super().decrypt(data)
 
     def _new_cipher(self, **optionals) -> CipherInterface:
-        return StandardBlockCipherUnit._new_cipher(
-            self, block_size=self.block_size, **optionals)
+        return StandardBlockCipherUnit._new_cipher(self,
+            big_endian=self.args.swap, block_size=self.block_size, **optionals)

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from typing import Sequence, Tuple
-from refinery.units.crypto.cipher.tea import TEABase, TEAUnit, BlockCipherFactory
+from refinery.units.crypto.cipher.tea import TEAWithRounds, TEAUnit, BlockCipherFactory
 
 
-class XTEA(TEABase):
+class XTEA(TEAWithRounds):
     """
     The XTEA cipher.
     """
-
     def tea_encrypt(self, key: Sequence[int], block: Sequence[int]) -> Tuple[int, int]:
         carry = 0
         delta = 0x9E3779B9

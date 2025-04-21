@@ -16,16 +16,13 @@ class TEABase(BlockCipher):
     key_size = {16}
     derived_key: List[int]
     big_endian: bool
-    rounds: int
 
     def __init__(
         self,
         key: BufferType, mode: Optional[CipherMode],
-        rounds: int = 32,
         big_endian: bool = False
     ):
         self.big_endian = big_endian
-        self.rounds = rounds
         super().__init__(key, mode)
 
     @property
@@ -57,11 +54,18 @@ class TEABase(BlockCipher):
         return pack(blocks, 4, be)
 
 
-class TEA(TEABase):
+class TEAWithRounds(TEABase):
+    rounds: int
+
+    def __init__(self, key, mode, rounds: int = 32, big_endian: bool = False):
+        super().__init__(key, mode, big_endian)
+        self.rounds = rounds
+
+
+class TEA(TEAWithRounds):
     """
     The TEA cipher.
     """
-
     def tea_encrypt(self, key: Sequence[int], block: Sequence[int]):
         k0, k1, k2, k3 = key
         v0, v1 = block
