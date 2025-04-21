@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from typing import Sequence, Optional
 
-from refinery.units.crypto.cipher.tea import TEAUnit, TEABase, Arg
+from refinery.units.crypto.cipher.tea import StandardBlockCipherUnit, TEAUnit, TEABase, Arg
 from refinery.lib.crypto import BlockCipherFactory, CipherInterface, BufferType, CipherMode
 
 
@@ -79,4 +79,5 @@ class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
         return super().decrypt(data)
 
     def _new_cipher(self, **optionals) -> CipherInterface:
-        return super()._new_cipher(block_size=self.block_size, **optionals)
+        return StandardBlockCipherUnit._new_cipher(
+            self, block_size=self.block_size, **optionals)
