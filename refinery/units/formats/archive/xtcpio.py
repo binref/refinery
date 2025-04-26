@@ -32,7 +32,7 @@ class CPIOEntry(Struct):
         reader.byte_align(4)
 
 
-class xtcpio(ArchiveUnit):
+class xtcpio(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a CPIO archive.
     """

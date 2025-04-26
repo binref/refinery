@@ -7,7 +7,7 @@ from refinery.lib.mime import FileMagicInfo as magic
 from refinery.lib.loader import get_entry_point
 
 
-class autoxor(xkey, extend_docs=True):
+class autoxor(xkey, docs='{0}{p}{1}'):
     """
     Assumes input that was encrypted with a polyalphabetic block cipher, like XOR-ing each byte
     with successive bytes from a key or by subtracting the respective key byte value from each

@@ -8,7 +8,7 @@ from refinery.units.formats.archive import Arg, ArchiveUnit
 _ISO_FILE_SYSTEMS = ['udf', 'joliet', 'rr', 'iso', 'auto']
 
 
-class xtiso(ArchiveUnit):
+class xtiso(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a ISO archive.
     """

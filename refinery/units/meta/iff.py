@@ -8,7 +8,7 @@ from refinery.lib.argformats import DelayedNumSeqArgument, PythonExpression
 from refinery.units.meta import Arg, ConditionalUnit
 
 
-class iff(ConditionalUnit, extend_docs=True):
+class iff(ConditionalUnit, docs='{0}{p}{1}'):
     """
     Filter incoming chunks depending on whether a given Python expression evaluates to true. If no
     expression is given, the unit filters out empty chunks.

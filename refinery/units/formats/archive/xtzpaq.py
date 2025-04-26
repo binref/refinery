@@ -1223,7 +1223,7 @@ class Decompressor:
         return checksum
 
 
-class xtzpaq(ArchiveUnit):
+class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a ZPAQ archive.
     """

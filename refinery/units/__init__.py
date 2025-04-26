@@ -950,7 +950,7 @@ class Executable(ABCMeta):
                 known.kwargs.setdefault('type', multibin)
         return args
 
-    def __new__(mcs, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, extend_docs=False):
+    def __new__(mcs, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, docs='{}'):
         def decorate(**decorations):
             for method, decorator in decorations.items():
                 try:
@@ -967,13 +967,19 @@ class Executable(ABCMeta):
             __init__=no_type_check,
         )
         if not abstract and Entry not in bases:
-            if not any(b.is_reversible for b in bases):
+            for b in bases:
+                try:
+                    if b.is_reversible:
+                        break
+                except AttributeError:
+                    pass
+            else:
                 nmspc.setdefault('reverse', MissingFunction)
             bases = bases + (Entry,)
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
-    def __init__(cls, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, extend_docs=False):
+    def __init__(cls, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, docs='{}'):
         super(Executable, cls).__init__(name, bases, nmspc)
         cls._argument_specification = args = ArgumentSpecification()
 
@@ -984,15 +990,19 @@ class Executable(ABCMeta):
         inherited = []
 
         for base in bases:
-            base: Executable
-            for key, value in base._argument_specification.items():
+            try:
+                base: Executable
+                spec = base._argument_specification
+            except AttributeError:
+                continue
+            for key, value in spec.items():
                 if key in parameters:
                     args[key] = value.__copy__()
 
-        if extend_docs and bases:
-            base_doc = bases[~0].__doc__.rstrip().lstrip('\n')
-            if base_doc:
-                cls.__doc__ = F'{cls.__doc__}\n{base_doc}'
+        if docs != '{}':
+            mro = {b.__name__: inspect.cleandoc(b.__doc__) for b in cls.__mro__}
+            cls.__doc__ = docs.format(*mro.values(), **mro, p='\n\n', s='\x20')
+            cls.__doc__ = cls.__doc__.replace('<this>', cls.__name__)
 
         if not abstract and bases and has_keyword:
             for key, value in bases[0]._argument_specification.items():

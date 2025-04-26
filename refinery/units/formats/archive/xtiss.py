@@ -68,7 +68,7 @@ class ISSReader(StructReader[bytearray]):
         return name, _data
 
 
-class xtiss(ArchiveUnit):
+class xtiss(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extracts files from Install Shield Setup files.
     """

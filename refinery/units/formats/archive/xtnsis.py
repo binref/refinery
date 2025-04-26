@@ -1288,7 +1288,7 @@ class NSArchive(Struct):
             return self.PartsReader(reader, decompressor, prefix_length)
 
 
-class xtnsis(ArchiveUnit):
+class xtnsis(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from NSIS archives.
     """

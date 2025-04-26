@@ -86,6 +86,21 @@ class PathPattern:
 
 
 class PathExtractorUnit(Unit, abstract=True):
+    """
+    This unit is a path extractor which extracts data from a hierarchical structure. Each extracted
+    item is emitted as a separate chunk and has attached to it a meta variable that contains its
+    path within the source structure. The positional arguments to the command are patterns that can
+    be used to filter the extracted items by their path. To view only the paths of all chunks, use
+    the listing switch:
+
+        emit something | <this> --list
+
+    Otherwise, extracted items are written to the standard output port and usually require a frame
+    to properly process. In order to dump all extracted data to disk, the following pipeline can be
+    used:
+
+        emit something | <this> [| dump {path} ]
+    """
 
     CustomPathSeparator = None
     """

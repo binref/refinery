@@ -7,10 +7,10 @@ from refinery.units.formats.archive import ArchiveUnit, MultipleArchives
 from refinery.units import RefineryException
 
 
-class xt(ArchiveUnit):
+class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extract files from archives. The unit tries to identify the archive format and use the
-    correct extractor.
+    This unit generically extracts files from archives. It attempts to identify the archive format
+    and use the corresponding specific extractor from among the ones implemented in refinery.
     """
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:

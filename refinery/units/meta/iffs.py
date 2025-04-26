@@ -3,7 +3,7 @@
 from refinery.units.meta import Arg, ConditionalUnit
 
 
-class iffs(ConditionalUnit, extend_docs=True):
+class iffs(ConditionalUnit, docs='{0}{p}{1}'):
     """
     Filter incoming chunks depending on whether they contain a given binary substring.
     """

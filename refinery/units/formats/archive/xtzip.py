@@ -11,7 +11,7 @@ from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
 ZIP_FILENAME_UTF8_FLAG = 0x800
 
 
-class xtzip(ArchiveUnit):
+class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a Zip archive.
     """

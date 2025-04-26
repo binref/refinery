@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from py7zr import SevenZipFile, FileInfo
 
 
-class xt7z(ArchiveUnit):
+class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a 7zip archive.
     """

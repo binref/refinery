@@ -4,7 +4,7 @@ from refinery.units.pattern import SingleRegexUnit
 from refinery.units.meta import ConditionalUnit
 
 
-class iffx(SingleRegexUnit, ConditionalUnit, extend_docs=True):
+class iffx(SingleRegexUnit, ConditionalUnit, docs='{0}{p}{1}'):
     """
     Filter incoming chunks by discarding those that do not match the given
     regular expression.

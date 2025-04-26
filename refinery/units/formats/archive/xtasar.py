@@ -29,7 +29,7 @@ class AsarHeader(Struct):
         self.base = reader.tell()
 
 
-class xtasar(ArchiveUnit):
+class xtasar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a ASAR archive.
     """

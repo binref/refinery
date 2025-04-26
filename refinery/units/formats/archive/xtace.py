@@ -5,7 +5,7 @@ from refinery.lib.thirdparty import acefile
 from refinery.lib.structures import MemoryFile
 
 
-class xtace(ArchiveUnit):
+class xtace(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from an ACE archive.
     """

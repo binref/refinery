@@ -11,10 +11,9 @@ from refinery.lib.json import BytesAsArrayEncoder
 from refinery.lib.inno.archive import InnoArchive, InvalidPassword, SetupFileFlags
 
 
-class xtinno(ArchiveUnit):
+class _ps:
     """
-    Extract files from InnoSetup archives. The unit extracts the following synthetic metadata files
-    under the "meta" directory:
+    Note: This unit generates the following synthetic metadata files under the "meta" directory:
 
     - `setup.bin` contains the raw bytes for the setup metadata
     - `setup.template` contains the raw and unprocessed metadata in JSON format
@@ -24,6 +23,12 @@ class xtinno(ArchiveUnit):
     of the archived files. The files that are extracted under the "embedded" directory are usually
     parts of the InnoSetup installer and not user data. All archived files are extracted within the
     directory named "data".
+    """
+
+
+class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
+    """
+    Extract files from InnoSetup archives:
     """
     def unpack(self, data: bytearray):
         def post_process_json(doc):
