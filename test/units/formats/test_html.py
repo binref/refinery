@@ -37,9 +37,9 @@ class TestHTMLExtractor(TestUnitBase):
                 'html/head/script',
                 'html/head/woober',
                 'html/body',
-                'html/body/p/1',
-                'html/body/p/2',
-                'html/body/p/3',
+                'html/body/1.p',
+                'html/body/2.p',
+                'html/body/3.p',
                 'html/body/div',
                 'html/body/div/div',
             ))
@@ -47,7 +47,7 @@ class TestHTMLExtractor(TestUnitBase):
 
     def test_extraction(self):
         self.assertEqual(
-            str(self._TEST_DOCUMENT | self.load('p/1')),
+            str(self._TEST_DOCUMENT | self.load('1.p')),
             'Paragraph 1 &#62; &#x3E;'
         )
 
@@ -77,5 +77,5 @@ class TestHTMLExtractor(TestUnitBase):
         test = data | self.load() | {'path': ...}
         path = max(test, key=len)
         self.assertEqual(str(path),
-            'html/alertset/20/alertdisplay/daid/html/body/a/form/1/select/option/option/option/option/option/option')
+            'html/20.alertset/alertdisplay/daid/html/body/a/1.form/select/option/option/option/option/option/option')
         self.assertEqual(len(test), 1007)
