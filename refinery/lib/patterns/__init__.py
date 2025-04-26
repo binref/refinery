@@ -274,20 +274,35 @@ _pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=_pattern_pathpart_nos
 _pattern_nix_path_element = R'(?:{n} ){{0,1}}{n}'.format(n=_pattern_pathpart_nospace)
 _pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]*%'
 
-_pattern_win_path = R'(?:{s}|{p}|)(?P<__pathsep>[\\\/])(?:{p}(?P=__pathsep))*{p}(?:(?P=__pathsep)|\b)'.format(
-    s='|'.join([
-        _pattern_win_env_variable,    # environment variable
-        R'[A-Za-z]:',                 # drive letter with colon
-        R'\\\\[a-zA-Z0-9_.$@]{1,50}', # UNC path
-        R'HK[A-Z_]{1,30}',            # registry root key
-    ]),
+_pattern_win_path_template = R'(?:{s}|{p}|)(?P<__pathsep>[\\\/])(?:{p}(?P=__pathsep))*{p}(?:(?P=__pathsep)|\b)'
+_pattern_win_root = '|'.join([
+    _pattern_win_env_variable,    # environment variable
+    R'[A-Za-z]:',                 # drive letter with colon
+    R'\\\\[a-zA-Z0-9_.$@]{1,50}', # UNC path
+    R'HK[A-Z_]{1,30}',            # registry root key
+])
+_pattern_win_path = _pattern_win_path_template.format(
+    s=_pattern_win_root,
     p=_pattern_win_path_element
 )
+_pattern_win_path_terse = _pattern_win_path_template.format(
+    s=_pattern_win_root,
+    p=_pattern_pathpart_nospace
+)
 
-_pattern_nix_path = R'(?:/(?:{n}/)+|(?:{n}/){{2,}}){n}'.format(n=_pattern_nix_path_element)
+_pattern_nix_path_template = R'(?:/(?:{n}/)+|(?:{n}/){{2,}}){n}'
+_pattern_nix_path = _pattern_nix_path_template.format(
+    n=_pattern_nix_path_element)
+_pattern_nix_path_terse = _pattern_nix_path_template.format(
+    n=_pattern_pathpart_nospace)
+
 _pattern_any_path = R'(?:{nix})|(?:{win})'.format(
     nix=_pattern_nix_path,
-    win=_pattern_win_path
+    win=_pattern_win_path,
+)
+_pattern_any_path_terse = R'(?:{nix})|(?:{win})'.format(
+    nix=_pattern_nix_path_terse,
+    win=_pattern_win_path_terse,
 )
 
 _pattern_uuencode = R'begin\s+\d{3}\s+[\x20!-~]+?\r?\n(?:M[\x20-\x60]{60}\r?\n)*(?:.*?\r?\n)?`\r?\nend'
@@ -482,6 +497,8 @@ class indicators(PatternEnum):
     "A pattern matching PEM encoded cryptographic parameters"
     xmr = wallets.XMR.value
     "Monero addresses"
+    path_terse = pattern(_pattern_any_path_terse)
+    "Windows and Linux path names without spaces"
     path = pattern(_pattern_any_path)
     "Windows and Linux path names"
     winpath = pattern(_pattern_win_path)
