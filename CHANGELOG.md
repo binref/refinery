@@ -5,6 +5,12 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.15
+- The `tea` and `xtea` units now offer the option to specify the number of rounds.
+- The `couple` unit made stdout/stderr merging optional and discards stderr by default.
+- The `couple` unit received the `--noinput` option to toggle this mode explicitly.
+- The standard path formatting for `xtxml` and `xthtml` was changed to allow filtering for all elements of a certain tag easier.
+
 ## Version 0.8.14
 - The `rtfc` unit was added.
 - A regular expression pattern named `date` was added and is now available in `xtp`.
