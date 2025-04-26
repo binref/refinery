@@ -458,9 +458,10 @@ class PrivilegesRequired(enum.IntEnum):
     Lowest = 3
 
 
-class PrivilegesRequiredOverrideAllowed(enum.IntEnum):
-    CommandLine = 0
-    Dialog = 1
+class PrivilegesRequiredOverrideAllowed(enum.IntFlag):
+    Empty = 0
+    CommandLine = 1
+    Dialog = 2
 
 
 class LanguageDetection(enum.IntEnum):
