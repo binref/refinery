@@ -386,7 +386,7 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
                 index = node.index
                 name = nval(node.tag)
                 if index is not None:
-                    name = F'{name}/{index}'
+                    name = F'{index}.{name}'
                 return name
 
         return path_builder
