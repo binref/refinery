@@ -25,14 +25,15 @@ class couple(Unit):
         self, *commandline : Arg(nargs='...', type=str, metavar='(all remaining)', help=(
             'All remaining command line tokens form an arbitrary command line to be executed. Use format string syntax '
             'to insert meta variables and incoming data chunks.')),
-        buffer: Arg.Switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
-        noerror: Arg('-e', help='do not merge stdin and stderr; stderr will only be output if -v is also specified.') = False,
+        buffer : Arg.Switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
+        noinput: Arg('-x', help='Do not send any input to the new process.') = False,
+        errors : Arg('-m', help='Merge stdout and stderr. By default, stderr will only be output if -v is also specified.') = False,
         timeout: Arg('-t', metavar='T',
             help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
     ):
         if not commandline:
             raise ValueError('you need to provide a command line.')
-        super().__init__(commandline=commandline, noerror=noerror, buffer=buffer, timeout=timeout)
+        super().__init__(commandline=commandline, errors=errors, noinput=noinput, buffer=buffer, timeout=timeout)
 
     def process(self, data):
         def shlexjoin():
@@ -47,11 +48,12 @@ class couple(Unit):
             for cmd in self.args.commandline
         ]
 
-        if 0 in used:
-            self.log_info('input used as command-line argument; sending no input to process stdin')
+        if self.args.noinput:
+            self.log_info('sending no input to process stdin')
             data = None
 
-        self.log_debug(shlexjoin)
+        if not self.log_debug(commandline):
+            self.log_info(shlexjoin)
 
         posix = 'posix' in sys.builtin_module_names
         process = Popen(commandline,
@@ -107,10 +109,10 @@ class couple(Unit):
             out = queue_read(qout)
             err = None
 
-            if self.args.noerror:
-                err = queue_read(qerr)
-            else:
+            if self.args.errors:
                 out = out or queue_read(qerr)
+            else:
+                err = queue_read(qerr)
 
             if err and self.log_info():
                 errbuf.write(err)
