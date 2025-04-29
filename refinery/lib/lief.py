@@ -30,6 +30,9 @@ __pdoc__ = {_forward: False for _forward in [
 __all__ = [
     'load',
     'load_pe',
+    'load_pe_fast',
+    'load_macho',
+    'string',
     'lib',
     'MachO',
     'PE',
