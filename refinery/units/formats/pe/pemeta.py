@@ -445,7 +445,7 @@ class pemeta(Unit):
             if self.args.tabular:
                 cw = max(len(F'{entry.count:d}') for entry in pe.rich_header.entries)
             for entry in pe.rich_header.entries:
-                idv = entry.id
+                idv = entry.build_id | (entry.id << 0x10)
                 count = entry.count
                 info = get_rich_info(idv)
                 if not info:
