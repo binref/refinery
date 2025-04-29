@@ -80,7 +80,7 @@ class StreamDetour(Generic[R]):
         self.stream.seek(self.cursor, io.SEEK_SET)
 
 
-class MemoryFile(Generic[T]):
+class MemoryFileMethods(Generic[T]):
     """
     A thin wrapper around (potentially mutable) byte sequences which gives it the features of a
     file-like object.
@@ -122,7 +122,7 @@ class MemoryFile(Generic[T]):
     def closed(self) -> bool:
         return self._closed
 
-    def __enter__(self):
+    def __enter__(self) -> MemoryFile:
         return self
 
     def __exit__(self, ex_type, ex_value, trace) -> bool:
@@ -370,6 +370,10 @@ class MemoryFile(Generic[T]):
         if rep > 0:
             replay = bytes(self._data[offset:self._cursor]) * rep + replay
         self.write(replay)
+
+
+class MemoryFile(MemoryFileMethods[T], io.BytesIO):
+    pass
 
 
 class order(str, enum.Enum):

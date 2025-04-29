@@ -20,7 +20,7 @@ import mmap
 
 from typing import Dict, Optional
 from refinery.lib.types import ByteStr
-from refinery.lib.structures import MemoryFile
+from refinery.lib.structures import MemoryFile, MemoryFileMethods
 
 
 class VirtualFile:
@@ -61,9 +61,9 @@ class VirtualFile:
         if length:
             view = view[offset:offset + length]
 
-        class _MappedView(bytearray, MemoryFile):
+        class _MappedView(bytearray, MemoryFileMethods):
             def __init__(self):
-                MemoryFile.__init__(self, self, True, node)
+                MemoryFileMethods.__init__(self, self, True, node)
 
         mapped = _MappedView()
         mapped[:] = view
