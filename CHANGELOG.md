@@ -5,6 +5,12 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.16
+
+This version is functionally equivalent to the previous one, but refinery starts using the [LIEF][] parser with this version.
+Switching from other executable parses to LIEF was the only change from the last version to this one,
+ see [#84](https://github.com/binref/refinery/pull/84).
+
 ## Version 0.8.15
 - The `tea` and `xtea` units now offer the option to specify the number of rounds.
 - The `couple` unit made stdout/stderr merging optional and discards stderr by default.
@@ -850,3 +856,4 @@ Updates build system.
 [python-registry-gh]: https://github.com/williballenthin/python-registry
 [python-registry]: https://pypi.org/project/python-registry/
 [pycryptodome]: https://www.pycryptodome.org/
+[LIEF]: https://github.com/lief-project/LIEF
