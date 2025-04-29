@@ -3,7 +3,6 @@
 """
 A wrapper module to read local data resources.
 """
-from refinery import data
 from importlib import resources
 
 import sys
@@ -11,6 +10,7 @@ import sys
 
 def datapath(name: str):
     if sys.version_info >= (3, 9):
+        from refinery import data
         return resources.files(data).joinpath(name)
-    else:
-        return resources.path(data, name)
+    with resources.path('refinery', 'data') as data:
+        return data / name
