@@ -5,6 +5,7 @@ A wrapper around the LIEF library.
 """
 from __future__ import annotations
 
+import io
 import lief as lib
 
 if True:
@@ -20,7 +21,6 @@ from lief import (
     Section,
 )
 
-from refinery.lib.structures import MemoryFileRO
 from refinery.lib.types import ByteStr
 
 __pdoc__ = {_forward: False for _forward in [
@@ -54,7 +54,7 @@ def load_pe(
     to a config object and then invokes the LIEF parser. Everything is parsed by default. For speed
     over completeness, see `refinery.lib.lief.load_pe_fast`.
     """
-    with MemoryFileRO(data) as stream:
+    with io.BytesIO(data) as stream:
         cfg = PE.ParserConfig()
         cfg.parse_exports = bool(parse_exports)
         cfg.parse_imports = bool(parse_imports)
@@ -93,7 +93,7 @@ def load_macho(data: ByteStr) -> MachO.FatBinary | MachO.Binary:
     """
     Load a MachO file using LIEF.
     """
-    with MemoryFileRO(data) as stream:
+    with io.BytesIO(data) as stream:
         if parsed := MachO.parse(stream):
             return parsed
         stream.seek(0)
@@ -106,7 +106,7 @@ def load(data: ByteStr):
     based on its first 4 bytes using a specific LIEF parser and reverts to LIEF's general purpose
     loader if these fail.
     """
-    with MemoryFileRO(data) as stream:
+    with io.BytesIO(data) as stream:
         if data[:2] == B'MZ':
             parsed = PE.parse(stream)
         elif data[:4] == B'\x7FELF':
