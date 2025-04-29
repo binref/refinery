@@ -29,7 +29,6 @@ _ALLOWED_NODE_TYPES = frozenset({
     ast.Mult,
     ast.Not,
     ast.NotEq,
-    ast.Num,
     ast.Or,
     ast.Pow,
     ast.RShift,
