@@ -6,7 +6,6 @@ import itertools
 import json
 
 from contextlib import suppress
-from importlib import resources
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from enum import Enum
@@ -18,8 +17,7 @@ from refinery.units.sinks.ppjson import ppjson
 from refinery.units.formats.pe import get_pe_size
 from refinery.lib.tools import date_from_timestamp
 from refinery.lib.lcid import LCID
-
-from refinery import data
+from refinery.lib.resources import datapath
 
 
 def _FILETIME(value: int) -> datetime:
@@ -73,9 +71,8 @@ class VersionInfo:
         return not self.err
 
 
-with resources.path(data, 'rich.json') as path:
-    with path.open('r') as stream:
-        RICH = json.load(stream)
+with datapath('rich.json').open('r') as stream:
+    RICH = json.load(stream)
 
 
 class ShortPID(str, Enum):

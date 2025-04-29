@@ -38,13 +38,14 @@ __version__ = '0.8.16'
 __distribution__ = 'binary-refinery'
 
 from typing import Dict, List, Optional, Type, TypeVar, Iterable
-from importlib import resources
 from datetime import datetime
 from threading import RLock
 
 import pickle
 
 from refinery.units import Arg, Unit
+from refinery.lib import resources
+
 
 _T = TypeVar('_T')
 
@@ -58,19 +59,14 @@ class __unit_loader__:
     """
     Every unit can be imported from the refinery base module. The import is performed on demand to
     reduce import times. The library ships with a pickled dictionary that maps unit names to their
-    corresponding module path. This data is expected to be stored as `__init__.pkl` in the package
-    directory.
+    corresponding module path. This data is stored as `units.pkl` in the data directory.
     """
     units: Dict[str, str]
     cache: Dict[str, Type[Unit]]
     _lock: RLock = RLock()
 
     def __init__(self):
-        with resources.path(__name__, '__init__.py') as current_file:
-            # This is an annoying hack to allow this to work when __init__.pkl does not
-            # yet exist during setup. Starting with Python 3.9, we could use the slightly
-            # less awkward: resources.files(__name__).joinpath('__init__.pkl')
-            self.path = current_file.parent / '__init__.pkl'
+        self.path = resources.datapath('units.pkl')
         self.reloading = False
         self.loaded = False
         self.units = {}
