@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Main Repository
-      uses: actions/checkout@v4
+      uses: nschloe/action-cached-lfs-checkout@v1
       with:
         fetch-depth: '2'
     - name: Set up Python

@@ -218,7 +218,7 @@ def cat(line: str, cell=None):
 
 
 def store_sample(hash: str, name: Optional[str] = None, key: Optional[str] = None):
-    store.download(hash, key=key)
+    store.decode(hash, key=key)
     if name is None:
         name = hash
     store.cache[name] = store.cache.pop(hash)

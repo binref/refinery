@@ -18,7 +18,7 @@ jobs:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
       - name: Checkout Main Repository
-        uses: actions/checkout@v4
+        uses: nschloe/action-cached-lfs-checkout@v1
       - name: Install Dependencies
         uses: ./.github/actions/setup/
         with:
