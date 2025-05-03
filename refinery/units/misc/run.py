@@ -8,7 +8,7 @@ from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.meta import metavars
 
 
-class couple(Unit):
+class run(Unit):
     """
     Turns any command into a refinery unit. Data is processed by feeding it to the standard input
     of a process spawned from the given command line, and then reading the standard output of that
