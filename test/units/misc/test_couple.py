@@ -19,20 +19,20 @@ class TestCoupler(TestUnitBase):
             self.echo = ['cmd', '/c'] + self.echo
 
     def test_simple_echo_01(self):
-        result = self.load(timeout=0, buffer=False, *self.echo)()
+        result = self.load(timeout=0, stream=True, *self.echo)()
         self.assertIn(B'Hello World', result)
 
     def test_simple_echo_02(self):
-        result = self.load(timeout=0, buffer=True, *self.echo)()
+        result = self.load(timeout=0, stream=False, *self.echo)()
         self.assertIn(B'Hello World', result)
 
     def test_simple_echo_04(self):
-        result = self.load(timeout=9, buffer=True, *self.echo)()
+        result = self.load(timeout=9, stream=False, *self.echo)()
         self.assertIn(B'Hello World', result)
 
     def test_simple_echo_timeout_race_condition(self):
         for k in range(1, 100):
-            result = self.load(timeout=9, buffer=False, *self.echo)()
+            result = self.load(timeout=9, stream=True, *self.echo)()
             self.assertIn(B'Hello World', result, msg=F'Race condition in iteration {k}')
 
     def test_grep(self):

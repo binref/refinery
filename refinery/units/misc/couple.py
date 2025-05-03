@@ -10,30 +10,37 @@ from refinery.lib.meta import metavars
 
 class couple(Unit):
     """
-    Turns any command into a refinery unit. Data is processed by feeding it to the standard input of a process spawned from
-    the given command line, and then reading the standard output of that process as the result of the operation. The main
-    purpose of this unit is to allow using the syntax from `refinery.lib.frame` with other command line tools. By default,
-    the `refinery.couple` unit streams the output from the executed command as individual outputs, but the `buffer` option
-    can be set to buffer all output of a single execution. The format string expression `{}` or `{0}` can be used as one of
-    the arguments passed to the external command to represent the incoming data. In this case, the data will not be sent
-    to the standard input device of the new process.
+    Turns any command into a refinery unit. Data is processed by feeding it to the standard input
+    of a process spawned from the given command line, and then reading the standard output of that
+    process as the result of the operation. The main purpose of this unit is to allow using the
+    syntax from `refinery.lib.frame` with other command line tools. By default, the unit streams
+    the output from the executed command as individual outputs, but the `buffer` option can be set
+    to buffer all output of a single execution. The format string expression `{}` or `{0}` can be
+    used as one of the arguments passed to the external command to represent the incoming data. In
+    this case, the data will not be sent to the standard input device of the new process.
     """
 
     _JOIN_TIME = 0.1
 
     def __init__(
         self, *commandline : Arg(nargs='...', type=str, metavar='(all remaining)', help=(
-            'All remaining command line tokens form an arbitrary command line to be executed. Use format string syntax '
-            'to insert meta variables and incoming data chunks.')),
-        buffer : Arg.Switch('-b', help='Buffer the command output for one execution rather than streaming it.') = False,
+            'All remaining command line tokens form an arbitrary command line to be executed. Use'
+            ' format string syntax to insert meta variables and incoming data chunks.')),
+        stream : Arg.Switch('-s',
+            help='Stream the command output rather than buffering it.') = False,
         noinput: Arg('-x', help='Do not send any input to the new process.') = False,
-        errors : Arg('-m', help='Merge stdout and stderr. By default, stderr will only be output if -v is also specified.') = False,
-        timeout: Arg('-t', metavar='T',
-            help='Set an execution timeout as a floating point number in seconds, there is none by default.') = 0.0
+        errors : Arg('-m', help=(
+            'Merge stdout and stderr. By default, the standard error stream of the coupled command'
+            ' is forwarded to the logger, i.e. it is only visible if -v is also specified.'
+        )) = False,
+        timeout: Arg('-t', metavar='T', help=(
+            'Optionally set an execution timeout as a floating point number in seconds.'
+        )) = 0.0
     ):
         if not commandline:
             raise ValueError('you need to provide a command line.')
-        super().__init__(commandline=commandline, errors=errors, noinput=noinput, buffer=buffer, timeout=timeout)
+        super().__init__(
+            commandline=commandline, errors=errors, noinput=noinput, stream=stream, timeout=timeout)
 
     def process(self, data):
         def shlexjoin():
@@ -59,7 +66,7 @@ class couple(Unit):
         process = Popen(commandline,
             stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=False, close_fds=posix)
 
-        if self.args.buffer and not self.args.timeout:
+        if not self.args.stream and not self.args.timeout:
             out, err = process.communicate(data)
             for line in err.splitlines():
                 self.log_info(line)
@@ -96,7 +103,7 @@ class couple(Unit):
         process.stdin.close()
         start = process_time()
 
-        if self.args.buffer or self.args.timeout:
+        if not self.args.stream or self.args.timeout:
             result = io.BytesIO()
 
         def queue_read(q: Queue):
@@ -127,9 +134,9 @@ class couple(Unit):
                         msg = line.rstrip(B'\n')
                         if msg: self.log_info(msg)
             if out:
-                if self.args.buffer or self.args.timeout:
+                if not self.args.stream or self.args.timeout:
                     result.write(out)
-                if not self.args.buffer:
+                if self.args.stream:
                     yield out
 
             if done.is_set():
@@ -164,5 +171,5 @@ class couple(Unit):
 
         if isinstance(result, Exception):
             raise result
-        elif self.args.buffer:
+        elif not self.args.stream:
             yield result.getvalue()
