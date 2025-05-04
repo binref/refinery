@@ -299,7 +299,16 @@ class Marshal(StructReader[memoryview]):
             if store_reference:
                 index = len(self.refs)
                 self.refs.append(None)
-            signature = inspect.signature(CodeType)
+            try:
+                signature = inspect.signature(CodeType)
+            except ValueError:
+                import re
+                docs = re.sub(r'[\s\[\]]', '', CodeType.__doc__)
+                spec = re.search(r'(?i)code\w*\((\w+(?:,\w+)*)\)', docs)
+                params = spec.group(1).split(',') if spec else []
+            else:
+                params = list(signature.parameters)
+
             arguments = {}
             self.quicksave()
             versions = [_v] if (_v := self.version) else list(_PY)
@@ -375,9 +384,9 @@ class Marshal(StructReader[memoryview]):
                     break
             else:
                 raise RuntimeError('Failed to parse code object.')
-            if set(signature.parameters) == set(arguments):
+            if set(params) == set(arguments):
                 try:
-                    rv = CodeType(*[arguments[p] for p in signature.parameters])
+                    rv = CodeType(*[arguments[p] for p in params])
                 except Exception:
                     rv = B'%s%s' % (self.version.header(), self.quickdata())
             if store_reference:
