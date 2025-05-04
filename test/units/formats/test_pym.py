@@ -34,7 +34,10 @@ class TestPyMarshal(TestUnitBase):
             'baz': {
                 'x': 'refined',
                 'y': 'binaries',
-            }
+            },
+            'bam': [
+                12.756,
+            ]
         }
         test = marshal.dumps(data) | unit | json.loads
         self.assertEqual(test, data)

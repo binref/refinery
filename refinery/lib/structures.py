@@ -112,6 +112,7 @@ class MemoryFileMethods(Generic[T]):
         self._cursor = 0
         self._closed = False
         self._fileno = fileno
+        self._quicksave = 0
         self.read_as_bytes = read_as_bytes
         self._size_limit = size_limit
 
@@ -156,6 +157,20 @@ class MemoryFileMethods(Generic[T]):
 
     def seekable(self) -> bool:
         return not self._closed
+
+    def quicksave(self):
+        self._quicksave = self.tell()
+
+    def quickload(self):
+        self.seekset(self._quicksave)
+
+    def quickdata(self) -> T:
+        qs = self._quicksave
+        cp = self._cursor
+        if cp > qs:
+            return self._data[qs:cp]
+        else:
+            return self._data[cp:qs]
 
     @property
     def eof(self) -> bool:
@@ -698,7 +713,7 @@ class StructReader(MemoryFile[T]):
         return self.read_length_prefixed(prefix_size, 'utf-16le', block_size)
 
     @overload
-    def read_length_prefixed(self, prefix_size: int = 32, block_size: int = 1) -> T:
+    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> T:
         ...
 
     @overload
