@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import overload, get_origin, get_args, Type, TypeVar
-from types import UnionType, CodeType
+from types import CodeType
 
 from refinery.units import Unit
 from refinery.lib.json import BytesAsStringEncoder
@@ -158,8 +158,8 @@ class Marshal(StructReader[memoryview]):
         except Null:
             raise
         else:
-            if get_origin(typecheck) is UnionType:
-                typecheck = tuple(get_origin(t) or t for t in get_args(typecheck))
+            if args := get_args(typecheck):
+                typecheck = tuple(get_origin(t) or t for t in args)
             if typecheck and not isinstance(o, typecheck):
                 if isinstance(typecheck, tuple):
                     expected = F'one of {", ".join(t.__name__ for t in typecheck)}'
