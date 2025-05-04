@@ -54,12 +54,15 @@ jobs:
         os: [windows-latest, macos-13, ubuntu-latest]
     steps:
       - name: Checkout Main Repository
-        uses: nschloe/action-cached-lfs-checkout@v1
+        uses: actions/checkout@v4
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+        with:
+          lfs: false
       - name: Clone PR Source Repository
-        uses: nschloe/action-cached-lfs-checkout@v1
+        uses: actions/checkout@v4
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
         with:
+          lfs: false
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
