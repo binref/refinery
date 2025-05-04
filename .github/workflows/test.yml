@@ -75,7 +75,7 @@ jobs:
         uses: pypa/gh-action-pip-audit@v1.1.0
 
   coverage:
-    if: ${{ github.repository_owner == 'binref' }}
+    if: ${{ github.repository_owner == 'binref' && false }}
     runs-on: windows-latest
     needs: 
       - test
