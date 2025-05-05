@@ -108,6 +108,13 @@ class _PY(tuple, enum.Enum):
         return magic + c
 
 
+def _bytes2code(code: bytes) -> CodeType:
+    if sys.version_info >= (3, 11):
+        return CodeType(0, 0, 0, 0, 2, 0, code, (), (), (), '', '', '', 1, b'', b'')
+    else:
+        return CodeType(0, 0, 0, 0, 2, 0, code, (), (), (), '', '', 1, b'')
+
+
 class Null(Exception):
     """
     Raised when the unmarshal C implementation would return a null pointer.
@@ -312,7 +319,7 @@ class Marshal(StructReader[memoryview]):
             arguments = {}
             self.quicksave()
             versions = [_v] if (_v := self.version) else list(_PY)
-            versions.sort(reverse=True)
+
             for version in versions:
                 intval = self.u32 if version >= _PY.V_2_03 else self.u16
                 arguments.clear()
@@ -330,7 +337,8 @@ class Marshal(StructReader[memoryview]):
                     if _PY.V_1_03 <= version:
                         arguments.update(flags=intval())
                     if _PY.V_1_00 <= version:
-                        arguments.update(codestring=self.object(bytes))
+                        codestring = self.object(bytes)
+                        arguments.update(codestring=codestring)
                         arguments.update(constants=self.object(tuple))
                         arguments.update(names=self.object(tuple))
                     if _PY.V_1_03 <= version < _PY.V_3_11:
@@ -371,7 +379,10 @@ class Marshal(StructReader[memoryview]):
                     if _PY.V_1_05 <= version:
                         arguments.update(firstlineno=intval())
                     if _PY.V_1_05 <= version < _PY.V_3_10:
-                        arguments.update(lnotab=self.object(tuple))
+                        lnotab = self.object(bytes)
+                        if len(lnotab) % 2 != 0:
+                            raise ValueError
+                        arguments.update(lnotab=lnotab)
                     if _PY.V_3_10 <= version:
                         arguments.update(linetable=self.object(bytes))
                     if _PY.V_3_11 <= version:
@@ -384,11 +395,13 @@ class Marshal(StructReader[memoryview]):
                     break
             else:
                 raise RuntimeError('Failed to parse code object.')
+            rv = None
             if set(params) == set(arguments):
                 try:
                     rv = CodeType(*[arguments[p] for p in params])
                 except Exception:
-                    rv = B'%s%s' % (self.version.header(), self.quickdata())
+                    rv = None
+            rv = rv or B'%s%s' % (self.version.header(), self.quickdata())
             if store_reference:
                 self.refs[index] = rv
             return rv
