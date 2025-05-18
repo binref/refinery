@@ -2288,13 +2288,18 @@ class InnoArchive:
         self.streams = InnoStreams(*result.streams)
         self.script_codec = 'latin1' if version.unicode else codec
 
-        for file in self.files:
-            path = self.emulator.reset().expand_constant(file.path)
-            path = path.replace('\\', '/')
-            drive, colon, path = path.rpartition(':/')
-            if colon and len(drive) == 1:
-                path = F'{drive}/{path}'
-            file.path = F'data/{path}'
+        try:
+            emulator = self.emulator
+        except Exception:
+            pass
+        else:
+            for file in self.files:
+                path = emulator.reset().expand_constant(file.path)
+                path = path.replace('\\', '/')
+                drive, colon, path = path.rpartition(':/')
+                if colon and len(drive) == 1:
+                    path = F'{drive}/{path}'
+                file.path = F'data/{path}'
 
     @cached_property
     def emulator(self):
