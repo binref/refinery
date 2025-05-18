@@ -2063,6 +2063,10 @@ class IFPSEmulator:
     def FindWindowByClassName(name: str) -> int:
         return 0
 
+    @external
+    def FindWindowByWindowName(name: str) -> int:
+        return 0
+
     @external(static=False)
     def WizardSilent(self) -> bool:
         return self.config.wizard_silent
