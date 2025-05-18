@@ -1478,7 +1478,7 @@ class IFPSFile(Struct):
                         body = reader.read(length)
                 if FTag.HasAttrs.check(tags):
                     attributes = list(self._read_attributes())
-                fn = Function(name, decl, body, exported, attributes)
+                fn = Function(name, decl=decl, body=body, attributes=attributes)
                 self.functions.append(fn)
             if has_dll_imports and all_long and all_void and not reparsed:
                 load_flags = True
@@ -1568,21 +1568,21 @@ class IFPSFile(Struct):
                 info = info and info.members.get(decl.name)
                 if not info or info.writable:
                     function.setter = Function(decl=DeclSpec(
-                        True,
-                        [this, *decl.parameters, nval],
-                        F'Set{decl.name}',
-                        None,
-                        None,
+                        void=True,
+                        parameters=[this, *decl.parameters, nval],
+                        name=F'Set{decl.name}',
+                        calling_convention=None,
+                        return_type=None,
                         classname=classname,
                         is_accessor=True
                     ))
                 if not info or info.readable:
                     function.getter = Function(decl=DeclSpec(
-                        False,
-                        [this, *decl.parameters],
-                        F'Get{decl.name}',
-                        None,
-                        decl.return_type,
+                        void=False,
+                        parameters=[this, *decl.parameters],
+                        name=F'Get{decl.name}',
+                        calling_convention=None,
+                        return_type=decl.return_type,
                         classname=classname,
                         is_accessor=True
                     ))
@@ -1754,7 +1754,7 @@ class IFPSFile(Struct):
             for fn in self.functions if fn.body
         ), default=0)
         _smax = max((
-            max(insn.stack for insn in fn.body if insn.stack is not None)
+            max((insn.stack for insn in fn.body if insn.stack is not None), default=1)
             for fn in self.functions if fn.body
         ), default=0)
         _omax = max(len(self.types), len(self.globals), _omax)
