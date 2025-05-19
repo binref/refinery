@@ -59,6 +59,7 @@ from refinery.lib.inno.ifps import (
     TC,
     TRecord,
     TStaticArray,
+    TPrimitive,
     Value,
     VariableBase,
     VariableSpec,
@@ -98,6 +99,9 @@ class OleObject:
 
     def __str__(self):
         return self.name
+
+
+_VariantType = TPrimitive(TC.Variant)
 
 
 class Variable(VariableBase, Generic[_T]):
@@ -232,6 +236,8 @@ class Variable(VariableBase, Generic[_T]):
                 return []
             if sub_path:
                 return Variable(type, spec, (*path, *sub_path))
+            elif type.code == TC.Pointer:
+                return Variable(_VariantType)
             else:
                 return type.default()
 
