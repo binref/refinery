@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.18 - bugfix release
+
 ## Version 0.8.17
 
 This version is functionally equivalent to the previous one, but refinery starts using the [LIEF][] parser with this version.
