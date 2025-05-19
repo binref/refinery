@@ -330,7 +330,7 @@ def _x86_filter(data: memoryview, size: int, processed_size: int, translate_size
         if i >= size:
             break
         i = i + 1
-        v = int.from_bytes(data[i:i + 4], 'little')
+        v = int.from_bytes(data[i:i + 4], 'little', signed=True)
         pos = 1 - (processed_size + i)
         if v >= pos and v < translate_size:
             v += pos if v >= 0 else translate_size
@@ -534,7 +534,7 @@ class LzxDecoder:
                 if rem == 0:
                     if eof_halt:
                         return
-                    return BitsReaderEOF('reading an uncompressed block')
+                    raise BitsReaderEOF('reading an uncompressed block')
                 if next > rem:
                     next = rem
                 bits.copy_to(win[self._pos:], next)
