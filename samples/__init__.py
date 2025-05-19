@@ -13,8 +13,7 @@ from refinery.units.crypto.cipher.aes import aes
 
 class SampleStore:
     lock = threading.Lock()
-    temp = tempfile.TemporaryDirectory(
-        prefix='binary-refinery.test-data.', ignore_cleanup_errors=True)
+    temp = tempfile.TemporaryDirectory(prefix='binary-refinery.test-data.')
     root = pathlib.Path(temp.name)
 
     def __init__(self):
