@@ -3,6 +3,7 @@ from typing import Optional
 import hashlib
 import urllib.error
 import urllib.request
+import http.client
 import time
 import threading
 import tempfile
@@ -37,6 +38,9 @@ class SampleStore:
             except urllib.error.HTTPError as error:
                 if error.code != 429:
                     raise
+                backoff += 1
+                wait *= 2
+            except http.client.RemoteDisconnected:
                 backoff += 1
                 wait *= 2
             else:
