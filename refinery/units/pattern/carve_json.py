@@ -97,9 +97,13 @@ class carve_json(Unit):
     """
     Extracts anything from the input data that looks like JSON.
     """
-    def __init__(self, dictonly: Arg.Switch('-d', help='only extract JSON dictionaries, do not extract lists.') = False):
-        super().__init__(dictonly=dictonly)
+    def __init__(
+        self, all: Arg.Switch('-a', help=(
+            'By default, only dictionaries are carved. Specify this flag to also carve lists.'
+        )) = False
+    ):
+        super().__init__(all=all)
 
     def process(self, data):
-        for start, chunk in JSONCarver(data, dictonly=self.args.dictonly):
+        for start, chunk in JSONCarver(data, dictonly=not self.args.all):
             yield self.labelled(chunk, offset=start)
