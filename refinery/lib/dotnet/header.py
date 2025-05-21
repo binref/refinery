@@ -1024,9 +1024,10 @@ class DotNetHeader:
         return list(parse(self.reader(self.head.Resources)))
 
     def reader(self, obj):
-        rva, size = (obj.rva, obj.size) if (
-            isinstance(obj, lief.PE.DataDirectory)
-        ) else (obj.VirtualAddress, obj.Size)
+        try:
+            rva, size = obj.rva, obj.size
+        except AttributeError:
+            rva, size = obj.VirtualAddress, obj.Size
         start = self.pe.rva_to_offset(rva)
         end = start + size
         return StreamReader(self.data[start:end])

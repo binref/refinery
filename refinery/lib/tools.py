@@ -16,7 +16,7 @@ import re
 
 from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar
 from math import log
-from enum import IntFlag
+from enum import IntFlag, Enum
 
 
 _T = TypeVar('_T')
@@ -367,6 +367,103 @@ class NoLogging:
         if self.mode & NoLogging.Mode.STD_OUT:
             sys.stdout.close()
             sys.stdout = self._stdout
+
+
+class NoLoggingProxy:
+    """
+    This class can be used to wrap any object. It acts as a proxy for this object, passing though
+    and attribute access, operator use, and method calls to its base. However, any such action
+    is wrapped in a `refinery.lib.tools.NoLogging` context to ensure that it procudes no logging
+    output. Notably, any returned values that are not considered primitive are wrapped as a proxy
+    as well. The main downside of this is that instance checks no longer work as expected.
+    """
+
+    __slots__ = (
+        '__wrapped__',
+        '__nl_mode__',
+    )
+
+    __proxy_cache__ = {}
+
+    def __new__(cls, wrap, mode: NoLogging.Mode = NoLogging.Mode.ALL):
+        wrap_type = type(wrap)
+        if isinstance(wrap, (int, float, str, bytes, bytearray, memoryview, Enum)):
+            return wrap
+        if (proxy_class := cls.__proxy_cache__.get(wrap_type)) is None:
+            dunder_names = [
+                name for name in dir(wrap_type) if name.startswith('__') and name.endswith('__')]
+            proxied_dunder_methods = {}
+            for name in dunder_names:
+                if name == '__new__':
+                    continue
+                class_method = getattr(wrap_type, name)
+                if class_method and class_method is getattr(wrap, name):
+                    def proxied_method(
+                        _, *args,
+                        _proxy___call=class_method,
+                        _proxy___wrap=wrap,
+                        _proxy___mode=mode,
+                        **kwargs
+                    ):
+                        with NoLogging(_proxy___mode):
+                            result = _proxy___call(_proxy___wrap, *args, **kwargs)
+                        return NoLoggingProxy(result, _proxy___mode)
+                    if not callable(class_method):
+                        continue
+                    proxied_dunder_methods[name] = proxied_method
+            if proxied_dunder_methods:
+                proxy_class = type(
+                    F'_proxy_{wrap_type.__name__}', (NoLoggingProxy,), proxied_dunder_methods)
+            else:
+                proxy_class = cls
+            cls.__proxy_cache__[wrap_type] = proxy_class
+        return super().__new__(proxy_class)
+
+    def __init__(self, wrap, mode: NoLogging.Mode = NoLogging.Mode.ALL):
+        self.__wrapped__ = wrap
+        self.__nl_mode__ = mode
+
+    def __setattr__(self, name, value):
+        if name in NoLoggingProxy.__slots__:
+            return super().__setattr__(name, value)
+        mode = self.__nl_mode__
+        wrap = self.__wrapped__
+        with NoLogging(mode):
+            setattr(wrap, name, value)
+
+    def __repr__(self):
+        with NoLogging(self.__nl_mode__):
+            return repr(self.__wrapped__)
+
+    def __getattribute__(self, name):
+        wrap = super().__getattribute__('__wrapped__')
+        mode = super().__getattribute__('__nl_mode__')
+        if name == '__wrapped__':
+            return wrap
+        if name == '__nl_mode__':
+            return mode
+        with NoLogging(mode):
+            attr = getattr(wrap, name)
+        return NoLoggingProxy(attr, mode)
+
+    def __iter__(self):
+        mode = self.__nl_mode__
+        with NoLogging(mode):
+            it = iter(self.__wrapped__)
+        while True:
+            try:
+                with NoLogging(mode):
+                    item = next(it)
+            except StopIteration:
+                return
+            else:
+                yield NoLoggingProxy(item, mode)
+
+    def __call__(self, *args, **kwargs):
+        mode = self.__nl_mode__
+        with NoLogging(mode):
+            rv = self.__wrapped__(*args, **kwargs)
+        return NoLoggingProxy(rv, mode)
 
 
 class NotOne(LookupError):

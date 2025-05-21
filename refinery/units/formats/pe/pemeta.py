@@ -12,6 +12,7 @@ from enum import Enum
 
 from refinery.lib import lief
 from refinery.lib.dotnet.header import DotNetHeader
+from refinery.lib.tools import NoLoggingProxy
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
 from refinery.units.formats.pe import get_pe_size
@@ -619,6 +620,8 @@ class pemeta(Unit):
 
         if pe is None:
             raise ValueError('Input not recognized as a PE file.')
+
+        pe = NoLoggingProxy(pe)
 
         for switch, resolver, name in [
             (self.args.debug,   self.parse_debug,    'Debug'),    # noqa
