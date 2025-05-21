@@ -158,20 +158,6 @@ class MemoryFileMethods(Generic[T]):
     def seekable(self) -> bool:
         return not self._closed
 
-    def quicksave(self):
-        self._quicksave = self.tell()
-
-    def quickload(self):
-        self.seekset(self._quicksave)
-
-    def quickdata(self) -> T:
-        qs = self._quicksave
-        cp = self._cursor
-        if cp > qs:
-            return self._data[qs:cp]
-        else:
-            return self._data[cp:qs]
-
     @property
     def eof(self) -> bool:
         return self._closed or self._cursor >= len(self._data)

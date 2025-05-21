@@ -108,13 +108,6 @@ class _PY(tuple, enum.Enum):
         return magic + c
 
 
-def _bytes2code(code: bytes) -> CodeType:
-    if sys.version_info >= (3, 11):
-        return CodeType(0, 0, 0, 0, 2, 0, code, (), (), (), '', '', '', 1, b'', b'')
-    else:
-        return CodeType(0, 0, 0, 0, 2, 0, code, (), (), (), '', '', 1, b'')
-
-
 class Null(Exception):
     """
     Raised when the unmarshal C implementation would return a null pointer.
@@ -139,7 +132,7 @@ class Marshal(StructReader[memoryview]):
     def __init__(self, data):
         super().__init__(memoryview(data))
         self.refs = []
-        self.version = None
+        self.version = (1, 0)
         self._depth = 0
 
     @overload
@@ -317,21 +310,52 @@ class Marshal(StructReader[memoryview]):
                 params = list(signature.parameters)
 
             arguments = {}
-            self.quicksave()
-            versions = [_v] if (_v := self.version) else list(_PY)
+            start = self.tell()
 
-            for version in versions:
+            for version in _PY:
+                if version < self.version:
+                    continue
+                self.seekset(start)
                 intval = self.u32 if version >= _PY.V_2_03 else self.u16
                 arguments.clear()
+                arguments.update(
+                    name='',
+                    qualname='',
+                    filename='',
+                    argcount=0,
+                    posonlyargcount=0,
+                    kwonlyargcount=0,
+                    nlocals=0,
+                    flags=0,
+                    stacksize=1000,
+                    firstlineno=1,
+                    linetable=B'',
+                    exceptiontable=B'',
+                    constants=(),
+                    names=(),
+                    varnames=(),
+                    freevars=(),
+                    cellvars=(),
+                )
+                MAX_ARGS = 0x100
+                MAX_VARS = 0x10000
                 try:
                     if _PY.V_1_03 <= version:
-                        arguments.update(argcount=intval())
+                        if (n := intval()) > MAX_ARGS:
+                            raise ValueError
+                        arguments.update(argcount=n)
                     if _PY.V_3_08 <= version:
-                        arguments.update(posonlyargcount=intval())
+                        if (n := intval()) > MAX_ARGS:
+                            raise ValueError
+                        arguments.update(posonlyargcount=n)
                     if _PY.V_3_00 <= version:
-                        arguments.update(kwonlyargcount=intval())
+                        if (n := intval()) > MAX_ARGS:
+                            raise ValueError
+                        arguments.update(kwonlyargcount=n)
                     if _PY.V_1_03 <= version < _PY.V_3_11:
-                        arguments.update(nlocals=intval())
+                        if (n := intval()) > MAX_VARS:
+                            raise ValueError
+                        arguments.update(nlocals=n)
                     if _PY.V_1_05 <= version:
                         arguments.update(stacksize=intval())
                     if _PY.V_1_03 <= version:
@@ -382,26 +406,28 @@ class Marshal(StructReader[memoryview]):
                         lnotab = self.object(bytes)
                         if len(lnotab) % 2 != 0:
                             raise ValueError
-                        arguments.update(lnotab=lnotab)
+                        arguments.update(linetable=lnotab)
                     if _PY.V_3_10 <= version:
                         arguments.update(linetable=self.object(bytes))
                     if _PY.V_3_11 <= version:
                         arguments.update(exceptiontable=self.object(bytes))
+                    if start == 1 and not self.eof:
+                        raise ValueError
                 except Exception:
-                    self.quickload()
                     continue
                 else:
+                    if version < self.version:
+                        continue
                     self.version = version
                     break
             else:
                 raise RuntimeError('Failed to parse code object.')
-            rv = None
-            if set(params) == set(arguments):
-                try:
-                    rv = CodeType(*[arguments[p] for p in params])
-                except Exception:
-                    rv = None
-            rv = rv or B'%s%s' % (self.version.header(), self.quickdata())
+            try:
+                rv = CodeType(*[arguments[p] for p in params])
+            except Exception:
+                size = self.tell() - start
+                self.seekset(start)
+                rv = B'%s%s' % (self.version.header(), self.read(size))
             if store_reference:
                 self.refs[index] = rv
             return rv
