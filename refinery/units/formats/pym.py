@@ -129,11 +129,12 @@ class Marshal(StructReader[memoryview]):
     A specialization of the `refinery.lib.structures.StructReader` to read marshaled objects.
     """
 
-    def __init__(self, data):
+    def __init__(self, data, load_code=False):
         super().__init__(memoryview(data))
         self.refs = []
         self.version = (1, 0)
         self._depth = 0
+        self._load_code = load_code
 
     @overload
     def object(self, typecheck: Type[_T]) -> _T:
@@ -422,9 +423,14 @@ class Marshal(StructReader[memoryview]):
                     break
             else:
                 raise RuntimeError('Failed to parse code object.')
-            try:
-                rv = CodeType(*[arguments[p] for p in params])
-            except Exception:
+            if not self._load_code:
+                rv = None
+            else:
+                try:
+                    rv = CodeType(*[arguments[p] for p in params])
+                except Exception:
+                    rv = None
+            if rv is None:
                 size = self.tell() - start
                 self.seekset(start)
                 rv = B'%s%s' % (self.version.header(), self.read(size))
