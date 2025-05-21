@@ -660,7 +660,7 @@ class pemeta(Unit):
                     signature['Match'] = True
                 else:
                     signature['Flags'] = [
-                        vf.name for vf in Signature.VERIFICATION_FLAGS if vf & verification == vf]
+                        vf.name for vf in Signature.VERIFICATION_FLAGS if vf & verification]
                     signature['Match'] = False
 
         if self.args.timestamps:
