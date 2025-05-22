@@ -89,8 +89,8 @@ class _PY(tuple, enum.Enum):
             _PY.V_1_05: tobytes(20121),
             _PY.V_2_01: tobytes(60202),
             _PY.V_2_03: tobytes(62211), # 2.7
-            _PY.V_3_00: tobytes(3394),  # 3.7
-            _PY.V_3_08: tobytes(3425),  # 3.9
+            _PY.V_3_00: tobytes(3000),  # 3.0
+            _PY.V_3_08: tobytes(3413),  # 3.8
             _PY.V_3_10: tobytes(3438),  # 3.10
             _PY.V_3_11: importlib.util.MAGIC_NUMBER,
         }[self] + nulls
