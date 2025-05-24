@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from refinery.lib.dotnet.disassembler import Disassembler
+from refinery.lib.dotnet.disassembler.factory import OutputFactory
+from refinery.units.sinks import Arg, Unit
+
+
+class dnopc(Unit):
+    """
+    Disassembles the input data as MSIL (.NET/C# bytecode) and produces a human-readable disassembly listing. If you are
+    looking for a more programmatic disassembly, take a look at `refinery.dnopc`.
+    """
+
+    def __init__(
+            self, *,
+            count=None, until=None,
+            no_il_refs: Arg.Switch('-I', help='Disable reference resolution to IL_*.') = False,
+            no_address: Arg.Switch('-A', help='Disable address display.') = False,
+            no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
+            no_args: Arg.Switch('-O', help='Disable output of instruction arguments.') = False,
+            description: Arg.Switch('-d', help='Enable opcodes descriptions in output.') = False,
+    ):
+        self._output_factory = OutputFactory(
+            il_refs=not no_il_refs,
+            address=not no_address,
+            hexdump=not no_hexdump,
+            arguments=not no_args,
+        )
+        self._disassembler = Disassembler()
+        super().__init__(
+            count=count,
+            until=until,
+            description=description,
+        )
+
+    def process(self, data):
+        until = str(self.args.until or '').lower()
+
+        max_line_length = 0
+        if self.args.description:
+            disasm = []
+            for ins in self._disassembler.disasm(data, self.args.count):
+                disasm.append(ins)
+                line = self._output_factory.instruction(ins)
+                max_line_length = max(max_line_length, len(line))
+        else:
+            disasm = self._disassembler.disasm(data, self.args.count)
+
+        for ins in disasm:
+            line = self._output_factory.instruction(ins)
+            if self.args.description:
+                line += ' ' * (max_line_length - len(line) + 2)
+                line += f'-- {ins.op.description}'
+            yield line.encode("utf-8")
+
+            if until and until in line.lower():
+                break
