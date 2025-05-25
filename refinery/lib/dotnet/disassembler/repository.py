@@ -406,7 +406,8 @@ class OpRepository:
             b"\x8a",
             "conv.ovf.i.un",
             [],
-            "Convert unsigned to a native int (on the stack as native int) and throw an exception on overflow.",
+            "Convert unsigned to a native int (on the stack as native int) and throw an exception on "
+            "overflow.",
         ),
         Op(
             OpType.BASE,
@@ -469,14 +470,16 @@ class OpRepository:
             b"\xd5",
             "conv.ovf.u",
             [],
-            "Convert to a native unsigned int (on the stack as native int) and throw an exception on overflow.",
+            "Convert to a native unsigned int (on the stack as native int) and throw an exception on "
+            "overflow.",
         ),
         Op(
             OpType.BASE,
             b"\x8b",
             "conv.ovf.u.un",
             [],
-            "Convert unsigned to a native unsigned int (on the stack as native int) and throw an exception on overflow.",
+            "Convert unsigned to a native unsigned int (on the stack as native int) and throw an exception "
+            "on overflow.",
         ),
         Op(
             OpType.BASE,
@@ -490,7 +493,8 @@ class OpRepository:
             b"\x86",
             "conv.ovf.u1.un",
             [],
-            "Convert unsigned to an unsigned int8 (on the stack as int32) and throw an exception on overflow.",
+            "Convert unsigned to an unsigned int8 (on the stack as int32) and throw an exception on "
+            "overflow.",
         ),
         Op(
             OpType.BASE,
@@ -504,7 +508,8 @@ class OpRepository:
             b"\x87",
             "conv.ovf.u2.un",
             [],
-            "Convert unsigned to an unsigned int16 (on the stack as int32) and throw an exception on overflow.",
+            "Convert unsigned to an unsigned int16 (on the stack as int32) and throw an exception on "
+            "overflow.",
         ),
         Op(
             OpType.BASE,
@@ -518,7 +523,8 @@ class OpRepository:
             b"\x88",
             "conv.ovf.u4.un",
             [],
-            "Convert unsigned to an unsigned int32 (on the stack as int32) and throw an exception on overflow.",
+            "Convert unsigned to an unsigned int32 (on the stack as int32) and throw an exception on "
+            "overflow.",
         ),
         Op(
             OpType.BASE,
@@ -532,7 +538,8 @@ class OpRepository:
             b"\x89",
             "conv.ovf.u8.un",
             [],
-            "Convert unsigned to an unsigned int64 (on the stack as int64) and throw an exception on overflow.",
+            "Convert unsigned to an unsigned int64 (on the stack as int64) and throw an exception on "
+            "overflow.",
         ),
         Op(
             OpType.BASE,
@@ -1227,7 +1234,8 @@ class OpRepository:
             b"\xdb",
             "sub.ovf.un",
             [],
-            "Subtract native unsigned int from a native unsigned int. Unsigned result shall fit in same size.",
+            "Subtract native unsigned int from a native unsigned int. Unsigned result shall fit in same "
+            "size.",
         ),
         Op(
             OpType.BASE,
@@ -1256,7 +1264,8 @@ class OpRepository:
             b"\xfe\x1e",
             "readonly.",
             [],
-            "Specify that the subsequent array address operation performs no type check at runtime, and that it returns a controlled-mutability managed pointer.",
+            "Specify that the subsequent array address operation performs no type check at runtime, and that "
+            "it returns a controlled-mutability managed pointer.",
         ),
         Op(
             OpType.OBJECT_MODEL,
@@ -1284,7 +1293,8 @@ class OpRepository:
             b"\xfe\x19",
             "no. {typecheck, rangecheck, nullcheck }",
             [],
-            "The specified fault check(s) normally performed as part of the execution of the subsequent instruction can/shall be skipped.",
+            "The specified fault check(s) normally performed as part of the execution of the subsequent "
+            "instruction can/shall be skipped.",
         ),
         Op(
             OpType.PREFIX_TO,
