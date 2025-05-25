@@ -15,18 +15,28 @@ class dnopc(Unit):
     def __init__(
             self,
             *,
-            count: Arg.Number('-c', help=(
-                    'Maximum number of bytes to disassemble, infinite by default.')) = None,
-            until: Arg.String('-u', help=(
-                    'Disassemble until the given string appears among the disassembly.')) = None,
-            nvar: Arg.String('-n', help=(
-                    'Variable to receive the disassembled mnemonic. Default is "{default}".')) = 'name',
-            avar: Arg.String('-a', help=(
-                    'Variable to receive the address of the instruction. Default is "{default}".')) = 'addr',
-            ovar: Arg.String('-o', help=(
-                    'Variable prefix for instruction operands. Default is "{default}". The complete operand '
-                    'string will be in {default}s, the first argument in {default}1, the second in {default}2, '
-                    'and so on.')) = 'arg',
+            count: Arg.Number(
+                '-c',
+                help='Maximum number of bytes to disassemble, infinite by default.',
+            ) = None,
+            until: Arg.String(
+                '-u',
+                help='Disassemble until the given string appears among the disassembly.',
+            ) = None,
+            nvar: Arg.String(
+                '-n',
+                help='Variable to receive the disassembled mnemonic. Default is "{default}".',
+            ) = 'name',
+            avar: Arg.String(
+                '-a',
+                help='Variable to receive the address of the instruction. Default is "{default}".',
+            ) = 'addr',
+            ovar: Arg.String(
+                '-o',
+                help=('Variable prefix for instruction operands. Default is "{default}". The complete operand '
+                      'string will be in {default}s, the first argument in {default}1, the second in {default}2, '
+                      'and so on.'),
+            ) = 'arg',
             **more
     ):
         super().__init__(
