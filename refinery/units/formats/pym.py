@@ -478,8 +478,10 @@ class pym(Unit):
             raise NotImplementedError(
                 F'No serialization implemented for object of type {data.__class__.__name__}')
 
-        reader = Marshal(memoryview(data))
-        out = reader.object()
+        try:
+            out = marshal.loads(data)
+        except Exception:
+            out = Marshal(memoryview(data)).object()
 
         if isinstance(out, (list, tuple, set, frozenset)):
             self.log_info('object is a collection, converting each item individually')
