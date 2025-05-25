@@ -69,6 +69,9 @@ class OutputFactory:
         self._arguments = arguments
         self._token_labels = {} if token_labels is None else token_labels
 
+    def extend_token_labels(self, token_labels: Dict[int, str]):
+        self._token_labels.update(token_labels)
+
     def instruction(self, instruction: Instruction) -> str:
         if not self._arguments or len(instruction.op.arguments) == 0:
             args = ""

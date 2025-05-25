@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import re
+
 from refinery.lib.dotnet.disassembler import Disassembler
 from refinery.lib.dotnet.disassembler.factory import OutputFactory
+from refinery.lib.meta import metavars
 from refinery.units.sinks import Arg, Unit
 
 
-class dnopc(Unit):
+class dnasm(Unit):
     """
     Disassembles the input data as MSIL (.NET/C# bytecode) and produces a human-readable disassembly listing. If you are
     looking for a more programmatic disassembly, take a look at `refinery.dnopc`.
@@ -34,6 +37,9 @@ class dnopc(Unit):
         )
 
     def process(self, data):
+        meta = metavars(data)
+        r = re.compile(r't[0-9a-f]+', re.IGNORECASE)
+        self._output_factory.extend_token_labels({int(k[1:], 16): v for k, v in meta.items() if r.match(k)})
         until = str(self.args.until or '').lower()
 
         max_line_length = 0
