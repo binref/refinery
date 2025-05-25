@@ -15,8 +15,10 @@ class dnopc(Unit):
     def __init__(
             self,
             *,
-            count: Arg.Number('-c', help='Maximum number of bytes to disassemble, infinite by default.') = None,
-            until: Arg.String('-u', help='Disassemble until the given string appears among the disassembly.') = None,
+            count: Arg.Number('-c', help=(
+                    'Maximum number of bytes to disassemble, infinite by default.')) = None,
+            until: Arg.String('-u', help=(
+                    'Disassemble until the given string appears among the disassembly.')) = None,
             nvar: Arg.String('-n', help=(
                     'Variable to receive the disassembled mnemonic. Default is "{default}".')) = 'name',
             avar: Arg.String('-a', help=(
@@ -33,7 +35,8 @@ class dnopc(Unit):
             nvar=nvar,
             avar=avar,
             ovar=ovar,
-            **more)
+            **more
+        )
 
     def process(self, data):
         until = str(self.args.until or '').lower()
