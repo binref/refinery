@@ -56,12 +56,12 @@ class InstructionFactory:
 
 class OutputFactory:
     def __init__(
-            self,
-            il_refs: bool = False,
-            address: bool = True,
-            hexdump: bool = True,
-            arguments: bool = True,
-            token_labels: Optional[Dict[int, str]] = None,
+        self,
+        il_refs: bool = False,
+        address: bool = True,
+        hexdump: bool = True,
+        arguments: bool = True,
+        token_labels: Optional[Dict[int, str]] = None,
     ):
         self._il_refs = il_refs
         self._address = address

@@ -5,23 +5,24 @@ import re
 from refinery.lib.dotnet.disassembler import Disassembler
 from refinery.lib.dotnet.disassembler.factory import OutputFactory
 from refinery.lib.meta import metavars
-from refinery.units.sinks import Arg, Unit
+from refinery.units.formats.pe.dotnet.dnopc import DotnetDisassemblerUnit
+from refinery.units.sinks import Arg
 
 
-class dnasm(Unit):
+class dnasm(DotnetDisassemblerUnit):
     """
     Disassembles the input data as MSIL (.NET/C# bytecode) and produces a human-readable disassembly listing. If you are
     looking for a more programmatic disassembly, take a look at `refinery.dnopc`.
     """
 
     def __init__(
-            self, *,
-            count=None, until=None,
-            no_il_refs: Arg.Switch('-I', help='Disable reference resolution to IL_*.') = False,
-            no_address: Arg.Switch('-A', help='Disable address display.') = False,
-            no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
-            no_args: Arg.Switch('-O', help='Disable output of instruction arguments.') = False,
-            description: Arg.Switch('-d', help='Enable opcodes descriptions in output.') = False,
+        self, *,
+        count=None, until=None,
+        no_il_refs: Arg.Switch('-I', help='Disable reference resolution to IL_*.') = False,
+        no_address: Arg.Switch('-A', help='Disable address display.') = False,
+        no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
+        no_args: Arg.Switch('-O', help='Disable output of instruction arguments.') = False,
+        description: Arg.Switch('-d', help='Enable opcodes descriptions in output.') = False,
     ):
         self._output_factory = OutputFactory(
             il_refs=not no_il_refs,
