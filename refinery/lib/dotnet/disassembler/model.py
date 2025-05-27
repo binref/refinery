@@ -8,14 +8,14 @@ from typing import List
 
 class OpArgument(abc.ABC):
     def __init__(
-            self,
-            size: int = 4,
-            has_target: bool = False,
-            is_num: bool = False,
-            is_idx: bool = False,
-            is_arg_num: bool = False,
-            is_casecnt: bool = False,
-            is_caseargs: bool = False,
+        self,
+        size: int = 4,
+        has_target: bool = False,
+        is_num: bool = False,
+        is_idx: bool = False,
+        is_arg_num: bool = False,
+        is_casecnt: bool = False,
+        is_caseargs: bool = False,
     ):
         self._size = size
         self.has_target = has_target
@@ -60,7 +60,7 @@ class Int8(OpArgument):
 
 class Int32(OpArgument):
     def __init__(
-            self, has_target: bool = False, is_num: bool = False, is_caseargs: bool = False
+        self, has_target: bool = False, is_num: bool = False, is_caseargs: bool = False
     ):
         super().__init__(4, has_target, is_num=is_num, is_caseargs=is_caseargs)
 
@@ -86,7 +86,7 @@ class UInt8(OpArgument):
 
 class UInt16(OpArgument):
     def __init__(
-            self, is_num: bool = False, is_idx: bool = False, is_arg_num: bool = False
+        self, is_num: bool = False, is_idx: bool = False, is_arg_num: bool = False
     ):
         super().__init__(2, is_num=is_num, is_idx=is_idx, is_arg_num=is_arg_num)
 
@@ -178,14 +178,14 @@ class Op(abc.ABC):
     """
 
     def __init__(
-            self,
-            op_type: OpType,
-            code: bytes,
-            mnemonic: str,
-            arguments: List[OpArgument],
-            description: str,
-            is_switch: bool = False,
-            is_alias: bool = False,
+        self,
+        op_type: OpType,
+        code: bytes,
+        mnemonic: str,
+        arguments: List[OpArgument],
+        description: str,
+        is_switch: bool = False,
+        is_alias: bool = False,
     ):
         self.op_type = op_type
         self.code = code
