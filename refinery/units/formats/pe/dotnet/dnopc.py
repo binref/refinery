@@ -9,6 +9,7 @@ class DotnetDisassemblerUnit(Unit, abstract=True):
     """
     Abstract unit to share arguments between `dnopc` and `dnasm`.
     """
+
     def __init__(
         self,
         *,
@@ -35,8 +36,8 @@ class dnopc(DotnetDisassemblerUnit):
     def __init__(
         self,
         *,
-        count = None,
-        until = None,
+        count=None,
+        until=None,
         nvar: Arg.String(
             '-n',
             help='Variable to receive the disassembled mnemonic. Default is "{default}".',
