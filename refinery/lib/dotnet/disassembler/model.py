@@ -31,23 +31,23 @@ class OpArgument(abc.ABC):
     def __repr__(self):
         bool_args = []
         if self.has_target:
-            bool_args.append("has_target")
+            bool_args.append('has_target')
         if self.is_num:
-            bool_args.append("is_num")
+            bool_args.append('is_num')
         if self.is_idx:
-            bool_args.append("is_idx")
+            bool_args.append('is_idx')
         if self.is_arg_num:
-            bool_args.append("is_arg_num")
+            bool_args.append('is_arg_num')
         if self.is_casecnt:
-            bool_args.append("is_casecnt")
+            bool_args.append('is_casecnt')
         if self.is_caseargs:
-            bool_args.append("is_caseargs")
-        bool_str = "" if len(bool_args) == 0 else f" {','.join(bool_args)}"
+            bool_args.append('is_caseargs')
+        bool_str = '' if len(bool_args) == 0 else f" {','.join(bool_args)}"
 
         return f"<{self.__class__.__name__} size={self._size}{bool_str}>"
 
     def unpack(self, value) -> int:
-        return unpack("<I", value)[0]
+        return unpack('<I', value)[0]
 
 
 class Int8(OpArgument):
@@ -55,7 +55,7 @@ class Int8(OpArgument):
         super().__init__(1, has_target=has_target, is_num=is_num)
 
     def unpack(self, value: bytes) -> int:
-        return unpack("<b", value)[0]
+        return unpack('<b', value)[0]
 
 
 class Int32(OpArgument):
@@ -65,7 +65,7 @@ class Int32(OpArgument):
         super().__init__(4, has_target, is_num=is_num, is_caseargs=is_caseargs)
 
     def unpack(self, value: bytes) -> int:
-        return unpack("<i", value)[0]
+        return unpack('<i', value)[0]
 
 
 class Int64(OpArgument):
@@ -73,7 +73,7 @@ class Int64(OpArgument):
         super().__init__(8, is_num=is_num)
 
     def unpack(self, value: bytes) -> int:
-        return unpack("<q", value)[0]
+        return unpack('<q', value)[0]
 
 
 class UInt8(OpArgument):
@@ -81,7 +81,7 @@ class UInt8(OpArgument):
         super().__init__(1, is_num=is_num, is_idx=is_idx, is_arg_num=is_arg_num)
 
     def unpack(self, value: bytes) -> int:
-        return unpack("<B", value)[0]
+        return unpack('<B', value)[0]
 
 
 class UInt16(OpArgument):
@@ -91,7 +91,7 @@ class UInt16(OpArgument):
         super().__init__(2, is_num=is_num, is_idx=is_idx, is_arg_num=is_arg_num)
 
     def unpack(self, value: bytes) -> int:
-        return unpack("<H", value)[0]
+        return unpack('<H', value)[0]
 
 
 class UInt32(OpArgument):
@@ -111,7 +111,7 @@ class Float64(OpArgument):
 
 class String(OpArgument):
     def unpack(self, value) -> int:
-        return unpack("<I", value[:-1] + b"\0")[0]
+        return unpack('<I', value[:-1] + b'\0')[0]
 
 
 class TypeTok(OpArgument):
@@ -165,9 +165,9 @@ class TokenLabel:
 
 
 class OpType(str, enum.Enum):
-    BASE = "Base"
-    OBJECT_MODEL = "ObjectModel"
-    PREFIX_TO = "PrefixTo"
+    BASE = 'Base'
+    OBJECT_MODEL = 'ObjectModel'
+    PREFIX_TO = 'PrefixTo'
 
 
 class Op(abc.ABC):
