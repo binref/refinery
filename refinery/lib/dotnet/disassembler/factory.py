@@ -74,7 +74,7 @@ class OutputFactory:
 
     def instruction(self, instruction: Instruction) -> str:
         if not self._arguments or len(instruction.op.arguments) == 0:
-            args = ""
+            args = ''
         elif instruction.op.is_switch:
             args = F" -> {', '.join(self._il(instruction, arg.value) for arg in instruction.arguments[1:])}"
         else:
@@ -87,14 +87,14 @@ class OutputFactory:
                 args += f" -> {self._token_labels[ins_argument.value]}"
             elif isinstance(op_argument, String) and ins_argument.value in self._token_labels.keys():
                 args += f' -> "{self._token_labels[ins_argument.value]}"'
-            args += ")"
+            args += ')'
 
         prefix_parts = []
         if self._hexdump:
             prefix_parts.append(f"/* {instruction.data.hex():<12} */")
         if self._address:
             prefix_parts.append(f"IL_{instruction.offset:04X}")
-        line = " ".join(prefix_parts) + ": " if prefix_parts else ""
+        line = ' '.join(prefix_parts) + ': ' if prefix_parts else ''
         line += F"{instruction.op.mnemonic}{args}"
 
         return line
