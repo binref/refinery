@@ -2275,6 +2275,8 @@ class InnoArchive:
                 result = best_parse
                 self._log_warning(F'using parse result for {result.version!s} with {result.warnings} warnings')
             else:
+                if not results:
+                    raise ValueError('no parser for any known Inno version worked')
                 result = min(results.values(), key=lambda result: len(result.failures))
                 self._log_warning(F'using parse result for {result.version!s} with {len(result.failures)} failures')
                 for k, failure in enumerate(result.failures, 1):
