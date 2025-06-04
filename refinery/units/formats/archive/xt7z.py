@@ -9,7 +9,7 @@ from refinery.units.formats.archive import ArchiveUnit
 import re
 
 if TYPE_CHECKING:
-    from py7zr import SevenZipFile, FileInfo
+    from py7zr import SevenZipFile
 
 
 class _IOFactory:
