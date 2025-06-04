@@ -8,13 +8,17 @@ from refinery.lib.argformats import DelayedNumSeqArgument
 from refinery.lib.meta import check_variable_name
 
 
-class _popcount:
-    _MERGE_SYMBOL = '@'
+_MERGE_META = '@'
+_CONVERSION = ':'
+_CHERRYPICK = '='
 
+
+class _popcount:
     def __init__(self, name: str):
         self.conversion = None
+        self.cherrypick = None
         self.current = 0
-        if name == self._MERGE_SYMBOL:
+        if name == _MERGE_META:
             self.count = 1
             self.field = ...
             return
@@ -24,11 +28,14 @@ class _popcount:
             else:
                 count = int(name, 0)
         except Exception:
-            name, colon, conversion = name.partition(':')
+            name, colon, conversion = name.partition(_CONVERSION)
+            name, equal, cherrypick = name.partition(_CHERRYPICK)
+            if equal:
+                self.cherrypick = cherrypick
+            if colon:
+                self.conversion = conversion
             self.count = 1
             self.field = check_variable_name(name)
-            if colon == ':':
-                self.conversion = conversion
         else:
             self.count = count
             self.field = None
@@ -50,9 +57,9 @@ class _popcount:
             if self.field is ...:
                 meta.update(chunk.meta.current)
             else:
-                if self.conversion:
-                    delayed = DelayedNumSeqArgument(self.conversion, seed=chunk, typecheck=False)
-                    chunk = delayed(chunk)
+                chunk = chunk.meta[c] if (c := self.cherrypick) else chunk
+                if c := self.conversion:
+                    chunk = DelayedNumSeqArgument(c, seed=chunk, reverse=True, typecheck=False)(chunk)
                 meta[self.field] = chunk
         self.current -= 1
         return True
@@ -60,26 +67,31 @@ class _popcount:
 
 class pop(Unit):
     """
-    In processing order, remove visible chunks from the current frame and store their contents in the given
-    meta variables. All chunks in the input stream are consequently made visible again. If pop is used at
-    the end of a frame, then variables will be local to the parent frame.
+    In processing order, remove visible chunks from the current frame and store their contents in
+    the given meta variables on all chunks that remain. All chunks in the input stream are
+    consequently made visible again. If pop is used at the end of a frame, then variables will be
+    local to the parent frame. A pop instruction has the following format:
+
+        count | {_MERGE_META} | name[{_CHERRYPICK}source][{_CONVERSION}conversion]
+
+    If the instruction is an integer, it is interpreted as `count`, specifying a number of chunks
+    to be skipped from the frame without storing them. The letter "{_MERGE_META}" can be used to
+    remove a single chunk from the input and merge all of its meta data into the ones that follow.
+    Otherwise, the pop instruction consists of the name of the variable to be created, an optional
+    source variable name, and an optional conversion sequence. If no source variable is specified,
+    the chunk contents are used as the source. The conversion is a sequence of multibin handlers
+    that are applied to the source data from right to left before storing it.
+    For example, the argument `k:le:b64` first decodes the chunk data using base64, then converts
+    it to an integer in little endian format, and store the integer result in the variable `k`. The
+    visual aid is that the content is passed from right to left through all conversions, into the
+    variable `k`. Similarly, the argument k=size will store the current chunk's size in `k`.
     """
     def __init__(
         self,
-        *names: Arg(type=str, metavar=F'[name[:conversion]|count|{_popcount._MERGE_SYMBOL}]', help=(
-            R'Specify either the name of a single variable to receive the contents of an input chunk, or '
-            R'an integer expression that specifies a number of values to be removed from the input without '
-            F'storing them. Additionally, it is possible to specify the symbol "{_popcount._MERGE_SYMBOL}" '
-            R'to remove a single chunk from the input and merge its meta data into the following ones. By '
-            R'default, a single merge is performed. When a variable name is specified, a sequence of '
-            R'transformations can be appended to be applied before storing it. For example, the argument '
-            R'k:le:b64 would first decode the chunk using base64, then convert it to an integer in little '
-            R'endian format, and store the integer result in the variable `k`. The visual aid is that the '
-            R'content is passed from right to left through all conversions, into the variable `k`.'
-        ))
+        *names: Arg(type=str, metavar='instruction', help='A sequence of instructions, see above.')
     ):
         if not names:
-            names = _popcount._MERGE_SYMBOL,
+            names = _MERGE_META,
         super().__init__(names=[_popcount(n) for n in names])
 
     def process(self, data):
@@ -129,3 +141,12 @@ class pop(Unit):
                     meta.set_scope(name, chunk.scope + nesting)
             chunk.visible = True
             yield chunk
+
+
+pop.__doc__ = pop.__doc__.format(
+    _MERGE_META=_MERGE_META,
+    _CONVERSION=_CONVERSION,
+    _CHERRYPICK=_CHERRYPICK,
+)
+
+__pdoc__ = dict(pop=pop.__doc__)
