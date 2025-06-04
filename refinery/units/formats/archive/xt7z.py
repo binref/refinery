@@ -93,14 +93,23 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             else:
                 raise ValueError('a password is required and none of the default passwords worked.')
 
+        has_read_method = hasattr(archive, 'read')
+
         for info in archive.list():
-            def extract(archive: SevenZipFile = archive, info: FileInfo = info):
-                io = _IOFactory()
-                archive.reset()
-                archive.extract(None, [info.filename], factory=io)
-                return io.buffer.getbuffer()
+            if has_read_method:
+                def extract(archive: SevenZipFile = archive, info: FileInfo = info):
+                    archive.reset()
+                    archive.read([info.filename]).get(info.filename).read()
+            else:
+                def extract(archive: SevenZipFile = archive, info: FileInfo = info):
+                    io = _IOFactory()
+                    archive.reset()
+                    archive.extract(None, [info.filename], factory=io)
+                    return io.buffer.getbuffer()
+
             if info.is_directory:
                 continue
+
             yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32, uncompressed=info.uncompressed)
 
     @classmethod
