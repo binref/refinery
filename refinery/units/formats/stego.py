@@ -42,7 +42,7 @@ class stego(Unit):
     def process(self, data):
         split = self.args.split
         parts = self.args.parts
-        image = self._image.open(MemoryFile(data))
+        image = self._image.open(MemoryFile(data, read_as_bytes=True))
         if self.args.transpose:
             image = image.transpose(self._image.Transpose.ROTATE_90)
         width, height = image.size
