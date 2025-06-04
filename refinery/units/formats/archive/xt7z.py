@@ -12,11 +12,22 @@ if TYPE_CHECKING:
     from py7zr import SevenZipFile, FileInfo
 
 
+class _IOFactory:
+    def __init__(self):
+        self.buffer = None
+
+    def create(self, _):
+        if self.buffer is not None:
+            raise RuntimeError('IO factory was unexpectedly called twice.')
+        self.buffer = MemoryFile()
+        return self.buffer
+
+
 class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a 7zip archive.
     """
-    @ArchiveUnit.Requires('py7zr', 'arc', 'default', 'extended')
+    @ArchiveUnit.Requires('py7zr>=1.0', 'arc', 'default', 'extended')
     def _py7zr():
         import py7zr
         import py7zr.exceptions
@@ -84,8 +95,10 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
         for info in archive.list():
             def extract(archive: SevenZipFile = archive, info: FileInfo = info):
+                io = _IOFactory()
                 archive.reset()
-                return archive.read([info.filename]).get(info.filename).read()
+                archive.extract(None, [info.filename], factory=io)
+                return io.buffer.getbuffer()
             if info.is_directory:
                 continue
             yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32, uncompressed=info.uncompressed)
