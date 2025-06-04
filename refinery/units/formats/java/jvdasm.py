@@ -144,7 +144,8 @@ class jvdasm(PathExtractorUnit):
             path_counter[_path(method)] += 1
         for method in jc.methods:
             for attribute in method.attributes:
-                if attribute.name == 'Code': break
+                if attribute.name == 'Code':
+                    break
             else:
                 self.log_warn(F'no code found for method: {method.name}')
                 continue
