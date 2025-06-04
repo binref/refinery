@@ -97,20 +97,29 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
         for info in archive.list():
             if has_read_method:
-                def extract(archive: SevenZipFile = archive, info: FileInfo = info):
+                def extract(archive: SevenZipFile = archive, name: str = info.filename):
                     archive.reset()
-                    archive.read([info.filename]).get(info.filename).read()
+                    io = archive.read([name])
+                    io = io[name]
+                    io.seek(0)
+                    return io.read()
             else:
-                def extract(archive: SevenZipFile = archive, info: FileInfo = info):
+                def extract(archive: SevenZipFile = archive, name: str = info.filename):
                     io = _IOFactory()
                     archive.reset()
-                    archive.extract(None, [info.filename], factory=io)
+                    archive.extract(None, [name], factory=io)
                     return io.buffer.getbuffer()
 
             if info.is_directory:
                 continue
 
-            yield self._pack(info.filename, info.creationtime, extract, crc32=info.crc32, uncompressed=info.uncompressed)
+            yield self._pack(
+                info.filename,
+                info.creationtime,
+                extract,
+                crc32=info.crc32,
+                uncompressed=info.uncompressed
+            )
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
