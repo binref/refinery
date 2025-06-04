@@ -16,7 +16,9 @@ class PIXEL_PART(IntEnum):
 class stego(Unit):
     """
     Decodes the RGBA (red/green/blue/alpha) values of the pixels of a given image file and outputs
-    these values as bytes. By default, the pixels are converted left to right, top to bottom.
+    these values as bytes. By default, the pixels are converted left to right, top to bottom. When
+    the input image is grayscale, the color channels are ignored. Colored images are converted to
+    RGBA mode.
     """
     def __init__(
         self,
@@ -45,16 +47,29 @@ class stego(Unit):
         image = self._image.open(MemoryFile(data, read_as_bytes=True))
         if self.args.transpose:
             image = image.transpose(self._image.Transpose.ROTATE_90)
+
+        grayscale = image.mode.startswith('L')
+        bw_bitmap = image.mode.startswith('1')
+        no_colors = grayscale or bw_bitmap
+
+        if not no_colors:
+            image = image.convert('RGBA')
+
         width, height = image.size
         chunk_size = len(parts)
         output = MemoryFile()
         buffer = bytearray(chunk_size * width)
-        for y in range(height):
+        pixels = iter(image.getdata())
+
+        for _ in range(height):
             offset = 0
-            for x in range(width):
-                pixel = image.getpixel((x, y))
+            for _ in range(width):
+                pixel = next(pixels)
                 next_offset = offset + chunk_size
-                buffer[offset:next_offset] = (pixel[p] for p in parts)
+                if no_colors:
+                    buffer[offset] = pixel
+                else:
+                    buffer[offset:next_offset] = (pixel[p] for p in parts)
                 offset = next_offset
             if split:
                 yield buffer
