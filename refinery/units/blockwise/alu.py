@@ -69,12 +69,14 @@ class alu(ArithmeticUnit):
         inc: Arg('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
         dec: Arg('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
         cbc: Arg('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
+        ctr: Arg('-T', group='EPI', help='equivalent to --epilogue=S+B') = False,
         bigendian=False, blocksize=None, precision=None
     ):
         for flag, flag_is_set, expression in [
             ('--cbc', cbc, '(B)'),
             ('--inc', inc, 'S+1'),
             ('--dec', dec, 'S-1'),
+            ('--ctr', ctr, 'S+B'),
         ]:
             if flag_is_set:
                 if epilogue is not None:
