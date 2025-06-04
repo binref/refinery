@@ -206,7 +206,6 @@ from refinery.lib.argformats import (
     ParserVariableMissing,
     pending,
     regexp,
-    slicerange,
     sliceobj,
     VariableMissing,
 )
@@ -555,17 +554,19 @@ class Arg(Argument):
         nargs   : Union[omit, int, str] = omit,
         default : Union[omit, Any] = omit,
         range   : bool = False,
+        intok   : bool = False,
         metavar : Optional[str] = 'start:end:step',
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments that contain a slice.
         """
+        def parser(t: str):
+            return sliceobj(t, range=range, intok=intok)
         if help is None:
             help = 'Specify start:end:step in Python slice syntax.'
             if default is not cls.omit:
                 help = F'{help} The default is {{default}}.'
-        parser = slicerange if range else sliceobj
         return cls(*args, group=group, help=help, default=default, nargs=nargs, dest=dest, type=parser, metavar=metavar)
 
     @classmethod

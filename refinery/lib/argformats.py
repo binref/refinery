@@ -298,7 +298,13 @@ def relslice(expression: Union[int, str, slice], data: Optional[Chunk] = None) -
     return bounds
 
 
-def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, range=False, final=False) -> Union[slice, SliceAgain]:
+def sliceobj(
+    expression: Union[int, str, slice],
+    data: Optional[Chunk] = None,
+    range=False,
+    intok=False,
+    final=False,
+) -> Union[slice, SliceAgain]:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
@@ -318,7 +324,7 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
         variables = metavars(data)
         if is_valid_variable_name(expression):
             try:
-                return sliceobj(variables[expression], data, final=True)
+                return sliceobj(variables[expression], data, intok=intok, range=range, final=True)
             except Exception:
                 pass
 
@@ -333,14 +339,16 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
             raise
         elif data is not None:
             parser = DelayedNumSeqArgument(expression)
-            return sliceobj(parser(data), data, range, final=True)
+            return sliceobj(parser(data), data, range=range, intok=intok, final=True)
         else:
             return SliceAgain(expression)
     if len(sliced) == 1:
         k = sliced[0]
-        if not range:
-            return slice(k, k + 1) if k + 1 else slice(k, None, None)
-        return slice(0, k, 1)
+        if intok:
+            return k
+        if range:
+            return slice(0, k, 1)
+        return slice(k, k + 1) if k + 1 else slice(k, None, None)
     if range:
         range_defaults = (0, None, 1)
         k = len(range_defaults) - len(sliced)
@@ -358,10 +366,6 @@ def sliceobj(expression: Union[int, str, slice], data: Optional[Chunk] = None, r
             continue
         raise TypeError(F'The value {item!r} of type {type(item).__name__} cannot be used as a slice index.')
     return slice(*sliced)
-
-
-def slicerange(expression: Union[int, str, slice], data: Optional[Chunk] = None, final=False) -> Union[slice, SliceAgain]:
-    return sliceobj(expression, data=data, range=True, final=final)
 
 
 def utf8(x: str):
