@@ -22,6 +22,10 @@ class TestIndicators(TestBase):
     def test_telegram_domain(self):
         self.assertTrue(re.fullmatch(str(indicators.domain), 't.me'))
 
+    def test_date(self):
+        self.assertTrue(re.fullmatch(str(indicators.date), '2030-01-01T09:00:00'))
+        self.assertTrue(re.fullmatch(str(indicators.date), '2020-01-01T12:07:00'))
+
 
 class TestFormats(TestBase):
 
