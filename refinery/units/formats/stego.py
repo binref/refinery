@@ -22,7 +22,6 @@ class stego(Unit):
     """
     def __init__(
         self,
-        transpose: Arg.Switch('-t', help='Return the columns of the image rather than the rows.'),
         split: Arg.Switch('-m', help='Emit the individual rows or columns as separate outputs.') = False,
         parts: Arg('parts', nargs='?', type=str, help=(
             'A string containing any ordering of the letters R, G, B, and A (case-insensitive). '
@@ -31,7 +30,6 @@ class stego(Unit):
         )) = 'RGB'
     ):
         super().__init__(
-            transpose=transpose,
             split=split,
             parts=tuple(Arg.AsOption(p, PIXEL_PART) for p in parts)
         )
@@ -45,8 +43,6 @@ class stego(Unit):
         split = self.args.split
         parts = self.args.parts
         image = self._image.open(MemoryFile(data, read_as_bytes=True))
-        if self.args.transpose:
-            image = image.transpose(self._image.Transpose.ROTATE_90)
 
         grayscale = image.mode.startswith('L')
         bw_bitmap = image.mode.startswith('1')
