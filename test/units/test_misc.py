@@ -250,6 +250,7 @@ class TestSimpleInvertible(TestUnitBase):
         'iffp',
         'iffs',
         'iffx',
+        'iffc',
         'msgpack',
         'morse',
         'recode',

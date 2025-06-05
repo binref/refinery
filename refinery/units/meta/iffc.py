@@ -13,6 +13,8 @@ class iffc(ConditionalUnit, docs='{0}{p}{1}'):
         *bounds: Arg.Bounds(help='Specifies an (inclusive) range to check for.', intok=True),
         retain=False,
     ):
+        if not bounds:
+            raise ValueError('cannot filter for size without specifying any bounds')
         super().__init__(
             bounds=bounds,
             retain=retain,
