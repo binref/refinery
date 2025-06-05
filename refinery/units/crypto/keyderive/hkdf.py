@@ -3,7 +3,7 @@
 from refinery.units.crypto.keyderive import KeyDerivation
 
 
-class HKDF(KeyDerivation):
+class hkdf(KeyDerivation):
     """HKDF Key derivation"""
 
     def __init__(self, size, salt, hash='SHA512'):
