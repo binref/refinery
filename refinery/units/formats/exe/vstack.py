@@ -89,7 +89,7 @@ class EmuState:
     last_api: Optional[int] = None
 
     def log(self, msg: str) -> str:
-        _width = len(str(self.cfg.wait))
+        _width = len(str(w)) if (w := self.cfg.wait) else 8
         _depth = len(self.callstack)
         return F'[wait={self.waiting:0{_width}d}] [depth={_depth}] {self.fmt(self.previous_address)}: {msg}'
 
@@ -308,7 +308,7 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
             # a function call anyway, but rather a way to get the IP.
             callstack.pop()
 
-        if waiting > state.cfg.wait:
+        if waiting > state.cfg.wait > 0:
             self.halt()
             return False
         if not depth or not state.cfg.wait_calls:
