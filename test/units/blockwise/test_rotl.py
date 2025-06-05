@@ -16,3 +16,7 @@ class TestROTL(TestUnitBase):
     def test_byte_circular(self):
         unit = self.ldu('rotl', '-B', 3, 8)
         self.assertEqual(unit(B'AABAACAAD'), B'BAACAADAA')
+
+    def test_iterable_argument(self):
+        unit = self.ldu('rotl', 'range:3')
+        self.assertEqual(unit(B'\x02\x01\x01\x01'), B'\x02\x02\x04\x01')

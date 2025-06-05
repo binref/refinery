@@ -320,8 +320,8 @@ class UnaryOperation(ArithmeticUnit, abstract=True):
 
 
 class BinaryOperation(ArithmeticUnit, abstract=True):
-    def __init__(self, argument, bigendian=False, blocksize=None):
-        super().__init__(argument, bigendian=bigendian, blocksize=blocksize)
+    def __init__(self, *argument, bigendian=False, blocksize=None):
+        super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
 
     def inplace(self, block, argument) -> None:
         super().inplace(block, argument)
@@ -329,7 +329,7 @@ class BinaryOperation(ArithmeticUnit, abstract=True):
 
 class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
     def __init__(
-        self, argument, bigendian=False,
+        self, *argument, bigendian=False,
         blocksize: Arg.Number(help=(
             'The size of each block in bytes. It is chosen, by default, to be the smallest size that can '
             'hold the provided argument without loss of precision. For example, passing the value 0x1234 '
@@ -337,7 +337,7 @@ class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
             'default block size is 1.'
         )) = None
     ):
-        super().__init__(argument, bigendian=bigendian, blocksize=blocksize)
+        super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
 
     def _argument_parse_hook(self, it: _I) -> Tuple[bool, _I]:
         try:
