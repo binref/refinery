@@ -119,18 +119,30 @@ class p1(pick):
     """
     A shortcut for `refinery.pick` with the argument `0:1`.
     """
-    def __init__(self): super().__init__(slice(0, 1))
+    def __init__(self):
+        super().__init__(slice(0, 1))
 
 
 class p2(pick):
     """
     A shortcut for `refinery.pick` with the argument `0:2`.
     """
-    def __init__(self): super().__init__(slice(0, 2))
+    def __init__(self):
+        super().__init__(slice(0, 2))
 
 
 class p3(pick):
     """
     A shortcut for `refinery.pick` with the argument `0:3`.
     """
-    def __init__(self): super().__init__(slice(0, 3))
+    def __init__(self):
+        super().__init__(slice(0, 3))
+
+
+class b2f(pick):
+    """
+    Short for "back to front". This unit is a shortcut for `refinery.pick` with argument `::-1`:
+    It will reorder the chunks in the current frame in reverse order.
+    """
+    def __init__(self):
+        super().__init__(slice(None, None, -1))
