@@ -56,7 +56,7 @@ class stego(Unit):
             image = image.convert('RGBA')
 
         width, height = image.size
-        chunk_size = len(parts)
+        chunk_size = 1 if no_colors else len(parts)
         output = MemoryFile()
         buffer = bytearray(chunk_size * width)
         pixels = iter(image.getdata())
