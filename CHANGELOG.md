@@ -5,6 +5,18 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.19
+- Thanks to [@larsborn][], the units `dnasm` and `dnopc` were added for disassembling MSIL.
+- The `iffc` unit was added; for filtering chunks in a frame by size constraints.
+- The `xtxs` unit was added; for extracting data from Microsoft Access databases.
+- The `pym` unit for unmarshaling Python data has been improved with a cross-version parser.
+- The `carve-json` unit now defaults to carving only dictionary values.
+- The `map` unit was extended with the "default" parameter.
+- The `pop` unit now supports using a single meta variable as the input source.
+- The `imgdb` and `imgtp` units for image processing were added, and the transposition option was consequently removed from `stego`.
+- The `b2f` (back to front) unit was added, a shortcut for `pick ::-1`.
+- The `HKDF` key derivation unit was renamed to `hkdf`, in line with all other units now being lowercase.
+
 ## Version 0.8.18 - bugfix release
 
 ## Version 0.8.17
