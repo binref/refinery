@@ -14,6 +14,9 @@ from typing import (
     Sequence,
     Type,
 )
+
+from refinery.lib.tools import isbuffer
+
 from refinery.lib.crypto import (
     CipherObjectFactory,
     CipherInterface,
@@ -222,9 +225,8 @@ class StandardCipherExecutable(Executable):
         if not check & {'CFB'}:
             _class._argument_specification.pop('segment_size', None)
         if not check & {'EAX', 'GCM', 'OCB', 'CCM'}:
-            _class._argument_specification.pop('mac_len', None)
-        if not check & {'CCM'}:
-            _class._argument_specification.pop('assoc_len', None)
+            _class._argument_specification.pop('tag', None)
+            _class._argument_specification.pop('aad', None)
         _class._available_block_cipher_modes = OptionFactory(modes, ignorecase=True)
         _class._argument_specification['mode'].merge_all(Arg(
             '-m', '--mode', type=str.upper, metavar='M', nargs=Arg.delete, choices=list(modes),
@@ -262,36 +264,55 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
     def encrypt(self, data: bytes) -> bytes:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
-        return cipher.encrypt(data)
+        if aad := self.args.aad:
+            cipher.update(aad)
+        result = cipher.encrypt(data)
+        if aad or self.args.tag:
+            result = self.labelled(result, tag=cipher.digest())
+        return result
 
     def decrypt(self, data: bytes) -> bytes:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
+        if aad := self.args.aad:
+            cipher.update(aad)
         try:
-            return cipher.decrypt(data)
+            result = cipher.decrypt(data)
         except ValueError:
             overlap = len(data) % self.block_size
             if not overlap:
                 raise
             data[-overlap:] = []
             self.log_warn(F'removing {overlap} bytes from the input to make it a multiple of the {self.block_size}-byte block size')
-            return cipher.decrypt(data)
+            result = cipher.decrypt(data)
+        if tag := self.args.tag:
+            if not isbuffer(tag):
+                raise ValueError('The tag must be a binary string during decryption.')
+            cipher.verify(tag)
+        return result
 
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
     def __init__(
-        self, key, iv=B'', *,
+        self, key, *,
+        iv=B'',
         padding=None, mode=None, raw=False,
-        little_endian: Arg.Switch('-e', '--little-endian',
-            help='Only for CTR: Use a little endian counter instead of the default big endian.') = False,
+        little_endian: Arg.Switch('-e', '--little-endian', help=(
+            'Only for CTR: Use a little endian counter instead of the default big endian.'
+        )) = False,
         segment_size: Arg.Number('-S', '--segment-size', help=(
-            'Only for CFB: Number of bits into which data is segmented. It must be a multiple of 8. The default of {default} means '
-            'that the block size will be used as the segment size.')) = 0,
-        mac_len: Arg.Number('-M', '--mac-len', bound=(4, 16),
-            help='Only for EAX, GCM, OCB, and CCM: Length of the authentication tag, in bytes.') = 0,
-        assoc_len: Arg.Number('-A', '--assoc-len',
-            help='Only for CCM: Length of the associated data. If not specified, all associated data is buffered internally.') = 0,
+            'Only for CFB: Number of segmentation bits. It must be a multiple of 8. The default '
+            'of {default} means that the block size will be used as the segment size.'
+        )) = 0,
+        tag: Arg.NumSeq('-t', '--tag', metavar='TAG', help=(
+            'Only for EAX, GCM, OCB, and CCM: An authentication tag to verify the message. For '
+            'encryption, this parameter specifies the tag length, and the tag is provided as a '
+            'meta variable named "tag".'
+        )) = None,
+        aad: Arg.Binary('-a', '--aad', metavar='AAD', help=(
+            'Only for EAX, GCM, OCB, and CCM: Set additional authenticated data.'
+        )) = None,
         **keywords
     ):
         mode = self._available_block_cipher_modes(mode or iv and 'CBC' or 'ECB')
@@ -304,8 +325,8 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             mode=mode,
             raw=raw,
             segment_size=segment_size,
-            mac_len=mac_len,
-            assoc_len=assoc_len,
+            aad=aad,
+            tag=tag,
             little_endian=little_endian,
             **keywords
         )
@@ -341,16 +362,13 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
                     little_endian=little_endian)
                 optionals['counter'] = counter
             elif mode in ('CCM', 'EAX', 'GCM', 'SIV', 'OCB', 'CTR'):
-                if mode in ('CCM', 'EAX', 'GCM', 'OCB'):
-                    ml = self.args.mac_len
-                    if ml > 0:
-                        if ml not in range(4, 17):
-                            raise ValueError(F'The given mac length {ml} is not in range [4,16].')
-                        optionals['mac_len'] = ml
+                if mode in ('CCM', 'EAX', 'GCM', 'OCB') and self.args.reverse and (tag := self.args.tag):
+                    if not isinstance(tag, int) or tag not in range(4, 17):
+                        raise ValueError('For encryption, the tag paramter must be an integer in range [4,16].')
+                    optionals['mac_len'] = tag
                 if mode == 'CCM':
-                    al = self.args.assoc_len
-                    if al > 0:
-                        optionals['assoc_len'] = al
+                    if aad := self.args.aad:
+                        optionals['assoc_len'] = len(aad)
                 bounds = {
                     'CCM': (7, self.block_size - 2),
                     'OCB': (1, self.block_size),

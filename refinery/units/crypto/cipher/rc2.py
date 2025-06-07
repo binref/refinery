@@ -23,8 +23,8 @@ class rc2(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(ARC2)):
         raw=False,
         little_endian=False,
         segment_size=0,
-        mac_len=0,
-        assoc_len=0,
+        tag=None,
+        aad=None,
         **keywords
     ):
         super().__init__(
@@ -37,8 +37,8 @@ class rc2(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(ARC2)):
             raw=raw,
             little_endian=little_endian,
             segment_size=segment_size,
-            mac_len=mac_len,
-            assoc_len=assoc_len,
+            tag=tag,
+            aad=aad,
             **keywords
         )
 

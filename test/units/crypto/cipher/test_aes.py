@@ -88,3 +88,56 @@ class TestAES(TestUnitBase):
             L('aes -m CFB -i h:2D4E1D3B2B3B5A1C0E141B0739C8AD31 h:A8B5C1A7E4A2D8A9D93F53DBB0B2A1F7F928DAF3D2F6FACBE61FFF3BFEDCDDBA -S 128') | ...)
         self.assertIn(B'xxxxxx22www2', data)
         self.assertIn(B'vpknpomashni', data)
+
+    def test_authentication(self):
+        data = B'The binary refinery refines the finest binaries!'
+
+        with self.assertRaises(ValueError):
+            data | L('aes -m=gcm -i=schokolade12 schokoladentorte --tag=16') | bytes
+
+        test = self.load_pipeline('|'.join((
+            'aes -m=gcm -i=schokolade12 schokoladentorte --tag=16 -R [',
+            'aes -m=gcm -i=schokolade12 schokoladentorte --tag=v:tag ]',
+        )))
+        self.assertEqual(data, data | test | bytes)
+
+        test = self.load_pipeline('|'.join((
+            'aes -m=gcm -i=schokolade12 schokoladentorte --tag=16 -R [',
+            'aes -m=gcm -i=schokolade12 schokoladentorte ]',
+        )))
+        self.assertEqual(data, data | test | bytes)
+
+        test = self.load_pipeline('|'.join((
+            'aes -m=gcm -i=schokolade12 schokoladentorte --aad=refined --tag=16 -R [',
+            'aes -m=gcm -i=schokolade12 schokoladentorte --aad=refined --tag=v:tag ]',
+        )))
+        self.assertEqual(data, data | test | bytes)
+
+        test = self.load_pipeline('|'.join((
+            'aes -m=gcm -i=schokolade12 schokoladentorte --aad=refined -R [',
+            'aes -m=gcm -i=schokolade12 schokoladentorte --aad=refined --tag=v:tag ]',
+        )))
+        self.assertEqual(data, data | test | bytes)
+
+        with self.assertRaises(ValueError):
+            data | self.load_pipeline('|'.join((
+                'aes -m=gcm -i=schokolade12 schokoladentorte -R [',
+                'put tag bogusbogustagtag'
+                'aes -m=gcm -i=schokolade12 schokoladentorte --tag=v:tag ]',
+            ))) | None
+
+        with self.assertRaises(ValueError):
+            data | self.load_pipeline('|'.join((
+                'aes -m=gcm -i=schokolade12 schokoladentorte --aad=refined --tag=16 -R [',
+                'aes -m=gcm -i=schokolade12 schokoladentorte --aad=REFYNED --tag=v:tag ]',
+            ))) | None
+        with self.assertRaises(ValueError):
+            data | self.load_pipeline('|'.join((
+                'aes -m=gcm -i=schokolade12 schokoladentorte               --tag=16 -R [',
+                'aes -m=gcm -i=schokolade12 schokoladentorte --aad=refyned --tag=v:tag ]',
+            ))) | None
+        with self.assertRaises(ValueError):
+            data | self.load_pipeline('|'.join((
+                'aes -m=gcm -i=schokolade12 schokoladentorte --aad=refined --tag=16 -R [',
+                'aes -m=gcm -i=schokolade12 schokoladentorte               --tag=v:tag ]',
+            ))) | None
