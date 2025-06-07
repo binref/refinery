@@ -336,7 +336,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
     def encrypt(self, data):
         result = super().encrypt(data)
         cipher = super()._get_cipher(False)
-        if self.args.tag:
+        if self.args.tag or self.args.aad:
             result = self.labelled(result, tag=cipher.digest())
         return result
 
