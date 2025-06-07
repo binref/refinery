@@ -13,7 +13,8 @@ class rc2(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(ARC2)):
     """
 
     def __init__(
-        self, key, iv=b'', *,
+        self, key, *,
+        iv=b'',
         eks: Arg.Number('-k', '--eks', group='EKS',
             help='Set the effective key size. Default is {default}.') = 1024,
         derive_eks: Arg.Switch('-d', '--dks', group='EKS',
@@ -29,7 +30,7 @@ class rc2(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(ARC2)):
     ):
         super().__init__(
             key,
-            iv,
+            iv=iv,
             eks=eks,
             derive_eks=derive_eks,
             padding=padding,

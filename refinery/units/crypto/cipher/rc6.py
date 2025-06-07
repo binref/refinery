@@ -122,13 +122,13 @@ class rc6(StandardBlockCipherUnit, cipher=BlockCipherFactory(RC6)):
     the unit will allow any key size up to 256 bits.
     """
     def __init__(
-        self, key, iv=b'', *, padding=None, mode=None, raw=False, little_endian=False, segment_size=0,
+        self, key, *, iv=b'', padding=None, mode=None, raw=False, little_endian=False, segment_size=0,
         rounds    : Arg.Number('-k', help='Number of rounds to use, the default is {default}') = _R,
         word_size : Arg.Number('-w', help='The word size in bits, {default} by default.') = _W,
     ):
         super().__init__(
             key,
-            iv,
+            iv=iv,
             padding=padding,
             mode=mode,
             raw=raw,
