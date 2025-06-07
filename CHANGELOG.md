@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.20
+- Adds the `--tag` and `--aad` flag to cipher units that support message authentication.
+
 ## Version 0.8.19
 - Thanks to [@larsborn][], the units `dnasm` and `dnopc` were added for disassembling MSIL.
 - The `iffc` unit was added; for filtering chunks in a frame by size constraints.
