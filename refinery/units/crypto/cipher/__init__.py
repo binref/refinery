@@ -264,32 +264,20 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
     def encrypt(self, data: bytes) -> bytes:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
-        if aad := self.args.aad:
-            cipher.update(aad)
-        result = cipher.encrypt(data)
-        if aad or self.args.tag:
-            result = self.labelled(result, tag=cipher.digest())
-        return result
+        return cipher.encrypt(data)
 
     def decrypt(self, data: bytes) -> bytes:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
-        if aad := self.args.aad:
-            cipher.update(aad)
         try:
-            result = cipher.decrypt(data)
+            return cipher.decrypt(data)
         except ValueError:
             overlap = len(data) % self.block_size
             if not overlap:
                 raise
             data[-overlap:] = []
             self.log_warn(F'removing {overlap} bytes from the input to make it a multiple of the {self.block_size}-byte block size')
-            result = cipher.decrypt(data)
-        if tag := self.args.tag:
-            if not isbuffer(tag):
-                raise ValueError('The tag must be a binary string during decryption.')
-            cipher.verify(tag)
-        return result
+            return cipher.decrypt(data)
 
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
@@ -337,6 +325,29 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             return padding
         elif self.args.mode.name in {'ECB', 'CBC', 'PCBC'}:
             return PADDINGS_LIB[0]
+
+    def _get_cipher(self, reset_cache=False):
+        reset_cache = reset_cache or self._cipher_interface is None
+        cipher = super()._get_cipher(reset_cache)
+        if reset_cache and (aad := self.args.aad):
+            cipher.update(aad)
+        return cipher
+
+    def encrypt(self, data):
+        result = super().encrypt(data)
+        cipher = super()._get_cipher(False)
+        if self.args.tag:
+            result = self.labelled(result, tag=cipher.digest())
+        return result
+
+    def decrypt(self, data):
+        result = super().decrypt(data)
+        if tag := self.args.tag:
+            if not isbuffer(tag):
+                raise ValueError('The tag must be a binary string during decryption.')
+            cipher = super()._get_cipher(False)
+            cipher.verify(tag)
+        return result
 
     @property
     def block_size(self) -> int:
