@@ -59,7 +59,8 @@ class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
             'Cipher block size in 32-bit words. The default value {default} implies that the input '
             'is treated as a single block, which is common behaviour of many implementations.')) = 1
     ):
-        super().__init__(key, iv, padding, mode, raw, swap=swap, block_size=block_size)
+        super().__init__(
+            key, iv=iv, padding=padding, mode=mode, raw=raw, swap=swap, block_size=block_size)
 
     def _prepare_block(self, data: bytes):
         if self.args.block_size <= 1:

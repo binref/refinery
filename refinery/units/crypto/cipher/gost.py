@@ -118,7 +118,7 @@ class gost(StandardBlockCipherUnit, cipher=BlockCipherFactory(GOST)):
         )) = SBOX.R34, **more
     ):
         sbox = Arg.AsOption(sbox, SBOX)
-        super().__init__(key, iv, padding=padding, mode=mode, raw=raw, swap=swap, sbox=sbox, **more)
+        super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, swap=swap, sbox=sbox, **more)
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         return super()._new_cipher(

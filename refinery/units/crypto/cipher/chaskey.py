@@ -112,7 +112,7 @@ class chaskey(StandardBlockCipherUnit, cipher=BlockCipherFactory(Chaskey)):
         swap: Arg.Switch('-s', help='Use big endian byte order for all blocks.') = False,
         **more
     ):
-        super().__init__(key, iv, padding=padding, mode=mode, raw=raw, rounds=rounds, swap=swap, **more)
+        super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, rounds=rounds, swap=swap, **more)
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         return super()._new_cipher(

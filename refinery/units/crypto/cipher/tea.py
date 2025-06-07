@@ -97,7 +97,7 @@ class TEAUnit(StandardBlockCipherUnit):
         rounds: Arg.Number('-k', help='Specify the number of rounds, {default} by default.') = 32,
         **more
     ):
-        super().__init__(key, iv, padding=padding, mode=mode, raw=raw, swap=swap, rounds=rounds, **more)
+        super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, swap=swap, rounds=rounds, **more)
 
     @property
     def block_size(self):

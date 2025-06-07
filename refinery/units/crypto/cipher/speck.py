@@ -93,7 +93,7 @@ class speck(StandardBlockCipherUnit, cipher=BlockCipherFactory(Speck)):
         block_size: Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 8 and 16.') = 16,
         **more
     ):
-        return super().__init__(key, iv, padding=padding, mode=mode, raw=raw, block_size=block_size, **more)
+        return super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, block_size=block_size, **more)
 
     @property
     def block_size(self):

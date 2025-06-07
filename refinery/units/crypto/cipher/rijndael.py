@@ -610,7 +610,7 @@ class rijndael(StandardBlockCipherUnit, cipher=BlockCipherFactory(Rijndael)):
         block_size: Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 16, 24, and 32.') = 16,
         **more
     ):
-        return super().__init__(key, iv, block_size=block_size, **more)
+        return super().__init__(key, iv=iv, block_size=block_size, **more)
 
     @property
     def block_size(self):
