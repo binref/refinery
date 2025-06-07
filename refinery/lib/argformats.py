@@ -522,15 +522,16 @@ def LazyPythonExpression(expression: str, variables: Optional[dict] = None) -> M
     if match := re.fullmatch(RF'''(?ix)
         (?: (?P<flt>{formats.float!s})
           | (?P<int>{formats.integer!s})
-        ) (?P<unit>[KMGTPE]B?)
+        ) (?P<unit>[KMGTPE]i?B?)
     ''', expression):
         unit = match['unit'].upper()
         step = 'KMGTPE'.index(unit[0]) + 1
+        kilo = 1024 if 'I' in unit else 1000
         if n := match['flt']:
             base = float(n)
         if n := match['int']:
             base = int(n, 0)
-        return int(base * (1000 ** step))
+        return int(base * (kilo ** step))
     if variables is not None:
         return PythonExpression.Evaluate(expression, variables)
     if (parser := PythonExpression.Lazy(expression)).variables:
