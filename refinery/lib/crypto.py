@@ -452,16 +452,35 @@ class CipherInterface(ABC):
     """
 
     @abstractmethod
-    def encrypt(self, M: BufferType) -> BufferType: ...
-    """
-    Data encryption according to this cipher interface.
-    """
+    def encrypt(self, M: BufferType) -> BufferType:
+        """
+        Data encryption according to this cipher interface.
+        """
 
     @abstractmethod
-    def decrypt(self, C: BufferType) -> BufferType: ...
-    """
-    Data decryption according to this cipher interface.
-    """
+    def decrypt(self, C: BufferType) -> BufferType:
+        """
+        Data decryption according to this cipher interface.
+        """
+
+    def update(self, D: BufferType) -> None:
+        """
+        Provide additional authenticated data to a cipher that supports authentication. This method
+        must be called before decryption.
+        """
+        return
+
+    def verify(self, T: BufferType) -> bool:
+        """
+        Verify that the decrypted message is authentic given the input tag.
+        """
+        raise NotImplementedError
+
+    def digest(self) -> BufferType:
+        """
+        Compute the binary authentication tag (MAC).
+        """
+        raise NotImplementedError
 
 
 class CipherObjectFactory(ABC):
