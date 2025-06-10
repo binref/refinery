@@ -248,10 +248,9 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
         return self._cipher_factory.new(key=self.args.key, **optionals)
 
     def _get_cipher(self, reset_cache=False) -> CipherInterface:
-        co = self._cipher_interface
-        if co is None or reset_cache:
-            self._cipher_interface = co = self._new_cipher()
-        return co
+        if reset_cache or (ci := self._cipher_interface) is None:
+            self._cipher_interface = ci = self._new_cipher()
+        return ci
 
     @property
     def block_size(self) -> int:
