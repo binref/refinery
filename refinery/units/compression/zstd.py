@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units import Unit
+from refinery.units import Unit, RefineryPartialResult
 
 
 class zstd(Unit):
@@ -14,7 +14,10 @@ class zstd(Unit):
 
     def process(self, data):
         zd = self._pyzstd.ZstdDecompressor()
-        return zd.decompress(data)
+        out = zd.decompress(data)
+        if zd.needs_input:
+            raise RefineryPartialResult('Incomplete ZSTD stream.', out)
+        return out
 
     def reverse(self, data):
         zc = self._pyzstd.ZstdCompressor()
