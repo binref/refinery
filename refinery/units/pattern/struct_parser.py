@@ -40,7 +40,7 @@ class struct(Unit):
     to using native byte order with no alignment. The `spec` parameter may additionally contain
     format expressions of the following form:
 
-    {name[!alignment]:format}
+        {name[!alignment]:format}
 
     The `alignment` parameter is optional. It must be an expression that evaluates to an integer
     value. The current data pointer is aligned to a multiple of this value before reading the field.
@@ -68,7 +68,9 @@ class struct(Unit):
 
     Finally, it is possible to specify a byte alignment by using the syntax `{field!T:a:b:c}` where
     the letter `T` is either a single digit specifying the alignment, or a single letter variable
-    that holds the byte alignment value in the current metadata.
+    that holds the byte alignment value in the current metadata. It is also possible to specify the
+    alignment as `0` which instructs the parser to only peek the contents of this field, i.e. the
+    read pointer is not advanced after reading it.
     """
 
     def __init__(
@@ -162,12 +164,18 @@ class struct(Unit):
                     if name and not name.isdecimal():
                         check_variable_name(name)
 
-                    if conversion:
-                        _aa = reader.tell()
-                        reader.byte_align(PythonExpression.Evaluate(conversion, meta))
-                        _ab = reader.tell()
-                        if _aa != _ab:
-                            self.log_info(F'aligned from 0x{_aa:X} to 0x{_ab:X}')
+                    if not conversion:
+                        peek = False
+                    else:
+                        alignment = PythonExpression.Evaluate(conversion, meta)
+                        if alignment == 0:
+                            peek = True
+                        else:
+                            _aa = reader.tell()
+                            reader.byte_align(alignment)
+                            _ab = reader.tell()
+                            if _aa != _ab:
+                                self.log_info(F'aligned from 0x{_aa:X} to 0x{_ab:X}')
 
                     spec, _, pipeline = spec.partition(':')
 
@@ -183,15 +191,15 @@ class struct(Unit):
                             spec = _exp
 
                     if spec == '':
-                        last = value = reader.read()
+                        last = value = reader.read(peek=peek)
                     elif isinstance(spec, int):
                         if spec < 0:
                             spec += reader.remaining_bytes
                         if spec < 0:
                             raise ValueError(F'The specified negative read offset is {-spec} beyond the cursor.')
-                        last = value = reader.read_bytes(spec)
+                        last = value = reader.read_bytes(spec, peek=peek)
                     else:
-                        value = reader.read_struct(fixorder(spec))
+                        value = reader.read_struct(fixorder(spec), peek=peek)
                         if not value:
                             self.log_debug(F'field {name} was empty, ignoring.')
                             continue
