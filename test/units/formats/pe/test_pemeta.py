@@ -111,7 +111,7 @@ class TestPEMeta(TestUnitBase):
         self.assertEqual(test['DotNet']['RuntimeVersion'], '2.5')
         self.assertEqual(test['DotNet']['Version'], '1.1')
         self.assertEqual(test['DotNet']['VersionString'], 'v4.0.30319')
-        self.assertEqual(test['DotNet']['Release'], '4.2.6.1'),
+        self.assertEqual(test['DotNet']['Release'], '4.2.6.1')
         self.assertEqual(test['DotNet']['EntryPoint'], 0x06400002)
         self.assertEqual(test['Version']['FileVersion'], '7.4.1.7')
         self.assertEqual(test['Version']['InternalName'], 'rewrwr.exe')

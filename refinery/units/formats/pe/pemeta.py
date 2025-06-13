@@ -249,62 +249,53 @@ class pemeta(Unit):
 
         try:
             certificates = signature['content']['certificates']
+            signer_infos = signature['content']['signer_infos']
         except KeyError:
             return info
 
-        if len(certificates) == 1:
-            main_certificate = certificates[0]
-        else:
-            certificates_with_extended_use = []
-            main_certificate = None
-            for certificate in certificates:
-                with suppress(Exception):
-                    crt = certificate['tbs_certificate']
-                    ext = [e for e in crt['extensions'] if e['extn_id'] == 'extended_key_usage' and e['extn_value'] != ['time_stamping']]
-                    key = [e for e in crt['extensions'] if e['extn_id'] == 'key_usage']
-                    if ext:
-                        certificates_with_extended_use.append(certificate)
-                    if any('key_cert_sign' in e['extn_value'] for e in key):
-                        continue
-                    if any('code_signing' in e['extn_value'] for e in ext):
-                        main_certificate = certificate
-                        break
-            if main_certificate is None and len(certificates_with_extended_use) == 1:
-                main_certificate = certificates_with_extended_use[0]
-        if main_certificate:
-            crt = main_certificate['tbs_certificate']
-            serial = crt['serial_number']
-            if isinstance(serial, int):
-                serial = F'{serial:x}'
-            if len(serial) % 2 != 0:
-                serial = F'0{serial}'
-            assert bytes.fromhex(serial) in data
-            subject = crt['subject']
-            location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
-            info.update(Subject=subject['common_name'])
-            if any(location):
-                info.update(SubjectLocation=', '.join(filter(None, location)))
-            for signer_info in signature['content'].get('signer_infos', ()):
-                try:
-                    if signer_info['sid']['serial_number'] != crt['serial_number']:
-                        continue
-                    for attr in signer_info['signed_attrs']:
-                        if attr['type'] == 'authenticode_info':
-                            auth = _value(attr)
-                            info.update(ProgramName=auth['programName'])
-                            info.update(MoreInfo=auth['moreInfo'])
-                except KeyError:
-                    continue
-            try:
-                valid_from = crt['validity']['not_before']
-                valid_until = crt['validity']['not_after']
-            except KeyError:
-                pass
-            else:
-                info.update(ValidFrom=valid_from, ValidUntil=valid_until)
-            info.update(
-                Issuer=crt['issuer']['common_name'], Fingerprint=main_certificate['fingerprint'], Serial=serial)
+        try:
+            signer_serials = {info['sid']['serial_number']: info for info in signer_infos}
+        except KeyError:
             return info
+
+        signer_certificates = []
+
+        for certificate in certificates:
+            with suppress(Exception):
+                crt = certificate['tbs_certificate']
+                serial = crt['serial_number']
+                signer = signer_serials[serial]
+                if isinstance(serial, int):
+                    serial = F'{serial:x}'
+                if len(serial) % 2 != 0:
+                    serial = F'0{serial}'
+                assert bytes.fromhex(serial) in data
+                subject = crt['subject']
+                location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
+                cert_info = {}
+                cert_info.update(Subject=subject['common_name'])
+                if any(location):
+                    cert_info.update(SubjectLocation=', '.join(filter(None, location)))
+                for attr in signer['signed_attrs']:
+                    if attr['type'] == 'authenticode_info':
+                        auth = _value(attr)
+                        cert_info.update(ProgramName=auth['programName'])
+                        cert_info.update(MoreInfo=auth['moreInfo'])
+                try:
+                    valid_since = crt['validity']['not_before']
+                    valid_until = crt['validity']['not_after']
+                except KeyError:
+                    pass
+                else:
+                    cert_info.update(ValidSince=valid_since, ValidUntil=valid_until)
+                cert_info.update(
+                    Issuer=crt['issuer']['common_name'], Fingerprint=certificate['fingerprint'], Serial=serial)
+                signer_certificates.append(cert_info)
+
+        if len(signer_certificates) == 1:
+            info.update(signer_certificates[0])
+        if len(signer_certificates) >= 2:
+            info['Signer'] = signer_certificates
         return info
 
     def _pe_characteristics(self, pe: lief.PE.Binary):
