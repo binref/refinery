@@ -155,7 +155,7 @@ class TestMachoMeta(TestUnitBase):
             self.assertEqual(pkcs7_signature_data['TimestampIssuer'], 'Developer ID Certification Authority')
             self.assertEqual(pkcs7_signature_data['Subject'], 'Developer ID Application: 3CX (33CF4654HL)')
             self.assertEqual(pkcs7_signature_data['SubjectLocation'], 'US')
-            self.assertEqual(pkcs7_signature_data['ValidFrom'], '2019-04-11 12:03:36+00:00')
+            self.assertEqual(pkcs7_signature_data['ValidSince'], '2019-04-11 12:03:36+00:00')
             self.assertEqual(pkcs7_signature_data['ValidUntil'], '2024-04-11 12:03:36+00:00')
             self.assertEqual(pkcs7_signature_data['Issuer'], 'Developer ID Certification Authority')
             self.assertEqual(pkcs7_signature_data['Fingerprint'], '7df5ed6d71b296ed073a5b3efbcdc4c916ba41be')
