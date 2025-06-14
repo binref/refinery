@@ -57,9 +57,16 @@ class DeployCommand(setuptools.Command):
 
         root = Path(refinery.__file__).parent.parent
         os.chdir(root)
-        run(F'git tag {refinery.__version__}')
-        run(R'git push')
-        run(R'git push --tags')
+
+        try:
+            run(F'git tag {refinery.__version__}')
+            run(R'git push')
+            run(R'git push --tags')
+        except subprocess.CalledProcessError as E:
+            print(F'error: {E!s}')
+            return 1
+        else:
+            return 0
 
     def run(self):
         sys.exit(self.main())
