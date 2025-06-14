@@ -83,8 +83,8 @@ class lz4(Unit):
             self._read_block(reader, output)
             return output.getbuffer()
 
-        (dict_id, rsrv1, content_checksummed, content_size,
-            blocks_checksummed, blocks_independent, v2, v1) = reader.read_bits(8)
+        (v1, v2, blocks_independent, blocks_checksummed,
+            content_size, content_checksummed, rsrv1, dict_id) = reader.read_bits(8)
         rsrv2 = reader.read_nibble()
         try:
             block_maximum = {

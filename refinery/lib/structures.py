@@ -464,7 +464,7 @@ class StructReader(MemoryFile[T]):
     def remaining_bits(self) -> int:
         return 8 * self.remaining_bytes + self._nbits
 
-    def read_integer(self, length: Optional[int] = None, peek: bool = False) -> int:
+    def read_integer(self, length: Optional[int] = None, peek: bool = False, bigendian: Optional[bool] = None) -> int:
         """
         Read `length` many bits from the underlying stream as an integer.
         """
@@ -472,9 +472,11 @@ class StructReader(MemoryFile[T]):
             length = self.remaining_bits
         if length < 0:
             raise ValueError
+        if bigendian is None:
+            bigendian = self.bigendian
         if length < self._nbits:
             new_count = self._nbits - length
-            if self.bigendian:
+            if bigendian:
                 result = self._bbits >> new_count
                 if not peek:
                     self._bbits ^= result << new_count
@@ -503,7 +505,7 @@ class StructReader(MemoryFile[T]):
             result = int.from_bytes(bb, self.byteorder_name)
         if not nbits and not rest:
             return result
-        if self.bigendian:
+        if bigendian:
             rbmask   = 2 ** rest - 1       # noqa
             excess   = result & rbmask     # noqa
             result >>= rest                # noqa
@@ -539,13 +541,15 @@ class StructReader(MemoryFile[T]):
         """
         return self.read_integer(1)
 
-    def read_bits(self, nbits: int) -> Iterable[int]:
+    def read_bits(self, nbits: int, bigendian: Optional[bool] = None) -> Iterable[int]:
         """
-        This method returns the bits of `refinery.lib.structures.StructReader.read_integer` as an iterable
-        from least to most significant.
+        This method returns the bits of `refinery.lib.structures.StructReader.read_integer` one by one.
         """
-        chunk = self.read_integer(nbits)
-        for k in range(nbits - 1, -1, -1):
+        if bigendian is None:
+            bigendian = self.bigendian
+        chunk = self.read_integer(nbits, bigendian=bigendian)
+        it = range(nbits - 1, -1, -1) if bigendian else range(nbits)
+        for k in it:
             yield chunk >> k & 1
 
     def read_flags(self, nbits: int, reverse=False) -> Iterable[bool]:
