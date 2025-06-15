@@ -503,7 +503,7 @@ class IFPSEmulatorConfig:
     max_opcodes: int = 0
     max_seconds: int = 10
     start_time: datetime = field(default_factory=datetime.now)
-    milliseconds_per_instruction: float = 0.001
+    milliseconds_per_instruction: float = 0.0001
     sleep_scale: float = 0.0
     max_data_stack: int = 1_000_000
     max_call_stack: int = 4096
