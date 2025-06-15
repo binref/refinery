@@ -75,7 +75,6 @@ import operator
 import random
 import re
 import struct
-import time
 
 
 if TYPE_CHECKING:
@@ -1177,9 +1176,12 @@ class IFPSEmulator:
             yield NewPassword(value)
         return value
 
-    @external
-    def kernel32__GetTickCount() -> int:
-        return time.monotonic_ns() // 1_000_000
+    @external(static=False)
+    def kernel32__GetTickCount(self) -> int:
+        tick = self.clock
+        tick *= self.config.milliseconds_per_instruction
+        tick += self.seconds_slept * 1000
+        return int(tick)
 
     @external
     def user32__GetSystemMetrics(index: int) -> int:
@@ -1210,7 +1212,6 @@ class IFPSEmulator:
     def kernel32__Sleep(self, ms: int):
         seconds = ms / 1000.0
         self.seconds_slept += seconds
-        time.sleep(seconds * self.config.sleep_scale)
 
     @external
     def Random(top: int) -> int:
