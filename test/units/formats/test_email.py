@@ -10,13 +10,13 @@ class TestEmailUnpacker(TestUnitBase):
         unit = self.load(list=True)
         listing = [t.decode('latin1') for t in data | unit]
         for k in range(1, 4):
-            self.assertIn(F'body.v{k}.txt', listing)
-            self.assertIn(F'body.v{k}.rtf', listing)
+            self.assertIn(F'body.txt/{k}', listing)
+            self.assertIn(F'body.rtf/{k}', listing)
         self.assertIn('attachments/request.zip', listing)
 
     def test_ascii_02(self):
         data = self.download_sample('a370a9c5defdd25da62ccb33539e6741f1545057f66b59392ffe094157c5fce8')
-        extract1 = self.load('body.v2.txt')
+        extract1 = self.load('body.txt/2')
         extract2 = self.load('*.zip')
         self.assertIn(B'If you are unsure LKQ IT Security advises deleting the email.', extract1(data))
         zipfile = extract2(data)
