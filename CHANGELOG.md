@@ -5,6 +5,11 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.21
+- The `pecdb` and `pefix` units were added.
+- The `pkw` unit for decompressing PKWare was added.
+- In the `struct` unit, it is now possible to peek a struct entry by specifying an alignment value of zero.
+
 ## Version 0.8.20
 - Adds the `--tag` and `--aad` flag to cipher units that support message authentication.
 
