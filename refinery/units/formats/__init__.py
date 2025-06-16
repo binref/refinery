@@ -273,13 +273,11 @@ class PathExtractorUnit(Unit, abstract=True):
                     continue
                 checksums[path].add(checksum)
                 counter = len(checksums[path])
-                base, extension = os.path.splitext(path)
-                width = len(str(occurrences[path]))
-                if any(F'{base}.v{c:0{width}d}{extension}' in occurrences for c in range(occurrences[path])):
-                    result.path = F'{base}.{_uuid()}{extension}'
-                else:
-                    result.path = F'{base}.v{counter:0{width}d}{extension}'
-                self.log_warn(F'read chunk with duplicate path; deduplicating to {result.path}')
+                slash = self._get_path_separator()
+                if any(F'{result.path}{slash}{c}' in occurrences for c in range(occurrences[path])):
+                    counter = _uuid()
+                result.path = F'{result.path}{slash}{counter}'
+                self.log_info(F'read chunk with duplicate path; deduplicating to {result.path}')
 
         if len({r.path.lower() for r in results}) == len(results):
             for p in patterns:
