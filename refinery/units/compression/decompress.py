@@ -27,6 +27,9 @@ from .zstd import zstd
 from .pkw import pkw
 
 
+_NO_PREFIX = {'pkw'}
+
+
 class _R(IntFlag):
     InvalidData = 0b00000  # noqa
     NotMangled  = 0b00001  # noqa
@@ -246,7 +249,7 @@ class decompress(Unit):
                 if best_current_rating() >= _R.Successful and careful and t > 0:
                     break
                 update(decompress(engine, t, None, careful), careful)
-            if self.args.prepend and best_current_rating() < _R.Successful:
+            if self.args.prepend and engine.name not in _NO_PREFIX and best_current_rating() < _R.Successful:
                 for p in range(0x100):
                     update(decompress(engine, 0, p, careful), careful)
 
