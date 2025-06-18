@@ -138,6 +138,7 @@ class xtp(PatternExtractor):
         'libssh.org'              : 1,
         'live.com'                : 1,
         'microsoft.com'           : 1,
+        'mozilla.org'             : 1,
         'msdn.com'                : 1,
         'msn.com'                 : 1,
         'newtonsoft.com'          : 3, # json.net
