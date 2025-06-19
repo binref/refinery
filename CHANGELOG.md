@@ -5,6 +5,10 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.23
+- The `xt` unit now also extracts AutoIt3 samples.
+- API tracing via SpeakEasy in `vstack` can now be switched on and off with a separate switch.
+
 ## Version 0.8.22
 - The `cfmt` unit was renamed to `pf`, short for "Print Format".
 - The `carve-der` unit was added.
