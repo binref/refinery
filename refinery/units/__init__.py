@@ -1926,6 +1926,15 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     @classmethod
+    def log_always(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
+        """
+        Log the message always.
+        """
+        if messages:
+            cls.logger.log(LogLevel.ALWAYS, cls._output(*messages, clip=clip))
+        return True
+
+    @classmethod
     def log_info(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.INFO`.

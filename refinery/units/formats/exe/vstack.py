@@ -53,6 +53,7 @@ class EmuConfig:
         'log_stack_addresses',
         'log_other_addresses',
         'log_zero_overwrites',
+        'log_api_calls',
     )
     wait_calls: bool
     skip_calls: bool
@@ -66,6 +67,7 @@ class EmuConfig:
     log_stack_addresses: bool
     log_other_addresses: bool
     log_zero_overwrites: bool
+    log_api_calls: bool
 
 
 @dataclass
@@ -133,10 +135,30 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
 
     def hook_api_call(self, _, name: str, function, args: tuple[int, ...], **ka) -> bool:
         def _repr(x):
-            stack = range(self.stack_base, self.stack_base + self.stack_size)
-            if isinstance(x, int) and (x in stack or x in self.exe):
-                return F'0x{x:X}'
-            return repr(x)
+            if not isinstance(x, int):
+                return repr(x)
+            try:
+                data = self.mem_read(x, 0x200)
+            except Exception:
+                data = None
+            else:
+                read = StructReader(data)
+                try:
+                    utf16 = read.read_w_string('utf-16le')
+                except UnicodeDecodeError:
+                    utf16 = ''
+                try:
+                    read.seek(0)
+                    ascii = read.read_c_string('latin1')
+                except UnicodeDecodeError:
+                    ascii = ''
+                string = utf16
+                if not symbol.endswith('W') and len(ascii) > 1 and ascii.isprintable():
+                    string = ascii
+                if len(string) in range(5, 80):
+                    return repr(string)
+            return F'0x{x:X}'
+
         self.state.last_api = self.ip
         module, dot, symbol = name.partition('.')
         if dot != '.':
@@ -151,8 +173,12 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
                 host = '.'.join(map(str, sockaddr.read(4)))
                 self.state.synthesized[F'{host}:{port}'.encode(vstack.codec)] = F'{module}::{symbol}'
                 logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
-        logged_args = [F'{FG.LIGHTCYAN_EX}{x}{RS}' for x in logged_args]
-        vstack.log_info(F'{FG.LIGHTCYAN_EX}{module}{RS}::{FG.LIGHTYELLOW_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
+        if self.state.cfg.log_api_calls:
+            for k, arg in enumerate(logged_args):
+                if arg.startswith('"') or arg.startswith("'"):
+                    logged_args[k] = F'{FG.LIGHTRED_EX}{arg}{RS}'
+            vstack.log_always(
+                F'{FG.LIGHTCYAN_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
         try:
             retval = function(args)
         except Exception as e:
@@ -387,6 +413,7 @@ class vstack(Unit):
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
         stack_push: Arg('-u', action='append', type=str, metavar='REG',
             help='Push the value of a register to the stack before beginning emulation; implies -r.') = None,
+        log_api_calls: Arg.Switch('-A', help='Log API calls when using Speakeasy.') = False,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
         max_visits: Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.') = 0x10000,
         log_writes_in_calls: Arg.Switch('-W', help='Log writes of values that occur in functions calls.') = False,
@@ -421,6 +448,7 @@ class vstack(Unit):
             skip_calls=skip_calls,
             block_size=block_size,
             max_visits=max_visits,
+            log_api_calls=log_api_calls,
             log_writes_in_calls=log_writes_in_calls,
             log_stack_addresses=log_stack_addresses,
             log_other_addresses=log_other_addresses,
@@ -465,6 +493,7 @@ class vstack(Unit):
             args.log_stack_addresses,
             args.log_other_addresses,
             args.log_zero_overwrites,
+            args.log_api_calls,
         )
 
         register_values = {}

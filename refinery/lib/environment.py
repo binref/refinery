@@ -27,6 +27,10 @@ class LogLevel(IntEnum):
     code. This means that the only way to communicate problems is to throw
     an exception.
     """
+    ALWAYS = logging.CRITICAL + 80
+    """
+    This log level is used to output messages that should appear always.
+    """
     NONE = logging.CRITICAL + 50
     PROFILE = logging.CRITICAL + 10
 
@@ -75,6 +79,7 @@ class RefineryFormatter(logging.Formatter):
         logging.INFO     : 'comment',
         logging.DEBUG    : 'verbose',
         LogLevel.PROFILE : 'profile',
+        LogLevel.ALWAYS  : 'message',
     }
 
     def __init__(self, format, **kwargs):
