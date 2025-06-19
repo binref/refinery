@@ -5,6 +5,11 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.22
+- The `cfmt` unit was renamed to `pf`, short for "Print Format".
+- The `carve-der` unit was added.
+- The `argon2id` key derivation unit was added.
+
 ## Version 0.8.21
 - The `pecdb` and `pefix` units were added.
 - The `pkw` unit for decompressing PKWare was added.
