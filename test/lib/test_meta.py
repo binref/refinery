@@ -28,15 +28,15 @@ class TestMeta(TestBase):
         self.assertEqual(meta.format_bin('{726566696E657279!H}', 'utf8'), b'refinery')
 
     def test_hex_byte_strings(self):
-        pl = L('emit Hello [| cm -2 | cfmt {sha256!r} ]')
+        pl = L('emit Hello [| cm -2 | pf {sha256!r} ]')
         self.assertEqual(pl(), b'185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969')
 
     def test_intrinsic_properties_are_recomputed(self):
-        pl = L('emit FOO-BAR [| cm size | snip :1 | cfmt {size} ]')
+        pl = L('emit FOO-BAR [| cm size | snip :1 | pf {size} ]')
         self.assertEqual(pl(), B'1')
 
     def test_magic_values_update(self):
-        pl = L('emit FOO-BAR [| cm sha256 | snip :3 | cfmt {sha256} ]')
+        pl = L('emit FOO-BAR [| cm sha256 | snip :3 | pf {sha256} ]')
         self.assertEqual(pl(), b'9520437ce8902eb379a7d8aaa98fc4c94eeb07b6684854868fa6f72bf34b0fd3')
 
     def test_costly_variable_is_discarded(self):
@@ -82,11 +82,11 @@ class TestMeta(TestBase):
             (False, b'alpha'), (False, b'beta')]})
 
     def test_regression_nulled_history(self):
-        pl = L('emit FOO [[| put b [| emit BAR ]| rex . | swap k | swap b | cfmt {}/{k} | sep / ]]')
+        pl = L('emit FOO [[| put b [| emit BAR ]| rex . | swap k | swap b | pf {}/{k} | sep / ]]')
         self.assertEqual(pl(), B'FOO/B/FOO/A/FOO/R')
 
     def test_wrapper_works_after_deserialization(self):
-        e1 = L('emit range:0x100 [| cm entropy | cfmt {entropy!r} ]') | str
-        e2 = L('emit range:0x100 | cfmt {entropy!r}') | str
+        e1 = L('emit range:0x100 [| cm entropy | pf {entropy!r} ]') | str
+        e2 = L('emit range:0x100 | pf {entropy!r}') | str
         self.assertEqual(e1, e2)
         self.assertEqual(e1, '100.00%')

@@ -116,7 +116,7 @@ class TestGrabBagExamples(TestBase):
     def test_sockaddr_decoding(self):
         pipeline = load_pipeline(
             'emit "0x51110002 0xAFBAFA12" | pack -B4 | struct 2x{port:!H}{addr:4}{} ['
-            ' | push var:addr | pack -R [| sep . ]| pop addr | cfmt {addr}:{port} ]')
+            ' | push var:addr | pack -R [| sep . ]| pop addr | pf {addr}:{port} ]')
         result = pipeline()
         self.assertEqual(result, B'18.250.186.175:4433')
 

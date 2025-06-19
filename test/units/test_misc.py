@@ -319,7 +319,7 @@ class TestSimpleInvertible(TestUnitBase):
         self.assertEqual(Unit._output(lambda: B'\x03'), '03')
 
     def test_run_method(self):
-        from refinery.units.strings.cfmt import cfmt
+        from refinery import pf
 
         class dummy:
             def __init__(self, buffer, isatty):
@@ -337,9 +337,9 @@ class TestSimpleInvertible(TestUnitBase):
         sys_stdout = sys.stdout
         sys.stdin = dummy(MemoryFile(B'test'), False)
         sys.stdout = out = dummy(MemoryFile(), True)
-        sys.argv = ['cfmt', '=={}==']
+        sys.argv = ['pf', '=={}==']
         try:
-            cfmt.run()
+            pf.run()
             self.assertEqual(out.buffer.getvalue(), b'==test==')
         finally:
             sys.stdin = sys_stdin
@@ -354,27 +354,27 @@ class TestSimpleInvertible(TestUnitBase):
 class TestScoping(TestUnitBase):
 
     def test_hiding_variables_created_by_units_automatically_01(self):
-        pl = PL('emit TEST [[| rex E ]| cfmt {offset} ]')
+        pl = PL('emit TEST [[| rex E ]| pf {offset} ]')
         self.assertEqual(pl(), b'{offset}')
 
     def test_hiding_variables_created_by_units_automatically_02(self):
-        pl = PL('emit TEST [[| rex E | cfmt {offset} ]]')
+        pl = PL('emit TEST [[| rex E | pf {offset} ]]')
         self.assertEqual(pl(), b'1')
 
     def test_simple_scoping_01(self):
-        pl = PL('emit X [| put x x [| put y y | cfmt {x}{y} ]]')
+        pl = PL('emit X [| put x x [| put y y | pf {x}{y} ]]')
         self.assertEqual(pl(), b'xy')
 
     def test_simple_scoping_02(self):
-        pl = PL('emit X [| put x x [| put y y ]| cfmt {x}{y} ]')
+        pl = PL('emit X [| put x x [| put y y ]| pf {x}{y} ]')
         self.assertEqual(pl(), b'x{y}')
 
     def test_variables_outside_scope_remain_01(self):
-        pl = PL('emit A [| put t [| emit B ]| cfmt {t} ]')
+        pl = PL('emit A [| put t [| emit B ]| pf {t} ]')
         self.assertEqual(pl(), B'A')
 
     def test_variables_outside_scope_remain_02(self):
-        pl = PL('emit A [| put t [| emit qq | rex . | struct x ]| cfmt {t} ]')
+        pl = PL('emit A [| put t [| emit qq | rex . | struct x ]| pf {t} ]')
         self.assertEqual(pl(), B'A')
 
     def test_variable_shadowing_01(self):

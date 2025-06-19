@@ -121,7 +121,7 @@ class TestFraming(TestBase):
         self.assertEqual(ergo['test'], B'test-data')
 
     def test_bug_conditional_units_generate_empty_chunks(self):
-        pipeline = load_pipeline('emit A | rex .. [| iff 1 [| cfmt boom ]]]')
+        pipeline = load_pipeline('emit A | rex .. [| iff 1 [| pf boom ]]]')
         self.assertEqual(pipeline(), B'')
 
     def test_units_can_overwrite_parent_metavars(self):
@@ -152,13 +152,13 @@ class TestFraming(TestBase):
             | put x rep[1000]:X      [
             | eat x                   [
             | inspector          ]]]]]]
-            | cfmt {x}          ]
+            | pf {x}            ]
         ''')(B'')
 
         self.assertEqual(x, B'X' * 1000)
 
     def test_regression_unaltered_pop(self):
-        pl = load_pipeline('rex "..(?P<t>..)" [| push var:t [| rex .. | pick ~0 | pop t ]| cfmt {t} ]')
+        pl = load_pipeline('rex "..(?P<t>..)" [| push var:t [| rex .. | pick ~0 | pop t ]| pf {t} ]')
         self.assertEqual(b'REFINERY' | pl | bytes, B'FIRY')
 
     def test_chunk_output_to_list(self):
@@ -170,7 +170,7 @@ class TestFraming(TestBase):
         self.assertEqual(test, ['He', 'll', 'o'])
 
     def test_auto_index_regression(self):
-        pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | cfmt {index} ]')
+        pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')
         self.assertEqual(0 | pipe | int, 0)
-        pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| put k index | max k | cfmt {k} ]')
+        pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| put k index | max k | pf {k} ]')
         self.assertEqual(0 | pipe | int, 5)

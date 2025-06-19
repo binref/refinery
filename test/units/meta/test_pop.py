@@ -12,5 +12,5 @@ class TestPop(TestUnitBase):
             b'TEST' | pl | None
 
     def test_regression_pop_does_not_key_error(self):
-        pl = L('emit FOO | rex . [| push [| put k XO | pop ]| cfmt {k} ]')
+        pl = L('emit FOO | rex . [| push [| put k XO | pop ]| pf {k} ]')
         self.assertEqual(pl(), B'XOXOXO')

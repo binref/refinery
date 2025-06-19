@@ -53,12 +53,12 @@ meta variables can freely be used in that expression. Examples:
 
 ### Format String Expressions
 
-The units `refinery.cfmt`, `refinery.dump`, and `refinery.run` support format string expressions
-that can contain meta variables. For example, the following command will print a recursive listing
-of the current directory with human-readable file sizes, entropy in percent, and the md5 hash of
-each file:
+The units `refinery.pf`, `refinery.dump`, and `refinery.run` support format string expressions that
+can contain meta variables. For example, the following command will print a recursive listing of
+the current directory with human-readable file sizes, entropy in percent, and the md5 hash of each
+file:
 
-    ef ** [| cfmt {size!r} {entropy!r} {md5} {path} ]]
+    ef ** [| pf {size!r} {entropy!r} {md5} {path} ]]
 
 Another example would be the following command, which dumps the base64 encoded buffer of length at
 least 200 from the input to incrementally numbered files:

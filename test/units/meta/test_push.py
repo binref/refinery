@@ -40,7 +40,7 @@ class TestMetaPushPop(TestUnitBase):
 
     def test_multiple_pops(self):
         data = B'$a = "foo"; $b = "bar"; $c = "baz"; decode-decode("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", $a, $b, $c)'
-        pl = L('push [| carve -dm5 string | pop foo bar baz | carve -sd string | cfmt {foo}-{bar}-{baz}-{} ]')
+        pl = L('push [| carve -dm5 string | pop foo bar baz | carve -sd string | pf {foo}-{bar}-{baz}-{} ]')
         result = pl(data)
         self.assertEqual(result,
             B'foo-bar-baz-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')

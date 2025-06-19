@@ -34,9 +34,9 @@ class TestCommonMeta(TestUnitBase):
 
         for name, value in meta.items():
             self.assertIn(value, {
-                str(pdf | self.load(name) | self.ldu('cfmt', F'{{{name}}}')).strip(),
-                str(pdf | self.load(name) | self.ldu('cfmt', F'{{{name}!r}}')).strip()
+                str(pdf | self.load(name) | self.ldu('pf', F'{{{name}}}')).strip(),
+                str(pdf | self.load(name) | self.ldu('pf', F'{{{name}!r}}')).strip()
             })
 
-        magic = str(pdf | self.load(name) | self.ldu('cfmt', '{magic}'))
+        magic = str(pdf | self.load(name) | self.ldu('pf', '{magic}'))
         self.assertTrue(magic.startswith('PDF document'))

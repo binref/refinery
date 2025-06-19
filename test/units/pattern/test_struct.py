@@ -58,7 +58,7 @@ class TestStructUnit(TestUnitBase):
         self.assertListEqual([b'\x03foo\x03bar'], list(data | unit))
 
     def test_auto_batch(self):
-        pl = L(R'emit ABCDEF | struct -m {k:B}{:1}{:1} {2} {3} [[| pop a | cfmt {a}{k} ]]')
+        pl = L(R'emit ABCDEF | struct -m {k:B}{:1}{:1} {2} {3} [[| pop a | pf {a}{k} ]]')
         self.assertEqual(pl(), B'B65E68')
 
     def test_use_variables_in_output(self):

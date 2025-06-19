@@ -37,7 +37,7 @@ class TestDeduplication(TestMetaBase):
         )
 
     def test_count(self):
-        pipeline = L('emit HELLO-WORLD [| push [| rex . | dedup -c | sorted count | pick :2 | pop t s ]| cfmt {t}{s} ]')
+        pipeline = L('emit HELLO-WORLD [| push [| rex . | dedup -c | sorted count | pick :2 | pop t s ]| pf {t}{s} ]')
         self.assertEqual(pipeline(), B'LO')
 
     def test_key(self):

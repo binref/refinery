@@ -13,5 +13,5 @@ class TestQueue(TestUnitBase):
         self.assertEqual(out, B'XfooYbar')
 
     def test_inserted_chunks_are_visible(self):
-        pipeline = L('emit AA | push [| qb BB | pop a b | cfmt {a}{b} ]')
+        pipeline = L('emit AA | push [| qb BB | pop a b | pf {a}{b} ]')
         self.assertEqual(pipeline(), b'AABB')

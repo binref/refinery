@@ -38,5 +38,5 @@ class TestIfExpr(TestUnitBase):
         self.assertEqual(pl(), B'c')
 
     def test_retain(self):
-        pl = load_pipeline('emit a b c d c [| put x | iff x -eq c -r | cfmt {}{} | scope ]')
+        pl = load_pipeline('emit a b c d c [| put x | iff x -eq c -r | pf {}{} | scope ]')
         self.assertEqual(pl(), B'abccdcc')

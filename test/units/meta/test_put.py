@@ -15,5 +15,5 @@ class TestMetaPut(TestUnitBase):
         self.assertEqual(pl(), B'\x01\x01\x01')
 
     def test_regression_put_removes_variable(self):
-        pl = L('emit BAR [| rex . [| put x | cfmt {x}{offset} ]]')
+        pl = L('emit BAR [| rex . [| put x | pf {x}{offset} ]]')
         self.assertEqual(pl(), B'B0A1R2')

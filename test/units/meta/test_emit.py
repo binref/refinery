@@ -33,12 +33,12 @@ class TestEmitter(TestUnitBase):
 
     def test_emit_keeps_metadata_01(self):
         with temporary_clipboard('baz'):
-            pl = load_pipeline('emit a [| put foo bar | emit | cfmt {foo}{} ]')
+            pl = load_pipeline('emit a [| put foo bar | emit | pf {foo}{} ]')
             pl = bytes(pl())
         self.assertEqual(pl, b'barbaz')
 
     def test_emit_keeps_metadata_02(self):
         with temporary_clipboard('baz'):
-            pl = load_pipeline('emit bort | push [| rex (?P<foo>...)t | pop | emit | cfmt {foo}{} ]')
+            pl = load_pipeline('emit bort | push [| rex (?P<foo>...)t | pop | emit | pf {foo}{} ]')
             pl = bytes(pl())
         self.assertEqual(pl, b'borbaz')

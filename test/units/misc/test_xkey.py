@@ -30,5 +30,5 @@ class TestXKey(TestUnitBase):
             self.assertEqual(test, B'\x47\xB0')
 
     def test_frame_scope_regression(self):
-        data = self.load_pipeline('emit rep[2000]:A | chop 500 [| autoxor | cfmt {key} ]')()
+        data = self.load_pipeline('emit rep[2000]:A | chop 500 [| autoxor | pf {key} ]')()
         self.assertEqual(data, B'AAAA')

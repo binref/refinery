@@ -123,7 +123,7 @@ class TestArgumentFormats(TestBase):
 
     def test_pos_01(self):
         L = self.load_pipeline
-        pl = L('emit "Hello World" [| put k pos:or | cfmt {k} ]')
+        pl = L('emit "Hello World" [| put k pos:or | pf {k} ]')
         self.assertEqual(pl(), b'7')
 
     def test_accu_zero_feed(self):
