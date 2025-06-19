@@ -28,6 +28,8 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         """
         Returns all archive handlers supported by the unit.
         """
+        from refinery.units.formats.a3x import a3x
+        yield a3x
         from refinery.units.formats.archive.xtsim import xtsim
         yield xtsim
         from refinery.units.formats.archive.xtinno import xtinno
