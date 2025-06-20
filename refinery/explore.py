@@ -8,7 +8,7 @@ import argparse
 
 from typing import Type
 
-from refinery.lib.tools import documentation, terminalfit, get_terminal_size
+from refinery.lib.tools import documentation, terminalfit, get_terminal_size, normalize_to_display
 from refinery.units import Unit, ArgparseError
 from refinery.lib.argparser import RawDescriptionHelpFormatter
 
@@ -166,6 +166,8 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
 
         for kw in args.keywords:
             info = highlight(info, kw, keyword_color)
+
+        name = normalize_to_display(name)
 
         if not args.all:
             header = '{e:-<4}[{}]{e:-<{w}}'.format(name, w=width - len(name) - 6, e='')
