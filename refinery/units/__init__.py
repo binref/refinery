@@ -199,6 +199,7 @@ from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr, Singleton
 
 from refinery.lib.argformats import (
+    pathvar,
     manifest,
     multibin,
     number,
@@ -478,6 +479,23 @@ class Arg(Argument):
         vice versa. By default, a switch will have a False default and change it to True when specified.
         """
         return cls(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
+
+    @classmethod
+    def PathVar(
+        cls,
+        *args   : str,
+        help    : Union[omit, str] = omit,
+        dest    : Union[omit, str] = omit,
+        nargs   : Union[omit, int, str] = omit,
+        metavar : Optional[str] = None,
+        group   : Optional[str] = None,
+    ):
+        """
+        Used to add argparse arguments that contain path patterns.
+        """
+        if metavar is None and any('-' in a for a in args):
+            metavar = 'B'
+        return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=pathvar, metavar=metavar)
 
     @classmethod
     def Binary(

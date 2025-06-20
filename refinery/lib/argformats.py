@@ -1383,6 +1383,22 @@ class DelayedBinaryArgument(DelayedArgument):
         return value
 
 
+class DelayedPathArgument(DelayedBinaryArgument):
+    """
+    A parser for binary arguments like `refinery.lib.argformats.DelayedBinaryArgument` which does not
+    read files from disk as the default. This makes it more suitable for parsing path patterns that
+    are passed to path extractor units: It avoids the problem that a provided file name is confused
+    with the contents of an equally named file on disk.
+    """
+    def default_handler(self, expression: str) -> bytes:
+        import sys
+        print(expression, file=sys.stderr)
+        try:
+            return utf8(expression)
+        except Exception:
+            return expression
+
+
 class DelayedNumSeqArgument(DelayedArgument):
     """
     A parser for sequences of numeric arguments. It does not implement any handlers beyond the default
@@ -1637,6 +1653,18 @@ def numseq(expression: Union[int, str], reverse=False, seed=None, typecheck=True
     if isinstance(expression, int):
         return RepeatedInteger(expression)
     arg = DelayedNumSeqArgument(expression, reverse=reverse, seed=seed, typecheck=typecheck)
+    with suppress(TooLazy):
+        return arg()
+    return arg
+
+
+def pathvar(expression: Union[str, bytes, bytearray]) -> Union[bytes, DelayedArgument]:
+    """
+    This is the argument parser type that uses `refinery.lib.argformats.DelayedPathArgument`.
+    """
+    if not isinstance(expression, str):
+        return bytes(expression)
+    arg = DelayedPathArgument(expression)
     with suppress(TooLazy):
         return arg()
     return arg

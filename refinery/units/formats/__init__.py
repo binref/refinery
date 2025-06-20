@@ -110,7 +110,7 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        *paths: Arg.Binary(metavar='path', nargs='*', help=(
+        *paths: Arg.PathVar(metavar='path', nargs='*', help=(
             'Wildcard pattern for the path of the item to be extracted. Each item is returned '
             'as a separate output of this unit. Paths may contain wildcards; The default '
             'argument is a single wildcard, which means that every item will be extracted. If '
@@ -160,18 +160,18 @@ class PathExtractorUnit(Unit, abstract=True):
             else:
                 paths = [u'*']
         else:
-            def to_string(t: Union[str, bytes]) -> str:
-                if isinstance(t, str):
-                    return t
+            def check_pattern(t: Union[str, bytes]) -> str:
                 try:
-                    return t.decode(self.codec)
+                    if len(t) >= 0x1000:
+                        raise OverflowError
+                    if not isinstance(t, str):
+                        t = t.decode(self.codec)
                 except Exception as E:
                     raise RefineryPotentialUserError(
-                        F'invalid path pattern of length {len(t)};'
-                        U' if that path exists on disk, these are the file contents.'
-                        U' to prevent this, specify s:path.txt rather than path.txt.'
-                    ) from E
-            paths = [to_string(p) for p in paths]
+                        F'Invalid path pattern of length {len(t)}.') from E
+                else:
+                    return t
+            paths = [check_pattern(p) for p in paths]
         for path in paths:
             self.log_debug('path:', path)
         return [
