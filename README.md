@@ -26,7 +26,8 @@ and is an attempt to implement something like [CyberChef](https://github.com/gch
 
 Make a Python virtual environment. You need Python 3.8 or later. Install refinery like this:
 ```
-pip install binary-refinery[extended]
+python -m pip install -U pip
+python -m pip install -U binary-refinery[extended]
 ```
 Run units with `-h` to learn how they work, grep through the [docs][] or use the command `binref` to find them.
 Watch [the latest video][VOD3] if you want to see it in action.
@@ -89,7 +90,12 @@ The author does not use a prefix and provides this option as a safety blanket.
 
 ## Installation
 
-The most straightforward way to install and update refinery is via pip:
+The most straightforward way to install and update refinery is via pip.
+Make sure you run the latest version first:
+```
+python -m pip install -U pip
+```
+Then just install the refinery package:
 ```
 pip install -U binary-refinery
 ```
