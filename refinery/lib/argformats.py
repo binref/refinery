@@ -1391,8 +1391,6 @@ class DelayedPathArgument(DelayedBinaryArgument):
     with the contents of an equally named file on disk.
     """
     def default_handler(self, expression: str) -> bytes:
-        import sys
-        print(expression, file=sys.stderr)
         try:
             return utf8(expression)
         except Exception:
