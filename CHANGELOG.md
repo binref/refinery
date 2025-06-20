@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.24 - bugfix release
+
 ## Version 0.8.23
 - The `xt` unit now also extracts AutoIt3 samples.
 - API tracing via SpeakEasy in `vstack` can now be switched on and off with a separate switch.
