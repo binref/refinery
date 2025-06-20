@@ -40,17 +40,20 @@ class ppjscript(Unit):
     def process(self, data: bytes):
         if self.args.strip_comments:
             from refinery.units.obfuscation.js.comments import deob_js_comments
-            data = data | deob_js_comments | str
+            code = data | deob_js_comments | str
         else:
-            data = data.decode(self.codec)
+            code = data.decode(self.codec)
         if self.args.strip_lines:
-            data = ' '.join(data.splitlines(False))
-        return self._jsb.beautify(data.strip(), dict(
-            eval_code=False,
-            indent_size=self.args.indent,
-            unescape_strings=not self.args.keep_escapes,
-            preserve_newlines=self.args.keep_lines,
-            indent_level=0,
-            keep_function_indentation=False,
-            keep_array_indentation=False,
-        )).encode(self.codec)
+            code = ' '.join(code.splitlines(False))
+        return self._jsb.beautify(
+            code.strip(),
+            self._jsb.BeautifierOptions(dict(
+                eval_code=False,
+                indent_size=self.args.indent,
+                unescape_strings=not self.args.keep_escapes,
+                preserve_newlines=self.args.keep_lines,
+                indent_level=0,
+                keep_function_indentation=False,
+                keep_array_indentation=False,
+            ))
+        ).encode(self.codec)
