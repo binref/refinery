@@ -30,7 +30,7 @@ python -m pip install -U pip
 python -m pip install -U binary-refinery[extended]
 ```
 Run units with `-h` to learn how they work, grep through the [docs][] or use the command `binref` to find them.
-Watch [the latest video][VOD3] if you want to see it in action.
+Watch [a recent video][VOD3] if you want to see it in action.
 But also, read the rest of this readme.
 
 ## Release Schedule
@@ -62,7 +62,10 @@ On top of that, I collect additional resources (including some produced by third
 - [`2021/11`] [Johannes Bader][JB] wrote an amazing [blog post][BLOG] about analyzing malspam with binary refinery.
 - [`2024/03`] [Malware Analysis For Hedgehogs][MH] made [a video about unpacking an XWorm sample][VOD2] using refinery.
 - [`2024/11`] [the CyberYeti][CY] had me [on stream presenting refinery][VOD3].
-  Showcases again include samples from the example section below and the [tutorials](tutorials).
+- [`2025/06`] I was [on stream again][VOD4] with [the CyberYeti][CY], this one is a little more raw.
+              All bugs you can see here were fixed. 😉
+
+Showcases again include samples from the example section below and the [tutorials](tutorials).
 
 ## License
 
@@ -351,7 +354,8 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [BLOG]: https://bin.re/blog/analysing-ta551-malspam-with-binary-refinery/
 [VOD1]: https://www.youtube.com/watch?v=4gTaGfFyMK4
 [VOD2]: https://www.youtube.com/watch?v=5ZtmYNmVMKo
-[VOD3]: https://www.youtube.com/live/-B072w0qjNk
+[VOD3]: https://www.youtube.com/watch?v=-B072w0qjNk
+[VOD4]: https://www.youtube.com/watch?v=HuLONk0Rt98
 
 [remnux]: https://hub.docker.com/r/remnux/binary-refinery
 [remnux-main]: https://remnux.org/
