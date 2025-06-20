@@ -356,11 +356,17 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
 class vstack(Unit):
     """
     The unit emulates instructions at a given address in the input executable (PE/ELF/MachO) and
-    extracts data patches that are written to the stack during emulation. Emulation is halted as
-    soon as a certain number of instructions has not performed any memory writes, or when an error
-    occurs. By default, most registers are set to the current location in the emulated stack.
-    However, if you want to initialize certain registers differently, you can set an environment
-    variable to the desired value.
+    extracts data patches that are written to memory during emulation. The unit can also be used
+    to emulate shellcode blobs, in which case it defaults to emulating 32bit x86 instructions.
+
+    Emulation is halted as soon as a certain number of instructions have not performed any memory
+    writes, or when an error occurs. By default, most registers are set to the current location in
+    the emulated stack. If you want to initialize some of them differently, the `-r` switch maes
+    the unit initialize register values from meta variables:
+
+        emit shellcode [| put eax 0x2000 | vstack -r ]
+
+    In this pipeline, the eax register is set to `0x2000` before emulation begins.
     """
     @Unit.Requires('capstone', 'default', 'extended')
     def _capstone():
