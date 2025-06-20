@@ -1,13 +1,14 @@
 from typing import Optional
 
 import hashlib
+import http.client
+import pathlib
+import socket
+import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
-import http.client
-import time
-import threading
-import tempfile
-import pathlib
 
 from refinery.units.crypto.cipher.aes import aes
 
@@ -40,7 +41,7 @@ class SampleStore:
                     raise
                 backoff += 1
                 wait *= 2
-            except http.client.RemoteDisconnected:
+            except (http.client.RemoteDisconnected, socket.timeout):
                 backoff += 1
                 wait *= 2
             else:
