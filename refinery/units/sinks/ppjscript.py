@@ -45,15 +45,12 @@ class ppjscript(Unit):
             code = data.decode(self.codec)
         if self.args.strip_lines:
             code = ' '.join(code.splitlines(False))
+        options = self._jsb.default_options()
+        options.eval_code = False
+        options.indent_size = self.args.indent
+        options.unescape_strings = not self.args.keep_escapes
+        options.preserve_newlines = self.args.keep_lines
+        options.indent_level = 0
+        options.keep_array_indentation = False
         return self._jsb.beautify(
-            code.strip(),
-            self._jsb.BeautifierOptions(dict(
-                eval_code=False,
-                indent_size=self.args.indent,
-                unescape_strings=not self.args.keep_escapes,
-                preserve_newlines=self.args.keep_lines,
-                indent_level=0,
-                keep_function_indentation=False,
-                keep_array_indentation=False,
-            ))
-        ).encode(self.codec)
+            code.strip(), options).encode(self.codec)
