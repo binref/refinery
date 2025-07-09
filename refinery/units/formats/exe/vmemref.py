@@ -156,7 +156,8 @@ class vmemref(Unit):
 
         for a in addresses:
             reset()
-            address, function = min(graph.xcfg.items(), key=lambda t: (t[0] >= a, abs(t[0] - a)))
+            address, function = min(
+                graph.xcfg.items(), key=lambda t: (abs(t[0] - a), t[0] >= a))
             self.log_debug(F'scanning function: 0x{address:0{fmt}X}')
             refs = list(self._memory_references(
                 exe,
