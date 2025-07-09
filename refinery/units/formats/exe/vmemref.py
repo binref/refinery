@@ -174,7 +174,7 @@ class vmemref(Unit):
                     box = exe.location_from_address(ref)
                     end = box.physical.box.upper
                     if take is not None:
-                        end = min(ref + take, end)
+                        end = min(box.physical.position + take, end)
                     if last_start is not None:
                         end = min(last_start, end)
                     last_start = box.physical.position
