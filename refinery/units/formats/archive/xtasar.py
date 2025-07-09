@@ -63,4 +63,4 @@ class xtasar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
-        return data.startswith(b'\04\0\0\0') and data[0x10:0x18] == B'{"files"'
+        return data[:4] == b'\04\0\0\0' and data[0x10:0x18] == B'{"files"'

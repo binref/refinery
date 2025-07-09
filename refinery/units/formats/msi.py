@@ -425,8 +425,8 @@ class xtmsi(xtdoc):
             yield streams[path]
 
     @classmethod
-    def handles(self, data: bytearray):
-        if not data.startswith(B'\xD0\xCF\x11\xE0'):
+    def handles(cls, data: bytearray):
+        if not data[:4] == B'\xD0\xCF\x11\xE0':
             return False
         return FileMagicInfo(data).extension == 'msi'
 

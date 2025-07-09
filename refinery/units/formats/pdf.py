@@ -118,5 +118,5 @@ class xtpdf(PathExtractorUnit):
                 yield from self._walk(catalog)
 
     @classmethod
-    def handles(self, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> Optional[bool]:
         return data.startswith(B'%PDF-')

@@ -28,64 +28,41 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         """
         Returns all archive handlers supported by the unit.
         """
-        from refinery.units.formats.a3x import a3x
-        yield a3x
-        from refinery.units.formats.archive.xtsim import xtsim
-        yield xtsim
-        from refinery.units.formats.archive.xtinno import xtinno
-        yield xtinno
-        from refinery.units.formats.winreg import winreg
-        yield winreg
-        from refinery.units.formats.office.xtone import xtone
-        yield xtone
-        from refinery.units.formats.archive.xtgz import xtgz
-        yield xtgz
-        from refinery.units.formats.email import xtmail
-        yield xtmail
-        from refinery.units.formats.pdf import xtpdf
-        yield xtpdf
-        from refinery.units.formats.archive.xtasar import xtasar
-        yield xtasar
-        from refinery.units.formats.office.xtrtf import xtrtf
-        yield xtrtf
-        from refinery.units.formats.archive.xtzpaq import xtzpaq
-        yield xtzpaq
-        from refinery.units.formats.pe.dotnet.dnsfx import dnsfx
-        yield dnsfx
-        from refinery.units.formats.archive.xtiso import xtiso
-        yield xtiso
-        from refinery.units.formats.archive.xtnsis import xtnsis
-        yield xtnsis
-        from refinery.units.formats.archive.xtnode import xtnode
-        yield xtnode
-        from refinery.units.formats.archive.xtace import xtace
-        yield xtace
-        from refinery.units.formats.archive.xtcab import xtcab
-        yield xtcab
-        from refinery.units.formats.archive.xtcpio import xtcpio
-        yield xtcpio
-        from refinery.units.formats.archive.xtpyi import xtpyi
-        yield xtpyi
-        from refinery.units.formats.archive.xttar import xttar
-        yield xttar
-        from refinery.units.formats.archive.xtiss import xtiss
-        yield xtiss
-        from refinery.units.formats.office.xtdoc import xtdoc
-        yield xtdoc
-        from refinery.units.formats.archive.xtzip import xtzip
-        yield xtzip
-        from refinery.units.formats.archive.xt7z import xt7z
-        yield xt7z
-        from refinery.units.formats.msi import xtmsi
-        yield xtmsi
-        from refinery.units.formats.archive.xtmacho import xtmacho
-        yield xtmacho
-        from refinery.units.formats.archive.xtnuitka import xtnuitka
-        yield xtnuitka
-        from refinery.units.formats.json import xtjson
-        yield xtjson
-        from refinery.units.formats.exe.vsect import vsect
-        yield vsect
+        # units that check fixed offsets
+        from refinery.units.formats.archive.xttar import xttar        ; yield xttar     # noqa
+        from refinery.units.formats.archive.xtiso import xtiso        ; yield xtiso     # noqa
+        from refinery.units.formats.office.xtrtf import xtrtf         ; yield xtrtf     # noqa
+        from refinery.units.formats.archive.xtcab import xtcab        ; yield xtcab     # noqa
+        from refinery.units.formats.archive.xtace import xtace        ; yield xtace     # noqa
+        from refinery.units.formats.archive.xtmacho import xtmacho    ; yield xtmacho   # noqa
+        from refinery.units.formats.archive.xtasar import xtasar      ; yield xtasar    # noqa
+        from refinery.units.formats.pdf import xtpdf                  ; yield xtpdf     # noqa
+        from refinery.units.formats.winreg import winreg              ; yield winreg    # noqa
+        from refinery.units.formats.archive.xtgz import xtgz          ; yield xtgz      # noqa
+        # units that use fixed offsets + file magic
+        from refinery.units.formats.msi import xtmsi                  ; yield xtmsi     # noqa
+        # units that search for markers
+        from refinery.units.formats.archive.xt7z import xt7z          ; yield xt7z      # noqa
+        from refinery.units.formats.office.xtdoc import xtdoc         ; yield xtdoc     # noqa
+        from refinery.units.formats.archive.xtzip import xtzip        ; yield xtzip     # noqa
+        from refinery.units.formats.pe.dotnet.dnsfx import dnsfx      ; yield dnsfx     # noqa
+        from refinery.units.formats.archive.xtinno import xtinno      ; yield xtinno    # noqa
+        from refinery.units.formats.archive.xtiss import xtiss        ; yield xtiss     # noqa
+        from refinery.units.formats.archive.xtnsis import xtnsis      ; yield xtnsis    # noqa
+        from refinery.units.formats.archive.xtpyi import xtpyi        ; yield xtpyi     # noqa
+        from refinery.units.formats.a3x import a3x                    ; yield a3x       # noqa
+        from refinery.units.formats.archive.xtnode import xtnode      ; yield xtnode    # noqa
+        from refinery.units.formats.archive.xtzpaq import xtzpaq      ; yield xtzpaq    # noqa
+        from refinery.units.formats.email import xtmail               ; yield xtmail    # noqa
+        from refinery.units.formats.office.xtone import xtone         ; yield xtone     # noqa
+        # units that implement more complex parsing / searching:
+        from refinery.units.formats.archive.xtsim import xtsim        ; yield xtsim     # noqa
+        from refinery.units.formats.archive.xtnuitka import xtnuitka  ; yield xtnuitka  # noqa
+        # units that can be unsure
+        from refinery.units.formats.archive.xtcpio import xtcpio      ; yield xtcpio    # noqa
+        # fallbacks that have to be attempted last
+        from refinery.units.formats.json import xtjson                ; yield xtjson    # noqa
+        from refinery.units.formats.exe.vsect import vsect            ; yield vsect     # noqa
 
     def unpack(self, data):
         fallback: List[Type[ArchiveUnit]] = []

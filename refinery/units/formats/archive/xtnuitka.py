@@ -62,13 +62,13 @@ class xtnuitka(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data: ByteStr) -> Optional[bool]:
-        if data.startswith(b'MZ'):
+        if data[:2] == b'MZ':
             try:
                 next(cls._pe_candidates(data))
             except StopIteration:
                 return False
         else:
-            return data.startswith(cls._MAGIC)
+            return data[:2] == cls._MAGIC
 
     @classmethod
     def _pe_candidates(cls, data: ByteStr):

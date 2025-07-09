@@ -165,7 +165,7 @@ class winreg(PathExtractorUnit):
         yield from self._unpack_file(data)
 
     @classmethod
-    def handles(self, data):
+    def handles(cls, data):
         if data[:4] == B'regf':
             return True
         if data[:31] == b'Windows Registry Editor Version':

@@ -81,5 +81,5 @@ class dnsfx(PathExtractorUnit):
         return int.from_bytes(data[bundle_sig_offset - 8:bundle_sig_offset], 'little')
 
     @classmethod
-    def handles(self, data: bytearray):
-        return self._SIGNATURE in data
+    def handles(cls, data: bytearray):
+        return cls._SIGNATURE in data

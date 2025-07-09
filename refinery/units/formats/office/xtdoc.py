@@ -52,8 +52,8 @@ class xtdoc(PathExtractorUnit):
                 yield UnpackResult(path, olestream.read())
 
     @classmethod
-    def handles(self, data: bytearray) -> Optional[bool]:
-        if data.startswith(B'\xD0\xCF\x11\xE0'):
+    def handles(cls, data: bytearray) -> Optional[bool]:
+        if data[:4] == B'\xD0\xCF\x11\xE0':
             return True
         if xtzip.handles(data):
             return sum(1 for marker in [

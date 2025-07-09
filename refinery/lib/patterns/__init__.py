@@ -250,8 +250,10 @@ _pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'
 _pattern_urlenc = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
 _pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2})+'''
 
-_pattern_json = R'''[\[\{](?:"(?:[^"\\\r\n]|\\[^\r\n])*"(?:\s*[:,])?|(?:none|true|false|%s|%s|\]|\})(?:\s*,)?|[,\]\}\[\{\s]+)*[\]\}]''' % (
-    _pattern_integer, _pattern_float)
+_pattern_json = (
+    R'''\s{0,20}[\[\{](?:"(?:[^"\\\r\n]|\\[^\r\n])*'''
+    R'''"(?:\s*[:,])?|(?:none|true|false|%s|%s|\]|\})(?:\s*,)?|[,\]\}\[\{\s]+)*[\]\}]'''
+) % (_pattern_integer, _pattern_float)
 
 _pattern_wshenc = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 

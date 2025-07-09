@@ -48,7 +48,7 @@ class xtjson(PathExtractorUnit):
             yield UnpackResult(path, extract, type=typename)
 
     @classmethod
-    def handles(self, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> Optional[bool]:
         return bool(checks.json.fullmatch(data))
 
 
