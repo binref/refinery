@@ -31,6 +31,9 @@ class TestIndicators(RegexTextBase):
     def test_ipv6_colon_colon_digit(self):
         self.assertMatches(indicators.ipv6, '2b14:301:126:3c::7')
 
+    def test_ipv6_colon_colon_digit_digit(self):
+        self.assertMatches(indicators.ipv6, '2b14:301:126:3c::2d4:25')
+
     def test_telegram_url(self):
         self.assertMatches(indicators.url, 'https://t.me/binaryrefinerytest')
 
