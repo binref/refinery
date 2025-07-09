@@ -12,5 +12,5 @@ class TestVMemRef(TestUnitBase):
         self.assertSetEqual(test, {
             'ToXic Loader',
             'I UwU Yu!',
-            'W!@ld2odcOIeYh2nHym$VUjTKd#o5hmD65q6d4f42A82ATCwmJ0',
+            'W!@ld2odcOIeYh2nHym$VUjTKd#o5hmD65q6d4f42A82ATCwmJ',
         })
