@@ -30,6 +30,8 @@ class ppjson(Unit):
             width = max(len(key) for key, _ in table)
             tsize = get_terminal_size(80) - width - 4
             for key, value in table:
+                if isinstance(value, str) and not value.isprintable():
+                    value = value.encode('latin1').hex(':')
                 value = str(value).rstrip()
                 value = textwrap.wrap(value, tsize)
                 it = iter(value)
