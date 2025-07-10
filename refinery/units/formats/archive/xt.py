@@ -39,6 +39,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.pdf import xtpdf                  ; yield xtpdf     # noqa
         from refinery.units.formats.winreg import winreg              ; yield winreg    # noqa
         from refinery.units.formats.archive.xtgz import xtgz          ; yield xtgz      # noqa
+        from refinery.units.formats.archive.xtcpio import xtcpio      ; yield xtcpio    # noqa
         # units that use fixed offsets + file magic
         from refinery.units.formats.msi import xtmsi                  ; yield xtmsi     # noqa
         # units that search for markers
@@ -58,8 +59,6 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         # units that implement more complex parsing / searching:
         from refinery.units.formats.archive.xtsim import xtsim        ; yield xtsim     # noqa
         from refinery.units.formats.archive.xtnuitka import xtnuitka  ; yield xtnuitka  # noqa
-        # units that can be unsure
-        from refinery.units.formats.archive.xtcpio import xtcpio      ; yield xtcpio    # noqa
         # fallbacks that have to be attempted last
         from refinery.units.formats.json import xtjson                ; yield xtjson    # noqa
         from refinery.units.formats.exe.vsect import vsect            ; yield vsect     # noqa

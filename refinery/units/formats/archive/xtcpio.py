@@ -38,7 +38,8 @@ class xtcpio(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     def unpack(self, data):
         def cpio():
-            with suppress(EOF): return CPIOEntry(reader)
+            with suppress(EOF):
+                return CPIOEntry(reader)
         reader = StructReader(memoryview(data))
         for entry in iter(cpio, None):
             if entry.name == 'TRAILER!!!':
@@ -47,10 +48,4 @@ class xtcpio(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        for signature in (B'\x71\xC7', B'\xC7\x71', B'0707'):
-            if data.startswith(signature):
-                if B'TRAILER!!' in data:
-                    return True
-                else:
-                    return None
-        return False
+        return data[:6] == B'070701'

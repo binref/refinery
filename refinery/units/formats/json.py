@@ -49,7 +49,18 @@ class xtjson(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
-        return bool(checks.json.fullmatch(data))
+        from refinery.units.pattern.carve_json import JSONCarver
+        carver = JSONCarver(data)
+        try:
+            _, c = next(carver)
+        except Exception:
+            return False
+        try:
+            _, _ = next(carver)
+        except StopIteration:
+            return c == data.strip()
+        else:
+            return False
 
 
 class xj0(Unit):
