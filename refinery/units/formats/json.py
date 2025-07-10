@@ -8,7 +8,6 @@ import json
 from refinery.units import Chunk
 from refinery.units.formats import PathExtractorUnit, UnpackResult, Unit
 from refinery.lib.meta import is_valid_variable_name, metavars
-from refinery.lib.patterns import checks
 
 
 class xtjson(PathExtractorUnit):
