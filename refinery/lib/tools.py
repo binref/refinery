@@ -52,7 +52,7 @@ def get_terminal_size(default=0):
     """
     from refinery.lib.environment import environment
     ev_terminal_size = environment.term_size.value
-    if ev_terminal_size > 0:
+    if ev_terminal_size and ev_terminal_size > 0:
         return ev_terminal_size
     width = default
     for stream in (sys.stderr, sys.stdout):
