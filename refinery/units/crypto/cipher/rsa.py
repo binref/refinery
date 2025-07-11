@@ -262,6 +262,8 @@ class rsa(Unit):
         if not self.key.has_private():
             try:
                 return self._unpad_per_argument(self._encrypt_raw(data))
+            except RefineryPartialResult:
+                raise
             except Exception as E:
                 raise ValueError(F'A public key was given for decryption and rsautl mode resulted in an error: {E}') from E
         return B''.join(self._decrypt_block(block) for block in splitchunks(data, self.blocksize))
