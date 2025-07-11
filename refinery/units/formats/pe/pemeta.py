@@ -651,11 +651,11 @@ class pemeta(Unit):
             else:
                 from lief.PE import Signature
                 if verification == Signature.VERIFICATION_FLAGS.OK:
-                    signature['HashMatchesContent'] = True
+                    signature['IsValid'] = True
                 else:
                     signature['Flags'] = [
                         vf.name for vf in Signature.VERIFICATION_FLAGS if vf & verification]
-                    signature['HashMatchesContent'] = False
+                    signature['IsValid'] = False
 
         if self.args.timestamps:
             ts = self.parse_time_stamps(pe, self.args.timeraw, self.args.timestamps > 1)
