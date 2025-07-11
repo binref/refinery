@@ -351,16 +351,16 @@ class Arg(Argument):
 
     def __init__(
         self, *args: str,
-            action   : Union[omit, str]           = omit, # noqa
-            choices  : Union[omit, Iterable[Any]] = omit, # noqa
-            const    : Union[omit, Any]           = omit, # noqa
-            default  : Union[omit, Any]           = omit, # noqa
-            dest     : Union[omit, str]           = omit, # noqa
-            help     : Union[omit, str]           = omit, # noqa
-            metavar  : Union[omit, str]           = omit, # noqa
-            nargs    : Union[omit, int, str]      = omit, # noqa
-            required : Union[omit, bool]          = omit, # noqa
-            type     : Union[omit, type]          = omit, # noqa
+            action   : Union[Type[omit], str]           = omit, # noqa
+            choices  : Union[Type[omit], Iterable[Any]] = omit, # noqa
+            const    : Union[Type[omit], Any]           = omit, # noqa
+            default  : Union[Type[omit], Any]           = omit, # noqa
+            dest     : Union[Type[omit], str]           = omit, # noqa
+            help     : Union[Type[omit], str]           = omit, # noqa
+            metavar  : Union[Type[omit], str]           = omit, # noqa
+            nargs    : Union[Type[omit], int, str]      = omit, # noqa
+            required : Union[Type[omit], bool]          = omit, # noqa
+            type     : Union[Type[omit], type]          = omit, # noqa
             group    : Optional[str]              = None, # noqa
             guessed  : Optional[Set[str]]         = None, # noqa
     ) -> None:
@@ -457,8 +457,8 @@ class Arg(Argument):
     def Counts(
         cls,
         *args   : str,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
@@ -470,8 +470,8 @@ class Arg(Argument):
     def Switch(
         cls,
         *args   : str, off=False,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
@@ -484,9 +484,9 @@ class Arg(Argument):
     def PathVar(
         cls,
         *args   : str,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
-        nargs   : Union[omit, int, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
+        nargs   : Union[Type[omit], int, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
@@ -501,9 +501,9 @@ class Arg(Argument):
     def Binary(
         cls,
         *args   : str,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
-        nargs   : Union[omit, int, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
+        nargs   : Union[Type[omit], int, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
@@ -518,9 +518,9 @@ class Arg(Argument):
     def String(
         cls,
         *args   : str,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
-        nargs   : Union[omit, int, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
+        nargs   : Union[Type[omit], int, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
@@ -535,9 +535,9 @@ class Arg(Argument):
     def RegExp(
         cls,
         *args   : str,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
-        nargs   : Union[omit, int, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
+        nargs   : Union[Type[omit], int, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
@@ -552,9 +552,9 @@ class Arg(Argument):
     def NumSeq(
         cls,
         *args   : str,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
-        nargs   : Union[omit, int, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
+        nargs   : Union[Type[omit], int, str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
@@ -567,10 +567,10 @@ class Arg(Argument):
     def Bounds(
         cls,
         *args   : str,
-        help    : Optional[Union[omit, str]] = None,
-        dest    : Union[omit, str] = omit,
-        nargs   : Union[omit, int, str] = omit,
-        default : Union[omit, Any] = omit,
+        help    : Optional[Union[Type[omit], str]] = None,
+        dest    : Union[Type[omit], str] = omit,
+        nargs   : Union[Type[omit], int, str] = omit,
+        default : Union[Type[omit], Any] = omit,
         range   : bool = False,
         intok   : bool = False,
         metavar : Optional[str] = 'start:end:step',
@@ -591,9 +591,9 @@ class Arg(Argument):
     def Number(
         cls,
         *args   : str,
-        bound   : Union[omit, Tuple[int, int]] = omit,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
+        bound   : Union[Type[omit], Tuple[int, int]] = omit,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
@@ -602,6 +602,7 @@ class Arg(Argument):
         """
         nt = number
         if bound is not cls.omit:
+            assert isinstance(bound, tuple)
             lower, upper = bound
             nt = nt[lower:upper]
         return cls(*args, group=group, help=help, dest=dest, type=nt, metavar=metavar or 'N')
@@ -610,9 +611,9 @@ class Arg(Argument):
     def Option(
         cls,
         *args   : str,
-        choices : Enum,
-        help    : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
+        choices : Type[Enum],
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
         metavar : Optional[str] = None,
         group   : Optional[str] = None,
     ):
@@ -628,11 +629,11 @@ class Arg(Argument):
         cls,
         *args   : str,
         choices : List[str],
-        help    : Union[omit, str] = omit,
-        metavar : Union[omit, str] = omit,
-        dest    : Union[omit, str] = omit,
+        help    : Union[Type[omit], str] = omit,
+        metavar : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
         type    : Type = str,
-        nargs   : Union[omit, int, str] = omit,
+        nargs   : Union[Type[omit], int, str] = omit,
         group   : Optional[str] = None,
     ):
         """
