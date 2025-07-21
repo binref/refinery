@@ -2091,6 +2091,7 @@ class SetupDataEntry(InnoStruct):
         def flagbit(f):
             self.Flags |= f if reader.read_bit() else 0
 
+        flag_start = reader.tell()
         flagbit(SetupDataEntryFlags.VersionInfoValid)
 
         if version < (6, 4, 0):
@@ -2116,6 +2117,9 @@ class SetupDataEntry(InnoStruct):
             flagbit(SetupDataEntryFlags.SignOnce)
 
         reader.byte_align()
+
+        if reader.tell() - flag_start % 2:
+            reader.u8()
 
         if version >= (6, 3, 0):
             self.SignMode = SetupSignMode(reader.u8())
