@@ -295,6 +295,9 @@ _IS_AMBIGUOUS = {
     _I(6, 3,  0, 0, IVF.UTF_16): False, # noqa
     _I(6, 4,  0, 0, IVF.UTF_16): False, # noqa
     _I(6, 4,  0, 1, IVF.UTF_16): False, # noqa
+    _I(6, 4,  1, 0, IVF.UTF_16): False, # noqa
+    _I(6, 4,  2, 0, IVF.UTF_16): False, # noqa
+    _I(6, 4,  3, 0, IVF.UTF_16): False, # noqa
 }
 
 _VERSIONS = sorted(_IS_AMBIGUOUS)
@@ -823,6 +826,8 @@ class SetupHeader(InnoStruct):
         if version >= (6, 3, 0):
             self.ArchitecturesAllowed32 = read_string()
             self.ArchitecturesAllowed64 = read_string()
+        if version >= (6, 0, 2):
+            self.CloseApplicationsFilterExcludes = read_string()
         if version >= (5, 2, 5):
             self._license = reader.read_length_prefixed_ascii()
             self.InfoHead = reader.read_length_prefixed_ascii()
@@ -1025,10 +1030,11 @@ class SetupHeader(InnoStruct):
         if version < (1, 3, 3):
             flags.append(Flags.BackSolid)
         flags.append(Flags.AlwaysUsePersonalGroup)
-        flags.append(Flags.WindowVisible)
-        flags.append(Flags.WindowShowCaption)
-        flags.append(Flags.WindowResizable)
-        flags.append(Flags.WindowStartMaximized)
+        if version < (6, 4, 0):
+            flags.append(Flags.WindowVisible)
+            flags.append(Flags.WindowShowCaption)
+            flags.append(Flags.WindowResizable)
+            flags.append(Flags.WindowStartMaximized)
         flags.append(Flags.EnableDirDoesntExistWarning)
         if version < (4, 1, 2):
             flags.append(Flags.DisableAppendDir)
@@ -1050,7 +1056,8 @@ class SetupHeader(InnoStruct):
             flags.append(Flags.CreateUninstallRegKey)
 
         flags.append(Flags.UsePreviousAppDir)
-        flags.append(Flags.BackColorHorizontal)
+        if version < (6, 4, 0):
+            flags.append(Flags.BackColorHorizontal)
         flags.append(Flags.UsePreviousGroup)
         flags.append(Flags.UpdateUninstallLogAppName)
         flags.append(Flags.UsePreviousSetupType)
@@ -2028,7 +2035,7 @@ class SetupDataEntryFlags(enum.IntFlag):
     TimeStampInUTC           = enum.auto() # noqa
     IsUninstallerExe         = enum.auto() # noqa
     CallInstructionOptimized = enum.auto() # noqa
-    Touch                    = enum.auto() # noqa
+    ApplyTouchDateTime       = enum.auto() # noqa
     ChunkEncrypted           = enum.auto() # noqa
     ChunkCompressed          = enum.auto() # noqa
     SolidBreak               = enum.auto() # noqa
@@ -2084,26 +2091,27 @@ class SetupDataEntry(InnoStruct):
         def flagbit(f):
             self.Flags |= f if reader.read_bit() else 0
 
-        flagbit(SetupDataEntryFlags.VersionInfoNotValid)
         flagbit(SetupDataEntryFlags.VersionInfoValid)
 
+        if version < (6, 4, 0):
+            flagbit(SetupDataEntryFlags.VersionInfoNotValid)
         if version < (4, 0, 1):
             flagbit(SetupDataEntryFlags.BZipped)
-        if version >= (4, 0, 10):
+        if (4, 0, 10) <= version:
             flagbit(SetupDataEntryFlags.TimeStampInUTC)
-        if version >= (4, 1, 0):
+        if (4, 1, 0) <= version < (6, 4, 3):
             flagbit(SetupDataEntryFlags.IsUninstallerExe)
-        if version >= (4, 1, 8):
+        if (4, 1, 8) <= version:
             flagbit(SetupDataEntryFlags.CallInstructionOptimized)
-        if version >= (4, 2, 0):
-            flagbit(SetupDataEntryFlags.Touch)
-        if version >= (4, 2, 2):
+        if (4, 2, 0) <= version < (6, 4, 3):
+            flagbit(SetupDataEntryFlags.ApplyTouchDateTime)
+        if (4, 2, 2) <= version:
             flagbit(SetupDataEntryFlags.ChunkEncrypted)
-        if version >= (4, 2, 5):
+        if (4, 2, 5) <= version:
             flagbit(SetupDataEntryFlags.ChunkCompressed)
-        if version >= (5, 1, 13):
+        if (5, 1, 13) <= version < (6, 4, 3):
             flagbit(SetupDataEntryFlags.SolidBreak)
-        if version >= (5, 5, 7) and version < (6, 3, 0):
+        if (5, 5, 7) <= version < (6, 3, 0):
             flagbit(SetupDataEntryFlags.Sign)
             flagbit(SetupDataEntryFlags.SignOnce)
 
