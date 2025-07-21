@@ -3,10 +3,15 @@
 import json
 import re
 import textwrap
+import unicodedata
 
 from refinery.units import Arg, Unit
 from refinery.lib.json import flattened
 from refinery.lib.tools import get_terminal_size
+
+
+def is_printable(s: str):
+    return all(unicodedata.category(c)[0] != 'C' for c in s)
 
 
 class ppjson(Unit):
@@ -30,8 +35,10 @@ class ppjson(Unit):
             width = max(len(key) for key, _ in table)
             tsize = get_terminal_size(80) - width - 4
             for key, value in table:
-                if isinstance(value, str) and not value.isprintable():
-                    value = value.encode('latin1').hex(':')
+                if isinstance(value, str):
+                    value = value.strip()
+                    if not is_printable(value) and all(ord(c) < 0x100 for c in value):
+                        value = value.encode('latin1').hex(':')
                 value = str(value).rstrip()
                 value = textwrap.wrap(value, tsize)
                 it = iter(value)
