@@ -826,7 +826,7 @@ class SetupHeader(InnoStruct):
         if version >= (6, 3, 0):
             self.ArchitecturesAllowed32 = read_string()
             self.ArchitecturesAllowed64 = read_string()
-        if version >= (6, 0, 2):
+        if version >= (6, 4, 2):
             self.CloseApplicationsFilterExcludes = read_string()
         if version >= (5, 2, 5):
             self._license = reader.read_length_prefixed_ascii()
