@@ -32,9 +32,6 @@ class xttar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        ustar = data.find(B'ustar')
-        if ustar < 0:
+        if data[257:262] != B'ustar':
             return False
-        if ustar == 257:
-            return True
-        return data[ustar + 5:ustar + 8] in (B'\x00\x30\x30', B'\x20\x20\x00')
+        return data[5:8] in (B'\x00\x30\x30', B'\x20\x20\x00')
