@@ -2094,7 +2094,7 @@ class SetupDataEntry(InnoStruct):
         flag_start = reader.tell()
         flagbit(SetupDataEntryFlags.VersionInfoValid)
 
-        if version < (6, 4, 0):
+        if version < (6, 4, 3):
             flagbit(SetupDataEntryFlags.VersionInfoNotValid)
         if version < (4, 0, 1):
             flagbit(SetupDataEntryFlags.BZipped)
@@ -2118,10 +2118,10 @@ class SetupDataEntry(InnoStruct):
 
         reader.byte_align()
 
-        if reader.tell() - flag_start % 2:
+        if (reader.tell() - flag_start) % 2:
             reader.u8()
 
-        if version >= (6, 3, 0):
+        if (6, 3, 0) <= version < (6, 4, 3):
             self.SignMode = SetupSignMode(reader.u8())
         elif self.Flags & SetupDataEntryFlags.SignOnce:
             self.SignMode = SetupSignMode.Once
@@ -2243,6 +2243,8 @@ class InnoArchive:
                     inno.seekrel(-48)
                 r = self._try_parse_as(inno, blobs, v)
             except Exception as e:
+                nonlocal best_error
+                best_error = best_error or e
                 self._log_comment(F'exception while parsing as {v!s}: {exception_to_string(e)}')
                 return _notok(e)
             else:
@@ -2252,6 +2254,7 @@ class InnoArchive:
         inno_start = inno.tell()
         best_parse = None
         best_score = 0
+        best_error = None
         success = False
         results: dict[InnoVersion, InnoParseResult] = {}
 
@@ -2288,6 +2291,8 @@ class InnoArchive:
                 self._log_warning(F'using parse result for {result.version!s} with {result.warnings} warnings')
             else:
                 if not results:
+                    if best_error:
+                        raise best_error
                     raise ValueError('no parser for any known Inno version worked')
                 result = min(results.values(), key=lambda result: len(result.failures))
                 self._log_warning(F'using parse result for {result.version!s} with {len(result.failures)} failures')
