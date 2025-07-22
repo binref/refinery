@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.25
+-  The `xtinno` unit now supports Inno Setup up to version 6.4.3.
+
 ## Version 0.8.24 - bugfix release
 
 ## Version 0.8.23
