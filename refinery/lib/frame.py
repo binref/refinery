@@ -406,8 +406,11 @@ class Chunk(bytearray):
         meta = self._meta.serialize(self.scope + nest)
 
         if serialize:
+            assert msgpack
             item = (path, view, meta, fs, self)
-            return msgpack.packb(item)
+            item = msgpack.packb(item)
+            assert isinstance(item, bytes)
+            return item
         else:
             return Chunk(self, path, view, None, meta, fs, fb,
                 ignore_chunk_properties=True)
