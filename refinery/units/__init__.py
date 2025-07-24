@@ -1802,7 +1802,7 @@ class Unit(UnitBase, abstract=True):
         def cname(x: str):
             return x.lower().replace('-', '')
 
-        recode = self.isatty and cname(self.codec) != cname(sys.stdout.encoding)
+        recode = self.isatty() and cname(self.codec) != cname(sys.stdout.encoding)
         chunk = None
 
         for last, chunk in lookahead(self):
@@ -1832,7 +1832,7 @@ class Unit(UnitBase, abstract=True):
                 break
 
         try:
-            if self.isatty and chunk and not chunk.endswith(B'\n'):
+            if self.isatty() and chunk and not chunk.endswith(B'\n'):
                 stream.write(B'\n')
                 stream.flush()
         except (NameError, AttributeError):
@@ -1973,10 +1973,9 @@ class Unit(UnitBase, abstract=True):
             cls.logger.debug(cls._output(*messages, clip=clip))
         return rv
 
-    @property
     def isatty(self) -> bool:
         try:
-            return self._target.isatty()
+            return (t := self._target) is not None and t.isatty()
         except AttributeError:
             return False
 

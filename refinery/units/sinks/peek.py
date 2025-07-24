@@ -94,7 +94,7 @@ class peek(HexViewer):
         except BaseException:
             stderr.write(_reset)
             raise
-        if not self.isatty:
+        if not self.isatty():
             self.log_info('forwarding input to next unit')
             yield data
 
@@ -302,14 +302,14 @@ class peek(HexViewer):
         buffer.reverse()
 
         while buffer:
-            if self.isatty and not buffer[0].visible:
+            if self.isatty() and not buffer[0].visible:
                 buffer.popleft()
                 discarded += 1
             else:
                 item = buffer.pop()
                 last = not bool(buffer)
                 item.temp = last
-                if not item.visible and self.isatty:
+                if not item.visible and self.isatty():
                     discarded += 1
                 else:
                     yield item

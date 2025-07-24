@@ -153,5 +153,5 @@ class iemap(Unit):
             stderr.write('\b' * footer_length)
             stderr.write(F'] [{te!r:>7}]\n')
             stderr.flush()
-        if not self.isatty:
+        if not self.isatty():
             yield data

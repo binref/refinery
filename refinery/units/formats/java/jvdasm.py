@@ -90,7 +90,7 @@ class jvdasm(PathExtractorUnit):
         def _path(method: JvClassMember):
             return F'{jc.this!s}/{_name(method)}'
         try:
-            if self.args.gray or not self.isatty:
+            if self.args.gray or not self.isatty():
                 raise ImportError
             import colorama
         except ImportError:

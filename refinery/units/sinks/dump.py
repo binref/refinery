@@ -172,7 +172,7 @@ class dump(Unit):
                 self.log_debug(F'wrote 0x{len(data):08X} bytes')
                 self._close()
         else:
-            forward_input_data = forward_input_data or not self.isatty
+            forward_input_data = forward_input_data or not self.isatty()
             if not forward_input_data:
                 size = metavars(data).size
                 self.log_warn(F'discarding unprocessed chunk of size {size!s}.')
