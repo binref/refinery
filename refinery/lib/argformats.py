@@ -987,7 +987,7 @@ class DelayedArgument(LazyEvaluation):
         raise ArgumentTypeError(F'The meta variable {name} is of type {type(obj).__name__} and no conversion is known.')
 
     def _var(self, name: str, eat: bool) -> bytes:
-        if not name.isidentifier():
+        if not is_valid_variable_name(name, allow_wildcards=True):
             name = multibin(name)
 
         def extract(data: Chunk):
@@ -997,6 +997,11 @@ class DelayedArgument(LazyEvaluation):
                     var = bytes(var)
                 var = var.decode()
             meta = metavars(data)
+            if var not in meta:
+                from fnmatch import fnmatch as matches
+                options = [name for name in meta.keys() if matches(name, var)]
+                if len(options) == 1:
+                    var = options[0]
             try:
                 if eat:
                     result = meta.pop(var)
@@ -1012,8 +1017,9 @@ class DelayedArgument(LazyEvaluation):
     def var(self, name: str) -> bytes:
         """
         The handler `var:name` contains the value of the meta variable `name`. This handler is semi-final;
-        if the provided argument is an identifier, it is read directly as a variable name. If it is not an
-        identifier, it will be interpreted as a multibin expression to compute the name.
+        if the provided argument is an identifier pattern, it is read directly as a variable name. Otherwise,
+        it will be interpreted as a multibin expression to compute the name. An identifier pattern here is
+        a unix file name pattern including the wildcards `?`, `*`, and letter options in `[` brackets `]`.
         """
         return self._var(name, eat=False)
 
