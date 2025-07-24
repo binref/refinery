@@ -119,6 +119,7 @@ import string
 import codecs
 import itertools
 import os
+import re
 
 from io import StringIO
 from urllib.parse import unquote_to_bytes
@@ -292,15 +293,32 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         return self.string.__format__(spec)
 
 
-def is_valid_variable_name(name: str) -> bool:
+def is_valid_variable_name(name: str, allow_wildcards: bool = False) -> bool:
     """
     All single-letter, uppercase variable names are reserved.
     """
+    if allow_wildcards:
+        parts = re.split(r'([\*\?\[\]])', name)
+        brackets = 0
+        for p in itertools.islice(parts, 1, None, 2):
+            if p == '[':
+                brackets += 1
+            if p == ']':
+                brackets -= 1
+            if brackets < 0:
+                return False
+        if brackets != 0:
+            return False
+        parts = parts[0::2]
+    else:
+        parts = [name]
     try:
-        check_variable_name(name, allow_derivations=True)
+        for part in parts:
+            check_variable_name(part, allow_derivations=True)
     except ValueError:
         return False
-    return True
+    else:
+        return True
 
 
 def check_variable_name(name: Optional[str], allow_derivations=False) -> None:
