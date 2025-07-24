@@ -111,10 +111,9 @@ class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
                 tags=[t.name for t in SetupFileFlags if t & file.tags])
 
     @classmethod
-    def handles(self, data):
+    def handles(cls, data):
         if data[:2] != B'MZ':
             return False
         if re.search(re.escape(InnoArchive.ChunkPrefix), data) is None:
             return False
-        return bool(
-            re.search(BR'Inno Setup Setup Data \(\d+\.\d+\.', data))
+        return bool(re.search(BR'Inno Setup', data))
