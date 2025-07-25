@@ -1343,7 +1343,7 @@ class requirement(property):
     pass
 
 
-class Unit(UnitBase, BinaryIO, abstract=True):
+class Unit(UnitBase, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
     available options and the handling for multiple inputs and outputs. All units
@@ -1356,7 +1356,7 @@ class Unit(UnitBase, BinaryIO, abstract=True):
     optional_dependencies: Optional[Dict[str, Set[str]]] = None
 
     _buffer: ByteStr
-    _source: Optional[Union[BinaryIO, Unit]]
+    _source: Optional[BinaryIO]
     _target: Optional[BinaryIO]
     _framed: Optional[Framed]
     _chunks: Optional[Iterator[Union[ByteStr, Chunk]]]
@@ -1415,7 +1415,7 @@ class Unit(UnitBase, BinaryIO, abstract=True):
             line.extend(char)
         return line
 
-    def __enter__(self) -> BinaryIO:
+    def __enter__(self):
         return self
 
     def __exit__(self, *_) -> None:
@@ -1679,7 +1679,7 @@ class Unit(UnitBase, BinaryIO, abstract=True):
             if not isstream(stream):
                 raise TypeError(F'Cannot connect object of type {type(stream).__name__} to unit.')
             self.reset()
-        self._source = stream
+        self._source = cast(BinaryIO, stream)
 
     @property
     def nozzle(self) -> Unit:
