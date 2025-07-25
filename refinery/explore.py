@@ -3,10 +3,10 @@
 """
 A commandline script to search for binary refinery units based on keywords.
 """
+from __future__ import annotations
+
 import re
 import argparse
-
-from typing import Type
 
 from refinery.lib.tools import documentation, terminalfit, get_terminal_size, normalize_to_display
 from refinery.units import Unit, ArgparseError
@@ -34,7 +34,7 @@ def highlight_word(text: str, word: str, color: str):
     return highlight(text, re.compile('(?i)' + re.escape(word)), color)
 
 
-def get_help_string(unit: Type[Unit], brief: bool = False, width: int = 0, remove_generic: bool = False):
+def get_help_string(unit: type[Unit], brief: bool = False, width: int = 0, remove_generic: bool = False):
     """
     Retrieves the help string from a given refinery unit.
     """
