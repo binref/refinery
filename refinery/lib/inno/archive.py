@@ -2209,15 +2209,18 @@ class InnoArchive:
             try:
                 version = InnoVersion.Parse(header)
             except ValueError:
-                name, _, _rest = header.partition(b'\0')
-                method = 'broken'
-                if any(_rest):
-                    header = name.hex()
+                if version := meta.iv:
+                    method = 'magic'
                 else:
-                    header = name.decode('latin1')
-                if leniency < 1:
-                    raise ValueError(F'unable to parse header identifier "{header}"')
-                version = _DEFAULT_INNO_VERSION
+                    name, _, _rest = header.partition(b'\0')
+                    method = 'broken'
+                    if any(_rest):
+                        header = name.hex()
+                    else:
+                        header = name.decode('latin1')
+                    if leniency < 1:
+                        raise ValueError(F'unable to parse header identifier "{header}"')
+                    version = _DEFAULT_INNO_VERSION
             else:
                 header, _, _ = header.partition(B'\0')
                 header = header.decode('latin1')
@@ -2237,8 +2240,10 @@ class InnoArchive:
                 return False
 
         def _parse(v: InnoVersion):
+            inno.seekset(inno_start)
+            if inno.eof:
+                raise EOFError
             try:
-                inno.seekset(inno_start)
                 if v.legacy:
                     inno.seekrel(-48)
                 r = self._try_parse_as(inno, blobs, v)
