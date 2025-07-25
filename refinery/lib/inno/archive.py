@@ -568,7 +568,7 @@ class CrcCompressedBlock(JsonStruct):
         self.BlockData = reader.read(size)
 
 
-_TSetupMagicToVersion = {
+TSetupMagicToVersion = {
     B'rDlPtS02\x87eVx'          : _I(1, 2, 10), # noqa
     B'rDlPtS04\x87eVx'          : _I(4, 0,  0), # noqa
     B'rDlPtS05\x87eVx'          : _I(4, 0,  3), # noqa
@@ -585,7 +585,7 @@ class TSetupOffsets(Struct):
         check = reader.peek()
 
         self.id = bytes(reader.read(12))
-        self.iv = iv = _TSetupMagicToVersion.get(self.id)
+        self.iv = iv = TSetupMagicToVersion.get(self.id)
 
         if iv is None:
             iv = _VERSIONS[-1]
@@ -644,7 +644,7 @@ class TSetupOffsets(Struct):
         view = memoryview(data)
         if len(view) < 0x1000:
             return None
-        for magic in _TSetupMagicToVersion:
+        for magic in TSetupMagicToVersion:
             for match in re.finditer(re.escape(magic), view):
                 if self := Cls.Try(view[match.start():]):
                     ip = self.base + self.info_offset

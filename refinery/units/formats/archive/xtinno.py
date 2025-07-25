@@ -8,7 +8,7 @@ from refinery.units.formats.archive import ArchiveUnit
 
 from refinery.lib.mime import FileMagicInfo as magic
 from refinery.lib.json import BytesAsArrayEncoder
-from refinery.lib.inno.archive import InnoArchive, InvalidPassword, SetupFileFlags
+from refinery.lib.inno.archive import InnoArchive, InvalidPassword, SetupFileFlags, TSetupMagicToVersion
 
 
 class _ps:
@@ -116,4 +116,16 @@ class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
             return False
         if re.search(re.escape(InnoArchive.ChunkPrefix), data) is None:
             return False
-        return bool(re.search(BR'Inno Setup', data))
+        for marker in [
+            B'Inno Setup Setup Data',
+            B'Inno Setup Messages',
+            B'<description>Inno Setup</description>',
+            B'InnoSetupLdrWindow',
+            B'This installation was built with Inno Setup',
+        ]:
+            if re.search(re.escape(marker), data):
+                return True
+        for marker in TSetupMagicToVersion.keys():
+            if re.search(re.escape(marker), data) is not None:
+                return True
+        return False
