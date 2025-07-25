@@ -210,6 +210,8 @@ if TYPE_CHECKING:
     DataType = TypeVar('DataType', bound=ByteStr)
     ProcType = Callable[['Unit', ByteStr], Optional[Union[DataType, Iterable[DataType]]]]
 
+    ByteIO = MemoryFile[ByteStr]
+
     _T = TypeVar('_T')
     _B = TypeVar('_B', bound=Union[BufferedWriter, ByteIO, BinaryIO])
     _E = TypeVar('_E', bound=Enum)
@@ -239,9 +241,6 @@ from refinery.lib.tools import (
     one,
     skipfirst,
 )
-
-
-ByteIO = MemoryFile[ByteStr]
 
 
 class RefineryPartialResult(ValueError):
