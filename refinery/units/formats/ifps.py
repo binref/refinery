@@ -14,9 +14,10 @@ class IFPSBase(Unit, abstract=True):
     def __init__(
         self,
         codec: Unit.Arg.String(
-            help='Optionally specify the string encoding. The default is "{default}".') = 'cp1252'
+            help='Optionally specify the string encoding. The default is "{default}".') = 'cp1252',
+        **more
     ):
-        super().__init__(codec=codec)
+        super().__init__(codec=codec, **more)
 
 
 class ifps(IFPSBase):
@@ -24,9 +25,16 @@ class ifps(IFPSBase):
     Disassembles compiled Pascal script files that start with the magic sequence "IFPS". These
     scripts can be found, for example, when unpacking InnoSetup installers using innounp.
     """
+    def __init__(
+        self,
+        bytes: IFPSBase.Arg.Switch('-b', help='Print opcode bytes in the disassembly.'),
+        codec='cp1252'
+    ):
+        super().__init__(codec=codec, bytes=bytes)
+
     def process(self, data):
-        return IFPSFile(data, self.args.codec).disassembly().encode(self.codec)
+        return IFPSFile(data, self.args.codec).disassembly(self.args.bytes).encode(self.codec)
 
     @classmethod
-    def handles(self, data: bytearray) -> bool:
-        return data.startswith(IFPSFile.Magic)
+    def handles(cls, data) -> bool:
+        return data[:len(IFPSFile.Magic)] == IFPSFile.Magic

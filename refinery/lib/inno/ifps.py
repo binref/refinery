@@ -1083,7 +1083,7 @@ _Op_StackD = {
 class Instruction:
     offset: int
     opcode: Op
-    size: int = 0
+    encoded: bytes = B''
     stack: Optional[int] = None
     operands: List[Union[str, bool, int, float, Operand, IFPSType, Function, None]] = field(default_factory=list)
     operator: Optional[Union[AOp, COp]] = None
@@ -1094,6 +1094,10 @@ class Instruction:
         if not isinstance(arg, Operand):
             raise TypeError
         return arg
+
+    @property
+    def size(self):
+        return len(self.encoded)
 
     @property
     def branches(self):
@@ -1700,7 +1704,9 @@ class IFPSFile(Struct):
                 raise ValueError(F'Unsupported opcode: 0x{cval:02X}')
             else:
                 raise ValueError(F'Unhandled opcode: {code.name}')
-            insn.size = reader.tell() - addr
+            size = reader.tell() - addr
+            reader.seekrel(-size)
+            insn.encoded = bytes(reader.read(size))
 
         for k, instruction in enumerate(disassembly.values()):
             if not instruction.branches:
@@ -1719,7 +1725,7 @@ class IFPSFile(Struct):
     def __str__(self):
         return self.disassembly()
 
-    def disassembly(self) -> str:
+    def disassembly(self, print_bytes: bool = False, print_bytes_count: int = 12) -> str:
         def sortkey(f: Function):
             d = (d.module or '', d.classname or '', d.void) if (d := f.decl) else ('', '', True)
             return (*d, f.name)
@@ -1802,19 +1808,43 @@ class IFPSFile(Struct):
             output.write('\n')
 
         if internal:
+            def create_prefix(instruction: Instruction):
+                stack = instruction.stack
+                stack = '?' * _smax if stack is None else F'{stack:>{_smax}d}'
+                return F'{_TAB}0x{instruction.offset:0{_omax}X}{_TAB}{stack}{_TAB}'
+
             for function in internal:
-                output.write(F'{function!r}\nbegin\n')
                 labels = [insn.offset for insn in function.body if insn.jumptarget]
                 labelw = max(len(str(len(labels))), 2)
                 labeld = {v: F'JumpDestination{k:0{labelw}d}' for k, v in enumerate(labels, 1)}
+
+                output.write(F'{function!r}\nbegin\n')
                 labelc = 0
+
                 for instruction in function.body:
-                    stack = instruction.stack
-                    stack = '?' * _smax if stack is None else F'{stack:>{_smax}d}'
+                    prefix = create_prefix(instruction)
                     if instruction.jumptarget:
                         output.write(F'{labeld[labels[labelc]]}:\n')
                         labelc += 1
-                    output.write(F'{_TAB}0x{instruction.offset:0{_omax}X}{_TAB}{stack}{_TAB}{instruction.pretty(labeld)}\n')
+                    if print_bytes:
+                        hexbytes = instruction.encoded.hex(' ').split()
+                    else:
+                        hexbytes = ['']
+                    hexbytes_iter = iter(hexbytes)
+                    instruction_written = False
+                    prefix_length = len(prefix)
+                    ic = instruction.pretty(labeld)
+                    while line := list(itertools.islice(hexbytes_iter, 0, print_bytes_count)):
+                        output.write(prefix)
+                        if print_bytes:
+                            prefix = prefix_length * '\x20'
+                            output.write('\x20'.join(line).ljust(3 * print_bytes_count - 1))
+                        if not instruction_written:
+                            output.write(_TAB)
+                            output.write(ic)
+                            instruction_written = True
+                        output.write('\n')
+
                 output.write('end;\n\n')
 
         return output.getvalue().strip()
