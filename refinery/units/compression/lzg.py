@@ -144,7 +144,7 @@ class LZGStream(Struct):
 
         while reader.tell() < end:
             pos = reader.tell()
-            hop = pattern.search(reader.getbuffer(), pos)
+            hop = pattern.search(reader.getvalue(), pos)
             if hop is None:
                 out.write(reader.read(end - pos))
                 break
@@ -175,7 +175,7 @@ class LZGStream(Struct):
                 raise RuntimeError
             out.replay(offset, length)
 
-        return out.getbuffer()
+        return out.getvalue()
 
 
 class lzg(Unit):

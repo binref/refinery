@@ -1364,7 +1364,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
                 # get csize from c block
                 seglen = len(seg)
-                seg = StructReader(seg.getbuffer())
+                seg = StructReader(seg.getvalue())
                 if block_type == 'c':
                     if seglen < 8:
                         raise RuntimeError("c block too small")
@@ -1404,7 +1404,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                         raise RuntimeError('bad frag size list')
                     # Save frag hashes and sizes. For output, save data too.
                     seg.seekset(fragsum)
-                    data = memoryview(seg.getbuffer())
+                    data = seg.getvalue()
                     assert seg.remaining_bytes == n * 4 + 8
                     for i in range(n):
                         while len(frag) <= frag_id + i:

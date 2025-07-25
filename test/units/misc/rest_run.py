@@ -7,7 +7,7 @@ import shlex
 from .. import TestUnitBase
 
 
-class TestCoupler(TestUnitBase):
+class TestRun(TestUnitBase):
 
     def setUp(self):
         super().setUp()

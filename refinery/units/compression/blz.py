@@ -41,7 +41,7 @@ class blz(Unit):
         self.log_debug(F'src crc32: 0x{src_crc32:08X}')
         self.log_debug(F'dst count: 0x{dst_count:08X}')
         self.log_debug(F'dst crc32: 0x{dst_crc32:08X}')
-        src = self._src.getbuffer()
+        src = self._src.getvalue()
         src = src[24:24 + src_count]
         if len(src) < src_count:
             self.log_warn(F'Only {len(src)} bytes in buffer, but header annoucned a length of {src_count}.')
@@ -105,7 +105,7 @@ class blz(Unit):
                             F'Requested rewind by 0x{delta:08X} bytes with only 0x{available:08X} bytes in output buffer.',
                             partial=self._dst.getvalue())
                     quotient, remainder = divmod(length, delta)
-                    replay = memoryview(self._dst.getbuffer())
+                    replay = memoryview(self._dst.getvalue())
                     replay = bytes(replay[-delta:] if quotient else replay[-delta:length - delta])
                     replay = quotient * replay + replay[:remainder]
                     self._dst.write(replay)
@@ -114,8 +114,8 @@ class blz(Unit):
                     self._dst.write(self._src.read_exactly(1))
                     decompressed += 1
         except EOFError as E:
-            raise RefineryPartialResult(str(E), partial=self._dst.getbuffer())
-        dst = self._dst.getbuffer()
+            raise RefineryPartialResult(str(E), partial=self._dst.getvalue())
+        dst = self._dst.getvalue()
         if decompressed < size:
             raise RefineryPartialResult(
                 F'Attempted to decompress {size} bytes, got only {len(dst)}.', dst)
@@ -128,7 +128,7 @@ class blz(Unit):
 
         try:
             self.log_info('computing suffix tree')
-            tree = SuffixTree(self._src.getbuffer())
+            tree = SuffixTree(self._src.getvalue())
         except Exception:
             raise
 
@@ -160,7 +160,7 @@ class blz(Unit):
             bitcount += 2
             bitstore |= (n & 1) << 1
 
-        src = self._src.getbuffer()
+        src = self._src.getvalue()
         remaining = len(src) - 1
         self.log_info('compressing data')
 
@@ -182,7 +182,7 @@ class blz(Unit):
                     k1 = 2 * k + 1
                     info_channel[k0], info_channel[k1] = info_channel[k1], info_channel[k0]
                 info_channel = memoryview(info_channel)
-                data_channel = memoryview(buffer.getbuffer())
+                data_channel = memoryview(buffer.getvalue())
                 self._dst.write(info_channel[:2])
                 self._dst.write(data_channel[:-1])
                 self._dst.write(info_channel[2:])
@@ -191,7 +191,7 @@ class blz(Unit):
                 store = buffer if bitcount else self._dst
                 store.write(data_channel)
             if remaining + bitcount < 0x10:
-                buffer = buffer.getbuffer()
+                buffer = buffer.getvalue()
                 if rest or buffer:
                     bitstore <<= 0x10 - bitcount
                     self._dst.write(bitstore.to_bytes(2, 'little'))
@@ -232,7 +232,7 @@ class blz(Unit):
         dst = self._dst.peek()
         self._dst.seek(0)
         self._dst.write(struct.pack('>6L', 0x626C7A1A, 1, len(dst), zlib.crc32(dst), len(src), zlib.crc32(src)))
-        return self._dst.getbuffer()
+        return self._dst.getvalue()
 
     def process(self, data):
         self._begin(data)

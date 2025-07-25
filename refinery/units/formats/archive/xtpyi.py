@@ -157,7 +157,7 @@ def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = No
                 offset = F'{i.offset:0{width_offset}d}'
                 output.write(F'# {offset:>5} {opname:<25} {i.argrepr}\n')
         output.write('\n')
-    return disassembly.getbuffer()
+    return disassembly.getvalue()
 
 
 class PiType(bytes, enum.Enum):

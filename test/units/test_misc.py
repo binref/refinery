@@ -230,6 +230,11 @@ class TestMetaProperties(TestUnitBase):
         with self.assertRaises(Exception):
             unit(B'y')
 
+    def test_import_from_toplevel(self):
+        from refinery import hex as h1
+        from refinery.units.encoding.hex import hex as h2
+        self.assertIs(h1, h2)
+
     def test_pdoc(self):
         import refinery
         pd = refinery.__pdoc__

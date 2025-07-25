@@ -5,6 +5,8 @@ Exports two singletons `refinery.lib.types.INF` and `refinery.lib.types.AST`.
 Used by `refinery.units.pattern.PatternExtractorBase` as the default values
 for certain command line arguments.
 """
+from __future__ import annotations
+
 from typing import Union, Tuple, Type, Dict, Any, Optional, List
 from collections.abc import MutableMapping
 
@@ -21,7 +23,7 @@ class Singleton(type):
     A metaclass that can be used to define singleton classes.
     """
 
-    def __new__(meta, name: str, bases: Tuple[Type, ...], namespace: Dict[str, Any]):
+    def __new__(cls, name: str, bases: Tuple[Type, ...], namespace: Dict[str, Any]):
         import sys
 
         def __repr__(self):
@@ -47,6 +49,9 @@ class Singleton(type):
         def __setstate__(self, _):
             pass
 
+        def __call__(self, *_):
+            return self
+
         qualname = F'__singleton_{name}'
 
         namespace.setdefault('__repr__', __repr__)
@@ -56,40 +61,41 @@ class Singleton(type):
             __slots__=(),
             __getstate__=__getstate__,
             __setstate__=__setstate__,
+            __call__=__call__,
             __qualname__=qualname
         )
-        cls = type.__new__(meta, name, bases, namespace)
-        setattr(sys.modules[cls.__module__], qualname, cls)
-        return cls()
+        singleton = type.__new__(cls, name, bases, namespace)
+        setattr(sys.modules[singleton.__module__], qualname, singleton)
+        return singleton()
 
 
 class _INF(metaclass=Singleton):
-    def __lt__(self, other): return False
-    def __le__(self, other): return False
-    def __gt__(self, other): return True
-    def __ge__(self, other): return True
-    def __eq__(self, other): return other is INF
-    def __rmul__(self, other): return self
-    def __radd__(self, other): return self
-    def __mul__(self, other): return self
-    def __add__(self, other): return self
-    def __sub__(self, other): return self
-    def __div__(self, other): return self
-    def __mod__(self, other): return self
-    def __pow__(self, other): return self
-    def __iadd__(self, other): return self
-    def __isub__(self, other): return self
-    def __imul__(self, other): return self
-    def __imod__(self, other): return self
+    def __lt__(self, other: Any): return False
+    def __le__(self, other: Any): return False
+    def __gt__(self, other: Any): return True
+    def __ge__(self, other: Any): return True
+    def __eq__(self, other: Any): return other is INF
+    def __rmul__(self, other: Any): return self
+    def __radd__(self, other: Any): return self
+    def __mul__(self, other: Any): return self
+    def __add__(self, other: Any): return self
+    def __sub__(self, other: Any): return self
+    def __div__(self, other: Any): return self
+    def __mod__(self, other: Any): return self
+    def __pow__(self, other: Any): return self
+    def __iadd__(self, other: Any): return self
+    def __isub__(self, other: Any): return self
+    def __imul__(self, other: Any): return self
+    def __imod__(self, other: Any): return self
     def __abs__(self): return None
     def __repr__(self): return '∞'
-    def __truediv__(self, other): return self
-    def __floordiv__(self, other): return self
-    def __rrshift__(self, other): return 0
+    def __truediv__(self, other: Any): return self
+    def __floordiv__(self, other: Any): return self
+    def __rrshift__(self, other: Any): return 0
     def __format__(self, *args): return str(self)
 
 
-INF = _INF
+INF = _INF()
 """
 A crude object representing infinity, which is greater than anything it
 is compared to, and only equal to itself.
@@ -97,14 +103,14 @@ is compared to, and only equal to itself.
 
 
 class _AST(metaclass=Singleton):
-    def __eq__(self, other): return True
-    def __ne__(self, other): return False
-    def __or__(self, other): return other
-    def __contains__(self, other): return True
+    def __eq__(self, other: Any): return True
+    def __ne__(self, other: Any): return False
+    def __or__(self, other: Any): return other
+    def __contains__(self, other: Any): return True
     def __repr__(self): return '*'
 
 
-AST = _AST
+AST = _AST()
 """
 A wildcard object which is equal to everything.
 """
@@ -123,7 +129,7 @@ class bounds:
     def __class_getitem__(cls, bounds):
         return cls(bounds)
 
-    def __init__(self, bounds: slice):
+    def __init__(self, bounds: slice[int, int, int]):
         start, stop, step = bounds.start, bounds.stop, bounds.step
         for field in (start, stop, step):
             if field is not None and not isinstance(field, int):

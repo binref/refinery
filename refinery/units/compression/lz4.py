@@ -81,7 +81,7 @@ class lz4(Unit):
         if not magic:
             reader.seek(0)
             self._read_block(reader, output)
-            return output.getbuffer()
+            return output.getvalue()
 
         (v1, v2, blocks_independent, blocks_checksummed,
             content_size, content_checksummed, rsrv1, dict_id) = reader.read_bits(8)
@@ -137,13 +137,14 @@ class lz4(Unit):
                 chk = reader.u32()
                 if chk != xxh:
                     self.log_warn(F'block {blockindex} had checksum {chk:08X} which did not match computed value {xxh:08X}')
+        value = output.getvalue()
         if content_checksummed:
             self.log_info('computing checksum')
-            xxh = xxhash(output.getbuffer()).intdigest()
+            xxh = xxhash(value).intdigest()
             chk = reader.u32()
             if chk != xxh:
                 self.log_warn(F'the given checksum {chk:08X} did not match the computed checksum {xxh:08X}')
         if not reader.eof:
             pos = reader.tell()
             self.log_warn(F'found {len(data) - pos} additional bytes starting at position 0x{pos:X} after compressed data')
-        return output.getbuffer()
+        return value

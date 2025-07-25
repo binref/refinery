@@ -113,7 +113,7 @@ class lzw(Unit):
 
                 if code >= free_entry:
                     if code > free_entry:
-                        raise RefineryPartialResult('corrupt input.', out.getbuffer())
+                        raise RefineryPartialResult('corrupt input.', out.getvalue())
                     stack.append(finchar)
                     code = oldcode
                 while code >= 256:

@@ -64,7 +64,7 @@ class mscf(Unit):
                     reader.seek(0)
                     handler = self._get_handler(mode)
                     handler(reader, writer, None)
-                    return writer.getbuffer()
+                    return writer.getvalue()
 
             header_size = reader.u16()
             if header_size != 24:
@@ -133,7 +133,7 @@ class mscf(Unit):
 
             if not reader.eof:
                 self.log_info(F'compression complete with {reader.remaining_bytes} bytes remaining in input')
-            return writer.getbuffer()
+            return writer.getvalue()
 
     def _get_handler(self, mode: MODE) -> Callable[[StructReader, MemoryFile, Optional[int]], None]:
         decompress = {
@@ -149,7 +149,7 @@ class mscf(Unit):
         header = bytes(reader.read(2))
         if header != B'CK':
             raise ValueError(F'chunk did not begin with CK header, got {header!r} instead')
-        decompress = zlib.decompressobj(-zlib.MAX_WBITS, zdict=writer.getbuffer())
+        decompress = zlib.decompressobj(-zlib.MAX_WBITS, zdict=writer.getvalue())
         writer.write(decompress.decompress(reader.read()))
         writer.write(decompress.flush())
 

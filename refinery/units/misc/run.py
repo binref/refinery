@@ -6,6 +6,7 @@ from subprocess import PIPE, Popen
 
 from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.meta import metavars
+from refinery.lib.structures import MemoryFile
 
 
 class run(Unit):
@@ -73,7 +74,6 @@ class run(Unit):
             yield out
             return
 
-        import io
         from threading import Thread, Event
         from queue import Queue, Empty
         from time import process_time, sleep
@@ -104,13 +104,13 @@ class run(Unit):
         start = process_time()
 
         if not self.args.stream or self.args.timeout:
-            result = io.BytesIO()
+            result = MemoryFile()
 
         def queue_read(q: Queue):
             try: return q.get_nowait()
             except Empty: return None
 
-        errbuf = io.BytesIO()
+        errbuf = MemoryFile()
 
         while True:
             out = queue_read(qout)
@@ -162,7 +162,7 @@ class run(Unit):
                         self.log_warn('process termination may have failed')
                     recverr.join(self._JOIN_TIME)
                     recvout.join(self._JOIN_TIME)
-                    if not len(result.getbuffer()):
+                    if not len(result):
                         result = RuntimeError('timeout reached, process had no output')
                     else:
                         result = RefineryPartialResult(

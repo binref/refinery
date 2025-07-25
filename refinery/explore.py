@@ -16,7 +16,7 @@ import refinery
 import refinery.units
 
 
-def highlight(text: str, expression: str, color: str):
+def highlight(text: str, expression: re.Pattern[str], color: str):
     """
     Uses ANSI color codes to highlight matches of the given regular `expression`
     in `text`.
@@ -42,9 +42,9 @@ def get_help_string(unit: Type[Unit], brief: bool = False, width: int = 0, remov
         return terminalfit(documentation(unit), width=width)
     else:
         from io import StringIO
+        from refinery.lib.environment import environment
+        term_size = environment.term_size.value
         if width > 0:
-            from refinery.lib.environment import environment
-            _ts = environment.term_size.value
             environment.term_size.value = width
         try:
             argp = unit.argparser()
@@ -59,7 +59,7 @@ def get_help_string(unit: Type[Unit], brief: bool = False, width: int = 0, remov
             return info.strip()
         finally:
             if width > 0:
-                environment.term_size.value = _ts
+                environment.term_size.value = term_size
 
 
 def explorer(keyword_color: str = '91', unit_color: str = '93'):
@@ -146,25 +146,31 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
             print(F'-- final regex: {kw}')
         return re.compile(kw)
 
-    args.keywords = [pattern(k) for k in args.keywords]
+    keywords = [pattern(k) for k in args.keywords]
 
     for name in refinery.__all__:
         unit = getattr(refinery, name, None)
 
-        try:
-            if not issubclass(unit, refinery.units.Entry) or unit is refinery.units.Entry:
-                continue
-        except TypeError:
+        if not isinstance(unit, type):
+            continue
+        if not issubclass(unit, Unit):
+            continue
+        if not issubclass(unit, refinery.units.Entry):
+            continue
+        if unit is refinery.units.Entry:
             continue
 
         info = get_help_string(unit, not args.all, width, remove_generic=True)
 
-        if not args.quantifier(k.search(name) or k.search(info) for k in args.keywords):
+        if info is None:
+            continue
+
+        if not args.quantifier(k.search(name) or k.search(info) for k in keywords):
             continue
 
         result = True
 
-        for kw in args.keywords:
+        for kw in keywords:
             info = highlight(info, kw, keyword_color)
 
         name = normalize_to_display(name)

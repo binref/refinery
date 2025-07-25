@@ -40,4 +40,4 @@ class xtmagtape(Unit):
                         raise ValueError('Invalid footer, data is corrupted.')
                 reader.seekrel(4)
 
-            yield buffer.getbuffer()
+            yield buffer.getvalue()

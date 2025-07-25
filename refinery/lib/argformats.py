@@ -1614,7 +1614,7 @@ class DelayedNumberArgument(DelayedArgument):
         return LazyPythonExpression(expression)
 
 
-class number:
+class ___number:
     __name__ = 'number'
 
     def __init__(self, min=None, max=None):
@@ -1641,7 +1641,7 @@ class number:
             return number(F'0x{match[1]}')
 
 
-number = number()
+number = ___number()
 """
 The singleton instance of a class that uses `refinery.lib.argformats.PythonExpression`
 to parse expressions with integer value. This singleton can be slice accessed to

@@ -5,8 +5,11 @@ Provides a customized argument parser that is used by all refinery `refinery.uni
 """
 from __future__ import annotations
 
-from typing import IO, Optional, List, Dict, Any
+from typing import List, Dict, Any, Sequence, cast, TYPE_CHECKING
 from argparse import ArgumentParser, ArgumentError, ArgumentTypeError, Action, RawDescriptionHelpFormatter
+
+if TYPE_CHECKING:
+    from _typeshed import SupportsWrite
 
 import sys
 
@@ -92,7 +95,7 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         self.keywords = keywords
         self.order = []
 
-    def print_help(self, file: Optional[IO[str]] = None) -> None:
+    def print_help(self, file: SupportsWrite[str] | None = None) -> None:
         if file is None:
             sys.stdout.close()
             file = sys.stderr
@@ -102,11 +105,16 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         keywords = self.keywords
         if action.dest in keywords:
             action.required = False
-            if callable(getattr(action, 'type', None)):
+            try:
+                atype = action.type
+            except AttributeError:
+                atype = None
+            if callable(atype):
                 value = keywords[action.dest]
-                if value is not None and isinstance(value, str) and action.type is not str:
-                    keywords[action.dest] = action.type(keywords[action.dest])
-        return super()._add_action(self.RememberOrder(action))
+                if value is not None and isinstance(value, str) and atype is not str:
+                    keywords[action.dest] = atype(keywords[action.dest])
+        return super()._add_action(
+            cast(Action, self.RememberOrder(action)))
 
     def _parse_optional(self, arg_string):
         if isinstance(arg_string, str):
@@ -118,7 +126,7 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
     def error(self, message):
         raise ArgparseError(self, message)
 
-    def parse_args_with_nesting(self, args: List[str], namespace=None):
+    def parse_args_with_nesting(self, args: Sequence[str], namespace=None):
         self.order = []
         args = list(args)
         keywords = self.keywords

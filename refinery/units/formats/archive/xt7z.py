@@ -108,7 +108,7 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     io = _IOFactory()
                     archive.reset()
                     archive.extract(None, [name], factory=io)
-                    return io.buffer.getbuffer()
+                    return io.buffer.getvalue()
 
             if info.is_directory:
                 continue

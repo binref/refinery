@@ -172,7 +172,7 @@ class lzo(Unit):
         def copy(distance: int, length: int):
             if distance > len(dst):
                 raise LZOError(F'Distance {distance} > bufsize {len(dst)}')
-            buffer = dst.getbuffer()
+            buffer = dst.getvalue()
             if distance > length:
                 start = len(buffer) - distance
                 end = start + length
@@ -229,7 +229,7 @@ class lzo(Unit):
                 state = argument & 3
                 distance = (H << 11) + (argument >> 2)
                 if not distance:
-                    return dst.getbuffer()
+                    return dst.getvalue()
                 if LZOv1 and distance & 0x803F == 0x803F and length in range(261, 265):
                     raise LZOError('Compressed data contains sequence that is banned in LZOv1.')
                 if LZOv1 and distance == 0xBFFF:
@@ -270,7 +270,7 @@ class lzo(Unit):
                 self.log_debug(F'decompressing chunk {k}')
                 output.write(self.decompress_stream(chunk.data))
             return self.labelled(
-                output.getbuffer(),
+                output.getvalue(),
                 path=lzo.name,
                 date=date_from_timestamp(lzo.mtime)
             )

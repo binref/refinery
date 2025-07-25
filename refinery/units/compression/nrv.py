@@ -21,7 +21,7 @@ class NRVUnit(Unit, abstract=True):
             bbr = BitBufferedReader(src, self.args.bits)
             dst = MemoryFile(size_limit=src.u32()) if length_prefix else MemoryFile()
             self._decompress(src, dst, bbr)
-            return dst.getbuffer()
+            return dst.getvalue()
         try:
             return process(False)
         except Exception:

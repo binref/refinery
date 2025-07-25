@@ -17,10 +17,12 @@ import weakref
 
 from typing import (
     overload,
+    cast,
     Any,
     ByteString,
     Dict,
     Generic,
+    Sized,
     Iterable,
     List,
     Optional,
@@ -30,6 +32,7 @@ from typing import (
     Union,
 )
 
+from collections.abc import Buffer
 
 T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
 C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
@@ -85,7 +88,6 @@ class MemoryFileMethods(Generic[T]):
     A thin wrapper around (potentially mutable) byte sequences which gives it the features of a
     file-like object.
     """
-    closed: bool
     read_as_bytes: bool
 
     _data: T
@@ -99,7 +101,7 @@ class MemoryFileMethods(Generic[T]):
 
     def __init__(
         self,
-        data: Optional[T] = None,
+        data: Optional[Union[bytes, bytearray, memoryview]] = None,
         read_as_bytes=False,
         fileno: Optional[int] = None,
         size_limit: Optional[int] = None,
@@ -108,7 +110,7 @@ class MemoryFileMethods(Generic[T]):
             data = bytearray()
         elif size_limit is not None and len(data) > size_limit:
             raise ValueError('Initial data exceeds size limit')
-        self._data = data
+        self._data = cast(T, data)
         self._cursor = 0
         self._closed = False
         self._fileno = fileno
@@ -123,7 +125,7 @@ class MemoryFileMethods(Generic[T]):
     def closed(self) -> bool:
         return self._closed
 
-    def __enter__(self) -> MemoryFile:
+    def __enter__(self):
         return self
 
     def __exit__(self, ex_type, ex_value, trace) -> bool:
@@ -167,7 +169,7 @@ class MemoryFileMethods(Generic[T]):
         return len(self._data) - self.tell()
 
     def detour(self, offset: Optional[int] = None, whence: int = io.SEEK_SET):
-        return StreamDetour(self, offset, whence=whence)
+        return StreamDetour(cast(io.IOBase, self), offset, whence=whence)
 
     def writable(self) -> bool:
         if self._closed:
@@ -182,7 +184,7 @@ class MemoryFileMethods(Generic[T]):
             out = cast(out)
         return out
 
-    def read(self, size: int = -1, peek: bool = False) -> T:
+    def read(self, size: Optional[int] = None, peek: bool = False) -> Union[bytes, T]:
         beginning = self._cursor
         if size is None or size < 0:
             end = len(self._data)
@@ -203,14 +205,14 @@ class MemoryFileMethods(Generic[T]):
             self._cursor = stop
         return match
 
-    def peek(self, size: int = -1) -> memoryview:
+    def peek(self, size: Optional[int] = None) -> memoryview:
         cursor = self._cursor
         mv = memoryview(self._data)
         if size is None or size < 0:
             return mv[cursor:]
         return mv[cursor:cursor + size]
 
-    def read1(self, size: int = -1, peek: bool = False) -> T:
+    def read1(self, size: Optional[int] = None, peek: bool = False) -> Union[bytes, T]:
         return self.read(size, peek)
 
     def _find_linebreak(self, beginning: int, end: int) -> int:
@@ -220,7 +222,7 @@ class MemoryFileMethods(Generic[T]):
             if self._data[k] == 0xA: return k
         return -1
 
-    def readline(self, size: int = -1) -> T:
+    def readline(self, size: Optional[int] = None) -> Union[bytes, T]:
         beginning, end = self._cursor, len(self._data)
         if size is not None and size >= 0:
             end = beginning + size
@@ -231,7 +233,7 @@ class MemoryFileMethods(Generic[T]):
             result = bytes(result)
         return result
 
-    def readlines(self, hint: int = -1) -> Iterable[T]:
+    def readlines_iter(self, hint: Optional[int] = None) -> Iterable[Union[bytes, T]]:
         if hint is None or hint < 0:
             yield from self
         else:
@@ -240,6 +242,9 @@ class MemoryFileMethods(Generic[T]):
                 line = next(self)
                 total += len(line)
                 yield line
+
+    def readlines(self, hint: Optional[int] = None) -> List[Union[bytes, T]]:
+        return list(self.readlines_iter(hint))
 
     def readinto1(self, b) -> int:
         data = self.read(len(b))
@@ -262,8 +267,8 @@ class MemoryFileMethods(Generic[T]):
         else:
             return self.seek(offset, io.SEEK_SET)
 
-    def getbuffer(self) -> T:
-        return self._data
+    def getbuffer(self) -> memoryview:
+        return memoryview(self._data)
 
     def getvalue(self) -> T:
         return self._data
@@ -281,18 +286,25 @@ class MemoryFileMethods(Generic[T]):
         self._cursor = min(self._cursor, len(self._data))
         return self._cursor
 
-    def writelines(self, lines: Iterable[ByteString]) -> None:
+    def writelines(self, lines: Union[Iterable[Iterable[int]], Iterable[Buffer]]) -> None:
         for line in lines:
             self.write(line)
 
-    def truncate(self, size=None) -> None:
+    def truncate(self, size: Optional[int] = None) -> int:
+        if not isinstance(self._data, bytearray):
+            raise TypeError
         if size is not None:
             if not (0 <= size <= len(self._data)):
                 raise ValueError('invalid size value')
             self._cursor = size
         del self._data[self._cursor:]
+        return self.tell()
 
     def write_byte(self, byte: int) -> None:
+        if isinstance(self._data, bytes):
+            raise TypeError
+        if isinstance(self._data, memoryview):
+            raise NotImplementedError
         limit = self._size_limit
         cc = self._cursor
         nc = cc + 1
@@ -308,9 +320,25 @@ class MemoryFileMethods(Generic[T]):
         else:
             self._cursor = nc
 
-    def write(self, data: Iterable[int]) -> int:
+    def write(self, _data: Union[Buffer, Iterable[int]]) -> int:
         out = self._data
         end = len(out)
+
+        if isinstance(out, memoryview):
+            if out.readonly:
+                raise PermissionError
+            out = out.obj
+        if not isinstance(out, bytearray):
+            raise PermissionError
+
+        try:
+            getbuf = cast(Buffer, _data).__buffer__
+        except AttributeError:
+            assert not isinstance(_data, Buffer)
+            data = _data
+        else:
+            data = getbuf(0)
+
         beginning = self._cursor
         limit = self._size_limit
 
@@ -319,9 +347,10 @@ class MemoryFileMethods(Generic[T]):
             self._cursor = end = len(out)
             return end - beginning
         try:
-            size = len(data)
+            size = len(cast(Sized, data))
         except Exception:
             it = iter(data)
+            cursor = 0
             for cursor, b in enumerate(it, beginning):
                 out[cursor] = b
                 if cursor >= end - 1:
@@ -331,9 +360,9 @@ class MemoryFileMethods(Generic[T]):
                 self._cursor = cursor
                 return cursor - beginning
             if limit is None:
-                out[end:] = it
+                out[end:] = bytes(it)
             else:
-                out[end:limit] = itertools.islice(it, 0, limit - end)
+                out[end:limit] = bytes(itertools.islice(it, 0, limit - end))
                 try:
                     b = next(it)
                 except StopIteration:
@@ -345,10 +374,10 @@ class MemoryFileMethods(Generic[T]):
                     raise EOF(rest)
         else:
             if limit and size + beginning > limit:
-                raise EOF(data)
+                raise EOF(bytes(data))
             self._cursor += size
             try:
-                self._data[beginning:self._cursor] = data
+                out[beginning:self._cursor] = data
             except Exception as T:
                 self._cursor = beginning
                 raise OSError(str(T)) from T
@@ -414,7 +443,7 @@ class StructReader(MemoryFile[T]):
         return '>' if self.bigendian else '<'
 
     @property
-    def byteorder_name(self) -> str:
+    def byteorder_name(self):
         return 'big' if self.bigendian else 'little'
 
     def seek(self, offset, whence=io.SEEK_SET) -> int:
@@ -422,7 +451,7 @@ class StructReader(MemoryFile[T]):
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read_exactly(self, size: Optional[int] = None, peek: bool = False) -> T:
+    def read_exactly(self, size: Optional[int] = None, peek: bool = False) -> Union[bytes, T]:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
@@ -620,19 +649,30 @@ class StructReader(MemoryFile[T]):
     def i32(self, peek: bool = False) -> int: return signed(self.read_integer(32, peek), 32)
     def i64(self, peek: bool = False) -> int: return signed(self.read_integer(64, peek), 64)
 
-    def f32(self, peek: bool = False) -> float: return self.read_struct('f', unwrap=True, peek=peek)
-    def f64(self, peek: bool = False) -> float: return self.read_struct('d', unwrap=True, peek=peek)
+    def f32(self, peek: bool = False) -> float: return cast(float, self.read_struct('f', unwrap=True, peek=peek))
+    def f64(self, peek: bool = False) -> float: return cast(float, self.read_struct('d', unwrap=True, peek=peek))
 
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
 
     def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray:
+        buf = self.getvalue()
         pos = self.tell()
-        buf = self.getbuffer()
+
+        if isinstance(buf, memoryview):
+            def find(whence: int):
+                n = len(terminator)
+                for k in range(whence, len(buf)):
+                    if buf[k:k + n] == terminator:
+                        return k
+                return -1
+        else:
+            def find(whence: int):
+                return buf.find(terminator, whence)
         try:
             end = pos - 1
             while True:
-                end = buf.find(terminator, end + 1)
+                end = find(end + 1)
                 if end < 0 or not (end - pos) % alignment:
                     break
         except AttributeError:
@@ -703,7 +743,7 @@ class StructReader(MemoryFile[T]):
         return self.read_length_prefixed(prefix_size, 'utf-16le', block_size)
 
     @overload
-    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> T:
+    def read_length_prefixed(self, *, encoding: str, prefix_size: int = 32, block_size: int = 1) -> str:
         ...
 
     @overload
@@ -711,17 +751,17 @@ class StructReader(MemoryFile[T]):
         ...
 
     @overload
-    def read_length_prefixed(self, *, encoding: str, prefix_size: int = 32, block_size: int = 1) -> str:
+    def read_length_prefixed(self, *, prefix_size: int = 32, block_size: int = 1) -> Union[T, bytes]:
         ...
 
-    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> Union[T, str]:
+    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> Union[T, bytes, str]:
         prefix = self.read_integer(prefix_size) * block_size
         data = self.read(prefix)
         if encoding is not None:
             data = codecs.decode(data, encoding)
         return data
 
-    def read_7bit_encoded_int(self, max_bits: int = 0) -> int:
+    def read_7bit_encoded_int(self, max_bits: int = 0) -> Optional[int]:
         value = 0
         for shift in itertools.count(0, step=7):
             b = self.read_byte()
@@ -752,11 +792,12 @@ class StructMeta(type):
                         F'but a {parser.__name__} is required.')
                 reader = parser(reader)
             start = reader.tell()
-            view = memoryview(reader.getbuffer())
+            view = reader.getbuffer()
             original__init__(self, reader, *args, **kwargs)
             self._data = view[start:reader.tell()]
+            del view
 
-        cls.__init__ = wrapped__init__
+        setattr(cls, '__init__', wrapped__init__)
 
 
 class Struct(metaclass=StructMeta):

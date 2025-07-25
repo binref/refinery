@@ -109,7 +109,7 @@ class jcalg(Unit):
             if one_byte_phrase_value == 0:
                 writer.write_byte(0)
             elif one_byte_phrase_value > 0:
-                b = writer.getbuffer()[-one_byte_phrase_value]
+                b = writer.getvalue()[-one_byte_phrase_value]
                 writer.write_byte(b)
             else:
                 if not flags.next():

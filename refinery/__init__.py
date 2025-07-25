@@ -37,7 +37,7 @@ various `refinery.units.Unit`s can be combined.
 __version__ = '0.8.25'
 __distribution__ = 'binary-refinery'
 
-from typing import Dict, List, Optional, Type, TypeVar, Iterable
+from typing import cast, Dict, List, Optional, Type, TypeVar, Iterable, TYPE_CHECKING
 from datetime import datetime
 from threading import RLock
 
@@ -45,6 +45,9 @@ import pickle
 
 from refinery.units import Arg, Unit
 from refinery.lib import resources
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 _T = TypeVar('_T')
@@ -83,7 +86,7 @@ class __unit_loader__:
 
     def load(self):
         try:
-            cache: dict = pickle.load(self.path.open('rb'))
+            cache = pickle.load(self.path.open('rb'))
         except (FileNotFoundError, EOFError):
             cache = None
         else:
@@ -107,10 +110,8 @@ class __unit_loader__:
 
     def save(self):
         try:
-            pickle.dump({
-                'units': self.units,
-                'version': __version__,
-            }, self.path.open('wb'))
+            with cast(Path, self.path).open('wb') as out:
+                pickle.dump({'units': self.units, 'version': __version__}, out)
         except Exception:
             pass
         else:
@@ -128,7 +129,7 @@ class __unit_loader__:
             self.save()
             self.reloading = False
 
-    def resolve(self, name) -> Optional[Unit]:
+    def resolve(self, name) -> Optional[Type[Unit]]:
         if not self.loaded:
             self.load()
         try:
@@ -184,14 +185,14 @@ class __pdoc__(dict):
                         bt = getattr(unit.mro()[1], method, None)
                         if at and at is not bt:
                             self[F'{name}.{method}'] = False
-                hlp = get_help_string(unit, width=97)
-                hlp = hlp.replace('\x60', '')
-                hlp = self._strip_globals(hlp).strip()
-                hlp = (
-                    F'This unit is implemented in `{unit.__module__}` and has the following '
-                    F'commandline Interface:\n```text\n{hlp}\n```'
-                )
-                self[name] = hlp
+                if hlp := get_help_string(unit, width=97):
+                    hlp = hlp.replace('\x60', '')
+                    hlp = self._strip_globals(hlp).strip()
+                    hlp = (
+                        F'This unit is implemented in `{unit.__module__}` and has the following '
+                        F'commandline Interface:\n```text\n{hlp}\n```'
+                    )
+                    self[name] = hlp
         self._loaded = True
 
     def items(self):
@@ -203,7 +204,7 @@ __all__ = sorted(__unit_loader__.units, key=lambda x: x.lower()) + [
     Unit.__name__, Arg.__name__, '__unit_loader__', '__pdoc__']
 
 
-def load(name) -> Optional[Unit]:
+def load(name) -> Optional[Type[Unit]]:
     with __unit_loader__ as ul:
         return ul.resolve(name)
 

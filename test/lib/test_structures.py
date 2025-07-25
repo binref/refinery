@@ -23,14 +23,18 @@ class TestStructures(TestBase):
             with MemoryFile(b) as mem:
                 self.assertFalse(mem.writable())
                 self.assertTrue(mem.readable())
-                with self.assertRaises(OSError):
+                with self.assertRaises(Exception):
                     mem.write(B'Unicode')
                 self.assertEqual(mem.read(6), B'Binary')
 
     def test_memoryfile_memoryview(self):
         with MemoryFile(memoryview(bytearray(B'Binary Refinery'))) as mem:
             self.assertTrue(mem.writable())
-            mem.write(B'Unicode')
+            mem.write(list(B'Uni'))
+            mem.write(bytearray(B'code'))
+            mem.seek(0, 2)
+            with self.assertRaises(Exception):
+                mem.write(B'Rocks')
             mem.seek(0)
             self.assertEqual(mem.read(), B'UnicodeRefinery')
 
@@ -64,7 +68,7 @@ class TestStructures(TestBase):
             self.assertTrue(mem.readline().endswith(B'spheres\n'))
             self.assertSequenceEqual(list(mem.readlines()), data[1:])
             mem.seek(0, io.SEEK_END)
-            self.assertEqual(mem.tell(), len(mem.getbuffer()))
+            self.assertEqual(mem.tell(), len(mem.getvalue()))
             mem.seekrel(-7)
             tmp = bytearray(10)
             self.assertLessEqual(mem.readinto(tmp), 10)
@@ -147,18 +151,18 @@ class TestStructures(TestBase):
         builder.write(B'refines the finer binaries.')
         builder.seekrel(-1)
         builder.write(B'!')
-        self.assertEqual(builder.getbuffer(), B'The binary refinery refines the finer binaries!')
+        self.assertEqual(builder.getvalue(), B'The binary refinery refines the finer binaries!')
 
     def test_write_iterables(self):
         builder = MemoryFile()
         builder.write(B'FOO BAR BAR FOO FOO')
         builder.seek(4)
         builder.write(itertools.repeat(B'X'[0], 7))
-        self.assertEqual(builder.getbuffer(), B'FOO XXXXXXX FOO FOO')
+        self.assertEqual(builder.getvalue(), B'FOO XXXXXXX FOO FOO')
         builder.seekset(len(builder))
         builder.write(B' ')
         builder.write(itertools.repeat(B'X'[0], 4))
-        self.assertEqual(builder.getbuffer(), B'FOO XXXXXXX FOO FOO XXXX')
+        self.assertEqual(builder.getvalue(), B'FOO XXXXXXX FOO FOO XXXX')
 
     def test_peeking_bits(self):
         seed = 0b_1011_0101_1100_0000_0111_1111

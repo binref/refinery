@@ -22,7 +22,7 @@ class xtxml(XMLToPathExtractorUnit):
                     return node.content.encode(self.codec)
                 with MemoryFile() as stream:
                     node.write(stream)
-                    return bytes(stream.getbuffer() | ppxml)
+                    return bytes(stream.getvalue() | ppxml)
 
             attributes = {
                 self._normalize_key(k): self._normalize_val(v)

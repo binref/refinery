@@ -56,7 +56,7 @@ class ArchiveExecutable(Executable):
                     result.path = F'archive{k}/{result.path}'
                     yield result
 
-        exe.unpack = __unpack
+        setattr(exe, 'unpack', __unpack)
 
     def _carver(cls) -> Optional[Unit]:
         return None

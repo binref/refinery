@@ -120,8 +120,23 @@ import itertools
 import zlib
 import uuid
 
-from typing import Generator, Iterable, BinaryIO, Callable, Optional, List, Tuple, Dict, ByteString, Any
-from typing import TYPE_CHECKING
+from typing import (
+    overload,
+    Union,
+    Generator,
+    SupportsIndex,
+    Iterable,
+    BinaryIO,
+    Callable,
+    Optional,
+    List,
+    Tuple,
+    Dict,
+    ByteString,
+    Any,
+    TYPE_CHECKING,
+)
+
 from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import LazyMetaOracle
 
@@ -441,10 +456,22 @@ class Chunk(bytearray):
     def __hash__(self):
         return hash(zlib.adler32(self))
 
-    def __getitem__(self, bounds):
-        if isinstance(bounds, str):
-            return self._meta[bounds]
-        return bytearray.__getitem__(self, bounds)
+    @overload
+    def __getitem__(self, k: str) -> Union[int, str, float, bytes, None]:
+        ...
+
+    @overload
+    def __getitem__(self, key: SupportsIndex, /) -> int:
+        ...
+
+    @overload
+    def __getitem__(self, key: slice, /) -> bytearray:
+        ...
+
+    def __getitem__(self, k):
+        if not isinstance(k, str):
+            return bytearray.__getitem__(self, k)
+        return self._meta.__getitem__(k)
 
     def __setitem__(self, bounds, value):
         if isinstance(bounds, str):
@@ -618,8 +645,8 @@ class Framed:
     """
     def __init__(
         self,
-        action : Callable[[bytearray], Iterable[Chunk]],
-        stream : BinaryIO,
+        action : Callable[[Chunk], Iterable[Chunk]],
+        stream : Optional[BinaryIO],
         nesting: int = 0,
         squeeze: bool = False,
         filter : Optional[Callable[[Iterable[Chunk]], Iterable[Chunk]]] = None,
@@ -713,14 +740,14 @@ class Framed:
             inherit(header)
             yield header
 
-    def _generate_bytes(self, data: ByteString):
+    def _generate_bytes(self, data: Chunk):
         if not self.squeeze:
             yield from self.action(data)
             return
         buffer = MemoryFile(bytearray())
         for item in self.action(data):
             buffer.write(item)
-        yield buffer.getbuffer()
+        yield buffer.getvalue()
 
     def __iter__(self):
         nesting = self.nesting

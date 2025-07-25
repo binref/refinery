@@ -166,8 +166,10 @@ from threading import Lock
 
 from typing import (
     Dict,
+    Self,
+    BinaryIO,
     Iterable,
-    Sequence,
+    Iterator,
     Set,
     Type,
     TypeVar,
@@ -175,13 +177,16 @@ from typing import (
     List,
     Optional,
     Callable,
+    Mapping,
     ClassVar,
     Tuple,
     Any,
     Generator,
+    cast,
     overload,
     no_type_check,
-    get_type_hints
+    get_type_hints,
+    TYPE_CHECKING,
 )
 
 from argparse import (
@@ -197,6 +202,17 @@ from refinery.lib.frame import generate_frame_header, Framed, Chunk, MAGIC, MSIZ
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr, Singleton
+
+if TYPE_CHECKING:
+    from argparse import _MutuallyExclusiveGroup
+    from io import BufferedReader, BufferedWriter
+
+    DataType = TypeVar('DataType', bound=ByteStr)
+    ProcType = Callable[['Unit', ByteStr], Optional[Union[DataType, Iterable[DataType]]]]
+
+    _T = TypeVar('_T')
+    _B = TypeVar('_B', bound=Union[BufferedWriter, ByteIO, BinaryIO])
+    _E = TypeVar('_E', bound=Enum)
 
 from refinery.lib.argformats import (
     pathvar,
@@ -351,22 +367,22 @@ class Arg(Argument):
 
     def __init__(
         self, *args: str,
-            action   : Union[Type[omit], str]           = omit, # noqa
-            choices  : Union[Type[omit], Iterable[Any]] = omit, # noqa
-            const    : Union[Type[omit], Any]           = omit, # noqa
-            default  : Union[Type[omit], Any]           = omit, # noqa
-            dest     : Union[Type[omit], str]           = omit, # noqa
-            help     : Union[Type[omit], str]           = omit, # noqa
-            metavar  : Union[Type[omit], str]           = omit, # noqa
-            nargs    : Union[Type[omit], int, str]      = omit, # noqa
-            required : Union[Type[omit], bool]          = omit, # noqa
-            type     : Union[Type[omit], type]          = omit, # noqa
-            group    : Optional[str]              = None, # noqa
-            guessed  : Optional[Set[str]]         = None, # noqa
+            action   : Union[Type[omit], str]                     = omit, # noqa
+            choices  : Union[Type[omit], Iterable[Any]]           = omit, # noqa
+            const    : Union[Type[omit], Any]                     = omit, # noqa
+            default  : Union[Type[omit], Any]                     = omit, # noqa
+            dest     : Union[Type[omit], str]                     = omit, # noqa
+            help     : Union[Type[omit], str]                     = omit, # noqa
+            metavar  : Union[Type[omit], str]                     = omit, # noqa
+            nargs    : Union[Type[omit], type[delete], int, str]  = omit, # noqa
+            required : Union[Type[omit], bool]                    = omit, # noqa
+            type     : Union[Type[omit], type, Callable]          = omit, # noqa
+            group    : Optional[str]                              = None, # noqa
+            guessed  : Optional[Set[str]]                         = None, # noqa
     ) -> None:
         kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
             help=help, metavar=metavar, nargs=nargs, required=required, type=type)
-        kwargs = {key: value for key, value in kwargs.items() if value is not Arg.omit}
+        kwargs = {key: value for key, value in kwargs.items() if value is not self.omit}
         self.group = group
         self.guessed = set(guessed or ())
         super().__init__(*args, **kwargs)
@@ -392,14 +408,15 @@ class Arg(Argument):
                         if not default:
                             return 'empty'
                         elif len(default) == 1:
-                            default = default[0]
+                            default = next(iter(default))
                     if isinstance(default, slice):
                         parts = [default.start or '', default.stop or '', default.step]
                         default = ':'.join(str(x) for x in parts if x is not None)
                     if isinstance(default, int):
                         return default
-                    if not isbuffer(default):
+                    if isinstance(default, str) or not isbuffer(default):
                         return default
+                    default = bytes(default)
                     if default.isalnum():
                         return default.decode('latin-1')
                     return F'H:{default.hex()}'
@@ -417,8 +434,18 @@ class Arg(Argument):
         self.update_help()
         return super().__rmatmul__(method)
 
+    @overload
     @staticmethod
-    def AsOption(value: Optional[Any], cls: Enum) -> Enum:
+    def AsOption(value: Type[None], cls: Type[_E]) -> None:
+        ...
+
+    @overload
+    @staticmethod
+    def AsOption(value: Union[str, _E], cls: Type[_E]) -> _E:
+        ...
+
+    @staticmethod
+    def AsOption(value, cls: Type[_E]) -> Optional[_E]:
         """
         This method converts the input `value` to an instance of the enum `cls`. It is intended to
         be used on values that are passed as an argument marked with the `refinery.units.Arg.Option`
@@ -487,13 +514,13 @@ class Arg(Argument):
         help    : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Optional[str] = None,
+        metavar : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments that contain path patterns.
         """
-        if metavar is None and any('-' in a for a in args):
+        if metavar is cls.omit and any('-' in a for a in args):
             metavar = 'B'
         return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=pathvar, metavar=metavar)
 
@@ -504,13 +531,13 @@ class Arg(Argument):
         help    : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Optional[str] = None,
+        metavar : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments that contain binary data.
         """
-        if metavar is None and any('-' in a for a in args):
+        if metavar is cls.omit and any('-' in a for a in args):
             metavar = 'B'
         return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=multibin, metavar=metavar)
 
@@ -521,13 +548,13 @@ class Arg(Argument):
         help    : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Optional[str] = None,
+        metavar : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments that contain string data.
         """
-        if metavar is None and any('-' in a for a in args):
+        if metavar is cls.omit and any('-' in a for a in args):
             metavar = 'STR'
         return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=str, metavar=metavar)
 
@@ -538,7 +565,7 @@ class Arg(Argument):
         help    : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Optional[str] = None,
+        metavar : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
@@ -555,7 +582,7 @@ class Arg(Argument):
         help    : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Optional[str] = None,
+        metavar : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
@@ -573,7 +600,7 @@ class Arg(Argument):
         default : Union[Type[omit], Any] = omit,
         range   : bool = False,
         intok   : bool = False,
-        metavar : Optional[str] = 'start:end:step',
+        metavar : Union[Type[omit], str] = 'start:end:step',
         group   : Optional[str] = None,
     ):
         """
@@ -594,7 +621,7 @@ class Arg(Argument):
         bound   : Union[Type[omit], Tuple[int, int]] = omit,
         help    : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
-        metavar : Optional[str] = None,
+        metavar : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
@@ -614,7 +641,7 @@ class Arg(Argument):
         choices : Type[Enum],
         help    : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
-        metavar : Optional[str] = None,
+        metavar : Union[Type[omit], str] = omit,
         group   : Optional[str] = None,
     ):
         """
@@ -681,7 +708,7 @@ class Arg(Argument):
             except KeyError:
                 return True
 
-        def get_argp_type(annotation_type):
+        def get_argp_type(annotation_type: type):
             if issubclass(annotation_type, (bytes, bytearray, memoryview)):
                 return multibin
             if issubclass(annotation_type, int):
@@ -693,7 +720,7 @@ class Arg(Argument):
         name = normalize_to_display(pt.name, False)
         default = pt.default
         guessed_pos_args = []
-        guessed_kwd_args = dict(dest=pt.name)
+        guessed_kwd_args: Dict[str, Any] = dict(dest=pt.name)
         guessed = set()
         annotation = pt.annotation
 
@@ -731,7 +758,8 @@ class Arg(Argument):
                         F'was annotated with {annotation!r}.')
                 guessed_pos_args = annotation.args
                 guessed_kwd_args.update(annotation.kwargs)
-                guessed_kwd_args.update(group=annotation.group)
+                if group := annotation.group:
+                    guessed_kwd_args.update(group=group)
             elif isinstance(annotation, type):
                 guessed.add('type')
                 if not issubclass(annotation, bool) and needs_type(guessed_kwd_args):
@@ -859,12 +887,6 @@ class ArgumentSpecification(OrderedDict):
         self[dest] = argument
 
 
-DataType = TypeVar('DataType', bound=ByteStr)
-ProcType = Callable[['Unit', ByteStr], Optional[Union[DataType, Iterable[DataType]]]]
-
-_T = TypeVar('_T')
-
-
 def _UnitProcessorBoilerplate(operation: ProcType[ByteStr]) -> ProcType[Chunk]:
     @wraps(operation)
     def wrapped(self: Unit, data: ByteStr) -> Optional[Union[Chunk, Iterable[Chunk]]]:
@@ -886,7 +908,7 @@ def _UnitProcessorBoilerplate(operation: ProcType[ByteStr]) -> ProcType[Chunk]:
         if isinstance(result, Chunk):
             return result
         elif not inspect.isgenerator(result):
-            return Chunk(result)
+            return Chunk(cast(Optional[bytearray], result))
         return (Chunk.Wrap(r) for r in result)
     return wrapped
 
@@ -935,9 +957,10 @@ class Executable(ABCMeta):
 
     _argument_specification: Dict[str, Arg]
 
-    def _infer_argspec(cls, parameters: Dict[str, inspect.Parameter], args: Optional[Dict[str, Arg]], module: str):
+    def _infer_argspec(cls, parameters: Mapping[str, inspect.Parameter], args: Optional[ArgumentSpecification], module: str):
 
-        args: Dict[str, Arg] = ArgumentSpecification() if args is None else args
+        if args is None:
+            args = ArgumentSpecification()
 
         exposed = [pt.name for pt in skipfirst(parameters.values()) if pt.kind != pt.VAR_KEYWORD]
         # The arguments are added in reverse order to the argument parser later.
@@ -970,12 +993,14 @@ class Executable(ABCMeta):
                 known.kwargs.setdefault('type', multibin)
         return args
 
-    def __new__(mcs, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, docs='{}'):
+    def __new__(mcs, name: str, bases: Tuple[Type, ...], nmspc: Dict[str, Any], abstract=False, docs='{}'):
         def decorate(**decorations):
             for method, decorator in decorations.items():
                 try:
                     old = nmspc[method]
                 except KeyError:
+                    continue
+                if old is MissingFunction:
                     continue
                 if getattr(old, '__isabstractmethod__', False):
                     continue
@@ -995,11 +1020,11 @@ class Executable(ABCMeta):
                     pass
             else:
                 nmspc.setdefault('reverse', MissingFunction)
-            bases = bases + (Entry,)
+            bases += (Entry,)
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
-    def __init__(cls, name: str, bases: Sequence[Executable], nmspc: Dict[str, Any], abstract=False, docs='{}'):
+    def __init__(cls, name: str, bases: Tuple[Type, ...], nmspc: Dict[str, Any], abstract=False, docs='{}'):
         super(Executable, cls).__init__(name, bases, nmspc)
         cls._argument_specification = args = ArgumentSpecification()
 
@@ -1020,7 +1045,7 @@ class Executable(ABCMeta):
                     args[key] = value.__copy__()
 
         if docs != '{}':
-            mro = {b.__name__: inspect.cleandoc(b.__doc__) for b in cls.__mro__}
+            mro = {b.__name__: inspect.cleandoc(b.__doc__) for b in cls.__mro__ if b.__doc__}
             cls.__doc__ = docs.format(*mro.values(), **mro, p='\n\n', s='\x20')
             cls.__doc__ = cls.__doc__.replace('<this>', cls.__name__)
 
@@ -1044,8 +1069,9 @@ class Executable(ABCMeta):
                 pp = inspect.signature(bases[0].__init__).parameters
                 for name in inherited:
                     params.append(pp[name])
-            new__init__.__signature__ = sig_init.replace(parameters=tuple(params))
-            cls.__init__ = new__init__
+
+            setattr(new__init__, '__signature__', sig_init.replace(parameters=tuple(params)))
+            setattr(cls, '__init__', new__init__)
 
         try:
             initcode = cls.__init__.__code__.co_code
@@ -1067,7 +1093,7 @@ class Executable(ABCMeta):
                     tail = p.name
 
             @wraps(cls.__init__)
-            def cls__init__(self, *args, **kw):
+            def auto__init__(self, *args, **kw):
                 for name, arg in zip(head, args):
                     kw[name] = arg
                 if tail:
@@ -1078,12 +1104,12 @@ class Executable(ABCMeta):
                         kw[key] = defs[key]
                 base.__init__(self, **kw)
 
-            cls.__init__ = cls__init__
+            setattr(cls, '__init__', auto__init__)
 
         if not abstract and sys.modules[cls.__module__].__name__ == '__main__':
             if not Executable.Entry:
                 Executable.Entry = cls.name
-                cls.run()
+                cast(Type[Unit], cls).run()
 
     def __getitem__(cls, other):
         return cls().__getitem__(other)
@@ -1103,14 +1129,15 @@ class Executable(ABCMeta):
         return cls().__ror__(other)
 
     @property
-    def is_reversible(cls: Unit) -> bool:
+    def is_reversible(cls) -> bool:
         """
         This property is `True` if and only if the unit has a member function named `reverse`. By convention,
         this member function implements the inverse of `refinery.units.Unit.process`.
         """
-        if cls.reverse is MissingFunction:
+        r = cast(Type[Unit], cls).reverse
+        if r is MissingFunction:
             return False
-        return not getattr(cls.reverse, '__isabstractmethod__', False)
+        return not getattr(r, '__isabstractmethod__', False)
 
     @property
     def codec(cls) -> str:
@@ -1236,10 +1263,6 @@ class DelayedArgumentProxy:
 
     def __getattr__(self, name):
         try:
-            return super().__getattr__(name)
-        except AttributeError:
-            pass
-        try:
             return self._args[name]
         except KeyError:
             pass
@@ -1275,7 +1298,7 @@ class UnitBase(metaclass=Executable, abstract=True):
         the unit processes a given chunk of binary data.
         """
 
-    @abc.abstractmethod
+    @MissingFunction()
     def reverse(self, data: ByteStr) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
         """
         If this routine is overridden by children of `refinery.units.Unit`, then it must
@@ -1286,7 +1309,7 @@ class UnitBase(metaclass=Executable, abstract=True):
 
     @classmethod
     @abc.abstractmethod
-    def handles(self, data: ByteStr) -> Optional[bool]:
+    def handles(cls, data: ByteStr) -> Optional[bool]:
         """
         This tri-state routine returns `True` if the unit is certain that it can process the
         given input data, and `False` if it is convinced of the opposite. `None` is returned
@@ -1321,7 +1344,7 @@ class requirement(property):
     pass
 
 
-class Unit(UnitBase, abstract=True):
+class Unit(UnitBase, BinaryIO, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
     available options and the handling for multiple inputs and outputs. All units
@@ -1332,6 +1355,72 @@ class Unit(UnitBase, abstract=True):
 
     required_dependencies: Optional[Set[str]] = None
     optional_dependencies: Optional[Dict[str, Set[str]]] = None
+
+    _buffer: ByteStr
+    _source: Optional[Union[BinaryIO, Unit]]
+    _target: Optional[BinaryIO]
+    _framed: Optional[Framed]
+    _chunks: Optional[Iterator[Union[ByteStr, Chunk]]]
+    console: bool
+
+    @property
+    def mode(self) -> str:
+        return 'rb'
+
+    def close(self) -> None:
+        self._chunks = None
+
+    @property
+    def closed(self) -> bool:
+        return self._chunks is None
+
+    def fileno(self) -> int:
+        return 0
+
+    def flush(self) -> None:
+        pass
+
+    def writable(self) -> bool:
+        return False
+
+    def seekable(self) -> bool:
+        return False
+
+    def write(self, _):
+        raise RuntimeError
+
+    def writelines(self, lines):
+        raise RuntimeError
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        raise RuntimeError
+
+    def truncate(self, size: int | None = None) -> int:
+        raise RuntimeError
+
+    def tell(self) -> int:
+        return 0
+
+    def readable(self) -> bool:
+        return True
+
+    def readlines(self, hint: int = -1) -> List[bytes]:
+        lines = []
+        while line := self.readline():
+            lines.append(line)
+        return lines
+
+    def readline(self, limit: int = -1) -> bytes:
+        line = bytearray()
+        while not line.endswith(B'\n') and (char := self.read1(1)):
+            line.extend(char)
+        return line
+
+    def __enter__(self) -> BinaryIO:
+        return self
+
+    def __exit__(self, *_) -> None:
+        pass
 
     @staticmethod
     def Requires(distribution: str, *_buckets: str):
@@ -1362,9 +1451,9 @@ class Unit(UnitBase, abstract=True):
                 if self.module is not None:
                     return self.module
                 try:
-                    self.module = module = self.fget()
+                    self.module = module = cast(Callable, self.fget)()
                 except ImportError as E:
-                    deps = unit.optional_dependencies or {}
+                    deps = unit and unit.optional_dependencies or {}
                     args = set()
                     for v in deps.values():
                         args.update(v)
@@ -1382,14 +1471,18 @@ class Unit(UnitBase, abstract=True):
         """
         Proxy to `refinery.units.Executable.is_reversible`.
         """
-        return self.__class__.is_reversible
+        cls = self.__class__
+        assert isinstance(cls, Executable)
+        return cls.is_reversible
 
     @property
     def codec(self) -> str:
         """
         Proxy to `refinery.units.Executable.codec`.
         """
-        return self.__class__.codec
+        cls = self.__class__
+        assert isinstance(cls, Executable)
+        return cls.codec
 
     @property
     def logger(self):
@@ -1404,7 +1497,9 @@ class Unit(UnitBase, abstract=True):
         """
         Proxy to `refinery.units.Executable.name`.
         """
-        return self.__class__.name
+        cls = self.__class__
+        assert isinstance(cls, Executable)
+        return cls.name
 
     @property
     def is_quiet(self) -> bool:
@@ -1434,7 +1529,7 @@ class Unit(UnitBase, abstract=True):
             value = LogLevel.FromVerbosity(value)
         self.logger.setLevel(value)
 
-    def log_detach(self) -> None:
+    def log_detach(self) -> Self:
         """
         When a unit is created using the `refinery.units.Unit.assemble` method, it is attached to a
         logger by default (in less abstract terms, the `refinery.units.Unit.log_level` property is
@@ -1444,7 +1539,7 @@ class Unit(UnitBase, abstract=True):
         self.log_level = LogLevel.DETACHED
         return self
 
-    def __iter__(self) -> Generator[Chunk, None, None]:
+    def __iter__(self) -> Iterator[Union[bytes, bytearray, Chunk]]:
         return self
 
     @property
@@ -1455,11 +1550,6 @@ class Unit(UnitBase, abstract=True):
         return getattr(self.args, 'lenient', 0)
 
     def _exception_handler(self, exception: BaseException, data: Optional[ByteStr]):
-        if data is not None and self.leniency > 1:
-            try:
-                return exception.partial
-            except AttributeError:
-                return data
         if isinstance(exception, RefineryPartialResult):
             if self.leniency >= 1:
                 return exception.partial
@@ -1467,6 +1557,8 @@ class Unit(UnitBase, abstract=True):
                 self.log_warn(F'A partial result was returned, use the -L switch to retrieve it: {exception}')
                 return None
             raise exception
+        elif self.leniency >= 1 and data is not None:
+            return data
         elif self.log_level >= LogLevel.DETACHED:
             raise exception
         elif isinstance(exception, RefineryCriticalException):
@@ -1508,7 +1600,7 @@ class Unit(UnitBase, abstract=True):
             self._chunks = iter(self._framehandler)
         return self._chunks
 
-    def __next__(self) -> Chunk:
+    def __next__(self) -> Union[bytes, bytearray, Chunk]:
         while True:
             try:
                 chunk = next(self.output())
@@ -1519,7 +1611,7 @@ class Unit(UnitBase, abstract=True):
             except BaseException as B:
                 self._exception_handler(B, None)
                 raise StopIteration from B
-            if not self.console and len(chunk) == MSIZE and chunk.startswith(MAGIC):
+            if not self.console and len(chunk) == MSIZE and chunk[:len(MAGIC)] == MAGIC:
                 continue
             return chunk
 
@@ -1528,7 +1620,7 @@ class Unit(UnitBase, abstract=True):
         if self._framed:
             return self._framed
 
-        def normalized_action(data: ByteStr) -> Generator[Chunk, None, None]:
+        def normalized_action(data: Chunk) -> Generator[Chunk, None, None]:
             try:
                 yield from self.act(data)
             except KeyboardInterrupt:
@@ -1557,12 +1649,13 @@ class Unit(UnitBase, abstract=True):
         return inputs
 
     @classmethod
-    def handles(self, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: ByteStr) -> Optional[bool]:
         return None
 
     def reset(self):
         try:
-            self._source.reset()
+            if isinstance(source := self._source, Unit):
+                source.reset()
         except AttributeError:
             pass
         self._framed = None
@@ -1574,7 +1667,10 @@ class Unit(UnitBase, abstract=True):
         Represents a unit or binary IO stream which has been attached to this unit as its
         source of input data.
         """
-        return self._source
+        try:
+            return self._source
+        except AttributeError:
+            return None
 
     @source.setter
     def source(self, stream):
@@ -1593,10 +1689,9 @@ class Unit(UnitBase, abstract=True):
         and `self` if no such thing exists. In other words, it is the leftmost unit in
         a pipeline, where data should be inserted for processing.
         """
-        try:
-            return self.source.nozzle
-        except AttributeError:
+        if not isinstance(source := self.source, Unit):
             return self
+        return source.nozzle
 
     def __getitem__(self, unit: Union[Unit, Type[Unit], slice]):
         if isinstance(unit, type):
@@ -1618,7 +1713,8 @@ class Unit(UnitBase, abstract=True):
 
     def __del__(self):
         try:
-            self.nozzle.source.close()
+            if src := self.nozzle.source:
+                src.close()
         except Exception:
             pass
 
@@ -1635,9 +1731,10 @@ class Unit(UnitBase, abstract=True):
         reversed = None
         while pipeline:
             reversed = reversed | pipeline.pop()
+        assert isinstance(reversed, Unit)
         return reversed
 
-    def __ror__(self, stream: Union[str, Chunk, list[Chunk], ByteIO, ByteStr, None]):
+    def __ror__(self, stream: Union[str, Chunk, list[Chunk], BinaryIO, Unit, BufferedReader, ByteStr, None]):
         if stream is None:
             return self
         if isinstance(stream, Chunk):
@@ -1664,6 +1761,7 @@ class Unit(UnitBase, abstract=True):
         elif not isstream(stream):
             if isinstance(stream, str):
                 stream = stream.encode(self.codec)
+            assert isinstance(stream, (int, bytes, bytearray, memoryview))
             if stream:
                 stream = MemoryFile(stream)
             else:
@@ -1679,22 +1777,28 @@ class Unit(UnitBase, abstract=True):
         return self | bytes
 
     @overload
-    def __or__(self, stream: Callable[[ByteStr], _T]) -> _T: ...
+    def __or__(self, stream: Type[None]) -> None: ...
+
+    @overload
+    def __or__(self, stream: Type[bytearray]) -> bytearray: ...
 
     @overload
     def __or__(self, stream: Type[str]) -> str: ...
 
     @overload
+    def __or__(self, stream: Callable[[ByteStr], _T]) -> _T: ...
+
+    @overload
     def __or__(self, stream: Union[Unit, Type[Unit]]) -> Unit: ...
 
     @overload
-    def __or__(self, stream: dict) -> dict: ...
+    def __or__(self, stream: Dict[str, Type[Ellipsis]]) -> Dict[str, bytearray]: ...
 
     @overload
     def __or__(self, stream: Dict[str, Type[_T]]) -> Dict[str, _T]: ...
 
     @overload
-    def __or__(self, stream: Dict[str, Type[Ellipsis]]) -> Dict[str, bytearray]: ...
+    def __or__(self, stream: dict) -> dict: ...
 
     @overload
     def __or__(self, stream: List[Type[_T]]) -> List[_T]: ...
@@ -1709,15 +1813,25 @@ class Unit(UnitBase, abstract=True):
     def __or__(self, stream: memoryview) -> memoryview: ...
 
     @overload
-    def __or__(self, stream: Type[None]) -> None: ...
+    def __or__(self, stream: _B) -> _B: ...
 
-    @overload
-    def __or__(self, stream: Type[bytearray]) -> bytearray: ...
-
-    @overload
-    def __or__(self, stream: ByteIO) -> ByteIO: ...
-
-    def __or__(self, stream):
+    def __or__(self, stream: Union[
+        Type[None],
+        Type[bytearray],
+        Type[str],
+        Callable[[ByteStr], _T],
+        Unit,
+        Type[Unit],
+        Dict[str, type],
+        List,
+        Set,
+        memoryview,
+        bytes,
+        bytearray,
+        BinaryIO,
+        ByteIO,
+        BufferedWriter,
+    ]):
         def get_converter(it: Iterable):
             try:
                 c = one(it)
@@ -1736,13 +1850,15 @@ class Unit(UnitBase, abstract=True):
 
         if stream is None:
             with open(os.devnull, 'wb') as null:
-                self | null
+                _ = self | null
             return
         if isinstance(stream, type) and issubclass(stream, Entry):
-            stream = stream()
+            stream = cast(Type[Unit], stream)()
         if isinstance(stream, type(...)):
-            def stream(c): return c
+            def _id(c): return c
+            stream = _id
         if isinstance(stream, Entry):
+            assert isinstance(stream, Unit)
             return stream.__copy__().__ror__(self)
         elif isinstance(stream, list):
             converter = get_converter(stream)
@@ -1751,30 +1867,34 @@ class Unit(UnitBase, abstract=True):
                 return stream
             return [converter(chunk) for chunk in self]
         elif isinstance(stream, set):
-            converter = get_converter(stream)
-            if converter is None:
+            if converter := get_converter(stream):
+                def converted():
+                    for chunk in self:
+                        yield converter(chunk)
+                return set(converted())
+            else:
                 stream.update(self)
                 return stream
-            return {converter(chunk) for chunk in self}
         elif isinstance(stream, dict):
             key, convert = one(stream.items())
-            output: Dict[Any, Union[List[Chunk], Set[Chunk]]] = {}
+            output = {}
             deconflict = None
-            if isinstance(convert, (list, set)):
-                deconflict = type(convert)
+            if isinstance(convert, list):
+                deconflict = list
+                convert = one(convert)
+            elif isinstance(convert, set):
+                deconflict = set
                 convert = one(convert)
             for item in self:
-                try:
-                    value = item.meta[key]
-                except KeyError:
-                    value = None
+                assert isinstance(item, Chunk)
+                value = item.meta.get(key)
                 if convert is not ...:
                     item = convert(item)
                 if deconflict:
                     bag = output.setdefault(value, deconflict())
                     if isinstance(bag, list):
                         bag.append(item)
-                    else:
+                    elif isinstance(bag, set):
                         bag.add(item)
                 else:
                     output[value] = item
@@ -1783,16 +1903,18 @@ class Unit(UnitBase, abstract=True):
             with MemoryFile(stream) as stdout:
                 return (self | stdout).getvalue()
         elif callable(stream):
-            with MemoryFile(bytearray()) as stdout:
-                self | stdout
-                out: bytearray = stdout.getbuffer()
+            tmp = bytearray()
+            with MemoryFile(tmp) as stdout:
+                _ = self | stdout
+                out = stdout.getvalue()
                 if isinstance(stream, type) and isinstance(out, stream):
                     return out
                 if isinstance(stream, type) and issubclass(stream, str):
-                    out = out.decode(self.codec)
-                return stream(out)
+                    import codecs
+                    out = codecs.decode(out, self.codec)
+                return cast(Callable[[Any], Any], stream)(out)
 
-        stream: ByteIO
+        stream = cast(BinaryIO, stream)
 
         if not stream.writable():
             raise ValueError('target stream is not writable')
@@ -1811,10 +1933,14 @@ class Unit(UnitBase, abstract=True):
                 and self._framehandler.framebreak
                 and not chunk.endswith(B'\n')
             ):
+                if not isinstance(chunk, bytearray):
+                    chunk = bytearray(chunk)
                 chunk.extend(B'\n')
             if recode:
                 try:
-                    chunk = chunk.decode(chunk, self.codec, errors='backslashreplace').encode(sys.stdout.encoding)
+                    import codecs
+                    chunk = codecs.encode(codecs.decode(
+                        chunk, self.codec, errors='backslashreplace'), sys.stdout.encoding)
                 except Exception:
                     pass
             try:
@@ -1875,10 +2001,10 @@ class Unit(UnitBase, abstract=True):
         except StopIteration:
             return B''
 
-    def act(self, data: Union[Chunk, ByteStr]) -> Generator[ByteStr, None, None]:
+    def act(self, data: Chunk) -> Generator[Chunk, None, None]:
         cls = self.__class__
         iff = self.args.iff
-        lvl = cls.log_level
+        lvl = self.log_level
 
         if iff and not self.handles(data):
             if iff < 2:
@@ -1888,7 +2014,7 @@ class Unit(UnitBase, abstract=True):
             data = self.args @ data
             data = data
 
-        cls.log_level = lvl
+        self.log_level = lvl
         cls.logger_locked = True
 
         try:
@@ -1896,19 +2022,20 @@ class Unit(UnitBase, abstract=True):
                 it = self.reverse(data)
             else:
                 it = self.process(data)
-            if not inspect.isgenerator(it):
+            assert it is not None
+            if isinstance(it, (bytes, bytearray, memoryview)):
                 it = (it,)
             for out in it:
-                if out is not None:
-                    yield out
+                assert isinstance(out, Chunk)
+                yield out
         finally:
             cls.logger_locked = False
 
-    def __call__(self, data: Optional[Union[ByteStr, Chunk]] = None) -> bytes:
+    def __call__(self, data: Optional[Union[ByteStr, Chunk]] = None) -> ByteStr:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
-            stdin: ByteIO
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
+        return B''
 
     @classmethod
     def labelled(cls, ___br___data: Union[Chunk, ByteStr], **meta) -> Chunk:
@@ -1916,16 +2043,17 @@ class Unit(UnitBase, abstract=True):
         This class method can be used to label a chunk of binary output with metadata. This
         metadata will be visible inside pipeline frames, see `refinery.lib.frame`.
         """
-        if isinstance(___br___data, Chunk):
+        if not isinstance(___br___data, Chunk):
+            ___br___data = Chunk(___br___data, meta=meta)
+        elif meta:
             ___br___data.meta.update(meta)
-            return ___br___data
-        return Chunk(___br___data, meta=meta)
+        return ___br___data
 
     def process(self, data: ByteStr) -> Union[Optional[ByteStr], Generator[ByteStr, None, None]]:
         return data
 
     @classmethod
-    def log_fail(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
+    def log_fail(cls, *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.ERROR`.
         """
@@ -1935,7 +2063,7 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     @classmethod
-    def log_warn(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
+    def log_warn(cls, *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.WARN`.
         """
@@ -1945,7 +2073,7 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     @classmethod
-    def log_always(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
+    def log_always(cls, *messages, clip=False) -> bool:
         """
         Log the message always.
         """
@@ -1954,7 +2082,7 @@ class Unit(UnitBase, abstract=True):
         return True
 
     @classmethod
-    def log_info(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
+    def log_info(cls, *messages, clip=False) -> bool:
         """
         Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.INFO`.
         """
@@ -1964,7 +2092,7 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     @classmethod
-    def log_debug(cls: Union[Executable, Type[Unit]], *messages, clip=False) -> bool:
+    def log_debug(cls, *messages, clip=False) -> bool:
         """
         Log the pmessage if and only if the current log level is at least `refinery.lib.environment.LogLevel.DEBUG`.
         """
@@ -1990,7 +2118,7 @@ class Unit(UnitBase, abstract=True):
                 return message
             if isbuffer(message):
                 import codecs
-                message: Union[bytes, bytearray, memoryview]
+                assert isinstance(message, (bytes, bytearray, memoryview))
                 pmsg: str = codecs.decode(message, cls.codec, 'surrogateescape')
                 if not pmsg.isprintable():
                     pmsg = message.hex().upper()
@@ -2030,16 +2158,15 @@ class Unit(UnitBase, abstract=True):
             base.add_argument('-F', '--iff', action='count', default=0,
                 help='Only apply unit if it can handle the input format. Specify twice to drop all other chunks.')
 
-        groups = {None: argp}
+        groups: Dict[Optional[str], Union[
+            ArgumentParserWithKeywordHooks, _MutuallyExclusiveGroup]] = {None: argp}
 
         for argument in reversed(cls._argument_specification.values()):
             gp = argument.group
             if gp not in groups:
-                groups[gp] = argp.add_mutually_exclusive_group()
+                _ = groups[gp] = argp.add_mutually_exclusive_group()
             try:
-                groups[gp].add_argument @ argument
-            except Exception as E:
-                raise RefineryCriticalException(F'Failed to queue argument: {argument!s}; {E!s}')
+                _ = groups[gp].add_argument @ argument
             except Exception as E:
                 raise RefineryCriticalException(F'Failed to queue argument: {argument!s}; {E!s}')
 
@@ -2087,7 +2214,7 @@ class Unit(UnitBase, abstract=True):
         return autoinvoke(spc.__init__, keywords)
 
     @classmethod
-    def assemble(cls, *args, **keywords):
+    def assemble(cls, *_args: str, **keywords):
         """
         Creates a unit from the given arguments and keywords. The given keywords are used to overwrite any
         previously specified defaults for the argument parser of the unit, then this modified parser is
@@ -2095,7 +2222,7 @@ class Unit(UnitBase, abstract=True):
         results are used to construct an instance of the unit, this object is consequently returned.
         """
         argp = cls.argparser(**keywords)
-        args = argp.parse_args_with_nesting(args)
+        args = argp.parse_args_with_nesting(_args)
 
         try:
             unit = autoinvoke(cls, args.__dict__)
@@ -2162,7 +2289,7 @@ class Unit(UnitBase, abstract=True):
     _SECRET_YAPPI_TIMING_FLAG = '--yappi-timing'
 
     @classmethod
-    def run(cls: Union[Type[Unit], Executable], argv=None, stream=None) -> None:
+    def run(cls, argv=None, stream=None) -> None:
         """
         Implements command line execution. As `refinery.units.Unit` is an `refinery.units.Executable`,
         this method will be executed when a class inheriting from `refinery.units.Unit` is defined in
@@ -2193,6 +2320,9 @@ class Unit(UnitBase, abstract=True):
             argv.remove(cls._SECRET_DEBUG_TIMING_FLAG)
             clock = process_time()
             cls.logger.log(LogLevel.PROFILE, 'starting clock: {:.4f}'.format(clock))
+        else:
+            def process_time():
+                return 0.0
 
         if cls._SECRET_YAPPI_TIMING_FLAG in argv:
             argv.remove(cls._SECRET_YAPPI_TIMING_FLAG)
@@ -2239,7 +2369,7 @@ class Unit(UnitBase, abstract=True):
 
             try:
                 with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
-                    source | unit | output
+                    _ = source | unit | output
             except ParserVariableMissing as E:
                 unit.logger.error(F'the variable "{E!s}" was missing while trying to parse an expression')
             except ArgumentTypeError as E:
