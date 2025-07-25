@@ -46,7 +46,7 @@ FileTypeMap = {
     'application/msword': 'doc',
     'application/ogg': 'ogg',
     'application/pdf': 'pdf',
-    'application/plain': 'text',
+    'application/plain': 'txt',
     'application/postscript': 'ps',
     'application/powerpoint': 'ppt',
     'application/rtf': 'rtf',
