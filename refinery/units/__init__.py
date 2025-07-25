@@ -166,7 +166,6 @@ from threading import Lock
 
 from typing import (
     Dict,
-    Self,
     BinaryIO,
     Iterable,
     Iterator,
@@ -204,6 +203,7 @@ from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr, Singleton
 
 if TYPE_CHECKING:
+    from typing import Self
     from argparse import _MutuallyExclusiveGroup
     from io import BufferedReader, BufferedWriter
 
