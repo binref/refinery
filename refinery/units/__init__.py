@@ -758,8 +758,7 @@ class Arg(Argument):
                         F'was annotated with {annotation!r}.')
                 guessed_pos_args = annotation.args
                 guessed_kwd_args.update(annotation.kwargs)
-                if group := annotation.group:
-                    guessed_kwd_args.update(group=group)
+                guessed_kwd_args.update(group=annotation.group)
             elif isinstance(annotation, type):
                 guessed.add('type')
                 if not issubclass(annotation, bool) and needs_type(guessed_kwd_args):
@@ -1020,7 +1019,7 @@ class Executable(ABCMeta):
                     pass
             else:
                 nmspc.setdefault('reverse', MissingFunction)
-            bases += (Entry,)
+            bases = bases + (Entry,)
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
 
