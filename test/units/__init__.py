@@ -81,9 +81,9 @@ class TestUnitBase(TestBase, metaclass=TestUnitBaseMeta):
         except ImportError:
             pass
         else:
-            for object in vars(module).values():
-                if isinstance(object, type) and issubclass(object, Entry) and object.__module__ == name:
-                    return object
+            for ut in vars(module).values():
+                if isinstance(ut, type) and issubclass(ut, Entry) and ut is not Entry and ut.__module__.endswith(name):
+                    return ut
         try:
             basename = name.rsplit('.', 1)[-1]
             entry = getattr(refinery, basename)
