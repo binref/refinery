@@ -1840,7 +1840,6 @@ class IFPSFile(Struct):
                             prefix = prefix_length * '\x20'
                             output.write('\x20'.join(line).ljust(3 * print_bytes_count - 1))
                         if not instruction_written:
-                            output.write(_TAB)
                             output.write(ic)
                             instruction_written = True
                         output.write('\n')
