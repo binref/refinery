@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import List, Optional, Type
 
-from refinery.units.formats.archive import ArchiveUnit, MultipleArchives
+from refinery.units.formats.archive import PathExtractorUnit, ArchiveUnit, MultipleArchives
 from refinery.units import RefineryException
 
 
@@ -64,7 +64,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.exe.vsect import vsect            ; yield vsect     # noqa
 
     def unpack(self, data):
-        fallback: List[Type[ArchiveUnit]] = []
+        fallback: List[Type[PathExtractorUnit]] = []
         errors = {}
         pos_args = self.args.paths
         key_args = dict(
@@ -82,10 +82,11 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         class unpacker:
             unit = self
 
-            def __init__(self, handler: Type[ArchiveUnit], fallback: bool):
+            def __init__(self, handler: Type[PathExtractorUnit], fallback: bool):
                 self.success = False
                 self.handler = handler
                 self.fallback = fallback
+                self.count = 0
 
             def __iter__(self):
                 handler = self.handler
@@ -102,6 +103,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         unit = handler(*pos_args, **key_args)
                         unit.args.lenient = self.unit.args.lenient
                         unit.args.quiet = self.unit.args.quiet
+                        unit.log_level = self.unit.log_level
                     except TypeError as error:
                         self.unit.log_debug('handler construction failed:', error)
                         return
@@ -111,6 +113,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                             if test_unpack:
                                 item.get_data()
                                 test_unpack = False
+                            self.count += 1
                             yield item
                     except Exception as error:
                         if not self.fallback:
@@ -124,12 +127,20 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 elif verdict is None:
                     fallback.append(handler)
 
+        extracted = 0
+
         for handler in self.handlers():
             self.CustomPathSeparator = handler.CustomPathSeparator
             it = unpacker(handler, fallback=False)
             yield from it
             if it.success:
-                return
+                extracted += it.count
+            if extracted != 0:
+                break
+            self.log_debug('handler extracted zero items, continuing')
+
+        if extracted > 0:
+            return
 
         self.log_debug('fallback order:', lambda: ', '.join(h.name for h in fallback))
 
