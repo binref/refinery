@@ -30,9 +30,11 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    TYPE_CHECKING,
 )
 
-from collections.abc import Buffer
+if TYPE_CHECKING:
+    from collections.abc import Buffer
 
 T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
 C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
@@ -332,10 +334,9 @@ class MemoryFileMethods(Generic[T]):
             raise PermissionError
 
         try:
-            getbuf = cast(Buffer, _data).__buffer__
+            getbuf = cast('Buffer', _data).__buffer__
         except AttributeError:
-            assert not isinstance(_data, Buffer)
-            data = _data
+            data = cast('Iterable[int]', _data)
         else:
             data = getbuf(0)
 
