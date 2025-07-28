@@ -99,7 +99,7 @@ class ef(Unit):
                 out.truncate()
 
     def _absolute_path(self, path_string: str):
-        path = Path(path_string).absolute()
+        path = Path(path_string).resolve().absolute()
         if os.name == 'nt' and not path.parts[0].startswith('\\\\?\\'):
             # The pathlib glob method will simply fail mid-traversal if it attempts to descend into
             # a folder or to a file whose path exceeds MAX_PATH on Windows. As a workaround, we use
