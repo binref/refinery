@@ -21,7 +21,7 @@ class SampleStore:
     def __init__(self):
         self.wait = 0.1
 
-    def _download(self, sha256hash: str, timeout: int = 60):
+    def _download(self, sha256hash: str, timeout: int = 80):
         def tobytearray(r):
             if isinstance(r, bytearray):
                 return r
@@ -31,20 +31,20 @@ class SampleStore:
         backoff = 0
         req = F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true'
         while remaining > 0:
-            clock = time.time()
-            time.sleep(wait)
+            clock = time.thread_time()
             try:
                 with urllib.request.urlopen(req, timeout=remaining) as response:
                     encoded_sample = tobytearray(response.read())
             except (http.client.RemoteDisconnected, socket.timeout, urllib.error.HTTPError):
-                backoff += 1
+                time.sleep(wait)
                 wait *= 2
+                backoff += 1
             else:
                 if not backoff:
                     wait = max(0.1, wait / 2)
                 self.wait = wait
                 return encoded_sample
-            remaining -= time.time() - clock
+            remaining -= time.thread_time() - clock
         raise LookupError(F'Timeout exceeded while looking for {sha256hash}, backed off {backoff} times.')
 
     def get(self, sha256hash: str, key: Optional[str] = None):
