@@ -678,12 +678,9 @@ class LIEF(Executable):
         if self._type == ET.PE:
             v_lower += self.image_defined_base()
         v_lower = self.rebase_img_to_usr(v_lower)
-        try:
-            alignment = section.alignment
-        except AttributeError:
-            v_upper = v_lower + section.size
-        else:
-            v_upper = v_lower + align(alignment, section.size)
+        v_align = getattr(section, 'alignment', 1)
+        v__size = getattr(section, 'virtual_size', section.size)
+        v_upper = v_lower + align(v_align, v__size)
         name = self.ascii(section.name)
         if segment_name is not None:
             name = F'{segment_name}/{name}'
