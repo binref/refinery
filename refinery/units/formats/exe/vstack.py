@@ -581,7 +581,10 @@ class vstack(Unit):
                 state.ticks = timeout
 
             try:
-                emu.emulate(cursor, args.stop)
+                emu.emulate(
+                    emu.base_exe_to_emu(cursor),
+                    emu.base_exe_to_emu(args.stop),
+                )
             except EmulationError:
                 pass
 

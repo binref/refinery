@@ -20,6 +20,7 @@ from refinery.units import RefineryImportMissing
 if TYPE_CHECKING:
     from capstone import Cs
     from speakeasy import Speakeasy as Se
+    from speakeasy.common import CodeHook, Hook as SeHook
     from speakeasy.memmgr import MemMap
     from unicorn import Uc
     from icicle import Icicle as Ic
@@ -213,6 +214,40 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self.state = state
         self._reset()
 
+    def step(self, address: int, count: int = 1) -> int:
+        """
+        This method emulates `count` many instructions starting at `address`. Returns the current
+        instruction pointer value after stepping.
+        """
+        if not self._resetonce:
+            self.reset()
+        try:
+            self._enable_single_step()
+            for _ in range(count):
+                self.emulate(address)
+                address = self.ip
+            return address
+        finally:
+            self._disable_single_step()
+
+    def base_exe_to_emu(self, address: Optional[int]):
+        """
+        Rebase a virtual address from the base executable's address space to the one used by the
+        emulator.
+        """
+        if address is not None:
+            address = address - self.exe.base + self.base
+        return address
+
+    def base_emu_to_exe(self, address: Optional[int]):
+        """
+        Rebase a virtual address from the emulator's address space to the one used by the base
+        executable.
+        """
+        if address is not None:
+            address = address + self.exe.base - self.base
+        return address
+
     def emulate(self, start: int, end: Optional[int] = None):
         """
         Call this function to begin emulation. The `start` parameter is the address where execution
@@ -220,10 +255,6 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         if not self._resetonce:
             self.reset()
-        exe = self.exe
-        start = start - exe.base + self.base
-        if end is not None:
-            end = end - exe.base + self.base
         return self._emulate(start, end)
 
     def call(self, function: int):
@@ -313,6 +344,20 @@ class Emulator(ABC, Generic[_E, _R, _T]):
     def malloc(self, size: int) -> int:
         """
         Allocate (i.e. map) the given amount of memory in the emulator's memory space.
+        """
+        ...
+
+    @abstractmethod
+    def _enable_single_step(self):
+        """
+        Enable single stepping.
+        """
+        ...
+
+    @abstractmethod
+    def _disable_single_step(self):
+        """
+        Enable single stepping.
         """
         ...
 
@@ -526,11 +571,12 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         Disassemble a single instruction at the given address.
         """
-        ea = address - self.base + self.exe.base
+        if not self._resetonce:
+            self.reset()
         cs = self.disassembler()
         cs.detail = True
-        pa = self.exe.location_from_address(ea).physical.position
-        return next(cs.disasm(bytes(self.exe.data[pa:pa + 0x20]), address, 1))
+        data = self.mem_read(address, 0x20)
+        return next(cs.disasm(data, address, 1))
 
     @lru_cache
     def disassembler(self) -> Cs:
@@ -671,6 +717,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         }[self.exe.byte_order()]
 
         self.unicorn = uc.Uc(uc_arch, uc_mode)
+        self._single_step_hook = None
 
         self._map_segments()
         self._map_stack_and_heap()
@@ -687,6 +734,27 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         ]:
             if self.hooked(flag):
                 self.unicorn.hook_add(hook, callback, user_data=self.state)
+
+    class _singlestep:
+        def __init__(self):
+            self.stepped = False
+
+        def __call__(self, uc: Uc, *_, **kw):
+            if self.stepped:
+                self.stepped = False
+                uc.emu_stop()
+            else:
+                self.stepped = True
+
+    def _enable_single_step(self):
+        if self._single_step_hook is not None:
+            return
+        self._single_step_hook = self.unicorn.hook_add(uc.UC_HOOK_CODE, self._singlestep())
+
+    def _disable_single_step(self):
+        if hook := self._single_step_hook:
+            self.unicorn.hook_del(hook)
+            self._single_step_hook = None
 
     def _init(self):
         self._reg_by_name: Dict[str, Register[int]] = {}
@@ -762,7 +830,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
     icicle: Ic
 
     def _init(self):
-        ...
+        self._single_step = False
 
     def _reset(self):
         exe = self.exe
@@ -788,6 +856,12 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
 
         self._map_segments()
         self._map_stack_and_heap()
+
+    def _enable_single_step(self):
+        self._single_step = True
+
+    def _disable_single_step(self):
+        self._single_step = False
 
     def _emulate(self, start: int, end: Optional[int] = None):
         dasm = self.disassembler()
@@ -845,11 +919,11 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             perm = MP.ExecuteReadWrite
         return self.icicle.mem_map(address, size, perm)
 
-    def _set_register(self, reg: str, value: int) -> None:
-        return self.icicle.reg_write(reg, value)
+    def _set_register(self, register: str, v: int) -> None:
+        return self.icicle.reg_write(register, v)
 
-    def _get_register(self, reg: str) -> int:
-        return self.icicle.reg_read(reg)
+    def _get_register(self, register: str) -> int:
+        return self.icicle.reg_read(register)
 
     def mem_write(self, address: int, data: bytes):
         return self.icicle.mem_write(address, data)
@@ -868,6 +942,32 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
     def _init(self):
         self._regs: Dict[str, Register[str]] = {}
+
+    class _singlestep:
+        def __init__(self):
+            self.stepped = False
+
+        def __call__(self, se: Se, *_, **kw):
+            if self.stepped:
+                self.stepped = False
+                se.stop()
+            else:
+                self.stepped = True
+            return True
+
+    class _stackfix:
+        hook: Optional[CodeHook]
+
+        def __init__(self, parent: SpeakeasyEmulator):
+            self.hook = None
+            self.parent = parent
+
+        def __call__(self, base_emu: Se, address: int, size: int, ctx: list):
+            if hook := self.hook:
+                emu = self.parent
+                stack = emu.stack_region
+                emu.sp = stack.base + stack.size // 3
+                hook.disable()
 
     def _reset(self):
         exe = self.exe
@@ -891,10 +991,28 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             else:
                 self.base = emu.load_module(vf.path, data=db).get_base()
 
+        if emu.emu is None:
+            raise RuntimeError('emulator failed to initialize')
+
+        self._end_hook_s = None
+        self._end_hook_d = None
+
+        self._single_step_hook_s = emu.add_code_hook(self._singlestep())
+        self._single_step_hook_d = emu.add_dyn_code_hook(self._singlestep())
+        self._disable_single_step()
+
+        stackfix = self._stackfix(self)
+        stackfix.hook = emu.add_code_hook(stackfix)
+
         emu.emu.timeout = 0
+
+        # prevent memory hook from being overridden, this is a bug in speakeasy
+        emu.emu.add_interrupt_hook(cb=emu.emu._hook_interrupt)
+        emu.emu.builtin_hooks_set = True
 
         if self.hooked(Hook.CodeExecute):
             emu.add_code_hook(self.hook_code_execute, ctx=self.state)
+            emu.add_dyn_code_hook(self.hook_code_execute, ctx=self.state)
 
         if self.hooked(Hook.MemoryRead):
             emu.add_mem_read_hook(self.hook_mem_read)
@@ -907,6 +1025,22 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
         if self.hooked(Hook.ApiCall):
             emu.add_api_hook(self.hook_api_call, '*', '*')
+
+    def _enable_single_step(self):
+        hd = self._single_step_hook_d
+        hs = self._single_step_hook_s
+        if hd is None or hs is None:
+            raise RuntimeError('single stepping hooks failed to be installed')
+        hd.cb.stepped = False
+        hs.cb.stepped = False
+        hd.enable()
+        hs.enable()
+
+    def _disable_single_step(self):
+        if hook := self._single_step_hook_d:
+            hook.disable()
+        if hook := self._single_step_hook_s:
+            hook.disable()
 
     @property
     def stack_region(self):
@@ -953,42 +1087,87 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         stack.base = base
         stack.size = stack.size + self.alloc_size
 
+    class _stop:
+        hook: Optional[SeHook]
+        address: Optional[int]
+
+        def __init__(self, address: Optional[int] = None):
+            self.address = address
+            self.hook = None
+
+        def __call__(self, spky: Se, address: int, size: int, ctx: list):
+            if hook := self.hook:
+                if address == self.address:
+                    spky.stop()
+                    hook.disable()
+
+    _end_hook_s: Optional[_stop]
+    _end_hook_d: Optional[_stop]
+
+    def _remove_hook(self, hook: Optional[SeHook]):
+        if hook is None:
+            return
+        hook.emu_eng.hook_del(hook.handle)
+        emu = self.speakeasy.emu
+        assert emu is not None
+        for hooklist in emu.hooks.values():
+            assert isinstance(hooklist, list)
+            for k, h in enumerate(hooklist):
+                if h is hook:
+                    del hooklist[k]
+                    break
+
+    def _set_end(self, end: Optional[int]):
+        if h := self._end_hook_s:
+            self._remove_hook(h.hook)
+        if h := self._end_hook_d:
+            self._remove_hook(h.hook)
+        if end is None:
+            self._end_hook_s = None
+            self._end_hook_d = None
+        else:
+            self._end_hook_s = h = self._stop(end)
+            h.hook = self.speakeasy.add_code_hook(h, end, end + 1)
+            self._end_hook_d = h = self._stop(end)
+            h.hook = self.speakeasy.add_dyn_code_hook(h)
+
     def _emulate(self, start: int, end: Optional[int] = None):
-        emu = self.speakeasy
+        spk = self.speakeasy
+        inner = spk.emu
+        assert inner
+        self._set_end(end)
 
-        def stackfix(emu, address: int, size: int, ctx: list):
-            if not ctx:
-                stack = self.stack_region
-                self.sp = stack.base + stack.size // 3
-                ctx.append(True)
-            return True
-
-        emu.add_code_hook(stackfix, start, start, ctx=[])
-
-        if end is not None:
-            def _terminate(*_):
-                emu.stop()
-            emu.add_code_hook(_terminate, end, end + 1)
+        if inner.get_current_run():
+            return spk.resume(start)
 
         if self.exe.blob:
-            emu.run_shellcode(start)
+            offset = start - self.base
+            if offset < 0:
+                raise ValueError(F'invalid offset 0x{start:X} specified; base address is 0x{self.base:X}')
+            spk.run_shellcode(self.base, offset=offset)
         else:
-            inner = emu.emu
+
             inner.stack_base, stack_addr = inner.alloc_stack(self.stack_size)
             inner.set_func_args(inner.stack_base, inner.return_hook)
+
             run = se_profiler.Run()
             run.type = 'thread'
             run.start_addr = start
             run.instr_cnt = 0
             run.args = ()
+
             inner.add_run(run)
+
             if not (p := inner.init_container_process()):
                 p = se_objman.Process(self)
+
             inner.processes.append(p)
             inner.curr_process = p
             if mm := inner.get_address_map(start):
                 mm.set_process(inner.curr_process)
+
             t = se_objman.Thread(inner, stack_base=inner.stack_base, stack_commit=self.stack_size)
+
             inner.om.objects.update({t.address: t})
             inner.curr_process.threads.append(t)
             inner.curr_thread = t
