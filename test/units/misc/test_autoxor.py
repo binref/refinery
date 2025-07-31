@@ -38,3 +38,10 @@ class TestAutoXOR(TestUnitBase):
         self.assertEqual(test['method'], 'sub')
         self.assertEqual(test['key'], key)
         self.assertEqual(test, data)
+
+    def test_text_autoxor(self):
+        data = bytes.fromhex(
+            '55 69 68 72 21 71 73 6E 66 73 60 6C 21 62 60 6F 6F 6E 75 21 63 64'
+            '21 73 74 6F 21 68 6F 21 45 4E 52 21 6C 6E 65 64 2F')
+        self.assertEqual(data | self.load() | str, 
+            'This program cannot be run in DOS mode.')
