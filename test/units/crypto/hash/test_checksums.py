@@ -10,3 +10,6 @@ class TestChecksums(TestUnitBase):
 
     def test_adler32(self):
         self.assertEqual(self.ldu('adler32')(B'binary-refinery'), bytes.fromhex('2FEA0617'))
+
+    def test_djb2(self):
+        self.assertEqual(self.ldu('djb2')(b'Hello!'), bytes.fromhex('b7332fba'))
