@@ -110,7 +110,7 @@ class __unit_loader__:
 
     def save(self):
         try:
-            with cast(Path, self.path).open('wb') as out:
+            with cast('Path', self.path).open('wb') as out:
                 pickle.dump({'units': self.units, 'version': __version__}, out)
         except Exception:
             pass
