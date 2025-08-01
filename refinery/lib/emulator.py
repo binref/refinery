@@ -152,7 +152,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         if isinstance(data, Executable):
             exe = data
         try:
-            exe = Executable.Load(data)
+            exe = Executable.Load(data, base)
         except ValueError:
             exe = ExecutableCodeBlob(data, base, arch)
             raw = True
