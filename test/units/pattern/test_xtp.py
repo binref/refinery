@@ -228,3 +228,7 @@ class TestPatternExtractor(TestUnitBase):
             '49.56.250.80',
             '90.18.112.77',
         ])
+
+    def test_big_ocet_ipv4_extraction_near_version(self):
+        data = self.download_sample('5466ad49c055381bf00dc2b68297ac75f63cc17162dae7ee35e12c8cb4fa1a4b')
+        self.assertEqual(data | self.load(filter=2) | str, '167''.99''.80''.104')

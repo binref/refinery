@@ -237,19 +237,25 @@ class xtp(PatternExtractor):
         if name == indicators.ipv4.name:
             ocets = [int(x) for x in value.split(B'.')]
             if ocets.count(0) >= 3:
+                self.log_info(F'excluding ipv4 because it contains many zeros: {text}')
                 return None
             if self.args.filter > 2 and sum(ocets) < 10:
+                self.log_info(F'excluding ipv4 because of low value ocets: {text}')
                 return None
-            for area in (
-                bytes(data[pos - 20 : pos + 20]),
-                bytes(data[pos * 2 - 40 : pos * 2 + 40 : 2]),
-                bytes(data[pos * 2 - 41 : pos * 2 + 39 : 2]),
-            ):
-                if B'version' in area.lower():
-                    return None
+            if ocets[0] <= 5 * self.args.filter:
+                for area in (
+                    bytes(data[pos - 20 : pos + 20]),
+                    bytes(data[pos * 2 - 40 : pos * 2 + 40 : 2]),
+                    bytes(data[pos * 2 - 41 : pos * 2 + 39 : 2]),
+                ):
+                    check = area.lower()
+                    if B'version' in check or b'build' in check:
+                        self.log_info(F'excluding ipv4 because it might be a version: {text}')
+                        return None
             ip = ip_address(text)
             if not ip.is_global:
                 if self.args.filter >= 3 or not ip.is_private:
+                    self.log_info(F'excluding ipv4 because it is not global: {text}')
                     return None
         elif name in {
             indicators.url.name,
