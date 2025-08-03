@@ -44,7 +44,7 @@ class TestAutoDecompressor(TestUnitBase):
     def test_mangled_buffers(self):
         from refinery.units.compression.decompress import decompress
         unit = decompress()
-        for engine in unit.engines:
+        for engine in unit.engines.values():
             if not engine.is_reversible:
                 continue
             for k, buffer in enumerate(self.buffers, 1):
