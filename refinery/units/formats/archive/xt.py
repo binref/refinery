@@ -135,9 +135,9 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             yield from it
             if it.success:
                 extracted += it.count
-            if extracted != 0:
-                break
-            self.log_debug('handler extracted zero items, continuing')
+                if extracted != 0:
+                    break
+                self.log_debug('handler extracted zero items, continuing')
 
         if extracted > 0:
             return
