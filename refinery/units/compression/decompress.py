@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import ByteString, List, NamedTuple, Optional, Dict
+from typing import ByteString, NamedTuple, Optional, Dict
 
 from enum import IntFlag
 
 from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.types import INF
+from refinery.lib.tools import normalize_to_display
 
 from .ap import aplib
 from .blz import blz
@@ -25,6 +26,7 @@ from .lzw import lzw
 from .nrv import nrv2b, nrv2d, nrv2e
 from .zstd import zstd
 from .pkw import pkw
+from .mscf import mscf, MODE as MSCF_MODE
 
 
 _NO_PREFIX = {'pkw'}
@@ -112,38 +114,48 @@ class decompress(Unit):
             max_ratio=max_ratio,
             strict_limits=strict_limits,
         )
-        self.engines: List[Unit] = [
-            engine.assemble() for engine in [
-                pkw,
-                zstd,
-                szdd,
-                bz2,
-                zl,
-                lzf,
-                lzma,
-                lzw,
-                jcalg,
-                lzo,
-                aplib,
-                qlz,
-                brotli,
-                blz,
-                lzjb,
-                lz4,
-                lznt1,
-                nrv2e,
-                nrv2d,
-                nrv2b
-            ]
-        ]
-        for engine in self.engines:
-            engine.log_detach()
+        self.engines: Dict[str, Unit] = {}
+        for mode in (
+            MSCF_MODE.XPRESS,
+            MSCF_MODE.XPRESS_HUFF,
+        ):
+            mode = normalize_to_display(mode.name).casefold()
+            unit = mscf.assemble(mode)
+            self.engines[F'{unit.name}[{mode}]'] = unit
+        for engine in [
+            mscf,
+            pkw,
+            zstd,
+            szdd,
+            bz2,
+            zl,
+            lzf,
+            lzma,
+            lzw,
+            jcalg,
+            lzo,
+            aplib,
+            qlz,
+            brotli,
+            blz,
+            lzjb,
+            lz4,
+            lznt1,
+            nrv2e,
+            nrv2d,
+            nrv2b
+        ]:
+            unit: Unit = engine.assemble()
+            self.engines[unit.name] = unit
+        for unit in self.engines.values():
+            unit.log_detach()
 
     def process(self, data):
 
         data = memoryview(data)
 
         class Decompression(NamedTuple):
+            method: str
             engine: Unit
             rating: _R
             result: Optional[ByteString] = None
@@ -152,11 +164,11 @@ class decompress(Unit):
 
             def __str__(self):
                 status = self.rating.summary
-                engine = self.engine.name
+                method = self.method
                 prefix = self.prefix
                 if prefix is not None:
                     prefix = F'0x{prefix:02X}'
-                return F'prefix={prefix}, cutoff=0x{self.cutoff:02X}, [{status}] engine={engine}'
+                return F'prefix={prefix}, cutoff=0x{self.cutoff:02X}, [{status}] method={method}'
 
             def __len__(self):
                 return len(self.result)
@@ -171,10 +183,6 @@ class decompress(Unit):
             def unmodified(self):
                 return self.prefix is None and self.cutoff == 0
 
-            @property
-            def method(self):
-                return self.engine.name
-
         if self.args.prepend:
             buffer = bytearray(1 + len(data))
             buffer[1:] = data
@@ -184,7 +192,7 @@ class decompress(Unit):
         def best_current_rating():
             return max(best_by_rating, default=_R.InvalidData)
 
-        def decompress(engine: Unit, cutoff: int = 0, prefix: Optional[int] = None, careful: bool = False):
+        def decompress(method: str, engine: Unit, cutoff: int = 0, prefix: Optional[int] = None, careful: bool = False):
             ingest = data[cutoff:]
             rating = _R.ValidData
             if cutoff == 0 and prefix is None and not careful:
@@ -196,7 +204,7 @@ class decompress(Unit):
             if is_handled is True:
                 rating |= _R.KnownFormat
             if is_handled is False:
-                return Decompression(engine, _R.InvalidData, None, cutoff, prefix)
+                return Decompression(method, engine, _R.InvalidData, None, cutoff, prefix)
             try:
                 result = next(engine.act(ingest))
             except RefineryPartialResult as pr:
@@ -206,7 +214,7 @@ class decompress(Unit):
                 result = None
             else:
                 rating |= _R.Successful
-            return Decompression(engine, rating, result, cutoff, prefix)
+            return Decompression(method, engine, rating, result, cutoff, prefix)
 
         def update(new: Decompression, discard_if_too_good=False):
             ratio = new.ratio
@@ -242,16 +250,16 @@ class decompress(Unit):
                 self.log_debug(lambda:
                     F'[reject] [{brief}] [q={q:07.4f}] compression ratio {ratio:07.4f}% with: {new!s}')
 
-        for engine in self.engines:
-            self.log_debug(F'attempting engine: {engine.name}')
+        for method, engine in self.engines.items():
+            self.log_debug(F'attempting engine: {method}')
             careful = isinstance(engine, (lznt1, lzf, lzjb))
             for t in range(self.args.tolerance + 1):
                 if best_current_rating() >= _R.Successful and careful and t > 0:
                     break
-                update(decompress(engine, t, None, careful), careful)
-            if self.args.prepend and engine.name not in _NO_PREFIX and best_current_rating() < _R.Successful:
+                update(decompress(method, engine, t, None, careful), careful)
+            if self.args.prepend and method not in _NO_PREFIX and best_current_rating() < _R.Successful:
                 for p in range(0x100):
-                    update(decompress(engine, 0, p, careful), careful)
+                    update(decompress(method, engine, 0, p, careful), careful)
 
         for r in sorted(best_by_rating, reverse=True):
             if dc := best_by_rating[r]:
