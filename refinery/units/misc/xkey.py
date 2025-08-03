@@ -121,22 +121,23 @@ class xkey(Unit):
             'XML'           : (B'<?xml version="'),
             'Ace'           : (B'**ACE**'),
         },
-        range(0x3C, 0x41): {
+        range(0x36, 0x41): {
             'PEStub': (
                 B'\0\x0E\x1F\xBA\x0E\x00\xB4\x09\xCD\x21\xB8\x01\x4C\xCD\x21'
                 B'This program cannot be run in DOS mode.\r'
-            )
+            ),
+            'PEDelphiStub': (
+                B'\0\xBA\x10\x00\x0E\x1F\xB4\x09\xCD\x21\xB8\x01\x4C\xCD\x21\x90\x90'
+                B'This program must be run under Win', (B'32', B'64'), B'\x0D\x0A'
+            ),
         },
         range(0x48, 0x60): {
-            'PEStubMsg'     : B'This program cannot be run in DOS mode.\r',
-            'PEDelphiStub'  : (B'This program must be run under Win', (B'32', B'64')),
+            'PEStubMsg'      : (B'This program cannot be run in DOS mode.\r'),
+            'PEDelphiStubMsg': (B'This program must be run under Win', (B'32', B'64'), B'\x0D\x0A'),
         },
         range(0xD0, 0xD1): {
             'Tar'           : (B'\x00' * 0x30 + B'ustar', (B'\x20\x20\x00', B'\x00\x30\x30')),
         },
-        # range(0x300): {
-        #     'EmailReceived' : (B'\nReceived:\x20from\x20'),
-        # },
     }
 
     _ENC_ALPHABETS = [
@@ -158,7 +159,7 @@ class xkey(Unit):
         freq = 2
 
     class _result(NamedTuple):
-        key: memoryview
+        key: bytes
         how: xkey._rt
         xor: Optional[bool] = None
 
@@ -243,21 +244,18 @@ class xkey(Unit):
                 yield self._result(key, self._rt.crib, xor)
 
         hist = {}
-        keys = set()
+        freq = []
 
         for xor in (True, False):
             result = self._process_freq(view, (start, stop, step), alphabets, xor, hist)
-            if result is None:
+            if result is None or not result.key:
                 continue
-            key, via_alphabet = result
-            if key is None:
+            if result.how == self._rt.freq:
+                freq.append(result)
                 continue
-            if via_alphabet:
-                yield self._result(key, self._rt.alph, xor)
-            keys.add(key)
+            yield result
 
-        if keys:
-            yield self._result(next(iter(keys)), self._rt.freq)
+        yield from freq
 
     def _process_crib(
         self,
@@ -332,7 +330,7 @@ class xkey(Unit):
                     if len(keys) == 1:
                         self.log_debug(F'discovered plaintext alphabet of size 0x{base:02X} at {keylen}')
                         alphabet, key = keys.popitem()
-                        return bytes(key), True
+                        return self._result(bytes(key), self._rt.alph, xor)
 
             if not first or not self.args.freq:
                 continue
@@ -351,4 +349,5 @@ class xkey(Unit):
             else:
                 self.log_debug(logmsg)
 
-        return guess, False
+        if guess is not None:
+            return self._result(guess, self._rt.freq)
