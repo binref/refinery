@@ -257,7 +257,7 @@ class FileMagicInfo:
 
     @property
     def blob(self):
-        return self.description.lower() == 'data'
+        return self.description.lower() == 'data' or self.extension == 'bin'
 
     def __init__(self, data, default='bin', decompress=True):
         if not magic:
