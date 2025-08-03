@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 _T = TypeVar('_T')
 
 if TYPE_CHECKING:
-    from refinery.units import Executable, Unit
+    from refinery.units import Unit
     from types import ModuleType
 
 
@@ -64,7 +64,7 @@ def get_all_entry_points() -> Generator[Type[Unit], None, None]:
 
 
 @functools.lru_cache(maxsize=1, typed=True)
-def get_entry_point_map() -> Dict[str, Executable]:
+def get_entry_point_map() -> Dict[str, Type[Unit]]:
     """
     Returns a dictionary of all available unit names, mapping to the class that implements it.
     The dictionary is cached.
@@ -72,7 +72,7 @@ def get_entry_point_map() -> Dict[str, Executable]:
     return {exe.name: exe for exe in get_all_entry_points()}
 
 
-def get_entry_point(name: str) -> Executable:
+def get_entry_point(name: str) -> Type[Unit]:
     """
     Retrieve a refinery entry point by name.
     """
@@ -95,7 +95,7 @@ def get_entry_point(name: str) -> Executable:
         raise EntryNotFound(F'no entry point named "{name}" was found.')
 
 
-def resolve(name: str) -> Executable:
+def resolve(name: str) -> Type[Unit]:
     """
     Attempts to import the unit with the given name from the refinery package
     and falls back to using `refinery.lib.loader.get_entry_point` if this fails.
