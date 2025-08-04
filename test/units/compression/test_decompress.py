@@ -44,21 +44,21 @@ class TestAutoDecompressor(TestUnitBase):
     def test_mangled_buffers(self):
         from refinery.units.compression.decompress import decompress
         unit = decompress()
-        for engine in unit.engines.values():
+        for name, engine in unit.engines.items():
             if not engine.is_reversible:
                 continue
             for k, buffer in enumerate(self.buffers, 1):
                 try:
                     compressed = next(buffer | -engine)
                 except Exception as E:
-                    self.assertTrue(False, F'Exception while compressing buffer {k} with {engine.name}: {E!s}')
+                    self.assertTrue(False, F'Exception while compressing buffer {k} with {name}: {E!s}')
                     continue
-                for m, sample in enumerate(self._mangle(compressed, engine.name), 1):
+                for m, sample in enumerate(self._mangle(compressed, name), 1):
                     start = time.process_time()
                     result = next(sample | unit)
                     delta = time.process_time() - start
-                    self.assertLessEqual(delta, 20, F'buffer {engine.name}({k}.{m}) took {delta} seconds')
+                    self.assertLessEqual(delta, 20, F'buffer {name}({k}.{m}) took {delta} seconds')
                     method = result.meta.get("method", "uncompressed")
-                    self.assertEqual(method, engine.name, F'buffer {engine.name}({k}.{m}) incorrectly identified as {method}')
+                    self.assertEqual(method, name, F'buffer {name}({k}.{m}) incorrectly identified as {method}')
                     _assert = self.assertEqual if m == 1 else self.assertIn
-                    _assert(buffer, result, msg=F'buffer {engine.name}({k}.{m}) did not decompress')
+                    _assert(buffer, result, msg=F'buffer {name}({k}.{m}) did not decompress')
