@@ -146,7 +146,8 @@ class decompress(Unit):
             nrv2b
         ]:
             unit: Unit = engine.assemble()
-            self.engines[unit.name] = unit
+            _, _, name = unit.name.rpartition('auto-decompress-')
+            self.engines[name] = unit
         for unit in self.engines.values():
             unit.log_detach()
 
