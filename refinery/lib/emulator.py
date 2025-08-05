@@ -665,6 +665,7 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
                 continue
             base = self.align(segment.virtual.lower, down=True)
             size = self.align(segment.virtual.upper) - base
+            size = max(size, len(segment.physical))
             mem.addi(base, size)
         it = iter(mem)
         for interval in it:
