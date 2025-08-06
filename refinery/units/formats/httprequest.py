@@ -73,7 +73,10 @@ class httprequest(Unit):
             body = path.partition(B'?')[1]
         if method == b'POST' and (ct := headers.get('content-type', None)):
             ct, _ = _parse_header(ct)
-            mode = _Fmt(ct)
+            try:
+                mode = _Fmt(ct)
+            except ValueError:
+                mode = _Fmt.RawBody
 
         def chunks(upload: Dict[Union[str, bytes], List[bytes]]):
             for key, values in upload.items():
