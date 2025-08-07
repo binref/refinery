@@ -438,6 +438,18 @@ class Executable(ABC):
         """
         return self.lookup_location(offset, LT.PHYSICAL)
 
+    def offset_to_address(self, offset: int):
+        """
+        Return the virtual address corresponding to a file offset.
+        """
+        return self.location_from_offset(offset).virtual.position
+
+    def address_to_offset(self, address: int):
+        """
+        Return the virtual address corresponding to a file offset.
+        """
+        return self.location_from_address(address).physical.position
+
     def image_defined_size(self) -> int:
         """
         Returns the size of the executable on disk.
