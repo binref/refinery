@@ -94,7 +94,10 @@ class tokenize(pattern):
     def __init__(self, token, sep, bound='\\b', unique_sep=False, sep_ignores_whitespace=True, **kwargs):
         if unique_sep:
             if sep_ignores_whitespace:
-                p = R'(?:{b}{t}{b}\s{{0,50}}(?P<__sep__>{s})\s{{0,50}})(?:(?:{b}{t}{b}\s{{0,50}}(?P=__sep__)\s{{0,50}})+{b}{t}{b}|{b}{t}{b})'
+                p = (
+                    R'(?:{b}{t}{b}\s{{0,50}}(?P<__sep__>{s})\s{{0,50}})'
+                    R'(?:(?:{b}{t}{b}\s{{0,50}}(?P=__sep__)\s{{0,50}})+{b}{t}{b}|{b}{t}{b})'
+                )
             else:
                 p = R'(?:{b}{t}{b}(?P<__sep__>{s}))(?:(?:{b}{t}{b}(?P=__sep__))+{b}{t}{b}|{b}{t}{b})'
         else:
