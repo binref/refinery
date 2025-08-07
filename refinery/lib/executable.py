@@ -18,7 +18,7 @@ from typing import NamedTuple, TYPE_CHECKING
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from uuid import uuid4
+from uuid import uuid4, UUID
 from functools import lru_cache
 
 from refinery.lib import lief
@@ -110,7 +110,9 @@ class Range(NamedTuple):
     def __len__(self):
         return self.upper - self.lower
 
-    def __contains__(self, addr: int):
+    def __contains__(self, addr: object):
+        if not isinstance(addr, int):
+            raise TypeError
         return self.lower <= addr < self.upper
 
     def __str__(self):
@@ -162,7 +164,7 @@ class ArchItem(NamedTuple):
     An item of the `refinery.lib.executable.Arch` enumeration. It is used to store the register
     size in bits for a given architecture.
     """
-    id: int
+    id: UUID
     pointer_size: int
 
     @classmethod
@@ -593,6 +595,7 @@ class Executable(ABC):
         }[self.byte_order()]
 
         return cs.Cs(cs_arch, cs_mode)
+
 
 class ExecutableCodeBlob(Executable):
     """
