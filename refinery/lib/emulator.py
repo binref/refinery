@@ -19,7 +19,6 @@ from refinery.lib.exceptions import MissingModule
 
 if TYPE_CHECKING:
     from capstone import Cs
-    from capstone.x86 import X86Op
     from speakeasy import Speakeasy as Se
     from speakeasy.common import CodeHook, Hook as SeHook
     from speakeasy.memmgr import MemMap
