@@ -94,9 +94,9 @@ class tokenize(pattern):
     def __init__(self, token, sep, bound='\\b', unique_sep=False, sep_ignores_whitespace=True, **kwargs):
         if unique_sep:
             if sep_ignores_whitespace:
-                p = R'(?:{b}{t}{b}\s{{0,50}}(?P<__sep>{s})\s{{0,50}})(?:(?:{b}{t}{b}\s{{0,50}}(?P=__sep)\s{{0,50}})+{b}{t}{b}|{b}{t}{b})'
+                p = R'(?:{b}{t}{b}\s{{0,50}}(?P<__sep__>{s})\s{{0,50}})(?:(?:{b}{t}{b}\s{{0,50}}(?P=__sep__)\s{{0,50}})+{b}{t}{b}|{b}{t}{b})'
             else:
-                p = R'(?:{b}{t}{b}(?P<__sep>{s}))(?:(?:{b}{t}{b}(?P=__sep))+{b}{t}{b}|{b}{t}{b})'
+                p = R'(?:{b}{t}{b}(?P<__sep__>{s}))(?:(?:{b}{t}{b}(?P=__sep__))+{b}{t}{b}|{b}{t}{b})'
         else:
             p = R'(?:{b}{t}{b}{s})+(?:{b}{t}{b})'
         pattern.__init__(self, p.format(s=sep, b=bound, t=token), **kwargs)
@@ -258,15 +258,15 @@ _pattern_json = (
 _pattern_wshenc = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
 _part_url_credentials = (
-    R'(?:(?P<url_username>[^"\'\s\x00-\x20\x7E-\xFF]{1,256})?'
-    R'(?::(?P<url_password>[^"\'\s\x00-\x20\x7E-\xFF]{0,256})?)?@)?'
+    R'(?:([^"\'\s\x00-\x20\x7E-\xFF]{1,256})?'
+    R'(?::([^"\'\s\x00-\x20\x7E-\xFF]{0,256})?)?@)?'
 )
-_prefix_serrated_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20}:)?\/\/)' + _part_url_credentials
-_prefix_defanged_url = R'(?P<url_scheme>(?P<url_protocol>[a-zA-Z]{2,20}(?:\[:\]|:))?\/\/)' + _part_url_credentials
-_suffix_combined_url = R'(?P<url_path>[/?#](?:[#/=:;$!?&.,\w\+\%\-\*\'~@()](?![a-zA-Z]{2,20}://))*)?'
+_prefix_serrated_url = R'(([a-zA-Z]{2,20}:)?\/\/)' + _part_url_credentials
+_prefix_defanged_url = R'(([a-zA-Z]{2,20}(?:\[:\]|:))?\/\/)' + _part_url_credentials
+_suffix_combined_url = R'([/?#](?:[#/=:;$!?&.,\w\+\%\-\*\'~@()](?![a-zA-Z]{2,20}://))*)?'
 
-_pattern_serrated_url = F'{_prefix_serrated_url}(?P<url_host>{_pattern_serrated_hostname}){_suffix_combined_url}'
-_pattern_defanged_url = F'{_prefix_defanged_url}(?P<url_host>{_pattern_defanged_hostname}){_suffix_combined_url}'
+_pattern_serrated_url = F'{_prefix_serrated_url}({_pattern_serrated_hostname}){_suffix_combined_url}'
+_pattern_defanged_url = F'{_prefix_defanged_url}({_pattern_defanged_hostname}){_suffix_combined_url}'
 
 _pattern_email = R'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{})'.format(_pattern_serrated_domain)
 _pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
@@ -276,7 +276,7 @@ _pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=_pattern_pathpart_nos
 _pattern_nix_path_element = R'(?:{n} ){{0,1}}{n}'.format(n=_pattern_pathpart_nospace)
 _pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]*%'
 
-_pattern_win_path_template = R'(?:{s}|{p}|)(?P<__pathsep>[\\\/])(?:{p}(?P=__pathsep))*{p}(?:(?P=__pathsep)|\b)'
+_pattern_win_path_template = R'(?:{s}|{p}|)(?P<__pathsep__>[\\\/])(?:{p}(?P=__pathsep__))*{p}(?:(?P=__pathsep__)|\b)'
 _pattern_win_root = '|'.join([
     _pattern_win_env_variable,    # environment variable
     R'[A-Za-z]:',                 # drive letter with colon

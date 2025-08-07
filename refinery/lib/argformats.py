@@ -1498,11 +1498,14 @@ class DelayedRegexpArgument(DelayedArgument):
         """
         if '(?' in expression:
             from refinery.lib.patterns import formats, indicators
+            tick = 0
 
-            def replace_known_pattern(match):
-                name = match[1]
-                return '(?:{})'.format(formats.get(
-                    name, indicators.get(name, match[0])))
+            def replace_known_pattern(match: re.Match[str]):
+                nonlocal tick
+                tick += 1
+                pattern = str(formats.get(match[1], indicators.get(match[1], match[0])))
+                pattern = re.sub(r'(?<=\(\?P[<=])__(\w+)__', F'__\\1_{tick}__', pattern)
+                return '(?:{})'.format(pattern)
 
             def replace_variable_assignment(match):
                 return F'(?P<{match[1]}>'
@@ -1511,8 +1514,8 @@ class DelayedRegexpArgument(DelayedArgument):
                 replace_variable_assignment, expression)
             expression = re.sub(
                 R'\(\?\?({}|{})\)'.format(
-                    '|'.join(p.name for p in formats),
-                    '|'.join(p.name for p in indicators)
+                    '|'.join(re.escape(p.name) for p in formats),
+                    '|'.join(re.escape(p.name) for p in indicators)
                 ),
                 replace_known_pattern,
                 expression
