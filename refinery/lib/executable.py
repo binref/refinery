@@ -19,15 +19,24 @@ from typing import NamedTuple, TYPE_CHECKING
 from abc import ABC, abstractmethod
 from enum import Enum
 from uuid import uuid4
+from functools import lru_cache
 
 from refinery.lib import lief
 from refinery.lib.types import INF, ByteStr
+from refinery.lib.exceptions import MissingModule
+
+try:
+    import capstone as cs
+except ImportError:
+    cs = MissingModule('capstone')
 
 if TYPE_CHECKING:
     from lief.ELF import Binary as ELFBinary
     from lief.MachO import Binary as MachOBinary
     from lief.MachO import FatBinary as MachOFatBinary
     from lief.PE import Binary as PEBinary
+
+    from capstone import Cs
 
     from typing import (
         ClassVar,
@@ -550,6 +559,40 @@ class Executable(ABC):
                 name = F'synthesized/.zeros-{gap.lower:08X}'
             yield Section(name, gap, Range(v_lower, v_upper), True)
 
+    def disassemble_instruction(self, address: int):
+        """
+        Disassemble a single instruction at the given address.
+        """
+        cs = self.disassembler()
+        cs.detail = True
+        data = self[address:address + 0x20]
+        return next(cs.disasm(data, address, 1))
+
+    @lru_cache
+    def disassembler(self) -> Cs:
+        """
+        Create a capstone disassembler that matches the emulator's architecture.
+        """
+        cs_arch, cs_mode = {
+            Arch.X32     : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
+            Arch.X64     : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa
+            Arch.ARM32   : (cs.CS_ARCH_ARM,   cs.CS_MODE_ARM),    # noqa
+            Arch.ARM64   : (cs.CS_ARCH_ARM,   cs.CS_MODE_THUMB),  # noqa
+            Arch.MIPS16  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_16),     # noqa
+            Arch.MIPS32  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_32),     # noqa
+            Arch.MIPS64  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_64),     # noqa
+            Arch.PPC32   : (cs.CS_ARCH_PPC,   cs.CS_MODE_32),     # noqa
+            Arch.PPC64   : (cs.CS_ARCH_PPC,   cs.CS_MODE_64),     # noqa
+            Arch.SPARC32 : (cs.CS_ARCH_SPARC, cs.CS_MODE_32),     # noqa
+            Arch.SPARC64 : (cs.CS_ARCH_SPARC, cs.CS_MODE_V9),     # noqa
+        }[self.arch()]
+
+        cs_mode |= {
+            BO.BE: cs.CS_MODE_BIG_ENDIAN,
+            BO.LE: cs.CS_MODE_LITTLE_ENDIAN,
+        }[self.byte_order()]
+
+        return cs.Cs(cs_arch, cs_mode)
 
 class ExecutableCodeBlob(Executable):
     """

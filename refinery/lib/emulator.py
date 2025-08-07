@@ -9,16 +9,17 @@ from typing import TYPE_CHECKING
 
 from abc import ABC, abstractmethod
 from enum import IntFlag
-from functools import lru_cache, cached_property, partial
+from functools import cached_property, partial
 
 from refinery.lib.executable import align, Arch, ET, BO, Executable, ExecutableCodeBlob
 from refinery.lib.tools import NoLogging
 from refinery.lib.vfs import VirtualFileSystem
 from refinery.lib.intervals import IntIntervalUnion
-from refinery.units import RefineryImportMissing
+from refinery.lib.exceptions import MissingModule
 
 if TYPE_CHECKING:
     from capstone import Cs
+    from capstone.x86 import X86Op
     from speakeasy import Speakeasy as Se
     from speakeasy.common import CodeHook, Hook as SeHook
     from speakeasy.memmgr import MemMap
@@ -34,21 +35,6 @@ else:
 _T = TypeVar('_T')
 _E = TypeVar('_E')
 _R = TypeVar('_R')
-
-
-class MissingModule:
-    """
-    This class can wrap a module import that is currently missing. If any attribute of the missing
-    module is accessed, it raises `refinery.units.RefineryImportMissing`.
-    """
-    def __init__(self, name, dist=None):
-        self.name = name
-        self.dist = dist or name
-
-    def __getattr__(self, key: str):
-        if key.startswith('__') and key.endswith('__'):
-            raise AttributeError(key)
-        raise RefineryImportMissing(self.name, self.dist)
 
 
 try:
@@ -573,36 +559,10 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         if not self._resetonce:
             self.reset()
-        cs = self.disassembler()
+        cs = self.exe.disassembler()
         cs.detail = True
         data = self.mem_read(address, 0x20)
         return next(cs.disasm(data, address, 1))
-
-    @lru_cache
-    def disassembler(self) -> Cs:
-        """
-        Create a capstone disassembler that matches the emulator's architecture.
-        """
-        cs_arch, cs_mode = {
-            Arch.X32     : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
-            Arch.X64     : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa
-            Arch.ARM32   : (cs.CS_ARCH_ARM,   cs.CS_MODE_ARM),    # noqa
-            Arch.ARM64   : (cs.CS_ARCH_ARM,   cs.CS_MODE_THUMB),  # noqa
-            Arch.MIPS16  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_16),     # noqa
-            Arch.MIPS32  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_32),     # noqa
-            Arch.MIPS64  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_64),     # noqa
-            Arch.PPC32   : (cs.CS_ARCH_PPC,   cs.CS_MODE_32),     # noqa
-            Arch.PPC64   : (cs.CS_ARCH_PPC,   cs.CS_MODE_64),     # noqa
-            Arch.SPARC32 : (cs.CS_ARCH_SPARC, cs.CS_MODE_32),     # noqa
-            Arch.SPARC64 : (cs.CS_ARCH_SPARC, cs.CS_MODE_V9),     # noqa
-        }[self.exe.arch()]
-
-        cs_mode |= {
-            BO.BE: cs.CS_MODE_BIG_ENDIAN,
-            BO.LE: cs.CS_MODE_LITTLE_ENDIAN,
-        }[self.exe.byte_order()]
-
-        return cs.Cs(cs_arch, cs_mode)
 
     def general_purpose_registers(self):
         """
