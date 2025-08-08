@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.27 - bugfix release
+
 ## Version 0.8.26
 - The `djb2` unit was added for computing the DJB2 hash.
 - The `mscf` decompression algorithms were added to the universal decompressor.
