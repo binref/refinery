@@ -51,7 +51,7 @@ class XXTEA(TEABase):
 
 class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
 
-    block_size: int = 8
+    block_size: int = 4
 
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False, swap=False,
