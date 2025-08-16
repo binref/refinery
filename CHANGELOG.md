@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.8.28
+- Adds the `pbuf` unit to decode ProtoBuf messages heuristically.
+
 ## Version 0.8.27 - bugfix release
 
 ## Version 0.8.26
