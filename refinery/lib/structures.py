@@ -770,7 +770,7 @@ class StructReader(MemoryFile[T]):
             if not b & 0x80:
                 return value
             if shift > max_bits > 0:
-                raise RuntimeError('Maximum bits were exceeded by encoded integer.')
+                raise OverflowError('Maximum bits were exceeded by encoded integer.')
 
 
 class StructMeta(type):
