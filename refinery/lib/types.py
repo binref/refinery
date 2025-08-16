@@ -55,13 +55,13 @@ class Singleton(type):
         qualname = F'__singleton_{name}'
 
         namespace.setdefault('__repr__', __repr__)
+        namespace.setdefault('__call__', __call__)
 
         namespace.update(
             __new__=__new__,
             __slots__=(),
             __getstate__=__getstate__,
             __setstate__=__setstate__,
-            __call__=__call__,
             __qualname__=qualname
         )
         singleton = type.__new__(cls, name, bases, namespace)

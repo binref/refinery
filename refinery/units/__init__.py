@@ -200,7 +200,7 @@ from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.frame import generate_frame_header, Framed, Chunk, MAGIC, MSIZE
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
-from refinery.lib.types import ByteStr, Singleton
+from refinery.lib.types import ByteStr
 
 from refinery.lib.exceptions import (
     RefineryCriticalException,
@@ -898,13 +898,16 @@ def _UnitFilterBoilerplate(
     return peekfilter
 
 
-class MissingFunction(metaclass=Singleton):
+class MissingFunction:
     """
     A singleton class that represents a missing function. Used internally to
     indicate that a unit does not implement a reverse operation.
     """
+    def __init__(self, *_):
+        pass
+
     def __call__(*_, **__):
-        raise NotImplementedError
+        raise NotImplementedError('A non-invertible unit was operated in reverse.')
 
 
 class Executable(ABCMeta):
@@ -967,7 +970,7 @@ class Executable(ABCMeta):
                     old = nmspc[method]
                 except KeyError:
                     continue
-                if old is MissingFunction:
+                if isinstance(old, MissingFunction):
                     continue
                 if getattr(old, '__isabstractmethod__', False):
                     continue
@@ -986,7 +989,7 @@ class Executable(ABCMeta):
                 except AttributeError:
                     pass
             else:
-                nmspc.setdefault('reverse', MissingFunction)
+                nmspc.setdefault('reverse', MissingFunction())
             bases = bases + (Entry,)
         nmspc.setdefault('__doc__', '')
         return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
@@ -1102,7 +1105,7 @@ class Executable(ABCMeta):
         this member function implements the inverse of `refinery.units.Unit.process`.
         """
         r = cast(Type[Unit], cls).reverse
-        if r is MissingFunction:
+        if isinstance(r, MissingFunction):
             return False
         return not getattr(r, '__isabstractmethod__', False)
 
@@ -1265,7 +1268,7 @@ class UnitBase(metaclass=Executable, abstract=True):
         the unit processes a given chunk of binary data.
         """
 
-    @MissingFunction()
+    @MissingFunction
     def reverse(self, data: ByteStr) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
         """
         If this routine is overridden by children of `refinery.units.Unit`, then it must
