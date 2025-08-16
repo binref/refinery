@@ -714,7 +714,7 @@ class Arg(Argument):
                     except Exception:
                         symbols = False
                 except Exception:
-                    pass
+                    raise
                 else:
                     break
 
