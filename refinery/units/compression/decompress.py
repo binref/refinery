@@ -172,6 +172,8 @@ class decompress(Unit):
                 return F'prefix={prefix}, cutoff=0x{self.cutoff:02X}, [{status}] method={method}'
 
             def __len__(self):
+                if not self.result:
+                    return 0
                 return len(self.result)
 
             @property
