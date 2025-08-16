@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from refinery.units.formats.pe.dotnet import Arg, JSONEncoderUnit
+from refinery.units import Arg
+from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
 from refinery.lib.dotnet.header import DotNetHeader
 
 
-class dnhdr(JSONEncoderUnit):
+class dnhdr(DotNetJSONEncoderUnit):
     """
     Expects data that has been formatted with the `BinaryFormatter` class. The
     output is a representation of the deserialized data in JSON format.
@@ -12,9 +13,9 @@ class dnhdr(JSONEncoderUnit):
     def __init__(
         self,
         resources: Arg.Switch('-r', '--resources', help='Also parse .NET resources.') = False,
-        encode=None, digest=None
+        encode=None, digest=None, arrays=False,
     ):
-        super().__init__(encode=encode, digest=digest, resources=resources)
+        super().__init__(encode=encode, digest=digest, arrays=arrays, resources=resources)
 
     def process(self, data):
         dn = DotNetHeader(data, parse_resources=self.args.resources)

@@ -19,6 +19,8 @@ from refinery.units import Arg, Unit, RefineryPartialResult, RefineryPotentialUs
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
 from refinery.lib.xml import XMLNodeBase
 from refinery.lib.tools import exception_to_string
+from refinery.lib.json import BytesAsArrayEncoder, BytesAsStringEncoder
+from refinery.lib.loader import load
 
 
 def pathspec(expression):
@@ -403,3 +405,48 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
                 return name
 
         return path_builder
+
+
+class JSONEncoderUnit(Unit, abstract=True):
+    """
+    An abstract unit that provides the interface for displaying parsed data as JSON. By default,
+    binary data is converted to latin1 strings.
+    """
+
+    EncoderBase = BytesAsStringEncoder
+
+    def __init__(
+        self,
+        encode: Arg.String('-e', group='BIN', metavar='U', help=(
+            'Select an encoder unit used to represent binary data in the JSON output. This unit '
+            'must be reversible and produce UTF8 encoded string output when operated in reverse.'
+            ' Common examples are hex and b64.')) = None,
+        digest: Arg.String('-d', group='BIN', metavar='U', help=(
+            'Select a hashing unit to digest all byte strings: Instead of the data, only the hash '
+            'will be displayed.')) = None,
+        arrays: Arg.Switch('-a', group='BIN', help=(
+            'Encode all byte strings as integer arrays. These arrays will have unsigned integer '
+            'entires between 0 and 255.')) = False,
+        **keywords
+    ):
+        if sum(1 for x in (encode, digest, arrays) if x) > 1:
+            raise ValueError('Can only set one option for byte string encoding.')
+        super().__init__(encode=encode, digest=digest, arrays=arrays, **keywords)
+
+    def to_json(self, obj) -> bytes:
+        def UnitEncoderFactory(unit: Unit):
+            class Encoder(self.EncoderBase):
+                def encode_bytes(self, obj):
+                    return obj | unit | str
+            return Encoder
+        if self.args.arrays:
+            encoder = BytesAsArrayEncoder
+        elif u := self.args.encode:
+            encoder = UnitEncoderFactory(load(u, reverse=True))
+        elif u := self.args.digest:
+            encoder = UnitEncoderFactory(load(u, text=True))
+        else:
+            encoder = self.EncoderBase
+
+        with encoder as enc:
+            return enc.dumps(obj).encode(self.codec)
