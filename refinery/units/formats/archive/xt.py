@@ -109,19 +109,22 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         return
                     try:
                         test_unpack = not self.unit.args.list
-                        for item in unit.unpack(data):
-                            if test_unpack:
-                                item.get_data()
-                                test_unpack = False
-                            self.count += 1
-                            yield item
+                        for filtered in unit.filter([data]):
+                            for item in unit.unpack(filtered):
+                                if test_unpack:
+                                    item.get_data()
+                                    test_unpack = False
+                                self.count += 1
+                                yield item
                     except Exception as error:
                         if not self.fallback:
                             errors[handler.name] = error
                         if isinstance(error, MultipleArchives):
                             self.unit.log_warn(error)
                         else:
-                            self.unit.log_debug('handler unpacking failed:', error)
+                            if self.unit.log_debug():
+                                raise error
+                            self.unit.log_info('handler unpacking failed:', error)
                     else:
                         self.success = True
                 elif verdict is None:
