@@ -647,10 +647,10 @@ class Framed:
         self,
         action : Callable[[Chunk], Iterable[Chunk]],
         stream : Optional[BinaryIO],
+        filter : Callable[[Iterable[Chunk]], Iterable[Chunk]],
+        finish : Callable[[], Iterable[Chunk]],
         nesting: int = 0,
         squeeze: bool = False,
-        filter : Optional[Callable[[Iterable[Chunk]], Iterable[Chunk]]] = None,
-        finish : Optional[Callable[[], Iterable[Chunk]]] = None,
         serialized: bool = True,
     ):
         self.unpack = FrameUnpacker(stream)

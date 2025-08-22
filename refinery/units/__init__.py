@@ -1609,10 +1609,10 @@ class Unit(UnitBase, abstract=True):
         self._framed = Framed(
             normalized_action,
             self.source,
-            self.args.nesting,
-            self.args.squeeze,
             self.filter,
             self.finish,
+            self.args.nesting,
+            self.args.squeeze,
             self.console
         )
         return self._framed
