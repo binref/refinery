@@ -5,6 +5,7 @@ from typing import List, Dict, Tuple, Callable, Optional
 
 import enum
 import struct
+import json
 
 from refinery.units.formats import UnpackResult, PathExtractorUnit, Arg
 
@@ -103,6 +104,23 @@ class perc(PathExtractorUnit):
                         extract = self._handle_bitmap(extract)
                     elif parts[0] is RSRC.ICON:
                         extract = self._handle_icon(pe, extract, parts)
+                    elif parts[0] is RSRC.ICON_GROUP:
+                        def extract(_=pe, e=entry):
+                            data = GRPICONDIR(e.content)
+                            return json.dumps({
+                                entry.nid: {
+                                    'width'         : entry.width,
+                                    'height'        : entry.height,
+                                    'bytes'         : entry.bytes_in_res,
+                                    'color'         : {
+                                        'count'     : entry.color_count,
+                                        'planes'    : entry.planes,
+                                        'bits'      : entry.bit_count,
+                                    },
+                                } for entry in data.entries},
+                                indent=4
+                            ).encode(self.codec)
+
                 yield UnpackResult(
                     path,
                     extract,
@@ -140,6 +158,8 @@ class perc(PathExtractorUnit):
             icondir = self._get_icon_dir(pe)
             index = int(parts[1]) - 1
             info = icondir.entries[index]
+        except IndexError:
+            return extract_raw_data
         except Exception as E:
             self.log_warn(F'unable to generate icon header: {E!s}')
             return extract_raw_data
