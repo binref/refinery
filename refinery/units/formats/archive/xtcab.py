@@ -23,15 +23,15 @@ class xtcab(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     path = F'CAB{id:04X}/{path}'
                 yield self._pack(path, file.timestamp, lambda f=file: f.decompress())
 
-    def filter(self, inputs):
+    def filter(self, chunks):
         box = None
         cab = Cabinet()
-        for chunk in inputs:
+        for chunk in chunks:
             if box is None:
                 box = chunk
                 box.temp = cab
             if cab.needs_more_disks():
-                cab.append(chunk)
+                cab.append(memoryview(chunk))
             else:
                 yield box
                 box = chunk
