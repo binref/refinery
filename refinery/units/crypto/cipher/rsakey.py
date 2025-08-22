@@ -31,10 +31,10 @@ class rsakey(Unit):
     """
     def __init__(
         self,
+        output: Arg.Option(help='Select an output format ({choices}), default is {default}.', choices=RSAFormat) = RSAFormat.PEM,
         public: Arg.Switch('-p', help='Force public key output even if the input is private.') = False,
-        output: Arg.Option(help='Select an output format ({choices}), default is {default}.', choices=RSAFormat) = RSAFormat.PEM
     ):
-        super().__init__(public=public, output=Arg.AsOption(output, RSAFormat))
+        super().__init__(output=Arg.AsOption(output, RSAFormat), public=public)
 
     def _xkms_wrap(self, number: int):
         size, r = divmod(number.bit_length(), 8)
