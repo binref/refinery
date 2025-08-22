@@ -220,6 +220,7 @@ if TYPE_CHECKING:
     ByteIO = MemoryFile[ByteStr]
 
     _T = TypeVar('_T')
+    _F = TypeVar('_F', bound=Callable)
     _B = TypeVar('_B', bound=Union[BufferedWriter, ByteIO, BinaryIO])
     _E = TypeVar('_E', bound=Enum)
 
@@ -909,6 +910,10 @@ class MissingFunction:
     def __call__(*_, **__):
         raise NotImplementedError('A non-invertible unit was operated in reverse.')
 
+    @classmethod
+    def Wrap(cls, _: _F) -> _F:
+        return cast('_F', cls())
+
 
 class Executable(ABCMeta):
     """
@@ -1268,7 +1273,7 @@ class UnitBase(metaclass=Executable, abstract=True):
         the unit processes a given chunk of binary data.
         """
 
-    @MissingFunction
+    @MissingFunction.Wrap
     def reverse(self, data: ByteStr) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
         """
         If this routine is overridden by children of `refinery.units.Unit`, then it must
