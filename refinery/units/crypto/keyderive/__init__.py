@@ -14,7 +14,7 @@ from refinery.lib.argformats import number
 from refinery.lib.types import ByteStr
 
 from enum import Enum
-from typing import Callable, TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from typing import Protocol
@@ -71,4 +71,4 @@ class KeyDerivation(Unit, abstract=True):
     def hash(self) -> _HashModule:
         name = self.args.hash.value
         hash = importlib.import_module(F'Cryptodome.Hash.{name}')
-        return hash
+        return cast('_HashModule', hash)

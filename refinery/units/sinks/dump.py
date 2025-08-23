@@ -152,10 +152,11 @@ class dump(Unit):
         from PIL import Image
         return Image
 
-    def process(self, data: bytes):
+    def process(self, data: bytearray):
         forward_input_data = self.args.tee
         if self._clipcopy:
-            self.stream.write(data)
+            if stream := self.stream:
+                stream.write(data)
         elif not self.exhausted:
             if not self.stream:
                 # This should happen only when the unit is called from Python code

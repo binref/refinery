@@ -184,7 +184,6 @@ from typing import (
     cast,
     overload,
     no_type_check,
-    get_type_hints,
     TYPE_CHECKING,
 )
 
@@ -215,7 +214,7 @@ if TYPE_CHECKING:
     from io import BufferedReader, BufferedWriter
 
     DataType = TypeVar('DataType', bound=ByteStr)
-    ProcType = Callable[['Unit', ByteStr], Optional[Union[DataType, Iterable[DataType]]]]
+    ProcType = Callable[['Unit', Chunk], Optional[Union[DataType, Iterable[DataType]]]]
 
     ByteIO = MemoryFile[ByteStr]
 
@@ -628,7 +627,7 @@ class Arg(Argument):
         help    : Union[Type[omit], str] = omit,
         metavar : Union[Type[omit], str] = omit,
         dest    : Union[Type[omit], str] = omit,
-        type    : Type = str,
+        type    : Union[Type, Callable] = str,
         nargs   : Union[Type[omit], int, str] = omit,
         group   : Optional[str] = None,
     ):
@@ -857,21 +856,11 @@ class ArgumentSpecification(OrderedDict):
 
 def _UnitProcessorBoilerplate(operation: ProcType[ByteStr]) -> ProcType[Chunk]:
     @wraps(operation)
-    def wrapped(self: Unit, data: ByteStr) -> Optional[Union[Chunk, Iterable[Chunk]]]:
-        ChunkType = Chunk
+    def wrapped(self: Unit, data: Optional[ByteStr]) -> Optional[Union[Chunk, Iterable[Chunk]]]:
         if data is None:
-            data = B''
-        typespec = get_type_hints(operation)
-        typespec.pop('return', None)
-        if typespec and len(typespec) == 1:
-            SpecType = next(iter(typespec.values()))
-            if isinstance(SpecType, str):
-                try: SpecType = eval(SpecType)
-                except Exception: pass
-            if isinstance(SpecType, type):
-                ChunkType = SpecType
-        if not isinstance(data, ChunkType):
-            data = ChunkType(data)
+            data = Chunk()
+        elif not isinstance(data, Chunk):
+            data = Chunk(data)
         result = operation(self, data)
         if isinstance(result, Chunk):
             return result
@@ -1267,14 +1256,14 @@ class UnitBase(metaclass=Executable, abstract=True):
     """
 
     @abc.abstractmethod
-    def process(self, data: ByteStr) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
+    def process(self, data: Chunk, /) -> None | ByteStr | Iterable[ByteStr]:
         """
         This routine is overridden by children of `refinery.units.Unit` to define how
         the unit processes a given chunk of binary data.
         """
 
     @MissingFunction.Wrap
-    def reverse(self, data: ByteStr) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
+    def reverse(self, data: Chunk, /) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
         """
         If this routine is overridden by children of `refinery.units.Unit`, then it must
         implement an operation that reverses the `refinery.units.Unit.process` operation.
@@ -1284,7 +1273,7 @@ class UnitBase(metaclass=Executable, abstract=True):
 
     @classmethod
     @abc.abstractmethod
-    def handles(cls, data: ByteStr) -> Optional[bool]:
+    def handles(cls, data: bytearray | Chunk) -> Optional[bool]:
         """
         This tri-state routine returns `True` if the unit is certain that it can process the
         given input data, and `False` if it is convinced of the opposite. `None` is returned
@@ -1292,7 +1281,7 @@ class UnitBase(metaclass=Executable, abstract=True):
         """
 
     @abc.abstractmethod
-    def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
+    def filter(self, chunks: Iterable[Chunk]) -> Iterable[Chunk]:
         """
         Receives an iterable of `refinery.lib.frame.Chunk`s and yields only those that
         should be processed. The default implementation returns the iterator without
@@ -1620,11 +1609,11 @@ class Unit(UnitBase, abstract=True):
     def finish(self) -> Iterable[Chunk]:
         yield from ()
 
-    def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
-        return inputs
+    def filter(self, chunks: Iterable[Chunk]) -> Iterable[Chunk]:
+        return chunks
 
     @classmethod
-    def handles(cls, data: ByteStr) -> Optional[bool]:
+    def handles(cls, data: bytearray | Chunk) -> Optional[bool]:
         return None
 
     def reset(self):
@@ -2013,18 +2002,30 @@ class Unit(UnitBase, abstract=True):
         return B''
 
     @classmethod
-    def labelled(cls, ___br___data: Union[Chunk, ByteStr], **meta) -> Chunk:
+    @overload
+    def labelled(cls, ___br___data: None, **meta) -> None:
+        ...
+
+    @classmethod
+    @overload
+    def labelled(cls, ___br___data: Chunk | ByteStr, **meta) -> Chunk:
+        ...
+
+    @classmethod
+    def labelled(cls, ___br___data: Chunk | ByteStr | None, **meta) -> Chunk | None:
         """
         This class method can be used to label a chunk of binary output with metadata. This
         metadata will be visible inside pipeline frames, see `refinery.lib.frame`.
         """
-        if not isinstance(___br___data, Chunk):
+        if ___br___data is None:
+            return None
+        elif not isinstance(___br___data, Chunk):
             ___br___data = Chunk(___br___data, meta=meta)
         elif meta:
             ___br___data.meta.update(meta)
         return ___br___data
 
-    def process(self, data: ByteStr) -> Union[Optional[ByteStr], Generator[ByteStr, None, None]]:
+    def process(self, data: Chunk, /) -> Union[Optional[ByteStr], Generator[ByteStr, None, None]]:
         return data
 
     @classmethod

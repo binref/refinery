@@ -16,7 +16,7 @@ class repl(Unit):
     ):
         super().__init__(search=search, replace=replace, count=count)
 
-    def process(self, data: bytes):
+    def process(self, data: bytearray):
         return data.replace(
             self.args.search,
             self.args.replace,

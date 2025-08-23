@@ -51,7 +51,7 @@ class rncrypt(Unit):
     def __init__(self, password: bytearray):
         super().__init__(password=password)
 
-    def process(self, data: bytes) -> bytes:
+    def process(self, data: bytearray) -> bytes:
         encryption_salt = data[2:10]
         hmac_salt = data[10:18]
         iv = data[18:34]

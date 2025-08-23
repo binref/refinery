@@ -11,11 +11,12 @@ from typing import (
     ClassVar,
     Iterable,
     Optional,
-    Sequence,
+    Collection,
     Type,
 )
 
 from refinery.lib.tools import isbuffer
+from refinery.lib.types import ByteStr
 
 from refinery.lib.crypto import (
     CipherObjectFactory,
@@ -32,26 +33,27 @@ from refinery.units import (
     RefineryCriticalException,
     RefineryPartialResult,
     Unit,
+    Chunk,
 )
 
 
 class CipherUnit(Unit, abstract=True):
 
-    key_size: Optional[Sequence[int]] = None
+    key_size: Optional[Collection[int]] = None
     block_size: int
 
     def __init__(self, key: Arg(help='The encryption key.'), **keywords):
         super().__init__(key=key, **keywords)
 
     @abc.abstractmethod
-    def decrypt(self, data: ByteString) -> ByteString:
+    def decrypt(self, data: Chunk) -> ByteStr:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def encrypt(self, data: ByteString) -> ByteString:
+    def encrypt(self, data: Chunk) -> ByteStr:
         raise NotImplementedError
 
-    def process(self, data: ByteString) -> ByteString:
+    def process(self, data: Chunk) -> ByteStr:
         ks = self.key_size
         if ks and len(self.args.key) not in ks:
             import itertools
@@ -73,7 +75,7 @@ class CipherUnit(Unit, abstract=True):
             raise ValueError(F'the given key has an invalid length of {len(self.args.key)} bytes; {msg}{pt}')
         return self.decrypt(data)
 
-    def reverse(self, data: ByteString) -> ByteString:
+    def reverse(self, data: Chunk) -> ByteStr:
         return self.encrypt(data)
 
 
@@ -99,21 +101,22 @@ class StreamCipherUnit(CipherUnit, abstract=True):
         import numpy
         return numpy
 
-    def encrypt(self, data: bytearray) -> bytearray:
-        it = self._keystream or self.keystream()
+    def encrypt(self, data: Chunk) -> bytearray:
+        it = iter(self._keystream or self.keystream())
         for _ in range(self.args.discard):
             next(it)
         try:
             np = self._numpy
         except ImportError:
             self.log_info('this unit could perform faster if numpy was installed.')
-            out = bytearray(a ^ b for a, b in zip(it, data))
+            data[:] = (a ^ b for a, b in zip(it, data))
         else:
             key = np.fromiter(it, dtype=np.uint8, count=len(data))
-            out = np.frombuffer(
+            tmp = np.frombuffer(
                 memoryview(data), dtype=np.uint8, count=len(data))
-            out ^= key
-        return out
+            tmp ^= key
+            data[:] = iter(tmp)
+        return data
 
     def filter(self, chunks: Iterable):
         if self.args.stateful:
@@ -156,7 +159,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
     def _default_padding(self) -> Optional[str]:
         return self.args.padding
 
-    def reverse(self, data: ByteString) -> ByteString:
+    def reverse(self, data: Chunk) -> ByteStr:
         padding = self._default_padding()
         if padding is not None:
             self.log_info('padding method:', padding)
@@ -165,9 +168,9 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
                 data = pad(data, self.block_size, padding)
         return super().reverse(data)
 
-    def process(self, data: ByteString) -> ByteString:
+    def process(self, data: Chunk) -> ByteStr:
         padding = self._default_padding()
-        result = super().process(data)
+        result = self.labelled(super().process(data))
         if padding is None:
             return result
 
@@ -245,7 +248,9 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         self.log_info(lambda: F'encryption key: {self.args.key.hex()}')
-        return self._cipher_factory.new(key=self.args.key, **optionals)
+        if cf := self._cipher_factory:
+            return cf.new(key=self.args.key, **optionals)
+        raise RuntimeError('The cipher factory for this unit was uninitialized.')
 
     def _get_cipher(self, reset_cache=False) -> CipherInterface:
         if reset_cache or (ci := self._cipher_interface) is None:
@@ -257,15 +262,15 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
         return self._get_cipher().block_size
 
     @property
-    def key_size(self) -> Optional[Sequence[int]]:
+    def key_size(self) -> Optional[Collection[int]]:
         return self._get_cipher().key_size
 
-    def encrypt(self, data: bytes) -> bytes:
+    def encrypt(self, data: Chunk) -> ByteStr:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
         return cipher.encrypt(data)
 
-    def decrypt(self, data: bytes) -> bytes:
+    def decrypt(self, data: Chunk) -> ByteStr:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
         try:
@@ -274,7 +279,7 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
             overlap = len(data) % self.block_size
             if not overlap:
                 raise
-            data[-overlap:] = []
+            del data[-overlap:]
             self.log_warn(F'removing {overlap} bytes from the input to make it a multiple of the {self.block_size}-byte block size')
             return cipher.decrypt(data)
 
@@ -350,13 +355,11 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
     @property
     def block_size(self) -> int:
-        provider = StandardCipherUnit
-        return provider.block_size.fget(self)
+        return self._get_cipher().block_size
 
     @property
-    def key_size(self) -> Sequence[int]:
-        provider = StandardCipherUnit
-        return provider.key_size.fget(self)
+    def key_size(self) -> Optional[Collection[int]]:
+        return self._get_cipher().key_size
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         mode = self.args.mode.name

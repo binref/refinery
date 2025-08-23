@@ -3,6 +3,8 @@
 """
 Miscellaneous helper functions.
 """
+from __future__ import annotations
+
 import datetime
 import functools
 import inspect
@@ -14,7 +16,7 @@ import io
 import warnings
 import re
 
-from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar
+from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar, Any, Type
 from math import log
 from enum import IntFlag, Enum
 
@@ -595,3 +597,10 @@ def nopdoc(obj: object):
     pdoc: dict = sys.modules[obj.__module__].__dict__.setdefault('__pdoc__', {})
     pdoc[obj.__qualname__] = False
     return obj
+
+
+def convert(x: _T | Any, t: Type[_T]) -> _T:
+    """
+    Convert the given object `x` to the type `t`.
+    """
+    return x if isinstance(x, t) else t(x) # type:ignore

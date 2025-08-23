@@ -3,17 +3,23 @@
 """
 A selection of refinery-specific decorators.
 """
+from __future__ import annotations
+
 import codecs
 import re
 import itertools
 
 from functools import wraps, WRAPPER_ASSIGNMENTS
-from typing import Callable, Iterable, Optional
+from typing import cast, overload, TYPE_CHECKING, Any, Callable, Iterable, Optional, TypeVar
 
-from refinery.units import Unit
+if TYPE_CHECKING:
+    from refinery.units import Unit, Chunk
 
 
-def wraps_without_annotations(method: Callable) -> Callable:
+_F = TypeVar('_F', bound=Callable)
+
+
+def wraps_without_annotations(method: Callable) -> Callable[[_F], _F]:
     """
     This decorator works simila to `wraps` from `functools` but does not update the
     type annotations of the wrapped function. This is used in the other decorators
@@ -21,10 +27,23 @@ def wraps_without_annotations(method: Callable) -> Callable:
     """
     assignments = set(WRAPPER_ASSIGNMENTS)
     assignments.discard('__annotations__')
-    return wraps(method, assigned=assignments)
+    wrap = wraps(method, assigned=assignments)
+    if TYPE_CHECKING:
+        wrap = cast('Callable[[_F], _F]', wrap)
+    return wrap
 
 
-def unicoded(method: Callable[[Unit, str], Optional[str]]) -> Callable[[Unit, bytes], bytes]:
+@overload
+def unicoded(method: Callable[[Any, str], str]) -> Callable[[Any, Chunk], bytes]:
+    ...
+
+
+@overload
+def unicoded(method: Callable[[Any, str], Optional[str]]) -> Callable[[Any, Chunk], Optional[bytes]]:
+    ...
+
+
+def unicoded(method: Callable[[Any, str], Optional[str]]) -> Callable[[Any, Chunk], Optional[bytes]]:
     """
     Can be used to decorate a `refinery.units.Unit.process` routine that takes a
     string argument and also returns one. The resulting routine takes a binary buffer
@@ -33,7 +52,7 @@ def unicoded(method: Callable[[Unit, str], Optional[str]]) -> Callable[[Unit, by
     once for each string patch that was successfully decoded.
     """
     @wraps_without_annotations(method)
-    def method_wrapper(self: Unit, data: bytes) -> bytes:
+    def method_wrapper(self: Unit, data: Chunk) -> Optional[bytes]:
         input_codec = self.codec if any(data[::2]) else 'UTF-16LE'
         partial = re.split(R'([\uDC80-\uDCFF]+)',  # surrogate escape range
             codecs.decode(data, input_codec, errors='surrogateescape'))
@@ -49,7 +68,7 @@ def unicoded(method: Callable[[Unit, str], Optional[str]]) -> Callable[[Unit, by
     return method_wrapper
 
 
-def linewise(method: Callable[[Unit, str], str]) -> Callable[[Unit, bytes], Iterable[bytes]]:
+def linewise(method: Callable[[Any, str], str]) -> Callable[[Any, Chunk], Iterable[bytes]]:
     """
     Can be used to decorate a `refinery.units.Unit.process` routine that takes a
     string argument and also returns one. The resulting routine expects a default
@@ -57,7 +76,7 @@ def linewise(method: Callable[[Unit, str], str]) -> Callable[[Unit, bytes], Iter
     line in the corresponding decoded string.
     """
     @wraps_without_annotations(method)
-    def method_wrapper(self: Unit, data: bytes) -> Iterable[bytes]:
+    def method_wrapper(self: Unit, data: Chunk) -> Iterable[bytes]:
         lines = data.decode(self.codec).splitlines()
         width = len(str(len(lines)))
         for k, line in enumerate(lines):

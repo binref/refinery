@@ -7,6 +7,7 @@ from datetime import datetime
 
 from refinery.units import Unit
 from refinery.lib.json import BytesAsStringEncoder
+from refinery.lib.tools import convert
 
 
 class pkcs7(Unit):
@@ -21,10 +22,10 @@ class pkcs7(Unit):
         import asn1crypto.x509
         return asn1crypto
 
-    def process(self, data: bytes):
+    def process(self, data):
         asn1 = self._asn1crypto.core
         cms = self._asn1crypto.cms
-        signature = cms.ContentInfo.load(data)
+        signature = cms.ContentInfo.load(convert(data, bytes))
 
         def unsign(data):
             if isinstance(data, int):

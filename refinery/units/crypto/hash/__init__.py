@@ -3,13 +3,13 @@
 """
 Implements various hashing algorithms.
 """
-from refinery.units import Arg, Unit, abc
+from refinery.units import Arg, Unit, ByteStr, abc
 
 
 class HashUnit(Unit, abstract=True):
 
     @abc.abstractmethod
-    def _algorithm(self, data: bytes) -> bytes:
+    def _algorithm(self, data: ByteStr) -> bytes:
         raise NotImplementedError
 
     def __init__(
@@ -20,7 +20,7 @@ class HashUnit(Unit, abstract=True):
     ):
         super().__init__(text=text, reps=reps, **kwargs)
 
-    def process(self, data: bytes) -> bytes:
+    def process(self, data: bytearray) -> bytes:
         reps = self.args.reps
         digest = data
         for _ in range(reps):

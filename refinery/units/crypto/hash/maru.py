@@ -16,5 +16,5 @@ class maru(HashUnit):
     ):
         super().__init__(seed=seed, text=text, reps=reps)
 
-    def _algorithm(self, data: bytes) -> bytes:
+    def _algorithm(self, data) -> bytes:
         return maru32digest(data, self.args.seed)

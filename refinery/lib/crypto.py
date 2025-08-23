@@ -5,12 +5,13 @@ Primitives used in custom cryptographic implementations.
 """
 from __future__ import annotations
 
-from typing import Callable, ClassVar, Container, Generator, Optional, Type, Union, Dict
+from typing import Callable, ClassVar, Collection, Generator, Optional, Type, Dict
 from abc import ABC, abstractmethod
 from enum import Enum
 
-BufferType = Union[bytearray, bytes, memoryview]
-CIPHER_MODES: Dict[str, CipherMode] = {}
+from refinery.lib.types import ByteStr as BufferType
+
+CIPHER_MODES: Dict[str, Type[CipherMode]] = {}
 
 
 def strxor(a: bytes, b: bytes):
@@ -132,20 +133,20 @@ class CipherMode(ABC):
     Abstract base class for a cipher mode of operation.
     """
 
-    encrypt_block: Callable[[memoryview], memoryview]
-    decrypt_block: Callable[[memoryview], memoryview]
+    encrypt_block: Callable[[BufferType], BufferType]
+    decrypt_block: Callable[[BufferType], BufferType]
     aligned: bool = True
     _identifier: ClassVar[int]
 
     @abstractmethod
-    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+    def encrypt(self) -> Generator[BufferType, memoryview, None]:
         """
         Implements data encryption according to the current cipher mode and underlying cipher.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+    def decrypt(self) -> Generator[BufferType, memoryview, None]:
         """
         Implements data decryption according to the current cipher mode and underlying cipher.
         """
@@ -156,8 +157,8 @@ class CipherMode(ABC):
         operation: Operation,
         dst: memoryview,
         src: memoryview,
-        encrypt_block: Callable[[memoryview], memoryview],
-        decrypt_block: Callable[[memoryview], memoryview],
+        encrypt_block: Callable[[BufferType], BufferType],
+        decrypt_block: Callable[[BufferType], BufferType],
         blocksize: int,
     ) -> memoryview:
         """
@@ -168,7 +169,7 @@ class CipherMode(ABC):
         """
         self.encrypt_block = encrypt_block
         self.decrypt_block = decrypt_block
-        engine: Generator[memoryview, memoryview, None] = {
+        engine: Generator[BufferType, memoryview, None] = {
             Operation.Encrypt: self.encrypt,
             Operation.Decrypt: self.decrypt,
         }[operation]()
@@ -190,15 +191,15 @@ class ECB(CipherMode):
     cipher is applied block-wise with no additional safeguards.
     """
 
-    def decrypt(self) -> Generator[memoryview, memoryview, None]:
-        M = None
+    def decrypt(self) -> Generator[BufferType, memoryview, None]:
+        M = B''
         D = self.decrypt_block
         while True:
             C = yield M
             M = D(C)
 
-    def encrypt(self) -> Generator[memoryview, memoryview, None]:
-        C = None
+    def encrypt(self) -> Generator[BufferType, memoryview, None]:
+        C = B''
         E = self.encrypt_block
         while True:
             M = yield C
@@ -234,16 +235,16 @@ class CBC(StatefulCipherMode):
     An implementation of the popular Cipher Block Chaining mode of operation.
     """
 
-    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+    def encrypt(self) -> Generator[BufferType, memoryview, None]:
         C = self.iv
         E = self.encrypt_block
         while True:
             M = yield C
             C = E(strxor(M, C))
 
-    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+    def decrypt(self) -> Generator[BufferType, memoryview, None]:
         S = self.iv
-        M = None
+        M = B''
         D = self.decrypt_block
         while True:
             C = yield M
@@ -257,18 +258,18 @@ class PCBC(StatefulCipherMode):
     An implementation of Propagating Cipher Block Chaining.
     """
 
-    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+    def encrypt(self) -> Generator[BufferType, memoryview, None]:
         S = self.iv
-        C = None
+        C = B''
         E = self.encrypt_block
         while True:
             M = yield C
             C = E(strxor(M, S))
             S = strxor(C, M)
 
-    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+    def decrypt(self) -> Generator[BufferType, memoryview, None]:
         S = self.iv
-        M = None
+        M = B''
         D = self.decrypt_block
         while True:
             C = yield M
@@ -299,7 +300,7 @@ class CFB(CipherMode):
         self.segment_size = segment_size
         self.iv = iv
 
-    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+    def encrypt(self) -> Generator[BufferType, memoryview, None]:
         s = self.segment_size
         S = bytearray(self.iv)
         E = self.encrypt_block
@@ -319,7 +320,7 @@ class CFB(CipherMode):
                     C[k] = c = strxor(m, E(S)[:s])
                     S[:-s], S[-s:] = memoryview(S)[s:], c
 
-    def decrypt(self) -> Generator[memoryview, memoryview, None]:
+    def decrypt(self) -> Generator[BufferType, memoryview, None]:
         s = self.segment_size
         S = bytearray(self.iv)
         E = self.encrypt_block
@@ -348,9 +349,9 @@ class OFB(StatefulCipherMode):
 
     aligned = False
 
-    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+    def encrypt(self) -> Generator[BufferType, memoryview, None]:
         S = self.iv
-        C = None
+        C = B''
         E = self.encrypt_block
         while True:
             M = yield C
@@ -400,7 +401,7 @@ class CTR(CipherMode):
         if block_size is None:
             raise ValueError('Unable to construct CTR mode object without block_size or counter argument.')
 
-        self.initial_value = initial_value
+        self.initial_value = initial_value or 0
         self.little_endian = little_endian
         self.suffix = B''
         self.block_size = block_size
@@ -414,7 +415,7 @@ class CTR(CipherMode):
             self.counter_len = block_size // 2
             self.prefix = B'\0' * (block_size - self.counter_len)
 
-    def encrypt(self) -> Generator[memoryview, memoryview, None]:
+    def encrypt(self) -> Generator[BufferType, memoryview, None]:
         S = bytearray(self.block_size)
         J = slice(len(self.prefix), self.block_size - len(self.suffix))
         K = self.initial_value
@@ -422,7 +423,7 @@ class CTR(CipherMode):
             S[:+len(self.prefix)] = self.prefix
         if self.suffix:
             S[-len(self.suffix):] = self.suffix
-        C = None
+        C = B''
         E = self.encrypt_block
         order = self.byte_order
         csize = self.counter_len
@@ -441,9 +442,9 @@ class CipherInterface(ABC):
     Abstract base class for refinery's block cipher interface.
     """
 
-    key_size: Container[int]
+    key_size: Collection[int]
     """
-    A container containing all valid key sizes for this cipher.
+    A sequence containing all valid key sizes for this cipher.
     """
 
     block_size: int
@@ -452,13 +453,13 @@ class CipherInterface(ABC):
     """
 
     @abstractmethod
-    def encrypt(self, M: BufferType) -> BufferType:
+    def encrypt(self, data: BufferType) -> BufferType:
         """
         Data encryption according to this cipher interface.
         """
 
     @abstractmethod
-    def decrypt(self, C: BufferType) -> BufferType:
+    def decrypt(self, data: BufferType) -> BufferType:
         """
         Data decryption according to this cipher interface.
         """
@@ -490,13 +491,14 @@ class CipherObjectFactory(ABC):
     """
 
     name: str
-    key_size: Optional[Container[int]] = None
+    key_size: Optional[Collection[int]] = None
     block_size: Optional[int] = None
 
     @abstractmethod
     def new(
         self,
         key: BufferType,
+        *,
         iv: Optional[BufferType] = None,
         counter: Optional[int] = None,
         initial_value: Optional[int] = 0,
@@ -584,8 +586,10 @@ class BlockCipherFactory(CipherObjectFactory):
                 # block size is truly an instance attribute and not a class property.
                 # In this case, we create a temporary cipher object and use it to obtain
                 # the true block size.
-                block_size = cipher(key, ECB, **args).block_size
+                block_size = cipher(key, ECB(), **args).block_size
             mode_arguments.update(block_size=block_size)
+        if mode is None:
+            mode = ECB
         mode = mode(**mode_arguments)
         return cipher(key, mode, **args)
 
@@ -618,7 +622,7 @@ class BlockCipher(CipherInterface, ABC):
     block_size: int
     key: BufferType
     mode: CipherMode
-    key_size: Container[int]
+    key_size: Collection[int]
 
     def __init__(self, key: BufferType, mode: Optional[CipherMode]):
         if len(key) not in self.key_size:
@@ -647,7 +651,7 @@ class BlockCipher(CipherInterface, ABC):
             raise DataUnaligned(block_size, k)
         dst = src = memoryview(data)
         if dst.readonly:
-            dst = bytearray(src)
+            dst = memoryview(bytearray(src))
         return mode.apply(
             operation,
             dst,

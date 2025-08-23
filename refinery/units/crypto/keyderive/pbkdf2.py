@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from functools import partial
-from refinery.lib.types import ByteStr
 from refinery.units.crypto.keyderive import KeyDerivation, multidecode
 
 
@@ -14,7 +13,7 @@ class pbkdf2(KeyDerivation):
     def __init__(self, size, salt, iter=1000, hash='SHA1'):
         self.superinit(super(), **vars())
 
-    def process(self, data: ByteStr):
+    def process(self, data):
         from Cryptodome.Protocol.KDF import PBKDF2
         return multidecode(data, partial(
             PBKDF2,

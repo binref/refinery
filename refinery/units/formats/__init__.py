@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import abc
 import collections
+import codecs
 import fnmatch
 import os
 import re
@@ -15,7 +16,7 @@ from zlib import adler32
 from collections import Counter
 from typing import ByteString, Iterable, Callable, List, Union, Optional
 
-from refinery.units import Arg, Unit, RefineryPartialResult, RefineryPotentialUserError
+from refinery.units import Arg, Unit, Chunk, RefineryPartialResult, RefineryPotentialUserError
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
 from refinery.lib.xml import XMLNodeBase
 from refinery.lib.tools import exception_to_string
@@ -167,7 +168,7 @@ class PathExtractorUnit(Unit, abstract=True):
                     if len(t) >= 0x1000:
                         raise OverflowError
                     if not isinstance(t, str):
-                        t = t.decode(self.codec)
+                        t = codecs.decode(t, self.codec)
                 except Exception as E:
                     raise RefineryPotentialUserError(
                         F'Invalid path pattern of length {len(t)}.') from E
@@ -185,10 +186,10 @@ class PathExtractorUnit(Unit, abstract=True):
         ]
 
     @abc.abstractmethod
-    def unpack(self, data: ByteString) -> Iterable[UnpackResult]:
+    def unpack(self, data: Chunk) -> Iterable[UnpackResult]:
         raise NotImplementedError
 
-    def process(self, data: ByteString) -> ByteString:
+    def process(self, data: Chunk) -> ByteString:
         meta = metavars(data)
         results: List[UnpackResult] = list(self.unpack(data))
 

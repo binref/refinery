@@ -20,5 +20,7 @@ class mimewords(Unit):
             self.log_info('encoded mime word:', match[0])
             decoded, = decode_header(match[0])
             raw, codec = decoded
+            if not isinstance(codec, str):
+                codec = 'utf8'
             return codecs.decode(raw, codec, errors='surrogateescape')
         return re.sub(R"=(?:\?[^\?]*){3}\?=", replacer, data)

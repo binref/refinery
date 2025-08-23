@@ -14,6 +14,6 @@ class pkcs7sig(Unit):
     def __init__(self, tabular: Arg('-t', help='Print information in a table rather than as JSON') = False):
         super().__init__(tabular=tabular)
 
-    def process(self, data: bytes):
+    def process(self, data):
         json = pemeta.parse_signature(data)
         yield from ppjson(tabular=self.args.tabular)._pretty_output(json, indent=4, ensure_ascii=False)

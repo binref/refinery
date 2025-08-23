@@ -8,7 +8,7 @@ from functools import wraps
 from typing import ByteString, Callable
 from zlib import crc32
 
-from refinery.units import Arg, Unit, RefineryPartialResult
+from refinery.units import Arg, Unit, Chunk, RefineryPartialResult
 from refinery.lib.decorators import unicoded
 
 
@@ -70,11 +70,11 @@ class IterativeDeobfuscator(Deobfuscator, abstract=True):
         super().__init__()
         self.args.timeout = timeout
 
-    def process(self, data: ByteString) -> ByteString:
+    def process(self, data: Chunk) -> ByteString:
         previous = crc32(data)
         for _ in range(self.args.timeout):
             try:
-                data = super().process(data)
+                data[:] = super().process(data)
             except KeyboardInterrupt:
                 raise RefineryPartialResult('Returning partially deobfuscated data', partial=data)
             checksum = crc32(data)

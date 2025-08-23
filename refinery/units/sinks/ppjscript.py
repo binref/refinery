@@ -37,7 +37,7 @@ class ppjscript(Unit):
         jsbeautifier.unpackers.javascriptobfuscator.detect = lambda *_: False
         return jsbeautifier
 
-    def process(self, data: bytes):
+    def process(self, data: bytearray):
         if self.args.strip_comments:
             from refinery.units.obfuscation.js.comments import deob_js_comments
             code = data | deob_js_comments | str

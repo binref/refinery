@@ -25,7 +25,7 @@ class rep(Unit):
     ):
         super().__init__(count=count, label=label)
 
-    def process(self, data: bytes):
+    def process(self, data: bytearray):
         def count():
             count = self.args.count
             if isinstance(count, int):
