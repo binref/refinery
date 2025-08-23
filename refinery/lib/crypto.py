@@ -120,6 +120,104 @@ def rotl(n: int, x: int, c: int) -> int:
     return (x >> (n - c)) | (x << c & mask)
 
 
+def pad_pkcs7(data: bytearray, block_size: int) -> None:
+    """
+    Pad a bytearray in-place using the PKCS7 padding type.
+    """
+    for _ in range(p := block_size - len(data) % block_size):
+        data.append(p)
+
+
+def pad_x923(data: bytearray, block_size: int) -> None:
+    """
+    Pad a bytearray in-place using the ANSI x923 padding type.
+    """
+    p = block_size - len(data) % block_size
+    data.extend(0 for _ in range(p - 1))
+    data.append(p)
+
+
+def pad_iso7816(data: bytearray, block_size: int) -> None:
+    """
+    Pad a bytearray in-place using the ISO-7816 padding type.
+    """
+    data.append(0x80)
+    for _ in range(-len(data) % block_size):
+        data.append(0)
+
+
+def unpad_pkcs7(data: bytearray, block_size: int) -> None:
+    """
+    Remove a PKCS7 padding in-place. When an exception occurs, the data is left unchanged.
+    """
+    if not 1 <= (p := data[-1]) <= block_size:
+        raise ValueError
+    if not all(data[-k] == p for k in range(1, p + 1)):
+        raise ValueError
+    del data[-p:]
+
+
+def unpad_x923(data: bytearray, block_size: int) -> None:
+    """
+    Remove an ANSI x923 padding in-place. When an exception occurs, the data is left unchanged.
+    """
+    if not 1 <= (p := data[-1]) <= block_size:
+        raise ValueError
+    for k in range(2, p + 1):
+        if data[-k]:
+            raise ValueError
+    del data[-p:]
+
+
+def unpad_iso7816(data: bytearray, block_size: int) -> None:
+    """
+    Remove an ISO-7816 padding in-place. When an exception occurs, the data is left unchanged.
+    """
+    for k in range(1, block_size + 1):
+        b = data[-k]
+        if b == 0x80:
+            del data[-k:]
+            return
+        if b != 0x00:
+            raise ValueError
+
+
+class Padding(str, Enum):
+    """
+    Supported padding methods for `refinery.lib.crypto.unpad` and `refinery.lib.crypto.pad`.
+    """
+    PKCS7 = 'pkcs7'
+    ISO7816 = 'iso7816'
+    X923 = 'x923'
+
+
+def unpad(data: bytearray, block_size: int, method: str | Padding):
+    """
+    Remove padding from the given buffer in place for the given block size according to the given
+    padding method.
+    """
+    if method == Padding.PKCS7:
+        return unpad_pkcs7(data, block_size)
+    if method == Padding.X923:
+        return unpad_x923(data, block_size)
+    if method == Padding.ISO7816:
+        return unpad_iso7816(data, block_size)
+    raise ValueError(method)
+
+
+def pad(data: bytearray, block_size: int, method: str | Padding):
+    """
+    Pad the given buffer in place to the given block size according to the given padding method.
+    """
+    if method == Padding.PKCS7:
+        return pad_pkcs7(data, block_size)
+    if method == Padding.X923:
+        return pad_x923(data, block_size)
+    if method == Padding.ISO7816:
+        return pad_iso7816(data, block_size)
+    raise ValueError(method)
+
+
 class Operation(str, Enum):
     """
     Specifies whether data is currently being encrypted or decrypted.

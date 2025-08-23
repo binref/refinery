@@ -19,6 +19,8 @@ from refinery.lib.tools import isbuffer
 from refinery.lib.types import ByteStr
 
 from refinery.lib.crypto import (
+    pad,
+    unpad,
     CipherObjectFactory,
     CipherInterface,
 )
@@ -164,8 +166,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         if padding is not None:
             self.log_info('padding method:', padding)
             if padding in PADDINGS_LIB:
-                from Cryptodome.Util.Padding import pad
-                data = pad(data, self.block_size, padding)
+                pad(data, self.block_size, padding)
         return super().reverse(data)
 
     def process(self, data: Chunk) -> ByteStr:
@@ -173,20 +174,18 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         result = self.labelled(super().process(data))
         if padding is None:
             return result
-
-        from Cryptodome.Util.Padding import unpad
         padding = [padding, *(p for p in PADDINGS_LIB if p != padding)]
 
         for p in padding:
             if p == PADDING_NONE:
                 return result
             try:
-                unpadded = unpad(result, self.block_size, p.lower())
-            except Exception:
-                pass
+                unpad(result, self.block_size, p.lower())
+            except ValueError:
+                continue
             else:
                 self.log_info(F'unpadding worked using {p}')
-                return unpadded
+                return result
         raise RefineryPartialResult(
             'None of these paddings worked: {}'.format(', '.join(padding)),
             partial=result)
@@ -194,11 +193,11 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
 
 class StandardCipherExecutable(Executable):
 
-    _available_block_cipher_modes: ClassVar[Type[Option]]
-    _cipher_factory: ClassVar[Optional[CipherObjectFactory]]
+    _available_block_cipher_modes: Type[Option]
+    _cipher_factory: Optional[CipherObjectFactory]
 
     def __new__(mcs, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
-        keywords = dict(abstract=(cipher is None))
+        keywords: dict = dict(abstract=(cipher is None))
         return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
 
     def __init__(_class, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
