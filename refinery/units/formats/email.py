@@ -16,9 +16,11 @@ from refinery.units.pattern.mimewords import mimewords
 from refinery.lib.mime import file_extension
 from refinery.lib.tools import NoLogging, isbuffer
 
-
 if TYPE_CHECKING:
     from extract_msg import Message
+
+
+CDFv2_MARKER = B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
 
 
 def _unwrap(method):
@@ -178,7 +180,9 @@ class xtmail(PathExtractorUnit):
         try:
             yield from self._get_parts_outlook(data)
         except Exception:
-            self.log_debug('failed parsing input as Outlook message')
+            if data[:len(CDFv2_MARKER)] == CDFv2_MARKER:
+                raise
+            self.log_debug('failed to parse the input as an Outlook message')
             yield from self._get_parts_regular(data)
 
     @classmethod
@@ -194,7 +198,7 @@ class xtmail(PathExtractorUnit):
             b'\nContent-Type:\x20',
             b'\nReturn-Path:\x20',
         ]
-        if data.startswith(B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'):
+        if data.startswith(CDFv2_MARKER):
             markers = [marker.decode('latin1').encode('utf-16le') for marker in markers]
         counter = 0
         for marker in markers:
