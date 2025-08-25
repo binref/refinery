@@ -10,11 +10,12 @@ import abc
 import itertools
 
 from typing import TYPE_CHECKING
+from functools import cached_property
 
 from refinery.units import Arg, Unit
 from refinery.lib.argformats import numseq
 from refinery.lib import chunks
-from refinery.lib.tools import infinitize, cached_property
+from refinery.lib.tools import infinitize
 from refinery.lib.inline import iterspread
 from refinery.lib.types import NoMask, INF
 

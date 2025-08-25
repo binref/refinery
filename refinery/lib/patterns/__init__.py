@@ -10,7 +10,7 @@ import re
 from typing import Optional
 
 from refinery.lib.patterns.tlds import tlds
-from refinery.lib.tools import cached_property, normalize_to_identifier, normalize_to_display
+from refinery.lib.tools import normalize_to_identifier, normalize_to_display
 
 
 class pattern:
@@ -21,8 +21,6 @@ class pattern:
     """
     str_pattern: str
     bin_pattern: Optional[bytes]
-    bin_compiled: re.Pattern
-    str_compiled: re.Pattern
 
     def __init__(self, pattern: str, flags: int = 0):
         self.str_pattern = pattern
@@ -32,11 +30,11 @@ class pattern:
     def __bytes__(self):
         return self.bin_pattern
 
-    @cached_property
+    @functools.cached_property
     def bin_compiled(self):
         return re.compile(B'(%s)' % self.bin_pattern, flags=self.regex_flags)
 
-    @cached_property
+    @functools.cached_property
     def str_compiled(self):
         return re.compile(self.str_pattern, flags=self.regex_flags)
 

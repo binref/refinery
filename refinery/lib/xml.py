@@ -17,21 +17,20 @@ from xml.etree.ElementTree import Element, ElementTree
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import exception_to_string
-from refinery.lib.types import ByteStr
 
 if TYPE_CHECKING:
     from typing import Self
 
 
-def is_xml(data: ByteStr, default=True):
+def is_xml(data: bytearray, default=True):
     """
     Implements a heuristic check for whether the input is likely XML data.
     """
     _be = data[0:120:2]
     _le = data[1:120:2]
     if isinstance(data, memoryview):
-        _le = bytes(_le)
-        _be = bytes(_be)
+        _le = bytearray(_le)
+        _be = bytearray(_be)
     if _le.count(0) > 100:
         data = _be
     if _be.count(0) > 100:
@@ -75,8 +74,8 @@ def ForgivingParse(data: bytes, entities=None) -> ElementTree:
     Uses the `refinery.lib.xml.ForgivingXMLParser` to parse the input data.
     """
     try:
-        codec = re.search(rb'^\s*<\?xml[^>]+?encoding="?([-\w]+)"?', data)
-        data = data.decode('utf8').encode(codec[1].decode('utf8'))
+        if codec := re.search(rb'^\s*<\?xml[^>]+?encoding="?([-\w]+)"?', data):
+            data = data.decode('utf8').encode(codec[1].decode('utf8'))
     except Exception:
         pass
     try:
@@ -135,8 +134,7 @@ class XMLNodeBase:
     attributes: Dict[str, Any]
     children: List[Self]
     content: Optional[str]
-    parent: Optional[weakref.ProxyType[Self]]
-    subtree: Iterable[Self]
+    _parent: Optional[weakref.ReferenceType[Self]]
     empty: bool
     tag: Optional[str]
 
@@ -162,7 +160,7 @@ class XMLNodeBase:
         self.parent = parent
 
     @property
-    def parent(self) -> XMLNodeBase:
+    def parent(self) -> Optional[XMLNodeBase]:
         parent = self._parent
         if parent is not None:
             parent = parent()
@@ -174,7 +172,9 @@ class XMLNodeBase:
             parent = weakref.ref(parent)
         self._parent = parent
 
-    def __eq__(self, other: XMLNodeBase):
+    def __eq__(self, other):
+        if not isinstance(other, XMLNodeBase):
+            return False
         return self.parent == other.parent and self.tag == other.tag and self.index == other.index
 
     @property
@@ -263,7 +263,7 @@ class XMLNode(XMLNodeBase):
         return ElementTree(self.source).write(stream)
 
 
-def parse(data) -> XMLNode:
+def parse(data) -> Optional[XMLNode]:
     """
     This function is the primary export of the `refinery.lib.xml` module. It accepts raw XML data
     as input and returns an `refinery.lib.xml.XMLNode` representing the document root node as
@@ -280,8 +280,8 @@ def parse(data) -> XMLNode:
         cursor.attributes = element.attrib
         cursor.content = element.text or element.tail or ''
         return cursor
-    root = ForgivingParse(data).getroot()
-    rt = translate(root, XMLNode(root.tag))
-    rt.source = root
-    rt.reindex()
-    return rt
+    if root := ForgivingParse(data).getroot():
+        rt = translate(root, XMLNode(root.tag))
+        rt.source = root
+        rt.reindex()
+        return rt

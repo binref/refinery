@@ -10,13 +10,14 @@ import json
 import re
 import struct
 
+from functools import cached_property
+
 from refinery.lib.structures import StructReader
 from refinery.units import Arg
 from refinery.units.formats.office.xtdoc import xtdoc, UnpackResult
 from refinery.lib import chunks
 from refinery.lib.types import ByteStr, JSONDict
 from refinery.lib.mime import FileMagicInfo
-from refinery.lib.tools import cached_property
 from refinery.lib.cab import Cabinet
 
 from refinery.units.formats.csv import csv

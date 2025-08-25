@@ -31,14 +31,13 @@ from typing import (
 
 from dataclasses import dataclass, field
 from enum import auto, Enum, IntFlag
-from functools import partial, wraps
+from functools import partial, wraps, cached_property
 from pathlib import Path
 from string import Formatter
 from time import process_time
 from urllib.parse import unquote
 from datetime import datetime, timedelta
 
-from refinery.lib.tools import cached_property
 from refinery.lib.types import CaseInsensitiveDict
 from refinery.lib.inno.archive import InnoArchive, Flags
 from refinery.lib.types import AST, INF, NoMask

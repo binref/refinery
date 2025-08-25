@@ -6,7 +6,6 @@ Miscellaneous helper functions.
 from __future__ import annotations
 
 import datetime
-import functools
 import inspect
 import itertools
 import logging
@@ -16,10 +15,11 @@ import io
 import warnings
 import re
 
-from typing import ByteString, Callable, Generator, Iterable, Optional, Tuple, TypeVar, Any, Type
+from typing import Callable, Generator, Iterable, Optional, Tuple, TypeVar, Any, Type
 from math import log
 from enum import IntFlag, Enum
 
+from refinery.lib.types import ByteStr
 
 _T = TypeVar('_T')
 
@@ -121,7 +121,7 @@ def documentation(unit):
     Certain pdoc3-specific reference strings are removed.
     """
     import re
-    docs = inspect.getdoc(unit)
+    docs = inspect.getdoc(unit) or ''
     docs = re.sub(R'`refinery\.(?:\w+\.)*(\w+)`', R'\1', docs)
     return docs.replace('`', '')
 
@@ -191,7 +191,7 @@ def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
     return method(*posargs, *varargs, **kwdargs)
 
 
-def entropy_fallback(data: ByteString) -> float:
+def entropy_fallback(data: ByteStr) -> float:
     """
     This method is called by `refinery.lib.tools.entropy` when the `numpy` module is not available.
     It computes the shannon entropy of the input byte string and is written in pure Python.
@@ -204,7 +204,7 @@ def entropy_fallback(data: ByteString) -> float:
     return 0.0 + -sum(p * log(p, 2) for p in S if p) / 8.0
 
 
-def entropy(data: ByteString) -> float:
+def entropy(data: ByteStr) -> float:
     """
     Computes the entropy of `data` over the alphabet of all bytes.
     """
@@ -220,7 +220,7 @@ def entropy(data: ByteString) -> float:
     return 0.0 - (numpy.log2(prob) * prob).sum() / 8.0
 
 
-def index_of_coincidence(data: bytearray) -> float:
+def index_of_coincidence(data: ByteStr) -> float:
     """
     Computes the index of coincidence of `data` over the alphabet of all bytes.
     """
@@ -232,7 +232,9 @@ def index_of_coincidence(data: bytearray) -> float:
     try:
         import numpy
     except ImportError:
-        C = [data.count(b) for b in range(0x100)]
+        C = [0] * 0x100
+        for b in data:
+            C[b] += 1
     else:
         C = numpy.histogram(
             numpy.frombuffer(data, dtype=numpy.uint8),
@@ -261,11 +263,11 @@ def isbuffer(obj) -> bool:
 
 
 def splitchunks(
-    data: ByteString,
+    data: ByteStr,
     size: int,
     step: Optional[int] = None,
     truncate: bool = False
-) -> Iterable[ByteString]:
+) -> Iterable[ByteStr]:
     """
     Split `data` into chunks of size `size`. The cursor advances by `step` bytes after extracting a
     block, the default value for `step` is equal to `size`. The boolean parameter `truncate`
@@ -287,7 +289,7 @@ def splitchunks(
         yield chunk
 
 
-def make_buffer_mutable(data: ByteString):
+def make_buffer_mutable(data: ByteStr):
     """
     Returns a mutable version of the input data. Already mutable inputs are returned
     as themselves, i.e. no copy operation occurs in these cases.
@@ -309,13 +311,6 @@ def infinitize(it):
             it = (it, )
         return itertools.cycle(it)
     return it
-
-
-try:
-    cached_property = functools.cached_property
-except AttributeError:
-    def cached_property(p):
-        return property(functools.lru_cache(maxsize=1)(p))
 
 
 class NoLogging:
@@ -362,6 +357,7 @@ class NoLogging:
             logging.disable(logging.NOTSET)
         if self.mode & NoLogging.Mode.WARNING:
             warnings.resetwarnings()
+            assert isinstance(warnings.filters, list)
             warnings.filters[:] = self._warning_filters
         if self.mode & NoLogging.Mode.STD_ERR:
             sys.stderr.close()
