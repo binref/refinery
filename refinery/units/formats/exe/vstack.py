@@ -485,7 +485,10 @@ class vstack(Unit):
         if engine is _engine.speakeasy:
             flags |= Hook.ApiCall
 
-        class Emu(engine.value, VStackEmulatorMixin):
+        base: type[Emulator] = cast('type[Emulator]', engine.value) \
+            if TYPE_CHECKING else engine.value
+
+        class Emu(base, VStackEmulatorMixin):
             pass
 
         emu = Emu(
