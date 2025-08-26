@@ -8,7 +8,7 @@ if True:
     FG = colorama.Fore
     RS = colorama.Style.RESET_ALL
 
-from typing import Any, Union, List, Dict, TYPE_CHECKING
+from typing import cast, Any, Union, List, Dict, TYPE_CHECKING
 
 import enum
 import functools
@@ -19,10 +19,18 @@ from refinery.lib.executable import Arch, Range
 from refinery.lib.types import bounds, INF
 from refinery.lib.meta import metavars
 from refinery.lib.tools import isbuffer, exception_to_string, NoLogging
-from refinery.lib.emulator import Emulator, SpeakeasyEmulator, UnicornEmulator, IcicleEmulator, Hook, EmulationError
 from refinery.lib.intervals import MemoryIntervalUnion
 from refinery.lib.argformats import PythonExpression, ParserVariableMissing
 from refinery.lib.structures import StructReader
+
+from refinery.lib.emulator import (
+    Emulator,
+    SpeakeasyEmulator,
+    UnicornEmulator,
+    IcicleEmulator,
+    Hook,
+    EmulationError,
+)
 
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -219,7 +227,7 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
             not state.cfg.log_stack_cookies
             and self.sp ^ unsigned_value == state.last_read
         ):
-            skipped = 'stack cookie'
+            skipped = 'no -E and stack cookie written'
         elif size not in bounds[state.cfg.write_range]:
             skipped = 'size excluded'
         elif (
@@ -227,13 +235,13 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
             and not state.cfg.log_writes_in_calls
             and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling)
         ):
-            skipped = 'inside call'
+            skipped = 'no -W and inside call'
         elif not state.cfg.log_stack_addresses and unsigned_value in self.stackrange():
-            skipped = 'stack address'
+            skipped = 'no -X and stack address written'
         elif not state.cfg.log_other_addresses and not self.exe.blob:
             for s in self.exe.sections():
                 if address in s.virtual:
-                    skipped = F'write to section {s.name}'
+                    skipped = F'no -Y and write to section {s.name}'
                     break
 
         if (
@@ -244,7 +252,7 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
         ):
             try:
                 if any(self.mem_read(address, size)):
-                    skipped = 'zero overwrite'
+                    skipped = 'no -Z and zero overwrite detected'
             except Exception:
                 pass
 
