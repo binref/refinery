@@ -278,6 +278,9 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
         if address == self.state.last_api:
             self.state.last_api = None
             return True
+        if address == (1 << self.exe.pointer_size) - 1:
+            self.halt()
+            return False
         msg = F'{state.fmt(address)}:{size:02X} memory error'
         if self.is_mapped(address, size):
             vstack.log_info(self.state.log(F'{msg}; fatal, this area was already mapped'))
@@ -558,6 +561,7 @@ class vstack(Unit):
         for cursor in addresses:
             state = EmuState(cfg, cursor, emu.exe.pointer_size // 4, stop=args.stop)
             emu.reset(state)
+            emu.push((1 << emu.exe.pointer_size) - 1)
 
             for reg in emu.general_purpose_registers():
                 if reg not in register_values:
