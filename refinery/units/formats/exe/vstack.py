@@ -407,7 +407,7 @@ class vstack(Unit):
         *address: Arg.NumSeq(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
         stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
         base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
-        arch: Arg.Option('-a', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
+        arch: Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
         engine: Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
             help='The emulator engine. The default is {default}, options are: {choices}') = _engine.unicorn,
         se: Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy') = False,
