@@ -307,17 +307,21 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
                 self.set_register(reg, tos)
             _init.clear()
 
-        state.ticks -= 1
-        state.visits[address] += 1
-        if state.visits[address] > state.cfg.max_visits > 0:
-            vstack.log_info(
-                F'aborting emulation: 0x{address:0{self.exe.pointer_size // 8}X}'
-                F' was visited more than {state.cfg.max_visits} times.')
+        if (max_visits := state.cfg.max_visits) > 0:
+            state.visits[address] += 1
+            if state.visits[address] > max_visits:
+                vstack.log_info(
+                    F'aborting emulation: 0x{address:0{self.exe.pointer_size // 8}X}'
+                    F' was visited more than {state.cfg.max_visits} times.')
+                self.halt()
+                return False
+
+        if address == state.stop or (ticks := state.ticks - 1) <= 0:
             self.halt()
             return False
-        if address == state.stop or state.ticks == 0:
-            self.halt()
-            return False
+        else:
+            state.ticks = ticks
+
         waiting = state.waiting
         callstack = state.callstack
         depth = len(callstack)
@@ -329,8 +333,10 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
             if retaddr is not None and state.cfg.skip_calls:
                 if state.cfg.skip_calls > 1:
                     self.rv = self.malloc(state.cfg.block_size)
-                self.ip = retaddr
-                self.sp = self.sp + (self.exe.pointer_size // 8)
+                self.ip = _ip = self.pop()
+                if _ip != retaddr:
+                    raise RuntimeError(
+                        'Trying to return from call: top of stack was not the execpted return address.')
                 return
             if depth and address == callstack[-1]:
                 depth -= 1
