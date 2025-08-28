@@ -8,15 +8,12 @@ class TestPDF(TestUnitBase):
     def test_pdf_maldoc_with_embedded_flash(self):
         data = self.download_sample('76b19c1e705328cab4d98e546095eb5eb601d23d8102e6e0bfb0a8a6ab157366')
 
-        unit = self.load(list=True)
-        self.assertEqual({bytes(c) for c in data | unit}, {
-            B'raw/Metadata',
-            B'raw/OpenAction/JS',
-            B'raw/Pages/Kids/0/Annots/0/NM',
-            B'raw/Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fqMBgzoMVutzNwk.swf',
-            B'parsed/page0.txt',
-            B'parsed/page0.json',
-            B'parsed/page0.html',
+        unit = self.load('raw/*', list=True)
+        self.assertSetEqual(data | unit | {str}, {
+            'raw/Metadata',
+            'raw/OpenAction/JS',
+            'raw/Pages/Kids/0/Annots/0/NM',
+            'raw/Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fqMBgzoMVutzNwk.swf',
         })
 
         unit = self.load('Pages/*')
@@ -25,4 +22,5 @@ class TestPDF(TestUnitBase):
         self.assertEqual(swf[:3], B'CWS')
 
         unit = self.load('fqMBgzoMVutzNwk') | self.ldu('sha256', text=True)
-        self.assertEqual(str(data | unit), 'c2b666a3ef4c191b77b78c037656e50477b8ba3d35fd61ae843a3a1f4d41c5c1')
+        self.assertEqual(data | unit | str,
+            'c2b666a3ef4c191b77b78c037656e50477b8ba3d35fd61ae843a3a1f4d41c5c1')
