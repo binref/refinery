@@ -108,6 +108,11 @@ class Range(NamedTuple):
         """
         return slice(self.lower, self.upper)
 
+    def __eq__(self, other):
+        if not isinstance(other, Range):
+            return False
+        return other.lower == self.lower and other.upper == self.upper
+
     def __len__(self):
         return self.upper - self.lower
 
@@ -229,6 +234,11 @@ class Section(NamedTuple):
         sections = [self] if populate_sections else None
         return Segment(self.physical, self.virtual, sections, self.name)
 
+    def __eq__(self, other):
+        if not isinstance(other, Section):
+            return False
+        return other.physical == self.physical and other.virtual == self.virtual
+
     def __str__(self):
         return str(self.as_segment())
 
@@ -271,6 +281,11 @@ class Segment(NamedTuple):
         if self.name is None:
             raise ValueError('Unable to convert nameless segment to section.')
         return Section(self.name, self.physical, self.virtual, False)
+
+    def __eq__(self, other):
+        if not isinstance(other, Segment):
+            return False
+        return other.virtual == self.virtual and other.physical == self.physical
 
     def __str__(self):
         msg = F'P=[{self.physical!s}];V=[{self.virtual!s}]'
