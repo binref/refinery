@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import json
 import re
+import email.utils
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Tuple
 from email.parser import Parser
-from functools import partial
-from collections import defaultdict
-from contextlib import suppress
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.pattern.mimewords import mimewords
 from refinery.lib.mime import file_extension
-from refinery.lib.tools import NoLogging, isbuffer
+from refinery.lib.tools import NoLogging, isbuffer, asbuffer
 
 if TYPE_CHECKING:
     from extract_msg import Message
@@ -23,12 +21,26 @@ if TYPE_CHECKING:
 CDFv2_MARKER = B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
 
 
-def _unwrap(method):
-    while True:
-        try:
-            method = method.__wrapped__
-        except AttributeError:
-            return method
+_EMAIL_TXT_MARKERS = [
+    b'\nReceived:\x20from'
+    b'\nSubject:\x20',
+    b'\nTo:\x20',
+    b'\nFrom:\x20',
+    B'\nMessage-ID:\x20',
+    b'\nBcc:\x20',
+    b'\nContent-Transfer-Encoding:\x20',
+    b'\nContent-Type:\x20',
+    b'\nReturn-Path:\x20',
+]
+
+_EMAIL_BIN_MARKERS = [
+    marker.encode('utf-16le') for marker in (
+        "__nameid_version"        # root node
+        "__recip_version"         # recipients
+        "__properties_version"    # properties
+        "__substg1.0_"            # strings
+    )
+]
 
 
 class xtmail(PathExtractorUnit):
@@ -36,17 +48,23 @@ class xtmail(PathExtractorUnit):
     Extract files and body from EMail messages. The unit supports both the Outlook message format
     and regular MIME documents.
     """
-    def _get_headparts(self, head: dict[str, str]):
-        mw = mimewords()
-        mw = partial(_unwrap(mw.process), mw)
-        jh: dict[str, list[str]] = defaultdict(list)
+    def _get_headparts(self, head: Iterable[Tuple[str, str]]):
+        def normalize_spaces(value: str):
+            return ''.join(re.sub(R'\A\s+', '\x20', t) for t in value.splitlines(False))
+
+        _headers: dict[str, list[str]] = {}
         for key, value in head:
-            jh[key].append(mw(''.join(re.sub(R'\A\s+', '\x20', t) for t in value.splitlines(False))))
-        jh = {k: v[0] if len(v) == 1 else [t for t in v if t] for k, v in jh.items()}
+            _headers.setdefault(key, []).append(mimewords.convert(normalize_spaces(value)))
+        headers = {
+            key: value[0] if len(value) == 1 else [t for t in value if t]
+            for key, value in _headers.items()}
+
         yield UnpackResult('headers.txt',
             lambda h=head: '\n'.join(F'{k}: {v}' for k, v in h).encode(self.codec))
+
         received = []
-        for recv in jh.get('Received', []):
+
+        for recv in headers.get('Received', []):
             if not recv.startswith('from '):
                 received = None
                 break
@@ -57,11 +75,13 @@ class xtmail(PathExtractorUnit):
                 'Source': src.partition('\x20')[0],
                 'Target': dst.partition('\x20')[0],
             })
+
         if received:
             received.reverse()
-            jh['ReceivedTrace'] = received
+            headers['ReceivedTrace'] = received
+
         yield UnpackResult('headers.json',
-            lambda jsn=jh: json.dumps(jsn, indent=4).encode(self.codec))
+            lambda jsn=headers: json.dumps(jsn, indent=4).encode(self.codec))
 
     @PathExtractorUnit.Requires('extract-msg<=0.54.0', 'formats', 'office', 'default', 'extended')
     def _extract_msg():
@@ -69,26 +89,40 @@ class xtmail(PathExtractorUnit):
         return extract_msg
 
     def _get_parts_outlook(self, data):
-        def ensure_bytes(data: bytes | str):
-            return data if isinstance(data, bytes) else data.encode(self.codec)
+        def ensure_bytes(data: bytes | str | None):
+            if data is None:
+                return B''
+            elif isinstance(data, str):
+                return data.encode(self.codec)
+            else:
+                return data
 
         def make_message(name, msg: Message):
             bodies = msg.detectedBodies
             BT = self._extract_msg.enums.BodyTypes
             if bodies & BT.HTML:
                 def htm(msg=msg):
-                    with suppress(Exception), NoLogging():
-                        return ensure_bytes(msg.htmlBody)
+                    with NoLogging():
+                        try:
+                            return ensure_bytes(msg.htmlBody)
+                        except Exception:
+                            return B''
                 yield UnpackResult(F'{name}.htm', htm)
             if bodies & BT.PLAIN:
                 def txt(msg=msg):
-                    with suppress(Exception), NoLogging():
-                        return ensure_bytes(msg.body)
+                    with NoLogging():
+                        try:
+                            return ensure_bytes(msg.body)
+                        except Exception:
+                            return B''
                 yield UnpackResult(F'{name}.txt', txt)
             if bodies & BT.RTF:
                 def rtf(msg=msg):
-                    with suppress(Exception), NoLogging():
-                        return ensure_bytes(msg.rtfBody)
+                    with NoLogging():
+                        try:
+                            return ensure_bytes(msg.rtfBody)
+                        except Exception:
+                            return B''
                 yield UnpackResult(F'{name}.rtf', rtf)
 
         msgcount = 0
@@ -105,7 +139,30 @@ class xtmail(PathExtractorUnit):
                     raise AttributeError(key)
             msg = ForgivingMessage(bytes(data))
 
-        yield from self._get_headparts(msg.header.items())
+        header = dict(msg.header)
+
+        if x := msg.date:
+            header['Date'] = email.utils.format_datetime(x)
+        if x := msg.sender:
+            header['From'] = x
+        if x := msg.to:
+            header['To'] = x
+        if x := msg.cc:
+            header['Cc'] = x
+        if x := msg.bcc:
+            header['Bcc'] = x
+        if x := msg.messageId:
+            header['Message-Id'] = x
+        if x := msg.subject:
+            header['Subject'] = x
+
+        for key, val in list(header.items()):
+            if val := val.strip().replace('\0', ''):
+                header[key] = val
+            else:
+                del header[key]
+
+        yield from self._get_headparts(header.items())
         yield from make_message('body', msg)
 
         def attachments(msg):
@@ -136,7 +193,7 @@ class xtmail(PathExtractorUnit):
     def _get_parts_regular(self, data: bytes):
         try:
             info = self._chardet.detect(data)
-            msg = data.decode(info['encoding'])
+            msg = data.decode(str(info['encoding']))
         except UnicodeDecodeError:
             raise ValueError('This is not a plaintext email message.')
         else:
@@ -146,7 +203,8 @@ class xtmail(PathExtractorUnit):
 
         for k, part in enumerate(msg.walk()):
             path = part.get_filename()
-            elog = None
+            error_message = None
+            result = None
             if path is None:
                 extension = file_extension(part.get_content_type(), 'txt')
                 path = F'body.{extension}'
@@ -154,57 +212,51 @@ class xtmail(PathExtractorUnit):
                 path = path | mimewords | str
                 path = F'attachments/{path}'
             try:
-                data = part.get_payload(decode=True)
+                payload = part.get_payload(decode=True)
+                if payload is None or isinstance(payload, bytes):
+                    result = payload
+                else:
+                    raise TypeError
             except Exception as E:
                 try:
-                    data = part.get_payload(decode=False)
+                    payload = part.get_payload(decode=False)
                 except Exception as E:
-                    elog = str(E)
-                    data = None
+                    error_message = str(E)
                 else:
-                    from refinery import carve
+                    from refinery.units.pattern.carve import carve
                     self.log_warn(F'manually decoding part {k}, data might be corrupted: {path}')
-                    if isinstance(data, str):
-                        data = data.encode('latin1')
-                    if isbuffer(data):
-                        data = next(data | carve('b64', stripspace=True, single=True, decode=True))
+                    if isinstance(payload, str):
+                        payload = payload.encode('latin1')
+                    if payload := asbuffer(payload):
+                        result = next(payload | carve('b64', stripspace=True, single=True, decode=True))
                     else:
-                        elog = str(E)
-                        data = None
-            if not data:
-                if elog is not None:
-                    self.log_warn(F'could not get content of message part {k}: {elog!s}')
+                        error_message = str(E)
+                        result = None
+            if not result:
+                if error_message is not None:
+                    self.log_warn(F'could not get content of message part {k}: {error_message!s}')
                 continue
-            yield UnpackResult(path, data)
+            yield UnpackResult(path, result)
 
     def unpack(self, data):
-        try:
+        if data[:len(CDFv2_MARKER)] == CDFv2_MARKER:
             yield from self._get_parts_outlook(data)
-        except Exception:
-            if data[:len(CDFv2_MARKER)] == CDFv2_MARKER:
-                raise
-            self.log_debug('failed to parse the input as an Outlook message')
+        else:
             yield from self._get_parts_regular(data)
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        markers = [
-            b'\nReceived:\x20from'
-            b'\nSubject:\x20',
-            b'\nTo:\x20',
-            b'\nFrom:\x20',
-            B'\nMessage-ID:\x20',
-            b'\nBcc:\x20',
-            b'\nContent-Transfer-Encoding:\x20',
-            b'\nContent-Type:\x20',
-            b'\nReturn-Path:\x20',
-        ]
-        if data.startswith(CDFv2_MARKER):
-            markers = [marker.decode('latin1').encode('utf-16le') for marker in markers]
         counter = 0
+        if data.startswith(CDFv2_MARKER):
+            markers = _EMAIL_BIN_MARKERS
+            threshold = 1
+        else:
+            markers = _EMAIL_TXT_MARKERS
+            threshold = 2
         for marker in markers:
             if re.search(re.escape(marker), data, flags=re.IGNORECASE):
                 counter += 1
-            if counter >= 3:
+            if counter >= threshold:
                 return True
-        return False
+        else:
+            return False
