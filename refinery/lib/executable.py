@@ -349,6 +349,14 @@ class Executable(ABC):
         else:
             return True
 
+    def read_integer(self, address: int, size: Optional[int] = None):
+        """
+        Read an integer at the given address. The size defaults to the pointer size in bytes.
+        """
+        if size is None:
+            size = self.pointer_size_in_bytes
+        return int.from_bytes(self[address:address + size], self.byte_order().value)
+
     def read(self, key: Union[int, slice, Range]) -> memoryview:
         """
         Read data from the binary based on a given address. If the input `key` is a single integer,
@@ -425,6 +433,13 @@ class Executable(ABC):
         Return the size of a pointer in bits. Depends on `refinery.lib.executable.Executable.arch`.
         """
         return self.arch().pointer_size
+
+    @property
+    def pointer_size_in_bytes(self) -> int:
+        """
+        Return the size of a pointer in bytes. Depends on `refinery.lib.executable.Executable.arch`.
+        """
+        return self.pointer_size // 8
 
     def location_from_address(self, address: int) -> Location:
         """
