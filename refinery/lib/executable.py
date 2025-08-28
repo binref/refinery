@@ -833,7 +833,8 @@ class LIEF(Executable):
                 yield segment.as_section()
             if self.is_pe:
                 return
-            yield from segment.sections
+            if sections := segment.sections:
+                yield from sections
 
     def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         if self.is_pe:
