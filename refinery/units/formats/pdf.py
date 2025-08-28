@@ -123,16 +123,19 @@ class xtpdf(ArchiveUnit):
             yield from self._walk_raw(value, memo, *path, key)
 
     def unpack(self, data):
-        mu = self._mupdf.open(stream=data, filetype='pdf')
-
-        if password := self.args.pwd or None:
-            if mu.is_encrypted:
-                mu.authenticate(password)
-            else:
-                self.log_warn('This PDF document is not protected; ignoring password argument.')
-                password = None
-        elif mu.is_encrypted:
-            raise ValueError('This PDF is password protected.')
+        try:
+            mu = self._mupdf.open(stream=data, filetype='pdf')
+        except Exception:
+            mu = password = None
+        else:
+            if password := self.args.pwd or None:
+                if mu.is_encrypted:
+                    mu.authenticate(password)
+                else:
+                    self.log_warn('This PDF document is not protected; ignoring password argument.')
+                    password = None
+            elif mu.is_encrypted:
+                raise ValueError('This PDF is password protected.')
 
         with MemoryFile(data, read_as_bytes=True) as stream:
             with NoLogging():
@@ -140,10 +143,16 @@ class xtpdf(ArchiveUnit):
                 catalog = pdf.trailer['/Root']
                 yield from self._walk_raw(catalog, None, 'raw')
 
+        if mu is None:
+            return
+
         for k in range(len(mu)):
             with NoLogging(NoLogging.Mode.ALL):
-                page: Page = mu[k]
-                text = page.get_textpage()
+                try:
+                    page: Page = mu[k]
+                    text = page.get_textpage()
+                except Exception:
+                    continue
             yield UnpackResult(F'parsed/page{k}.html', text.extractHTML().encode(self.codec))
             yield UnpackResult(F'parsed/page{k}.json', text.extractJSON().encode(self.codec))
             yield UnpackResult(F'parsed/page{k}.txt', text.extractText().encode(self.codec))
