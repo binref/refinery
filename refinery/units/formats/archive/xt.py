@@ -44,7 +44,6 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.msi import xtmsi                  ; yield xtmsi     # noqa
         # units that search for markers
         from refinery.units.formats.archive.xt7z import xt7z          ; yield xt7z      # noqa
-        from refinery.units.formats.office.xtdoc import xtdoc         ; yield xtdoc     # noqa
         from refinery.units.formats.archive.xtzip import xtzip        ; yield xtzip     # noqa
         from refinery.units.formats.pe.dotnet.dnsfx import dnsfx      ; yield dnsfx     # noqa
         from refinery.units.formats.archive.xtinno import xtinno      ; yield xtinno    # noqa
@@ -56,6 +55,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.archive.xtzpaq import xtzpaq      ; yield xtzpaq    # noqa
         from refinery.units.formats.email import xtmail               ; yield xtmail    # noqa
         from refinery.units.formats.office.xtone import xtone         ; yield xtone     # noqa
+        from refinery.units.formats.office.xtdoc import xtdoc         ; yield xtdoc     # noqa
         # units that implement more complex parsing / searching:
         from refinery.units.formats.archive.xtsim import xtsim        ; yield xtsim     # noqa
         from refinery.units.formats.archive.xtnuitka import xtnuitka  ; yield xtnuitka  # noqa
