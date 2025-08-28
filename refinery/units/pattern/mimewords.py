@@ -26,4 +26,6 @@ class mimewords(Unit):
             return codecs.decode(raw, codec, errors='surrogateescape')
         return re.sub(R"=(?:\?[^\?]*){3}\?=", replacer, word)
 
-    process = unicoded(convert)
+    @unicoded
+    def process(self, data):
+        return self.convert(data)
