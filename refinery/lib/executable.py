@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 import itertools
+import codecs
 
 from typing import NamedTuple, TYPE_CHECKING
 
@@ -386,7 +387,7 @@ class Executable(ABC):
             if b == 0:
                 string = string[:k]
                 break
-        return string.decode('latin-1')
+        return codecs.decode(string, 'latin-1')
 
     def rebase_usr_to_img(self, addr: int) -> int:
         return addr - self.base + self.image_defined_base()
