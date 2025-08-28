@@ -262,6 +262,18 @@ def isbuffer(obj) -> bool:
         return False
 
 
+def asbuffer(obj) -> Optional[memoryview]:
+    """
+    Attempts to acquire a memoryview of the given object. This works for bytes and bytearrays, or
+    memoryview objects themselves. The return value is `None` for objects that do not support the
+    buffer protocol.
+    """
+    try:
+        return memoryview(obj)
+    except TypeError:
+        return None
+
+
 def splitchunks(
     data: ByteStr,
     size: int,
