@@ -45,14 +45,12 @@ if TYPE_CHECKING:
         Iterable,
         List,
         Optional,
-        ParamSpec,
         Type,
         TypeVar,
         Union,
     )
 
     _T = TypeVar('_T')
-    _P = ParamSpec('_P')
 
     AnyLIEF = Union[
         MachOBinary,
