@@ -201,6 +201,15 @@ _pattern_number = (
 
 
 _pattern_date_elements = {
+    'A': '(?:{})'.format('|'.join([
+        '[sS]un(?:day)?',
+        '[mM]on(?:day)?',
+        '[tT]ue(?:sday)?',
+        '[wW]ed(?:nesday)?',
+        '[tT]hu(?:rsday)?',
+        '[fF]ri(?:day)?',
+        '[sS]at(?:urday)?',
+    ])),
     'B': '(?:{})'.format('|'.join([
         '[jJ]an(?:uary)?',
         '[fF]eb(?:ruary)?',
@@ -227,12 +236,14 @@ _pattern_date_elements = {
     'y': '(?:[0-9]{2})',
     'Y': '(?:[0-9]{4})',
     'c': '(?:[,;]|\\s|[,;]\\s)',
+    'gap': '\\s{1,3}'
 }
 
 _pattern_time = r'(?:{H}:{M}(?::{S})?|{I}:{M}(?::{S})?{c}?\(?{p}\)?)'.format_map(_pattern_date_elements)
 _pattern_date_elements['T'] = _pattern_time
 
 _pattern_date_list = [
+    R'{A}{c}(?:{d}|{D}){gap}{B}{c}{Y}(?:\s{T})?',
     R'{B}\s(?:{d}|{D}){c}{Y}(?:\s{T})?',
     R'{Y}[-:]{m}[-:]{d}(?:[T\x20]{H}:{M}(?::{S})?(?:[Z.][0-9]{{6}})?{z}?)',
     R'{m}/{d}/{Y}(?:{c}{T})?',

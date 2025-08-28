@@ -20,6 +20,11 @@ for comma in (',', ''):
             _FORMATS.append(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S')
             _FORMATS.append(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S (UTC)')
             _FORMATS.append(F'{month_name} %d{comma} %Y')
+            for day_name in ('%a', '%A'):
+                # Wed, 20 Aug 2025 00:56:59
+                _FORMATS.append(F'{day_name}{comma} %d{suffix} {month_name} %Y %H:%M:%S')
+                _FORMATS.append(F'{day_name}{comma} %d {month_name} %Y %H:%M:%S')
+
 for timesep in ('T', ' '):
     for millisecs in ('Z%f', '.%f', ''):
         _FORMATS.append(F'%Y-%m-%d{timesep}%H:%M:%S{millisecs}')
