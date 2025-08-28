@@ -125,6 +125,7 @@ class xtmail(PathExtractorUnit):
                 self.log_warn(F'unknown attachment of type {at}, please report this!')
                 continue
             path = attachment.longFilename or attachment.shortFilename
+            path = path.rstrip('\0')
             yield UnpackResult(F'attachments/{path}', attachment.data)
 
     @PathExtractorUnit.Requires('chardet', 'default', 'extended')
