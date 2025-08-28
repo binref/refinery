@@ -10,10 +10,13 @@ class TestPDF(TestUnitBase):
 
         unit = self.load(list=True)
         self.assertEqual({bytes(c) for c in data | unit}, {
-            B'Metadata',
-            B'OpenAction/JS',
-            B'Pages/Kids/0/Annots/0/NM',
-            B'Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fqMBgzoMVutzNwk.swf',
+            B'raw/Metadata',
+            B'raw/OpenAction/JS',
+            B'raw/Pages/Kids/0/Annots/0/NM',
+            B'raw/Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fqMBgzoMVutzNwk.swf',
+            B'parsed/page0.txt',
+            B'parsed/page0.json',
+            B'parsed/page0.html',
         })
 
         unit = self.load('Pages/*')

@@ -9,9 +9,11 @@ import re
 
 if TYPE_CHECKING:
     from pypdf.generic import EncodedStreamObject
+    from pymupdf import Page
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats.archive import ArchiveUnit, UnpackResult
 from refinery.lib.tools import NoLogging
+from refinery.lib.mime import get_cached_file_magic_info
 from refinery.lib.structures import MemoryFile
 
 
@@ -19,17 +21,25 @@ def isdict(object):
     return isinstance(object, dict) or all(hasattr(object, method) for method in ['items', 'values', 'keys'])
 
 
-class xtpdf(PathExtractorUnit):
+class xtpdf(ArchiveUnit):
     """
     Extract objects from PDF documents.
     """
-    @PathExtractorUnit.Requires('pypdf>=3.1.0', 'formats', 'default', 'extended')
+    @ArchiveUnit.Requires('pypdf>=3.1.0', 'formats', 'default', 'extended')
     def _pypdf2():
         import pypdf
         import pypdf.generic
         return pypdf
 
-    def _walk(self, blob, memo: Optional[Set[int]] = None, *path):
+    @ArchiveUnit.Requires('pymupdf', 'formats', 'default', 'extended')
+    def _mupdf():
+        import os
+        for setting in ('PYMUPDF_MESSAGE', 'PYMUPDF_LOG'):
+            os.environ[setting] = F'path:{os.devnull}'
+        import pymupdf
+        return pymupdf
+
+    def _walk_raw(self, blob, memo: Optional[Set[int]] = None, *path):
         while isinstance(blob, self._pypdf2.generic.IndirectObject):
             try:
                 blob = blob.get_object()
@@ -97,25 +107,52 @@ class xtpdf(PathExtractorUnit):
                 blob = dict(zip(*([iter(blob)] * 2)))
             else:
                 for key, value in enumerate(blob):
-                    yield from self._walk(value, memo, *path, F'/{key}')
+                    yield from self._walk_raw(value, memo, *path, F'/{key}')
                 return
 
         if not isdict(blob):
             return
+
+        assert isinstance(blob, dict)
 
         for key, value in blob.items():
             if not isinstance(key, str):
                 continue
             if not key.startswith('/'):
                 key = F'/{key}'
-            yield from self._walk(value, memo, *path, key)
+            yield from self._walk_raw(value, memo, *path, key)
 
     def unpack(self, data):
+        mu = self._mupdf.open(stream=data, filetype='pdf')
+
+        if password := self.args.pwd or None:
+            if mu.is_encrypted:
+                mu.authenticate(password)
+            else:
+                self.log_warn('This PDF document is not protected; ignoring password argument.')
+                password = None
+        elif mu.is_encrypted:
+            raise ValueError('This PDF is password protected.')
+
         with MemoryFile(data, read_as_bytes=True) as stream:
             with NoLogging():
-                pdf = self._pypdf2.PdfReader(stream)
+                pdf = self._pypdf2.PdfReader(stream, password=password)
                 catalog = pdf.trailer['/Root']
-                yield from self._walk(catalog)
+                yield from self._walk_raw(catalog, None, 'raw')
+
+        for k in range(len(mu)):
+            with NoLogging(NoLogging.Mode.ALL):
+                page: Page = mu[k]
+                text = page.get_textpage()
+            yield UnpackResult(F'parsed/page{k}.html', text.extractHTML().encode(self.codec))
+            yield UnpackResult(F'parsed/page{k}.json', text.extractJSON().encode(self.codec))
+            yield UnpackResult(F'parsed/page{k}.txt', text.extractText().encode(self.codec))
+            for j, image in enumerate(page.get_images(), 1):
+                xref = image[0]
+                base = mu.extract_image(xref)
+                data = base['image']
+                info = get_cached_file_magic_info(data)
+                yield UnpackResult(F'parsed/page{k}/img{j}.{info.extension}', data)
 
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
