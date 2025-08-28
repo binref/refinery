@@ -140,7 +140,7 @@ class vmemref(Unit):
         avoid = set()
 
         for symbol in exe.symbols():
-            if not symbol.code:
+            if not symbol.function:
                 continue
             avoid.add(exe.location_from_address(symbol.address).virtual.box)
 

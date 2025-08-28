@@ -238,13 +238,12 @@ class Section(NamedTuple):
 class Symbol(NamedTuple):
     address: int
     name: Optional[str] = None
-    code: bool = True
-    exported: bool = True
-    is_entry: bool = False
     size: Optional[int] = None
-    tls_index: Optional[int] = None
-    type_name: Optional[str] = None
-    bind_name: Optional[str] = None
+    function: Optional[bool] = None
+    exported: Optional[bool] = None
+    imported: Optional[bool] = None
+    is_entry: bool = False
+    section: Optional[Section] = None
 
     def get_name(self):
         name = self.name
@@ -252,7 +251,7 @@ class Symbol(NamedTuple):
             return name
         if self.is_entry:
             return 'entry'
-        if self.code:
+        if self.function:
             return F'sub_{self.address:08X}'
         else:
             return F'sym_{self.address:08X}'
@@ -726,7 +725,33 @@ class LIEF(Executable):
         yield Symbol(self._lh.entrypoint, is_entry=True)
         it: Iterable[lief.Symbol] = self._lh.symbols
         for symbol in it:
-            yield Symbol(symbol.value, symbol.name, size=symbol.size)
+            addr = symbol.value
+            name = self.ascii(symbol.name)
+            size = symbol.size
+            if isinstance(symbol, lief.PE.Symbol):
+                yield Symbol(
+                    addr, name, size,
+                    function=symbol.complex_type == lief.PE.SYMBOL_COMPLEX_TYPES.FUNCTION,
+                    section=self._convert_section(s) if (s := symbol.section) else None,
+                )
+            elif isinstance(symbol, lief.ELF.Symbol):
+                name = self.ascii(symbol.demangled_name) or name
+                yield Symbol(
+                    addr, name, size,
+                    exported=symbol.exported,
+                    imported=symbol.imported,
+                    function=symbol.is_function,
+                    section=self._convert_section(s) if (s := symbol.section) else None,
+                )
+            elif isinstance(symbol, lief.MachO.Symbol):
+                name = self.ascii(symbol.demangled_name) or name
+                yield Symbol(
+                    addr, name, size,
+                    imported=symbol.is_external,
+                    exported=symbol.has_export_info,
+                )
+            else:
+                yield Symbol(addr, name, size)
 
     def _convert_section(self, section: lief.Section, segment_name: Optional[str] = None) -> Section:
         p_lower = section.offset

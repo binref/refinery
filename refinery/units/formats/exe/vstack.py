@@ -548,8 +548,8 @@ class vstack(Unit):
             for filter in [
                 lambda s: s.get_name().casefold() == a.casefold(),
                 lambda s: s.name == a,
-                lambda s: s.code,
-                lambda s: s.exported
+                lambda s: s.function,
+                lambda s: s.exported,
             ]:
                 symbols = [s for s in symbols if filter(s)]
                 if len(symbols) == 1:
