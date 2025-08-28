@@ -826,6 +826,13 @@ class LIEF(Executable):
                     function=symbol.complex_type == lief.PE.SYMBOL_COMPLEX_TYPES.FUNCTION,
                     section=self._convert_section(s) if (s := symbol.section) else None,
                 )
+            elif isinstance(symbol, lief.PE.ImportEntry):
+                yield Symbol(
+                    addr, name, size,
+                    function=True,
+                    imported=True,
+                    exported=False,
+                )
             elif isinstance(symbol, lief.ELF.Symbol):
                 name = self.ascii(symbol.demangled_name) or name
                 yield Symbol(
