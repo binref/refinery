@@ -280,7 +280,7 @@ def parse(data) -> Optional[XMLNode]:
         cursor.attributes = element.attrib
         cursor.content = element.text or element.tail or ''
         return cursor
-    if root := ForgivingParse(data).getroot():
+    if (root := ForgivingParse(data).getroot()) is not None:
         rt = translate(root, XMLNode(root.tag))
         rt.source = root
         rt.reindex()
