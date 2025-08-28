@@ -54,8 +54,8 @@ class xtmail(PathExtractorUnit):
             src, _, rest = recv.partition(' by ')
             dst, _, rest = rest.partition(' with ')
             received.append({
-                'Target': src.partition('\x20')[0],
-                'Source': dst.partition('\x20')[0],
+                'Source': src.partition('\x20')[0],
+                'Target': dst.partition('\x20')[0],
             })
         if received:
             received.reverse()
