@@ -198,6 +198,8 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self._memorymap = IntIntervalUnion()
         self.state = state
         self._reset()
+        for rd in self.exe.relocations():
+            self.mem_write_int(rd.address, rd.value, rd.size)
 
     def step(self, address: int, count: int = 1) -> int:
         """
@@ -254,6 +256,24 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             self.mem_write(tp, B'\x90' * rs)
         self.push(tp)
         self.emulate(function, tp)
+
+    def mem_read_int(self, address: int, size: Optional[int] = None):
+        """
+        Read an integer from memory at the given address. The default for the size parameter is
+        the pointer size of the emulated executable.
+        """
+        if size is None:
+            size = self.exe.pointer_size_in_bytes
+        return int.from_bytes(self.mem_read(address, size), self.exe.byte_order().value)
+
+    def mem_write_int(self, address: int, value: int, size: Optional[int] = None):
+        """
+        Read an integer from memory at the given address. The default for the size parameter is
+        the pointer size of the emulated executable.
+        """
+        if size is None:
+            size = self.exe.pointer_size_in_bytes
+        return self.mem_write(address, value.to_bytes(size, self.exe.byte_order().value))
 
     @abstractmethod
     def _reset(self):
