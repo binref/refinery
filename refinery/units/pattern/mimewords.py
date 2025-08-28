@@ -13,14 +13,17 @@ class mimewords(Unit):
     """
     Implements the decoding of MIME encoded-word syntax from RFC-2047.
     """
-
-    @unicoded
-    def process(self, data: str) -> str:
+    @classmethod
+    def convert(cls, word: str) -> str:
+        """
+        Converts the MIME word.
+        """
         def replacer(match):
-            self.log_info('encoded mime word:', match[0])
             decoded, = decode_header(match[0])
             raw, codec = decoded
             if not isinstance(codec, str):
-                codec = 'utf8'
+                codec = cls.codec
             return codecs.decode(raw, codec, errors='surrogateescape')
-        return re.sub(R"=(?:\?[^\?]*){3}\?=", replacer, data)
+        return re.sub(R"=(?:\?[^\?]*){3}\?=", replacer, word)
+
+    process = unicoded(convert)
