@@ -244,6 +244,16 @@ class Section(NamedTuple):
         return F'<{self.__class__.__name__}:{self!s}>'
 
 
+class Relocation(NamedTuple):
+    """
+    The data required to apply a relocation; An integer of the given size at the given address has
+    to be patched to the given value.
+    """
+    address: int
+    value: int
+    size: int
+
+
 class Symbol(NamedTuple):
     address: int
     name: Optional[str] = None
@@ -566,11 +576,21 @@ class Executable(ABC):
     def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         ...
 
+    @abstractmethod
+    def _relocations(self) -> Generator[Relocation, None, None]:
+        ...
+
     def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
         """
         An iterable of all `refinery.lib.executable.Segment`s in this executable.
         """
         yield from self._segments(populate_sections=populate_sections)
+
+    def relocations(self) -> Generator[Relocation, None, None]:
+        """
+        An iterable of all `refinery.lib.executable.Relocation`s defined in this executable.
+        """
+        yield from self._relocations()
 
     def sections(self) -> Generator[Section, None, None]:
         """
@@ -668,6 +688,9 @@ class ExecutableCodeBlob(Executable):
     def _symbols(self) -> Generator[Symbol, None, None]:
         yield Symbol(0, is_entry=True)
 
+    def _relocations(self):
+        yield from ()
+
     def _sections(self) -> Generator[Section, None, None]:
         v = Range(self.base, self.base + len(self.data))
         p = Range(0, len(self.data))
@@ -749,6 +772,46 @@ class LIEF(Executable):
             if LM.BITS_64 == mode:
                 return Arch.X64
         raise NotImplementedError
+
+    def _relocations(self):
+        ps = self.pointer_size_in_bytes
+        it: Iterable[lief.Relocation] = iter(self._lh.relocations)
+
+        if self.is_elf:
+            for rel in it:
+                assert isinstance(rel, lief.ELF.Relocation)
+                if (symbol := rel.symbol) is None:
+                    continue
+                if '_RELATIVE' in (tn := rel.type.name):
+                    base = self.base
+                elif tn.endswith('GLOB_DAT') or tn.endswith('JUMP_SLOT'):
+                    base = symbol.value
+                else:
+                    continue
+                yield Relocation(rel.address, base + rel.addend, ps)
+        elif (delta := (base := self.base) - self.image_defined_base()) != 0:
+            def relocation(addr: int, size: int):
+                return Relocation(addr, self.read_integer(addr, size) + delta & mask, size)
+            mask = (1 << self.pointer_size) - 1
+            for rel in it:
+                if isinstance(rel, lief.MachO.Relocation):
+                    yield relocation(rel.address, rel.size // 8)
+                elif isinstance(rel, lief.PE.Relocation):
+                    rva = rel.virtual_address
+                    if (delta := (base := self.base) - self.image_defined_base()) == 0:
+                        continue
+                    for entry in rel.entries:
+                        if entry.type == lief.PE.RelocationEntry.BASE_TYPES.HIGHLOW:
+                            size = 4
+                        elif entry.type == lief.PE.RelocationEntry.BASE_TYPES.DIR64:
+                            size = 8
+                        else:
+                            continue
+                        if size != entry.size:
+                            raise RuntimeError(F'Unexpected relocation size: Guessed {size}, LIEF says {entry.size}.')
+                        yield relocation(base + rva + entry.position, size)
+                else:
+                    raise TypeError(F'Unexpected relocation type: {type(rel).__qualname__}')
 
     def _symbols(self) -> Generator[Symbol, None, None]:
         yield Symbol(self._lh.entrypoint, is_entry=True)

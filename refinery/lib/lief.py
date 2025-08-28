@@ -16,6 +16,7 @@ from lief import (
     PE,
     ELF,
     Binary,
+    Relocation,
     Header,
     Symbol,
     Section,
@@ -24,7 +25,7 @@ from lief import (
 from refinery.lib.types import ByteStr
 
 __pdoc__ = {_forward: False for _forward in [
-    'MachO', 'PE', 'ELF', 'Binary', 'Header', 'Symbol', 'Section'
+    'MachO', 'PE', 'ELF', 'Binary', 'Header', 'Symbol', 'Section', 'Relocation'
 ]}
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     'PE',
     'ELF',
     'Binary',
+    'Relocation',
     'Header',
     'Symbol',
     'Section',
