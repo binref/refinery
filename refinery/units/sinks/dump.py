@@ -11,6 +11,13 @@ from refinery.units import Arg, Unit, RefineryCriticalException
 from refinery.lib.meta import metavars
 
 
+def _is_path_obstruction(p: str):
+    try:
+        return os.path.exists(p) and not os.path.isdir(p)
+    except Exception:
+        return False
+
+
 class dump(Unit):
     """
     Dump incoming data to files on disk. It is possible to specify filenames with format fields.
@@ -30,6 +37,9 @@ class dump(Unit):
     specified on the command line. Unless connected to a terminal, the remaining inputs will be
     forwarded on STDOUT. The `-t` or `--tee` switch can be used to forward all inputs, under all
     circumstances, regardless of whether or not they have been processed.
+
+    If the data cannot be written to the specified path because a file already exists in place of a
+    directory that would have to be created, the unit renames the directory until dumping is possible.
 
     If no file is specified, all ingested inputs are concatenated and written to the clipboard. This
     will only succeed when the data can successfully be encoded.
@@ -68,8 +78,8 @@ class dump(Unit):
     def _clipcopy(self):
         return not self.args.files
 
-    def _components(self, path):
-        def _reversed_components(path):
+    def _components(self, path: str):
+        def _reversed_components(path: str):
             while True:
                 path, component = os.path.split(path)
                 if not component:
@@ -80,40 +90,59 @@ class dump(Unit):
         components.reverse()
         return components
 
+    def _fix_path(self, path) -> str:
+        base = ''
+        *parts, name = self._components(path)
+        while parts:
+            segment, *parts = parts
+            base = os.path.join(base, segment)
+            if not _is_path_obstruction(base):
+                continue
+            elif self.args.force:
+                try:
+                    os.unlink(base)
+                except Exception:
+                    raise RefineryCriticalException(F'Unable to dump to {path} because {base} is not a directory.')
+                else:
+                    self.log_info(F'removing path obstruction: {base}')
+                    continue
+            else:
+                stem, _, ex = base.rpartition('.')
+                base = stem = stem or ex
+                counter = 1
+                while _is_path_obstruction(base):
+                    base = F'{stem}.{counter}'
+                    counter += 1
+        return os.path.join(base, name)
+
     def _open(self, path, unc=False):
         if hasattr(path, 'close'):
             return path
-        path = os.path.abspath(path)
-        base = os.path.dirname(path)
-        if not unc:
-            self.log_info('opening:', path)
-        try:
-            os.makedirs(base, exist_ok=True)
-        except FileExistsError:
-            self.log_info('existed:', path)
-            part, components = '', self._components(path)
-            while components:
-                component, *components = components
-                part = os.path.join(part, component)
-                if os.path.exists(part) and os.path.isfile(part):
-                    if self.args.force:
-                        os.unlink(part)
-                        return self._open(path, unc)
-                    break
-            raise RefineryCriticalException(F'Unable to dump to {path} because {part} is a file.')
-        except FileNotFoundError:
-            if unc or os.name != 'nt':
-                raise
-            path = F'\\\\?\\{path}'
-            return self._open(path, unc=True)
-        except OSError as e:
-            if not self.log_info():
-                self.log_warn('opening:', path)
-            self.log_warn('errored:', e.args[1])
-            return open(os.devnull, 'wb')
-        else:
-            mode = 'ab' if self.args.stream else 'wb'
-            return open(path, mode)
+        for is_second_attempt in (False, True):
+            path = os.path.abspath(path)
+            base = os.path.dirname(path)
+            try:
+                os.makedirs(base, exist_ok=True)
+            except FileNotFoundError:
+                if is_second_attempt:
+                    raise
+                elif unc or os.name != 'nt':
+                    path = self._fix_path(path)
+                else:
+                    return self._open(F'\\\\?\\{path}', unc=True)
+            except FileExistsError:
+                if is_second_attempt:
+                    raise RefineryCriticalException(F'Unknown error while attempting to create directory: {base}')
+                path = self._fix_path(path)
+            except OSError as e:
+                if not self.log_info():
+                    self.log_warn('opening:', path)
+                self.log_warn('errored:', e.args[1])
+                return open(os.devnull, 'wb')
+            else:
+                self.log_info('opening:', path[4:] if unc else path)
+                mode = 'ab' if self.args.stream else 'wb'
+                return open(path, mode)
 
     def _close(self, final=False):
         if not self.stream:

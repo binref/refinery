@@ -201,12 +201,6 @@ class PathExtractorUnit(Unit, abstract=True):
         root = ''
         uuid = 0
 
-        def path_exists(p: str):
-            try:
-                return os.path.exists(p) and not os.path.isdir(p)
-            except Exception:
-                return False
-
         def get_data(result: UnpackResult):
             try:
                 data = result.get_data()
@@ -248,13 +242,6 @@ class PathExtractorUnit(Unit, abstract=True):
                 root = str(ByteStringWrapper(meta[metavar], self.codec))
             except KeyError:
                 pass
-            if path_exists(root):
-                root, _, rest = root.rpartition('.')
-                root = root or rest
-            _rr = root
-            _rk = 1
-            while path_exists(root):
-                root = F'{_rr}.{_rk}'
 
         for result in results:
             path = normalize(result.path)
