@@ -9,7 +9,6 @@ import abc
 import collections
 import codecs
 import fnmatch
-import os
 import re
 
 from zlib import adler32
