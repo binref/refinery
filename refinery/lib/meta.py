@@ -159,11 +159,11 @@ class CustomStringRepresentation(abc.ABC):
 
 _INDEX = 'index'
 
-_PRINT_SAFE = set(string.printable.encode('latin1')) - set(b'|<>&\t\n\r\x0B\x0B')
+_PRINT_SAFE = set(string.printable.encode('latin1')) - set(b'|<>\t\n\r\v')
 if os.name == 'nt':
     _PRINT_SAFE -= set(b'^"')
 else:
-    _PRINT_SAFE -= set(b'*?\'"')
+    _PRINT_SAFE -= set(b'&*?\'"')
 _PRINT_SAFE = bytes(_PRINT_SAFE)
 _IS_PRINT_SAFE = bytearray(256)
 for p in _PRINT_SAFE:
