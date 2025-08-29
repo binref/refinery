@@ -17,11 +17,11 @@ runs:
     - name: Install Dependencies (Linux)
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: sudo apt-get install xclip xvfb
+      run: sudo apt-get install xclip xvfb libzbar0
     - name: Install Dependencies (MacOS)
       if: ${{ contains(inputs.os, 'macos') }}
       shell: bash
-      run: brew install libmagic
+      run: brew install libmagic zbar
     - name: Install Dependencies
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: |
