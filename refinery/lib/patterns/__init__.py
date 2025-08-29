@@ -3,11 +3,11 @@
 """
 Library of regular expression patterns.
 """
+from __future__ import annotations
+
 import enum
 import functools
 import re
-
-from typing import Optional
 
 from refinery.lib.patterns.tlds import tlds
 from refinery.lib.tools import normalize_to_identifier, normalize_to_display
@@ -20,7 +20,7 @@ class pattern:
     operators.
     """
     str_pattern: str
-    bin_pattern: Optional[bytes]
+    bin_pattern: bytes | None
 
     def __init__(self, pattern: str, flags: int = 0):
         self.str_pattern = pattern
@@ -31,11 +31,11 @@ class pattern:
         return self.bin_pattern
 
     @functools.cached_property
-    def bin_compiled(self):
+    def bin(self):
         return re.compile(B'(%s)' % self.bin_pattern, flags=self.regex_flags)
 
     @functools.cached_property
-    def str_compiled(self):
+    def str(self):
         return re.compile(self.str_pattern, flags=self.regex_flags)
 
     def __str__(self):
@@ -44,10 +44,10 @@ class pattern:
     def __getattr__(self, verb):
         if not hasattr(re.Pattern, verb):
             raise AttributeError(verb)
-        bin_attr = getattr(self.bin_compiled, verb)
+        bin_attr = getattr(self.bin, verb)
         if not callable(bin_attr):
             return bin_attr
-        str_attr = getattr(self.str_compiled, verb)
+        str_attr = getattr(self.str, verb)
 
         def wrapper(*args, **kwargs):
             for argument in args:
