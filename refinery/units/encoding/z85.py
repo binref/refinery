@@ -5,8 +5,8 @@ import base64
 from refinery.units import Unit
 
 _b85alphabet = (
-    b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    b"abcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~")
+    b'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    b'abcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~')
 _z85alphabet = (
     b'0123456789abcdefghijklmnopqrstuvwxyz'
     b'ABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#')
@@ -23,6 +23,7 @@ _z85_encode_translation = bytes.maketrans(
 class z85(Unit):
     """
     Z85 encoding and decoding, an alternative variant of Base85 with a different alphabet.
+    This variant derives its name from the developer, ZeroMQ.
     """
     def reverse(self, data):
         return base64.b85encode(data).translate(_z85_encode_translation)
