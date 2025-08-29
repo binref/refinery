@@ -30,6 +30,6 @@ class b32(Unit):
     @classmethod
     def handles(cls, data):
         from refinery.lib.patterns import formats
-        if not formats.b32.value.fullmatch(data):
+        if not formats.b32.value.bin.fullmatch(data):
             return False
-        return not formats.hex.value.fullmatch(data)
+        return not formats.hex.value.bin.fullmatch(data)

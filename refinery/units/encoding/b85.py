@@ -21,4 +21,4 @@ class b85(Unit):
     @classmethod
     def handles(cls, data: bytearray):
         from refinery.lib.patterns import formats
-        return formats.spaced_b85.value.fullmatch(data)
+        return formats.spaced_b85.value.bin.fullmatch(data) is not None

@@ -15,7 +15,7 @@ class b58(base):
     def handles(cls, data):
         from refinery.lib.patterns import formats
         return (
-            formats.b58.value.fullmatch(data)
-            and not formats.hex.value.fullmatch(data)
-            and not formats.b32.value.fullmatch(data)
+            formats.b58.value.bin.fullmatch(data)
+            and not formats.hex.value.bin.fullmatch(data)
+            and not formats.b32.value.bin.fullmatch(data)
         )
