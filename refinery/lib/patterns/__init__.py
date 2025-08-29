@@ -410,6 +410,8 @@ class formats(PatternEnum):
     "Base85 encoded strings"
     a85 = alphabet(R'[!-u]')
     "Ascii85 encoded strings"
+    z85 = alphabet(R'[-0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]')
+    "Z85 encoded strings"
     b92 = pattern(_pattern_b92)
     "Base92 encoded strings"
     b64any = alphabet(R'(?:[-\w\+/]{4})', postfix=R'(?:(?:[-\w\+/]{2,3})={0,3})?')
@@ -428,7 +430,8 @@ class formats(PatternEnum):
     "Base85 encoded string, separated by whitespace"
     spaced_a85 = alphabet(R'[!-u\s]')
     "Ascii85 encoded string, separated by whitespace"
-
+    spaced_z85 = alphabet(R'[-\s0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]')
+    "Z85 encoded string, separated by whitespace"
     utf8 = pattern(_pattern_utf8)
     "A sequence of bytes that can be decoded as UTF8."
     hexdump = tokenize(_pattern_hexline, bound='', sep=R'\s*\n')
