@@ -21,6 +21,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install .[all]
         pip install 'pdoc3<0.11.0'
+        sudo apt-get install libzbar0
     - name: Generate documentation
       run: |
         pdoc3 --html --force --template-dir pdoc3-template refinery
