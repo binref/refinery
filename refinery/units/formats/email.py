@@ -83,7 +83,7 @@ class xtmail(PathExtractorUnit):
         yield UnpackResult('headers.json',
             lambda jsn=headers: json.dumps(jsn, indent=4).encode(self.codec))
 
-    @PathExtractorUnit.Requires('extract-msg<=0.54.0', ['formats', 'office', 'default', 'extended'])
+    @PathExtractorUnit.Requires('extract-msg', ['formats', 'office', 'default', 'extended'])
     def _extract_msg():
         import extract_msg.enums
         return extract_msg
