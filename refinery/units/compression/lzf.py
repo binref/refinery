@@ -197,6 +197,6 @@ class lzf(Unit):
         return out.getvalue()
 
     @classmethod
-    def handles(self, data: bytearray):
+    def handles(cls, data: bytearray):
         if data[:2] == LZFHeader.MAGIC:
             return True

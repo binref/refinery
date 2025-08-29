@@ -276,7 +276,7 @@ class lzo(Unit):
             )
 
     @classmethod
-    def handles(self, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> Optional[bool]:
         sig = LZO.SIGNATURE
         if data[:len(sig)] == sig:
             return True

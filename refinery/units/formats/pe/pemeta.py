@@ -182,7 +182,7 @@ class pemeta(Unit):
         )
 
     @classmethod
-    def handles(self, data):
+    def handles(cls, data):
         return data[:2] == B'MZ'
 
     @classmethod

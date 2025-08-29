@@ -46,7 +46,7 @@ class xtxs(PathExtractorUnit):
                         yield UnpackResult(F'{name}/{k}/{header}', entry)
 
     @classmethod
-    def handles(self, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> Optional[bool]:
         view = memoryview(data)
         if b'Standard ACE DB' in view[:20]:
             return True

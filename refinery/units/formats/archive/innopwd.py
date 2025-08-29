@@ -44,7 +44,7 @@ class innopwd(Unit):
                 return
 
     @classmethod
-    def handles(self, data):
+    def handles(cls, data):
         import re
         if data[:2] != B'MZ':
             return False

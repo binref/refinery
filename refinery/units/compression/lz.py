@@ -159,7 +159,7 @@ class lzma(Unit):
         return self._process(data, partial=True)
 
     @classmethod
-    def handles(self, data: bytearray):
+    def handles(cls, data: bytearray):
         if data[:4] == B'\x5D\0\0\0':
             return True
         if data[:5] == B'\xFD7zXZ':

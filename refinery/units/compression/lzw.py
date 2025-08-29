@@ -136,7 +136,7 @@ class lzw(Unit):
         return out.getvalue()
 
     @classmethod
-    def handles(self, data: bytearray) -> Optional[bool]:
-        sig = self._MAGIC
+    def handles(cls, data: bytearray) -> Optional[bool]:
+        sig = cls._MAGIC
         if data[:len(sig)] == sig:
             return True

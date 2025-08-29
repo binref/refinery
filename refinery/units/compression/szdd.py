@@ -52,5 +52,5 @@ class szdd(Unit):
             return output
 
     @classmethod
-    def handles(self, data: bytearray):
+    def handles(cls, data: bytearray):
         return data[:4] == B'SZDD'

@@ -206,7 +206,7 @@ class xthtml(XMLToPathExtractorUnit):
         yield from tree(root, path(root))
 
     @classmethod
-    def handles(self, data: bytearray):
+    def handles(cls, data: bytearray):
         from refinery.lib import mime
         info = mime.get_cached_file_magic_info(data)
         if info.extension == 'html':

@@ -15,7 +15,7 @@ class u16(Unit):
         return data.decode('utf-16').encode(self.codec)
 
     @classmethod
-    def handles(self, data: bytearray):
+    def handles(cls, data: bytearray):
         view = memoryview(data)
         if len(view) % 2 != 0:
             return False

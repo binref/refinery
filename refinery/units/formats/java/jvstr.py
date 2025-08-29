@@ -14,5 +14,5 @@ class jvstr(Unit):
             yield string.encode(self.codec)
 
     @classmethod
-    def handles(self, data):
+    def handles(cls, data):
         return data[:4] == B'\xCA\xFE\xBA\xBE'

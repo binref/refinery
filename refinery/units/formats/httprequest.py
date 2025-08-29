@@ -106,5 +106,5 @@ class httprequest(Unit):
             yield from chunks(parse_qs(body, keep_blank_values=1))
 
     @classmethod
-    def handles(self, data: bytearray) -> bool | None:
+    def handles(cls, data: bytearray) -> bool | None:
         return data.startswith(B'POST ') or data.startswith(B'GET ')

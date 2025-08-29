@@ -70,7 +70,7 @@ class uuenc(Unit):
             return stream.getvalue()
 
     @classmethod
-    def handles(self, data):
+    def handles(cls, data):
         if len(data) < 16:
             return False
         if data[:6] == B'begin ':

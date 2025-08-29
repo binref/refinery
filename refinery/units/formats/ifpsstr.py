@@ -15,5 +15,5 @@ class ifpsstr(IFPSBase):
             yield string.encode(self.codec)
 
     @classmethod
-    def handles(self, data: bytearray) -> bool:
+    def handles(cls, data: bytearray) -> bool:
         return data.startswith(IFPSFile.Magic)
