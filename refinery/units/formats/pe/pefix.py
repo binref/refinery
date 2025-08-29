@@ -58,7 +58,7 @@ class pefix(Unit):
     relevant parts of the header have been stripped. The unit attempts to repair the damage
     and return something that can be parsed.
     """
-    @Unit.Requires('pefile', 'default', 'extended')
+    @Unit.Requires('pefile', ['default', 'extended'])
     def _pefile():
         import pefile
         return pefile

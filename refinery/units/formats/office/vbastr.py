@@ -32,7 +32,7 @@ class vbastr(PathExtractorUnit):
     value; the unit extracts these with the synthesized file extension "cap", "tip", and "val",
     respectively.
     """
-    @PathExtractorUnit.Requires('oletools', 'formats', 'office')
+    @PathExtractorUnit.Requires('oletools', ['formats', 'office'])
     def _olevba():
         from oletools import olevba
         return olevba

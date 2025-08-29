@@ -31,7 +31,7 @@ class imgtp(Unit):
         transformation = [Arg.AsOption(t, T) for t in transformation]
         super().__init__(transformation=transformation)
 
-    @Unit.Requires('Pillow', 'formats')
+    @Unit.Requires('Pillow', ['formats'])
     def _image():
         from PIL import Image
         return Image

@@ -80,7 +80,7 @@ class pcap(Unit):
     ):
         super().__init__(merge=merge, client=client, server=server)
 
-    @Unit.Requires('pypcapkit[scapy]>=1.3', 'all')
+    @Unit.Requires('pypcapkit[scapy]>=1.3', ['all'])
     def _pcapkit():
         with NoLogging():
             import importlib
@@ -88,7 +88,7 @@ class pcap(Unit):
             import pcapkit
             return pcapkit
 
-    @Unit.Requires('scapy', 'all')
+    @Unit.Requires('scapy', ['all'])
     def _scapy():
         import scapy
         import scapy.packet

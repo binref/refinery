@@ -10,7 +10,7 @@ class xtvba(PathExtractorUnit):
     """
     Extract VBA macro code from Office documents.
     """
-    @PathExtractorUnit.Requires('oletools', 'formats', 'office', 'extended')
+    @PathExtractorUnit.Requires('oletools', ['formats', 'office', 'extended'])
     def _olevba():
         with NoLogging(NoLogging.Mode.ALL):
             import oletools.olevba

@@ -25,13 +25,13 @@ class xtpdf(ArchiveUnit):
     """
     Extract objects from PDF documents.
     """
-    @ArchiveUnit.Requires('pypdf>=3.1.0', 'formats', 'default', 'extended')
+    @ArchiveUnit.Requires('pypdf>=3.1.0', ['formats', 'default', 'extended'])
     def _pypdf2():
         import pypdf
         import pypdf.generic
         return pypdf
 
-    @ArchiveUnit.Requires('pymupdf', 'formats', 'default', 'extended')
+    @ArchiveUnit.Requires('pymupdf', ['formats', 'default', 'extended'])
     def _mupdf():
         import os
         for setting in ('PYMUPDF_MESSAGE', 'PYMUPDF_LOG'):

@@ -79,7 +79,7 @@ class pedebloat(OverlayUnit):
             names=names,
         )
 
-    @OverlayUnit.Requires('pefile', 'default', 'extended')
+    @OverlayUnit.Requires('pefile', ['default', 'extended'])
     def _pefile():
         import pefile
         return pefile

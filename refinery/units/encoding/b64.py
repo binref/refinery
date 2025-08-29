@@ -29,7 +29,7 @@ class b64(Unit):
             altchars = B'-_'
         return base64.b64decode(data, altchars=altchars)
 
-    @Unit.Requires('numpy', 'speed', 'default', 'extended')
+    @Unit.Requires('numpy', ['speed', 'default', 'extended'])
     def _numpy():
         import numpy
         return numpy

@@ -22,7 +22,7 @@ class doctxt(Unit):
     Extracts the text body from Word documents.
     """
 
-    @Unit.Requires('olefile', 'formats', 'office', 'extended')
+    @Unit.Requires('olefile', ['formats', 'office', 'extended'])
     def _olefile():
         import olefile
         return olefile

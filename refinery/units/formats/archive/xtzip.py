@@ -15,12 +15,12 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a Zip archive.
     """
-    @ArchiveUnit.Requires('chardet', 'default', 'extended')
+    @ArchiveUnit.Requires('chardet', ['default', 'extended'])
     def _chardet():
         import chardet
         return chardet
 
-    @ArchiveUnit.Requires('pyzipper', 'arc', 'default', 'extended')
+    @ArchiveUnit.Requires('pyzipper', ['arc', 'default', 'extended'])
     def _pyzipper():
         import pyzipper
         return pyzipper

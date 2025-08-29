@@ -11,13 +11,14 @@ class qr(Unit):
     Extract information from bar codes, especially QR codes. This unit is a thin proxy around the
     pyzbar library, which itself only provides Python bindings for the ZBar library.
     """
-    @Unit.Requires('pyzbar', 'all')
+    @Unit.Requires('pyzbar', ['formats', 'extended', 'all'],
+        more='you also have to install the zbar shared library separately')
     def _pyzbar():
         import pyzbar
         import pyzbar.pyzbar
         return pyzbar
 
-    @Unit.Requires('Pillow', 'all')
+    @Unit.Requires('Pillow', ['formats', 'extended', 'all'])
     def _image():
         from PIL import Image
         return Image

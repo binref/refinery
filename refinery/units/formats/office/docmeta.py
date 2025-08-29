@@ -9,7 +9,7 @@ class docmeta(PathExtractorUnit):
     """
     Extract metadata from Word Documents such as custom document properties.
     """
-    @PathExtractorUnit.Requires('olefile', 'formats', 'office')
+    @PathExtractorUnit.Requires('olefile', ['formats', 'office'])
     def _olefile():
         import olefile
         return olefile

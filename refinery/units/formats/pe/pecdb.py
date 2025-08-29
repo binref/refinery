@@ -10,7 +10,7 @@ class pecdb(Unit):
     set, this DLL when loaded into memory will usually be loaded at its header-defined base address,
     which can make debugging easier.
     """
-    @Unit.Requires('pefile', 'default', 'extended')
+    @Unit.Requires('pefile', ['default', 'extended'])
     def _pefile():
         import pefile
         return pefile

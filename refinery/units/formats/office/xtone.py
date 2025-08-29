@@ -12,7 +12,7 @@ class xtone(PathExtractorUnit):
     """
     Extract embedded files from OneNote documents.
     """
-    @PathExtractorUnit.Requires('pyonenote', 'formats', 'office', 'extended')
+    @PathExtractorUnit.Requires('pyonenote', ['formats', 'office', 'extended'])
     def _pyOneNote():
         import pyOneNote
         import pyOneNote.OneDocument

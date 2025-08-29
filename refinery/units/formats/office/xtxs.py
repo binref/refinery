@@ -12,7 +12,7 @@ class xtxs(PathExtractorUnit):
     Extract data from Microsoft Access Databases.
     """
 
-    @PathExtractorUnit.Requires('access-parser', 'formats', 'office', 'extended')
+    @PathExtractorUnit.Requires('access-parser', ['formats', 'office', 'extended'])
     def _access_parser():
         import access_parser
         return access_parser

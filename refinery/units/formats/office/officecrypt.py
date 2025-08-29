@@ -14,7 +14,7 @@ class officecrypt(Unit):
     )) = b'VelvetSweatshop'):
         super().__init__(password=password)
 
-    @Unit.Requires('msoffcrypto-tool', 'formats', 'office')
+    @Unit.Requires('msoffcrypto-tool', ['formats', 'office'])
     def _msoffcrypto():
         import msoffcrypto
         return msoffcrypto

@@ -21,7 +21,7 @@ class vmemref(Unit):
     at the given offset.
     """
 
-    @Unit.Requires('smda<2.0', 'all')
+    @Unit.Requires('smda<2.0', ['all'])
     def _smda():
         import datetime
         datetime.UTC = datetime.timezone.utc

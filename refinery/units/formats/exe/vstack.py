@@ -385,12 +385,12 @@ class vstack(Unit):
 
     In this pipeline, the eax register is set to `0x2000` before emulation begins.
     """
-    @Unit.Requires('capstone', 'default', 'extended')
+    @Unit.Requires('capstone', ['default', 'extended'])
     def _capstone():
         import capstone
         return capstone
 
-    @Unit.Requires('unicorn==2.0.1.post1', 'default', 'extended')
+    @Unit.Requires('unicorn==2.0.1.post1', ['default', 'extended'])
     def _unicorn():
         import importlib
         importlib.import_module('setuptools')
@@ -398,12 +398,12 @@ class vstack(Unit):
             import unicorn
             return unicorn
 
-    @Unit.Requires('speakeasy-emulator-refined', 'extended')
+    @Unit.Requires('speakeasy-emulator-refined', ['extended'])
     def _speakeasy():
         import speakeasy
         return speakeasy
 
-    @Unit.Requires('icicle-emu', 'all')
+    @Unit.Requires('icicle-emu', ['all'])
     def _icicle():
         import icicle
         return icicle

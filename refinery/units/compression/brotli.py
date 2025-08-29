@@ -8,7 +8,7 @@ class brotli(Unit):
     Brotli compression and decompression.
     """
 
-    @Unit.Requires('brotlipy', 'all')
+    @Unit.Requires('brotlipy', ['all'])
     def _brotli():
         import brotli
         return brotli

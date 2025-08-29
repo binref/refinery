@@ -66,7 +66,7 @@ class dsjava(Unit):
     """
     Deserialize Java serialized data and re-serialize as JSON.
     """
-    @Unit.Requires('javaobj-py3>=0.4.0.1', 'formats')
+    @Unit.Requires('javaobj-py3>=0.4.0.1', ['formats'])
     def _javaobj():
         import javaobj.v2
         return javaobj.v2

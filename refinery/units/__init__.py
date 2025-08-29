@@ -176,6 +176,7 @@ from typing import (
     List,
     Optional,
     Callable,
+    Collection,
     Mapping,
     ClassVar,
     Tuple,
@@ -1387,7 +1388,7 @@ class Unit(UnitBase, abstract=True):
         pass
 
     @staticmethod
-    def Requires(distribution: str, *_buckets: str):
+    def Requires(distribution: str, _buckets: Collection[str] = (), more: Optional[str] = None):
 
         class Requirement(requirement):
             dependency: ClassVar[str] = distribution
@@ -1421,7 +1422,7 @@ class Unit(UnitBase, abstract=True):
                     args = set()
                     for v in deps.values():
                         args.update(v)
-                    raise RefineryImportMissing(self.dependency, *args) from E
+                    raise RefineryImportMissing(self.dependency, list(args), more) from E
                 except Exception as E:
                     raise AttributeError(F'module import for distribution "{distribution}" failed: {E!s}')
                 else:
@@ -1536,6 +1537,8 @@ class Unit(UnitBase, abstract=True):
             raise exception
         elif isinstance(exception, RefineryImportMissing):
             self.log_fail(F'dependency {exception.missing} is missing; run pip install {exception.install}')
+            if more := exception.more:
+                self.log_fail(more)
         elif isinstance(exception, RefineryException):
             self.log_fail(exception.args[0])
         else:

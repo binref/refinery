@@ -10,7 +10,7 @@ class carve_der(Unit):
     0x30 is found, since this can indicate the start of an ASN1 SEQUENCE. It will only consider the
     next 10KB of data at this offset, but it nevertheless remains a poor heuristic.
     """
-    @Unit.Requires('pyasn1', 'default', 'extended')
+    @Unit.Requires('pyasn1', ['default', 'extended'])
     def _pyasn1parsers():
         from pyasn1.codec.der.decoder import decode
         from pyasn1.codec.der.encoder import encode

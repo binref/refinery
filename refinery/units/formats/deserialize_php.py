@@ -8,7 +8,7 @@ class dsphp(Unit):
     """
     Deserialize PHP serialized data and re-serialize as JSON.
     """
-    @Unit.Requires('phpserialize', 'formats')
+    @Unit.Requires('phpserialize', ['formats'])
     def _php():
         import phpserialize
         return phpserialize

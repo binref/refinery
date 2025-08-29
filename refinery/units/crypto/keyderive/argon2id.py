@@ -20,7 +20,7 @@ class argon2id(Unit):
     ):
         super().__init__(size=size, salt=salt, iter=iter, skey=skey, jobs=jobs, cost=cost, more=more)
 
-    @Unit.Requires('cryptography', 'default', 'extended')
+    @Unit.Requires('cryptography', ['default', 'extended'])
     def _argon2id():
         from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
         return Argon2id

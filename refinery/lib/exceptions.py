@@ -5,6 +5,8 @@ This module  exposes exceptions used by refinery.
 """
 from __future__ import annotations
 
+from typing import Collection
+
 
 class RefineryImportMissing(ModuleNotFoundError):
     """
@@ -12,11 +14,12 @@ class RefineryImportMissing(ModuleNotFoundError):
     refinery unit is not installed in the current environment. The exception also provides hints
     about what package has to be installed in order to make that module available.
     """
-    def __init__(self, missing: str, *dependencies: str):
+    def __init__(self, missing: str, dependencies: Collection[str] = (), more: str | None = None):
         super().__init__()
         import shlex
         self.missing = missing
         self.install = ' '.join(shlex.quote(dist) for dist in dependencies)
+        self.more = more
         self.dependencies = dependencies
 
 
@@ -25,14 +28,15 @@ class MissingModule:
     This class can wrap a module import that is currently missing. If any attribute of the missing
     module is accessed, it raises `refinery.units.RefineryImportMissing`.
     """
-    def __init__(self, name, dist=None):
+    def __init__(self, name, dist=None, more=None):
         self.name = name
         self.dist = dist or name
+        self.more = more
 
     def __getattr__(self, key: str):
         if key.startswith('__') and key.endswith('__'):
             raise AttributeError(key)
-        raise RefineryImportMissing(self.name, self.dist)
+        raise RefineryImportMissing(self.name, self.dist, more=self.more)
 
 
 class RefineryCriticalException(RuntimeError):
