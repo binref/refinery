@@ -214,8 +214,8 @@ class flz(Unit):
     """
     def __init__(
         self,
-        level: Arg.Number('-l', bound=(1, 2), help=(
-            'Specify a FastLZ level (either 1 or 2). By default, compression will select a level '
+        level: Arg.Number('-l', bound=(0, 1), help=(
+            'Specify a FastLZ level (either 0 or 1). By default, compression will select a level '
             'based on buffer length like the reference implementation. Decompression reads level '
             'information from the header by default.')) = None
     ):
