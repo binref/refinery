@@ -258,6 +258,7 @@ class TestSimpleInvertible(TestUnitBase):
         'iffc',
         'msgpack',
         'morse',
+        'pdfcrypt',
         'recode',
         'stretch',
         'terminate',
