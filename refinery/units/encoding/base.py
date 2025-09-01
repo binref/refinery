@@ -125,10 +125,13 @@ class base(Unit):
                 result *= base
                 result += lookup[digit]
         if not base or self.args.strip_padding:
-            bits = result.bit_length()
+            size, r = divmod(result.bit_length(), 8)
+            size += int(bool(r))
         else:
-            bits = (len(data) - 1) * math.log2(base) + math.log2(max(alphabet.index(data[0]), 1))
-            bits = math.ceil(bits)
-        size, rest = divmod(bits, 8)
-        size += int(bool(rest))
+            log2n = int(len(data) * math.log2(base))
+            test = 1 << log2n
+            while test > result:
+                log2n -= 1
+                test >>= 1
+            size = log2n // 8 + 1
         return result.to_bytes(size, byteorder=self.byteorder)
