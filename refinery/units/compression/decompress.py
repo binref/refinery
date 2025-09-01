@@ -22,6 +22,7 @@ from .szdd import szdd
 from .zl import zl
 from .qlz import qlz
 from .lzf import lzf
+from .flz import flz
 from .lzw import lzw
 from .nrv import nrv2b, nrv2d, nrv2e
 from .zstd import zstd
@@ -130,6 +131,7 @@ class decompress(Unit):
             bz2,
             zl,
             lzf,
+            flz,
             lzma,
             lzw,
             jcalg,
@@ -255,7 +257,7 @@ class decompress(Unit):
 
         for method, engine in self.engines.items():
             self.log_debug(F'attempting engine: {method}')
-            careful = isinstance(engine, (lznt1, lzf, lzjb))
+            careful = isinstance(engine, (lznt1, lzf, flz, lzjb))
             for t in range(self.args.tolerance + 1):
                 if best_current_rating() >= _R.Successful and careful and t > 0:
                     break
@@ -263,6 +265,9 @@ class decompress(Unit):
             if self.args.prepend and method not in _NO_PREFIX and best_current_rating() < _R.Successful:
                 for p in range(0x100):
                     update(decompress(method, engine, 0, p, careful), careful)
+
+        for r, u in best_by_rating.items():
+            self.log_debug(r, u.method)
 
         for r in sorted(best_by_rating, reverse=True):
             if dc := best_by_rating[r]:
