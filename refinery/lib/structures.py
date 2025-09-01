@@ -101,6 +101,9 @@ class MemoryFileMethods(Generic[T]):
         END = io.SEEK_END
         SET = io.SEEK_SET
 
+    def __bytes__(self):
+        return bytes(self._data)
+
     def __init__(
         self,
         data: Optional[Union[bytes, bytearray, memoryview]] = None,
