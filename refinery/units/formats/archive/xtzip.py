@@ -76,8 +76,6 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         for p in passwords:
             if not password_invalid(p):
                 break
-        else:
-            raise RuntimeError('Archive is password-protected.')
 
         for info in archive.infolist():
             def xt(archive: ZipFile = archive, info: ZipInfo = info):
@@ -87,7 +85,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     if 'password' not in str(E):
                         raise
                     if not password:
-                        raise RuntimeError('archive is password-protected')
+                        raise RuntimeError('file is password-protected')
                     else:
                         raise RuntimeError(F'invalid password: {password.decode(self.codec)}') from E
             if info.filename:
