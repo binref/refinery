@@ -396,13 +396,15 @@ class MemoryFileMethods(Generic[T]):
         return result
 
     def replay(self, offset: int, length: int):
-        if offset not in range(self._cursor + 1):
+        cursor = self._cursor
+        if offset not in range(cursor + 1):
             raise ValueError(F'The supplied delta {offset} is not in the valid range [0,{self._cursor}].')
         rep, r = divmod(length, offset)
-        offset = -offset - len(self) + self._cursor
+        offset = cursor - offset
         replay = self._data[offset:offset + r]
         if rep > 0:
-            replay = bytes(self._data[offset:self._cursor]) * rep + replay
+            # While this is technically a copy, it is faster than repeated calls to write.
+            replay = bytes(self._data[offset:cursor]) * rep + replay
         self.write(replay)
 
 
