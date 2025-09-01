@@ -121,9 +121,7 @@ class PathExtractorUnit(Unit, abstract=True):
         list: Arg.Switch('-l',
             help='Return all matching paths as UTF8-encoded output chunks.') = False,
         join_path: Arg.Switch('-j', group='PATH', help=(
-            'Join path names with the previously existing one. If the previously existing path has '
-            'a file extension, it is removed. Then, if that path already exists on disk, a numeric '
-            'extension is appended to avoid conflict with the file system.')) = False,
+            'Join path names with the previously existing one.')) = False,
         drop_path: Arg.Switch('-d', group='PATH',
             help='Do not modify the path variable for output chunks.') = False,
         fuzzy: Arg.Counts('-z', group='MATCH', help=(
