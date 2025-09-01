@@ -67,12 +67,17 @@ class base(Unit):
         if base > len(alphabet):
             raise ValueError(F'Only {len(alphabet)} available; not enough to encode base {base}')
 
+        log2n = len(data) * 8
+        logBn = int(log2n / math.log2(base))
+        if base ** logBn <= number:
+            logBn += 1
         result = bytearray()
+        no_pad = self.args.strip_padding
 
-        while number > 0:
+        for _ in range(logBn):
             number, k = divmod(number, base)
             result.append(alphabet[k])
-            if not number and self.args.strip_padding:
+            if no_pad and number <= 0:
                 break
 
         result.reverse()
