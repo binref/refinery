@@ -180,10 +180,10 @@ def _flz_decompress(input: memoryview, level: int):
     op = MemoryFile()
     while True:
         if ctrl >= 0x20:
-            length = (ctrl >> 5) - 1
+            length = (ctrl >> 5)
             offset = (ctrl & 31) << 8
             ref = offset + 1
-            if length == 6:
+            if length == 7:
                 while True:
                     ip, inc = ip + 1, bound_checked[ip]
                     length += inc
@@ -191,7 +191,7 @@ def _flz_decompress(input: memoryview, level: int):
                         break
             ip, inc = ip + 1, input[ip]
             ref += inc
-            length += 3
+            length += 2
             if level > 0 and inc == 0xFF and offset == 0x1F00:
                 ip, offset = ip + 2, (bound_checked[ip] << 8) + input[ip + 1]
                 ref = offset + _MAX_L2_DISTANCE + 1
