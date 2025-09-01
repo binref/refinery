@@ -601,7 +601,9 @@ class Arg(Argument):
             assert isinstance(bound, tuple)
             lower, upper = bound
             nt = nt[lower:upper]
-        return cls(*args, group=group, help=help, dest=dest, type=nt, metavar=metavar or 'N')
+        if metavar is cls.omit:
+            metavar = 'N'
+        return cls(*args, group=group, help=help, dest=dest, type=nt, metavar=metavar)
 
     @classmethod
     def Option(
