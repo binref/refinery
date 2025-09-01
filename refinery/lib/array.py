@@ -13,7 +13,10 @@ import array
 
 
 CodeMap: dict[tuple[bool, int], str] = {}
-
+"""
+Maps a tuple `(unsigned, size)` to a Python array type code that represents an integer type of the
+given size and signedness.
+"""
 
 for code in array.typecodes:
     unsigned = code.isupper()
