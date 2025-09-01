@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import math
+import re
 
 from refinery.units import Arg, Unit
 from refinery.lib.argformats import numseq
@@ -66,16 +67,13 @@ class base(Unit):
         if base > len(alphabet):
             raise ValueError(F'Only {len(alphabet)} available; not enough to encode base {base}')
 
-        data_bits = len(data) * 8
-        base_bits = math.log2(base)
         result = bytearray()
 
-        while data_bits >= 1:
+        while number > 0:
             number, k = divmod(number, base)
             result.append(alphabet[k])
             if not number and self.args.strip_padding:
                 break
-            data_bits -= base_bits
 
         result.reverse()
         return result
@@ -88,19 +86,12 @@ class base(Unit):
             if all(x == y for x, y in zip(data, lcased)):
                 data = data.upper()
         if base and base != 64 and be_lenient:
-            check = set(alphabet)
-            index = 0
-            it = iter(data)
-            for b in it:
-                if b not in check:
-                    break
-                index += 1
-            for b in it:
-                if b in check:
-                    data[index] = b
-                    index += 1
-            self.log_info(F'stripped {len(data) - index} invalid digits from input data')
-            del data[index:]
+            check = '[^{}]'.format(
+                ''.join(F'\\x{c:02x}' for c in sorted(set(alphabet)))).encode('ascii')
+            if re.search(check, data) is not None:
+                stripped = re.sub(check, B'', data)
+                self.log_info(F'stripped {len(data) - len(stripped)} invalid digits from input data')
+                data[:] = stripped
         if len(alphabet) <= len(_DEFAULT_ALPHABET):
             defaults = _DEFAULT_ALPHABET[:base]
             if alphabet != defaults:
