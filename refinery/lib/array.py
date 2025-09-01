@@ -12,13 +12,13 @@ from typing import Iterable, Union
 import array
 
 
-_TCMAP: dict[tuple[bool, int], str] = {}
+CodeMap: dict[tuple[bool, int], str] = {}
 
 
 for code in array.typecodes:
     unsigned = code.isupper()
     itemsize = array.array(code).itemsize
-    _TCMAP[unsigned, itemsize] = code
+    CodeMap[unsigned, itemsize] = code
 
 
 def make_array(
@@ -32,7 +32,7 @@ def make_array(
     contain (un)signed integers and what initial value each cell should have.
     """
     try:
-        code = _TCMAP[unsigned, itemsize]
+        code = CodeMap[unsigned, itemsize]
     except KeyError as KE:
         un = 'un' if unsigned else ''
         raise LookupError(F'Cannot build array of {un}signed integers of width {itemsize}.') from KE
