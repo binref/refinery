@@ -3,7 +3,6 @@
 """
 Generates the lists of toplevel domains and URL specifiers.
 """
-import pprint
 import os.path
 import re
 import io
@@ -13,12 +12,6 @@ import json
 
 from refinery.lib import xml
 from refinery.lib.patterns.tlds import tlds as old_tlds
-
-template = '''
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-{variable} = {contents}
-'''.lstrip()
 
 
 def normalize(data, *required):
@@ -36,11 +29,14 @@ def crawl_tlds():
     tlds = list(tlds)
     tlds.sort()
     tlds.sort(key=len, reverse=True)
+    tab = '\x20' * 4
     with open(os.path.join('.', 'refinery', 'lib', 'patterns', 'tlds.py'), 'w') as stream:
-        stream.write(template.format(
-            variable='tlds',
-            contents=pprint.pformat(tlds)
-        ))
+        stream.write('#!/usr/bin/env python3\n')
+        stream.write('# -*- coding: utf-8 -*-\n')
+        stream.write('tlds = [\n')
+        for tld in tlds:
+            stream.write(F'{tab}{tld!r},\n')
+        stream.write(']\n')
 
 
 def crawl_rich():
