@@ -51,7 +51,7 @@ if TYPE_CHECKING:
         ClassVar,
     )
     _T = TypeVar('_T')
-    _E = TypeVar('_T', bound=enum.IntEnum)
+    _E = TypeVar('_E', bound=enum.IntEnum)
 
 
 class InvalidPassword(ValueError):
