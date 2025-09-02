@@ -1,14 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Optional
+from __future__ import annotations
 
 from datetime import datetime
 
+from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.structures import MemoryFile
+from refinery.lib.structures import MemoryFile, StructReader, Struct
 from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
+
+
+class _FileRecord(Struct):
+    def __init__(self, reader: StructReader[memoryview]):
+        if reader.u32() != 0x04034B50:
+            raise ValueError
+        self.version = reader.u16()
+        self.flags = reader.u16()
+        self.method = reader.u16()
+        self.mtime = reader.u16()
+        self.mdate = reader.u16()
+        self.crc32 = reader.u32()
+        self.csize = reader.u32()
+        self.usize = reader.u32()
+        nl = reader.u16()
+        xl = reader.u16()
+        self.name = reader.read_exactly(nl)
+        self.xtra = reader.read_exactly(xl)
+        self.data = reader.read_exactly(self.csize)
 
 
 class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
@@ -32,7 +52,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def unpack(self, data: bytearray):
         from zipfile import ZipInfo, ZipFile, BadZipFile
 
-        def password_invalid(password: Optional[bytes]):
+        def password_invalid(password: bytes | None):
             nonlocal archive, fallback
             if password:
                 archive.setpassword(password)
@@ -78,16 +98,16 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 break
 
         for info in archive.infolist():
-            def xt(archive: ZipFile = archive, info: ZipInfo = info):
+            def xt(archive: ZipFile = archive, info: ZipInfo = info, data=memoryview(data)):
                 try:
                     return archive.read(info.filename)
                 except RuntimeError as E:
                     if 'password' not in str(E):
                         raise
-                    if not password:
-                        raise RuntimeError('file is password-protected')
-                    else:
-                        raise RuntimeError(F'invalid password: {password.decode(self.codec)}') from E
+                    msg = 'invalid password; use -L to extract raw encrypted data'
+                    rec = _FileRecord(data[info.header_offset:])
+                    raise RefineryPartialResult(msg, rec.data) from E
+
             if info.filename:
                 if info.is_dir():
                     continue
