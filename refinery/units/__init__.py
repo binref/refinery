@@ -708,7 +708,7 @@ class Arg(Argument):
             while symbols is not False:
                 try:
                     annotation = eval(annotation, symbols)
-                except NameError:
+                except (NameError, TypeError):
                     if symbols is not None or module is None:
                         break
                     try:
