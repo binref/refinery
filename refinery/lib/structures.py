@@ -40,6 +40,12 @@ if TYPE_CHECKING:
     B = TypeVar('B', bound=Union[bytearray, bytes, memoryview], default=T)
     C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
     R = TypeVar('R', bound=io.IOBase)
+else:
+    T = TypeVar('T')
+    B = TypeVar('B')
+    C = TypeVar('C')
+    R = TypeVar('R')
+
 
 UnpackType = Union[int, bool, float, bytes]
 
