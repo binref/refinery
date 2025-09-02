@@ -18,9 +18,14 @@ runs:
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: sudo apt-get install xclip xvfb libzbar0
-    - name: Disable AutoCRLF for GIT
-      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: git config --global core.autocrlf false
+    - name: Undo Windows AutoCRLF in GIT
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: cmd
+      run: |
+        git config core.eol lf
+        git config core.autocrlf false
+        git rm --cached -r .
+        git reset --hard
     - name: Install Dependencies (MacOS)
       if: ${{ contains(inputs.os, 'macos') }}
       shell: bash
