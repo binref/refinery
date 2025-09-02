@@ -140,7 +140,7 @@ class doctxt(Unit):
                 for i in range(piece_count - 1):
                     cp_start = character_positions[i]
                     cp_end = character_positions[i + 1]
-                    fc_value = reader.read_struct('xxLxx', unwrap=True)
+                    fc_value = reader.read_one_struct('xxLxx')
                     is_ansi = bool((fc_value >> 30) & 1)
                     fc = fc_value & 0xBFFFFFFF
                     cb = cp_end - cp_start

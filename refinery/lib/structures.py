@@ -597,7 +597,11 @@ class StructReader(MemoryFile[T]):
         for bit in bits:
             yield bool(bit)
 
-    def read_struct(self, spec: str, unwrap=False, peek=False) -> Union[List[UnpackType], UnpackType]:
+    def read_one_struct(self, spec: str, peek=False) -> UnpackType:
+        item, = self.read_struct(spec, peek=peek)
+        return item
+
+    def read_struct(self, spec: str, peek=False) -> List[UnpackType]:
         """
         Read structured data from the stream in any format supported by the `struct` module. The `format`
         argument can be used to override the current byte ordering. If the `unwrap` parameter is `True`, a
@@ -633,8 +637,6 @@ class StructReader(MemoryFile[T]):
             else:
                 part = F'{byteorder}{part}'
                 data.extend(struct.unpack(part, self.read_bytes(struct.calcsize(part))))
-        if unwrap and len(data) == 1:
-            return data[0]
         if peek:
             self.seekset(current_cursor)
         return data
@@ -655,8 +657,8 @@ class StructReader(MemoryFile[T]):
     def i32(self, peek: bool = False) -> int: return signed(self.read_integer(32, peek), 32)
     def i64(self, peek: bool = False) -> int: return signed(self.read_integer(64, peek), 64)
 
-    def f32(self, peek: bool = False) -> float: return cast(float, self.read_struct('f', unwrap=True, peek=peek))
-    def f64(self, peek: bool = False) -> float: return cast(float, self.read_struct('d', unwrap=True, peek=peek))
+    def f32(self, peek: bool = False) -> float: return cast(float, self.read_one_struct('f', peek=peek))
+    def f64(self, peek: bool = False) -> float: return cast(float, self.read_one_struct('d', peek=peek))
 
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
