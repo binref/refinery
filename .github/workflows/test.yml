@@ -23,6 +23,9 @@ jobs:
         run: |
           echo "event  = ${{ github.event_name }}"
           echo "action = ${{ github.event.action }}"
+      - uses: ./.github/actions/git/
+        with:
+          os: ${{ matrix.os }}
       - name: Checkout Main Repository
         uses: actions/checkout@v4
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
@@ -53,6 +56,9 @@ jobs:
         python-version: ['3.12']
         os: [windows-latest, macos-13, ubuntu-latest]
     steps:
+      - uses: ./.github/actions/git/
+        with:
+          os: ${{ matrix.os }}
       - name: Checkout Main Repository
         uses: actions/checkout@v4
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
@@ -80,6 +86,9 @@ jobs:
     env:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
+    - uses: ./.github/actions/git/
+      with:
+        os: ${{ matrix.os }}
     - name: Checkout
       uses: actions/checkout@v4
     - name: Install Dependencies

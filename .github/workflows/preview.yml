@@ -17,6 +17,9 @@ jobs:
     env:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
+      - uses: ./.github/actions/git/
+        with:
+          os: ${{ matrix.os }}
       - name: Checkout Main Repository
         uses: actions/checkout@v4
       - name: Install Dependencies

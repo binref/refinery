@@ -1,0 +1,12 @@
+name: "Configure GIT"
+description: "Configures GIT before checking out anything."
+inputs:
+  os:
+    required: true
+    description: "Target Operating System"
+runs:
+  using: "composite"
+  steps:
+    - name: Disable AutoCRLF for GIT
+      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
+      run: git config --global core.autocrlf false

@@ -15,6 +15,9 @@ jobs:
         python-version: ['3.12']
         os: [windows-latest, macos-13, ubuntu-latest]
     steps:
+    - uses: ./.github/actions/git/
+      with:
+        os: ${{ matrix.os }}
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -46,6 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
+    - uses: ./.github/actions/git/
+      with:
+        os: ${{ matrix.os }}
     - uses: actions/checkout@v4
     - name: Set up Python
       uses: actions/setup-python@v5
