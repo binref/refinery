@@ -52,26 +52,27 @@ class _PyLib(_HashExe):
         super().__init__(export, bases, nmspc, **kw)
         cls._build_hash = getattr(hashlib, kernel)
 
-__all__ = [
-    'ripemd128',
-    'ripemd160',
-    'md2',
-    'md4',
-    'keccak',
-    'md5',
-    'sha1',
-    'sha224',
-    'sha256',
-    'sha384',
-    'sha512',
-    'blake2b',
-    'blake2s',
-    'sha3_224',
-    'sha3_256',
-    'sha3_384',
-    'sha3_512',
-    'shake128',
-    'shake256',
+
+__all__ = [      # noqa
+    'ripemd128', # type: ignore
+    'ripemd160', # type: ignore
+    'md2',       # type: ignore
+    'md4',       # type: ignore
+    'keccak',    # type: ignore
+    'md5',       # type: ignore
+    'sha1',      # type: ignore
+    'sha224',    # type: ignore
+    'sha256',    # type: ignore
+    'sha384',    # type: ignore
+    'sha512',    # type: ignore
+    'blake2b',   # type: ignore
+    'blake2s',   # type: ignore
+    'sha3_224',  # type: ignore
+    'sha3_256',  # type: ignore
+    'sha3_384',  # type: ignore
+    'sha3_512',  # type: ignore
+    'shake128',  # type: ignore
+    'shake256',  # type: ignore
 ]
 
 _K = {
