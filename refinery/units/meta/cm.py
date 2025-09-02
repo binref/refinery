@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars, LazyMetaOracle
-from refinery.lib.frame import Chunk
 
 
 _COMMON_PROPERTIES_LIST = ', '.join(LazyMetaOracle.derivations)
@@ -40,36 +39,37 @@ class cm(Unit):
                 return name
             return name.decode(self.codec)
 
-        names = {stringify(name) for name in names}
+        _names = {
+            stringify(name) for name in names}
         if hashes:
             md5 = sha256 = sha1 = crc32 = True
         if size:
-            names.add('size')
+            _names.add('size')
         if ext:
-            names.add('ext')
+            _names.add('ext')
         if entropy:
-            names.add('entropy')
+            _names.add('entropy')
         if ic:
-            names.add('ic')
+            _names.add('ic')
         if magic:
-            names.add('magic')
+            _names.add('magic')
         if sha1:
-            names.add('sha1')
+            _names.add('sha1')
         if sha256:
-            names.add('sha256')
+            _names.add('sha256')
         if crc32:
-            names.add('crc32')
+            _names.add('crc32')
         if md5:
-            names.add('md5')
-        if not names and not reset:
-            names.add('size')
+            _names.add('md5')
+        if not _names and not reset:
+            _names.add('size')
         if all:
             if invert:
                 raise ValueError('invert and all are both enabled, resulting in empty configuration.')
-            names = set(LazyMetaOracle.derivations)
+            _names = set(LazyMetaOracle.derivations)
         elif invert:
-            names = set(LazyMetaOracle.derivations) - names
-        super().__init__(names=names, reset=reset)
+            _names = set(LazyMetaOracle.derivations) - _names
+        super().__init__(names=list(_names), reset=reset)
 
     def process(self, data):
         return data
@@ -78,7 +78,6 @@ class cm(Unit):
         names = self.args.names
         reset = self.args.reset
         for chunk in chunks:
-            chunk: Chunk
             if not chunk.visible:
                 yield chunk
                 continue

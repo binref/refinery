@@ -848,6 +848,10 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             or key in self.derivations
         )
 
+    def clear(self):
+        self.current.clear()
+        self.tempval.clear()
+
     def __len__(self):
         return len(self.current) + len(self.tempval)
 
