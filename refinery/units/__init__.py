@@ -2373,6 +2373,7 @@ class Unit(UnitBase, abstract=True):
 
 
 __pdoc__ = {
+    'requirement': False,
     'Unit.is_reversible': Executable.is_reversible.__doc__,
-    'Unit.codec': Executable.codec.__doc__
+    'Unit.codec': Executable.codec.__doc__,
 }
