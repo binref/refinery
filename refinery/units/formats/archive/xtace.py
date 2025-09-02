@@ -10,7 +10,7 @@ class xtace(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     Extract files from an ACE archive.
     """
     def unpack(self, data):
-        ace = acefile.open(MemoryFile(data, read_as_bytes=True))
+        ace = acefile.open(MemoryFile(data, output=bytes))
         for member in ace.getmembers():
             member: acefile.AceMember
             comment = {} if not member.comment else {'comment': member.comment}

@@ -40,7 +40,7 @@ class imgtp(Unit):
         imglib = self._image
 
         try:
-            image = imglib.open(MemoryFile(data, read_as_bytes=True))
+            image = imglib.open(MemoryFile(data, output=bytes))
         except Exception:
             raise ValueError('input could not be parsed as an image')
         else:

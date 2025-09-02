@@ -217,7 +217,7 @@ if TYPE_CHECKING:
     DataType = TypeVar('DataType', bound=ByteStr)
     ProcType = Callable[['Unit', Chunk], Optional[Union[DataType, Iterable[DataType]]]]
 
-    ByteIO = MemoryFile[ByteStr]
+    ByteIO = MemoryFile[DataType]
 
     _T = TypeVar('_T')
     _F = TypeVar('_F', bound=Callable)

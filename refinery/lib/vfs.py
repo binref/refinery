@@ -76,7 +76,7 @@ class VirtualFile:
         """
         if self.data is None and 'w' in mode:
             self.data = bytearray()
-        fd = MemoryFile(self.data, read_as_bytes=True, fileno=self.node)
+        fd = MemoryFile(self.data, output=bytes, fileno=self.node)
         fd.name = self.path
         return fd
 

@@ -19,7 +19,6 @@ from typing import (
     overload,
     cast,
     Any,
-    ByteString,
     Dict,
     Generic,
     Sized,
@@ -35,10 +34,12 @@ from typing import (
 
 if TYPE_CHECKING:
     from collections.abc import Buffer
+    from refinery.lib.types import ByteStr
 
-T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
-C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
-R = TypeVar('R', bound=io.IOBase)
+    T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
+    B = TypeVar('B', bound=Union[bytearray, bytes, memoryview], default=T)
+    C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
+    R = TypeVar('R', bound=io.IOBase)
 
 UnpackType = Union[int, bool, float, bytes]
 
@@ -57,7 +58,7 @@ class EOF(EOFError):
     While reading from a `refinery.lib.structures.MemoryFile`, less bytes were available than
     requested. The exception contains the data from the incomplete read.
     """
-    def __init__(self, rest: ByteString = B''):
+    def __init__(self, rest: ByteStr = B''):
         super().__init__('Unexpected end of buffer.')
         self.rest = rest
 
@@ -85,14 +86,13 @@ class StreamDetour(Generic[R]):
         self.stream.seek(self.cursor, io.SEEK_SET)
 
 
-class MemoryFileMethods(Generic[T]):
+class MemoryFileMethods(Generic[T, B]):
     """
     A thin wrapper around (potentially mutable) byte sequences which gives it the features of a
     file-like object.
     """
-    read_as_bytes: bool
-
     _data: T
+    _output: type[B]
     _cursor: int
     _closed: bool
 
@@ -106,22 +106,30 @@ class MemoryFileMethods(Generic[T]):
 
     def __init__(
         self,
-        data: Optional[Union[bytes, bytearray, memoryview]] = None,
-        read_as_bytes=False,
+        data: Optional[T] = None,
+        output: Optional[type[B]] = None,
         fileno: Optional[int] = None,
         size_limit: Optional[int] = None,
     ) -> None:
         if data is None:
-            data = bytearray()
-        elif size_limit is not None and len(data) > size_limit:
+            if TYPE_CHECKING:
+                data = cast(T, bytearray())
+            else:
+                data = bytearray()
+        if output is None:
+            if TYPE_CHECKING:
+                output = cast(type[B], type(data))
+            else:
+                output = type(data)
+        if size_limit is not None and len(data) > size_limit:
             raise ValueError('Initial data exceeds size limit')
-        self._data = cast(T, data)
+        self._output = output
         self._cursor = 0
         self._closed = False
         self._fileno = fileno
         self._quicksave = 0
-        self.read_as_bytes = read_as_bytes
         self._size_limit = size_limit
+        self._data = data
 
     def close(self) -> None:
         self._closed = True
@@ -189,15 +197,15 @@ class MemoryFileMethods(Generic[T]):
             out = cast(out)
         return out
 
-    def read(self, size: Optional[int] = None, peek: bool = False) -> Union[bytes, T]:
+    def read(self, size: Optional[int] = None, peek: bool = False) -> B:
         beginning = self._cursor
         if size is None or size < 0:
             end = len(self._data)
         else:
             end = min(self._cursor + size, len(self._data))
         result = self._data[beginning:end]
-        if self.read_as_bytes and not isinstance(result, bytes):
-            result = bytes(result)
+        if not isinstance(result, t := self._output):
+            result = t(result)
         if not peek:
             self._cursor = end
         return result
@@ -217,7 +225,7 @@ class MemoryFileMethods(Generic[T]):
             return mv[cursor:]
         return mv[cursor:cursor + size]
 
-    def read1(self, size: Optional[int] = None, peek: bool = False) -> Union[bytes, T]:
+    def read1(self, size: Optional[int] = None, peek: bool = False) -> B:
         return self.read(size, peek)
 
     def _find_linebreak(self, beginning: int, end: int) -> int:
@@ -227,18 +235,18 @@ class MemoryFileMethods(Generic[T]):
             if self._data[k] == 0xA: return k
         return -1
 
-    def readline(self, size: Optional[int] = None) -> Union[bytes, T]:
+    def readline(self, size: Optional[int] = None) -> B:
         beginning, end = self._cursor, len(self._data)
         if size is not None and size >= 0:
             end = beginning + size
         p = self._find_linebreak(beginning, end)
         self._cursor = end if p < 0 else p + 1
         result = self._data[beginning:self._cursor]
-        if self.read_as_bytes and not isinstance(result, bytes):
-            result = bytes(result)
+        if not isinstance(result, t := self._output):
+            result = t(result)
         return result
 
-    def readlines_iter(self, hint: Optional[int] = None) -> Iterable[Union[bytes, T]]:
+    def readlines_iter(self, hint: Optional[int] = None) -> Iterable[B]:
         if hint is None or hint < 0:
             yield from self
         else:
@@ -248,8 +256,11 @@ class MemoryFileMethods(Generic[T]):
                 total += len(line)
                 yield line
 
-    def readlines(self, hint: Optional[int] = None) -> List[Union[bytes, T]]:
-        return list(self.readlines_iter(hint))
+    def readlines(self, hint: Optional[int] = None) -> list[bytes]:
+        it = self.readlines_iter(hint)
+        if issubclass(self._output, bytes):
+            return list(it)
+        return [bytes(t) for t in it]
 
     def readinto1(self, b) -> int:
         data = self.read(len(b))
@@ -391,8 +402,8 @@ class MemoryFileMethods(Generic[T]):
 
     def __getitem__(self, slice):
         result = self._data[slice]
-        if self.read_as_bytes and not isinstance(result, bytes):
-            result = bytes(result)
+        if not isinstance(result, t := self._output):
+            result = t(result)
         return result
 
     def replay(self, offset: int, length: int):
@@ -408,7 +419,7 @@ class MemoryFileMethods(Generic[T]):
         self.write(replay)
 
 
-class MemoryFile(MemoryFileMethods[T], io.BytesIO):
+class MemoryFile(MemoryFileMethods[T, B], io.BytesIO):
     pass
 
 
@@ -417,7 +428,7 @@ class order(str, enum.Enum):
     little = '<'
 
 
-class StructReader(MemoryFile[T]):
+class StructReader(MemoryFile[T, B]):
     """
     An extension of a `refinery.lib.structures.MemoryFile` which provides methods to read
     structured data.
@@ -457,7 +468,7 @@ class StructReader(MemoryFile[T]):
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read_exactly(self, size: Optional[int] = None, peek: bool = False) -> Union[bytes, T]:
+    def read_exactly(self, size: Optional[int] = None, peek: bool = False) -> B:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises

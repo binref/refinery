@@ -137,7 +137,7 @@ class xtpdf(ArchiveUnit):
             elif mu.is_encrypted:
                 raise ValueError('This PDF is password protected.')
 
-        with MemoryFile(data, read_as_bytes=True) as stream:
+        with MemoryFile(data, output=bytes) as stream:
             with NoLogging():
                 pdf = self._pypdf2.PdfReader(stream, password=password)
                 catalog = pdf.trailer['/Root']

@@ -56,7 +56,7 @@ class xtiso(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def unpack(self, data):
         if not self.handles(data):
             self.log_warn('The data does not look like an ISO file.')
-        with MemoryFile(data, read_as_bytes=True) as stream:
+        with MemoryFile(data, output=bytes) as stream:
             iso = self._pycdlib.PyCdlib()
             iso.open_fp(stream)
             fs = self.args.fs

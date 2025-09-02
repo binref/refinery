@@ -42,7 +42,7 @@ class stego(Unit):
     def process(self, data):
         split = self.args.split
         parts = self.args.parts
-        image = self._image.open(MemoryFile(data, read_as_bytes=True))
+        image = self._image.open(MemoryFile(data, output=bytes))
 
         grayscale = image.mode.startswith('L')
         bw_bitmap = image.mode.startswith('1')

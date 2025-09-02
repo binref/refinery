@@ -24,7 +24,7 @@ class qr(Unit):
         return Image
 
     def process(self, data):
-        img = self._image.open(MemoryFile(data, read_as_bytes=True))
+        img = self._image.open(MemoryFile(data, output=bytes))
         bar = self._pyzbar.pyzbar.decode(img)
         for data in bar:
             self.log_debug(data)

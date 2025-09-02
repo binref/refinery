@@ -16,7 +16,7 @@ class msgpack(Unit):
         return mp.dumps(json.loads(data))
 
     def process(self, data):
-        unpacker: mp.fallback.Unpacker = mp.Unpacker(MemoryFile(data, read_as_bytes=True))
+        unpacker: mp.fallback.Unpacker = mp.Unpacker(MemoryFile(data, output=bytes))
         for k in itertools.count():
             try:
                 last = unpacker.tell()
