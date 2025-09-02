@@ -17,7 +17,7 @@ def _docstr(name: str):
 
 
 class _CDome(Executable):
-    def __new__(cls, _: str, bases, namespace: dict, kernel: str):
+    def __new__(cls, _: str, bases, namespace: dict, kernel: str = ''):
         def _algorithm(self, data):
             return getattr(__import__(F'Cryptodome.Hash.{algo}').Hash, algo).new(data).digest()
         algo = kernel.upper()
@@ -25,19 +25,19 @@ class _CDome(Executable):
         namespace['__doc__'] = _docstr(kernel)
         return Executable.__new__(cls, kernel, bases, namespace)
 
-    def __init__(cls, name, bases, nmspc, kernel: str, **kw):
+    def __init__(cls, name, bases, nmspc, kernel: str = '', **kw):
         super().__init__(name, bases, nmspc, **kw)
 
 
 class _PyLib(Executable):
-    def __new__(cls, _: str, bases, namespace: dict, kernel: str):
+    def __new__(cls, _: str, bases, namespace: dict, kernel: str = ''):
         def _algorithm(self, data):
             return getattr(hashlib, kernel)(data).digest()
         namespace['_algorithm'] = _algorithm
         namespace['__doc__'] = _docstr(kernel)
         return Executable.__new__(cls, kernel, bases, namespace)
 
-    def __init__(cls, name, bases, nmspc, kernel: str, **kw):
+    def __init__(cls, name, bases, nmspc, kernel: str = '', **kw):
         super().__init__(name, bases, nmspc, **kw)
 
 

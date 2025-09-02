@@ -125,7 +125,7 @@ class __unit_loader__:
             self.reloading = True
             self.clear()
             for executable in get_all_entry_points():
-                name = executable.__qualname__
+                name = executable.name
                 self.units[name] = executable.__module__
                 self.cache[name] = executable
             self.save()
