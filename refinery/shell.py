@@ -16,14 +16,18 @@ multibin format expressions, see `refinery.lib.argformats`.
 """
 from __future__ import annotations
 
-from functools import wraps
+from functools import wraps, WRAPPER_ASSIGNMENTS
 from refinery import __unit_loader__
 
 with __unit_loader__:
     __all__ = sorted(__unit_loader__.units, key=lambda x: x.lower())
 
 
-class __pdoc2__:
+__WRAP_UPDATE = ()
+__WRAP_ASSIGN = WRAPPER_ASSIGNMENTS + ('__firstlineno__',)
+
+
+class __pdoc3__:
     def __class_getitem__(cls, *_):
         return ''
 
@@ -39,7 +43,8 @@ def __getattr__(name):
         def __new__(cls, *args, **kwargs):
             return unit.assemble(*args, **kwargs)
 
-    return wraps(unit, updated=[])(_unit)
+    wrapped_unit = wraps(unit, updated=__WRAP_UPDATE, assigned=__WRAP_ASSIGN)(_unit)
+    return wrapped_unit
 
 
 def __dir__():
