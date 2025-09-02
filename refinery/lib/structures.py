@@ -434,7 +434,7 @@ class order(str, enum.Enum):
     little = '<'
 
 
-class StructReader(MemoryFile[T, B]):
+class StructReader(MemoryFile[T, T]):
     """
     An extension of a `refinery.lib.structures.MemoryFile` which provides methods to read
     structured data.
