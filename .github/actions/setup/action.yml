@@ -18,6 +18,8 @@ runs:
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: sudo apt-get install xclip xvfb libzbar0
+    - name: Disable AutoCRLF for GIT
+      run: git config --global core.autocrlf false
     - name: Install Dependencies (MacOS)
       if: ${{ contains(inputs.os, 'macos') }}
       shell: bash
