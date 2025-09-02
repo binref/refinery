@@ -28,8 +28,10 @@ class _HashExe(Executable):
     def _algorithm(cls, data: ByteStr):
         return cls._build_hash(data).digest()
 
-    def __new__(cls, _: str, bases, namespace: dict, export: str = '', kernel: str = ''):
-        namespace.update(__doc__=_doc(kernel), _algorithm=cls._algorithm)
+    def __new__(cls, name: str, bases, namespace: dict, export: str = '', kernel: str = ''):
+        if kernel:
+            namespace.update(__doc__=_doc(kernel), _algorithm=cls._algorithm)
+        export = export or name
         exe = Executable.__new__(cls, export, bases, namespace)
         setattr(exe, '__qualname__', export)
         return exe
@@ -38,10 +40,11 @@ class _HashExe(Executable):
 class _CDome(_HashExe):
     def __init__(cls, _, bases, nmspc: dict, export: str = '', kernel: str = '', **kw):
         super().__init__(export, bases, nmspc, **kw)
-        hash = __import__(F'Cryptodome.Hash.{kernel}')
-        for t in ('Hash', kernel, 'new'):
-            hash = getattr(hash, t)
-        cls._build_hash = hash
+        if kernel and export:
+            hash = __import__(F'Cryptodome.Hash.{kernel}')
+            for t in ('Hash', kernel, 'new'):
+                hash = getattr(hash, t)
+            cls._build_hash = hash
 
 
 class _PyLib(_HashExe):
