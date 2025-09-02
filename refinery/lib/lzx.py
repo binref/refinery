@@ -81,7 +81,7 @@ class HuffmanDecoder:
         self._lens = uint32array(1 << num_table_bits)
         self._symbols = uint32array(num_symbols)
 
-    def build(self, lens: memoryview):
+    def build(self, lens: memoryview | bytearray):
         num_bits_max = self.num_bits_max
         num_symbols = self.num_symbols
         num_table_bits = self.num_table_bits
@@ -151,7 +151,7 @@ class HuffmanDecoder7b:
         self.num_symbols = num_symbols
         self._lens = bytearray(1 << 7)
 
-    def build(self, lens: memoryview):
+    def build(self, lens: memoryview | bytearray):
         num_symbols = self.num_symbols
         num_bits_max = 7
         num_pair_len_bits = 3
@@ -213,13 +213,9 @@ class BitDecoder:
     __slots__ = '_bitpos', '_value', '_buf', '_pos', 'overflow'
 
     def __init__(self):
-        self._bitpos = 0
         self._value = 0
-        self._buf = None
-        self._pos = 0
-        self.overflow = 0
 
-    def initialize(self, data: bytearray):
+    def initialize(self, data: memoryview):
         self._buf = data
         self._pos = 0
         self._bitpos = 0
@@ -310,7 +306,7 @@ class BitDecoder:
             return value
 
 
-def _memzap(data: memoryview):
+def _memzap(data: memoryview | bytearray):
     n = len(data)
     if n == 0:
         return
@@ -374,13 +370,19 @@ class LzxDecoder:
         self._lzx_levels = bytearray(_LZX_TABLE_SIZE)
         self._len_levels = bytearray(_NUM_LEN_SYMBOLS)
 
+    @property
+    def window(self):
+        if _win := self._win:
+            return memoryview(_win)
+        raise AttributeError
+
     def set_external_window(self, win: bytearray, num_dict_bits: int):
         self._win = win
         self._win_size = 1 << num_dict_bits
         return self.set_params(num_dict_bits)
 
     def _flush(self):
-        win = memoryview(self._win)
+        win = self.window
         if self._x86_translate_size != 0:
             dst = win[self._write_pos:]
             cur_size = self._pos - self._write_pos
@@ -399,7 +401,7 @@ class LzxDecoder:
             if self._x86_processed_size >= (1 << 30):
                 self._x86_translate_size = 0
 
-    def read_table(self, levels: memoryview, num_symbols: int):
+    def read_table(self, levels: memoryview | bytearray, num_symbols: int):
         lvls = bytearray(_LVL_TABLE_SIZE)
         bits = self._bits
         log_phase = 'reading table'
@@ -493,8 +495,8 @@ class LzxDecoder:
         self.read_table(self._len_levels, _NUM_LEN_SYMBOLS)
         self._len_decoder.build(self._len_levels)
 
-    def _decompress(self, cur_size: int):
-        win = memoryview(self._win)
+    def _decompress(self, cur_size: int | INF):
+        win = self.window
         bits = self._bits
         if not self.keep_history or not self._is_uncompressed_block:
             bits.normalize_big()
@@ -612,9 +614,10 @@ class LzxDecoder:
 
     def get_output_data(self):
         data = self._unpacked_data
-        if data is not None:
-            view = memoryview(data)
-            return view[:self._pos - self._write_pos]
+        if data is None:
+            raise RuntimeError
+        view = memoryview(data)
+        return view[:self._pos - self._write_pos]
 
     def decompress(self, data: memoryview, expected_output_size: int = 0):
         if not self.keep_history:
@@ -623,7 +626,7 @@ class LzxDecoder:
         elif self._pos == self._win_size:
             self._pos = 0
             self._over_dict = True
-        win = memoryview(self._win)
+        win = self.window
         self._write_pos = self._pos
         self._unpacked_data = win[self._pos:]
         if expected_output_size > self._win_size - self._pos:
