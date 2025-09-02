@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf - 8 -* -
+# -*- coding: utf-8 -*-
 from refinery.units import Unit
 from refinery.lib.vfs import VirtualFileSystem
 

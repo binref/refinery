@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+A module with common functions used by decompression units.
+"""
 from __future__ import annotations
 from typing import List, Optional, Union
 

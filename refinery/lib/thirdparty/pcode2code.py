@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 The code of this module is based on the source code of pcode2code, originally
 available at the following location:
