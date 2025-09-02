@@ -9,6 +9,7 @@ import hashlib
 
 from refinery.units import Executable
 from refinery.units.crypto.hash import HashUnit
+from refinery.lib.tools import normalize_to_display
 
 
 class _CDome(Executable):
@@ -53,9 +54,12 @@ __C = {
 __all__ = list(__C)
 
 for name, HashUnitFactory in __C.items():
-    __display = name.upper().replace('_', '-')
-    __G[name] = HashUnitFactory(name, (HashUnit,), {
-        '__module__': __name__, '__doc__': F'Returns the {__display} hash of the input data.'})
+    class __hash(HashUnit, metaclass=HashUnitFactory):
+        ...
+    setattr(__hash, '__name__', name)
+    __hash.__doc__ = (
+        F'Returns the {normalize_to_display(name.upper())} hash of the input data.')
+    __G[name] = __hash
 
 
 class ripemd128(HashUnit):
