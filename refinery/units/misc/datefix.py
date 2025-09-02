@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from re import compile as re_compile
 from datetime import datetime, timedelta
 

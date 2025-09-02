@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.lib import xml
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.office.xtdoc import xtdoc

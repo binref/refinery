@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units.compression.zl import zl
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.meta import SizeInt

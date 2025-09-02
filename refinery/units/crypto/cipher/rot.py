@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units import Arg, Unit
 
 _UCASE = range(ord('A'), ord('Z') + 1)

@@ -4,6 +4,8 @@
 This implementation of the SPECK cipher is based on the
 [SPECK Implementation Guide](https://nsacyber.github.io/simon-speck/implementations/ImplementationGuide1.1.pdf) by the authors of SPECK.
 """
+from __future__ import annotations
+
 import struct
 
 from typing import Tuple, List

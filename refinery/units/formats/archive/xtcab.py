@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units import Chunk
 from refinery.lib.cab import Cabinet, CabDisk

@@ -5,6 +5,8 @@ Classes that implement different kinds of interval unions. These are primarily u
 related to `refinery.lib.emulator` for representing memory regions that have been mapped or
 written to.
 """
+from __future__ import annotations
+
 from abc import abstractmethod, ABC
 from bisect import bisect_right
 from typing import Generic, TypeVar, List, Dict, Tuple, Iterator, ClassVar, Optional

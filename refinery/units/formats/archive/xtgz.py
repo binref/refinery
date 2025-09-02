@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from gzip import GzipFile, FEXTRA, FNAME
 from datetime import datetime
 from pathlib import Path

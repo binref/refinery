@@ -4,6 +4,8 @@
 These definitions in this module are used across the other modules in the .NET
 parsing library.
 """
+from __future__ import annotations
+
 import struct
 import datetime
 import time

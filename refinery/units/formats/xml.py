@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import metavars, is_valid_variable_name
 from refinery.lib import xml

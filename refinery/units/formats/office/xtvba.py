@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from uuid import uuid4
 
 from refinery.lib.tools import NoLogging

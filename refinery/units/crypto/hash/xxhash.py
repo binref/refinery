@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units.crypto.hash import HashUnit
 from refinery.lib.thirdparty.xxhash import xxhash
 

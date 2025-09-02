@@ -3,6 +3,7 @@
 """
 A library to parse .NET headers and metadata.
 """
+from __future__ import annotations
 
 
 def integer_from_ldc(ins: bytes):

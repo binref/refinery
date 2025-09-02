@@ -10,6 +10,7 @@ References:
   [1] https://msdn.microsoft.com/en-us/library/cc236844.aspx
   [2] https://github.com/agix/NetBinaryFormatterParser/blob/master/JSON2dotnetBinaryFormatter.py
 """
+from __future__ import annotations
 
 from collections import defaultdict
 

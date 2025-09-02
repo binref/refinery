@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.lib.murmur import (
     v3_mmh128digest32,
     v3_mmh128digest64,

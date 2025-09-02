@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from enum import IntEnum, IntFlag
 from typing import ByteString, Generator, Optional
 from zlib import adler32, crc32

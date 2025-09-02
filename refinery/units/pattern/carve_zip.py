@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units import Unit
 from refinery.units.misc.datefix import datefix
 from refinery.lib.structures import StructReader, Struct

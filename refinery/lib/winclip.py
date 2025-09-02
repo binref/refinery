@@ -4,6 +4,8 @@
 Windows-specific module to obtain data in different complex formats from the clipboard.
 Primarily, this can retrieve image data from the clipboard.
 """
+from __future__ import annotations
+
 import os
 import enum
 

@@ -4,6 +4,8 @@
 In order to represent arbitrary data as JSON, these classes help extend the built-in
 json module in order to support custom encoding of already serializable types.
 """
+from __future__ import annotations
+
 from typing import List, Tuple, Union
 
 import datetime

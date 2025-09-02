@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.lib.patterns import formats, indicators, pattern
 
 from refinery.units.meta import Arg, ConditionalUnit

@@ -3,6 +3,8 @@
 """
 Implements hash algorithms of short length, commonly used as checksums.
 """
+from __future__ import annotations
+
 import zlib
 
 from refinery.units.crypto.hash import HashUnit

@@ -3,6 +3,8 @@
 """
 A package for units that operate primarily on frames of several of inputs.
 """
+from __future__ import annotations
+
 import abc
 
 from refinery.units import Arg, Unit, Chunk

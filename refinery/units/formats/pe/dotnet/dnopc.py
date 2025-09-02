@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.lib.dotnet.disassembler import Disassembler
 from refinery.lib.dotnet.disassembler.factory import OutputFactory
 from refinery.units.sinks import Arg, Unit

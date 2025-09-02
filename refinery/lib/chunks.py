@@ -4,6 +4,8 @@
 Routines to help interpret large binary buffers as arrays of numbers, stored
 as consecutive sequences of bytes, all with the same length and byte order.
 """
+from __future__ import annotations
+
 import array
 import sys
 

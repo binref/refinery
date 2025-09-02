@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from typing import Sequence, Optional
 
 from refinery.units.crypto.cipher.tea import StandardBlockCipherUnit, TEAUnit, TEABase, Arg

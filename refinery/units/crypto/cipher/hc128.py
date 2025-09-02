@@ -3,6 +3,8 @@
 """
 Pure Python implementation of HC-128
 """
+from __future__ import annotations
+
 from itertools import cycle
 from typing import Iterable
 

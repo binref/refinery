@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from typing import Iterable
 from refinery.units import Arg, Unit, Chunk
 from refinery.lib.meta import metavars

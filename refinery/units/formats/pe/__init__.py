@@ -3,6 +3,8 @@
 """
 A package containing Portable Executable (PE) file related units.
 """
+from __future__ import annotations
+
 from typing import Union, ByteString
 from refinery.units import Arg, Unit
 from refinery.lib import lief

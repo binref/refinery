@@ -14,6 +14,8 @@ the command line. For example:
 This especially gives easier access to the powerful `refinery.lib.meta` variables and the entire
 multibin format expressions, see `refinery.lib.argformats`.
 """
+from __future__ import annotations
+
 from functools import wraps
 from refinery import __unit_loader__
 

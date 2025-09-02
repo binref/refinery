@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units import Arg
 from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
 from refinery.lib.dotnet.header import DotNetHeader

@@ -3,6 +3,7 @@
 """
 This module contains only a dictionary of Windows Language IDs.
 """
+from __future__ import annotations
 
 LCID = {
     0x0C00: 'Default Custom Locale Language',

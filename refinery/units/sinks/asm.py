@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units.formats.exe.opc import opc
 from refinery.units.sinks import Arg, hexdump, HexDumpMetrics
 from refinery.lib.tools import one

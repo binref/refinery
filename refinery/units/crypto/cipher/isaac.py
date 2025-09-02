@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from operator import __lshift__, __rshift__
 from typing import Iterable, List
 

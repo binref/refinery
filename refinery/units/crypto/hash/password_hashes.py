@@ -3,6 +3,8 @@
 """
 Implements password hashing algorithms.
 """
+from __future__ import annotations
+
 import codecs
 from refinery.units.crypto.hash import HashUnit
 

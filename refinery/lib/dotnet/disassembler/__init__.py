@@ -3,6 +3,8 @@
 """
 A library to disassemble .NET assembly
 """
+from __future__ import annotations
+
 from typing import Iterator, Optional
 
 from refinery.lib.dotnet.disassembler.factory import InstructionFactory

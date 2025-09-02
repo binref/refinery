@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from io import BytesIO, SEEK_END
 
 from refinery.units import Unit

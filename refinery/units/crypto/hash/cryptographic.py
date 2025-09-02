@@ -3,6 +3,8 @@
 """
 Implements various cryptographic hashing algorithms.
 """
+from __future__ import annotations
+
 import hashlib
 
 from refinery.units import Executable

@@ -3,6 +3,8 @@
 """
 A simple tool to queue binary data as one or more chunks in the current frame.
 """
+from __future__ import annotations
+
 from typing import ByteString, Iterable, Generator, Union
 from refinery.units import Arg, Unit, Chunk
 

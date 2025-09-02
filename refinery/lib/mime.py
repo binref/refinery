@@ -3,6 +3,8 @@
 """
 File type related functions.
 """
+from __future__ import annotations
+
 import functools
 
 from refinery.lib.magic import magic, magicparse

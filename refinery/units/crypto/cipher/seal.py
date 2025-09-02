@@ -6,6 +6,8 @@ Pure Python implementation of SEAL3
 Reference:
 https://link.springer.com/article/10.1007/s001459900048
 """
+from __future__ import annotations
+
 import struct
 from typing import Iterable
 

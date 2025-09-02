@@ -7,6 +7,8 @@ unit.
 
 Main Reference: https://source.android.com/devices/tech/dalvik/dex-format
 """
+from __future__ import annotations
+
 from typing import Generator
 
 import zlib

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 from refinery.units import RefineryPartialResult
 from refinery.lib.tools import isbuffer

@@ -3,6 +3,8 @@
 """
 Java disassembler. The main logic is implemented int `refinery.lib.java.JvOpCode`.
 """
+from __future__ import annotations
+
 import re
 import io
 import collections

@@ -3,6 +3,8 @@
 """
 Implements various hashing algorithms.
 """
+from __future__ import annotations
+
 from refinery.units import Arg, Unit, ByteStr, abc
 
 

@@ -3,6 +3,8 @@
 """
 Maru hash implementation; it matches the C implementation found in Donut.
 """
+from __future__ import annotations
+
 from ctypes import (
     Array,
     Union,

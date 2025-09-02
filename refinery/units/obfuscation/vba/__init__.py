@@ -3,6 +3,7 @@
 """
 A package containing deobfuscators for Visual Basic for Applications (VBA).
 """
+from __future__ import annotations
 
 
 def string_unquote(string: str) -> str:

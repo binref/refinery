@@ -6,6 +6,8 @@ Parsing of the .NET header. The code is based on the description in [1].
 References:
   [1]: https://www.ntcore.com/files/dotnetformat.htm
 """
+from __future__ import annotations
+
 from typing import List
 
 from refinery.lib import lief

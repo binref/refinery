@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import bz2 as bz2_
 
 from refinery.units import Arg, Unit

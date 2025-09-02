@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from struct import unpack
 
 from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult

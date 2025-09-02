@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from refinery.units import Unit, Arg
 from refinery.units.formats.pe.pemeta import pemeta
 from refinery.units.sinks.ppjson import ppjson

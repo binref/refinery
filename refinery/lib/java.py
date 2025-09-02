@@ -4,6 +4,8 @@
 Parsing of the Java Class file format as per
  [the official specification](https://docs.oracle.com/javase/specs/jvms/se14/html/jvms-4.html).
 """
+from __future__ import annotations
+
 from typing import Union, Any, Dict, List, ByteString, Type, Optional, TypeVar, Generic
 from enum import IntEnum
 

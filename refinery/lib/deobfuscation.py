@@ -3,6 +3,8 @@
 """
 Contains functions to aid in deobfuscation.
 """
+from __future__ import annotations
+
 from typing import Optional, Any
 
 import ast

@@ -4,6 +4,8 @@
 A simple tool to output binary data. Multiple arguments are output in framed
 format, see `refinery.lib.frame`.
 """
+from __future__ import annotations
+
 import os
 
 from refinery.units import Arg, Unit

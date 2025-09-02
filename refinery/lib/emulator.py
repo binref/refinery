@@ -4,6 +4,7 @@
 This module implements an emulator abstraction layer.
 """
 from __future__ import annotations
+
 from typing import Dict, List, Any, Generic, TypeVar, Optional, Union
 from typing import TYPE_CHECKING
 

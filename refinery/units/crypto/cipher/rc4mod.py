@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from itertools import cycle
 
 from refinery.units.crypto.cipher import Arg, StreamCipherUnit

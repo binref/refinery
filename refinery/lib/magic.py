@@ -3,6 +3,8 @@
 """
 A cross-platform interface to libmagic.
 """
+from __future__ import annotations
+
 try:
     from winmagic import magic
 except ModuleNotFoundError:

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 # Reference: https://github.com/Parkayun/base65536
 from refinery.units import Unit
 from refinery.lib.structures import MemoryFile

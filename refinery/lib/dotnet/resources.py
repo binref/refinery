@@ -6,6 +6,8 @@ begin with the magic sequence `0xBEEFCACE`. These resources can contain several
 entries of serialized data. The main reference used for this parser was the
 dnSpy source code.
 """
+from __future__ import annotations
+
 import re
 
 from refinery.lib.dotnet.deserialize import BinaryFormatterParser

@@ -3,6 +3,8 @@
 """
 Implementation of RIPEMD128 in pure Python.
 """
+from __future__ import annotations
+
 import itertools
 
 from refinery.lib.crypto import rotl32 as rol

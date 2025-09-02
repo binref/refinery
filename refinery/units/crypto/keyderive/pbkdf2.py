@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 from functools import partial
 from refinery.units.crypto.keyderive import KeyDerivation, multidecode
 
