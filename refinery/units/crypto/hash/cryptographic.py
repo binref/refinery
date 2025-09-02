@@ -12,54 +12,67 @@ from refinery.units.crypto.hash import HashUnit
 from refinery.lib.tools import normalize_to_display
 
 
+def _docstr(name: str):
+    return F'Returns the {normalize_to_display(name.upper())} hash of the input data.'
+
+
 class _CDome(Executable):
-    def __new__(cls, name: str, bases, namespace: dict):
+    def __new__(cls, _: str, bases, namespace: dict, kernel: str):
         def _algorithm(self, data):
             return getattr(__import__(F'Cryptodome.Hash.{algo}').Hash, algo).new(data).digest()
-        algo = name.upper()
+        algo = kernel.upper()
         namespace['_algorithm'] = _algorithm
-        return Executable.__new__(cls, name, bases, namespace)
+        namespace['__doc__'] = _docstr(kernel)
+        return Executable.__new__(cls, kernel, bases, namespace)
+
+    def __init__(cls, name, bases, nmspc, kernel: str, **kw):
+        super().__init__(name, bases, nmspc, **kw)
 
 
 class _PyLib(Executable):
-    def __new__(cls, name: str, bases, namespace: dict):
+    def __new__(cls, _: str, bases, namespace: dict, kernel: str):
         def _algorithm(self, data):
-            return getattr(hashlib, name)(data).digest()
+            return getattr(hashlib, kernel)(data).digest()
         namespace['_algorithm'] = _algorithm
-        return Executable.__new__(cls, name, bases, namespace)
+        namespace['__doc__'] = _docstr(kernel)
+        return Executable.__new__(cls, kernel, bases, namespace)
+
+    def __init__(cls, name, bases, nmspc, kernel: str, **kw):
+        super().__init__(name, bases, nmspc, **kw)
 
 
-__G = globals()
-__C = {
-    'md2'      : _CDome,
-    'md4'      : _CDome,
-    'ripemd160': _CDome,
-    'keccak256': _CDome,
-    'md5'      : _PyLib,
-    'sha1'     : _PyLib,
-    'sha224'   : _PyLib,
-    'sha256'   : _PyLib,
-    'sha384'   : _PyLib,
-    'sha512'   : _PyLib,
-    'blk224'   : _PyLib,
-    'blk256'   : _PyLib,
-    'blk384'   : _PyLib,
-    'blk512'   : _PyLib,
-    'sha3_224' : _PyLib,
-    'sha3_256' : _PyLib,
-    'sha3_384' : _PyLib,
-    'sha3_512' : _PyLib,
-}
+__globs = globals()
+__all__ = [
+    'ripemd128',
+    'md2',
+    'md4',
+    'ripemd160',
+    'keccak256',
+    'md5',
+    'sha1',
+    'sha224',
+    'sha256',
+    'sha384',
+    'sha512',
+    'blk224',
+    'blk256',
+    'blk384',
+    'blk512',
+    'sha3_224',
+    'sha3_256',
+    'sha3_384',
+    'sha3_512',
+]
 
-__all__ = list(__C)
-
-for name, HashUnitFactory in __C.items():
-    class __hash(HashUnit, metaclass=HashUnitFactory):
+for h in __all__[1:5]:
+    class __cd_hash(HashUnit, metaclass=_CDome, kernel=h):
         ...
-    setattr(__hash, '__name__', name)
-    __hash.__doc__ = (
-        F'Returns the {normalize_to_display(name.upper())} hash of the input data.')
-    __G[name] = __hash
+    __globs[h] = __cd_hash
+
+for h in __all__[5:]:
+    class __py_hash(HashUnit, metaclass=_PyLib, kernel=h):
+        ...
+    __globs[h] = __py_hash
 
 
 class ripemd128(HashUnit):
