@@ -88,14 +88,16 @@ _G = globals()
 
 
 for h in __all__[1:5]:
-    class __cd_hash(HashUnit, metaclass=_CDome, export=h, kernel=_K.get(h, h)):
+    class H(HashUnit, metaclass=_CDome, export=h, kernel=_K.get(h, h)):
         ...
-    _G[h] = __cd_hash
+    _G[h] = H
+    del H
 
 for h in __all__[5:]:
-    class __py_hash(HashUnit, metaclass=_PyLib, export=h, kernel=_K.get(h, h)):
+    class H(HashUnit, metaclass=_PyLib, export=h, kernel=_K.get(h, h)):
         ...
-    _G[h] = __py_hash
+    _G[h] = H
+    del H
 
 
 class ripemd128(HashUnit):
