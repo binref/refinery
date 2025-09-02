@@ -169,6 +169,12 @@ class TestMetaProperties(TestUnitBase):
         python_files = [path for path in glob(
             os.path.join(root, 'refinery', '**', '*.py'), recursive=True)
             if 'thirdparty' not in path]
+
+        for file in python_files:
+            with open(file, 'rb') as code_lines:
+                for k, line in enumerate(code_lines):
+                    self.assertFalse(line.endswith(b'\r\n'), F'CRLF sequence on line {k} in {file}')
+
         report = stylez.check_files(python_files)
         self.assertEqual(report.total_errors, 0, 'PEP8 formatting errors were found.')
 
