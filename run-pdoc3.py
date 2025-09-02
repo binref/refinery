@@ -5,13 +5,14 @@ Generates the refinery documentation.
 """
 import argparse
 import os
-import shlex
+import warnings
 import subprocess
 import sys
 import shutil
 
 _SAFETY_FLAG = '--current-environment'
 _TEMPLATEDIR = os.path.abspath('pdoc3-template')
+_DOCUMENTDIR = os.path.abspath('html')
 
 if __name__ == '__main__':
     def venv(path):
@@ -43,17 +44,22 @@ if __name__ == '__main__':
     elif not args.safety:
         argp.error(F'You have to either specify a virtual environment or provide the flag {_SAFETY_FLAG}.')
 
-    def run(cmd):
-        return subprocess.check_call(shlex.split(cmd))
-
-    py = shlex.quote(sys.executable)
-    pd = shlex.quote(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), 'pdoc3'))
-    td = shlex.quote(_TEMPLATEDIR)
-
-    run(F'{py} -m pip install pdoc3')
-    run(F'{pd} --html --force --template-dir {td} refinery')
+    for second_attempt in (False, True):
+        try:
+            from pdoc.cli import main as pdoc3_main
+        except ImportError:
+            if second_attempt:
+                raise
+            subprocess.check_call(
+                [sys.executable, '-m', 'pip', 'install', 'pdoc3'])
+        else:
+            warnings.filterwarnings('ignore')
+            sys.argv = [
+                'pdoc3', '--html', '--force', '--template-dir', _TEMPLATEDIR, 'refinery']
+            pdoc3_main()
+            break
 
     shutil.copyfile(
         os.path.join(_TEMPLATEDIR, 'FixedSysEx.ttf'),
-        os.path.join('html', 'refinery', 'FixedSysEx.ttf')
+        os.path.join(_DOCUMENTDIR, 'refinery', 'FixedSysEx.ttf')
     )
