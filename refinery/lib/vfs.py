@@ -63,7 +63,7 @@ class VirtualFile:
 
         class _MappedView(bytearray, MemoryFileMethods):
             def __init__(self):
-                MemoryFileMethods.__init__(self, self, True, node)
+                MemoryFileMethods.__init__(self, data=self, output=bytes, fileno=node)
 
         mapped = _MappedView()
         mapped[:] = view
