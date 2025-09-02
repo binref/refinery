@@ -11,6 +11,8 @@ from typing import Iterable, Union
 
 import array
 
+from refinery.lib.tools import NoLogging
+
 
 CodeMap: dict[tuple[bool, int], str] = {}
 """
@@ -18,10 +20,11 @@ Maps a tuple `(unsigned, size)` to a Python array type code that represents an i
 given size and signedness.
 """
 
-for code in array.typecodes:
-    unsigned = code.isupper()
-    itemsize = array.array(code).itemsize
-    CodeMap[unsigned, itemsize] = code
+with NoLogging(NoLogging.Mode.WARNING):
+    for code in array.typecodes:
+        unsigned = code.isupper()
+        itemsize = array.array(code).itemsize
+        CodeMap[unsigned, itemsize] = code
 
 
 def make_array(
