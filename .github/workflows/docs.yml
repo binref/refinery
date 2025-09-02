@@ -8,9 +8,6 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: ./.github/actions/git/
-      with:
-        os: ${{ matrix.os }}
     - name: Checkout Main Repository
       uses: actions/checkout@v4
       with:
