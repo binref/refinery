@@ -201,6 +201,7 @@ from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr
 
 from refinery.lib.exceptions import (
+    dependency,
     RefineryCriticalException,
     RefineryException,
     RefineryImportMissing,
@@ -1306,7 +1307,21 @@ class requirement(property):
     decorate a member function as an import, this member function becomes an instance of this
     class.
     """
-    pass
+    def __init__(self, importer: Callable):
+        super().__init__(importer)
+        self.module = None
+        self.parent = None
+
+    def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
+        if unit is None:
+            unit = self.parent
+        if (mod := self.module) is not None:
+            return mod
+        self.module = mod = cast(Callable, self.fget)(unit)
+        return mod
+
+    def __set_name__(self, unit: Type[Unit], name: str):
+        self.parent = unit
 
 
 class Unit(UnitBase, abstract=True):
@@ -1389,47 +1404,17 @@ class Unit(UnitBase, abstract=True):
 
     @staticmethod
     def Requires(distribution: str, _buckets: Collection[str] = (), more: Optional[str] = None):
-
-        class Requirement(requirement):
-            dependency: ClassVar[str] = distribution
-            required: ClassVar[bool] = not _buckets
-
-            def __init__(self, importer: Callable):
-                super().__init__(importer)
-                self.module = None
-
-            def __set_name__(self, unit: Type[Unit], name: str):
-                if self.required:
-                    bucket = unit.required_dependencies
-                    if bucket is None:
-                        unit.required_dependencies = bucket = set()
-                    buckets = [bucket]
-                else:
-                    optmap = unit.optional_dependencies
-                    if optmap is None:
-                        unit.optional_dependencies = optmap = {}
-                    buckets = [optmap.setdefault(name, set()) for name in _buckets]
-                for bucket in buckets:
-                    bucket.add(self.dependency)
-
-            def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
-                if self.module is not None:
-                    return self.module
-                try:
-                    self.module = module = cast(Callable, self.fget)()
-                except ImportError as E:
-                    deps = unit and unit.optional_dependencies or {}
-                    args = set()
-                    for v in deps.values():
-                        args.update(v)
-                    raise RefineryImportMissing(self.dependency, list(args), more) from E
-                except Exception as E:
-                    raise AttributeError(F'module import for distribution "{distribution}" failed: {E!s}')
-                else:
-                    return module
-
-        Requirement.__qualname__ = F'Requirement({distribution!r})'
-        return Requirement
+        """
+        A decorator for unit-local dependencies.
+        """
+        def decorated(imp):
+            @requirement
+            def wrapped_import(unit: type[Unit]):
+                module.register(unit)
+                return module()
+            module = dependency(distribution, _buckets, more)(imp)
+            return wrapped_import
+        return decorated
 
     @property
     def is_reversible(self) -> bool:

@@ -3,7 +3,12 @@ This module  exposes exceptions used by refinery.
 """
 from __future__ import annotations
 
-from typing import Collection
+from typing import cast, Collection, Generic, Callable, TypeVar, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from refinery.units import Unit
+
+_M = TypeVar('_M')
 
 
 class RefineryImportMissing(ModuleNotFoundError):
@@ -18,7 +23,10 @@ class RefineryImportMissing(ModuleNotFoundError):
         self.missing = missing
         self.install = ' '.join(shlex.quote(dist) for dist in dependencies)
         self.more = more
-        self.dependencies = dependencies
+        self.dependencies = dependencies or (missing,)
+
+    def __repr__(self):
+        return F'{self.__class__.__name__}({self.missing!r})'
 
 
 class MissingModule:
@@ -26,15 +34,71 @@ class MissingModule:
     This class can wrap a module import that is currently missing. If any attribute of the missing
     module is accessed, it raises `refinery.units.RefineryImportMissing`.
     """
-    def __init__(self, name, dist=None, more=None):
+    def __init__(self, name, install=None, more=None):
         self.name = name
-        self.dist = dist or name
+        self.install = install or [name]
         self.more = more
 
     def __getattr__(self, key: str):
         if key.startswith('__') and key.endswith('__'):
             raise AttributeError(key)
-        raise RefineryImportMissing(self.name, self.dist, more=self.more)
+        raise RefineryImportMissing(self.name, self.install, more=self.more)
+
+
+class LazyDependency(Generic[_M]):
+    """
+    A lazily evaluated dependency. Functions decorated with `refinery.lib.exceptions.dependency`
+    are converted into this type. Calling the object returns either the return value of that
+    function, which should be an imported module, or a `refinery.lib.exceptions.MissingModule`
+    wrapper which will raise a `refinery.lib.exceptions.RefineryImportMissing` exception as soon
+    as any of its members is accessed.
+    """
+    def __init__(self, imp: Callable[[], _M], name: str, dist: Collection[str], more: str | None):
+        self.name = name
+        self.dist = dist
+        self.more = more
+        self._imp = imp
+        self.units: set[type[Unit]] = set()
+
+    def register(self, unit: type[Unit]):
+        if unit in (units := self.units):
+            return unit
+        if dist := self.dist:
+            optmap = unit.optional_dependencies
+            if optmap is None:
+                unit.optional_dependencies = optmap = {}
+            buckets = [optmap.setdefault(name, set()) for name in dist]
+        else:
+            bucket = unit.required_dependencies
+            if bucket is None:
+                unit.required_dependencies = bucket = set()
+            buckets = [bucket]
+        for bucket in buckets:
+            bucket.add(self.name)
+        units.add(unit)
+        return unit
+
+    def __call__(self) -> _M:
+        try:
+            return self._imp()
+        except ImportError:
+            install = {self.name}
+            for unit in self.units:
+                if deps := unit.optional_dependencies:
+                    for v in deps.values():
+                        install.update(v)
+            return cast(_M, MissingModule(self.name, install=install, more=self.more))
+
+
+def dependency(name: str, dist: Collection[str] = (), more: str | None = None):
+    """
+    A decorator to mark up an optional dependency. The decorated function can import the module
+    and return the module object. The `name` argument of the decorator specifies the name of the
+    dependency
+    """
+    def decorator(imp: Callable[[], _M]):
+        return LazyDependency(imp, name, dist, more)
+    return decorator
 
 
 class RefineryCriticalException(RuntimeError):

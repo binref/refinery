@@ -4,11 +4,13 @@ they are missing.
 """
 from __future__ import annotations
 
-from refinery.lib.exceptions import MissingModule
+from refinery.lib.exceptions import dependency
 
 __all__ = ['xdis']
 
-try:
+
+@dependency('xdis', ['arc', 'python', 'extended'])
+def xdis():
     import xdis.load
     import xdis.magics
     import xdis.marsh
@@ -32,5 +34,4 @@ try:
             next(iter(reversed(xdis.op_imports.op_imports.values()))))
     del A, B, C, version
     import xdis.std
-except ImportError:
-    xdis = MissingModule('xdis', ['arc', 'python', 'extended'])
+    return xdis
