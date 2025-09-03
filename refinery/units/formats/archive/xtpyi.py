@@ -11,7 +11,6 @@ import os
 import os.path
 import contextlib
 import dataclasses
-import sys
 
 from importlib.util import MAGIC_NUMBER
 
@@ -19,8 +18,22 @@ from refinery.units.formats.archive import Arg, ArchiveUnit
 from refinery.units.pattern.carve import carve
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import NoLogging, normalize_word_separators
+from refinery.lib.xdis import xdis
+from refinery.lib.exceptions import MissingModule
 
 from Cryptodome.Cipher import AES
+
+try:
+    import uncompyle6
+    import uncompyle6.main # noqa
+except ImportError:
+    uncompyle6 = MissingModule('uncompyle6', ['arc', 'python', 'extended'])
+
+try:
+    import decompyle3
+    import decompyle3.main # noqa
+except ImportError:
+    decompyle3 = MissingModule('decompyle3', ['arc', 'python'])
 
 
 if TYPE_CHECKING:
@@ -59,7 +72,7 @@ class Code(NamedTuple):
 def extract_code_from_buffer(buffer: ByteStr, file_name: Optional[str] = None) -> Generator[Code, None, None]:
     code_objects = {}
     file_name = file_name or '<unknown>'
-    load = xtpyi._xdis.load.load_module_from_file_object
+    load = xdis.load.load_module_from_file_object
     with NoLogging(NoLogging.Mode.STD_ERR):
         version, timestamp, magic_int, codes, is_pypy, _, _ = load(MemoryFile(buffer), file_name, code_objects)
     if not isinstance(codes, list):
@@ -69,20 +82,18 @@ def extract_code_from_buffer(buffer: ByteStr, file_name: Optional[str] = None) -
 
 
 def disassemble_code(code: CodeType, version=None) -> Iterable[Instruction]:
-    dis = xtpyi._xdis
     opc = None
     if version is not None:
         if isinstance(version, float):
             version = str(version)
         if not isinstance(version, str):
-            version = dis.version_info.version_tuple_to_str(version)
+            version = xdis.version_info.version_tuple_to_str(version)
         with contextlib.suppress(KeyError):
-            opc = dis.op_imports.op_imports[version]
-    return dis.std.Bytecode(code, opc=opc)
+            opc = xdis.op_imports.op_imports[version]
+    return xdis.std.Bytecode(code, opc=opc)
 
 
 def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = None) -> ByteStr:
-    main: xtpyi = xtpyi
     errors = ''
     python = ''
     codes = [buffer]
@@ -93,13 +104,13 @@ def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = No
     def _engines():
         nonlocal errors
         try:
-            dc = main._decompyle3
+            dc = decompyle3.main.decompile
         except ImportError:
             errors += '# The decompiler decompyle3 is not installed.\n'
         else:
             yield 'decompyle3', dc
         try:
-            dc = main._uncompyle6
+            dc = uncompyle6.main.decompile
         except ImportError:
             errors += '# The decompiler decompyle3 is not installed.\n'
         else:
@@ -111,10 +122,10 @@ def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = No
         errors += '# (all missing, install one of the above to enable decompilation)'
 
     for code in codes:
-        for name, engine in engines.items():
+        for name, decompile in engines.items():
             with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
                 try:
-                    engine.main.decompile(
+                    decompile(
                         co=code.container,
                         bytecode_version=code.version,
                         out=output,
@@ -138,13 +149,13 @@ def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = No
             python.pop()
         python.reverse()
         python = ''.join(python)
-        return python.encode(main.codec)
+        return python.encode('utf8')
     if not isinstance(buffer, Code):
         embedded = bytes(buffer | carve('printable', single=True))
         if len(buffer) - len(embedded) < 0x20:
             return embedded
     disassembly = MemoryFile()
-    with io.TextIOWrapper(disassembly, main.codec, newline='\n') as output:
+    with io.TextIOWrapper(disassembly, 'utf8', newline='\n') as output:
         output.write(errors)
         output.write('# Generating Disassembly:\n\n')
         for code in codes:
@@ -204,7 +215,7 @@ def make_decompiled_item(name: str, data: ByteStr, *magics) -> PiMeta:
             except Exception as exception:
                 error = exception
         return '\n'.join(F'# {line}'
-            for line in str(error).splitlines(True)).encode(xtpyi.codec)
+            for line in str(error).splitlines(True)).encode('utf8')
 
     return PiMeta(PiType.DECOMPILED, F'{name}.py', extract)
 
@@ -221,9 +232,6 @@ class PYZ(Struct):
             raise ValueError('invalid magic')
         magic = bytes(reader.read(4))
         with contextlib.suppress(KeyError, AttributeError):
-            xdis = xtpyi._xdis
-            if isinstance(xdis, property):
-                xdis = xdis.fget()
             version = xdis.magics.versions[magic]
         vtuple = version2tuple(version)
         padding_size = 4
@@ -244,14 +252,11 @@ class PYZ(Struct):
             toc = marshal.loads(toc_data)
         except Exception as error:
             if MAGIC_NUMBER != self.magic[:4]:
-                xdis = xtpyi._xdis
-                if isinstance(xdis, property):
-                    xdis = xdis.fget()
                 _ord = xdis.marsh.Ord
                 xdis.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
                 try:
                     toc = xdis.marsh.load(
-                        MemoryFile(self.data), self.version)
+                        MemoryFile(toc_data), self.version)
                 except Exception:
                     pass
                 else:
@@ -463,7 +468,7 @@ class PyInstallerArchiveEpilogue(Struct):
             self.files[extracted.name] = extracted
             is_crypto_key = name.endswith('crypto_key')
 
-            if len(magics) == 1 and data[:4] != magics[0]:
+            if len(magics) == 1 and data[:4] != magics[0][:4]:
                 extracted.data = magics[0] + data
 
             if is_crypto_key or self.decompile:
@@ -543,44 +548,6 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             unmarshal=unmarshal,
             user_code=user_code,
         )
-
-    @ArchiveUnit.Requires('xdis', ['arc', 'python', 'extended'])
-    def _xdis():
-        import xdis.load
-        import xdis.magics
-        import xdis.marsh
-        import xdis.op_imports
-        import xdis.version_info
-        import xdis
-        A, B, C, *_ = sys.version_info
-        version = F'{A}.{B}.{C}'
-        canonic = F'{A}.{B}'
-        if version not in xdis.magics.canonic_python_version:
-            import importlib.util
-            magic = importlib.util.MAGIC_NUMBER
-            xdis.magics.add_magic_from_int(xdis.magics.magic2int(magic), version)
-            xdis.magics.by_magic.setdefault(magic, set()).add(version)
-            xdis.magics.by_version[version] = magic
-            xdis.magics.magics[canonic] = magic
-            xdis.magics.canonic_python_version[canonic] = canonic
-            xdis.magics.add_canonic_versions(version, canonic)
-            xdis.op_imports.op_imports.setdefault(canonic,
-                next(iter(reversed(xdis.op_imports.op_imports.values()))))
-        del A, B, C, version
-        import xdis.std
-        return xdis
-
-    @ArchiveUnit.Requires('uncompyle6', ['arc', 'python', 'extended'])
-    def _uncompyle6():
-        import uncompyle6
-        import uncompyle6.main
-        return uncompyle6
-
-    @ArchiveUnit.Requires('decompyle3', ['arc', 'python'])
-    def _decompyle3():
-        import decompyle3
-        import decompyle3.main
-        return decompyle3
 
     def unpack(self, data):
         view = memoryview(data)
