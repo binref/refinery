@@ -10,7 +10,7 @@ on:
         type: string
       system:
         description: 'The Operating System to run on.'
-        default: 'windows'
+        default: 'windows-latest'
         required: true
         type: string
 
