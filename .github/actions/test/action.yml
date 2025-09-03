@@ -13,8 +13,8 @@ runs:
     - name: Unit Tests
       if: ${{ !contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: python -m unittest discover -p test_*.py
+      run: pytest -n ${{ steps.cores.outputs.count }} test
     - name: Unit Tests
       if: ${{  contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -p test_*.py
+      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n ${{ steps.cores.outputs.count }} test

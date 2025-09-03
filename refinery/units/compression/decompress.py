@@ -147,7 +147,7 @@ class decompress(Unit):
             lznt1,
             nrv2e,
             nrv2d,
-            nrv2b
+            nrv2b,
         ]:
             unit: Unit = engine.assemble()
             _, _, name = unit.name.rpartition('auto-decompress-')

@@ -5,10 +5,25 @@ from typing import Type, Dict, Any
 import importlib
 import functools
 
-from .. import refinery, TestBase, NameUnknownException
+from .. import (
+    refinery,
+    thread_group,
+    temporary_clipboard,
+    temporary_chwd,
+    TestBase,
+    NameUnknownException,
+)
+
 from refinery.units import requirement, RefineryImportMissing, Entry, LogLevel
 
-__all__ = ['refinery', 'TestUnitBase', 'NameUnknownException']
+__all__ = [
+    'refinery',
+    'thread_group',
+    'temporary_clipboard',
+    'temporary_chwd',
+    'NameUnknownException',
+    'TestUnitBase',
+]
 
 
 class MissingRequirement(property):

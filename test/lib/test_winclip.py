@@ -5,12 +5,12 @@ import pyperclip
 
 from refinery.lib.winclip import get_any_data, ClipBoard, CF
 
-from .. import TestBase
+from .. import thread_group, TestBase
 
 
 def onlywin(f):
     if os.name == 'nt':
-        return f
+        return thread_group('clipboard')(f)
     else:
         def dummy(*_):
             return
@@ -38,5 +38,5 @@ class TestWinClip(TestBase):
         test = 'Unrefined ASCII'
         pyperclip.copy(test)
         mode, data = get_any_data()
-        self.assertEqual(mode, CF.UNICODETEXT)
         self.assertEqual(test, data.decode())
+        self.assertEqual(mode, CF.UNICODETEXT)

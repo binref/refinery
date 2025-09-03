@@ -9,40 +9,20 @@ import time
 import hashlib
 import zlib
 
-from contextlib import contextmanager
-
-from .. import TestUnitBase
+from .. import thread_group, temporary_clipboard, temporary_chwd, TestUnitBase
 from refinery.lib.loader import load_detached as L
-
-
-@contextmanager
-def temporary_clipboard():
-    backup = pyperclip.paste()
-    pyperclip.copy('')
-    try:
-        yield None
-    finally:
-        pyperclip.copy(backup)
-
-
-@contextmanager
-def temporary_chwd(directory):
-    old = os.getcwd()
-    try:
-        os.chdir(directory)
-        yield directory
-    finally:
-        os.chdir(old)
 
 
 class TestDump(TestUnitBase):
 
+    @thread_group('clipboard')
     def test_clipboard_copy_01(self):
         copy = self.load()
         with temporary_clipboard():
             L('emit Too Much Technology')[copy]()
             self.assertEqual(pyperclip.paste(), 'TooMuchTechnology')
 
+    @thread_group('clipboard')
     def test_clipboard_copy_02(self):
         copy = self.load()
         sep = self.ldu('sep', ' ')
@@ -50,6 +30,7 @@ class TestDump(TestUnitBase):
             L('emit Too Much Technology')[sep | copy]()
             self.assertEqual(pyperclip.paste(), 'Too Much Technology')
 
+    @thread_group('clipboard')
     def test_clipboard_copy_multiple(self):
         copy = self.load()
         data = 'Too much technology, in too little time.'

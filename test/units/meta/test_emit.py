@@ -1,20 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import pyperclip
-import contextlib
-
 from refinery.lib.loader import load_pipeline
-from .. import TestUnitBase
-
-
-@contextlib.contextmanager
-def temporary_clipboard(data: str):
-    backup = pyperclip.paste()
-    pyperclip.copy(data)
-    try:
-        yield None
-    finally:
-        pyperclip.copy(backup)
+from .. import temporary_clipboard, thread_group, TestUnitBase
 
 
 class TestEmitter(TestUnitBase):
@@ -31,12 +18,14 @@ class TestEmitter(TestUnitBase):
         emit = self.load('Hello', 'x::', 'World')
         self.assertEqual(emit(B'cruel'), B'Hello\ncruel\nWorld')
 
+    @thread_group('clipboard')
     def test_emit_keeps_metadata_01(self):
         with temporary_clipboard('baz'):
             pl = load_pipeline('emit a [| put foo bar | emit | pf {foo}{} ]')
             pl = bytes(pl())
         self.assertEqual(pl, b'barbaz')
 
+    @thread_group('clipboard')
     def test_emit_keeps_metadata_02(self):
         with temporary_clipboard('baz'):
             pl = load_pipeline('emit bort | push [| rex (?P<foo>...)t | pop | emit | pf {foo}{} ]')

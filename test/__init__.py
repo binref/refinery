@@ -3,11 +3,52 @@ import random
 import refinery
 import string
 import unittest
+import pyperclip
+import contextlib
+import os
+
+try:
+    import pytest
+except ImportError:
+    def thread_group(name: str):
+        def dummy(x):
+            return x
+        return dummy
+else:
+    def thread_group(name: str): # type:ignore
+        return pytest.mark.xdist_group(name=name)
 
 from samples import SampleStore
 
 
-__all__ = ['refinery', 'TestBase', 'NameUnknownException']
+__all__ = [
+    'refinery',
+    'thread_group',
+    'temporary_clipboard',
+    'temporary_chwd',
+    'TestBase',
+    'NameUnknownException',
+]
+
+
+@contextlib.contextmanager
+def temporary_clipboard(data: str = ''):
+    backup = pyperclip.paste()
+    pyperclip.copy(data)
+    try:
+        yield None
+    finally:
+        pyperclip.copy(backup)
+
+
+@contextlib.contextmanager
+def temporary_chwd(directory):
+    old = os.getcwd()
+    try:
+        os.chdir(directory)
+        yield directory
+    finally:
+        os.chdir(old)
 
 
 class NameUnknownException(Exception):
