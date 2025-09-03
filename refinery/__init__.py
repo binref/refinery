@@ -183,9 +183,13 @@ class __pdoc__(dict):
                     for method in abstractmethods:
                         if method.startswith('_'):
                             continue
-                        at = getattr(unit, method, None)
+                        at = getattr(unit, method, NotImplemented)
                         bt = getattr(unit.mro()[1], method, None)
-                        if at and at is not bt:
+                        if at is NotImplemented:
+                            continue
+                        if at is None:
+                            continue
+                        if at is not bt:
                             self[F'{name}.{method}'] = False
                 if hlp := get_help_string(unit, width=97):
                     hlp = hlp.replace('\x60', '')
