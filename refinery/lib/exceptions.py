@@ -60,7 +60,9 @@ class LazyDependency(Generic[_M]):
         self._imp = imp
         self.units: set[type[Unit]] = set()
 
-    def register(self, unit: type[Unit]):
+    def register(self, unit: type[Unit] | None):
+        if unit is None:
+            return None
         if unit in (units := self.units):
             return unit
         if dist := self.dist:

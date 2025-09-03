@@ -201,6 +201,7 @@ from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr
 
 from refinery.lib.exceptions import (
+    LazyDependency,
     dependency,
     RefineryCriticalException,
     RefineryException,
@@ -1300,28 +1301,28 @@ class UnitBase(metaclass=Executable, abstract=True):
         """
 
 
-class requirement(property):
+class requirement:
     """
     An empty descendant of the builtin `property` class that is used to distinguish import
     requirements on units from other properties. When `refinery.units.Unit.Requires` is used to
     decorate a member function as an import, this member function becomes an instance of this
     class.
     """
-    def __init__(self, importer: Callable):
-        super().__init__(importer)
-        self.module = None
+    def __init__(self, dependency: LazyDependency):
+        self.dependency = dependency
         self.parent = None
+        self.module = None
 
     def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
-        if unit is None:
-            unit = self.parent
-        if (mod := self.module) is not None:
-            return mod
-        self.module = mod = cast(Callable, self.fget)(unit)
+        if (mod := self.module) is None:
+            dependency = self.dependency
+            dependency.register(unit := unit or self.parent)
+            self.module = mod = dependency()
         return mod
 
     def __set_name__(self, unit: Type[Unit], name: str):
         self.parent = unit
+        self.dependency.register(unit)
 
 
 class Unit(UnitBase, abstract=True):
@@ -1408,12 +1409,7 @@ class Unit(UnitBase, abstract=True):
         A decorator for unit-local dependencies.
         """
         def decorated(imp):
-            @requirement
-            def wrapped_import(unit: type[Unit]):
-                module.register(unit)
-                return module()
-            module = dependency(distribution, _buckets, more)(imp)
-            return wrapped_import
+            return requirement(dependency(distribution, _buckets, more)(imp))
         return decorated
 
     @property
