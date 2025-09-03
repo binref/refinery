@@ -5,6 +5,22 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.0
+- The change to `--join-path` from v0.7.4 was reverted;
+  this switch for path extraction units no longer alters the joined path based on files on disk.
+  This makes its behavior completely deterministic again.
+  Deconflicting paths is now done by `dump`: The unit implements the same logic in trying to find
+  compatible paths on disk that do not conflict with existing files.
+- The `pdf` unit has been extended with support for extracting images based on the `mupdf` library.
+- The `pdfcrypt` unit was added for removing & adding passwords from & to PDF documents.
+- There is now a `qr` unit for decoding barcodes (especially QR codes).
+  It requires the ZBar shared library to work, but that really seems to be the only way it can be done.
+- The `z85` unit for _yet_ another Base85 encoding scheme was added.
+- The `flz` unit implementing FastLZ was added and is now included in the universal decompressor.
+- The `xtzip` unit now allows extracting archives partially,
+  i.e. a single password-protected file does not completely fail the extraction process.
+  When decryption fails, it is also possible to extract the raw encrypted chunk using the `--lenient` option.
+
 ## Version 0.8.28
 - Adds the `pbuf` unit to decode ProtoBuf messages heuristically.
 
