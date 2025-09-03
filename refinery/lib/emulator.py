@@ -17,14 +17,12 @@ from refinery.lib.intervals import IntIntervalUnion
 from refinery.lib.exceptions import MissingModule
 
 if TYPE_CHECKING:
-    from capstone import Cs
     from speakeasy import Speakeasy as Se
     from speakeasy.common import CodeHook, Hook as SeHook
     from speakeasy.memmgr import MemMap
     from unicorn import Uc
     from icicle import Icicle as Ic
 else:
-    class Cs: pass
     class Uc: pass
     class Ic: pass
     class Se: pass
@@ -816,8 +814,8 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
 
         try:
             arch = {
-                Arch.X32   : 'i686',
-                Arch.X64   : 'x86_64',
+                Arch.X32: 'i686',
+                Arch.X64: 'x86_64',
             }[exe.arch()]
         except KeyError:
             arch = None
@@ -826,9 +824,6 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
 
         if self.hooked(Hook.ApiCall):
             raise NotImplementedError(F'{self.__class__.__name__} cannot hook API calls.')
-
-        if self.hooks & Hook.Memory:
-            raise NotImplementedError(U'Icicle does not support memory hooks yet.')
 
         self.icicle = ice = ic.Icicle(arch)
         self.regmap = {reg.casefold(): val[1] for reg, val in ice.reg_list().items()}
@@ -843,42 +838,85 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         self._single_step = False
 
     def _emulate(self, start: int, end: Optional[int] = None):
-        dasm = self.disassembler()
-        code = False
         RS = ic.RunStatus
-        emu = self.icicle
+        MP = ic.MemoryProtection
+        ice = self.icicle
 
-        if self.hooked(Hook.CodeExecute):
-            code = True
-            step = partial(emu.step, 1)
+        code_hooked = self.hooked(Hook.CodeExecute)
+        mm_e_hooked = self.hooked(Hook.MemoryError)
+        mm_w_hooked = self.hooked(Hook.MemoryWrite)
+        mm_r_hooked = self.hooked(Hook.MemoryRead)
+
+        halt = self._single_step
+        dasm = self.exe.disassembler()
+        dasm.detail = True
+
+        if code_hooked or halt:
+            step = partial(ice.step, 1)
         elif end is not None:
-            step = partial(emu.run_until, end)
+            step = partial(ice.run_until, end)
         else:
-            step = emu.run
+            step = ice.run
 
         self.ip = ip = start
+        mprotect = []
+        cb_write = None
+        retrying = 0
 
         while True:
-            if code:
-                op = next(dasm.disasm(self.exe[ip:ip + 12], ip, 1))
-                self.hook_code_execute(emu, ip, op._raw.size, self.state)
+            insn = None
+            self.ip = ip
 
-            status = step()
-
-            if status == RS.InstructionLimit:
+            if code_hooked and not retrying:
+                insn = next(dasm.disasm(self.mem_read(ip, 20), 1))
+                self.hook_code_execute(ice, ip, insn.size, self.state)
+            if mprotect:
+                ice.mem_protect(*mprotect[-1], MP.ExecuteReadWrite)
+            if (status := step()) == RS.InstructionLimit:
+                for p in mprotect:
+                    ice.mem_protect(*p, MP.ExecuteOnly)
+                if cb_write:
+                    addr, size = cb_write
+                    value = self.mem_read_int(addr, size)
+                    if self.hook_mem_write(ice, 0, addr, size, value, self.state) is False:
+                        break
+                    cb_write = None
+                mprotect.clear()
+                retrying = 0
                 ip = self.ip
-                continue
-
-            if status in (
+            elif status in (
                 RS.Breakpoint,
                 RS.Halt,
                 RS.Killed,
             ):
                 break
-            if status == RS.UnhandledException:
-                raise EmulationError(emu.exception_code.name)
-            if status != RS.Running:
+            elif status == RS.UnhandledException:
+                insn = insn or next(dasm.disasm(self.mem_read(ip, 20), 1))
+                size = max((op.size for op in insn.operands), default=insn.addr_size)
+                EC = ic.ExceptionCode
+                ea = ice.exception_value
+                ec = ice.exception_code
+                if ec in (EC.ReadUnmapped, EC.WriteUnmapped) and mm_e_hooked:
+                    if self.hook_mem_error(ice, 0, ea, size, 0, self.state) is not False:
+                        retrying += 1
+                        continue
+                elif ec == EC.ReadPerm and mm_r_hooked:
+                    value = self.mem_read_int(ea, size)
+                    if self.hook_mem_read(ice, 0, ea, size, value, self.state) is not False:
+                        mprotect.append((ea, size))
+                        retrying += 1
+                        continue
+                elif ec == EC.WritePerm and mm_w_hooked:
+                    cb_write = (ea, size)
+                    mprotect.append(cb_write)
+                    retrying += 1
+                    continue
+                else:
+                    raise EmulationError(ec.name)
+            elif status != RS.Running:
                 raise EmulationError(status.name)
+            if halt:
+                break
 
     def halt(self):
         self.icicle.add_breakpoint(self.ip)
@@ -890,10 +928,8 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
 
     def _map(self, address: int, size: int):
         MP = ic.MemoryProtection
-        if self.hooked(Hook.MemoryRead):
-            perm = MP.ExecuteRead
-        elif self.hooked(Hook.MemoryWrite):
-            perm = MP.ExecuteRead
+        if self.hooks & Hook.MemoryAccess:
+            perm = MP.ExecuteOnly
         else:
             perm = MP.ExecuteReadWrite
         return self.icicle.mem_map(address, size, perm)

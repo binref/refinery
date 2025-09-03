@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-from refinery.lib.emulator import Arch, Hook, Emulator, UnicornEmulator, SpeakeasyEmulator
+from refinery.lib.emulator import Arch, Hook, Emulator, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
 from .. import TestBase
 
 
-def _makeEmulator(e: type[Emulator]) -> type[Emulator]:
+def _makeEmulator(e: type[Emulator]):
     class Emu(e):
-        def hook_mem_error(self, emu, access, address, size, value, state=None):
+        writes = []
+
+        def hook_mem_error(self, emu, access: int, address: int, size: int, value: int, state=None):
             aligned = self.align(address, down=True)
             alloc_size = 0
             while address + size >= aligned + alloc_size:
                 alloc_size += self.alloc_size
             self.map(aligned, alloc_size)
             return True
+
+        def hook_mem_write(self, emu, access: int, address: int, size: int, value: int, state=None):
+            self.writes.append(value)
+            return True
+
     return Emu
 
 
@@ -30,10 +37,11 @@ class TestEmulator(TestBase):
         )
 
         for BaseEmulator in (
+            IcicleEmulator,
             SpeakeasyEmulator,
             UnicornEmulator,
         ):
-            emulator = _makeEmulator(BaseEmulator)(data, arch=Arch.X32, hooks=Hook.MemoryError)
+            emulator = _makeEmulator(BaseEmulator)(data, arch=Arch.X32, hooks=Hook.Memory)
             emulator.reset()
             ip = emulator.base
 
@@ -58,6 +66,10 @@ class TestEmulator(TestBase):
             ea = emulator.step(ip)
             self.assertEqual(emulator.mem_read(0x1001B3A2, 2), B'\xBB\x01')
 
+            self.assertEqual(emulator.writes.pop(), 443)
+            emulator.writes.pop()
+            self.assertListEqual(emulator.writes, [2, 443])
+
     def test_single_stepping_x64(self):
 
         data = bytes.fromhex(
@@ -69,10 +81,11 @@ class TestEmulator(TestBase):
         )
 
         for BaseEmulator in (
+            IcicleEmulator,
             SpeakeasyEmulator,
             UnicornEmulator,
         ):
-            emulator = _makeEmulator(BaseEmulator)(data, arch=Arch.X64, hooks=Hook.MemoryError)
+            emulator = _makeEmulator(BaseEmulator)(data, arch=Arch.X64, hooks=Hook.Memory)
             emulator.reset()
             ip = base = emulator.base
 
@@ -91,3 +104,7 @@ class TestEmulator(TestBase):
 
             ea = emulator.step(ip)
             self.assertEqual(emulator.mem_read(base + 0x1dc27, 2), B'\xBB\x01')
+
+            self.assertEqual(emulator.writes.pop(), 443)
+            emulator.writes.pop()
+            self.assertListEqual(emulator.writes, [2])
