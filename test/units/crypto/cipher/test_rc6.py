@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from ... import TestUnitBase
 
 from refinery.units.crypto.cipher.rc6 import RC6

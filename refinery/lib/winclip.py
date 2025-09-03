@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Windows-specific module to obtain data in different complex formats from the clipboard.
 Primarily, this can retrieve image data from the clipboard.

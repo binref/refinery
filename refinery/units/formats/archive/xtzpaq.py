@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # ---------------------------------------------------------------------------------------------\
 # This code was ported directly from unzpaq.cpp; it is not very Pythonic and has inherited a   |
 # somewhat convoluted structure from the source. Cleaning it up seems to be largely pointless  |

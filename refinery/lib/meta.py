@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 R"""
 Inside a frame (see `refinery.lib.frame`), all chunks that are processed by refinery units have a
 dictionary of metadata attached to them. This dictionary implements chunk-local variables which can

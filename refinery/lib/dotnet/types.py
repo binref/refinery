@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 These definitions in this module are used across the other modules in the .NET
 parsing library.

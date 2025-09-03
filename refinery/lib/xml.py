@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Custom XML parser that is intended to be less strict than the standard library one.
 """

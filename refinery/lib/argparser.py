@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Provides a customized argument parser that is used by all refinery `refinery.units.Unit`s.
 """

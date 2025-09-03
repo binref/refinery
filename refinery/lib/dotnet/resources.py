@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Parsing of managed .NET resources, which are .NET resource directories which
 begin with the magic sequence `0xBEEFCACE`. These resources can contain several

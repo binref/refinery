@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery import Unit
 from refinery.units.meta.pick import pick
 from refinery.lib.loader import load_pipeline

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery.lib.mime import FileMagicInfo
 
 from .. import TestBase

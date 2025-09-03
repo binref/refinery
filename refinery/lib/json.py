@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 In order to represent arbitrary data as JSON, these classes help extend the built-in
 json module in order to support custom encoding of already serializable types.

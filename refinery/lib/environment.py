@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A common interface to all binary refinery configuration settings available via environment
 variables. This module is also host to the logging configuration.

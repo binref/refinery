@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 import unittest
 from collections import defaultdict
 from typing import List, Tuple

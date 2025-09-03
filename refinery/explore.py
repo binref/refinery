@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A commandline script to search for binary refinery units based on keywords.
 """

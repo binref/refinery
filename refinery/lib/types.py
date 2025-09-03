@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Exports two singletons `refinery.lib.types.INF` and `refinery.lib.types.AST`.
 Used by `refinery.units.pattern.PatternExtractorBase` as the default values

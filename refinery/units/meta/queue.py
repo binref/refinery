@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A simple tool to queue binary data as one or more chunks in the current frame.
 """

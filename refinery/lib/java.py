@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Parsing of the Java Class file format as per
  [the official specification](https://docs.oracle.com/javase/specs/jvms/se14/html/jvms-4.html).

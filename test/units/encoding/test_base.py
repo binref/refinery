@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery import b64, b85, map
 from .. import TestUnitBase
 

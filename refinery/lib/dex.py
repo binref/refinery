@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A rudimentary parser for Dalvik Executable (dex) files. The parser is not yet complete
 and currently only parses the string table, which is required for the `refinery.dexstr`

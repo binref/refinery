@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 R"""
 Some refinery units produce more than one output when applied to an input. For example,
 `refinery.chop` will chop the input data into evenly sized blocks and emit each of them

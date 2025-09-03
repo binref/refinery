@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Windows-specific module to determine whether the current Python process is running in a PowerShell process.
 """

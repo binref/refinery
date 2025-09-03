@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery.lib.vfs import VirtualFileSystem, VirtualFile
 from .. import TestBase
 

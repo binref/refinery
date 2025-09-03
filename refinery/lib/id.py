@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 This module contains functions to identify certain file formats; these functions are used by units
 who operate on the same file format to implement the `refinery.units.Unit.handles` method.

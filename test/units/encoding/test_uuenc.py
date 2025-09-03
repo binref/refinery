@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from .. import TestUnitBase
 from ..compression import KADATH1, KADATH2
 

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Java disassembler. The main logic is implemented int `refinery.lib.java.JvOpCode`.
 """

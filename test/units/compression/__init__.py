@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 KADATH1 = (
     "Three times Randolph Carter dreamed of the marvellous city, and three times was he snatched "

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # flake8: noqa
 """
 This implementation of the Serpent cipher is based on the original C reference implementation, available

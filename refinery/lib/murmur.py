@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 # pymmh3 was originally written by Fredrik Kihlander and enhanced by Swapnil Gusani.

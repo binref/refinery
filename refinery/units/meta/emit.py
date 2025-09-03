@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A simple tool to output binary data. Multiple arguments are output in framed
 format, see `refinery.lib.frame`.

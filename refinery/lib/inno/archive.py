@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Data structures and methods for parsing Inno Setup installer archives. The design is based
 on [innoextract][IE] source code and its Python port in [Malcat][MC]. The [Malcat][MC]

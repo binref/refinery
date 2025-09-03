@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from . import TestMetaBase
 from refinery.lib.loader import load_pipeline as L
 

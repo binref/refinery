@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 This package contains all refinery units. To write an executable refinery unit,
 it is sufficient to write a class that inherits from `refinery.units.Unit` and

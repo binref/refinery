@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 This module implements an abstraction layer executable loader for PE, ELF, and MachO files.
 The provided interface is the same for all executables. It powers the following units:

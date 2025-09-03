@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Based on source code from: https://github.com/DissectMalware/batch_deobfuscator
 # Original License: MIT License
 # Copyright (c) 2018 Malwrologist

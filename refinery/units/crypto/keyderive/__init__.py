@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Implements key derivation routines. These are mostly meant to be used as
 modifiers for multibin expressions that can be passed as key arguments to

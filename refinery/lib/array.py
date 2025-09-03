@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 The Python array module provides efficient arrays of numeric values, but it uses a type code
 to specify the item size, and the corresponding block length depends on the underlying system

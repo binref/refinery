@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery.lib.suffixtree import SuffixTree
 from .. import TestBase
 

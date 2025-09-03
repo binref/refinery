@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery.units.encoding.esc import esc
 from .. import TestUnitBase
 

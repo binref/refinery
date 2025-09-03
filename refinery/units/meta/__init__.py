@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A package for units that operate primarily on frames of several of inputs.
 """

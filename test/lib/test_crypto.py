@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery.lib.crypto import (
     pad_iso7816,
     pad_pkcs7,

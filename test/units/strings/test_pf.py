@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from .. import TestUnitBase
 
 from refinery.lib.loader import load_commandline

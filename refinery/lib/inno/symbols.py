@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # flake8: noqa
 """
 Contains a library of known external function symbols for the IFPS runtime in InnoSetup installers.

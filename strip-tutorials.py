@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Strips the Jupyter Notebooks in the Tutorial section of run count information.
 """

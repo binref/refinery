@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from ... import TestUnitBase
 
 from refinery.lib.crypto import BlockCipher, BlockCipherFactory, rotl16, rotr16, CIPHER_MODES

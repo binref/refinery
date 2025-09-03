@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 The code is based on the logic implemented in IFPSTools:
  https://github.com/Wack0/IFPSTools

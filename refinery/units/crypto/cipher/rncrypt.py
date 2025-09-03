@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 The source code for this refinery unit is based on RNCryptor for Python:
 

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Certain libraries insist on reading data from a file on disk which has to be specified by passing
 a file path, and sometimes they will not accept a stream object or any other way to input data to

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Routines to help interpret large binary buffers as arrays of numbers, stored
 as consecutive sequences of bytes, all with the same length and byte order.

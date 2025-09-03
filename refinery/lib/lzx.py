@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 This is a port of the LZX implementation in 7Zip to Python. A focus was on preserving the exact
 logic and few Python-specific optimizations have been implemented.

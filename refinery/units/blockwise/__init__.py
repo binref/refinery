@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Contains all units that can work on blocks a fixed length. Note that block cipher
 algorithms can be found in `refinery.units.crypto.cipher`.

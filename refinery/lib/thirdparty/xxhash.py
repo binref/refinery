@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 This code is based on a pure Python implementation of xxHash, sourced from the
 following GitHub repository:

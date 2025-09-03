@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 An emulator for Inno Setup executables. The implementation is unlikely to be 100% correct as it
 was engineered by making various malicious scripts execute reasonably well, not by implementing

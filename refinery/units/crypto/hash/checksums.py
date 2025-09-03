@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Implements hash algorithms of short length, commonly used as checksums.
 """

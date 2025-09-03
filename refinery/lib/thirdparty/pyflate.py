@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # ============================ MOTIFICATION NOTE ============================
 # The content of this file has been modified for use in binary refinery; it
 # has been ported from Python2 to Python3 and the BZip2 implementation was

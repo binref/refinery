@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery.lib.argformats import multibin
 from refinery.lib.loader import load_detached as L
 

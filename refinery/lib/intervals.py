@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Classes that implement different kinds of interval unions. These are primarily used by code
 related to `refinery.lib.emulator` for representing memory regions that have been mapped or

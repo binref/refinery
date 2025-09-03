@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from refinery.lib.dotnet.deserialize import BinaryFormatterParser, unpack
 from refinery.lib.dotnet.resources import NetManifestResource, StreamReader
 from refinery.lib.dotnet.types import StringGUID

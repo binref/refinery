@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Maru hash implementation; it matches the C implementation found in Donut.
 """

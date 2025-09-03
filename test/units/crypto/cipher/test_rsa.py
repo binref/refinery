@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from inspect import getdoc
 
 from ... import TestUnitBase
