@@ -92,7 +92,7 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install pytest pytest-cov
     - name: Run tests and collect coverage
-      run: pytest --cov-config=.coveragerc --cov refinery test/
+      run: pytest --cov-config=.coveragerc --cov refinery -n=8 --dist=loadgroup test
       shell: powershell
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
