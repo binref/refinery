@@ -176,7 +176,6 @@ from typing import (
     Callable,
     Collection,
     Mapping,
-    ClassVar,
     Tuple,
     Any,
     Generator,
