@@ -1,11 +1,10 @@
-import logging
 import os.path
 import inspect
 import sys
 
 from glob import glob
 
-from . import TestUnitBase
+from . import cosmetics, TestUnitBase
 from .compression import KADATH1, KADATH2
 
 from refinery.lib.loader import get_all_entry_points, resolve, load_detached as L, load_pipeline as PL
@@ -92,6 +91,7 @@ class TestPipelines(TestUnitBase):
 
 class TestMetaProperties(TestUnitBase):
 
+    @cosmetics
     def test_happy_flakes(self):
         import pyflakes.api
         import pyflakes.reporter
@@ -130,6 +130,7 @@ class TestMetaProperties(TestUnitBase):
 
         self.assertListEqual(error_log, [])
 
+    @cosmetics
     def test_style_guide(self):
         import pycodestyle
 

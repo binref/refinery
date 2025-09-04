@@ -9,6 +9,7 @@ from .. import (
     refinery,
     thread_group,
     clipboard,
+    cosmetics,
     temporary_clipboard,
     temporary_chwd,
     TestBase,
@@ -17,16 +18,6 @@ from .. import (
 
 from refinery.units import RefineryImportMissing, Entry, LogLevel
 from refinery.lib.dependencies import DependencyAccessor
-
-__all__ = [
-    'refinery',
-    'thread_group',
-    'clipboard',
-    'temporary_clipboard',
-    'temporary_chwd',
-    'NameUnknownException',
-    'TestUnitBase',
-]
 
 
 class MissingRequirement(property):
