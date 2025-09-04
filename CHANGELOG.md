@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.1 - bugfix release
+
 ## Version 0.9.0
 - The change to `--join-path` from v0.7.4 was reverted;
   this switch for path extraction units no longer alters the joined path based on files on disk.
