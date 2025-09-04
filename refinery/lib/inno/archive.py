@@ -1698,7 +1698,7 @@ class SetupIcon(InnoStruct):
         if version >= (5, 3, 5):
             self.AppUserModelId = self._read_string()
         if version >= (6, 1, 0):
-            self.AppUserModelToastActivatorCLSID = reader.read_guid()
+            self.AppUserModelToastActivatorCLSID = str(reader.read_guid())
 
         self.WindowsVersion = WinVerRange(reader, version)
         self.IconIndex = reader.i32()

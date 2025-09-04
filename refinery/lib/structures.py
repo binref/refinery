@@ -13,6 +13,8 @@ import re
 import struct
 import weakref
 
+from uuid import UUID
+
 from typing import (
     overload,
     cast,
@@ -188,6 +190,12 @@ class MemoryFileMethods(Generic[T, B]):
     def detour(self, offset: Optional[int] = None, whence: int = io.SEEK_SET):
         return StreamDetour(cast(io.IOBase, self), offset, whence=whence)
 
+    def detour_absolute(self, offset: Optional[int] = None):
+        return self.detour(offset, io.SEEK_SET)
+
+    def detour_relative(self, offset: Optional[int] = None):
+        return self.detour(offset, io.SEEK_CUR)
+
     def writable(self) -> bool:
         if self._closed:
             return False
@@ -277,6 +285,9 @@ class MemoryFileMethods(Generic[T, B]):
 
     def tell(self) -> int:
         return self._cursor
+
+    def skip(self, n: int):
+        self._cursor += n
 
     def seekrel(self, offset: int) -> int:
         return self.seek(offset, io.SEEK_CUR)
@@ -520,8 +531,6 @@ class StructReader(MemoryFile[T, T]):
         """
         if length is None:
             length = self.remaining_bits
-        if length < 0:
-            raise ValueError
         if bigendian is None:
             bigendian = self.bigendian
         if length < self._nbits:
@@ -675,6 +684,15 @@ class StructReader(MemoryFile[T, T]):
     def f32(self, peek: bool = False) -> float: return cast(float, self.read_one_struct('f', peek=peek))
     def f64(self, peek: bool = False) -> float: return cast(float, self.read_one_struct('d', peek=peek))
 
+    def u8fast(self):
+        try:
+            b = self._data[self._cursor]
+        except IndexError:
+            raise EOFError
+        else:
+            self._cursor += 1
+            return b
+
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
 
@@ -711,21 +729,11 @@ class StructReader(MemoryFile[T, T]):
             self.seekrel(len(terminator))
             return bytearray(data)
 
-    def read_guid(self) -> str:
-        _mode = self.bigendian
-        self.bigendian = False
-        try:
-            a = self.u32()
-            b = self.u16()
-            c = self.u16()
-            d = self.read(2).hex().upper()
-            e = self.read(6).hex().upper()
-        except Exception:
-            raise
-        else:
-            return F'{a:08X}-{b:04X}-{c:04X}-{d}-{e}'
-        finally:
-            self.bigendian = _mode
+    def read_guid(self) -> UUID:
+        return UUID(bytes_le=self.read_bytes(16))
+
+    def read_uuid(self) -> UUID:
+        return UUID(bytes=self.read_bytes(16))
 
     @overload
     def read_c_string(self) -> bytearray:
@@ -788,14 +796,21 @@ class StructReader(MemoryFile[T, T]):
             data = codecs.decode(data, encoding)
         return data
 
-    def read_7bit_encoded_int(self, max_bits: int = 0) -> Optional[int]:
+    def read_7bit_encoded_int(self, max_bits: int = 0, bigendian: bool | None = None) -> int:
         value = 0
-        for shift in itertools.count(0, step=7):
-            b = self.read_byte()
-            value |= (b & 0x7F) << shift
+        shift = 0
+        if bigendian is None:
+            bigendian = self.bigendian
+        while True:
+            b = self.u8fast()
+            if bigendian:
+                value <<= 7
+                value |= (b & 0x7F)
+            else:
+                value |= (b & 0x7F) << shift
             if not b & 0x80:
                 return value
-            if shift > max_bits > 0:
+            if (shift := shift + 7) > max_bits > 0:
                 raise OverflowError('Maximum bits were exceeded by encoded integer.')
 
 
