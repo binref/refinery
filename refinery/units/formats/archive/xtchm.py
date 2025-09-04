@@ -11,12 +11,12 @@ class xtchm(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     def unpack(self, data):
         chm = CHM(memoryview(data))
         for path, entry in chm.filesystem.items():
+            def extract(chm=chm, e=entry):
+                return chm.read(e)
             if entry.length <= 0:
                 continue
             if path.startswith('::DataSpace'):
                 continue
-            def extract(chm=chm, e=entry):
-                return chm.read(e)
             yield self._pack(path, None, extract)
 
     @classmethod
