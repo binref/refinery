@@ -247,3 +247,16 @@ class TestHexLoad(TestUnitBase):
             '15 76 52 56 bb 3d 6b 1d 2a d1 9f 5c 8a c0 55 ea c3 29 a2 1e'
         )
         self.assertEqual(goal, data | self.load() | bytes)
+
+    def test_pipes_around_txt(self):
+        data = '''
+        00000000:  3f 28 c0 73 68 69 6d 31 2e 6b 70 67 62 6f 64 79   |?(.shim1.kpgbody|
+        00000010:  2e 63 6f 6d 2f 67 61 74 65 77 61 79 2f 78 63 63   |.com/gateway/xcc|
+        00000020:  6c 0b 62 37 61 35 2e 39 73 64 63 6a 2b c0 80 29   |l.b7a5.9sdcj+..)|
+        00000030:  09 70 68 61 6e 67 61 6e 68 75 62 e0 12 2c 00 29   |.phanganhub..,.)|
+        00000040:  60 2c 06 32 2e 74 61 78 69 2d 20 5b e0 1b 2a 06   |`,.2.taxi- [..*.|
+        00000050:  72 6f 70 69 78 67 6f e0 10 2a 01 63 6a            |ropixgo..*.cj|
+        '''
+        goal = bytes.fromhex(''.join(
+            line.partition(':')[2].partition('|')[0] for line in data.splitlines()))
+        self.assertEqual(data | self.load() | bytes, goal)

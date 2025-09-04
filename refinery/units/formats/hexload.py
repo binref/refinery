@@ -4,10 +4,18 @@ import inspect
 import operator
 import re
 
-from typing import Dict, List, Type
+from typing import Dict, List, Type, NamedTuple
 
 from refinery.units.sinks import HexViewer
+from refinery.units import RefineryPartialResult
 from refinery.lib.patterns import make_hexline_pattern
+from refinery.lib.tools import lookahead
+
+
+class HexLineCheck(NamedTuple):
+    decoded_length: int
+    preview_length: int
+    matched_binary: bool
 
 
 def regex(cls: Type) -> re.Pattern:
@@ -49,18 +57,19 @@ class hexload(HexViewer):
         self._hexline_pattern = re.compile(F'{make_hexline_pattern(1)}(?:[\r\n]|$)', flags=re.MULTILINE)
 
     def process(self, data: bytearray):
-        lines = data.decode(self.codec).splitlines(keepends=False)
-
-        if not lines:
+        if not (lines := [
+            line for line in data.decode(self.codec).splitlines(keepends=False)
+            if line.strip()
+        ]):
             return None
 
-        decoded_bytes = bytearray()
+        result = bytearray()
         encoded_byte_matches: List[Dict[int, int]] = []
 
-        for line in lines:
+        for check in lines:
             matches: Dict[int, int] = {}
             encoded_byte_matches.append(matches)
-            for match in self._ENCODED_BYTES.finditer(line):
+            for match in self._ENCODED_BYTES.finditer(check):
                 a, b = match.span()
                 matches[a] = b - a
 
@@ -82,28 +91,43 @@ class hexload(HexViewer):
             key=operator.itemgetter(1))
         end = offset + length
         del lengths
-        for k, line in enumerate(lines, 1):
-            encoded_line = line[offset:end]
-            onlyhex = re.search(r'^[\sA-Fa-f0-9]+', encoded_line)
+
+        line_checks: list[HexLineCheck] = []
+
+        for k, check in enumerate(lines, 1):
+            encoded = check[offset:end]
+            onlyhex = re.search(r'^[\sA-Fa-f0-9]+', encoded)
             if not onlyhex:
-                self.log_warn(F'ignoring line without hexadecimal data: {line}')
+                self.log_warn(F'ignoring line without hexadecimal data: {check}')
                 continue
-            if onlyhex.group(0) != encoded_line:
+            if onlyhex.group(0) != encoded:
                 if k != len(lines):
-                    self.log_warn(F'ignoring line with mismatching hex data length: {line}')
+                    self.log_warn(F'ignoring line with mismatching hex data length: {check}')
                     continue
-                encoded_line = onlyhex.group(0)
-            self.log_debug(F'decoding: {encoded_line.strip()}')
-            decoded_line = bytes.fromhex(encoded_line)
-            decoded_bytes.extend(decoded_line)
-            txt = line[end:]
-            txt_stripped = re.sub('\\s+', '', txt)
-            if not txt_stripped:
-                continue
-            if len(decoded_line) not in range(len(txt_stripped), len(txt) + 1):
-                self.log_warn(F'preview size {len(txt_stripped)} does not match decoding: {line}')
-        if decoded_bytes:
-            yield decoded_bytes
+                encoded = onlyhex.group(0)
+            self.log_debug(F'decoding: {encoded.strip()}')
+            decoded = bytes.fromhex(encoded)
+            result.extend(decoded)
+            matched = True
+            if preview := check[end:]:
+                pattern = re.compile(
+                    '.'.join(re.escape(x.decode('ascii')) for x in re.split(b'[^!-~]', decoded)))
+                matched = pattern.search(preview) is not None
+            line_checks.append(HexLineCheck(len(decoded), len(preview), matched))
+
+        decoded_sizes: set[int] = set()
+        for last, hl in lookahead(line_checks):
+            if not last:
+                decoded_sizes.add(hl.decoded_length)
+                if len(decoded_sizes) > 1:
+                    raise RefineryPartialResult('inconsistent text preview sizes', result)
+
+        for k, check in enumerate(line_checks, 1):
+            if check.preview_length and not check.matched_binary:
+                self.log_warn(F'preview mismatch in line {k}: {lines[k - 1]}', result)
+
+        if result:
+            yield result
 
     def reverse(self, data):
         metrics = self._get_metrics(len(data))
