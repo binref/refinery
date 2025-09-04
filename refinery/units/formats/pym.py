@@ -165,7 +165,7 @@ class Marshal(StructReader[memoryview]):
                 else:
                     expected = typecheck.__name__
                 raise TypeError(
-                    F'Unmarshelled object of type {o.__class__.__name__}, '
+                    F'Unmarshelled object of type {o.__class__!r}, '
                     F'expected {expected}.')
             else:
                 return o
@@ -190,10 +190,11 @@ class Marshal(StructReader[memoryview]):
             if store_reference:
                 index = len(self.refs)
                 self.refs.append(None)
-            rv = sequence_type(_sequence())
-            if store_reference:
+                rv = sequence_type(_sequence())
                 self.refs[index] = rv
                 store_reference = False
+            else:
+                rv = sequence_type(_sequence())
             return rv
 
         prefix_size = 32
@@ -290,9 +291,10 @@ class Marshal(StructReader[memoryview]):
             if store_reference:
                 index = len(self.refs)
                 self.refs.append(None)
-            rv = slice(self.object(), self.object(), self.object())
-            if store_reference:
+                rv = slice(self.object(), self.object(), self.object())
                 self.refs[index] = rv
+            else:
+                rv = slice(self.object(), self.object(), self.object())
             return rv
         elif code == _MC.CODE:
             if store_reference:
@@ -301,10 +303,13 @@ class Marshal(StructReader[memoryview]):
             try:
                 signature = inspect.signature(CodeType)
             except ValueError:
-                import re
-                docs = re.sub(r'[\s\[\]]', '', CodeType.__doc__)
-                spec = re.search(r'(?i)code\w*\((\w+(?:,\w+)*)\)', docs)
-                params = spec.group(1).split(',') if spec else []
+                if docs := CodeType.__doc__:
+                    import re
+                    docs = re.sub(r'[\s\[\]]', '', docs)
+                    spec = re.search(r'(?i)code\w*\((\w+(?:,\w+)*)\)', docs)
+                    params = spec.group(1).split(',') if spec else []
+                else:
+                    raise
             else:
                 params = list(signature.parameters)
 

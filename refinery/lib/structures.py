@@ -774,10 +774,14 @@ class StructReader(MemoryFile[T, T]):
         ...
 
     @overload
-    def read_length_prefixed(self, *, prefix_size: int = 32, block_size: int = 1) -> Union[T, bytes]:
+    def read_length_prefixed(self, *, prefix_size: int = 32, block_size: int = 1) -> T:
         ...
 
-    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> Union[T, bytes, str]:
+    @overload
+    def read_length_prefixed(self, prefix_size: int, *, block_size: int = 1) -> T:
+        ...
+
+    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> Union[T, str]:
         prefix = self.read_integer(prefix_size) * block_size
         data = self.read(prefix)
         if encoding is not None:
