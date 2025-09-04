@@ -14,7 +14,8 @@ from .. import (
     NameUnknownException,
 )
 
-from refinery.units import requirement, RefineryImportMissing, Entry, LogLevel
+from refinery.units import RefineryImportMissing, Entry, LogLevel
+from refinery.lib.dependencies import DependencyAccessor
 
 __all__ = [
     'refinery',
@@ -61,7 +62,7 @@ class TestUnitBaseMeta(type):
                         for name, getter in base.__dict__.items():
                             if name in restoration:
                                 continue
-                            if isinstance(getter, requirement):
+                            if isinstance(getter, DependencyAccessor):
                                 restoration[name] = getter
                                 setattr(unit, name, MissingRequirement(name))
                     try:

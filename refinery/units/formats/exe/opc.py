@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 from refinery.units.sinks import Arg, Unit
+from refinery.lib.shared import capstone as cs
 
 if TYPE_CHECKING:
     from capstone import Cs
@@ -41,15 +42,10 @@ class opc(Unit):
             ovar=ovar,
             **more)
 
-    @Unit.Requires('capstone')
-    def _capstone():
-        import capstone
-        return capstone
-
     @property
     def _capstone_engine(self) -> Cs:
-        cs = self._capstone
-        return cs.Cs(*{
+        mode = self.args.mode.lower()
+        init = {
             'arm'    : (cs.CS_ARCH_ARM, cs.CS_MODE_ARM),
             'mips32' : (cs.CS_ARCH_MIPS, cs.CS_MODE_MIPS32),
             'mips64' : (cs.CS_ARCH_MIPS, cs.CS_MODE_MIPS64),
@@ -58,7 +54,10 @@ class opc(Unit):
             'x16'    : (cs.CS_ARCH_X86, cs.CS_MODE_16),
             'x32'    : (cs.CS_ARCH_X86, cs.CS_MODE_32),
             'x64'    : (cs.CS_ARCH_X86, cs.CS_MODE_64),
-        }.get(self.args.mode.lower()))
+        }.get(mode)
+        if init is not None:
+            return cs.Cs(*init)
+        raise AttributeError(F'invalid mode: {mode}')
 
     def process(self, data):
         count = self.args.count or 0
@@ -73,8 +72,8 @@ class opc(Unit):
                 avar: insn.address,
                 nvar: insn.mnemonic,
             }
+            ops: str = insn.op_str
             try:
-                ops = insn.op_str
                 operands = [op.strip() for op in ops.split(',')]
             except Exception:
                 operands = []

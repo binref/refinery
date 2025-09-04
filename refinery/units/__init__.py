@@ -198,10 +198,9 @@ from refinery.lib.frame import generate_frame_header, Framed, Chunk, MAGIC, MSIZ
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
 from refinery.lib.types import ByteStr
+from refinery.lib.dependencies import dependency_accessor
 
 from refinery.lib.exceptions import (
-    LazyDependency,
-    dependency,
     RefineryCriticalException,
     RefineryException,
     RefineryImportMissing,
@@ -1300,30 +1299,6 @@ class UnitBase(metaclass=Executable, abstract=True):
         """
 
 
-class requirement:
-    """
-    An empty descendant of the builtin `property` class that is used to distinguish import
-    requirements on units from other properties. When `refinery.units.Unit.Requires` is used to
-    decorate a member function as an import, this member function becomes an instance of this
-    class.
-    """
-    def __init__(self, dependency: LazyDependency):
-        self.dependency = dependency
-        self.parent = None
-        self.module = None
-
-    def __get__(self, unit: Optional[Type[Unit]], tp: Optional[Type[Executable]] = None):
-        if (mod := self.module) is None:
-            dependency = self.dependency
-            dependency.register(unit := unit or self.parent)
-            self.module = mod = dependency()
-        return mod
-
-    def __set_name__(self, unit: Type[Unit], name: str):
-        self.parent = unit
-        self.dependency.register(unit)
-
-
 class Unit(UnitBase, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
@@ -1405,11 +1380,9 @@ class Unit(UnitBase, abstract=True):
     @staticmethod
     def Requires(distribution: str, _buckets: Collection[str] = (), more: Optional[str] = None):
         """
-        A decorator for unit-local dependencies.
+        Proxy to `refinery.lib.dependencies.dependency_accessor`.
         """
-        def decorated(imp):
-            return requirement(dependency(distribution, _buckets, more)(imp))
-        return decorated
+        return dependency_accessor(distribution, _buckets, more)
 
     @property
     def is_reversible(self) -> bool:
@@ -2351,7 +2324,6 @@ class Unit(UnitBase, abstract=True):
 
 
 __pdoc__ = {
-    'requirement': False,
     'Unit.is_reversible': Executable.is_reversible.__doc__,
     'Unit.codec': Executable.codec.__doc__,
 }

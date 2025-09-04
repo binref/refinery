@@ -75,6 +75,7 @@ def get_config():
     sys.path.insert(0, str(pathlib.Path(__file__).parent.absolute()))
 
     import refinery
+    import refinery.lib.shared
 
     with refinery.__unit_loader__:
         refinery.__unit_loader__.reload()
@@ -84,7 +85,10 @@ def get_config():
         all_required: Set[str] = set()
         extras: Dict[str, Set[str]] = {'all': all_optional}
         with refinery.__unit_loader__:
-            for executable in refinery.__unit_loader__.cache.values():
+            for executable in (
+                refinery.lib.shared.GlobalDependenciesDummy,
+                *refinery.__unit_loader__.cache.values()
+            ):
                 if executable.optional_dependencies:
                     for key, deps in executable.optional_dependencies.items():
                         bucket = extras.setdefault(key, set())

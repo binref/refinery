@@ -18,8 +18,7 @@ from refinery.units.formats.archive import Arg, ArchiveUnit
 from refinery.units.pattern.carve import carve
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import NoLogging, normalize_word_separators
-from refinery.lib.xdis import xdis
-from refinery.lib.exceptions import dependency
+from refinery.lib.shared import xdis, decompyle3, uncompyle6
 
 from Cryptodome.Cipher import AES
 
@@ -28,20 +27,6 @@ if TYPE_CHECKING:
     from typing import Callable, Dict, List, Tuple, Optional, Set, Union, Generator, Iterable
     from xdis import Instruction
     from refinery.lib.types import ByteStr
-
-
-@dependency('uncompyle6', ['arc', 'python', 'extended'])
-def uncompyle6():
-    import uncompyle6
-    import uncompyle6.main
-    return uncompyle6
-
-
-@dependency('decompyle3', ['arc', 'python'])
-def decompyle3():
-    import decompyle3
-    import decompyle3.main
-    return decompyle3
 
 
 class Unmarshal(enum.IntEnum):
@@ -73,7 +58,7 @@ class Code(NamedTuple):
 def extract_code_from_buffer(buffer: ByteStr, file_name: Optional[str] = None) -> Generator[Code, None, None]:
     code_objects = {}
     file_name = file_name or '<unknown>'
-    load = xdis().load.load_module_from_file_object
+    load = xdis.load.load_module_from_file_object
     with NoLogging(NoLogging.Mode.STD_ERR):
         version, timestamp, magic_int, codes, is_pypy, _, _ = load(MemoryFile(buffer), file_name, code_objects)
     if not isinstance(codes, list):
@@ -88,10 +73,10 @@ def disassemble_code(code: CodeType, version=None) -> Iterable[Instruction]:
         if isinstance(version, float):
             version = str(version)
         if not isinstance(version, str):
-            version = xdis().version_info.version_tuple_to_str(version)
+            version = xdis.version_info.version_tuple_to_str(version)
         with contextlib.suppress(KeyError):
-            opc = xdis().op_imports.op_imports[version]
-    return xdis().std.Bytecode(code, opc=opc)
+            opc = xdis.op_imports.op_imports[version]
+    return xdis.std.Bytecode(code, opc=opc)
 
 
 def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = None) -> ByteStr:
@@ -105,13 +90,13 @@ def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = No
     def _engines():
         nonlocal errors
         try:
-            dc = decompyle3().main.decompile
+            dc = decompyle3.main.decompile
         except ImportError:
             errors += '# The decompiler decompyle3 is not installed.\n'
         else:
             yield 'decompyle3', dc
         try:
-            dc = uncompyle6().main.decompile
+            dc = uncompyle6.main.decompile
         except ImportError:
             errors += '# The decompiler decompyle3 is not installed.\n'
         else:
@@ -233,7 +218,7 @@ class PYZ(Struct):
             raise ValueError('invalid magic')
         magic = bytes(reader.read(4))
         with contextlib.suppress(KeyError, AttributeError):
-            version = xdis().magics.versions[magic]
+            version = xdis.magics.versions[magic]
         vtuple = version2tuple(version)
         padding_size = 4
         if vtuple >= (3, 3):
@@ -253,18 +238,17 @@ class PYZ(Struct):
             toc = marshal.loads(toc_data)
         except Exception as error:
             if MAGIC_NUMBER != self.magic[:4]:
-                xd = xdis()
-                _ord = xd.marsh.Ord
-                xd.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
+                _ord = xdis.marsh.Ord
+                xdis.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
                 try:
-                    toc = xd.marsh.load(
+                    toc = xdis.marsh.load(
                         MemoryFile(toc_data), self.version)
                 except Exception:
                     pass
                 else:
                     error = None
                 finally:
-                    xd.marsh.Ord = _ord
+                    xdis.marsh.Ord = _ord
             if error is not None:
                 raise error
 
@@ -519,9 +503,6 @@ class PyInstallerArchiveEpilogue(Struct):
         return result
 
 
-@uncompyle6.register
-@decompyle3.register
-@xdis.register
 class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extracts and decompiles files from a Python Installer (aka PyInstaller) archive.

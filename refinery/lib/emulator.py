@@ -11,10 +11,14 @@ from enum import IntFlag
 from functools import cached_property, partial
 
 from refinery.lib.executable import align, Arch, ET, BO, Executable, ExecutableCodeBlob
-from refinery.lib.tools import NoLogging
 from refinery.lib.vfs import VirtualFileSystem
 from refinery.lib.intervals import IntIntervalUnion
-from refinery.lib.exceptions import MissingModule
+
+from refinery.lib.shared import (
+    unicorn as uc,
+    icicle as ic,
+    speakeasy as se,
+)
 
 if TYPE_CHECKING:
     from speakeasy import Speakeasy as Se
@@ -31,27 +35,6 @@ else:
 _T = TypeVar('_T')
 _E = TypeVar('_E')
 _R = TypeVar('_R')
-
-
-try:
-    with NoLogging():
-        import unicorn as uc
-except ImportError:
-    uc = MissingModule('unicorn')
-try:
-    import speakeasy.profiler as se_profiler
-    import speakeasy.windows.objman as se_objman
-    import speakeasy as se
-except ImportError:
-    se = MissingModule('speakeasy-emulator')
-try:
-    import icicle as ic
-except ImportError:
-    ic = MissingModule('icicle-emu')
-try:
-    import capstone as cs
-except ImportError:
-    cs = MissingModule('capstone')
 
 
 class EmulationError(Exception):
@@ -88,7 +71,9 @@ class Register(Generic[_R]):
         self.code = code
         self.size = size
 
-    def __eq__(self, other: Register):
+    def __eq__(self, other):
+        if not isinstance(other, Register):
+            return False
         return self.code == other.code and self.size == other.size
 
     def __hash__(self):
@@ -133,13 +118,15 @@ class Emulator(ABC, Generic[_E, _R, _T]):
     ):
         if isinstance(data, Executable):
             exe = data
-        try:
-            exe = Executable.Load(data, base)
-        except ValueError:
-            exe = ExecutableCodeBlob(data, base, arch)
-            raw = True
-        else:
             raw = False
+        else:
+            try:
+                exe = Executable.Load(data, base)
+            except ValueError:
+                exe = ExecutableCodeBlob(data, base, arch or Arch.X32)
+                raw = True
+            else:
+                raw = False
 
         self.exe = exe
         self.raw = raw
@@ -1165,7 +1152,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             inner.stack_base, stack_addr = inner.alloc_stack(self.stack_size)
             inner.set_func_args(inner.stack_base, inner.return_hook)
 
-            run = se_profiler.Run()
+            run = se.profiler.Run()
             run.type = 'thread'
             run.start_addr = start
             run.instr_cnt = 0
@@ -1174,14 +1161,14 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             inner.add_run(run)
 
             if not (p := inner.init_container_process()):
-                p = se_objman.Process(self)
+                p = se.windows.objman.Process(self)
 
             inner.processes.append(p)
             inner.curr_process = p
             if mm := inner.get_address_map(start):
                 mm.set_process(inner.curr_process)
 
-            t = se_objman.Thread(inner, stack_base=inner.stack_base, stack_commit=self.stack_size)
+            t = se.windows.objman.Thread(inner, stack_base=inner.stack_base, stack_commit=self.stack_size)
 
             inner.om.objects.update({t.address: t})
             inner.curr_process.threads.append(t)

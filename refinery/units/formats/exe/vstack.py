@@ -16,7 +16,7 @@ from refinery.units import Arg, Unit
 from refinery.lib.executable import Arch, Range
 from refinery.lib.types import bounds, INF
 from refinery.lib.meta import metavars
-from refinery.lib.tools import isbuffer, exception_to_string, NoLogging
+from refinery.lib.tools import isbuffer, exception_to_string
 from refinery.lib.intervals import MemoryIntervalUnion
 from refinery.lib.argformats import PythonExpression, ParserVariableMissing
 from refinery.lib.structures import StructReader
@@ -383,29 +383,6 @@ class vstack(Unit):
 
     In this pipeline, the eax register is set to `0x2000` before emulation begins.
     """
-    @Unit.Requires('capstone', ['default', 'extended'])
-    def _capstone():
-        import capstone
-        return capstone
-
-    @Unit.Requires('unicorn==2.0.1.post1', ['default', 'extended'])
-    def _unicorn():
-        import importlib
-        importlib.import_module('setuptools')
-        with NoLogging():
-            import unicorn
-            return unicorn
-
-    @Unit.Requires('speakeasy-emulator-refined', ['extended'])
-    def _speakeasy():
-        import speakeasy
-        return speakeasy
-
-    @Unit.Requires('icicle-emu', ['all'])
-    def _icicle():
-        import icicle
-        return icicle
-
     def __init__(
         self,
         *address: Arg.NumSeq(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
@@ -484,7 +461,6 @@ class vstack(Unit):
         engine: _engine = args.engine
         flags = Hook.Default
         self.log_debug(F'attempting to use {engine.name}')
-        getattr(self, F'_{engine.name}')
 
         if engine is _engine.speakeasy:
             flags |= Hook.ApiCall

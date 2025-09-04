@@ -17,17 +17,11 @@ from typing import NamedTuple, TYPE_CHECKING
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from uuid import uuid4, UUID
 from functools import lru_cache
 
 from refinery.lib import lief
 from refinery.lib.types import INF, ByteStr
-from refinery.lib.exceptions import MissingModule
-
-try:
-    import capstone as cs
-except ImportError:
-    cs = MissingModule('capstone')
+from refinery.lib.shared import capstone as cs
 
 if TYPE_CHECKING:
     from lief.ELF import Binary as ELFBinary
@@ -166,29 +160,25 @@ class ArchItem(NamedTuple):
     An item of the `refinery.lib.executable.Arch` enumeration. It is used to store the register
     size in bits for a given architecture.
     """
-    id: UUID
     pointer_size: int
-
-    @classmethod
-    def New(cls, pointer_size: int):
-        return cls(uuid4(), pointer_size)
+    id: str
 
 
 class Arch(ArchItem, Enum):
     """
     An enumeration of supported architectures and their register sizes.
     """
-    X32 = ArchItem.New(32)
-    X64 = ArchItem.New(64)
-    ARM32 = ArchItem.New(32)
-    ARM64 = ArchItem.New(64)
-    MIPS16 = ArchItem.New(16)
-    MIPS32 = ArchItem.New(32)
-    MIPS64 = ArchItem.New(64)
-    PPC32 = ArchItem.New(32)
-    PPC64 = ArchItem.New(64)
-    SPARC32 = ArchItem.New(32)
-    SPARC64 = ArchItem.New(64)
+    X32 = (32, 'X32')
+    X64 = (64, 'X64')
+    ARM32 = (32, 'ARM32')
+    ARM64 = (64, 'ARM64')
+    MIPS16 = (16, 'MIPS16')
+    MIPS32 = (32, 'MIPS32')
+    MIPS64 = (64, 'MIPS64')
+    PPC32 = (32, 'PPC32')
+    PPC64 = (64, 'PPC64')
+    SPARC32 = (32, 'SPARC32')
+    SPARC64 = (64, 'SPARC64')
 
 
 class LT(str, Enum):
