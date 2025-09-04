@@ -10,12 +10,12 @@ import zlib
 import os
 import os.path
 import contextlib
+import codecs
 import dataclasses
-
-from importlib.util import MAGIC_NUMBER
 
 from refinery.units.formats.archive import Arg, ArchiveUnit
 from refinery.units.pattern.carve import carve
+from refinery.units.formats.pym import Marshal
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import NoLogging, normalize_word_separators
 from refinery.lib.shared import xdis, decompyle3, uncompyle6
@@ -24,7 +24,7 @@ from Cryptodome.Cipher import AES
 
 if TYPE_CHECKING:
     from types import CodeType
-    from typing import Callable, Dict, List, Tuple, Optional, Set, Union, Generator, Iterable
+    from typing import cast, Callable, Dict, List, Tuple, Optional, Set, Union, Generator, Iterable
     from xdis import Instruction
     from refinery.lib.types import ByteStr
 
@@ -36,7 +36,9 @@ class Unmarshal(enum.IntEnum):
 
 
 def version2tuple(version: str):
-    return tuple(int(k, 10) for k in re.fullmatch(R'^(\d+\.\d+(?:\.\d+)?)(.*)$', version).group(1).split('.'))
+    if m := re.fullmatch(R'^(\d+\.\d+(?:\.\d+)?)(.*)$', version):
+        return tuple(int(k, 10) for k in m.group(1).split('.'))
+    raise ValueError(version)
 
 
 def decompress_peek(buffer, size=512) -> Optional[bytes]:
@@ -82,10 +84,11 @@ def disassemble_code(code: CodeType, version=None) -> Iterable[Instruction]:
 def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = None) -> ByteStr:
     errors = ''
     python = ''
-    codes = [buffer]
 
     if not isinstance(buffer, Code):
         codes = list(extract_code_from_buffer(buffer, file_name))
+    else:
+        codes = [buffer]
 
     def _engines():
         nonlocal errors
@@ -236,21 +239,8 @@ class PYZ(Struct):
             toc_data = self.reader.read()
         try:
             toc = marshal.loads(toc_data)
-        except Exception as error:
-            if MAGIC_NUMBER != self.magic[:4]:
-                _ord = xdis.marsh.Ord
-                xdis.marsh.Ord = ord  # monkey-patch workaround for bug in xdis
-                try:
-                    toc = xdis.marsh.load(
-                        MemoryFile(toc_data), self.version)
-                except Exception:
-                    pass
-                else:
-                    error = None
-                finally:
-                    xdis.marsh.Ord = _ord
-            if error is not None:
-                raise error
+        except Exception:
+            toc = Marshal(memoryview(toc_data)).object()
 
         if isinstance(toc, list):
             try:
@@ -258,19 +248,19 @@ class PYZ(Struct):
             except Exception as error:
                 self.entries = []
                 self.error = error
-                return
+                return False
+
+        if TYPE_CHECKING:
+            toc = cast(dict[str | bytes, tuple[int, int, int]], toc)
 
         failures = 0
         attempts = len(toc)
 
-        for name, (pzt, offset, length) in toc.items():
+        for name, (_pzt, offset, length) in toc.items():
+            if not isinstance(name, str):
+                name = codecs.decode(name, 'utf-8')
             try:
-                name: str
-                name = name.decode('utf-8')
-            except AttributeError:
-                pass
-            try:
-                pzt = PzType(pzt)
+                pzt = PzType(_pzt)
             except Exception:
                 pzt = PzType.DATA
 
@@ -335,10 +325,10 @@ class PiTOCEntry(Struct):
         try:
             name = name.decode('utf8', 'backslashreplace')
         except Exception:
-            name = None
-        if not all(part.isprintable() for part in re.split('\\s*', name)):
-            raise RuntimeError('Refusing to process TOC entry with non-printable name.')
-        name = name or str(uuid.uuid4())
+            name = str(uuid.uuid4())
+        else:
+            if not all(part.isprintable() for part in re.split('\\s*', name)):
+                raise RuntimeError('Refusing to process TOC entry with non-printable name.')
         if entry_type == B'Z':
             entry_type = B'z'
         try:
@@ -459,16 +449,17 @@ class PyInstallerArchiveEpilogue(Struct):
 
             if is_crypto_key or self.decompile:
                 decompiled = make_decompiled_item(name, data, *magics)
+
                 if entry.type is PiType.SOURCE:
                     decompiled.type = PiType.USERCODE
                 self.files[decompiled.name] = decompiled
 
-            if is_crypto_key:
-                for key in decompiled.unpack() | carve('string', decode=True):
-                    if len(key) != 0x10:
-                        continue
-                    xtpyi.logger.info(F'found key: {key.decode(xtpyi.codec)}')
-                    keys.add(key)
+                if is_crypto_key:
+                    for key in decompiled.unpack() | carve('string', decode=True):
+                        if len(key) != 0x10:
+                            continue
+                        xtpyi.logger.info(F'found key: {key.decode(xtpyi.codec)}')
+                        keys.add(key)
 
         if unmarshal is Unmarshal.No:
             return
