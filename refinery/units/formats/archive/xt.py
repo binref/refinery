@@ -29,11 +29,12 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         # units that check fixed offsets
         from refinery.units.formats.archive.xttar import xttar        ; yield xttar     # noqa
         from refinery.units.formats.archive.xtiso import xtiso        ; yield xtiso     # noqa
-        from refinery.units.formats.office.xtrtf import xtrtf         ; yield xtrtf     # noqa
+        from refinery.units.formats.archive.xtchm import xtchm        ; yield xtchm     # noqa
         from refinery.units.formats.archive.xtcab import xtcab        ; yield xtcab     # noqa
         from refinery.units.formats.archive.xtace import xtace        ; yield xtace     # noqa
         from refinery.units.formats.archive.xtmacho import xtmacho    ; yield xtmacho   # noqa
         from refinery.units.formats.archive.xtasar import xtasar      ; yield xtasar    # noqa
+        from refinery.units.formats.office.xtrtf import xtrtf         ; yield xtrtf     # noqa
         from refinery.units.formats.pdf import xtpdf                  ; yield xtpdf     # noqa
         from refinery.units.formats.winreg import winreg              ; yield winreg    # noqa
         from refinery.units.formats.archive.xtgz import xtgz          ; yield xtgz      # noqa
