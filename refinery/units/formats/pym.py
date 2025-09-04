@@ -468,8 +468,11 @@ class pym(Unit):
                 return data.encode(self.codec)
             if isinstance(data, CodeType):
                 self.log_info(U'unmarshalled a code object, converting to pyc')
-                import importlib
-                return importlib._bootstrap_external._code_to_timestamp_pyc(data)
+                from importlib.util import MAGIC_NUMBER
+                pyc = bytearray(MAGIC_NUMBER)
+                pyc.extend(bytes(12))
+                pyc.extend(marshal.dumps(data))
+                return pyc
             if isinstance(data, int):
                 self.log_info(U'unmarshalled an integer, returning big endian encoding')
                 q, r = divmod(data.bit_length(), 8)
