@@ -13,8 +13,12 @@ runs:
     - name: Unit Tests
       if: ${{ !contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: pytest -n=8 --dist=loadgroup test
+      run: |
+        pytest -m "not clipboard" -n=8 test
+        pytest -m "    clipboard" -n=0 test
     - name: Unit Tests
       if: ${{  contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup test
+      run: |
+        XDG_SESSION_TYPE=x11 xvfb-run pytest -m "not clipboard" -n=8 --dist=loadgroup test
+        XDG_SESSION_TYPE=x11 xvfb-run pytest -m "    clipboard" -n=0 --dist=loadgroup test
