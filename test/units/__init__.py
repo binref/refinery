@@ -8,6 +8,7 @@ import functools
 from .. import (
     refinery,
     thread_group,
+    clipboard,
     temporary_clipboard,
     temporary_chwd,
     TestBase,
@@ -20,6 +21,7 @@ from refinery.lib.dependencies import DependencyAccessor
 __all__ = [
     'refinery',
     'thread_group',
+    'clipboard',
     'temporary_clipboard',
     'temporary_chwd',
     'NameUnknownException',

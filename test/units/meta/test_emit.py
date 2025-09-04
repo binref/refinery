@@ -1,5 +1,5 @@
 from refinery.lib.loader import load_pipeline
-from .. import temporary_clipboard, thread_group, TestUnitBase
+from .. import temporary_clipboard, clipboard, thread_group, TestUnitBase
 
 
 class TestEmitter(TestUnitBase):
@@ -17,6 +17,7 @@ class TestEmitter(TestUnitBase):
         self.assertEqual(emit(B'cruel'), B'Hello\ncruel\nWorld')
 
     @thread_group('clipboard')
+    @clipboard
     def test_emit_keeps_metadata_01(self):
         with temporary_clipboard('baz'):
             pl = load_pipeline('emit a [| put foo bar | emit | pf {foo}{} ]')
@@ -24,6 +25,7 @@ class TestEmitter(TestUnitBase):
         self.assertEqual(pl, b'barbaz')
 
     @thread_group('clipboard')
+    @clipboard
     def test_emit_keeps_metadata_02(self):
         with temporary_clipboard('baz'):
             pl = load_pipeline('emit bort | push [| rex (?P<foo>...)t | pop | emit | pf {foo}{} ]')

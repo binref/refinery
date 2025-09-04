@@ -14,16 +14,23 @@ except ImportError:
         def dummy(x):
             return x
         return dummy
+
+    def clipboard(f):
+        return f
 else:
     def thread_group(name: str): # type:ignore
         return pytest.mark.xdist_group(name=name)
+
+    def clipboard(f):
+        return pytest.mark.clipboard(f)
+
 
 from samples import SampleStore
 
 
 __all__ = [
     'refinery',
-    'thread_group',
+    'clipboard',
     'temporary_clipboard',
     'temporary_chwd',
     'TestBase',

@@ -7,13 +7,14 @@ import time
 import hashlib
 import zlib
 
-from .. import thread_group, temporary_clipboard, temporary_chwd, TestUnitBase
+from .. import thread_group, clipboard, temporary_clipboard, temporary_chwd, TestUnitBase
 from refinery.lib.loader import load_detached as L
 
 
 class TestDump(TestUnitBase):
 
     @thread_group('clipboard')
+    @clipboard
     def test_clipboard_copy_01(self):
         copy = self.load()
         with temporary_clipboard():
@@ -21,6 +22,7 @@ class TestDump(TestUnitBase):
             self.assertEqual(pyperclip.paste(), 'TooMuchTechnology')
 
     @thread_group('clipboard')
+    @clipboard
     def test_clipboard_copy_02(self):
         copy = self.load()
         sep = self.ldu('sep', ' ')
@@ -29,6 +31,7 @@ class TestDump(TestUnitBase):
             self.assertEqual(pyperclip.paste(), 'Too Much Technology')
 
     @thread_group('clipboard')
+    @clipboard
     def test_clipboard_copy_multiple(self):
         copy = self.load()
         data = 'Too much technology, in too little time.'

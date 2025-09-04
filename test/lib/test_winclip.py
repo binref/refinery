@@ -3,12 +3,12 @@ import pyperclip
 
 from refinery.lib.winclip import get_any_data, ClipBoard, CF
 
-from .. import thread_group, TestBase
+from .. import clipboard, thread_group, TestBase
 
 
 def onlywin(f):
     if os.name == 'nt':
-        return thread_group('clipboard')(f)
+        return f
     else:
         def dummy(*_):
             return
@@ -18,6 +18,8 @@ def onlywin(f):
 class TestWinClip(TestBase):
 
     @onlywin
+    @thread_group('clipboard')
+    @clipboard
     def test_copy_unicode(self):
         test = 'Refined Ünicode'
         with ClipBoard(CF.UNICODETEXT) as cb:
@@ -25,6 +27,8 @@ class TestWinClip(TestBase):
         self.assertEqual(pyperclip.paste(), test)
 
     @onlywin
+    @thread_group('clipboard')
+    @clipboard
     def test_copy_ansi(self):
         test = 'Refined ASCII'
         with ClipBoard(CF.TEXT) as cb:
@@ -32,6 +36,8 @@ class TestWinClip(TestBase):
         self.assertEqual(pyperclip.paste(), test)
 
     @onlywin
+    @thread_group('clipboard')
+    @clipboard
     def test_paste_text(self):
         test = 'Unrefined ASCII'
         pyperclip.copy(test)
