@@ -13,7 +13,7 @@ runs:
     - name: Unit Tests
       if: ${{ !contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: pytest -m -n=8 --dist=loadgroup test
+      run: pytest -n=8 --dist=loadgroup test
     - name: Unit Tests
       if: ${{  contains(inputs.os, 'ubuntu') }}
       shell: bash
