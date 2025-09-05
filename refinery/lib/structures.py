@@ -196,6 +196,9 @@ class MemoryFileMethods(Generic[T, B]):
     def detour_relative(self, offset: Optional[int] = None):
         return self.detour(offset, io.SEEK_CUR)
 
+    def detour_from_end(self, offset: Optional[int] = None):
+        return self.detour(offset, io.SEEK_END)
+
     def writable(self) -> bool:
         if self._closed:
             return False

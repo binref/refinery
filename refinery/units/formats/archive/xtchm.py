@@ -1,23 +1,27 @@
 from __future__ import annotations
 
-from refinery.units.formats.archive import ArchiveUnit
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.chm import CHM, ChmHeader
 
 
-class xtchm(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
+class xtchm(PathExtractorUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from CHM (Windows Help) files.
     """
     def unpack(self, data):
         chm = CHM(memoryview(data))
-        for path, entry in chm.filesystem.items():
-            def extract(chm=chm, e=entry):
-                return chm.read(e)
-            if entry.length <= 0:
+
+        self.log_info(F'language: {chm.header.language_name}')
+        self.log_info(F'codepage: {chm.header.codepage}')
+
+        for path, record in chm.filesystem.items():
+            def extract(chm=chm, record=record):
+                return chm.read(record)
+            if record.length <= 0:
                 continue
             if path.startswith('::DataSpace'):
                 continue
-            yield self._pack(path, None, extract)
+            yield UnpackResult(path, extract)
 
     @classmethod
     def handles(cls, data):

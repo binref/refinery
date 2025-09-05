@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import ClassVar
 from uuid import UUID
 from dataclasses import dataclass, field
+from functools import cached_property
 
 import codecs
 import math
@@ -10,6 +11,7 @@ import math
 
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.lzx import LzxDecoder
+from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
 
 
 _LZX_HLP = UUID('0a9007c6-4076-11d3-8789-0000f8105754')
@@ -20,6 +22,18 @@ class SectionHeader(Struct):
     def __init__(self, reader: StructReader[memoryview]):
         self.offset = reader.u64()
         self.length = reader.u64()
+
+
+class LanguageMixin:
+    language: int
+
+    @cached_property
+    def codepage(self):
+        return DEFAULT_CODEPAGE.get(self.language, None)
+
+    @cached_property
+    def language_name(self):
+        return LCID.get(self.language, 'Unknown')
 
 
 class ChmStruct(Struct):
@@ -37,7 +51,7 @@ class InvalidMagic(ValueError):
             F'should be {who.Magic.hex(":").upper()}.')
 
 
-class ChmHeader(ChmStruct):
+class ChmHeader(ChmStruct, LanguageMixin):
 
     Magic = B'ITSF'
     Guid = UUID('7C01FD10-7BAA-11D0-9E0C-00A0-C922-E6EC')
@@ -46,10 +60,11 @@ class ChmHeader(ChmStruct):
         self._check_magic(reader)
         self.signature = reader.read_bytes(4)
         self.version = v = reader.u32()
+        if v < 3:
+            raise NotImplementedError(F'Parsing of HelpV{v} not yet implemented.')
         self.header_size = reader.u32()
         self.unknown = reader.u32()
-        with reader.be:
-            self.timestamp = reader.u32()
+        self.timestamp = reader.u32()
         self.language = reader.u32()
         self.guid1 = reader.read_guid()
         self.guid2 = reader.read_guid()
@@ -70,7 +85,7 @@ class FileSizeHeader(ChmStruct):
         reader.skip(8)
 
 
-class DirectoryHeader(ChmStruct):
+class DirectoryHeader(ChmStruct, LanguageMixin):
 
     Magic = B'ITSP\x01\0\0\0'
     Guid = UUID('5D02926A-212E-11D0-9DF9-00A0C922E6EC')
@@ -87,8 +102,8 @@ class DirectoryHeader(ChmStruct):
         self.density = reader.u32()
         self.tree_depth = reader.u32()
         self.root_chunk = reader.u32()
-        self.listing_chunk_first = reader.u32()
-        self.listing_chunk_last = reader.u32()
+        self.listing1st = reader.u32()
+        self.listingLst = reader.u32()
         reader.skip(4)
         self.total_chunks = reader.u32()
         self.language = reader.u32()
@@ -118,20 +133,22 @@ class DirectoryListingEntry(Struct):
 
 class Chunk(ChmStruct):
 
-    def __init__(self, reader: StructReader, density: int, chunk_size: int):
+    def __init__(self, reader: StructReader, density: int):
         self._check_magic(reader)
         self.density = density
-        self.offset = reader.tell()
-        with reader.detour_relative(chunk_size - 2):
+        with reader.detour_from_end(-2):
             self.num_entries = reader.u16()
         self.signature = reader.read_bytes(4)
         self.extra_size = reader.u32()
 
-    def _quick_refs(self, reader: StructReader, density: int, chunk_size: int):
+    def _quick_refs(self, reader: StructReader, density: int):
         n = 1 + (1 << density)
         count = self.num_entries // n
-        padding = chunk_size - (reader.tell() - self.offset + 2 * (count + 1))
-        reader.read(padding)
+        skips = reader.remaining_bytes - 2 * (count + 1)
+        while skips < 0:
+            count -= 1
+            skips += 2
+        reader.skip(skips)
         self.quickref = QuickRefArea(reader, n, count)
         if self.quickref.num_entries != self.num_entries:
             raise ValueError
@@ -141,23 +158,23 @@ class IndexChunk(Chunk):
 
     Magic = B'PMGI'
 
-    def __init__(self, reader: StructReader, density: int, chunk_size: int):
-        super().__init__(reader, density, chunk_size)
-        self._quick_refs(reader, density, chunk_size)
+    def __init__(self, reader: StructReader, density: int):
+        super().__init__(reader, density)
+        self._quick_refs(reader, density)
 
 
 class ListingChunk(Chunk):
 
     Magic = B'PMGL'
 
-    def __init__(self, reader: StructReader, density: int, chunk_size: int):
-        super().__init__(reader, density, chunk_size)
-        reader.read(4)
+    def __init__(self, reader: StructReader, density: int):
+        super().__init__(reader, density)
+        reader.skip(4)
         self.nr_prev = reader.u32()
         self.nr_next = reader.u32()
         self.entries = [
             DirectoryListingEntry(reader) for _ in range(self.num_entries)]
-        self._quick_refs(reader, density, chunk_size)
+        self._quick_refs(reader, density)
 
 
 class ContentSectionsName(Struct):
@@ -294,24 +311,25 @@ class CHM(Struct):
 
         with reader.detour_absolute(header.section_directory.offset):
             self.directory = dh = DirectoryHeader(reader)
-            self.index_chunks = []
+            self.index = []
 
             d = dh.density
             m = dh.chunk_size
 
-            if dh.tree_depth > 1 and (n := dh.listing_chunk_first) > 0:
-                for _ in range(n):
-                    self.index_chunks.append(IndexChunk(reader, d, m))
+            self.listing: list[ListingChunk] = []
 
-            if dh.listing_chunk_first <= dh.listing_chunk_last:
-                count = 1 + dh.listing_chunk_last - dh.listing_chunk_first
-                self.listing = [ListingChunk(reader, d, m) for _ in range(count)]
-                for chunk in self.listing:
-                    for entry in chunk.entries:
-                        name = entry.name
-                        if name.startswith('/#') or name.startswith('/$'):
-                            name = F'/$CHM{name}'
-                        self.filesystem[name] = entry
+            for k in range(dh.total_chunks):
+                body = reader.read_exactly(m)
+                if k not in range(dh.listing1st, dh.listingLst + 1):
+                    self.index.append(IndexChunk(body, d))
+                    continue
+                chunk = ListingChunk(body, d)
+                for entry in chunk.entries:
+                    name = entry.name
+                    if name.startswith('/#') or name.startswith('/$'):
+                        name = F'/$CHM{name}'
+                    self.filesystem[name] = entry
+                self.listing.append(chunk)
 
         if (co := header.content_offset) is None:
             co = reader.tell()
@@ -334,12 +352,10 @@ class CHM(Struct):
             cs.base_section = s = content.section_index
             reader.seekset(self.sections[s].offset + cs.offset)
 
-            # yield Bytes(cs.length, name=section.name, category=Type.DATA)
-
             if self.seekto(reader, section.path_ctrl_data):
                 control_data = ContentSectionsControlData(reader)
                 cs.reset_interval = control_data.reset_interval
-                cs.window_size = int(math.log2(control_data.window_size * 0x8000))
+                cs.window_size = 15 + int(math.log2(control_data.window_size))
 
             if self.seekto(reader, section.path_span_info):
                 cs.uncompressed = reader.u64()
