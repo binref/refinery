@@ -11,6 +11,10 @@ from .. import thread_group, clipboard, temporary_clipboard, temporary_chwd, Tes
 from refinery.lib.loader import load_detached as L
 
 
+def work_around_pyperclip_data_races():
+    time.sleep(0.1)
+
+
 class TestDump(TestUnitBase):
 
     @thread_group('clipboard')
@@ -19,6 +23,7 @@ class TestDump(TestUnitBase):
         copy = self.load()
         with temporary_clipboard():
             L('emit Too Much Technology')[copy]()
+            work_around_pyperclip_data_races()
             self.assertEqual(pyperclip.paste(), 'TooMuchTechnology')
 
     @thread_group('clipboard')
@@ -28,6 +33,7 @@ class TestDump(TestUnitBase):
         sep = self.ldu('sep', ' ')
         with temporary_clipboard():
             L('emit Too Much Technology')[sep | copy]()
+            work_around_pyperclip_data_races()
             self.assertEqual(pyperclip.paste(), 'Too Much Technology')
 
     @thread_group('clipboard')
@@ -37,6 +43,7 @@ class TestDump(TestUnitBase):
         data = 'Too much technology, in too little time.'
         with temporary_clipboard():
             copy(data.encode(copy.codec))
+            work_around_pyperclip_data_races()
             self.assertEqual(pyperclip.paste(), data)
 
     def test_stream_mode(self):
