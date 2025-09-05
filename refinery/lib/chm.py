@@ -320,16 +320,21 @@ class CHM(Struct):
 
             for k in range(dh.total_chunks):
                 body = reader.read_exactly(m)
-                if k not in range(dh.listing1st, dh.listingLst + 1):
+                if body[:4] == IndexChunk.Magic:
                     self.index.append(IndexChunk(body, d))
                     continue
-                chunk = ListingChunk(body, d)
-                for entry in chunk.entries:
-                    name = entry.name
-                    if name.startswith('/#') or name.startswith('/$'):
-                        name = F'/$CHM{name}'
-                    self.filesystem[name] = entry
-                self.listing.append(chunk)
+                if body[:4] == ListingChunk.Magic:
+                    if not (dh.listing1st <= k <= dh.listingLst):
+                        raise ValueError(F'Chunk {k} has magic {ListingChunk.Magic.decode()} but is out of listing range.')
+                    chunk = ListingChunk(body, d)
+                    for entry in chunk.entries:
+                        name = entry.name
+                        if name.startswith('/#') or name.startswith('/$'):
+                            name = F'/$CHM{name}'
+                        self.filesystem[name] = entry
+                    self.listing.append(chunk)
+                    continue
+                raise ValueError(F'Unknown chunk magic: {body[:4].hex(":")}')
 
         if (co := header.content_offset) is None:
             co = reader.tell()
