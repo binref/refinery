@@ -2,7 +2,7 @@
 name: Feature request
 about: Suggest a new feature that isn't a unit
 title: ''
-labels: feature
+type: Feature
 assignees: huettenhain
 
 ---

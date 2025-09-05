@@ -2,7 +2,7 @@
 name: Bug report
 about: Report a bug in the binary refinery.
 title: ''
-labels: bug
+type: Bug
 assignees: huettenhain
 
 ---

@@ -2,6 +2,7 @@
 name: New unit request
 about: Suggest a new unit
 title: ''
+type: Feature
 labels: new-unit
 assignees: huettenhain
 
