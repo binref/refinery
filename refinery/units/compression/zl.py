@@ -32,6 +32,8 @@ class zl(Unit):
             try:
                 chunk = zl.decompress(memory[:read])
             except zlib.error as e:
+                if not result:
+                    raise
                 raise RefineryPartialResult(exception_to_string(e), result) from e
             else:
                 result.extend(chunk)
@@ -48,32 +50,37 @@ class zl(Unit):
             modes = [-self.args.window, self.args.window | 0x20]
         modes.extend([0x10 | self.args.window, 0])
         view = memoryview(data)
+        rest = view
         step = 32 if self.leniency > 0 else len(data)
+        count = 0
+        error = None
         for k in itertools.count(1):
             error = None
-            rest = view
             for mode in modes:
+                msg = F'decompressing chunk {k} with mode {mode & 0xFF:02X}'
                 try:
                     out, rest = self._decompress_data(view, mode, step)
+                    yield out
                 except Exception as e:
+                    self.log_info(F'{msg} failed: {e!s}')
                     error = error or e
                 else:
-                    self.log_info(F'used mode {mode} to decompress chunk {k}')
-                    yield out
+                    self.log_info(F'{msg} ok, remaining data:', rest, clip=True)
+                    count += 1
                     error = None
+                    modes = [mode]
                     break
-            if error:
-                raise error
-            if not rest:
-                break
-            if len(rest) == len(view):
+            if error or not rest or len(rest) == len(view):
                 break
             if len(rest) > len(view):
                 raise RuntimeError('Decompressor returned more tail data than input data.')
-            yield out
             view = rest
-        if k <= 0:
-            raise ValueError('Could not detect any zlib stream.')
+        if count <= 0:
+            raise error or ValueError('Could not detect any zlib stream.')
+        if rest:
+            from refinery.lib.meta import SizeInt
+            size = SizeInt(len(rest))
+            raise RefineryPartialResult(F'{size!r} excess data after compressed stream', rest)
 
     def reverse(self, data):
         mode = -self.args.window

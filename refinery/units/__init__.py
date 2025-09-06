@@ -1654,19 +1654,33 @@ class Unit(UnitBase, abstract=True):
         assert isinstance(reversed, Unit)
         return reversed
 
-    def __ror__(self, stream: Union[str, Chunk, list[Chunk], BinaryIO, Unit, BufferedReader, ByteStr, None]):
+    def __ror__(self, stream: Union[
+        str,
+        Chunk,
+        tuple[Chunk],
+        tuple[ByteStr],
+        tuple[str],
+        list[Chunk],
+        list[ByteStr],
+        list[str],
+        BinaryIO,
+        Unit,
+        BufferedReader,
+        ByteStr,
+        None
+    ]):
         if stream is None:
             return self
         if isinstance(stream, Chunk):
             stream = [stream]
         if isinstance(stream, (list, tuple)):
-            chunks = list(stream)
-            scopes = set()
+            def tochunk(t: str | ByteStr | Chunk):
+                if isinstance(t, str):
+                    t = t.encode(self.codec)
+                return t if isinstance(t, Chunk) else Chunk(t)
+            chunks = [tochunk(t) for t in stream]
+            scopes = {t.scope for t in chunks}
             stream = MemoryFile()
-            for k, chunk in enumerate(chunks):
-                if not isinstance(chunk, Chunk):
-                    chunks[k] = chunk = Chunk(chunk)
-                scopes.add(chunk.scope)
             if len(scopes) != 1:
                 raise ValueError('Inconsistent scopes in iterable input')
             chunk_scope = next(iter(scopes))
