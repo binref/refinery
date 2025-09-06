@@ -5,8 +5,14 @@ from typing import ByteString, NamedTuple, Optional, Dict
 from enum import IntFlag
 
 from refinery.units import Arg, Unit, RefineryPartialResult
+from refinery.lib.mime import FileMagicInfo
 from refinery.lib.types import INF
 from refinery.lib.tools import normalize_to_display
+
+import colorama
+
+if True:
+    colorama.init()
 
 from .ap import aplib
 from .blz import blz
@@ -29,19 +35,27 @@ from .zstd import zstd
 from .pkw import pkw
 from .mscf import mscf, MODE as MSCF_MODE
 
+from colorama import Fore, Style
+
+
+_COLOR_FAILURE = Fore.LIGHTRED_EX
+_COLOR_SUCCESS = Fore.LIGHTCYAN_EX
+_COLOR_WARNING = Fore.LIGHTYELLOW_EX
+_CR = Style.RESET_ALL
 
 _NO_PREFIX = {'pkw'}
 
 
 class _R(IntFlag):
-    InvalidData = 0b00000  # noqa
-    NotMangled  = 0b00001  # noqa
-    ValidData   = 0b00010  # noqa
-    KnownFormat = 0b00100  # noqa
-    HadOutput   = 0b01000  # noqa
-    HadNoErrors = 0b10000  # noqa
-    Candidate   = 0b00110  # noqa
-    Successful  = 0b11000  # noqa
+    InvalidData    = 0b000000  # noqa
+    NotMangled     = 0b000001  # noqa
+    ValidData      = 0b000010  # noqa
+    KnownFormat    = 0b000100  # noqa
+    HadOutput      = 0b001000  # noqa
+    HadNoErrors    = 0b010000  # noqa
+    Candidate      = 0b000110  # noqa
+    Successful     = 0b011000  # noqa
+    KnownFormatOut = 0b100000  # noqa
 
     @property
     def total(self):
@@ -50,19 +64,20 @@ class _R(IntFlag):
     @property
     def summary(self):
         if self is _R.InvalidData:
-            return 'invalid'
+            return F'{_COLOR_FAILURE}invalid{_CR}'
         elif _R.HadNoErrors & self:
-            return 'success'
+            return F'{_COLOR_SUCCESS}success{_CR}'
         elif _R.HadOutput & self:
-            return 'partial'
+            return F'{_COLOR_WARNING}partial{_CR}'
         else:
-            return 'failure'
+            return F'{_COLOR_FAILURE}failure{_CR}'
 
     @property
     def brief(self):
         return ''.join(
-            t if self & x else ' '
+            t if self & x else '\x20'
             for t, x in {
+                'M': _R.KnownFormatOut,
                 'V': _R.ValidData,
                 'F': _R.KnownFormat,
                 'O': _R.HadOutput,
@@ -99,8 +114,18 @@ class decompress(Unit):
             'is a "too good to be true" heuristic against algorithms like lznt1 '
             'that can produce false positives. The default is {default}.')
         ) = 0.0001,
-        strict_limits: Arg('-l', action='store_true', help=(
-            'For recognized formats, i.e. when a magic signature is present, the '
+        expand_limits: Arg.Bounds('-d', range=True, metavar='a:b', help=(
+            'Ratio limits are expanded for sizes of input data in the given range, '
+            'the default being 0:0x100. The reason for this is that small buffers '
+            'can increase in size when compressed under many formats. Set this to :0 '
+            'or use strict limits to disable this setting.')
+        ) = range(0, 0x101),
+        expand_factor: Arg('-k', help=(
+            'The number by which the maximum compression ratio is multiplied for '
+            'small buffers. The default is {default}.'
+        )) = 1.5,
+        strict_limits: Arg.Switch('-l', help=(
+            'For recognized formats i.e. when a magic signature is present, the '
             'above limits are disabled by default. Activate this flag to enforce '
             'them in every case.')
         ) = False
@@ -114,6 +139,8 @@ class decompress(Unit):
             min_ratio=min_ratio,
             max_ratio=max_ratio,
             strict_limits=strict_limits,
+            expand_limits=expand_limits,
+            expand_factor=expand_factor,
         )
         self.engines: Dict[str, Unit] = {}
         for mode in (
@@ -164,14 +191,19 @@ class decompress(Unit):
             result: Optional[ByteString] = None
             cutoff: int = 0
             prefix: Optional[int] = None
+            magic: Optional[FileMagicInfo] = None
 
             def __str__(self):
                 status = self.rating.summary
                 method = self.method
                 prefix = self.prefix
                 if prefix is not None:
-                    prefix = F'0x{prefix:02X}'
-                return F'prefix={prefix}, cutoff=0x{self.cutoff:02X}, [{status}] method={method}'
+                    prefix = F'{_COLOR_WARNING}0x{prefix:02X}{_CR}'
+                if cutoff := self.cutoff:
+                    cutoff = F'{_COLOR_WARNING}0x{cutoff:02X}{_CR}'
+                else:
+                    cutoff = R'0x00'
+                return F'prefix={prefix}, cutoff={cutoff}, [{status}] method={method}'
 
             def __len__(self):
                 if not self.result:
@@ -200,6 +232,7 @@ class decompress(Unit):
         def decompress(method: str, engine: Unit, cutoff: int = 0, prefix: Optional[int] = None, careful: bool = False):
             ingest = data[cutoff:]
             rating = _R.ValidData
+            magic = None
             if cutoff == 0 and prefix is None and not careful:
                 rating |= _R.NotMangled
             if prefix is not None:
@@ -219,15 +252,23 @@ class decompress(Unit):
                 result = None
             else:
                 rating |= _R.Successful
-            return Decompression(method, engine, rating, result, cutoff, prefix)
+                magic = FileMagicInfo(result)
+                if not magic.blob:
+                    rating |= _R.KnownFormatOut
+
+            return Decompression(method, engine, rating, result, cutoff, prefix, magic)
 
         def update(new: Decompression, discard_if_too_good=False):
             ratio = new.ratio
-            if self.args.strict_limits or not new.rating & _R.KnownFormat:
-                if ratio > self.args.max_ratio:
-                    return
-                if ratio < self.args.min_ratio:
-                    return
+            known = new.rating & _R.KnownFormat
+            strict = self.args.strict_limits
+            max_ratio = self.args.max_ratio
+            min_ratio = self.args.min_ratio
+            if not strict and len(data) in self.args.expand_limits:
+                max_ratio *= self.args.expand_factor
+                min_ratio /= self.args.expand_factor
+            if (strict or not known) and not (min_ratio <= ratio <= max_ratio):
+                return
             best = best_by_rating.get(new.rating, None)
             prefix = new.prefix
             if prefix is not None:
@@ -248,16 +289,18 @@ class decompress(Unit):
                         return
                     if new.rating & _R.Successful != _R.Successful:
                         return
-                self.log_info(lambda:
-                    F'[switch] [{brief}] [q={q:07.4f}] compression ratio {ratio:07.4f}% with: {new!s}')
                 best_by_rating[new.rating] = new
+                logger = self.log_info
+                _color = _COLOR_SUCCESS
             else:
-                self.log_debug(lambda:
-                    F'[reject] [{brief}] [q={q:07.4f}] compression ratio {ratio:07.4f}% with: {new!s}')
+                logger = self.log_info
+                _color = _COLOR_FAILURE
+            logger(lambda: (
+                F'[{brief}] [{_color}{ratio:07.4f}%{_CR}] [q={q:07.4f}] {new!s}'))
 
         for method, engine in self.engines.items():
             self.log_debug(F'attempting engine: {method}')
-            careful = isinstance(engine, (lznt1, lzf, flz, lzjb))
+            careful = isinstance(engine, (lznt1, flz, lzjb))
             for t in range(self.args.tolerance + 1):
                 if best_current_rating() >= _R.Successful and careful and t > 0:
                     break
@@ -284,6 +327,8 @@ class decompress(Unit):
                     self.log_info('supporting evidence: there were errors, but the engine produced output')
                 if not dc.rating & _R.Successful:
                     self.log_info('the only decompression with result returned only a partial result.')
+                if dc.rating & _R.KnownFormatOut and (magic := dc.magic):
+                    self.log_info(F'the decompressed result had a known format: {magic.mime}')
                 return self.labelled(dc.result, method=dc.method)
 
         raise ValueError('no compression engine worked')
