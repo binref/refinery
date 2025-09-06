@@ -201,6 +201,7 @@ from refinery.lib.types import ByteStr
 from refinery.lib.dependencies import dependency_accessor
 
 from refinery.lib.exceptions import (
+    RefineryPartialResult,
     RefineryCriticalException,
     RefineryException,
     RefineryImportMissing,
@@ -247,20 +248,6 @@ from refinery.lib.tools import (
     one,
     skipfirst,
 )
-
-
-class RefineryPartialResult(ValueError):
-    """
-    This exception indicates that a partial result is available.
-    """
-    def __init__(self, message: str, partial: ByteStr, rest: Optional[ByteStr] = None):
-        super().__init__(message)
-        self.message = message
-        self.partial = partial
-        self.rest = rest
-
-    def __str__(self):
-        return self.message
 
 
 class Entry:

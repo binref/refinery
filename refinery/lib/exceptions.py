@@ -3,7 +3,21 @@ This module exposes exceptions used by refinery.
 """
 from __future__ import annotations
 
-from typing import Collection
+from typing import Collection, ByteString
+
+
+class RefineryPartialResult(ValueError):
+    """
+    This exception indicates that a partial result is available.
+    """
+    def __init__(self, message: str, partial: ByteString, rest: ByteString | None = None):
+        super().__init__(message)
+        self.message = message
+        self.partial = partial
+        self.rest = rest
+
+    def __str__(self):
+        return self.message
 
 
 class RefineryImportMissing(ModuleNotFoundError):
