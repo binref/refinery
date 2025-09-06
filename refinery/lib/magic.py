@@ -18,7 +18,11 @@ except ModuleNotFoundError:
             magic = None
 
 
-def magicparse(data, *args, **kwargs):
+def magicparse(data, *args, **kwargs) -> str:
     if magic:
         data = bytes(data) if not isinstance(data, bytes) else data
-        return magic.Magic(*args, **kwargs).from_buffer(data)
+        try:
+            return magic.Magic(*args, **kwargs).from_buffer(data)
+        except magic.MagicException:
+            pass
+    return 'application/octet-stream'
