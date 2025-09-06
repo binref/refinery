@@ -6,6 +6,12 @@ from . import KADATH1, KADATH2
 
 class TestAutoDecompressor(TestUnitBase):
 
+    def test_zl_with_custom_padding(self):
+        data = bytes.fromhex('11 73F2F4730C 8AD40F7275 F3F4730D8A 0400616161')
+        test = next(data | self.load())
+        self.assertEqual(test, B'BINARY/REFINERY')
+        self.assertEqual(test.meta['method'], 'zl')
+
     def setUp(self):
         super().setUp()
         self.buffers = [buf[:0x5000] for buf in {
