@@ -1222,7 +1222,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     Extract files from a ZPAQ archive.
     """
 
-    _MAGIC = B'\x37\x6B\x53\x74\xA0\x31\x83\xD3\x8C\xB2\x28\xB0\xD3\x7A\x50\x51'
+    _MAGIC = B'7kSt\xA01\x83\xD3\x8C\xB2\x28\xB0\xD3zPQ'
 
     def __init__(
         self, *paths,
