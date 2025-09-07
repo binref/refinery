@@ -1,9 +1,10 @@
-# ---------------------------------------------------------------------------------------------\
-# This code was ported directly from unzpaq.cpp; it is not very Pythonic and has inherited a   |
-# somewhat convoluted structure from the source. Cleaning it up seems to be largely pointless  |
-# given the archaic nature of the file format.                                                 |
-# ---------------------------------------------------------------------------------------------/
+"""
+This code was ported directly from unzpaq.cpp; it is not very Pythonic and has inherited a
+somewhat convoluted structure from the source. Cleaning it up seems to be largely pointless
+given the archaic nature of the file format.
+"""
 from __future__ import annotations
+
 from typing import Optional, Dict, List, TYPE_CHECKING
 from types import CodeType
 
@@ -39,13 +40,13 @@ def _i32(x: int):
     return -(~(x - 1) & 0xFFFFFFFF) if x & 0x80000000 else x
 
 
-def _resize(a: array, c: int, b: int = 0):
+def _resize(a: array[int] | bytearray, c: int, b: int = 0):
     c *= (1 << b)
     del a[c:]
     a.extend(itertools.repeat(0, c - len(a)))
 
 
-def _memzap(a: array, offset: int, n: int):
+def _memzap(a: array[int] | bytearray, offset: int, n: int):
     a[offset:offset + n] = itertools.repeat(0, n)
 
 
@@ -919,7 +920,7 @@ class Predictor:
     def clamp512k(self, x: int):
         return min(max(x, -(1 << 19)), (1 << 19) - 1) & 0xFFFFFFFF
 
-    def find(self, ht: array, sizebits: int, cxt: int):
+    def find(self, ht: array[int] | bytearray, sizebits: int, cxt: int):
         assert len(ht) == 16 << sizebits
         chk = cxt >> sizebits & 255
         h0 = (cxt * 16) & (len(ht) - 16)
@@ -946,15 +947,14 @@ class Predictor:
 
 
 class Decoder:
-    src: Optional[StructReader]
-
+    src: StructReader
     low: int
     high: int
     curr: int
     pr: Predictor
 
-    def __init__(self, z: ZPAQL):
-        self.src = None
+    def __init__(self, z: ZPAQL, src: StructReader[bytearray]):
+        self.src = src
         self.pr = Predictor(z)
         self._set_values(1, 0xFFFFFFFF, 0)
 
@@ -990,7 +990,7 @@ class Decoder:
             if self.low == 0:
                 self.low = 1
             self.curr <<= 8
-            self.curr |= self.src.read_byte()
+            self.curr |= self.src.u8fast()
             self.curr &= 0xFFFFFFFF
         return int(rv)
 
@@ -1022,7 +1022,7 @@ class Decoder:
             self.curr -= 1
             if self.src.eof:
                 return None
-            return self.src.read_byte()
+            return self.src.u8fast()
 
 
 class PostProcessor:
@@ -1111,16 +1111,12 @@ class Decompressor:
     state: State
     first_seg: bool
 
-    def __init__(self):
+    def __init__(self, data: bytearray):
         self.z = z = ZPAQL()
-        self.dec = Decoder(z)
+        self.dec = Decoder(z, StructReader(data))
         self.pp = PostProcessor()
         self.state = Decompressor.State.BLOCK
         self.first_seg = True
-
-    def set_input(self, data) -> StructReader:
-        self.dec.src = ip = StructReader(data)
-        return ip
 
     def set_output(self, op: MemoryFile):
         self.pp.set_output(op)
@@ -1137,7 +1133,7 @@ class Decompressor:
         h4 = 0x3828EB13
         ip = self.dec.src
         while not ip.eof:
-            c = ip.read_byte()
+            c = ip.u8fast()
             h1 = h1 * 12 + c & 0xFFFFFFFF
             h2 = h2 * 20 + c & 0xFFFFFFFF
             h3 = h3 * 28 + c & 0xFFFFFFFF
@@ -1146,11 +1142,11 @@ class Decompressor:
                 break
         if ip.eof:
             return False
-        c = ip.read_byte()
+        c = ip.u8fast()
         z = self.z
         if c not in (1, 2):
             raise RuntimeError('unsupported ZPAQ level')
-        if ip.read_byte() != 1:
+        if ip.u8fast() != 1:
             raise RuntimeError('unsupported ZPAQ type')
         z.read(ip)
         if c == 1 and len(z.header) > 6 and z.header[6] == 0:
@@ -1163,7 +1159,7 @@ class Decompressor:
         if self.state is not Decompressor.State.FILENAME:
             raise RuntimeError('invalid state')
         ip = self.dec.src
-        c = ip.read_byte()
+        c = ip.u8fast()
         if c == 1:
             self.state = Decompressor.State.COMMENT
             return ip.read_c_string('utf8')
@@ -1173,14 +1169,14 @@ class Decompressor:
         else:
             raise RuntimeError('missing segment or end of block')
 
-    def read_comment(self, op: Optional[MemoryFile] = None) -> Optional[str]:
+    def read_comment(self) -> Optional[str]:
         if self.state is Decompressor.State.BLOCK:
             return None
         if self.state is not Decompressor.State.COMMENT:
             raise RuntimeError('invalid state')
         ip = self.dec.src
         comment = ip.read_c_string('utf8')
-        if ip.read_byte() != 0:
+        if ip.u8fast() != 0:
             raise RuntimeError('missing reserved byte')
         self.state = Decompressor.State.DATA
         return comment
@@ -1210,7 +1206,7 @@ class Decompressor:
             raise RuntimeError('invalid state')
         dec = self.dec
         src = dec.src
-        c = src.read_byte()
+        c = src.u8fast()
         if c == 254:
             checksum = None
         elif c == 253:
@@ -1252,7 +1248,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def handles(cls, data: bytearray) -> Optional[bool]:
         return cls._MAGIC in data
 
-    def unpack(self, archive: bytearray):
+    def unpack(self, data: bytearray):
         def mkdate(date) -> datetime:
             date = int(date)
             year = date // 1000000 // 10000
@@ -1286,8 +1282,9 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         journaling = False
 
         done = False
-        dc = Decompressor()
-        src = dc.set_input(archive)
+        dc = Decompressor(data)
+        src = dc.dec.src
+        offset = 0
 
         while not done and dc.read_block():
             while not done:
@@ -1297,7 +1294,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 self.log_info('reading file', filename)
                 comment = dc.read_comment()
                 jsize = 0
-                if len(comment) >= 4 and comment[-4:] == "jDC\x01":
+                if comment and len(comment) >= 4 and comment[-4:] == "jDC\x01":
                     num = re.search('^\\d+', comment)
                     if not num:
                         raise RuntimeError('missing size in comment')
@@ -1355,7 +1352,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     raise RuntimeError('SHA1 mismatch')
 
                 # check csize at first non-d block
-                if csize and block_type in 'chi':
+                if csize and block_type and block_type in 'chi':
                     if csize != offset:
                         raise RuntimeError(F'csize={csize} does not point to offset={offset}')
                     csize = 0
@@ -1402,7 +1399,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                         raise RuntimeError('bad frag size list')
                     # Save frag hashes and sizes. For output, save data too.
                     seg.seekset(fragsum)
-                    data = seg.getvalue()
+                    buffer = seg.getvalue()
                     assert seg.remaining_bytes == n * 4 + 8
                     for i in range(n):
                         while len(frag) <= frag_id + i:
@@ -1410,11 +1407,11 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                         if frag[frag_id + i]:
                             raise RuntimeError('duplicate frag ID')
                         f = seg.u32()
-                        h = hashlib.sha1(data[:f]).digest()
-                        frag[frag_id + i] = h + f.to_bytes(4, 'little') + data[:f]
-                        data = data[f:]
+                        h = hashlib.sha1(buffer[:f]).digest()
+                        frag[frag_id + i] = h + f.to_bytes(4, 'little') + buffer[:f]
+                        buffer = buffer[f:]
 
-                    assert len(data) == n * 4 + 8
+                    assert len(buffer) == n * 4 + 8
                     assert seg.remaining_bytes == 8
 
                 # Test and save h block. Format is: bsize (sha1[20] size)...
