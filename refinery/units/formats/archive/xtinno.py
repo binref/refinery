@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from refinery.units.formats.archive import ArchiveUnit
 
 from refinery.lib.mime import FileMagicInfo as magic
@@ -12,7 +10,6 @@ from refinery.lib.inno.archive import (
     InnoArchive,
     InvalidPassword,
     SetupFileFlags,
-    TSetupMagicToVersion,
 )
 
 
