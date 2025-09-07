@@ -120,8 +120,8 @@ class LZO(Struct):
             checksum = algorithm(reader.read(detour.cursor - 9))
 
         self.header_checksum = reader.u32()
-        if self.header_checksum != checksum:
-            raise LZOError(F'Header checksum is 0x{checksum:X}, header value is 0x{self.checksum:X}.')
+        if (c := self.header_checksum) != checksum:
+            raise LZOError(F'Header checksum is 0x{checksum:X}, header value is 0x{c:X}.')
 
         if self.flags & LZOFlags.F_H_EXTRA_FIELD:
             reader.read(reader.u32())
@@ -147,8 +147,9 @@ class LZO(Struct):
 
 class lzo(Unit):
     """
-    LZO decompression. The code works against simple test cases, but it is known to fail for certain outputs produced by the lzop
-    command-line tool when high compression ratio is favoured (i.e. when the -9 switch is used).
+    LZO decompression. The code works against simple test cases, but it is known to fail for
+    certain outputs produced by the lzop command-line tool when high compression ratio is
+    favoured (i.e. when the -9 switch is used).
     """
     def decompress_stream(self, data: ByteString, LZOv1: bool = False) -> bytearray:
         """
