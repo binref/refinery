@@ -12,7 +12,7 @@ from pathlib import Path
 from refinery.units.formats import PathExtractorUnit, UnpackResult, PathPattern
 from refinery.units.encoding.esc import esc
 from refinery.lib.structures import MemoryFile
-from refinery.lib.id import is_reg_export
+from refinery.lib.id import get_reg_export_type
 
 if TYPE_CHECKING:
     from Registry.Registry import RegistryKey, RegistryValue
@@ -163,4 +163,4 @@ class winreg(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data):
-        return is_reg_export(data)
+        return get_reg_export_type(data) is not None
