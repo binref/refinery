@@ -462,7 +462,7 @@ class Arg(Argument):
         return cls(*args, group=group, help=help, dest=dest, action='store_false' if off else 'store_true')
 
     @classmethod
-    def PathVar(
+    def FsPath(
         cls,
         *args   : str,
         help    : Union[Type[omit], str] = omit,
