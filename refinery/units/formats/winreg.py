@@ -12,6 +12,7 @@ from pathlib import Path
 from refinery.units.formats import PathExtractorUnit, UnpackResult, PathPattern
 from refinery.units.encoding.esc import esc
 from refinery.lib.structures import MemoryFile
+from refinery.lib.id import is_reg_export
 
 if TYPE_CHECKING:
     from Registry.Registry import RegistryKey, RegistryValue
@@ -73,8 +74,7 @@ class winreg(PathExtractorUnit):
             return REG_BINARY(data).decode('UTF-16LE').rstrip('\0').encode(self.codec)
 
         def REG_MULTI_SZ(data: str):
-            data = REG_BINARY(data).decode('UTF-16LE').split('\0')
-            for string in data:
+            for string in REG_BINARY(data).decode('UTF-16LE').split('\0'):
                 if string:
                     yield string.encode(self.codec)
 
@@ -148,8 +148,7 @@ class winreg(PathExtractorUnit):
                 path = Path(key)
                 if name != '@':
                     path = path / Path(name)
-                data = config[key][value]
-                decoded = list(self._decode_registry_export(data))
+                decoded = list(self._decode_registry_export(config[key][value]))
                 if len(decoded) == 1:
                     yield UnpackResult(str(path), decoded[0])
                     continue
@@ -164,8 +163,4 @@ class winreg(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data):
-        if data[:4] == B'regf':
-            return True
-        if data[:31] == b'Windows Registry Editor Version':
-            return True
-        return False
+        return is_reg_export(data)

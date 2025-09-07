@@ -33,3 +33,14 @@ def is_likely_pe_dotnet(data: bytearray):
     if data.find(b'#Blob') < 0:
         return False
     return True
+
+
+def is_reg_export(data: bytearray):
+    """
+    Check whether the input data is a Windows registry file export.
+    """
+    if data[:4] == B'regf':
+        return True
+    if data[:31] == b'Windows Registry Editor Version':
+        return True
+    return False
