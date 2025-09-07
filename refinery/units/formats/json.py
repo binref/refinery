@@ -62,19 +62,22 @@ class xtjson(PathExtractorUnit):
 
 class xj0(Unit):
     """
-    Extracts a single field from a JSON document at depth 0. By default, the unit applies a heuristic to
-    extract remaining fields as metadata: String values are extracted only if they do not exceed 80
-    characters in length and do not contain any line breaks. Floating-point, integer, boolean values, and
-    lists of the latter are also extracted.
+    Extracts a single field from a JSON document at depth 0. By default, the unit applies a
+    heuristic to extract remaining fields as metadata: String values are extracted only if
+    they do not exceed 80 characters in length and do not contain any line breaks.
+    Floating-point, integer, boolean values, and lists of the latter are also extracted.
     """
     def __init__(
         self,
         fmt: Unit.Arg.String(help=(
-            'Format expression for the output chunk; may use previously extracted JSON items. The default '
-            'is {default}, which represents the input data.')) = '',
-        all: Unit.Arg.Switch('-a', group='META', help='Extract all other fields as metadata regardless of length and type.') = False,
-        one: Unit.Arg.Switch('-x', group='META', help='Do not extract any other fields as metadata.') = False,
-        raw: Unit.Arg.Switch('-r', help='Disable conversion of JSON strings to binary strings in metadata') = False,
+            'Format expression for the output chunk; may use previously extracted JSON items. '
+            'The default is {default}, which represents the input data.')) = '',
+        all: Unit.Arg.Switch('-a', group='META',
+            help='Extract all other fields as metadata regardless of length and type.') = False,
+        one: Unit.Arg.Switch('-x', group='META',
+            help='Do not extract any other fields as metadata.') = False,
+        raw: Unit.Arg.Switch('-r',
+            help='Disable conversion of JSON strings to binary strings in metadata') = False,
     ):
         super().__init__(fmt=fmt, one=one, raw=raw, all=all)
 
