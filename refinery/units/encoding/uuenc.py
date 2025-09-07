@@ -74,4 +74,4 @@ class uuenc(Unit):
         if len(data) < 16:
             return False
         if data[:6] == B'begin ':
-            return set(data[6:9]) <= set(B'01234567')
+            return re.fullmatch(B'[0-7]{3}', data[6:9]) is not None
