@@ -15,4 +15,4 @@ class jvstr(Unit):
 
     @classmethod
     def handles(cls, data):
-        return data[:4] == B'\xCA\xFE\xBA\xBE'
+        return data.startswith(B'\xCA\xFE\xBA\xBE')

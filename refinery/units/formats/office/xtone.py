@@ -31,4 +31,4 @@ class xtone(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> Optional[bool]:
-        return UUID('e4525c7b-8cd8-a74d-aeb1-5378d02996d3').bytes in data
+        return UUID('7b5c52e4-d88c-4da7-aeb1-5378d02996d3').bytes_le in data

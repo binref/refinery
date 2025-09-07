@@ -15,6 +15,7 @@ from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
 from refinery.units.formats.pe import get_pe_size
 from refinery.lib.tools import date_from_timestamp
+from refinery.lib.id import is_likely_pe
 from refinery.lib.lcid import LCID
 from refinery.lib.resources import datapath
 
@@ -181,7 +182,7 @@ class pemeta(Unit):
 
     @classmethod
     def handles(cls, data):
-        return data[:2] == B'MZ'
+        return is_likely_pe(data)
 
     @classmethod
     def _ensure_string(cls, x):
