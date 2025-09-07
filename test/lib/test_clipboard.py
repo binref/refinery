@@ -1,6 +1,7 @@
 import os
 import pyperclip
 import time
+import pytest
 
 from refinery.lib.winclip import get_any_data, ClipBoard, CF
 from refinery.lib.loader import load_detached
@@ -10,6 +11,7 @@ from .. import TestBase
 
 class TestWinClip(TestBase):
 
+    @pytest.mark.clipboard
     def test_clipboard(self):
         def delay():
             time.sleep(0.1)

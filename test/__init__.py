@@ -3,24 +3,10 @@ import random
 import refinery
 import string
 import unittest
-import pyperclip
 import contextlib
 import os
-import pytest
 
 from samples import SampleStore
-
-
-def thread_group(name: str): # type:ignore
-    return pytest.mark.xdist_group(name=name)
-
-
-def clipboard(f):
-    return pytest.mark.clipboard(f)
-
-
-def cosmetics(f):
-    return pytest.mark.cosmetics(f)
 
 
 

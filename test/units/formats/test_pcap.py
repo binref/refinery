@@ -1,11 +1,12 @@
 import hashlib
+import pytest
 
-from .. import thread_group, TestUnitBase
+from .. import TestUnitBase
 
 
 class TestPCAP(TestUnitBase):
 
-    @thread_group('pcap')
+    @pytest.mark.xdist_group(name='pcap')
     def test_pe_extraction_from_pcap(self):
         data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
         pipeline = self.ldu('pcap-http')
@@ -25,7 +26,7 @@ class TestPCAP(TestUnitBase):
         }
         self.assertDictEqual(test, goal)
 
-    @thread_group('pcap')
+    @pytest.mark.xdist_group(name='pcap')
     def test_get_request_summary(self):
         data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
         pipeline = self.load_pipeline(R'pcap [| rex "^GET\s[^\s]+" | sep ]')
@@ -41,7 +42,7 @@ class TestPCAP(TestUnitBase):
             'GET /286/pop.asp?url=http://59.34.197.''164:81/804635/adx352133.asp',
         )))
 
-    @thread_group('pcap')
+    @pytest.mark.xdist_group(name='pcap')
     def test_flaron11_challenge7(self):
         import base64
         import lzma
