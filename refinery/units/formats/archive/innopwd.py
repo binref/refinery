@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from refinery.units import Unit
 
-from refinery.lib.inno.archive import InnoArchive
+from refinery.lib.inno.archive import is_inno_setup, InnoArchive
 from refinery.lib.inno.emulator import InnoSetupEmulator, NewPassword
 from refinery.lib.inno.ifps import IFPSFile
 
@@ -43,10 +43,4 @@ class innopwd(Unit):
 
     @classmethod
     def handles(cls, data):
-        import re
-        if data[:2] != B'MZ':
-            return False
-        if re.search(re.escape(InnoArchive.ChunkPrefix), data) is None:
-            return False
-        return bool(
-            re.search(BR'Inno Setup Setup Data \(\d+\.\d+\.', data))
+        return is_inno_setup(data)

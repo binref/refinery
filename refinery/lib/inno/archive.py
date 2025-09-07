@@ -2782,3 +2782,26 @@ class InnoArchive:
                 addr_bytes_left -= 1
             data[i] = c
         return data
+
+
+def is_inno_setup(data: bytearray):
+    """
+    Test whether the input data is likely an Inno Setup executable.
+    """
+    if data[:2] != B'MZ':
+        return False
+    if re.search(re.escape(InnoArchive.ChunkPrefix), data) is None:
+        return False
+    for marker in [
+        B'Inno Setup Setup Data',
+        B'Inno Setup Messages',
+        B'<description>Inno Setup</description>',
+        B'InnoSetupLdrWindow',
+        B'This installation was built with Inno Setup',
+    ]:
+        if re.search(re.escape(marker), data):
+            return True
+    for marker in TSetupMagicToVersion.keys():
+        if re.search(re.escape(marker), data) is not None:
+            return True
+    return False
