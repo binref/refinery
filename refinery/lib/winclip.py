@@ -4,8 +4,9 @@ Primarily, this can retrieve image data from the clipboard.
 """
 from __future__ import annotations
 
-import os
 import enum
+import os
+import time
 
 if os.name == 'nt':
     import ctypes
@@ -47,6 +48,19 @@ if os.name == 'nt':
     CloseClipboard = u32.CloseClipboard
     CloseClipboard.argtypes = None
     CloseClipboard.restype = w.BOOL
+
+    def timeout(result, limit: float = 1.0):
+        def decorator(function):
+            def wrapped(*args, **kwargs):
+                t = 0.001
+                while t < limit:
+                    if function(*args, **kwargs):
+                        return result
+                    t *= 2
+                    time.sleep(t)
+                raise RuntimeError('Could not open the clipboard.')
+            return wrapped
+        return decorator
 
     class FieldsFromTypeHints(type(ctypes.Structure)):
 
@@ -120,8 +134,7 @@ class ClipBoard:
         self.mode = mode
 
     def __enter__(self):
-        OpenClipboard(None)
-        return self
+        return timeout(self)(OpenClipboard)(None)
 
     def __exit__(self, *args):
         CloseClipboard()
@@ -176,7 +189,7 @@ class ClipBoard:
         ctypes.windll.msvcrt.memset(ctypes.c_char_p(lock), 0, size)
         ctypes.windll.msvcrt.memcpy(ctypes.c_char_p(lock), data, size)
         GlobalUnlock(lock)
-        SetClipboardData(self.mode.value, glob)
+        timeout(...)(SetClipboardData)(self.mode.value, glob)
 
 
 def get_any_data():
