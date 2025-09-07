@@ -1,11 +1,8 @@
-from __future__ import annotations
-
-# pymmh3 was originally written by Fredrik Kihlander and enhanced by Swapnil Gusani.
-# source: https://github.com/wc-duck/pymmh3
-# This file is a modification of their source code.
 """
 Murmur hash implementation, orignally written by Fredrik Kihlander and enhanced by Swapnil Gusani.
+See also their [original source code](https://github.com/wc-duck/pymmh3).
 """
+from __future__ import annotations
 from refinery.lib import chunks
 from refinery.lib.types import ByteStr
 
