@@ -18,7 +18,7 @@ class pattern:
     operators.
     """
     str_pattern: str
-    bin_pattern: bytes | None
+    bin_pattern: bytes
 
     def __init__(self, pattern: str, flags: int = 0):
         self.str_pattern = pattern

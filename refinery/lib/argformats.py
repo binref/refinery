@@ -1529,7 +1529,7 @@ class DelayedRegexpArgument(DelayedArgument):
         """
         from refinery.lib.patterns import formats
         try:
-            return formats[name]
+            return formats[name].value.bin_pattern
         except LookupError:
             raise ArgumentTypeError(
                 F'Based on the prefix "f:", the parser looked for a carve format named "{name}".'
