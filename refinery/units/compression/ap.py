@@ -70,9 +70,6 @@ class _bits_decompress(BytesIO):
         self.__bitbuffer = 0
         self.decompressed = bytearray()
 
-    def read_bit(self):
-        return self.read_bits(1)
-
     def read_byte(self):
         buffer = self.read(1)
         if len(buffer) != 1:
@@ -89,28 +86,15 @@ class _bits_decompress(BytesIO):
 
     def read_variablenumber(self):
         result = 1
-        result = (result << 1) + self.read_bit()
-        while self.read_bit():
-            result = (result << 1) + self.read_bit()
-        return result
-
-    def read_setbits(self, max_, set_=1):
-        result = 0
-        while result < max_ and self.read_bit() == set_:
-            result += 1
+        result = (result << 1) + self.read_bits(1)
+        while self.read_bits(1):
+            result = (result << 1) + self.read_bits(1)
         return result
 
     def back_copy(self, offset, length=1):
         for _ in range(length):
             self.decompressed.append(self.decompressed[-offset])
         return
-
-    def read_literal(self, value=None):
-        if value is None:
-            self.decompressed.append(self.read_byte())
-        else:
-            self.decompressed.append(value)
-        return False
 
 
 def lengthdelta(offset):
@@ -229,7 +213,7 @@ class decompressor(_bits_decompress):
         ]
 
     def __literal(self):
-        self.read_literal()
+        self.decompressed.append(self.read_byte())
         self.__pair = True
         return False
 
@@ -266,14 +250,24 @@ class decompressor(_bits_decompress):
         if offset:
             self.back_copy(offset)
         else:
-            self.read_literal(0)
+            self.decompressed.append(0)
         self.__pair = True
         return False
 
+    def read_sequence(self):
+        if not self.read_bits(1):
+            return self.__literal()
+        if not self.read_bits(1):
+            return self.__block()
+        if not self.read_bits(1):
+            return self.__shortblock()
+        else:
+            return self.__singlebyte()
+
     def decompress(self):
         self.seek(0)
-        self.read_literal()
-        while not self.__functions[self.read_setbits(3)]():
+        self.decompressed.append(self.read_byte())
+        while not self.read_sequence():
             continue
         return self.decompressed
 
@@ -299,6 +293,8 @@ class aplib(Unit):
 
     @classmethod
     def handles(cls, data: bytearray):
+        if len(data) < 2:
+            return False
         if data[:4] == B'AP32':
             return True
         return None

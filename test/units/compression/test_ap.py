@@ -10,3 +10,12 @@ class TestAPLib(TestUnitBase):
             b"Kevin's got the magic - and the magic's got Kevin.",
             unit(data)
         )
+
+    def test_packed_with_dipper(self):
+        data = self.download_sample('ad320839e01df160c5feb0e89131521719a65ab11c952f33e03d802ecee3f51f')
+        data = data | self.load_pipeline(
+            'vsnip 0x01011240:0x1e348 | rex ..(..) {1} []| alu -B4 L(B@0x26FE,4)+0x77777778'
+        ) | bytes
+        unit = self.load()
+        test = data | unit | self.ldu('sha256', text=True) | str
+        self.assertEqual(test, 'f31468c95437a0c99be5551536b64576e21eeacfd43b0c63b020cdc10465a01b')
