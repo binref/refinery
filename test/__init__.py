@@ -24,17 +24,6 @@ def cosmetics(f):
 
 
 
-
-@contextlib.contextmanager
-def temporary_clipboard(data: str = ''):
-    backup = pyperclip.paste()
-    pyperclip.copy(data)
-    try:
-        yield None
-    finally:
-        pyperclip.copy(backup)
-
-
 @contextlib.contextmanager
 def temporary_chwd(directory):
     old = os.getcwd()

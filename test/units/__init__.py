@@ -7,11 +7,6 @@ import functools
 
 from .. import (
     refinery,
-    thread_group,
-    clipboard,
-    cosmetics,
-    temporary_clipboard,
-    temporary_chwd,
     TestBase,
     NameUnknownException,
 )
