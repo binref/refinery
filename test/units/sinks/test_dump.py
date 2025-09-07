@@ -6,7 +6,9 @@ import time
 import hashlib
 import zlib
 
-from .. import temporary_chwd, TestUnitBase
+from test import temporary_chwd
+from test.units import TestUnitBase
+
 from refinery.lib.loader import load_detached as L
 
 

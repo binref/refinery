@@ -5,9 +5,9 @@ import os
 
 from pathlib import Path
 
-from .. import TestUnitBase
-from ..compression import KADATH1, KADATH2
-from ..sinks.test_dump import temporary_chwd
+from test.units import TestUnitBase
+from test.units.compression import KADATH1, KADATH2
+from test import temporary_chwd
 
 
 # The magic word is bananapalooza
