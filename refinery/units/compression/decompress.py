@@ -286,7 +286,7 @@ class decompress(Unit):
                 # This is unexpected, but indicates that we may have produced incorrect output
                 # before: What seems to work best is to force a reset at this point, although
                 # it seems like there should be a better solution than this.
-                q = 0
+                q = -1
                 assert best.result
                 vb = memoryview(best.result)
                 vn = memoryview(new.result)
@@ -307,12 +307,23 @@ class decompress(Unit):
             else:
                 logger = self.log_info
                 _color = _COLOR_FAILURE
-            if ratio is INF:
-                rs = R'INFINITY'
+            if ratio >= 9:
+                rs = 'USELESS'
+                rc = _COLOR_FAILURE
             else:
-                rs = F'{ratio * 100:07.3f}%'
+                rs = F'{ratio * 100:6.2f}%'
+                if ratio >= 1.1:
+                    rc = _COLOR_FAILURE
+                elif ratio >= 1.0:
+                    rc = _COLOR_WARNING
+                else:
+                    rc = _COLOR_SUCCESS
+            if q < 0:
+                qs = 'RESTART'
+            else:
+                qs = F'{q:07.4f}'
             logger(lambda: (
-                F'[{new.rating.brief}] [{_color}{rs}{_CR}] [q={q:07.4f}] {new!s}'))
+                F'[{new.rating.brief}] [{rc}{rs}{_CR}] [q={_color}{qs}{_CR}] {new!s}'))
 
         for method, engine in self.engines.items():
             self.log_debug(F'attempting engine: {method}')
