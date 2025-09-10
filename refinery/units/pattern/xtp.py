@@ -252,6 +252,10 @@ class xtp(PatternExtractor):
                     if B'version' in check or b'build' in check:
                         self.log_info(F'excluding ipv4 because it might be a version: {text}')
                         return None
+            small_ocet_count = sum(1 for ocet in ocets if ocet < 10)
+            if small_ocet_count > max(0, 4 - self.args.filter):
+                self.log_info(F'excluding ipv4 because it has too many small ocets: {text}')
+                return None
             ip = ip_address(text)
             if not ip.is_global:
                 if self.args.filter >= 3 or not ip.is_private:
