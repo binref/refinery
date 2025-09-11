@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from re import compile as re_compile
+import re
+
 from datetime import datetime, timedelta
 
 from refinery.units import Arg, Unit
@@ -8,37 +9,46 @@ from refinery.lib.decorators import linewise
 from refinery.lib.tools import date_from_timestamp
 
 
-_FORMATS = [
+_DATETIME_PATTERNS = {
     '%m/%d/%Y',
     '%a %b %d %Y %H:%M:%S',
     '%Y:%m:%d %H:%M:%S',
-]
+}
 for comma in (',', ''):
-    _FORMATS.append(F'%m/%d/%Y{comma} %H:%M:%S')
+    _DATETIME_PATTERNS.add(F'%m/%d/%Y{comma} %H:%M:%S')
     for month_name in ('%B', '%b'):
-        for suffix in ('st', 'nd', 'rd', 'th'):
-            _FORMATS.append(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S')
-            _FORMATS.append(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S (UTC)')
-            _FORMATS.append(F'{month_name} %d{comma} %Y')
+        for suffix in ('st', 'nd', 'rd', 'th', ''):
+            _DATETIME_PATTERNS.add(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S')
+            _DATETIME_PATTERNS.add(F'{month_name} %d{comma} %Y')
             for day_name in ('%a', '%A'):
                 # Wed, 20 Aug 2025 00:56:59
-                _FORMATS.append(F'{day_name}{comma} %d{suffix} {month_name} %Y %H:%M:%S')
-                _FORMATS.append(F'{day_name}{comma} %d {month_name} %Y %H:%M:%S')
+                _DATETIME_PATTERNS.add(F'{day_name}{comma} %d{suffix} {month_name} %Y %H:%M:%S')
+                # Wed Mar 31 00:00:00 UTC 2027
+                _DATETIME_PATTERNS.add(F'{day_name}{comma} {month_name} %d{suffix} %Y %H:%M:%S')
+                _DATETIME_PATTERNS.add(F'{day_name}{comma} {month_name} %d{suffix} %H:%M:%S %Y')
 
 for timesep in ('T', ' '):
     for millisecs in ('Z%f', '.%f', ''):
-        _FORMATS.append(F'%Y-%m-%d{timesep}%H:%M:%S{millisecs}')
+        _DATETIME_PATTERNS.add(F'%Y-%m-%d{timesep}%H:%M:%S{millisecs}')
+
+_DATETIME_PATTERNS = sorted(_DATETIME_PATTERNS)
+_TIMEZONE_PATTERN = R'''(?x)(?:
+    (?:\(?(?:GMT|UTC)\)?)?
+    (?P<info>
+        (?P<p> [+-] )
+        (?P<h> \d\d ):? (?![-T]|\s\d)
+        (?P<m> \d\d )?
+        (?:\s\([A-Z]{2,6}\))?
+    )|
+    (?P<name>\(?(?:GMT|UTC)\)?)
+)
+'''
 
 
 class datefix(Unit):
     """
     Parses all kinds of date formats and unifies them into the same format.
     """
-    _TIMEZONE_REGEXES = [re_compile(p) for p in [
-        R'([+-])(\d{2})(\d{2})$',           # Thu Apr 24 2014 12:32:21 GMT-0700
-        R'([+-])(\d{2}):(\d{2})$',          # 2017:09:11 23:47:22+02:00
-        R'GMT([+-])(\d{2})(\d{2}) \(.+\)$'  # Thu Apr 24 2014 12:32:21 GMT-0700 (PDT)
-    ]]
 
     def __init__(
         self,
@@ -67,19 +77,21 @@ class datefix(Unit):
     def _format(self, dt: datetime) -> str:
         return dt.strftime(self.args.format)
 
-    def _extract_timezone(self, data):
-        for r in self._TIMEZONE_REGEXES:
-            m = r.search(data)
-            if not m:
-                continue
-            pm = m[1]
-            td = timedelta(
-                hours=int(m[2]), minutes=int(m[3]))
-            if pm == '-':
-                td = -td
-            return data[:-len(m[0])].strip(), td
-
-        return data, None
+    def _extract_timezone(self, data: str):
+        def extract(match: re.Match[str]):
+            nonlocal zone
+            if zone is not None:
+                raise ValueError
+            h = int(h) if (h := match['h']) else 0
+            m = int(m) if (m := match['m']) else 0
+            zone = timedelta(hours=h, minutes=m)
+            if match['p'] == '-':
+                zone = -zone
+            return ''
+        zone = None
+        data = re.sub(_TIMEZONE_PATTERN, extract, data)
+        data = re.sub('\\s{2,}', ' ', data).strip()
+        return data, zone
 
     @linewise
     def process(self, data: str) -> str:
@@ -116,9 +128,12 @@ class datefix(Unit):
             else:
                 return self._format(date_from_timestamp(time_stamp))
 
-        data, time_delta = self._extract_timezone(data)
+        try:
+            data, time_delta = self._extract_timezone(data)
+        except ValueError:
+            return data
 
-        for f in _FORMATS:
+        for f in _DATETIME_PATTERNS:
             try:
                 dt = datetime.strptime(data, f)
             except ValueError:

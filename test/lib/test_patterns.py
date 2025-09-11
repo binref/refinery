@@ -41,6 +41,7 @@ class TestIndicators(RegexTextBase):
     def test_date(self):
         self.assertMatches(indicators.date, '2030-01-01T09:00:00')
         self.assertMatches(indicators.date, '2020-01-01T12:07:00')
+        self.assertMatches(indicators.date, 'Wed Mar 31 00:00:00 UTC 2027')
 
 
 class TestFormats(RegexTextBase):
