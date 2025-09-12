@@ -157,25 +157,23 @@ class CustomStringRepresentation(abc.ABC):
 
 _INDEX = 'index'
 
-_PRINT_SAFE = set(string.printable.encode('latin1')) - set(b'|<>\t\n\r\v')
+_HIGH_ASCII = '¹²³«»¡¿¼½¾¢£¥§©®±µ·÷øÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöùúûüýþÿ'
+_8BIT_ASCII = string.printable + _HIGH_ASCII
+_PRINT_SAFE = set(_8BIT_ASCII.encode('latin1')) - set(b'|<>\t\n\r\v')
 if os.name == 'nt':
     _PRINT_SAFE -= set(b'^"')
 else:
     _PRINT_SAFE -= set(b'&*?\'"')
-_PRINT_SAFE = bytes(_PRINT_SAFE)
-_IS_PRINT_SAFE = bytearray(256)
+
+_PT = bytearray(256)
 for p in _PRINT_SAFE:
-    _IS_PRINT_SAFE[p] = 1
+    _PT[p] = 1
 
 
 def is_print_safe(string: str):
-    if not string.isprintable():
-        return False
-    for letter in string:
-        code = ord(letter)
-        if code < len(_IS_PRINT_SAFE) and not _IS_PRINT_SAFE[code]:
-            return False
-    return True
+    return string.isprintable() or not any(
+        (code := ord(letter)) < len(_PT) and not _PT[code] for letter in string
+    )
 
 
 class ByteStringWrapper(bytearray, CustomStringRepresentation):
@@ -199,12 +197,10 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
     def __init__(self, string: Union[str, ByteString], codec: Optional[str] = None):
         if isinstance(string, str):
             self._string = string
-            self._buffer = False
             codec = codec or 'utf8'
             string = string.encode(codec)
         elif isbuffer(string):
             self._string = None
-            self._buffer = True
         else:
             raise TypeError(F'The argument {string!r} is not a buffer or string.')
 
@@ -237,7 +233,7 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
             codecs = self._CODECS if _codec is None else [_codec, 'latin1']
             for codec in codecs:
                 try:
-                    value = self.decode(codec)
+                    self._string = value = self.decode(codec)
                 except UnicodeError as e:
                     _error = _error or e
                 else:
@@ -257,7 +253,7 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
 
     def __repr__(self):
         try:
-            return self._representation
+            return self._pretty
         except AttributeError:
             pass
         try:
@@ -265,24 +261,24 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
                 prefix = None
             else:
                 try:
-                    representation = self.decode('utf-16le')
+                    pretty = self.decode('utf-16le')
                     prefix = 'u'
                 except UnicodeDecodeError:
                     prefix = None
             if prefix is None:
-                representation = self.string
+                pretty = self.string
                 prefix = self._CODECS[self.codec]
         except AttributeError:
-            representation = None
+            pretty = None
         else:
-            if not is_print_safe(representation):
-                representation = None
-            elif prefix != 's' or self.requires_prefix(representation):
-                representation = F'{prefix}:{representation}'
-        if representation is None:
-            representation = F'h:{self.hex()}'
-        self._representation = representation
-        return representation
+            if not is_print_safe(pretty):
+                pretty = None
+            elif prefix != 's' or self.requires_prefix(pretty):
+                pretty = F'{prefix}:{pretty}'
+        if pretty is None:
+            pretty = F'h:{self.hex()}'
+        self._pretty = pretty
+        return pretty
 
     def __str__(self):
         return self.string
