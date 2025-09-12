@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import overload, get_origin, get_args, Type, TypeVar
 from types import CodeType
 
-from refinery.units import Unit
+from refinery.units import Unit, Arg
 from refinery.lib.json import BytesAsStringEncoder
 from refinery.lib.structures import StructReader
 
@@ -66,7 +66,7 @@ class _CK(enum.IntFlag):
     Free   = 0b1000_0000 # noqa
 
 
-class _PY(tuple, enum.Enum):
+class PV(tuple, enum.Enum):
     V_1_00 = (1,  0) # noqa
     V_1_03 = (1,  3) # noqa
     V_1_05 = (1,  5) # noqa
@@ -82,15 +82,15 @@ class _PY(tuple, enum.Enum):
             return m.to_bytes(2, 'little') + B'\r\n'
         nulls = b'\0\0\0\0'
         magic = {
-            _PY.V_1_00: tobytes(39170),
-            _PY.V_1_03: tobytes(11913),
-            _PY.V_1_05: tobytes(20121),
-            _PY.V_2_01: tobytes(60202),
-            _PY.V_2_03: tobytes(62211), # 2.7
-            _PY.V_3_00: tobytes(3000),  # 3.0
-            _PY.V_3_08: tobytes(3413),  # 3.8
-            _PY.V_3_10: tobytes(3438),  # 3.10
-            _PY.V_3_11: importlib.util.MAGIC_NUMBER,
+            PV.V_1_00: tobytes(39170),
+            PV.V_1_03: tobytes(11913),
+            PV.V_1_05: tobytes(20121),
+            PV.V_2_01: tobytes(60202),
+            PV.V_2_03: tobytes(62211), # 2.7
+            PV.V_3_00: tobytes(3000),  # 3.0
+            PV.V_3_08: tobytes(3413),  # 3.8
+            PV.V_3_10: tobytes(3438),  # 3.10
+            PV.V_3_11: importlib.util.MAGIC_NUMBER,
         }[self] + nulls
         # Sadly, we cannot determine this exactly:
         # 1.0 - 3.2 [magic][timestamp]        4 bytes
@@ -98,11 +98,11 @@ class _PY(tuple, enum.Enum):
         # 3.7 - now [magic][flags][misc]     12 bytes
         # All changes happen between 3.0 and 3.8, which we cannot distinguish based on the
         # layout of marshaled code objects. We will have to guess to minimize the damage:
-        if self >= _PY.V_3_00:
+        if self >= PV.V_3_00:
             magic += nulls
-        if self >= _PY.V_3_08:
+        if self >= PV.V_3_08:
             magic += nulls
-        c = B'C' if self == _PY.V_1_00 else B'c'
+        c = B'C' if self == PV.V_1_00 else B'c'
         return magic + c
 
 
@@ -127,10 +127,11 @@ class Marshal(StructReader[memoryview]):
     A specialization of the `refinery.lib.structures.StructReader` to read marshaled objects.
     """
 
-    def __init__(self, data, load_code=False):
+    def __init__(self, data, load_code=False, version=None):
         super().__init__(memoryview(data))
         self.refs = []
-        self.version = (1, 0)
+        self.version = version
+        self._min_version = (1, 0)
         self._depth = 0
         self._load_code = load_code
 
@@ -316,11 +317,13 @@ class Marshal(StructReader[memoryview]):
             arguments = {}
             start = self.tell()
 
-            for version in _PY:
-                if version < self.version:
+            versions = [v] if (v := self.version) else PV
+
+            for version in versions:
+                if version < self._min_version:
                     continue
                 self.seekset(start)
-                intval = self.u32 if version >= _PY.V_2_03 else self.u16
+                intval = self.u32 if version >= PV.V_2_03 else self.u16
                 arguments.clear()
                 arguments.update(
                     name='',
@@ -344,37 +347,37 @@ class Marshal(StructReader[memoryview]):
                 MAX_ARGS = 0x100
                 MAX_VARS = 0x10000
                 try:
-                    if _PY.V_1_03 <= version:
+                    if PV.V_1_03 <= version:
                         if (n := intval()) > MAX_ARGS:
                             raise ValueError
                         arguments.update(argcount=n)
-                    if _PY.V_3_08 <= version:
+                    if PV.V_3_08 <= version:
                         if (n := intval()) > MAX_ARGS:
                             raise ValueError
                         arguments.update(posonlyargcount=n)
-                    if _PY.V_3_00 <= version:
+                    if PV.V_3_00 <= version:
                         if (n := intval()) > MAX_ARGS:
                             raise ValueError
                         arguments.update(kwonlyargcount=n)
-                    if _PY.V_1_03 <= version < _PY.V_3_11:
+                    if PV.V_1_03 <= version < PV.V_3_11:
                         if (n := intval()) > MAX_VARS:
                             raise ValueError
                         arguments.update(nlocals=n)
-                    if _PY.V_1_05 <= version:
+                    if PV.V_1_05 <= version:
                         arguments.update(stacksize=intval())
-                    if _PY.V_1_03 <= version:
+                    if PV.V_1_03 <= version:
                         arguments.update(flags=intval())
-                    if _PY.V_1_00 <= version:
+                    if PV.V_1_00 <= version:
                         codestring = self.object(bytes)
                         arguments.update(codestring=codestring)
                         arguments.update(constants=self.object(tuple))
                         arguments.update(names=self.object(tuple))
-                    if _PY.V_1_03 <= version < _PY.V_3_11:
+                    if PV.V_1_03 <= version < PV.V_3_11:
                         arguments.update(varnames=self.object(tuple))
-                    if _PY.V_2_01 <= version < _PY.V_3_11:
+                    if PV.V_2_01 <= version < PV.V_3_11:
                         arguments.update(freevars=self.object(tuple))
                         arguments.update(cellvars=self.object(tuple))
-                    if _PY.V_3_11 <= version:
+                    if PV.V_3_11 <= version:
                         co_localsplusnames = self.object(tuple)
                         co_localspluskinds = self.object(bytes)
                         co_freevars = []
@@ -399,30 +402,30 @@ class Marshal(StructReader[memoryview]):
                         arguments.update(cellvars=tuple(co_cellvars))
                         arguments.update(varnames=tuple(co_varnames))
                         arguments.update(nlocals=co_nlocals)
-                    if _PY.V_1_00 <= version:
+                    if PV.V_1_00 <= version:
                         arguments.update(filename=self.object(str))
                         arguments.update(name=self.object(str))
-                    if _PY.V_3_11 <= version:
+                    if PV.V_3_11 <= version:
                         arguments.update(qualname=self.object(str))
-                    if _PY.V_1_05 <= version:
+                    if PV.V_1_05 <= version:
                         arguments.update(firstlineno=intval())
-                    if _PY.V_1_05 <= version < _PY.V_3_10:
+                    if PV.V_1_05 <= version < PV.V_3_10:
                         lnotab = self.object(bytes)
                         if len(lnotab) % 2 != 0:
                             raise ValueError
                         arguments.update(linetable=lnotab)
-                    if _PY.V_3_10 <= version:
+                    if PV.V_3_10 <= version:
                         arguments.update(linetable=self.object(bytes))
-                    if _PY.V_3_11 <= version:
+                    if PV.V_3_11 <= version:
                         arguments.update(exceptiontable=self.object(bytes))
                     if start == 1 and not self.eof:
                         raise ValueError
                 except Exception:
                     continue
                 else:
-                    if version < self.version:
+                    if version < self._min_version:
                         continue
-                    self.version = version
+                    self._min_version = version
                     break
             else:
                 raise RuntimeError('Failed to parse code object.')
@@ -436,7 +439,7 @@ class Marshal(StructReader[memoryview]):
             if rv is None:
                 size = self.tell() - start
                 self.seekset(start)
-                rv = B'%s%s' % (self.version.header(), self.read(size))
+                rv = B'%s%s' % (self._min_version.header(), self.read(size))
             if store_reference:
                 self.refs[index] = rv
             return rv
@@ -449,12 +452,29 @@ class Marshal(StructReader[memoryview]):
         return rv
 
 
+_PV_CHOICE = []
+_PV_LOOKUP = {}
+
+for pv in PV:
+    pvc = '.'.join(pv.name.split('_')[1:])
+    _PV_CHOICE.append(pvc)
+    _PV_LOOKUP[pvc] = pv
+
+
 class pym(Unit):
     """
     Converts Python-Marshaled code objects to the PYC (Python Bytecode) format. If it is an
     older Python version, you can use the `refinery.pyc` unit to then decompile the code, but
     for more recent versions a separate Python decompiler will be required.
     """
+    def __init__(
+        self, version: Arg.Choice('-V', choices=_PV_CHOICE, metavar='V',
+            help='Optionally select the Python Version. Available options are: {choices}.') = None
+    ):
+        if version is not None:
+            version = _PV_LOOKUP[version]
+        super().__init__(version=version)
+
     def reverse(self, data):
         return marshal.dumps(data)
 
@@ -484,10 +504,16 @@ class pym(Unit):
             raise NotImplementedError(
                 F'No serialization implemented for object of type {data.__class__.__name__}')
 
-        try:
-            out = marshal.loads(data)
-        except Exception:
-            out = Marshal(memoryview(data)).object()
+        if version := self.args.version:
+            out = None
+        else:
+            try:
+                out = marshal.loads(data)
+            except Exception as error:
+                self.log_info(F'falling back to refinery unmarshal after built-in method failed: {error!s}')
+                out = None
+        if out is None:
+            out = Marshal(memoryview(data), version=version).object()
 
         if isinstance(out, (list, tuple, set, frozenset)):
             self.log_info('object is a collection, converting each item individually')
