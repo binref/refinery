@@ -242,7 +242,13 @@ class Marshal(StructReader[memoryview]):
         elif code == _MC.INT64:
             rv = self.i64()
         elif code == _MC.LONG:
-            rv = self.i32()
+            rv = 0
+            for _ in range(self.u32()):
+                digit = self.u16()
+                if digit >> 15:
+                    raise ValueError('Python LONG digit has MSB set.')
+                rv <<= 15
+                rv |= digit
         elif code == _MC.FLOAT:
             rv = float(self.read_length_prefixed_ascii(8))
         elif code == _MC.BINARY_FLOAT:
