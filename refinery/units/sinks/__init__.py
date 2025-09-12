@@ -9,10 +9,9 @@ import re
 import io
 import dataclasses
 
-from typing import ByteString, Iterable, Optional
-
 from refinery.units import Arg, Unit
 from refinery.lib.tools import get_terminal_size, lookahead
+from refinery.lib.types import ByteStr, Iterable
 from refinery.lib import chunks
 
 
@@ -80,7 +79,7 @@ class HexDumpMetrics:
         return width
 
 
-def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterable[str]:
+def hexdump(data: ByteStr, metrics: HexDumpMetrics, colorize=False) -> Iterable[str]:
     hex_separator = metrics.hex_char_spacer
     txt_separator = metrics.txt_char_spacer
     hex_width = metrics.hex_column_width
@@ -121,7 +120,7 @@ def hexdump(data: ByteString, metrics: HexDumpMetrics, colorize=False) -> Iterab
                 skipped += repetitions - 1
                 repetitions = 0
 
-        if metrics.line_count and lno - skipped >= metrics.line_count:
+        if 0 < metrics.line_count <= lno - skipped:
             break
 
         blocks = chunks.unpack(chunk, metrics.block_size, metrics.big_endian)
@@ -206,7 +205,7 @@ class HexViewer(Unit, abstract=True):
             **kwargs
         )
 
-    def _get_metrics(self, data_size: int, line_count: Optional[int] = None, padding: int = 0) -> HexDumpMetrics:
+    def _get_metrics(self, data_size: int, line_count: int = 0, padding: int = 0) -> HexDumpMetrics:
         blocks = self.args.blocks
         metrics = HexDumpMetrics(
             self.args.width,
@@ -223,6 +222,6 @@ class HexViewer(Unit, abstract=True):
             metrics.fit_to_width()
         return metrics
 
-    def hexdump(self, data: ByteString, metrics: Optional[HexDumpMetrics] = None, colorize=False):
+    def hexdump(self, data: ByteStr, metrics: HexDumpMetrics | None = None, colorize=False):
         metrics = metrics or self._get_metrics(len(data))
         yield from hexdump(data, metrics, colorize)

@@ -5,16 +5,16 @@ from __future__ import annotations
 
 import re
 
-from typing import Iterable, Optional, Callable, Union, Tuple, ByteString, Dict, TYPE_CHECKING
 from itertools import islice
 from hashlib import blake2b
+from typing import overload, TYPE_CHECKING
 
-from refinery.lib.types import INF, AST, BufferOrStr
+from refinery.lib.types import INF, AST, BufferOrStr, ByteStr, Callable, Iterable
 from refinery.lib.argformats import regexp
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    MT = Tuple[int, re.Match[bytes]]
+    MT = tuple[int, re.Match[bytes]]
 
 
 class PatternExtractorBase(Unit, abstract=True):
@@ -47,7 +47,7 @@ class PatternExtractorBase(Unit, abstract=True):
             **keywords
         )
 
-    def matches(self, data: ByteString, pattern: Union[ByteString, re.Pattern]):
+    def matches(self, data: ByteStr, pattern: ByteStr | re.Pattern[bytes]):
         """
         Searches the input data for the given regular expression pattern. If the
         argument `utf16` is `True`, search for occurrences where a zero byte
@@ -88,12 +88,12 @@ class PatternExtractorBase(Unit, abstract=True):
     def _postfilter(self, matches: Iterable[MT]) -> Iterable[MT]:
         result = matches
         if self.args.longest and self.args.take and self.args.take is not INF:
-            try:
-                length = len(result)
-            except TypeError:
+            if not isinstance(result, (list, tuple)):
                 result = list(result)
-                length = len(result)
-            indices = sorted(range(length), key=lambda k: len(result[k][1][0]), reverse=True)
+            indices = sorted(
+                range(len(result)),
+                key=lambda k: len(result[k][1][0]),
+                reverse=True)
             for k in sorted(islice(indices, abs(self.args.take))):
                 yield result[k]
         elif self.args.longest:
@@ -106,23 +106,23 @@ class PatternExtractorBase(Unit, abstract=True):
 
     def matches_filtered(
         self,
-        data: ByteString,
-        pattern: Union[ByteString, re.Pattern],
-        *transforms: Optional[Iterable[Callable[[re.Match], Optional[Union[Dict, ByteString]]]]]
-    ) -> Iterable[Union[Dict, ByteString]]:
+        data: ByteStr,
+        pattern: ByteStr | re.Pattern,
+        *transforms: Callable[[re.Match[bytes]], ByteStr] | None
+    ):
         """
         This is a wrapper for `AbstractRegexUint.matches` which filters the
         results according to the given commandline arguments. Returns a
         dictionary mapping its position (start, end) in the input data to the
         filtered and transformed match that was found at this position.
         """
-        transforms = [(f if callable(f) else lambda _: f) for f in transforms]
-        transforms = transforms or [lambda m: m[0]]
+        tf = [(f if callable(f) else lambda _: f) for f in transforms]
+        tf = tf or [lambda m: m[0]]
 
         if self.args.stripspace:
             data = re.sub(BR'\s+', B'', data)
         for k, (offset, match) in enumerate(self.matchfilter(self.matches(memoryview(data), pattern))):
-            for transform in transforms:
+            for transform in tf:
                 t = transform(match)
                 if t is None:
                     continue
@@ -170,7 +170,7 @@ class RegexUnit(Unit, abstract=True):
             flags |= re.IGNORECASE
         super().__init__(flags=flags, fullmatch=fullmatch, **keywords)
 
-    def _make_matcher(self, pattern: Optional[BufferOrStr], default=None):
+    def _make_matcher(self, pattern: BufferOrStr | None, default=None):
         if pattern is None:
             return default
         if self.args.fullmatch:
@@ -178,7 +178,15 @@ class RegexUnit(Unit, abstract=True):
         else:
             return self._make_regex(pattern).search
 
-    def _make_regex(self, pattern: Optional[BufferOrStr]):
+    @overload
+    def _make_regex(self, pattern: None) -> None:
+        ...
+
+    @overload
+    def _make_regex(self, pattern: BufferOrStr) -> re.Pattern[bytes]:
+        ...
+
+    def _make_regex(self, pattern: BufferOrStr | None):
         if pattern is None:
             return None
         if isinstance(pattern, str):

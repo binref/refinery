@@ -5,20 +5,21 @@ from __future__ import annotations
 
 from abc import ABCMeta
 from io import BytesIO
-from typing import Any, ByteString, Iterable, List, Dict, Optional
 from collections import deque
+
+from refinery.lib.types import ByteStr, Iterable, Self
 
 
 class NodeMeta(ABCMeta):
-    def __new__(mcls, name, bases, namespace: Dict[str, Any]):
+    def __new__(mcls, name, bases, namespace: dict):
         namespace.setdefault('__slots__', tuple(namespace.get('__annotations__', ())))
         return ABCMeta.__new__(mcls, name, bases, namespace)
 
 
 class Node(metaclass=NodeMeta):
-    children: Dict[int, Node]
+    children: dict[int, Self]
     end: int
-    link: Optional[Node]
+    link: Node | None
     start: int
     tree: SuffixTree
 
@@ -28,7 +29,7 @@ class Node(metaclass=NodeMeta):
         self.children = {}
 
     @property
-    def label(self) -> ByteString:
+    def label(self) -> ByteStr:
         return self.tree.data[self.start:self.end + 1]
 
     @property
@@ -90,7 +91,8 @@ class Leaf(Node):
         self.link = tree.root
 
     @property
-    def end(self): return self.tree.cursor
+    def end(self):
+        return self.tree.cursor
 
 
 class Root(Node):
@@ -101,10 +103,10 @@ class Root(Node):
 
 class SuffixTree:
     root: Root
-    data: ByteString
+    data: ByteStr
     cursor: int
 
-    def __init__(self, data: ByteString):
+    def __init__(self, data: ByteStr):
         self.data = memoryview(data)
         self.root = Root(self)
 
@@ -113,7 +115,7 @@ class SuffixTree:
         self.end = None
         self.suffix_left = 0
         self.length_left = 0
-        self.leaves: List[Leaf] = []
+        self.leaves: list[Leaf] = []
 
         for self.cursor in range(len(self.data)):
             self.extend()

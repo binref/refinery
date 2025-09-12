@@ -9,7 +9,7 @@ from typing import NamedTuple, Optional
 import inspect
 import re
 
-from refinery.lib.types import CaseInsensitiveDict
+from refinery.lib.inno import CaseInsensitiveDict
 
 
 class IFPSParam(NamedTuple):

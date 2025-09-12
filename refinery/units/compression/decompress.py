@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from typing import ByteString, NamedTuple, Optional, Dict
-
 from enum import IntFlag
 
 from refinery.units import Arg, Unit, RefineryPartialResult
-from refinery.lib.types import INF
+from refinery.lib.types import INF, ByteStr, NamedTuple
 from refinery.lib.tools import normalize_to_display
 from refinery.lib.id import is_structured_data
 
 import colorama
+
+ByteStr = ByteStr
 
 if True:
     colorama.init()
@@ -142,7 +142,7 @@ class decompress(Unit):
             expand_limits=expand_limits,
             expand_factor=expand_factor,
         )
-        self.engines: Dict[str, Unit] = {}
+        self.engines: dict[str, Unit] = {}
         for mode in (
             MSCF_MODE.XPRESS,
             MSCF_MODE.XPRESS_HUFF,
@@ -188,10 +188,10 @@ class decompress(Unit):
             method: str
             engine: Unit
             rating: _R
-            result: Optional[ByteString] = None
+            result: ByteStr | None = None
             cutoff: int = 0
-            prefix: Optional[int] = None
-            magic: Optional[str] = None
+            prefix: int | None = None
+            magic: str | None = None
 
             def __str__(self):
                 status = self.rating.summary
@@ -224,12 +224,12 @@ class decompress(Unit):
             buffer = bytearray(1 + len(data))
             buffer[1:] = data
 
-        best_by_rating: Dict[_R, Decompression] = {}
+        best_by_rating: dict[_R, Decompression] = {}
 
         def best_current_rating():
             return max(best_by_rating, default=_R.InvalidData)
 
-        def decompress(method: str, engine: Unit, cutoff: int = 0, prefix: Optional[int] = None, careful: bool = False):
+        def decompress(method: str, engine: Unit, cutoff: int = 0, prefix: int | None = None, careful: bool = False):
             ingest = data[cutoff:]
             rating = _R.ValidData
             magic = None

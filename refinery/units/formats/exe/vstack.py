@@ -14,9 +14,9 @@ import re
 
 from refinery.units import Arg, Unit
 from refinery.lib.executable import Arch, Range
-from refinery.lib.types import bounds, INF
+from refinery.lib.types import INF
 from refinery.lib.meta import metavars
-from refinery.lib.tools import isbuffer, exception_to_string
+from refinery.lib.tools import isbuffer, exception_to_string, bounds
 from refinery.lib.intervals import MemoryIntervalUnion
 from refinery.lib.argformats import PythonExpression, ParserVariableMissing
 from refinery.lib.structures import StructReader
@@ -465,10 +465,10 @@ class vstack(Unit):
         if engine is _engine.speakeasy:
             flags |= Hook.ApiCall
 
-        base: type[Emulator] = cast('type[Emulator]', engine.value) \
+        ET: type[Emulator] = cast('type[Emulator]', engine.value) \
             if TYPE_CHECKING else engine.value
 
-        class Emu(base, VStackEmulatorMixin):
+        class Emu(ET, VStackEmulatorMixin):
             pass
 
         emu = Emu(

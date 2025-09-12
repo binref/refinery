@@ -1,14 +1,11 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+
 from functools import wraps
 from datetime import datetime
 
 from refinery.units import Executable, Unit, Arg
 from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.types import ByteStr
-
-if TYPE_CHECKING:
-    from typing import ByteString, Callable, Optional, Union, Type, Self
+from refinery.lib.types import ByteStr, Callable
 
 
 class MultipleArchives(Exception):
@@ -17,18 +14,21 @@ class MultipleArchives(Exception):
 
 class ArchiveExecutable(Executable):
 
-    def __init__(exe: Union[Self, Type[PathExtractorUnit]], name, bases, nmspc, **kwargs):
-        super(ArchiveExecutable, exe).__init__(name, bases, nmspc, **kwargs)
+    def __init__(cls, name, bases, nmspc, **kwargs):
+        super(ArchiveExecutable, cls).__init__(name, bases, nmspc, **kwargs)
 
-        carver = exe._carver()
+        carver = cls._carver()
 
         if carver is None:
             return
 
-        unpack = exe.unpack
+        if not issubclass(cls, PathExtractorUnit):
+            raise TypeError
+
+        unpack = cls.unpack
 
         @wraps(unpack)
-        def __unpack(self: PathExtractorUnit, data: ByteStr):
+        def __unpack(self, data: ByteStr):
             carved = data | carver
             try:
                 arc1 = next(carved)
@@ -54,9 +54,9 @@ class ArchiveExecutable(Executable):
                     result.path = F'archive{k}/{result.path}'
                     yield result
 
-        setattr(exe, 'unpack', __unpack)
+        setattr(cls, 'unpack', __unpack)
 
-    def _carver(cls) -> Optional[Unit]:
+    def _carver(cls) -> Unit | None:
         return None
 
 
@@ -101,8 +101,8 @@ class ArchiveUnit(PathExtractorUnit, metaclass=ArchiveExecutable, abstract=True)
     def _pack(
         self,
         path: str,
-        date: Optional[Union[datetime, str]],
-        data: Union[ByteString, Callable[[], ByteString]],
+        date: datetime | str | None,
+        data: ByteStr | Callable[[], ByteStr],
         **meta
     ) -> UnpackResult:
         if isinstance(date, datetime):

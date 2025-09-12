@@ -1,19 +1,93 @@
 """
-Exports two singletons `refinery.lib.types.INF` and `refinery.lib.types.AST`.
-Used by `refinery.units.pattern.PatternExtractorBase` as the default values
-for certain command line arguments.
+This module is used as a unified resource for various types that are primarily used for type hints.
+It also exports important singleton types used throughout refinery.
 """
 from __future__ import annotations
 
-from typing import Union, Tuple, Type, Dict, Any, Optional, List
-from collections.abc import MutableMapping
+from typing import Any, NamedTuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import (
+        Union,
+        Tuple,
+        Type,
+        Dict,
+        Optional,
+        List,
+        Self,
+        Collection,
+        Callable,
+        ClassVar,
+        Iterable,
+        Generator,
+    )
+
+    from os import PathLike as PathLike
+    from re import Pattern as Pattern
+    from enum import Enum
+    from pathlib import Path
+
+    FsPath = Union[str, Path, PathLike]
+    Option = Union[str, Enum]
+    Counts = Optional[int]
+    RegExp = Union[str, bytes, Pattern[str], Pattern[bytes]]
+    NumSeq = Union[int, Iterable[int]]
+    Number = Union[int, float]
+    Binary = Union[bytes, bytearray, memoryview]
+
+    ByteStr = Union[bytes, bytearray, memoryview]
+    BufferOrStr = Union[bytes, bytearray, memoryview, str]
+
+    JSON = Optional[Union[str, int, float, bool, Type[None], Dict[str, 'JSON'], List['JSON']]]
+    JSONDict = Dict[str, JSON]
+else:
+    Pattern = Any
+    FsPath = Any
+    Option = Any
+    Counts = Any
+    RegExp = Any
+    NumSeq = Any
+    Number = Any
+    Binary = Any
+    ByteStr = Any
+    BufferOrStr = Any
+    JSON = Any
+    JSONDict = Any
+
+    Callable = Any
+    ClassVar = Any
+    Collection = Any
+    Iterable = Any
+    Self = Any
+    Generator = Any
 
 
-ByteStr = Union[bytes, bytearray, memoryview]
-BufferOrStr = Union[bytes, bytearray, memoryview, str]
-
-JSON = Optional[Union[str, int, float, bool, Type[None], Dict[str, 'JSON'], List['JSON']]]
-JSONDict = Dict[str, JSON]
+__all__ = [
+    'Pattern',
+    'FsPath',
+    'Option',
+    'Counts',
+    'RegExp',
+    'NumSeq',
+    'Number',
+    'Binary',
+    'ByteStr',
+    'BufferOrStr',
+    'JSON',
+    'JSONDict',
+    'NamedTuple',
+    'Collection',
+    'Iterable',
+    'Self',
+    'Singleton',
+    'Generator',
+    'ClassVar',
+    'Callable',
+    'INF',
+    'AST',
+    'NoMask',
+    'RepeatedInteger',
+]
 
 
 class Singleton(type):
@@ -114,50 +188,6 @@ A wildcard object which is equal to everything.
 """
 
 
-class bounds:
-    """
-    Can be used to specify certain upper and lower bounds. For example, the following is `True`:
-
-        5 in bounds[3:5]
-
-    This is notably different from how a `range` object functions since the upper bound is included
-    in the valid range.
-    """
-
-    def __class_getitem__(cls, bounds):
-        return cls(bounds)
-
-    def __init__(self, bounds: slice[int, int, int]):
-        start, stop, step = bounds.start, bounds.stop, bounds.step
-        for field in (start, stop, step):
-            if field is not None and not isinstance(field, int):
-                raise TypeError(field)
-        self.min = start or 0
-        self.max = stop
-        self.inc = step or 1
-        if self.max is None:
-            self.max = INF
-        if self.max < self.min:
-            raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')
-        if self.inc < 0:
-            raise ValueError('Negative step size not supported for range expressions.')
-
-    def __iter__(self):
-        k = self.min
-        m = self.max
-        i = self.inc
-        while k <= m:
-            yield k
-            k += i
-
-    def __contains__(self, value: int):
-        if value < self.min:
-            return False
-        if value > self.max:
-            return False
-        return (value - self.min) % self.inc == 0
-
-
 class _NoMask(metaclass=Singleton):
     def __rand__(self, other):
         return other
@@ -180,52 +210,3 @@ class RepeatedInteger(int):
     """
     def __iter__(self): return self
     def __next__(self): return self
-
-
-class CaseInsensitiveDict(MutableMapping):
-
-    def __init__(self, data=None, **kwargs):
-        if isinstance(data, CaseInsensitiveDict):
-            self._fold = dict(data._fold)
-            self._dict = dict(data._dict)
-        else:
-            self._fold = dict()
-            self._dict = dict()
-            self.update(data or {}, **kwargs)
-
-    def __setitem__(self, key: str, value):
-        kci = key.casefold()
-        self._fold[kci] = key
-        self._dict[key] = value
-
-    def __getitem__(self, key: str):
-        return self._dict[self._fold[key.casefold()]]
-
-    def __delitem__(self, key: str):
-        kci = key.casefold()
-        key = self._fold[kci]
-        del self._fold[kci]
-        del self._dict[key]
-
-    def __iter__(self):
-        return iter(self._dict)
-
-    def __len__(self):
-        return len(self._dict)
-
-    def casefold(self):
-        for kci, key in self._fold.items():
-            yield (kci, self._dict[key])
-
-    def __eq__(self, other):
-        try:
-            other = CaseInsensitiveDict(other)
-        except Exception:
-            return False
-        return dict(self.casefold()) == dict(other.casefold())
-
-    def copy(self):
-        return CaseInsensitiveDict(self)
-
-    def __repr__(self):
-        return repr(self._dict)

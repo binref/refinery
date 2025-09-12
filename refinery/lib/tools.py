@@ -610,3 +610,47 @@ def convert(x: _T | Any, t: Type[_T]) -> _T:
     Convert the given object `x` to the type `t`.
     """
     return x if isinstance(x, t) else t(x) # type:ignore
+
+
+class bounds:
+    """
+    Can be used to specify certain upper and lower bounds. For example, the following is `True`:
+
+        5 in bounds[3:5]
+
+    This is notably different from how a `range` object functions since the upper bound is included
+    in the valid range, and it is also permitted to be `None` for an unbounded range.
+    """
+
+    def __class_getitem__(cls, bounds: slice):
+        return cls(bounds)
+
+    def __init__(self, bounds: slice[int, int | None, int | None]):
+        start, stop, step = bounds.start, bounds.stop, bounds.step
+        for field in (start, stop, step):
+            if field is not None and not isinstance(field, int):
+                raise TypeError(field)
+        self.min = start or 0
+        self.max = stop
+        self.inc = step or 1
+        if stop and stop < self.min:
+            raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')
+        if self.inc < 0:
+            raise ValueError('Negative step size not supported for range expressions.')
+
+    def __iter__(self):
+        k = self.min
+        i = self.inc
+        if m := self.max:
+            while k <= m:
+                yield k
+                k += i
+        else:
+            yield from itertools.count(k, i)
+
+    def __contains__(self, value: int):
+        if value < self.min:
+            return False
+        if (m := self.max) and value > m:
+            return False
+        return (value - self.min) % self.inc == 0

@@ -5,18 +5,8 @@ from __future__ import annotations
 
 import abc
 
-from typing import (
-    Any,
-    ByteString,
-    ClassVar,
-    Iterable,
-    Optional,
-    Collection,
-    Type,
-)
-
 from refinery.lib.tools import isbuffer
-from refinery.lib.types import ByteStr
+from refinery.lib.types import ByteStr, Collection, Iterable, ClassVar, Any
 
 from refinery.lib.crypto import (
     pad,
@@ -41,7 +31,7 @@ from refinery.units import (
 
 class CipherUnit(Unit, abstract=True):
 
-    key_size: Optional[Collection[int]] = None
+    key_size: Collection[int] | None = None
     block_size: int
 
     def __init__(self, key: Arg(help='The encryption key.'), **keywords):
@@ -155,10 +145,10 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         raise NotImplementedError
 
     @property
-    def iv(self) -> ByteString:
+    def iv(self) -> ByteStr:
         return self.args.iv or bytes(self.block_size)
 
-    def _default_padding(self) -> Optional[str]:
+    def _default_padding(self) -> str | None:
         return self.args.padding
 
     def reverse(self, data: Chunk) -> ByteStr:
@@ -193,14 +183,14 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
 
 class StandardCipherExecutable(Executable):
 
-    _available_block_cipher_modes: Type[Option]
-    _cipher_factory: Optional[CipherObjectFactory]
+    _available_block_cipher_modes: type[Option]
+    _cipher_factory: CipherObjectFactory | None
 
-    def __new__(mcs, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
+    def __new__(mcs, name, bases, nmspc, cipher: CipherObjectFactory | None = None):
         keywords: dict = dict(abstract=(cipher is None))
         return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
 
-    def __init__(_class, name, bases, nmspc, cipher: Optional[CipherObjectFactory] = None):
+    def __init__(_class, name, bases, nmspc, cipher: CipherObjectFactory | None = None):
         abstract = cipher is None
         super(StandardCipherExecutable, _class).__init__(name, bases, nmspc, abstract=abstract)
         _class._cipher_factory = cipher
@@ -241,9 +231,9 @@ class StandardCipherExecutable(Executable):
 
 class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
 
-    _available_block_cipher_modes: ClassVar[Type[Option]]
+    _available_block_cipher_modes: ClassVar[type[Option]]
     _cipher_factory: ClassVar[CipherObjectFactory]
-    _cipher_interface: Optional[CipherInterface] = None
+    _cipher_interface: CipherInterface | None = None
 
     def _new_cipher(self, **optionals) -> CipherInterface:
         self.log_info(lambda: F'encryption key: {self.args.key.hex()}')
@@ -261,7 +251,7 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
         return self._get_cipher().block_size
 
     @property
-    def key_size(self) -> Optional[Collection[int]]:
+    def key_size(self) -> Collection[int] | None:
         return self._get_cipher().key_size
 
     def encrypt(self, data: Chunk) -> ByteStr:
@@ -322,7 +312,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             **keywords
         )
 
-    def _default_padding(self) -> Optional[str]:
+    def _default_padding(self) -> str | None:
         padding = super()._default_padding()
         if padding is not None:
             return padding
@@ -357,7 +347,7 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         return self._get_cipher().block_size
 
     @property
-    def key_size(self) -> Optional[Collection[int]]:
+    def key_size(self) -> Collection[int] | None:
         return self._get_cipher().key_size
 
     def _new_cipher(self, **optionals) -> CipherInterface:

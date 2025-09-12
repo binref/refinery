@@ -4,8 +4,8 @@ Pure Python implementation of the RABBIT stream cipher.
 from __future__ import annotations
 
 import struct
-from typing import Iterable, Optional, ByteString, List
 
+from refinery.lib.types import Iterable, ByteStr
 from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 
@@ -13,16 +13,16 @@ class RabbitCipher:
 
     _COUNTER = 0x4D34D34D, 0xD34D34D3, 0x34D34D34
 
-    def __init__(self, key: ByteString, iv: Optional[ByteString] = B''):
-        key = struct.unpack('<8H', key)
-        self.c: List[int] = []
-        self.x: List[int] = []
+    def __init__(self, key: ByteStr, iv: ByteStr | None = B''):
+        _key = struct.unpack('<8H', key)
+        self.c: list[int] = []
+        self.x: list[int] = []
         for j in range(8):
             v1, v2, w1, w2 = (
-                key[j + 0 & 7],
-                key[j + 1 & 7],
-                key[j + 4 & 7],
-                key[j + 5 & 7]
+                _key[j + 0 & 7],
+                _key[j + 1 & 7],
+                _key[j + 4 & 7],
+                _key[j + 5 & 7],
             )
             if j % 2 == 0:
                 self.c.append((w1 << 16) | w2)
@@ -42,12 +42,12 @@ class RabbitCipher:
         self.hop4()
 
     def hop4(self):
-        self.hop(False)
-        self.hop(False)
-        self.hop(False)
-        self.hop(False)
+        self.hop()
+        self.hop()
+        self.hop()
+        self.hop()
 
-    def hop(self, derive=True):
+    def hop(self):
         for k in range(8):
             self.b += self.c[k] + self._COUNTER[k % 3]
             self.b, self.c[k] = divmod(self.b, 0x100000000)
@@ -61,8 +61,6 @@ class RabbitCipher:
                 self.x[j + 1 & 7] += self.r08(g[j])
                 self.x[j + 2 & 7] += self.r16(g[j])
         self.x = [t & 0xFFFFFFFF for t in self.x]
-        if derive:
-            return self.key
 
     @staticmethod
     def _compute_g(a, b):
@@ -70,10 +68,12 @@ class RabbitCipher:
         return (t ^ (t >> 32)) & 0xFFFFFFFF
 
     @staticmethod
-    def r08(y): return ((y & 0x00FFFFFF) << 0x08) | (y >> 0x18)
+    def r08(y):
+        return ((y & 0x00FFFFFF) << 0x08) | (y >> 0x18)
 
     @staticmethod
-    def r16(y): return ((y & 0x0000FFFF) << 0x10) | (y >> 0x10)
+    def r16(y):
+        return ((y & 0x0000FFFF) << 0x10) | (y >> 0x10)
 
     @property
     def key(self) -> bytes:
@@ -82,7 +82,9 @@ class RabbitCipher:
         return struct.pack('<8H', *s)
 
     def __iter__(self):
-        while True: yield from self.hop()
+        while True:
+            self.hop()
+            yield from self.key
 
 
 class rabbit(StreamCipherUnit):

@@ -3,7 +3,7 @@ A simple tool to queue binary data as one or more chunks in the current frame.
 """
 from __future__ import annotations
 
-from typing import ByteString, Iterable, Generator, Union
+from refinery.lib.types import Iterable, Generator
 from refinery.units import Arg, Unit, Chunk
 
 
@@ -16,10 +16,10 @@ class QueueUnit(Unit, abstract=True):
     ))):
         super().__init__(data=data)
 
-    def act(self, data: Union[Chunk, ByteString]):
+    def act(self, data: Chunk):
         yield data
 
-    def _queue(self, chunks: Iterable[Chunk], front: bool) -> Generator[Chunk, None, None]:
+    def _queue(self, chunks: Iterable[Chunk], front: bool) -> Generator[Chunk]:
         it = iter(chunks)
 
         try:

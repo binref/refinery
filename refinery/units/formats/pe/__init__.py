@@ -3,13 +3,13 @@ A package containing Portable Executable (PE) file related units.
 """
 from __future__ import annotations
 
-from typing import Union, ByteString
 from refinery.units import Arg, Unit
 from refinery.lib import lief
+from refinery.lib.types import ByteStr
 
 
 def get_pe_size(
-    pe: Union[lief.PE.Binary, ByteString],
+    pe: ByteStr | lief.PE.Binary,
     overlay=True,
     sections=True,
     directories=True,

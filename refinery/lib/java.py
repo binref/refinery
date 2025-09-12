@@ -4,7 +4,7 @@ Parsing of the Java Class file format as per
 """
 from __future__ import annotations
 
-from typing import Union, Any, Dict, List, ByteString, Type, Optional, TypeVar, Generic
+from typing import Union, Any, Dict, List, Type, Optional, TypeVar, Generic
 from enum import IntEnum
 
 from refinery.lib.structures import (
@@ -14,6 +14,7 @@ from refinery.lib.structures import (
     Struct,
     StructReader,
 )
+from refinery.lib.types import ByteStr
 
 __all__ = (
     'opc',
@@ -638,7 +639,7 @@ class JvClassFile(Struct):
             raise ValueError('Failed parsing Attributes.')
 
     @staticmethod
-    def decode_utf8m(string: ByteString) -> str:
+    def decode_utf8m(string: ByteStr) -> str:
         """
         Based on the following code:
         https://gist.github.com/BarelyAliveMau5/000e7e453b6d4ebd0cb06f39bc2e7aec

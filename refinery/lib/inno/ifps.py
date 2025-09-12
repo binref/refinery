@@ -29,7 +29,7 @@ from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents
-from refinery.lib.types import CaseInsensitiveDict
+from refinery.lib.inno import CaseInsensitiveDict
 
 _E = TypeVar('_E', bound=Type[enum.Enum])
 _C = TypeVar('_C', bound=Type)

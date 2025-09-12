@@ -36,7 +36,7 @@ from time import process_time
 from urllib.parse import unquote
 from datetime import datetime, timedelta
 
-from refinery.lib.types import CaseInsensitiveDict
+from refinery.lib.inno import CaseInsensitiveDict
 from refinery.lib.inno.archive import InnoArchive, Flags
 from refinery.lib.types import AST, INF, NoMask
 from refinery.lib.patterns import formats
