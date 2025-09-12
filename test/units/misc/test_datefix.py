@@ -18,6 +18,7 @@ class TestDateFix(TestUnitBase):
         self.assertEqual(b'2023-02-28 00:00:00', unit(b'02/28/2023'))
         self.assertEqual(b'2023-02-28 12:12:12', unit(b'02/28/2023 12:12:12'))
         self.assertEqual(b'2027-03-31 00:00:00', unit(b'Wed Mar 31 00:00:00 UTC 2027'))
+        self.assertEqual(b'2021-12-02 00:32:49', unit(b'2021-12-02T00:32:49.000Z'))
 
     def test_dates_dos(self):
         unit = self.load(dos=True)
