@@ -9,7 +9,7 @@ from itertools import islice
 from hashlib import blake2b
 from typing import overload, TYPE_CHECKING
 
-from refinery.lib.types import INF, AST, BufferOrStr, ByteStr, Callable, Iterable
+from refinery.lib.types import INF, AST, ByteStr, Callable, Iterable
 from refinery.lib.argformats import regexp
 from refinery.units import Arg, Unit
 
@@ -170,7 +170,7 @@ class RegexUnit(Unit, abstract=True):
             flags |= re.IGNORECASE
         super().__init__(flags=flags, fullmatch=fullmatch, **keywords)
 
-    def _make_matcher(self, pattern: BufferOrStr | None, default=None):
+    def _make_matcher(self, pattern: str | ByteStr | None, default=None):
         if pattern is None:
             return default
         if self.args.fullmatch:
@@ -183,10 +183,10 @@ class RegexUnit(Unit, abstract=True):
         ...
 
     @overload
-    def _make_regex(self, pattern: BufferOrStr) -> re.Pattern[bytes]:
+    def _make_regex(self, pattern: str | ByteStr) -> re.Pattern[bytes]:
         ...
 
-    def _make_regex(self, pattern: BufferOrStr | None):
+    def _make_regex(self, pattern: str | ByteStr | None):
         if pattern is None:
             return None
         if isinstance(pattern, str):
