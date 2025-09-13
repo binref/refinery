@@ -82,7 +82,10 @@ def load_macho(data: Binary) -> MachO.FatBinary | MachO.Binary:
         if parsed := MachO.parse(stream):
             return parsed
         stream.seek(0)
-        return lib.parse(stream)
+        exe = lib.parse(stream)
+        if not isinstance(exe, (MachO.FatBinary, MachO.Binary)):
+            raise TypeError
+        return exe
 
 
 def load(data: Binary):
