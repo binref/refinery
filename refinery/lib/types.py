@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     Number = Union[int, float]
     Binary = Union[bytes, bytearray, memoryview]
 
-    JSON = Optional[Union[str, int, float, bool, Type[None], Dict[str, 'JSON'], List['JSON']]]
+    JSON = Optional[Union[str, int, float, bool, dict[str, 'JSON'], list['JSON']]]
     JSONDict = Dict[str, JSON]
 else:
     Pattern = Any

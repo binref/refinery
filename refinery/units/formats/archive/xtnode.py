@@ -31,7 +31,7 @@ class JSONReader(StructReader):
             value.append(char)
         return value | esc | str
 
-    def read_json(self) -> Optional[JSON]:
+    def read_json(self) -> JSON:
         while self.u8() not in b'[{':
             pass
         self.seekrel(-1)
