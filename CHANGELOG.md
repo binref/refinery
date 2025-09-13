@@ -5,6 +5,11 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.4
+- The `decompress` unit was extended with a new heuristic tier:
+  If any decompression produces output that is recognized as matching a known format,
+  the unit will pick the best result from among all results with this property.
+
 ## Version 0.9.3 - bugfix release
 
 ## Version 0.9.2
