@@ -170,7 +170,7 @@ class RegexUnit(Unit, abstract=True):
             flags |= re.IGNORECASE
         super().__init__(flags=flags, fullmatch=fullmatch, **keywords)
 
-    def _make_matcher(self, pattern: str | Binary | None, default=None):
+    def _make_matcher(self, pattern: str | Binary | re.Pattern[str] | re.Pattern[bytes] | None, default=None):
         if pattern is None:
             return default
         if self.args.fullmatch:
@@ -183,12 +183,16 @@ class RegexUnit(Unit, abstract=True):
         ...
 
     @overload
-    def _make_regex(self, pattern: str | Binary) -> re.Pattern[bytes]:
+    def _make_regex(self, pattern: str | Binary | re.Pattern[str] | re.Pattern[bytes]) -> re.Pattern[bytes]:
         ...
 
-    def _make_regex(self, pattern: str | Binary | None):
+    def _make_regex(
+        self, pattern: str | Binary | re.Pattern[str] | re.Pattern[bytes] | None
+    ) -> re.Pattern[bytes] | None:
         if pattern is None:
             return None
+        if isinstance(pattern, re.Pattern):
+            pattern = pattern.pattern
         if isinstance(pattern, str):
             pattern = pattern.encode(self.codec)
         elif not isinstance(pattern, bytes):
