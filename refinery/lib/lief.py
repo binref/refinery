@@ -106,12 +106,14 @@ def load(data: Binary):
         return lib.parse(stream)
 
 
-def string(value: str | bytes) -> str:
+def string(value: str | Binary) -> str:
     """
     A function to convert LIEF values to a string, regardless of whether it is exposed as bytes
     or string by the foreign interface.
     """
     if not isinstance(value, str):
+        if isinstance(value, memoryview):
+            value = bytes(value)
         value, _, _ = value.partition(B'\0')
         value = value.decode('utf8')
     return value
