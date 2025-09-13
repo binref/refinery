@@ -86,8 +86,9 @@ class LatinCipher(ABC):
             hi = hi + 1 & 0xFFFFFFFF
         self.state[self._idx_count] = self.counter = lo, hi
 
+    @staticmethod
     @abstractmethod
-    def quarter(self, x: List[int], a: int, b: int, c: int, d: int):
+    def quarter(x: List[int], a: int, b: int, c: int, d: int):
         raise NotImplementedError
 
     def permute(self, x: List[int]):
