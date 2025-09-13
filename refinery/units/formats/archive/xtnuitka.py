@@ -3,7 +3,7 @@ from typing import Iterable, Optional
 
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.structures import StructReader, Struct
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 
 
 class xtnuitka(PathExtractorUnit):
@@ -17,7 +17,7 @@ class xtnuitka(PathExtractorUnit):
         import pyzstd
         return pyzstd
 
-    def unpack(self, data: ByteStr) -> Iterable[UnpackResult]:
+    def unpack(self, data: Binary) -> Iterable[UnpackResult]:
         class NuitkaData(Struct):
             unit = self
 
@@ -59,7 +59,7 @@ class xtnuitka(PathExtractorUnit):
                 yield UnpackResult(path, data)
 
     @classmethod
-    def handles(cls, data: ByteStr) -> Optional[bool]:
+    def handles(cls, data: Binary) -> Optional[bool]:
         if data[:2] == b'MZ':
             try:
                 next(cls._pe_candidates(data))
@@ -69,7 +69,7 @@ class xtnuitka(PathExtractorUnit):
             return data[:2] == cls._MAGIC
 
     @classmethod
-    def _pe_candidates(cls, data: ByteStr):
+    def _pe_candidates(cls, data: Binary):
 
         from refinery.units.formats.pe.peoverlay import peoverlay
         blob = data | peoverlay | bytearray

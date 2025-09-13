@@ -34,7 +34,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from collections.abc import Buffer
-    from refinery.lib.types import ByteStr
+    from refinery.lib.types import Binary
 
     T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
     B = TypeVar('B', bound=Union[bytearray, bytes, memoryview], default=T)
@@ -64,7 +64,7 @@ class EOF(EOFError):
     While reading from a `refinery.lib.structures.MemoryFile`, less bytes were available than
     requested. The exception contains the data from the incomplete read.
     """
-    def __init__(self, rest: ByteStr = B''):
+    def __init__(self, rest: Binary = B''):
         super().__init__('Unexpected end of buffer.')
         self.rest = rest
 

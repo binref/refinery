@@ -10,7 +10,7 @@ from refinery.units.formats import UnpackResult, PathExtractorUnit, Arg
 from refinery.lib import lief
 from refinery.lib.lcid import LCID
 from refinery.lib.structures import Struct, StructReader
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 
 
 class RSRC(enum.IntEnum):
@@ -139,7 +139,7 @@ class perc(PathExtractorUnit):
         lcid = pid.get(sid, 0)
         return LCID.get(lcid)
 
-    def _handle_bitmap(self, extract_raw_data: Callable[[], ByteStr]) -> ByteStr:
+    def _handle_bitmap(self, extract_raw_data: Callable[[], Binary]) -> Binary:
         def extract():
             bitmap = extract_raw_data()
             total = (len(bitmap) + 14).to_bytes(4, 'little')
@@ -149,9 +149,9 @@ class perc(PathExtractorUnit):
     def _handle_icon(
         self,
         pe: lief.PE.Binary,
-        extract_raw_data: Callable[[], ByteStr],
+        extract_raw_data: Callable[[], Binary],
         parts: Tuple[RSRC, int, int]
-    ) -> ByteStr:
+    ) -> Binary:
         try:
             icondir = self._get_icon_dir(pe)
             index = int(parts[1]) - 1

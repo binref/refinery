@@ -8,7 +8,7 @@ from typing import List, Union, Sequence, Optional, Iterable, Tuple, Type, TypeV
 
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
 from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 
 
 class LatinCipher(ABC):
@@ -20,12 +20,7 @@ class LatinCipher(ABC):
     _round_access_pattern: Tuple[Tuple[int, int, int, int], ...]
 
     @classmethod
-    def FromState(cls, state: Union[Sequence[int], ByteStr]):
-        try:
-            state = struct.unpack('<16L', state)
-        except TypeError:
-            pass
-        state: List[int] = list(state)
+    def FromState(cls, state: Union[Sequence[int], Binary]):
         if len(state) != 16:
             raise ValueError('State must contain 16 DWORDs')
         key = struct.pack(
@@ -38,7 +33,7 @@ class LatinCipher(ABC):
             '<2L', *state[cls._idx_count]), 'little')
         return cls(key, nonce, magic, counter=count)
 
-    def __init__(self, key: ByteStr, nonce: ByteStr, magic: Optional[ByteStr] = None, rounds: int = 20, counter: int = 0):
+    def __init__(self, key: Binary, nonce: Binary, magic: Optional[Binary] = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
             key = 2 * key
         elif len(key) != 32:
@@ -131,11 +126,11 @@ _X = TypeVar('_X', bound=LatinCipher)
 def LatinX(
     cipher: Type[_X],
     blocks: Iterable[int],
-    key: ByteStr,
-    kdn: ByteStr,
-    kdp: ByteStr,
-    nonce: ByteStr,
-    magic: ByteStr,
+    key: Binary,
+    kdn: Binary,
+    kdp: int,
+    nonce: Binary,
+    magic: Binary,
     rounds: int,
     offset: int,
 ) -> _X:

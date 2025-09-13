@@ -9,7 +9,7 @@ from itertools import islice
 from hashlib import blake2b
 from typing import overload, TYPE_CHECKING
 
-from refinery.lib.types import INF, AST, ByteStr, Callable, Iterable
+from refinery.lib.types import INF, AST, Binary, Callable, Iterable
 from refinery.lib.argformats import regexp
 from refinery.units import Arg, Unit
 
@@ -47,7 +47,7 @@ class PatternExtractorBase(Unit, abstract=True):
             **keywords
         )
 
-    def matches(self, data: ByteStr, pattern: ByteStr | re.Pattern[bytes]):
+    def matches(self, data: Binary, pattern: Binary | re.Pattern[bytes]):
         """
         Searches the input data for the given regular expression pattern. If the
         argument `utf16` is `True`, search for occurrences where a zero byte
@@ -106,9 +106,9 @@ class PatternExtractorBase(Unit, abstract=True):
 
     def matches_filtered(
         self,
-        data: ByteStr,
-        pattern: ByteStr | re.Pattern,
-        *transforms: Callable[[re.Match[bytes]], ByteStr] | None
+        data: Binary,
+        pattern: Binary | re.Pattern,
+        *transforms: Callable[[re.Match[bytes]], Binary] | None
     ):
         """
         This is a wrapper for `AbstractRegexUint.matches` which filters the
@@ -170,7 +170,7 @@ class RegexUnit(Unit, abstract=True):
             flags |= re.IGNORECASE
         super().__init__(flags=flags, fullmatch=fullmatch, **keywords)
 
-    def _make_matcher(self, pattern: str | ByteStr | None, default=None):
+    def _make_matcher(self, pattern: str | Binary | None, default=None):
         if pattern is None:
             return default
         if self.args.fullmatch:
@@ -183,10 +183,10 @@ class RegexUnit(Unit, abstract=True):
         ...
 
     @overload
-    def _make_regex(self, pattern: str | ByteStr) -> re.Pattern[bytes]:
+    def _make_regex(self, pattern: str | Binary) -> re.Pattern[bytes]:
         ...
 
-    def _make_regex(self, pattern: str | ByteStr | None):
+    def _make_regex(self, pattern: str | Binary | None):
         if pattern is None:
             return None
         if isinstance(pattern, str):

@@ -8,7 +8,7 @@ from refinery.units.formats.archive import Arg, ArchiveUnit, UnpackResult
 from refinery.units.encoding.esc import esc
 from refinery.lib.structures import StructReader
 from refinery.lib.patterns import formats
-from refinery.lib.types import ByteStr, JSON
+from refinery.lib.types import Binary, JSON
 from refinery.units.pattern.carve_json import JSONCarver
 
 
@@ -73,7 +73,7 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             list=list, join_path=join_path, drop_path=drop_path, fuzzy=fuzzy, exact=exact, regex=regex,
             path=path, date=date)
 
-    def unpack(self, data: ByteStr) -> Iterable[UnpackResult]:
+    def unpack(self, data: Binary) -> Iterable[UnpackResult]:
         if self._is_nexe(data):
             self.log_info('unpacking as nexe')
             yield from self._unpack_nexe(data)
@@ -83,7 +83,7 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             yield from self._unpack_pkg(data)
             return
 
-    def _unpack_nexe(self, data: ByteStr):
+    def _unpack_nexe(self, data: Binary):
         try:
             ep = re.compile(
                 RB"entry\s*=\s*path\.resolve\(path\.dirname\(process\.execPath\),\s*(%s)\)" % formats.string)
@@ -124,7 +124,7 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         continue
                     yield UnpackResult(path, blob[offset:end])
 
-    def _unpack_pkg(self, data: ByteStr):
+    def _unpack_pkg(self, data: Binary):
         def _extract_coordinates(*v: bytes):
             for name in v:
                 pattern = name + BR'''\s{0,3}=\s{0,3}(['"])([\s\d]+)\1'''
@@ -204,11 +204,11 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 yield UnpackResult(path, data)
 
     @classmethod
-    def _is_nexe(cls, data: ByteStr) -> bool:
+    def _is_nexe(cls, data: Binary) -> bool:
         return cls._NEXE_SENTINEL in data
 
     @classmethod
-    def _is_pkg(cls, data: ByteStr) -> bool:
+    def _is_pkg(cls, data: Binary) -> bool:
         if cls._PKG_PAYLOAD_P not in data:
             return False
         if cls._PKG_PAYLOAD_S not in data:
@@ -222,5 +222,5 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         return True
 
     @classmethod
-    def handles(cls, data: ByteStr) -> Optional[bool]:
+    def handles(cls, data: Binary) -> Optional[bool]:
         return cls._is_nexe(data) or cls._is_pkg(data)

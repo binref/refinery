@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import struct
 
-from refinery.lib.types import Iterable, ByteStr
+from refinery.lib.types import Iterable, Binary
 from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 
@@ -13,7 +13,7 @@ class RabbitCipher:
 
     _COUNTER = 0x4D34D34D, 0xD34D34D3, 0x34D34D34
 
-    def __init__(self, key: ByteStr, iv: ByteStr | None = B''):
+    def __init__(self, key: Binary, iv: Binary | None = B''):
         _key = struct.unpack('<8H', key)
         self.c: list[int] = []
         self.x: list[int] = []

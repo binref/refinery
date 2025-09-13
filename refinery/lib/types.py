@@ -35,8 +35,6 @@ if TYPE_CHECKING:
     Number = Union[int, float]
     Binary = Union[bytes, bytearray, memoryview]
 
-    ByteStr = Union[bytes, bytearray, memoryview]
-
     JSON = Optional[Union[str, int, float, bool, Type[None], Dict[str, 'JSON'], List['JSON']]]
     JSONDict = Dict[str, JSON]
 else:
@@ -48,7 +46,6 @@ else:
     NumSeq = Any
     Number = Any
     Binary = Any
-    ByteStr = Any
     JSON = Any
     JSONDict = Any
 
@@ -69,7 +66,6 @@ __all__ = [
     'NumSeq',
     'Number',
     'Binary',
-    'ByteStr',
     'JSON',
     'JSONDict',
     'NamedTuple',

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from types import CodeType
     from typing import cast, Callable, Dict, List, Tuple, Optional, Set, Union, Generator, Iterable
     from xdis import Instruction
-    from refinery.lib.types import ByteStr
+    from refinery.lib.types import Binary
 
 
 class Unmarshal(enum.IntEnum):
@@ -57,7 +57,7 @@ class Code(NamedTuple):
     code_objects: dict
 
 
-def extract_code_from_buffer(buffer: ByteStr, file_name: Optional[str] = None) -> Generator[Code, None, None]:
+def extract_code_from_buffer(buffer: Binary, file_name: Optional[str] = None) -> Generator[Code, None, None]:
     code_objects = {}
     file_name = file_name or '<unknown>'
     load = xdis.load.load_module_from_file_object
@@ -81,7 +81,7 @@ def disassemble_code(code: CodeType, version=None) -> Iterable[Instruction]:
     return xdis.std.Bytecode(code, opc=opc)
 
 
-def decompile_buffer(buffer: Union[Code, ByteStr], file_name: Optional[str] = None) -> ByteStr:
+def decompile_buffer(buffer: Union[Code, Binary], file_name: Optional[str] = None) -> Binary:
     errors = ''
     python = ''
 
@@ -184,15 +184,15 @@ class PzType(enum.IntEnum):
 class PiMeta:
     type: PiType
     name: str
-    data: Union[Callable[[], ByteStr], ByteStr]
+    data: Union[Callable[[], Binary], Binary]
 
-    def unpack(self) -> ByteStr:
+    def unpack(self) -> Binary:
         if callable(self.data):
             self.data = self.data()
         return self.data
 
 
-def make_decompiled_item(name: str, data: ByteStr, *magics) -> PiMeta:
+def make_decompiled_item(name: str, data: Binary, *magics) -> PiMeta:
 
     def extract(data=data, magics=magics):
         error = None
@@ -551,5 +551,5 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             yield self._pack(name, None, file.data, type=file.type.name)
 
     @classmethod
-    def handles(cls, data: ByteStr) -> Optional[bool]:
+    def handles(cls, data: Binary) -> Optional[bool]:
         return PyInstallerArchiveEpilogue.MagicSignature in data

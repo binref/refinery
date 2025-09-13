@@ -9,7 +9,7 @@ from refinery.units import Unit
 from refinery.units.formats.pe.dotnet import CodePath
 from refinery.lib.dotnet.header import DotNetHeader, NetMetaDataTables
 from refinery.lib.structures import StructReader
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 
 
 class dnarrays(Unit):
@@ -53,7 +53,7 @@ class dnarrays(Unit):
         ){4,}
         ''', flags=re.DOTALL)
 
-    def _str_arrays(self, data: ByteStr, header: DotNetHeader, tables: NetMetaDataTables):
+    def _str_arrays(self, data: Binary, header: DotNetHeader, tables: NetMetaDataTables):
         for match in self._STACK_ARRAY_PATTERN_STR.finditer(data):
             reader = StructReader(match[0])
             result: list[str] = []
@@ -91,7 +91,7 @@ class dnarrays(Unit):
         ){4,}
         ''', flags=re.DOTALL)
 
-    def _int_arrays(self, data: ByteStr, header: DotNetHeader, tables: NetMetaDataTables):
+    def _int_arrays(self, data: Binary, header: DotNetHeader, tables: NetMetaDataTables):
         for match in self._STACK_ARRAY_PATTERN_INT.finditer(data):
             self.log_info(F'int array pattern at 0x{match.start():X}')
             reader = StructReader(match[0])

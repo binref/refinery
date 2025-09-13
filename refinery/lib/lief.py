@@ -9,43 +9,25 @@ import lief as lib
 if True:
     lib.logging.disable()
 
-from lief import (
-    MachO,
-    PE,
-    ELF,
-    Binary,
-    Relocation,
-    Header,
-    Symbol,
-    Section,
-)
+from refinery.lib.types import Binary
 
-from refinery.lib.types import ByteStr
+MachO = lib.MachO
+PE = lib.PE
+ELF = lib.ELF
+AbstractBinary = lib.Binary
+Relocation = lib.Relocation
+Header = lib.Header
+Symbol = lib.Symbol
+Section = lib.Section
+
 
 __pdoc__ = {_forward: False for _forward in [
-    'MachO', 'PE', 'ELF', 'Binary', 'Header', 'Symbol', 'Section', 'Relocation'
+    'MachO', 'PE', 'ELF', 'AbstractBinary', 'Header', 'Symbol', 'Section', 'Relocation'
 ]}
-
-__all__ = [
-    'load',
-    'load_pe',
-    'load_pe_fast',
-    'load_macho',
-    'string',
-    'lib',
-    'MachO',
-    'PE',
-    'ELF',
-    'Binary',
-    'Relocation',
-    'Header',
-    'Symbol',
-    'Section',
-]
 
 
 def load_pe(
-    data: ByteStr,
+    data: Binary,
     parse_exports: bool = True,
     parse_imports: bool = True,
     parse_reloc: bool = True,
@@ -71,7 +53,7 @@ def load_pe(
 
 
 def load_pe_fast(
-    data: ByteStr,
+    data: Binary,
     parse_exports: bool = False,
     parse_imports: bool = False,
     parse_reloc: bool = False,
@@ -92,7 +74,7 @@ def load_pe_fast(
     )
 
 
-def load_macho(data: ByteStr) -> MachO.FatBinary | MachO.Binary:
+def load_macho(data: Binary) -> MachO.FatBinary | MachO.Binary:
     """
     Load a MachO file using LIEF.
     """
@@ -103,7 +85,7 @@ def load_macho(data: ByteStr) -> MachO.FatBinary | MachO.Binary:
         return lib.parse(stream)
 
 
-def load(data: ByteStr):
+def load(data: Binary):
     """
     Load a PE, ELF, or MachO executable using LIEF. The function first attempts to parse the file
     based on its first 4 bytes using a specific LIEF parser and reverts to LIEF's general purpose

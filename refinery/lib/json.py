@@ -11,7 +11,7 @@ import json
 import re
 import uuid
 
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 
 
 class JSONEncoderExMeta(type):
@@ -107,7 +107,7 @@ class BytesEncoder(JSONEncoderEx):
     def handled(cls, obj) -> bool:
         return cls._is_byte_array(obj) or super().handled(obj)
 
-    def encode_bytes(self, obj: ByteStr):
+    def encode_bytes(self, obj: Binary):
         raise NotImplementedError
 
     def default(self, obj):
@@ -120,7 +120,7 @@ class BytesAsArrayEncoder(BytesEncoder):
     """
     This JSON Encoder encodes byte strings as arrays of integers.
     """
-    def encode_bytes(self, obj: ByteStr):
+    def encode_bytes(self, obj: Binary):
         return self.encode_raw('[{}]'.format(','.join(str(b & 0xFF) for b in obj)))
 
 
@@ -128,7 +128,7 @@ class BytesAsStringEncoder(BytesEncoder):
     """
     This JSON Encoder encodes byte strings as escaped strings.
     """
-    def encode_bytes(self, obj: ByteStr):
+    def encode_bytes(self, obj: Binary):
         if not isinstance(obj, (bytes, bytearray)):
             if not isinstance(obj, memoryview):
                 obj = (b & 0xFF for b in obj)

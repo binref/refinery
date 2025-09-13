@@ -197,7 +197,7 @@ from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.frame import generate_frame_header, Framed, Chunk, MAGIC, MSIZE
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 from refinery.lib.dependencies import dependency_accessor
 
 from refinery.lib.exceptions import (
@@ -213,7 +213,7 @@ if TYPE_CHECKING:
     from argparse import _MutuallyExclusiveGroup
     from io import BufferedReader, BufferedWriter
 
-    DataType = TypeVar('DataType', bound=ByteStr)
+    DataType = TypeVar('DataType', bound=Binary)
     ProcType = Callable[['Unit', Chunk], Optional[Union[DataType, Iterable[DataType]]]]
 
     ByteIO = MemoryFile[DataType]
@@ -842,9 +842,9 @@ class ArgumentSpecification(OrderedDict):
         self[dest] = argument
 
 
-def _UnitProcessorBoilerplate(operation: ProcType[ByteStr]) -> ProcType[Chunk]:
+def _UnitProcessorBoilerplate(operation: ProcType[Binary]) -> ProcType[Chunk]:
     @wraps(operation)
-    def wrapped(self: Unit, data: Optional[ByteStr]) -> Optional[Union[Chunk, Iterable[Chunk]]]:
+    def wrapped(self: Unit, data: Optional[Binary]) -> Optional[Union[Chunk, Iterable[Chunk]]]:
         if data is None:
             data = Chunk()
         elif not isinstance(data, Chunk):
@@ -1244,14 +1244,14 @@ class UnitBase(metaclass=Executable, abstract=True):
     """
 
     @abc.abstractmethod
-    def process(self, data: Chunk, /) -> None | ByteStr | Iterable[ByteStr]:
+    def process(self, data: Chunk, /) -> None | Binary | Iterable[Binary]:
         """
         This routine is overridden by children of `refinery.units.Unit` to define how
         the unit processes a given chunk of binary data.
         """
 
     @MissingFunction.Wrap
-    def reverse(self, data: Chunk, /) -> Union[Optional[ByteStr], Iterable[ByteStr]]:
+    def reverse(self, data: Chunk, /) -> Union[Optional[Binary], Iterable[Binary]]:
         """
         If this routine is overridden by children of `refinery.units.Unit`, then it must
         implement an operation that reverses the `refinery.units.Unit.process` operation.
@@ -1298,11 +1298,11 @@ class Unit(UnitBase, abstract=True):
     required_dependencies: Optional[Set[str]] = None
     optional_dependencies: Optional[Dict[str, Set[str]]] = None
 
-    _buffer: ByteStr
+    _buffer: Binary
     _source: Optional[BinaryIO]
     _target: Optional[BinaryIO]
     _framed: Optional[Framed]
-    _chunks: Optional[Iterator[Union[ByteStr, Chunk]]]
+    _chunks: Optional[Iterator[Union[Binary, Chunk]]]
     console: bool
 
     @property
@@ -1454,7 +1454,7 @@ class Unit(UnitBase, abstract=True):
         """
         return getattr(self.args, 'lenient', 0)
 
-    def _exception_handler(self, exception: BaseException, data: Optional[ByteStr]):
+    def _exception_handler(self, exception: BaseException, data: Optional[Binary]):
         if isinstance(exception, RefineryPartialResult):
             if self.leniency >= 1:
                 return exception.partial
@@ -1645,15 +1645,15 @@ class Unit(UnitBase, abstract=True):
         str,
         Chunk,
         tuple[Chunk],
-        tuple[ByteStr],
+        tuple[Binary],
         tuple[str],
         list[Chunk],
-        list[ByteStr],
+        list[Binary],
         list[str],
         BinaryIO,
         Unit,
         BufferedReader,
-        ByteStr,
+        Binary,
         None
     ]):
         if stream is None:
@@ -1661,7 +1661,7 @@ class Unit(UnitBase, abstract=True):
         if isinstance(stream, Chunk):
             stream = [stream]
         if isinstance(stream, (list, tuple)):
-            def tochunk(t: str | ByteStr | Chunk):
+            def tochunk(t: str | Binary | Chunk):
                 if isinstance(t, str):
                     t = t.encode(self.codec)
                 return t if isinstance(t, Chunk) else Chunk(t)
@@ -1710,7 +1710,7 @@ class Unit(UnitBase, abstract=True):
     def __or__(self, stream: Union[Unit, Type[Unit]]) -> Unit: ...
 
     @overload
-    def __or__(self, stream: Callable[[ByteStr], _T]) -> _T: ...
+    def __or__(self, stream: Callable[[Binary], _T]) -> _T: ...
 
     @overload
     def __or__(self, stream: Dict[str, Type[Ellipsis]]) -> Dict[str, bytearray]: ...
@@ -1740,7 +1740,7 @@ class Unit(UnitBase, abstract=True):
         Type[None],
         Type[bytearray],
         Type[str],
-        Callable[[ByteStr], _T],
+        Callable[[Binary], _T],
         Unit,
         Type[Unit],
         Dict[str, type],
@@ -1952,7 +1952,7 @@ class Unit(UnitBase, abstract=True):
         finally:
             cls.logger_locked = False
 
-    def __call__(self, data: Optional[Union[ByteStr, Chunk]] = None) -> ByteStr:
+    def __call__(self, data: Optional[Union[Binary, Chunk]] = None) -> Binary:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
@@ -1965,11 +1965,11 @@ class Unit(UnitBase, abstract=True):
 
     @classmethod
     @overload
-    def labelled(cls, ___br___data: Chunk | ByteStr, **meta) -> Chunk:
+    def labelled(cls, ___br___data: Chunk | Binary, **meta) -> Chunk:
         ...
 
     @classmethod
-    def labelled(cls, ___br___data: Chunk | ByteStr | None, **meta) -> Chunk | None:
+    def labelled(cls, ___br___data: Chunk | Binary | None, **meta) -> Chunk | None:
         """
         This class method can be used to label a chunk of binary output with metadata. This
         metadata will be visible inside pipeline frames, see `refinery.lib.frame`.
@@ -1982,7 +1982,7 @@ class Unit(UnitBase, abstract=True):
             ___br___data.meta.update(meta)
         return ___br___data
 
-    def process(self, data: Chunk, /) -> Union[Optional[ByteStr], Generator[ByteStr, None, None]]:
+    def process(self, data: Chunk, /) -> Union[Optional[Binary], Generator[Binary, None, None]]:
         return data
 
     @classmethod

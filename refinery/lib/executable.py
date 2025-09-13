@@ -20,7 +20,7 @@ from enum import Enum
 from functools import lru_cache
 
 from refinery.lib import lief
-from refinery.lib.types import INF, ByteStr
+from refinery.lib.types import INF, Binary
 from refinery.lib.shared import capstone as cs
 
 if TYPE_CHECKING:
@@ -309,7 +309,7 @@ class Executable(ABC):
     An abstract representation of a parsed executable in memory.
     """
 
-    _data: ByteStr
+    _data: Binary
     _head: AnyLIEF
     _base: Optional[int]
     _type: ET
@@ -317,7 +317,7 @@ class Executable(ABC):
     blob: ClassVar[bool] = False
 
     @classmethod
-    def Load(cls: Type[_T], data: ByteStr, base: Optional[int] = None) -> _T:
+    def Load(cls: Type[_T], data: Binary, base: Optional[int] = None) -> _T:
         """
         Uses the `refinery.lib.executable.exeroute` function to parse the input data with one of
         the following specializations of this class:
@@ -330,7 +330,7 @@ class Executable(ABC):
             raise ValueError('LIEF was unable to parse the input.')
         return LIEF(parsed, data, base)
 
-    def __init__(self, head: AnyLIEF, data: ByteStr, base: Optional[int] = None):
+    def __init__(self, head: AnyLIEF, data: Binary, base: Optional[int] = None):
         self._data = data
         self._head = head
         self._base = base
@@ -394,7 +394,7 @@ class Executable(ABC):
         return self.data[box.physical.position:end]
 
     @staticmethod
-    def ascii(string: Union[str, ByteStr]) -> str:
+    def ascii(string: Union[str, Binary]) -> str:
         """
         If the input `string` is a `str` instance, the function returns the input value. Byte
         strings are truncated to the first occurrence of a null byte and then decoded using
@@ -695,7 +695,7 @@ class LIEF(Executable):
     _type: Union[ET.PE, ET.ELF, ET.MachO]
 
     @property
-    def _lh(self) -> lief.Binary:
+    def _lh(self) -> lief.AbstractBinary:
         return self._first_header.abstract
 
     @property
@@ -707,7 +707,7 @@ class LIEF(Executable):
 
     @property
     def _type(self):
-        EF = lief.Binary.FORMATS
+        EF = lief.AbstractBinary.FORMATS
         HF = self._lh.format
         if HF is EF.UNKNOWN:
             raise AttributeError('Unknown executable type.')

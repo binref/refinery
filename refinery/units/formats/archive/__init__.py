@@ -5,7 +5,7 @@ from datetime import datetime
 
 from refinery.units import Executable, Unit, Arg
 from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.types import ByteStr, Callable
+from refinery.lib.types import Binary, Callable
 
 
 class MultipleArchives(Exception):
@@ -28,7 +28,7 @@ class ArchiveExecutable(Executable):
         unpack = cls.unpack
 
         @wraps(unpack)
-        def __unpack(self, data: ByteStr):
+        def __unpack(self, data: Binary):
             carved = data | carver
             try:
                 arc1 = next(carved)
@@ -102,7 +102,7 @@ class ArchiveUnit(PathExtractorUnit, metaclass=ArchiveExecutable, abstract=True)
         self,
         path: str,
         date: datetime | str | None,
-        data: ByteStr | Callable[[], ByteStr],
+        data: Binary | Callable[[], Binary],
         **meta
     ) -> UnpackResult:
         if isinstance(date, datetime):

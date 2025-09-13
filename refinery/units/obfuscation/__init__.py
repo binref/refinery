@@ -9,7 +9,7 @@ from zlib import crc32
 
 from refinery.units import Arg, Unit, Chunk, RefineryPartialResult
 from refinery.lib.decorators import unicoded
-from refinery.lib.types import ByteStr, Callable
+from refinery.lib.types import Binary, Callable
 
 
 __all__ = [
@@ -70,7 +70,7 @@ class IterativeDeobfuscator(Deobfuscator, abstract=True):
         super().__init__()
         self.args.timeout = timeout
 
-    def process(self, data: Chunk) -> ByteStr:
+    def process(self, data: Chunk) -> Binary:
         previous = crc32(data)
         for _ in range(self.args.timeout):
             try:

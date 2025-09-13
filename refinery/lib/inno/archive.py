@@ -29,7 +29,7 @@ from refinery.lib.structures import Struct, StructReader
 
 from refinery.lib.tools import exception_to_string, one
 from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.inno.ifps import IFPSFile
 
@@ -652,7 +652,7 @@ class TSetupOffsets(Struct):
 
 @dataclasses.dataclass
 class InnoFile:
-    reader: StructReader[ByteStr]
+    reader: StructReader[Binary]
     version: InnoVersion
     meta: SetupDataEntry
     path: str = ""
@@ -716,7 +716,7 @@ class InnoFile:
     def filtered(self):
         return bool(self.meta.Flags & SetupDataEntryFlags.CallInstructionOptimized)
 
-    def check(self, data: ByteStr):
+    def check(self, data: Binary):
         t = self.checksum_type
         if t == CheckSumType.Missing:
             return None
@@ -2690,7 +2690,7 @@ class InnoArchive:
 
         return data
 
-    def _filter_new(self, data: ByteStr, flip_high_byte=False):
+    def _filter_new(self, data: Binary, flip_high_byte=False):
         try:
             import numpy as np
         except ImportError:
@@ -2742,7 +2742,7 @@ class InnoArchive:
             out[offset - 4:offset] = addresses[k * 4:(k + 1) * 4]
         return out
 
-    def _filter_new_fallback(self, data: ByteStr, flip_high_byte=False):
+    def _filter_new_fallback(self, data: Binary, flip_high_byte=False):
         block_size = 0x10000
         out = bytearray(data)
         i = 0
@@ -2764,7 +2764,7 @@ class InnoArchive:
         return out
 
     @staticmethod
-    def _filter_old(data: ByteStr):
+    def _filter_old(data: Binary):
         if not isinstance(data, bytearray):
             data = bytearray(data)
         addr_bytes_left = 0

@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import IntFlag
 
 from refinery.units import Arg, Unit, RefineryPartialResult
-from refinery.lib.types import INF, ByteStr, NamedTuple
+from refinery.lib.types import INF, Binary, NamedTuple
 from refinery.lib.tools import normalize_to_display
 from refinery.lib.id import is_structured_data
 
@@ -186,7 +186,7 @@ class decompress(Unit):
             method: str
             engine: Unit
             rating: _R
-            result: ByteStr | None = None
+            result: Binary | None = None
             cutoff: int = 0
             prefix: int | None = None
             magic: str | None = None

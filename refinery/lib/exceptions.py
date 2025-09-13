@@ -3,14 +3,14 @@ This module exposes exceptions used by refinery.
 """
 from __future__ import annotations
 
-from refinery.lib.types import Collection, ByteStr
+from refinery.lib.types import Collection, Binary
 
 
 class RefineryPartialResult(ValueError):
     """
     This exception indicates that a partial result is available.
     """
-    def __init__(self, message: str, partial: ByteStr, rest: ByteStr | None = None):
+    def __init__(self, message: str, partial: Binary, rest: Binary | None = None):
         super().__init__(message)
         self.message = message
         self.partial = partial

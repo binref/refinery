@@ -9,7 +9,7 @@ import importlib
 
 from refinery.units import Arg, Unit
 from refinery.lib.argformats import number
-from refinery.lib.types import ByteStr
+from refinery.lib.types import Binary
 
 from enum import Enum
 from typing import Callable, TYPE_CHECKING, cast
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from typing import Protocol
 
     class _Hash(Protocol):
-        def update(self, data: ByteStr): ...
-        def digest(self) -> ByteStr: ...
+        def update(self, data: Binary): ...
+        def digest(self) -> Binary: ...
         def hexdigest(self) -> str: ...
 
     class _HashModule(Protocol):
@@ -40,7 +40,7 @@ class HASH(str, Enum):
     SHA384 = 'SHA384'
 
 
-def multidecode(data: ByteStr, function: Callable[[str], ByteStr]) -> ByteStr:
+def multidecode(data: Binary, function: Callable[[str], Binary]) -> Binary:
     for codec in ['utf8', 'latin1', 'cp1252']:
         try:
             return function(data.decode(codec))

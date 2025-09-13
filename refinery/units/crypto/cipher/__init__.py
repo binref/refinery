@@ -6,7 +6,7 @@ from __future__ import annotations
 import abc
 
 from refinery.lib.tools import isbuffer
-from refinery.lib.types import ByteStr, Collection, Iterable, ClassVar, Any
+from refinery.lib.types import Binary, Collection, Iterable, ClassVar, Any
 
 from refinery.lib.crypto import (
     pad,
@@ -38,14 +38,14 @@ class CipherUnit(Unit, abstract=True):
         super().__init__(key=key, **keywords)
 
     @abc.abstractmethod
-    def decrypt(self, data: Chunk) -> ByteStr:
+    def decrypt(self, data: Chunk) -> Binary:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def encrypt(self, data: Chunk) -> ByteStr:
+    def encrypt(self, data: Chunk) -> Binary:
         raise NotImplementedError
 
-    def process(self, data: Chunk) -> ByteStr:
+    def process(self, data: Chunk) -> Binary:
         ks = self.key_size
         if ks and len(self.args.key) not in ks:
             import itertools
@@ -67,7 +67,7 @@ class CipherUnit(Unit, abstract=True):
             raise ValueError(F'the given key has an invalid length of {len(self.args.key)} bytes; {msg}{pt}')
         return self.decrypt(data)
 
-    def reverse(self, data: Chunk) -> ByteStr:
+    def reverse(self, data: Chunk) -> Binary:
         return self.encrypt(data)
 
 
@@ -145,13 +145,13 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
         raise NotImplementedError
 
     @property
-    def iv(self) -> ByteStr:
+    def iv(self) -> Binary:
         return self.args.iv or bytes(self.block_size)
 
     def _default_padding(self) -> str | None:
         return self.args.padding
 
-    def reverse(self, data: Chunk) -> ByteStr:
+    def reverse(self, data: Chunk) -> Binary:
         padding = self._default_padding()
         if padding is not None:
             self.log_info('padding method:', padding)
@@ -159,7 +159,7 @@ class BlockCipherUnitBase(CipherUnit, abstract=True):
                 pad(data, self.block_size, padding)
         return super().reverse(data)
 
-    def process(self, data: Chunk) -> ByteStr:
+    def process(self, data: Chunk) -> Binary:
         padding = self._default_padding()
         result = self.labelled(super().process(data))
         if padding is None:
@@ -254,12 +254,12 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
     def key_size(self) -> Collection[int] | None:
         return self._get_cipher().key_size
 
-    def encrypt(self, data: Chunk) -> ByteStr:
+    def encrypt(self, data: Chunk) -> Binary:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
         return cipher.encrypt(data)
 
-    def decrypt(self, data: Chunk) -> ByteStr:
+    def decrypt(self, data: Chunk) -> Binary:
         cipher = self._get_cipher(True)
         assert cipher.block_size == self.block_size
         try:
