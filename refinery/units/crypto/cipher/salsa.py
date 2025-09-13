@@ -17,7 +17,16 @@ class LatinCipher(ABC):
     _idx_key32: slice
     _idx_nonce: slice
     _idx_count: slice
-    _round_access_pattern: Tuple[Tuple[int, int, int, int], ...]
+    _round_access_pattern: Tuple[
+        Tuple[int, int, int, int],
+        Tuple[int, int, int, int],
+        Tuple[int, int, int, int],
+        Tuple[int, int, int, int],
+        Tuple[int, int, int, int],
+        Tuple[int, int, int, int],
+        Tuple[int, int, int, int],
+        Tuple[int, int, int, int],
+    ]
 
     @classmethod
     def FromState(cls, state: Union[Sequence[int], Binary]):
@@ -109,7 +118,7 @@ class SalsaCipher(LatinCipher):
         (0x0, 0x1, 0x2, 0x3),
         (0x5, 0x6, 0x7, 0x4),
         (0xA, 0xB, 0x8, 0x9),
-        (0xF, 0xC, 0xD, 0xE)
+        (0xF, 0xC, 0xD, 0xE),
     )
 
     @staticmethod
