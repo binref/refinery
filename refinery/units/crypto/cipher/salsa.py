@@ -9,6 +9,7 @@ from typing import List, Union, Sequence, Optional, Iterable, Tuple, Type, TypeV
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
 from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
 from refinery.lib.types import Binary
+from refinery.lib.tools import asbuffer
 
 
 class LatinCipher(ABC):
@@ -30,6 +31,10 @@ class LatinCipher(ABC):
 
     @classmethod
     def FromState(cls, state: Union[Sequence[int], Binary]):
+        if b := asbuffer(state):
+            state = struct.unpack('<16L', b)
+        else:
+            state = list(state)
         if len(state) != 16:
             raise ValueError('State must contain 16 DWORDs')
         key = struct.pack(
@@ -44,7 +49,7 @@ class LatinCipher(ABC):
 
     def __init__(self, key: Binary, nonce: Binary, magic: Optional[Binary] = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
-            key = 2 * key
+            key = 2 * bytes(key)
         elif len(key) != 32:
             raise ValueError('The key must be of length 16 or 32.')
         if rounds % 2:
@@ -53,16 +58,13 @@ class LatinCipher(ABC):
             nonce = bytearray(8)
         elif len(nonce) != 8:
             raise ValueError('The nonce must be of length 8.')
-        if magic:
-            if len(magic) != 16:
-                raise ValueError('The initialization magic must be 16 bytes in length.')
-        elif len(key) == 16:
-            magic = B'expand 16-byte k'
-        elif len(key) == 32:
-            magic = B'expand 32-byte k'
-        key = struct.unpack('<8L', key)
-        self.key16 = key[:4]
-        self.key32 = key[4:]
+        if not magic:
+            magic = B'expand %d-byte k' % len(key)
+        elif len(magic) != 16:
+            raise ValueError('The initialization magic must be 16 bytes in length.')
+        _key = struct.unpack('<8L', key)
+        self.key16 = _key[:4]
+        self.key32 = _key[4:]
         self.magic = struct.unpack('<4L', magic)
         self.nonce = struct.unpack('<2L', nonce)
         self.state: List[int] = [0] * 4 * 4
