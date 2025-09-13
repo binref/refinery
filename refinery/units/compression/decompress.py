@@ -9,8 +9,6 @@ from refinery.lib.id import is_structured_data
 
 import colorama
 
-ByteStr = ByteStr
-
 if True:
     colorama.init()
 
