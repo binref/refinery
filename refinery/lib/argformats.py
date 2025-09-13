@@ -1605,7 +1605,7 @@ class DelayedNumberArgument(DelayedArgument):
         if self.min is not None and value < self.min or self.max is not None and value > self.max:
             a = '-∞' if self.min is None else self.min
             b = u'∞' if self.max is None else self.max
-            raise ArgumentTypeError(F'value {value} is out of bounds [{a}, {b}]')
+            raise ArgumentTypeError(F'value {value} is out of bounds [{a},{b}]')
         return value
 
     def default_handler(self, expression: str) -> int:

@@ -4,16 +4,11 @@ It also exports important singleton types used throughout refinery.
 """
 from __future__ import annotations
 
-from typing import Any, NamedTuple, TYPE_CHECKING
+from typing import Annotated, Any, NamedTuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import (
         Union,
-        Tuple,
-        Type,
-        Dict,
-        Optional,
-        List,
         Self,
         Collection,
         Callable,
@@ -27,16 +22,14 @@ if TYPE_CHECKING:
     from enum import Enum
     from pathlib import Path
 
+    Binary = Union[bytes, bytearray, memoryview]
     FsPath = Union[str, Path, PathLike]
     Option = Union[str, Enum]
-    Counts = Optional[int]
-    RegExp = Union[str, bytes, Pattern[str], Pattern[bytes]]
+    RegExp = Union[str, Binary, Pattern[str], Pattern[bytes]]
     NumSeq = Union[int, Iterable[int]]
-    Number = Union[int, float]
-    Binary = Union[bytes, bytearray, memoryview]
 
-    JSON = Optional[Union[str, int, float, bool, dict[str, 'JSON'], list['JSON']]]
-    JSONDict = Dict[str, JSON]
+    JSON = Union[str, int, float, bool, None, dict[str, 'JSON'], list['JSON']]
+    JSONDict = dict[str, JSON]
 else:
     Pattern = Any
     FsPath = Any
@@ -61,13 +54,12 @@ __all__ = [
     'Pattern',
     'FsPath',
     'Option',
-    'Counts',
     'RegExp',
     'NumSeq',
-    'Number',
     'Binary',
     'JSON',
     'JSONDict',
+    'Annotated',
     'NamedTuple',
     'Collection',
     'Iterable',
@@ -88,7 +80,7 @@ class Singleton(type):
     A metaclass that can be used to define singleton classes.
     """
 
-    def __new__(cls, name: str, bases: Tuple[Type, ...], namespace: Dict[str, Any]):
+    def __new__(cls, name: str, bases: tuple[type, ...], namespace: dict[str, Any]):
         import sys
 
         def __repr__(self):
