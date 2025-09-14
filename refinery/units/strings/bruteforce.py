@@ -61,16 +61,15 @@ class bruteforce(Unit):
         )
 
     def _alphabet(self) -> bytes:
-        alphabet = self.args.alphabet
-        if alphabet:
+        if (alphabet := self.args.alphabet):
             return alphabet
-        alphabet = bytes(range(0x100))
-        pattern = self.args.pattern
-        if not pattern:
+        else:
+            alphabet = bytes(range(0x100))
+        if not (pattern := self.args.pattern):
             return alphabet
-        alphabet = B''.join(re.findall(pattern, alphabet, flags=re.DOTALL))
-        if alphabet:
-            return alphabet
+        if isinstance((regex := Arg.AsRegExp(self.codec, pattern, flags=re.DOTALL)), re.Pattern):
+            if (alphabet := B''.join(regex.findall(alphabet))):
+                return alphabet
         raise ValueError(F'Invalid regular expression: {pattern}')
 
     def process(self, data: bytearray):

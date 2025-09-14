@@ -172,31 +172,11 @@ class RegexUnit(Unit, abstract=True):
     def _make_matcher(self, pattern: str | Binary | re.Pattern[str] | re.Pattern[bytes] | None, default=None):
         if pattern is None:
             return default
+        regex = Arg.AsRegExp(self.codec, pattern, self.args.flags)
         if self.args.fullmatch:
-            return self._make_regex(pattern).fullmatch
+            return regex.fullmatch
         else:
-            return self._make_regex(pattern).search
-
-    @overload
-    def _make_regex(self, pattern: None) -> None:
-        ...
-
-    @overload
-    def _make_regex(self, pattern: str | Binary | re.Pattern[str] | re.Pattern[bytes]) -> re.Pattern[bytes]:
-        ...
-
-    def _make_regex(
-        self, pattern: str | Binary | re.Pattern[str] | re.Pattern[bytes] | None
-    ) -> re.Pattern[bytes] | None:
-        if pattern is None:
-            return None
-        if isinstance(pattern, re.Pattern):
-            pattern = pattern.pattern
-        if isinstance(pattern, str):
-            pattern = pattern.encode(self.codec)
-        elif not isinstance(pattern, bytes):
-            pattern = bytes(pattern)
-        return re.compile(pattern, flags=self.args.flags)
+            return regex.search
 
 
 class SingleRegexUnit(RegexUnit, abstract=True):
