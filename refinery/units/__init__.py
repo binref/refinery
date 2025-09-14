@@ -149,7 +149,7 @@ import sys
 
 from abc import ABCMeta
 from enum import Enum
-from functools import wraps
+from functools import wraps, partial
 from collections import OrderedDict
 from threading import Lock
 
@@ -550,12 +550,14 @@ class Arg(Argument):
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
         metavar : Union[Type[omit], str] = omit,
+        check   : bool = True,
         group   : Optional[str] = None,
     ):
         """
         Used to add argparse arguments that contain a numeric sequence.
         """
-        return cls(*args, group=group, help=help, nargs=nargs, dest=dest, type=numseq, metavar=metavar)
+        t = numseq if check else partial(numseq, typecheck=False)
+        return cls(*args, group=group, help=help, nargs=nargs, dest=dest, type=t, metavar=metavar)
 
     @classmethod
     def Bounds(

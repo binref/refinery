@@ -4,7 +4,6 @@ import math
 import re
 
 from refinery.units import Arg, Unit
-from refinery.lib.argformats import numseq
 
 
 _DEFAULT_ALPH_STR = R'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -23,7 +22,7 @@ class base(Unit):
     """
     def __init__(
         self,
-        base: Arg(type=numseq, metavar='base|alphabet', help=(
+        base: Arg.NumSeq(metavar='base|alphabet', help=(
             R'Either the base to be used or an alphabet. If an explicit alphabet is given, its length '
             R'determines the base. The default base 0 treats the input as a Python integer literal. If '
             F'a numeric base is given, digits from the alphabet "{_DEFAULT_ALPH_STR}" are used. ')) = 0,

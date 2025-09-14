@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import itertools
-import functools
 
 from refinery.units import Arg, Unit, Chunk
-from refinery.lib.argformats import numseq
 from refinery.lib.tools import isbuffer, typename
 from refinery.lib.meta import check_variable_name
 
@@ -19,8 +17,9 @@ class put(Unit):
     def __init__(
         self,
         name : Arg(help='The name of the variable to be used.', type=str),
-        value: Arg(help='The value for the variable. If no value is given, the entire current chunk is stored.',
-            type=functools.partial(numseq, typecheck=False)) = _EMPTY
+        value: Arg.NumSeq(check=False, help=(
+            'The value for the variable. If no value is given, the entire current chunk is stored.'
+        )) = _EMPTY
     ):
         super().__init__(name=check_variable_name(name), value=value)
 

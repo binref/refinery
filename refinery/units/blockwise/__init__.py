@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from functools import cached_property
 
 from refinery.units import Arg, Unit
-from refinery.lib.argformats import numseq
 from refinery.lib import chunks
 from refinery.lib.tools import infinitize
 from refinery.lib.inline import iterspread
@@ -163,7 +162,7 @@ class BlockTransformation(BlockTransformationBase, abstract=True):
 
 class ArithmeticUnit(BlockTransformation, abstract=True):
 
-    def __init__(self, *argument: Arg(type=numseq, help=(
+    def __init__(self, *argument: Arg.NumSeq(help=(
         'A single numeric expression which provides the right argument to the operation, '
         'where the left argument is each block in the input data. This argument can also '
         'contain a sequence of bytes which is then split into blocks of the same size as '
