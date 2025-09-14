@@ -198,8 +198,8 @@ class SingleRegexUnit(RegexUnit, abstract=True):
 
     @property
     def regex(self):
-        return self._make_regex(self.args.regex)
+        return Arg.AsRegExp(self.codec, self.args.regex, self.args.flags)
 
     @property
     def matcher(self):
-        return self._make_matcher(self.args.regex)
+        return Arg.AsRegExp(self.codec, self.args.regex, self.args.flags)
