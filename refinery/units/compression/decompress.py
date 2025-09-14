@@ -4,7 +4,7 @@ from enum import IntFlag
 
 from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.types import INF, Binary, NamedTuple
-from refinery.lib.tools import normalize_to_display
+from refinery.lib.tools import bounds, normalize_to_display
 from refinery.lib.id import is_structured_data
 
 import colorama
@@ -112,7 +112,7 @@ class decompress(Unit):
             'is a "too good to be true" heuristic against algorithms like lznt1 '
             'that can produce false positives. The default is {default}.')
         ) = 0.0001,
-        expand_limits: Arg.Bounds('-d', range=True, metavar='a:b', help=(
+        expand_limits: Arg.Bounds('-d', metavar='a:b', help=(
             'Ratio limits are expanded for sizes of input data in the given range, '
             'the default being 0:0x100. The reason for this is that small buffers '
             'can increase in size when compressed under many formats. Set this to :0 '
@@ -181,6 +181,7 @@ class decompress(Unit):
     def process(self, data):
 
         data = memoryview(data)
+        tiny = bounds[self.args.expand_limits]
 
         class Decompression(NamedTuple):
             method: str
@@ -264,7 +265,7 @@ class decompress(Unit):
             strict = self.args.strict_limits
             max_ratio = self.args.max_ratio
             min_ratio = self.args.min_ratio
-            if not strict and len(data) in self.args.expand_limits:
+            if not strict and len(data) in tiny:
                 max_ratio *= self.args.expand_factor
                 min_ratio /= self.args.expand_factor
             if (strict or not known) and not (min_ratio <= ratio <= max_ratio):

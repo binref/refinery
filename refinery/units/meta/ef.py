@@ -11,7 +11,7 @@ from typing import Iterable, Dict, Set, Optional
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import exception_to_string
+from refinery.lib.tools import bounds, exception_to_string
 from refinery.units import Arg, Unit
 
 
@@ -40,7 +40,7 @@ class ef(Unit):
         meta: Arg.Switch('-m', help=(
             'Adds the atime, mtime, ctime, and size metadata variables.'
         )) = False,
-        size: Arg.Bounds('-s', range=True, help=(
+        size: Arg.Bounds('-s', help=(
             'If specified, only files are read whose size is in the given range.')) = None,
         read: Arg.Number('-r', help=(
             'If specified, files will be read in chunks of size N and each '
@@ -174,7 +174,7 @@ class ef(Unit):
     def process(self, data):
         meta = metavars(data)
         size = self.args.size
-        size = size and range(size.start, size.stop, size.step)
+        size = size and bounds[size]
         meta.ghost = True
         wild = (os.name == 'nt' or self.args.wild) and not self.args.tame
         root = self._absolute_path('.')

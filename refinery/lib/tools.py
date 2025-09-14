@@ -17,7 +17,7 @@ from typing import Callable, Generator, Iterable, Optional, Tuple, TypeVar, Any,
 from math import log
 from enum import IntFlag, Enum
 
-from refinery.lib.types import Binary
+from refinery.lib.types import INF, Binary
 
 _T = TypeVar('_T')
 
@@ -612,7 +612,7 @@ def convert(x: _T | Any, t: Type[_T]) -> _T:
     return x if isinstance(x, t) else t(x) # type:ignore
 
 
-class bounds:
+class BoundsType:
     """
     Can be used to specify certain upper and lower bounds. For example, the following is `True`:
 
@@ -621,9 +621,10 @@ class bounds:
     This is notably different from how a `range` object functions since the upper bound is included
     in the valid range, and it is also permitted to be `None` for an unbounded range.
     """
+    __name__ = 'bounds'
 
-    def __class_getitem__(cls, bounds: slice):
-        return cls(bounds)
+    def __getitem__(self, k: slice):
+        return BoundsType(k)
 
     def __init__(self, bounds: slice[int, int | None, int | None]):
         start, stop, step = bounds.start, bounds.stop, bounds.step
@@ -631,7 +632,7 @@ class bounds:
             if field is not None and not isinstance(field, int):
                 raise TypeError(field)
         self.min = start or 0
-        self.max = stop
+        self.max = stop or INF
         self.inc = step or 1
         if stop and stop < self.min:
             raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')
@@ -641,12 +642,12 @@ class bounds:
     def __iter__(self):
         k = self.min
         i = self.inc
-        if m := self.max:
+        if (m := self.max) is INF:
+            yield from itertools.count(k, i)
+        else:
             while k <= m:
                 yield k
                 k += i
-        else:
-            yield from itertools.count(k, i)
 
     def __contains__(self, value: int):
         if value < self.min:
@@ -654,3 +655,6 @@ class bounds:
         if (m := self.max) and value > m:
             return False
         return (value - self.min) % self.inc == 0
+
+
+bounds = BoundsType(slice(None, None))

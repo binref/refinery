@@ -587,7 +587,6 @@ class Arg(Argument):
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
         default : Union[Type[omit], Any] = omit,
-        range   : bool = False,
         intok   : bool = False,
         metavar : Union[Type[omit], str] = 'start:end:step',
         group   : Optional[str] = None,
@@ -596,7 +595,7 @@ class Arg(Argument):
         Used to add argparse arguments that contain a slice.
         """
         def parser(t: str):
-            return sliceobj(t, range=range, intok=intok)
+            return sliceobj(t, intok=intok)
         if help is None:
             help = 'Specify start:end:step in Python slice syntax.'
             if default is not cls.omit:

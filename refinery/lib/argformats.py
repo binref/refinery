@@ -110,11 +110,26 @@ from pathlib import Path
 from argparse import ArgumentTypeError
 from contextlib import suppress
 from functools import update_wrapper, reduce, lru_cache
-from typing import TYPE_CHECKING, get_type_hints
-from typing import AnyStr, Deque, Optional, Tuple, Union, Mapping, Any, List, TypeVar, Iterable, Callable
+
+from typing import (
+    AnyStr,
+    Deque,
+    Optional,
+    Tuple,
+    Union,
+    Mapping,
+    Any,
+    List,
+    TypeVar,
+    Iterable,
+    Callable,
+    TYPE_CHECKING,
+    get_type_hints,
+    overload,
+)
 
 from refinery.lib.frame import Chunk
-from refinery.lib.tools import isbuffer, infinitize, one, normalize_to_identifier, exception_to_string
+from refinery.lib.tools import bounds, isbuffer, infinitize, one, normalize_to_identifier, exception_to_string
 from refinery.lib.types import NoMask, RepeatedInteger, Binary
 from refinery.lib.meta import is_valid_variable_name, metavars, Percentage
 from refinery.lib.patterns import formats
@@ -147,19 +162,18 @@ class ParserVariableMissing(ParserError):
 
 class LazyEvaluation:
     """
-    Empty parent class for any unit that throws `refinery.lib.argformats.TooLazy`.
+    Empty parent class for any parse result that throws `refinery.lib.argformats.TooLazy`.
     """
     pass
 
 
 class PythonExpression:
     """
-    Implements a parser for any Python expression with a prescribed set of variable
-    names permitted to occur in the expression. The resulting object is a callable
-    which can be given the string representation of such an expression. In turn, the
-    result of this operation is either the value of the expression if no variables
-    were present, or a callable which expects keyword arguments corresponding to the
-    permitted variable names.
+    Implements a parser for any Python expression with a prescribed set of variable names permitted
+    to occur in the expression. The resulting object is a callable which can be given the string
+    representation of such an expression. In turn, the result of this operation is either the value
+    of the expression if no variables were present, or a callable which expects keyword arguments
+    corresponding to the permitted variable names.
     """
     def __init__(self, definition: AnyStr, *variables, constants=None, all_variables_allowed=False, mask=None):
         self.definition = definition = definition.strip()
@@ -258,8 +272,8 @@ class PythonExpression:
 
 class SliceAgain(LazyEvaluation):
     """
-    Raised by `refinery.lib.argformats.sliceobj` to indicate that meta variables
-    are required to compute this slice.
+    Raised by `refinery.lib.argformats.sliceobj` to indicate that meta variables are required to
+    compute this slice.
     """
     def __init__(self, expr: Union[DelayedBinaryArgument, str]):
         self.expr = expr
@@ -280,28 +294,57 @@ def percent(expression: str):
     return float(expression)
 
 
-def relslice(expression: Union[int, str, slice], data: Optional[Chunk] = None) -> Union[slice, SliceAgain]:
+@overload
+def relslice(expression: Union[int, str, slice], data: Chunk) -> slice:
+    ...
+
+
+@overload
+def relslice(expression: Union[int, str, slice]) -> slice | SliceAgain:
+    ...
+
+
+def relslice(expression: Union[int, str, slice], data: Optional[Chunk] = None) -> slice | SliceAgain:
     """
     Uses `refinery.lib.argformats.sliceobj` to parse a slice from the input, but
     interprets the second part of the slice as a relative length (which can also
     be negative).
     """
-    bounds = sliceobj(expression, data)
-    if (stop := bounds.stop) is not None:
-        start = bounds.start or 0
+    s = sliceobj(expression, data)       
+    if isinstance(s, slice) and (stop := s.stop) is not None:
+        start = s.start or 0
         stop += start
-        if (step := bounds.step) is None and stop < start:
+        if (step := s.step) is None and stop < start:
             step = -1
-        bounds = slice(start, stop, step)
-    return bounds
+        s = slice(start, stop, step)
+    return s
+
+
+@overload
+def sliceobj(
+    expression: int | str | slice,
+    data: Chunk,
+    intok: bool = False,
+    final: bool = False,
+) -> slice:
+    ...
+
+
+@overload
+def sliceobj(
+    expression: int | str | slice,
+    data: Chunk | None = None,
+    intok: bool = False,
+    final: bool = False,
+) -> slice | SliceAgain:
+    ...
 
 
 def sliceobj(
-    expression: Union[int, str, slice],
-    data: Optional[Chunk] = None,
-    range=False,
-    intok=False,
-    final=False,
+    expression: int | str | slice,
+    data: Chunk | None = None,
+    intok: bool = False,
+    final: bool = False,
 ) -> Union[slice, SliceAgain]:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
@@ -322,7 +365,7 @@ def sliceobj(
         variables = metavars(data)
         if is_valid_variable_name(expression):
             try:
-                return sliceobj(variables[expression], data, intok=intok, range=range, final=True)
+                return sliceobj(variables[expression], data, intok=intok, final=True)
             except Exception:
                 pass
 
@@ -337,25 +380,16 @@ def sliceobj(
             raise
         elif data is not None:
             parser = DelayedNumSeqArgument(expression)
-            return sliceobj(parser(data), data, range=range, intok=intok, final=True)
+            return sliceobj(parser(data), data, intok=intok, final=True)
         else:
             return SliceAgain(expression)
     if len(sliced) == 1:
         k = sliced[0]
         if intok:
             return k
-        if range:
-            return slice(0, k, 1)
         return slice(k, k + 1) if k + 1 else slice(k, None, None)
-    if range:
-        range_defaults = (0, None, 1)
-        k = len(range_defaults) - len(sliced)
-        if k > 0:
-            sliced.extend(range_defaults[-k:])
     for k, item in enumerate(sliced):
         if item is None:
-            if range:
-                sliced[k] = range_defaults[k]
             continue
         if isinstance(item, int):
             continue
@@ -769,7 +803,7 @@ class DelayedArgument(LazyEvaluation):
         """
         Returns the contents of the file located at the given path. This path may contain
         wildcard characters, but this pattern has to match a single file. It is also possible
-        to use the handler as `read[offset]` or as `read[offset:count]` to read `count` many
+        to use the handler as `read[count]` or as `read[offset:count]` to read `count` many
         bytes from the file at the given offset.
         """
         return self._file(path, region)
@@ -795,14 +829,24 @@ class DelayedArgument(LazyEvaluation):
     def _file(self, pattern: str, region: str) -> Optional[bytes]:
         def read(data: Optional[Chunk] = None):
             if not region:
-                bounds = slice(0, None)
+                k = slice(0, None)
             else:
-                bounds = sliceobj(region, data, range=True)
-            if bounds.step and bounds.step != 1:
-                raise ValueError('Step size is not supported for file slices.')
+                k = sliceobj(region, data, intok=True)
+            if isinstance(k, SliceAgain):
+                raise TooLazy
+            if isinstance(k, int):
+                offset = 0
+                length = k
+            else:
+                if k.step and k.step != 1:
+                    raise ValueError('Step size is not supported for file slices.')
+                offset = k.start or 0
+                length = k.stop
+            if length and length < 0:
+                raise ValueError('The count for a read operation must be non-negative.')
             with open(path, 'rb') as stream:
-                stream.seek(bounds.start or 0)
-                return stream.read(bounds.stop)
+                stream.seek(offset)
+                return stream.read(length)
         try:
             path: Path = one(Path.cwd().glob(pattern))
         except (NotImplementedError, LookupError):
@@ -815,7 +859,7 @@ class DelayedArgument(LazyEvaluation):
             return read
 
     @handler.register('range', final=True)
-    def range(self, region: str) -> bytes:
+    def range(self, region: str) -> Iterable[int]:
         """
         Implements the final modifier `range:bounds` to generate a sequence of bytes, where
         `bounds` is parsed as a `refinery.lib.argformats.sliceobj` with one exception: If
@@ -824,18 +868,16 @@ class DelayedArgument(LazyEvaluation):
         """
         def compute_range(data: Optional[Chunk] = None):
             try:
-                bounds = sliceobj(region, data, range=True)
+                s = sliceobj(region, data, intok=True)
             except ParserVariableMissing:
                 raise TooLazy
-            if pending(bounds):
+            if isinstance(s, SliceAgain):
                 raise TooLazy
-            start = bounds.start or 0
-            stop = bounds.stop
-            step = bounds.step or 1
-            if stop is None:
-                return itertools.islice(itertools.count(), start, None, step)
-            result = range(start, stop, step)
-            if 0 <= start and stop <= 0x100:
+            if isinstance(s, int):
+                s = slice(None, s, None)
+            result = bounds[s]
+            result.max -= 1
+            if 0 <= result.min and result.max <= 0x100:
                 result = bytearray(result)
             return result
         try:
@@ -1592,7 +1634,7 @@ class DelayedNumberArgument(DelayedArgument):
     The class can be initialized with numerical bounds and checks the validity of the input after
     having evaluated all handlers.
     """
-    def __init__(self, expression: str, min: int, max: int):
+    def __init__(self, expression: str, min: int | None, max: int | None):
         self.min = min
         self.max = max
         super().__init__(expression)
@@ -1618,12 +1660,12 @@ class DelayedNumberArgument(DelayedArgument):
 class ___number:
     __name__ = 'number'
 
-    def __init__(self, min=None, max=None):
+    def __init__(self, min: int | None = None, max: int | None = None):
         self.min = min
         self.max = max
 
-    def __getitem__(self, bounds):
-        return self.__class__(bounds.start, bounds.stop)
+    def __getitem__(self, k: slice):
+        return self.__class__(k.start, k.stop)
 
     def __call__(self, value):
         if isinstance(value, int):
