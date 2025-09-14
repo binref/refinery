@@ -126,7 +126,7 @@ from typing import Callable, Dict, List, Tuple, Any, Iterable, Optional, Union, 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isbuffer, entropy, typename, index_of_coincidence
 from refinery.lib.environment import environment
-from refinery.lib.types import Binary
+from refinery.lib.types import buf
 
 if TYPE_CHECKING:
     from typing import Protocol
@@ -189,12 +189,12 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
     }
 
     @classmethod
-    def Wrap(cls, string: Union[str, Binary, ByteStringWrapper], codec: Optional[str] = None):
+    def Wrap(cls, string: Union[str, buf, ByteStringWrapper], codec: Optional[str] = None):
         if isinstance(string, cls):
             return string
         return cls(string, codec=codec)
 
-    def __init__(self, string: Union[str, Binary], codec: Optional[str] = None):
+    def __init__(self, string: Union[str, buf], codec: Optional[str] = None):
         if isinstance(string, str):
             self._string = string
             codec = codec or 'utf8'
@@ -426,7 +426,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     """
 
     ghost: bool
-    chunk: Binary
+    chunk: buf
     cache: Dict[str, Union[str, int, float]]
     index: Optional[int]
 
@@ -434,7 +434,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     current: Dict[str, Any]
     updated: Dict[str, bool]
 
-    def __init__(self, chunk: Binary, scope: Optional[int] = 1, seed: Optional[Dict[str, List[Tuple[bool, Any]]]] = None):
+    def __init__(self, chunk: buf, scope: Optional[int] = 1, seed: Optional[Dict[str, List[Tuple[bool, Any]]]] = None):
         self.ghost = False
         self.chunk = chunk
         self.cache = {}
@@ -634,7 +634,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         args: Optional[Iterable] = None,
         symb: Optional[dict] = None,
         used: Optional[set] = None,
-    ) -> Binary:
+    ) -> buf:
         """
         Formats the input expression using a Python F-string like expression. These strings contain
         fields in the format `{expression!T:pipeline}`, where `T` is a transformation character and
@@ -663,7 +663,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         binary  : bool,
         fixup   : bool = True,
         used    : Optional[set] = None,
-    ) -> Union[str, Binary]:
+    ) -> Union[str, buf]:
         """
         Formats a string using Python-like string fomatting syntax. The formatter for `binary`
         mode is different; each formatting is documented in one of the following two proxy methods:
@@ -1002,7 +1002,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         return hashlib.md5(self.chunk).hexdigest()
 
 
-def metavars(chunk: Union[Chunk, Binary]) -> LazyMetaOracle:
+def metavars(chunk: Union[Chunk, buf]) -> LazyMetaOracle:
     """
     This method is the main function used by refinery units to get the meta variable dictionary
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`

@@ -11,7 +11,7 @@ import dataclasses
 
 from refinery.units import Arg, Unit
 from refinery.lib.tools import get_terminal_size, lookahead
-from refinery.lib.types import Binary, Iterable
+from refinery.lib.types import buf, Iterable
 from refinery.lib import chunks
 
 
@@ -79,7 +79,7 @@ class HexDumpMetrics:
         return width
 
 
-def hexdump(data: Binary, metrics: HexDumpMetrics, colorize=False) -> Iterable[str]:
+def hexdump(data: buf, metrics: HexDumpMetrics, colorize=False) -> Iterable[str]:
     hex_separator = metrics.hex_char_spacer
     txt_separator = metrics.txt_char_spacer
     hex_width = metrics.hex_column_width
@@ -222,6 +222,6 @@ class HexViewer(Unit, abstract=True):
             metrics.fit_to_width()
         return metrics
 
-    def hexdump(self, data: Binary, metrics: HexDumpMetrics | None = None, colorize=False):
+    def hexdump(self, data: buf, metrics: HexDumpMetrics | None = None, colorize=False):
         metrics = metrics or self._get_metrics(len(data))
         yield from hexdump(data, metrics, colorize)

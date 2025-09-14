@@ -130,7 +130,7 @@ from typing import (
 
 from refinery.lib.frame import Chunk
 from refinery.lib.tools import bounds, isbuffer, infinitize, one, normalize_to_identifier, exception_to_string
-from refinery.lib.types import NoMask, RepeatedInteger, Binary
+from refinery.lib.types import NoMask, RepeatedInteger, buf
 from refinery.lib.meta import is_valid_variable_name, metavars, Percentage
 from refinery.lib.patterns import formats
 
@@ -138,7 +138,7 @@ if TYPE_CHECKING:
     from refinery import Unit
 
 FinalType = TypeVar('FinalType')
-DelayedType = Callable[[Binary], FinalType]
+DelayedType = Callable[[buf], FinalType]
 MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
 
 _DEFAULT_BITS = 64
@@ -310,7 +310,7 @@ def relslice(expression: Union[int, str, slice], data: Optional[Chunk] = None) -
     interprets the second part of the slice as a relative length (which can also
     be negative).
     """
-    s = sliceobj(expression, data)       
+    s = sliceobj(expression, data)
     if isinstance(s, slice) and (stop := s.stop) is not None:
         start = s.start or 0
         stop += start
@@ -693,7 +693,7 @@ class DelayedArgument(LazyEvaluation):
                 raise ArgumentTypeError(F'Unexpected error parsing "{expression}".')
         return name, arguments, rest
 
-    def __call__(self, data: Optional[Binary] = None) -> bytes:
+    def __call__(self, data: Optional[buf] = None) -> bytes:
         arg = self.seed
         mod = iter(self.modifiers)
         if not self.finalized:
@@ -895,7 +895,7 @@ class DelayedArgument(LazyEvaluation):
         return os.environ[name]
 
     @handler.register('pos')
-    def pos(self, regex: Binary, occurrence: int = 0) -> int:
+    def pos(self, regex: buf, occurrence: int = 0) -> int:
         """
         The handler pos[k=0]:[regex] returns the position of the k-th occurrence of the regular
         expression [regex]. The value `k` can be set to `-1` to return the position of the last
@@ -1086,7 +1086,7 @@ class DelayedArgument(LazyEvaluation):
         return LazyPythonExpression(expression)
 
     @handler.register('btoi')
-    def btoi(self, binary: Binary, size=None, step=None) -> Iterable[int]:
+    def btoi(self, binary: buf, size=None, step=None) -> Iterable[int]:
         """
         The modifier `btoi[size=0,step=0]:data` uses `refinery.lib.chunks.unpack` to convert a
         sequence of bytes into a sequence of integers.
@@ -1119,7 +1119,7 @@ class DelayedArgument(LazyEvaluation):
         return list(chunks.unpack(binary, size, bigE, step))
 
     @handler.register('itob')
-    def itob(self, integers: Iterable[int], size=None) -> Binary:
+    def itob(self, integers: Iterable[int], size=None) -> buf:
         """
         The modifier `itob[size=0]:integers` is the inverse of `btoi` and works in the same way,
         except that the case `size=0` is handled in the following way: The handler inspects all
@@ -1349,7 +1349,7 @@ class DelayedArgument(LazyEvaluation):
             return finalize()
 
     @handler.register('be')
-    def be(self, arg: Union[int, Binary], size: Optional[str] = None) -> int:
+    def be(self, arg: Union[int, buf], size: Optional[str] = None) -> int:
         """
         The handler `be[size=0]:data` converts a binary input into the integer that it encodes in
         big endian format, and vice versa. The optional parameter `size` can be used to specify
@@ -1367,7 +1367,7 @@ class DelayedArgument(LazyEvaluation):
             return int.from_bytes(arg[:size], 'big')
 
     @handler.register('le')
-    def le(self, arg: Union[int, Binary], size: Optional[str] = None) -> int:
+    def le(self, arg: Union[int, buf], size: Optional[str] = None) -> int:
         """
         The handler `be[size=0]:data` converts a binary input into the integer that it encodes in
         little endian format, and vice versa. The optional parameter `size` can be used to specify
@@ -1415,7 +1415,7 @@ class DelayedBinaryArgument(DelayedArgument):
     are implemented in `refinery.lib.argformats.DelayedArgument`.
     """
 
-    def __call__(self, data: Binary | None = None) -> bytes:
+    def __call__(self, data: buf | None = None) -> bytes:
         value = super().__call__(data=data)
         if not isbuffer(value):
             if isinstance(value, str):
@@ -1439,7 +1439,7 @@ class DelayedPathArgument(DelayedBinaryArgument):
     def default_handler(self, expression: str) -> bytes:
         return utf8(expression)
 
-    def __call__(self, data: Binary | None = None) -> str:
+    def __call__(self, data: buf | None = None) -> str:
         return super().__call__(data).decode('utf8')
 
 
@@ -1472,7 +1472,7 @@ class DelayedNumSeqArgument(DelayedArgument):
                 return super().default_handler(expression)
             return expression
 
-    def __call__(self, data: Optional[Union[Binary, Chunk]] = None) -> Iterable[int]:
+    def __call__(self, data: Optional[Union[buf, Chunk]] = None) -> Iterable[int]:
         value = super().__call__(data)
         if isbuffer(value):
             return value
@@ -1639,7 +1639,7 @@ class DelayedNumberArgument(DelayedArgument):
         self.max = max
         super().__init__(expression)
 
-    def __call__(self, data: Union[Binary, Chunk, None] = None) -> int:
+    def __call__(self, data: Union[buf, Chunk, None] = None) -> int:
         value = super().__call__(data)
         if not isinstance(value, int):
             tv = type(value).__name__

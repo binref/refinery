@@ -5,11 +5,11 @@ from __future__ import annotations
 
 from refinery.units import Arg, Unit
 from refinery.lib import lief
-from refinery.lib.types import Binary
+from refinery.lib.types import buf
 
 
 def get_pe_size(
-    pe: Binary | lief.PE.Binary,
+    pe: buf | lief.PE.Binary,
     overlay=True,
     sections=True,
     directories=True,

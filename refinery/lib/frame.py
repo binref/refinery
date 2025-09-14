@@ -136,7 +136,7 @@ from typing import (
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import LazyMetaOracle
-from refinery.lib.types import Binary
+from refinery.lib.types import buf
 
 if TYPE_CHECKING:
     from msgpack.fallback import Unpacker
@@ -216,7 +216,7 @@ class Chunk(bytearray):
 
     def __init__(
         self,
-        data: Optional[Binary] = None,
+        data: Optional[buf] = None,
         path: Optional[List[int]] = None,
         view: Optional[List[bool]] = None,
         meta: Optional[Dict[str, Any]] = None,

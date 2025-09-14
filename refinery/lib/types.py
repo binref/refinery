@@ -18,36 +18,22 @@ if TYPE_CHECKING:
         Union,
     )
 
-    from os import PathLike as PathLike
-    from re import Pattern as Pattern
-    from enum import Enum
-    from pathlib import Path
-
-    Binary = Union[bytes, bytearray, memoryview]
-    FsPath = Union[str, Path, PathLike]
-    Option = Union[str, Enum]
-    RegExp = Union[str, Binary, Pattern[str], Pattern[bytes]]
-    NumSeq = Union[int, Iterable[int]]
-
-    Param = Annotated
-
     JSON = Union[str, int, float, bool, None, dict[str, 'JSON'], list['JSON']]
     JSONDict = dict[str, JSON]
+    Param = Annotated
+
+    buf = Union[bytes, bytearray, memoryview]
+    ints = Union[int, Iterable[int]]
+
 else:
     class Param:
         def __class_getitem__(cls, annotation):
             return annotation[1]
 
-    Pattern = Any
-    FsPath = Any
-    Option = Any
-    Counts = Any
-    RegExp = Any
-    NumSeq = Any
-    Number = Any
-    Binary = Any
     JSON = Any
     JSONDict = Any
+    buf = Any
+    ints = Any
 
     Callable = Any
     ClassVar = Any
@@ -58,14 +44,10 @@ else:
 
 
 __all__ = [
-    'Pattern',
-    'FsPath',
-    'Option',
-    'RegExp',
-    'NumSeq',
-    'Binary',
     'JSON',
     'JSONDict',
+    'buf',
+    'ints',
     'Param',
     'NamedTuple',
     'Collection',
@@ -167,10 +149,10 @@ is compared to, and only equal to itself.
 
 
 class _AST(metaclass=Singleton):
-    def __eq__(self, other: Any): return True
-    def __ne__(self, other: Any): return False
-    def __or__(self, other: Any): return other
-    def __contains__(self, other: Any): return True
+    def __eq__(self, _: Any): return True
+    def __ne__(self, _: Any): return False
+    def __or__(self, x: Any): return x
+    def __contains__(self, _: Any): return True
     def __repr__(self): return '*'
 
 

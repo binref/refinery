@@ -7,7 +7,7 @@ from typing import Callable, ClassVar, Collection, Generator, Optional, Type, Di
 from abc import ABC, abstractmethod
 from enum import Enum
 
-from refinery.lib.types import Binary as BufferType
+from refinery.lib.types import buf as BufferType
 
 CIPHER_MODES: Dict[str, Type[CipherMode]] = {}
 

@@ -7,7 +7,7 @@ from abc import ABCMeta
 from io import BytesIO
 from collections import deque
 
-from refinery.lib.types import Binary, Iterable, Self
+from refinery.lib.types import buf, Iterable, Self
 
 
 class NodeMeta(ABCMeta):
@@ -29,7 +29,7 @@ class Node(metaclass=NodeMeta):
         self.children = {}
 
     @property
-    def label(self) -> Binary:
+    def label(self) -> buf:
         return self.tree.data[self.start:self.end + 1]
 
     @property
@@ -103,10 +103,10 @@ class Root(Node):
 
 class SuffixTree:
     root: Root
-    data: Binary
+    data: buf
     cursor: int
 
-    def __init__(self, data: Binary):
+    def __init__(self, data: buf):
         self.data = memoryview(data)
         self.root = Root(self)
 

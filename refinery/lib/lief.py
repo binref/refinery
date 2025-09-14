@@ -9,7 +9,7 @@ import lief as lib
 if True:
     lib.logging.disable()
 
-from refinery.lib.types import Binary
+from refinery.lib.types import buf
 
 MachO = lib.MachO
 PE = lib.PE
@@ -27,7 +27,7 @@ __pdoc__ = {_forward: False for _forward in [
 
 
 def load_pe(
-    data: Binary,
+    data: buf,
     parse_exports: bool = True,
     parse_imports: bool = True,
     parse_reloc: bool = True,
@@ -53,7 +53,7 @@ def load_pe(
 
 
 def load_pe_fast(
-    data: Binary,
+    data: buf,
     parse_exports: bool = False,
     parse_imports: bool = False,
     parse_reloc: bool = False,
@@ -74,7 +74,7 @@ def load_pe_fast(
     )
 
 
-def load_macho(data: Binary) -> MachO.FatBinary | MachO.Binary:
+def load_macho(data: buf) -> MachO.FatBinary | MachO.Binary:
     """
     Load a MachO file using LIEF.
     """
@@ -88,7 +88,7 @@ def load_macho(data: Binary) -> MachO.FatBinary | MachO.Binary:
         return exe
 
 
-def load(data: Binary):
+def load(data: buf):
     """
     Load a PE, ELF, or MachO executable using LIEF. The function first attempts to parse the file
     based on its first 4 bytes using a specific LIEF parser and reverts to LIEF's general purpose
@@ -109,7 +109,7 @@ def load(data: Binary):
         return lib.parse(stream)
 
 
-def string(value: str | Binary) -> str:
+def string(value: str | buf) -> str:
     """
     A function to convert LIEF values to a string, regardless of whether it is exposed as bytes
     or string by the foreign interface.

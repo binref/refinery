@@ -8,7 +8,7 @@ from typing import List, Union, Sequence, Optional, Iterable, Tuple, Type, TypeV
 
 from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
 from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
-from refinery.lib.types import Binary
+from refinery.lib.types import buf
 from refinery.lib.tools import asbuffer
 
 
@@ -30,7 +30,7 @@ class LatinCipher(ABC):
     ]
 
     @classmethod
-    def FromState(cls, state: Union[Sequence[int], Binary]):
+    def FromState(cls, state: Union[Sequence[int], buf]):
         if b := asbuffer(state):
             state = struct.unpack('<16L', b)
         else:
@@ -47,7 +47,7 @@ class LatinCipher(ABC):
             '<2L', *state[cls._idx_count]), 'little')
         return cls(key, nonce, magic, counter=count)
 
-    def __init__(self, key: Binary, nonce: Binary, magic: Optional[Binary] = None, rounds: int = 20, counter: int = 0):
+    def __init__(self, key: buf, nonce: buf, magic: Optional[buf] = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
             key = 2 * bytes(key)
         elif len(key) != 32:
@@ -138,11 +138,11 @@ _X = TypeVar('_X', bound=LatinCipher)
 def LatinX(
     cipher: Type[_X],
     blocks: Iterable[int],
-    key: Binary,
-    kdn: Binary,
+    key: buf,
+    kdn: buf,
     kdp: int,
-    nonce: Binary,
-    magic: Binary,
+    nonce: buf,
+    magic: buf,
     rounds: int,
     offset: int,
 ) -> _X:

@@ -3,13 +3,13 @@ Implements various hashing algorithms.
 """
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, Binary, abc
+from refinery.units import Arg, Unit, buf, abc
 
 
 class HashUnit(Unit, abstract=True):
 
     @abc.abstractmethod
-    def _algorithm(self, data: Binary) -> bytes:
+    def _algorithm(self, data: buf) -> bytes:
         raise NotImplementedError
 
     def __init__(

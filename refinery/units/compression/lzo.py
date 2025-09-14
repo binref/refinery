@@ -4,7 +4,7 @@ from enum import IntEnum, IntFlag
 from zlib import adler32, crc32
 
 from refinery.units import Unit
-from refinery.lib.types import Binary, Generator
+from refinery.lib.types import buf, Generator
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import date_from_timestamp
 
@@ -151,7 +151,7 @@ class lzo(Unit):
     certain outputs produced by the lzop command-line tool when high compression ratio is
     favoured (i.e. when the -9 switch is used).
     """
-    def decompress_stream(self, data: Binary, LZOv1: bool = False) -> bytearray:
+    def decompress_stream(self, data: buf, LZOv1: bool = False) -> bytearray:
         """
         An implementation of LZO decompression. We use the article
         "[LZO stream format as understood by Linux's LZO decompressor](https://www.kernel.org/doc/html/latest/staging/lzo.html)"

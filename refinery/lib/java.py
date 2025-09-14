@@ -14,7 +14,7 @@ from refinery.lib.structures import (
     Struct,
     StructReader,
 )
-from refinery.lib.types import Binary
+from refinery.lib.types import buf
 
 __all__ = (
     'opc',
@@ -639,7 +639,7 @@ class JvClassFile(Struct):
             raise ValueError('Failed parsing Attributes.')
 
     @staticmethod
-    def decode_utf8m(string: Binary) -> str:
+    def decode_utf8m(string: buf) -> str:
         """
         Based on the following code:
         https://gist.github.com/BarelyAliveMau5/000e7e453b6d4ebd0cb06f39bc2e7aec

@@ -4,13 +4,13 @@ See also their [original source code](https://github.com/wc-duck/pymmh3).
 """
 from __future__ import annotations
 from refinery.lib import chunks
-from refinery.lib.types import Binary
+from refinery.lib.types import buf
 
 from itertools import zip_longest
 from struct import unpack
 
 
-def mmh32(key: Binary, seed=0) -> int:
+def mmh32(key: buf, seed=0) -> int:
     key = memoryview(key)
 
     def fmix(h: int) -> int:
@@ -59,11 +59,11 @@ def mmh32(key: Binary, seed=0) -> int:
     return fmix(h1 ^ length)
 
 
-def v3_mmh32digest(key: Binary, seed: int = 0) -> bytes:
+def v3_mmh32digest(key: buf, seed: int = 0) -> bytes:
     return mmh32(key, seed).to_bytes(4, 'big')
 
 
-def mmh128x64(key: Binary, seed: int = 0) -> int:
+def mmh128x64(key: buf, seed: int = 0) -> int:
     key = memoryview(key)
 
     def fmix(k):
@@ -169,7 +169,7 @@ def mmh128x64(key: Binary, seed: int = 0) -> int:
     return (h1 << 64 | h2)
 
 
-def mmh128x32(key: Binary, seed: int = 0) -> int:
+def mmh128x32(key: buf, seed: int = 0) -> int:
     key = memoryview(key)
 
     def fmix(h: int) -> int:
@@ -321,18 +321,18 @@ def mmh128x32(key: Binary, seed: int = 0) -> int:
     return (h1 << 96 | h2 << 64 | h3 << 32 | h4)
 
 
-def v3_mmh128digest64(key: Binary, seed: int = 0) -> bytes:
+def v3_mmh128digest64(key: buf, seed: int = 0) -> bytes:
     return mmh128x64(key, seed).to_bytes(0x10, 'big')
 
 
-def v3_mmh128digest32(key: Binary, seed: int = 0) -> bytes:
+def v3_mmh128digest32(key: buf, seed: int = 0) -> bytes:
     return mmh128x32(key, seed).to_bytes(0x10, 'big')
 
 
 # Begin MurmurHash v2 Implementation
 
 
-def v2_mmh32digest(data: Binary, seed: int):
+def v2_mmh32digest(data: buf, seed: int):
     seed ^= len(data)
     j = len(data) % 4
     e = len(data) - j
@@ -362,7 +362,7 @@ def v2_mmh32digest(data: Binary, seed: int):
     return h.to_bytes(4, 'big')
 
 
-def v2_mmh64digestA(data: Binary, seed: int):
+def v2_mmh64digestA(data: buf, seed: int):
     seed ^= len(data) * 0xC6A4A7935BD1E995
     j = len(data) % 8
     e = len(data) - j
@@ -393,7 +393,7 @@ def v2_mmh64digestA(data: Binary, seed: int):
     return h.to_bytes(8, 'big')
 
 
-def v2_mmh64digestB(data: Binary, seed: int):
+def v2_mmh64digestB(data: buf, seed: int):
     h1 = seed ^ len(data)
     h2 = seed >> 32
     h1 &= 0xFFFFFFFF
@@ -464,7 +464,7 @@ def v2_mmh32digestA_mmix(h, k):
     return (h, k)
 
 
-def v2_mmh32digestA(data: Binary, seed: int):
+def v2_mmh32digestA(data: buf, seed: int):
     n = len(data)
     h = seed & 0xFFFFFFFF
     j = len(data) % 4

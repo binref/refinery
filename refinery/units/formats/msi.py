@@ -14,7 +14,7 @@ from refinery.lib.structures import StructReader
 from refinery.units import Arg
 from refinery.units.formats.office.xtdoc import xtdoc, UnpackResult
 from refinery.lib import chunks
-from refinery.lib.types import Binary, JSONDict
+from refinery.lib.types import buf, JSONDict
 from refinery.lib.mime import FileMagicInfo
 from refinery.lib.cab import Cabinet
 
@@ -88,7 +88,7 @@ class MSITableColumnInfo(NamedTuple):
 
 
 class MSIStringData:
-    def __init__(self, string_data: Binary, string_pool: Binary):
+    def __init__(self, string_data: buf, string_pool: buf):
         data = StructReader(string_data)
         pool = StructReader(string_pool)
         self.strings: List[bytes] = []
@@ -191,7 +191,7 @@ class xtmsi(xtdoc):
         def column_formats(table: Dict[str, MSITableColumnInfo]) -> str:
             return ''.join(v.struct_format for v in table.values())
 
-        def stream_to_rows(data: Binary, row_format: str):
+        def stream_to_rows(data: buf, row_format: str):
             row_size = struct.calcsize(F'<{row_format}')
             row_count = int(len(data) / row_size)
             reader = StructReader(data)

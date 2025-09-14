@@ -17,7 +17,7 @@ from refinery.units import Arg, Unit, Chunk, RefineryPartialResult, RefineryPote
 from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
 from refinery.lib.xml import XMLNodeBase
 from refinery.lib.tools import exception_to_string
-from refinery.lib.types import Binary, Iterable, Callable
+from refinery.lib.types import buf, Iterable, Callable
 from refinery.lib.json import BytesAsArrayEncoder, BytesAsStringEncoder
 from refinery.lib.loader import load
 
@@ -32,12 +32,12 @@ def pathspec(expression):
 
 class UnpackResult:
 
-    def get_data(self) -> Binary:
+    def get_data(self) -> buf:
         if callable(self.data):
             self.data = self.data()
         return self.data
 
-    def __init__(self, _br__path: str, _br__data: Union[Binary, Callable[[], Binary]], **_br__meta):
+    def __init__(self, _br__path: str, _br__data: Union[buf, Callable[[], buf]], **_br__meta):
         self.path = _br__path
         self.data = _br__data
         self.meta = _br__meta
@@ -183,7 +183,7 @@ class PathExtractorUnit(Unit, abstract=True):
     def unpack(self, data: Chunk) -> Iterable[UnpackResult]:
         raise NotImplementedError
 
-    def process(self, data: Chunk) -> Binary:
+    def process(self, data: Chunk) -> buf:
         meta = metavars(data)
         results: List[UnpackResult] = list(self.unpack(data))
 

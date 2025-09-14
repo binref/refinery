@@ -17,7 +17,7 @@ from typing import Callable, Generator, Iterable, Optional, Tuple, TypeVar, Any,
 from math import log
 from enum import IntFlag, Enum
 
-from refinery.lib.types import INF, Binary
+from refinery.lib.types import INF, buf
 
 _T = TypeVar('_T')
 
@@ -189,7 +189,7 @@ def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
     return method(*posargs, *varargs, **kwdargs)
 
 
-def entropy_fallback(data: Binary) -> float:
+def entropy_fallback(data: buf) -> float:
     """
     This method is called by `refinery.lib.tools.entropy` when the `numpy` module is not available.
     It computes the shannon entropy of the input byte string and is written in pure Python.
@@ -202,7 +202,7 @@ def entropy_fallback(data: Binary) -> float:
     return 0.0 + -sum(p * log(p, 2) for p in S if p) / 8.0
 
 
-def entropy(data: Binary) -> float:
+def entropy(data: buf) -> float:
     """
     Computes the entropy of `data` over the alphabet of all bytes.
     """
@@ -218,7 +218,7 @@ def entropy(data: Binary) -> float:
     return 0.0 - (numpy.log2(prob) * prob).sum() / 8.0
 
 
-def index_of_coincidence(data: Binary) -> float:
+def index_of_coincidence(data: buf) -> float:
     """
     Computes the index of coincidence of `data` over the alphabet of all bytes.
     """
@@ -273,11 +273,11 @@ def asbuffer(obj) -> Optional[memoryview]:
 
 
 def splitchunks(
-    data: Binary,
+    data: buf,
     size: int,
     step: Optional[int] = None,
     truncate: bool = False
-) -> Iterable[Binary]:
+) -> Iterable[buf]:
     """
     Split `data` into chunks of size `size`. The cursor advances by `step` bytes after extracting a
     block, the default value for `step` is equal to `size`. The boolean parameter `truncate`
@@ -299,7 +299,7 @@ def splitchunks(
         yield chunk
 
 
-def make_buffer_mutable(data: Binary):
+def make_buffer_mutable(data: buf):
     """
     Returns a mutable version of the input data. Already mutable inputs are returned
     as themselves, i.e. no copy operation occurs in these cases.

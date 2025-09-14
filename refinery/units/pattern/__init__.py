@@ -9,7 +9,7 @@ from itertools import islice
 from hashlib import blake2b
 from typing import overload, TYPE_CHECKING
 
-from refinery.lib.types import INF, AST, Binary, Callable, Iterable
+from refinery.lib.types import INF, AST, buf, Callable, Iterable
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ class PatternExtractorBase(Unit, abstract=True):
             **keywords
         )
 
-    def matches(self, data: Binary, pattern: Binary | re.Pattern[bytes]):
+    def matches(self, data: buf, pattern: buf | re.Pattern[bytes]):
         """
         Searches the input data for the given regular expression pattern. If the
         argument `utf16` is `True`, search for occurrences where a zero byte
@@ -105,9 +105,9 @@ class PatternExtractorBase(Unit, abstract=True):
 
     def matches_filtered(
         self,
-        data: Binary,
-        pattern: Binary | re.Pattern,
-        *transforms: Callable[[re.Match[bytes]], Binary] | None
+        data: buf,
+        pattern: buf | re.Pattern,
+        *transforms: Callable[[re.Match[bytes]], buf] | None
     ):
         """
         This is a wrapper for `AbstractRegexUint.matches` which filters the
@@ -169,7 +169,7 @@ class RegexUnit(Unit, abstract=True):
             flags |= re.IGNORECASE
         super().__init__(flags=flags, fullmatch=fullmatch, **keywords)
 
-    def _make_matcher(self, pattern: str | Binary | None, default=None):
+    def _make_matcher(self, pattern: str | buf | None, default=None):
         if pattern is None:
             return default
         regex = Arg.AsRegExp(self.codec, pattern, self.args.flags)

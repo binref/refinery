@@ -12,7 +12,7 @@ from refinery.units.crypto.hash import HashUnit
 from refinery.lib.tools import normalize_to_display
 
 if TYPE_CHECKING:
-    from refinery.lib.types import Binary
+    from refinery.lib.types import buf
     from refinery.units.crypto.keyderive import _Hash
 
 
@@ -21,9 +21,9 @@ def _doc(name: str):
 
 
 class _HashExe(Executable):
-    _build_hash: Callable[[Binary], _Hash]
+    _build_hash: Callable[[buf], _Hash]
 
-    def _algorithm(cls, data: Binary):
+    def _algorithm(cls, data: buf):
         return cls._build_hash(data).digest()
 
     def __new__(cls, name: str, bases, namespace: dict, export: str = '', kernel: str = ''):
