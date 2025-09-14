@@ -7,7 +7,7 @@ import enum
 
 from refinery.lib.structures import StructReader, MemoryFile
 from refinery.lib.decompression import make_huffman_decode_table, read_huffman_symbol, BitBufferedReader
-from refinery.units import Unit
+from refinery.units import Unit, Arg
 
 
 XPRESS_NUM_CHARS        = 256    # noqa
@@ -41,12 +41,12 @@ class mscf(Unit):
 
     def __init__(
         self,
-        mode: Unit.Arg.Option(choices=MODE, help=(
+        mode: Arg.Option(choices=MODE, help=(
             'Manually select decompression mode ({choices}); by default the unit attempts to derive the '
             'mode from the header, but this will fail for raw streams. However, even if a header is '
             'found, a manually specified mode will take precedence.')) = None,
     ):
-        mode = Unit.Arg.AsOption(mode, MODE)
+        mode = Arg.AsOption(mode, MODE)
         super().__init__(mode=mode)
 
     def process(self, data):

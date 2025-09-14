@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 
-from refinery.units import Unit
+from refinery.units import Unit, Arg
 from refinery.lib.structures import MemoryFile, StructReader
 from refinery.lib.decompression import BitBufferedReader
 
@@ -12,7 +12,7 @@ class jcalg(Unit):
     """
     def __init__(
         self,
-        ignore_header: Unit.Arg('-g', help=(
+        ignore_header: Arg('-g', help=(
             'Keep decompressing even after the output has reached the final size as given by the header value.')) = False,
     ):
         super().__init__(ignore_header=ignore_header)

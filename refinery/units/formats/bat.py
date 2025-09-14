@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.units import Unit
+from refinery.units import Unit, Arg
 from refinery.lib.thirdparty.batch_interpreter import STRIP, BatchDeobfuscator
 from refinery.lib.decorators import unicoded
 
@@ -14,10 +14,10 @@ class bat(Unit):
     """
     def __init__(
         self,
-        keep_all         : Unit.Arg.Switch('-a', help='Do not strip anything after deobfuscation.') = False,
-        keep_comment     : Unit.Arg.Switch('-c', help='Do not strip comments from the script.') = False,
-        keep_definitions : Unit.Arg.Switch('-d', help='Do not strip variable definitions.') = False,
-        keep_echo        : Unit.Arg.Switch('-e', help='Do not strip echo calls in the script.') = False,
+        keep_all         : Arg.Switch('-a', help='Do not strip anything after deobfuscation.') = False,
+        keep_comment     : Arg.Switch('-c', help='Do not strip comments from the script.') = False,
+        keep_definitions : Arg.Switch('-d', help='Do not strip variable definitions.') = False,
+        keep_echo        : Arg.Switch('-e', help='Do not strip echo calls in the script.') = False,
     ): ...
 
     @unicoded

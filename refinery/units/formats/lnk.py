@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.units.formats import Unit
+from refinery.units.formats import Unit, Arg
 from refinery.units.sinks.ppjson import ppjson
 from refinery.lib.structures import MemoryFile
 from refinery.lib.json import JSONEncoderEx
@@ -26,8 +26,8 @@ class lnk(Unit):
 
     def __init__(
         self,
-        tabular: Unit.Arg('-t', help='Print information in a table rather than as JSON.') = False,
-        details: Unit.Arg('-d', help='Print all details; some properties are hidden by default.') = False,
+        tabular: Arg('-t', help='Print information in a table rather than as JSON.') = False,
+        details: Arg('-d', help='Print all details; some properties are hidden by default.') = False,
     ):
         super().__init__(tabular=tabular, details=details)
 

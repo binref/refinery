@@ -4,7 +4,7 @@ import math
 import itertools
 import random
 
-from refinery.units import Unit
+from refinery.units import Unit, Arg
 from refinery.lib.tools import get_terminal_size, entropy
 from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import metavars
@@ -17,16 +17,16 @@ class iemap(Unit):
     """
     def __init__(
         self,
-        legend: Unit.Arg.Switch('-l', help='Show entropy color legend.') = False,
-        background: Unit.Arg.Switch('-b', help='Generate the bar by coloring the background.') = False,
-        block_char: Unit.Arg('-c', '--block-char', type=str, metavar='C',
+        legend: Arg.Switch('-l', help='Show entropy color legend.') = False,
+        bgfill: Arg.Switch('-b', help='Generate the bar by coloring the bgfill.') = False,
+        fgchar: Arg.String('-c', '--block-char', metavar='C',
             help='Character used for filling the bar, default is {default}') = '#',
-        *label: Unit.Arg(type=str, metavar='label-part', help=(
+        *label: Arg.String(metavar='label-part', help=(
             'The remaining command line specifies a format string expression that will be printed '
             'over the heat map display of each processed chunk.'
         ))
     ):
-        super().__init__(label=' '.join(label), background=background, legend=legend, block_char=block_char)
+        super().__init__(label=' '.join(label), bgfill=bgfill, legend=legend, fgchar=fgchar)
 
     @Unit.Requires('colorama', ['display', 'default', 'extended'])
     def _colorama():
@@ -39,7 +39,7 @@ class iemap(Unit):
         colorama = self._colorama
         colorama.init(autoreset=False, convert=(os_name == 'nt'))
 
-        nobg = not self.args.background
+        nobg = not self.args.bgfill
         meta = metavars(data)
 
         label = meta.format_str(self.args.label, self.codec, [data])
@@ -122,7 +122,7 @@ class iemap(Unit):
         assert sum(chunk_sizes) == size
 
         stream = MemoryFile(view)
-        filler = self.args.block_char if nobg else ' '
+        filler = self.args.fgchar if nobg else ' '
 
         try:
             stderr.write(header)

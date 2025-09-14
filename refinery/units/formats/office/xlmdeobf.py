@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.units.formats import Unit
+from refinery.units.formats import Unit, Arg
 from refinery.lib.vfs import VirtualFileSystem
 from refinery.lib.tools import NoLogging
 
@@ -12,50 +12,50 @@ class xlmdeobf(Unit):
 
     def __init__(
         self,
-        extract_only: Unit.Arg.Switch(
+        extract_only: Arg.Switch(
             '-x', help='Only extract cells without any emulation.'
         ) = False,
-        sort_formulas: Unit.Arg.Switch(
+        sort_formulas: Arg.Switch(
             '-s', '--sort-formulas',
             help='Sort extracted formulas based on their cell address (implies -x).',
         ) = False,
-        with_ms_excel: Unit.Arg.Switch(
+        with_ms_excel: Arg.Switch(
             '-X', '--with-ms-excel', help='Use MS Excel to process XLS files.'
         ) = False,
-        day: Unit.Arg.Number(
+        day: Arg.Number(
             '-d',
             '--day',
             help='Specify the day of month',
         ) = -1,
-        output_formula_format: Unit.Arg(
+        output_formula_format: Arg(
             '-O', '--output-format',
             type=str,
             metavar='FMT',
             help='Specify the format for output formulas (using [[CELL-ADDR]], [[INT-FORMULA]], and [[STATUS]])',
         ) = 'CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]',
-        extract_formula_format: Unit.Arg(
+        extract_formula_format: Arg(
             '-E', '--extract-format',
             metavar='FMT',
             type=str,
             help='Specify the format for extracted formulas (using [[CELL-ADDR]], [[CELL-FORMULA]], and [[CELL-VALUE]])',
         ) = 'CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
-        no_indent: Unit.Arg.Switch(
+        no_indent: Arg.Switch(
             '-I', '--no-indent',
             help='Do not show indent before formulas',
         ) = False,
-        start_point: Unit.Arg(
+        start_point: Arg(
             '-c', '--start-point',
             type=str,
             help='Start interpretation from a specific cell address',
             metavar='CELL',
         ) = '',
-        password: Unit.Arg(
+        password: Arg(
             '-p',
             '--password',
             type=str,
             help='Password to decrypt the protected document',
         ) = '',
-        output_level: Unit.Arg.Number(
+        output_level: Arg.Number(
             '-o',
             '--output-level',
             help=(
@@ -63,7 +63,7 @@ class xlmdeobf(Unit):
                 'commands 3:strings in important commands).'
             ),
         ) = 0,
-        timeout: Unit.Arg.Number(
+        timeout: Arg.Number(
             '-t',
             '--timeout',
             help='Stop emulation after N seconds (0: not interruption N>0: stop emulation after N seconds)',

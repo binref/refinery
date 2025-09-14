@@ -1,10 +1,9 @@
 """
-This package contains all refinery units. To write an executable refinery unit,
-it is sufficient to write a class that inherits from `refinery.units.Unit` and
-implements `refinery.units.Unit.process`. If the operation implemented by this
-unit should be reversible, then a method called `reverse` with the same
-signature has to be implemented. For example, the following would be a
-minimalistic approach to implement `refinery.hex`:
+This package contains all refinery units. To write an executable refinery unit, it is sufficient to
+write a class inheriting from `refinery.units.Unit` and implements `refinery.units.Unit.process`.
+If the operation implemented by this unit should be reversible, then a method called `reverse` with
+the same signature has to be implemented. For example, the following would be a minimalistic
+approach to implement `refinery.hex`:
 
     from refinery import Unit
 
@@ -12,21 +11,20 @@ minimalistic approach to implement `refinery.hex`:
         def process(self, data): return bytes.fromhex(data.decode('ascii'))
         def reverse(self, data): return data.hex().encode(self.codec)
 
-The above script can be run from the command line. Since `hex` is not marked as
-abstract, its inherited `refinery.units.Unit.run` method will be invoked when
-the script is executed.
+The above script can be run from the command line. Since `hex` is not marked as abstract, its
+inherited `refinery.units.Unit.run` method will be invoked when the script is executed.
 
 ### Command Line Parameters
 
-If you want your custom refinery unit to accept command line parameters, you can
-write an initialization routine. For example, the following unit implements a
-very simple XOR unit (less versatile than the already existing `refinery.xor`):
+If you want your custom refinery unit to accept command line parameters, you can write an
+initialization routine. For example, the following unit implements a very simple XOR unit (less
+versatile than the already existing `refinery.xor`):
 
-    from refinery import Unit
+    from refinery import Unit, Arg
     import itertools
 
     class myxor (Unit):
-        def __init__(self, key: Unit.Arg.Binary(help='Encryption key')):
+        def __init__(self, key: Arg(help='Encryption key')):
             pass
 
         def process(self, data: bytearray):
@@ -35,20 +33,17 @@ very simple XOR unit (less versatile than the already existing `refinery.xor`):
                 data[k] ^= next(key)
             return data
 
-The `refinery.units.Arg` decorator is optional and only used here to provide a
-help message on the command line. It is also available as the `Arg` class property
-of the `refinery.units.Unit` class for convenience. The example also shows that
-the `__init__` code can be left empty: In this case, refinery automatically adds
-boilerplate code that copies all `__init__` parameters to the `args` member
-variable of the unit. In this case, the constructor will be completed to have
-the following code:
+The `refinery.units.Arg` decorator is optional and only used here to provide a help message on the
+command line. The example also shows that the `__init__` code can be left empty: In this case,
+refinery automatically adds boilerplate code that copies all `__init__` parameters to the `args`
+member variable of the unit. In this case, the constructor will be completed to have the following
+code:
 
-        def __init__(self, key: Unit.Arg.Binary(help='Encryption key')):
+        def __init__(self, key: Arg(help='Encryption key')):
             super().__init__(key=key)
 
-The option of writing an empty `__init__` was added because it is rarely needed
-to perform any processing of the input arguments. The command line help for this
-unit will look as follows:
+The option of writing an empty `__init__` was added because it is rarely needed to perform any
+processing of the input arguments. The command line help for this unit will look as follows:
 
     usage: myxor [-h] [-Q] [-0] [-v] key
 
@@ -60,9 +55,9 @@ unit will look as follows:
 
 ### Refinery Syntax in Code
 
-Refinery units can be used in Python code (and a Python repl) in nearly the same
-way as on the command line. As one example, consider the following unit that can
-decode base64 with a custom alphabet using `refinery.map` and `refinery.b64`:
+Refinery units can be used in Python code (and a Python repl) in nearly the same way as on the
+command line. As one example, consider the following unit that can decode base64 with a custom
+alphabet using `refinery.map` and `refinery.b64`:
 
     from refinery import Unit, b64, map
 
@@ -84,47 +79,45 @@ decode base64 with a custom alphabet using `refinery.map` and `refinery.b64`:
         def reverse(self, data):
             return data | -b64 | map(self._b64alphabet, self.args.alphabet)
 
-The syntax does not work exactly as on the command line, but it was designed to
-be as similar as possible:
+The syntax does not work exactly as on the command line, but it was designed to be as similar as
+possible:
 
 - The binary or operator `|` can be used to combine units into pipelines.
-- Combining a pipeline from the left with a byte string or io stream object will
-  feed this byte string into the unit.
-- Unary negation of a reversible unit is equivalent to using the `-R` switch for
-  reverse mode.
-- A pipeline is an iterable of output chunks, but there is quite a selection of
-  objects that can be connected to a pipeline from the right using `|` for
-  various different output options. See below for details.
+- Combining a pipeline from the left with a byte string or io stream object will feed this byte
+  string into the unit.
+- Unary negation of a reversible unit is equivalent to using the `-R` switch for reverse mode.
+- A pipeline is an iterable of output chunks, but there is quite a selection of objects that can
+  be connected to a pipeline from the right using `|` for various different output options. See
+  below for details.
 
-If you want to use frames in code, simply omit any pipe before a square bracket.
-For example, the first example from the `refinery.lib.frame` documentation
-translates to the following Python code:
+If you want to use frames in code, simply omit any pipe before a square bracket. For example, the
+first example from the `refinery.lib.frame` documentation translates to the following Python code:
 
     >>> from refinery import *
     >>> B'OOOOOOOO' | chop(2) [ ccp(B'F') | cca(B'.') ]| ...
     >>> bytearray(b'FOO.FOO.FOO.FOO.')
 
-In the above example, the pipeline is piped to a literal ellipsis (`...`) to get
-the final result. The following section lists the other output options.
+In the above example, the pipeline is piped to a literal ellipsis (`...`) to get the final result.
+The following section lists the other output options.
 
 ### Output Options in Code
 
-You can connect a pipeline to any binary i/o stream, and the output of the
-pipeline will be written to that stream. Example:
+You can connect a pipeline to any binary i/o stream, and the output of the pipeline will be written
+to that stream. Example:
 
     with open('output', 'wb') as stream:
         B'BINARY REFINERY' | xor(0x13) | stream
 
-Furthermore, you can connect pipelines to any callable, and you can always use
-a literal ellipsis (`...`) to represent the identity function. The result of
-this is that you receive the raw output from the pipeline:
+Furthermore, you can connect pipelines to any callable, and you can always use a literal ellipsis
+(`...`) to represent the identity function. The result of this is that you receive the raw output
+from the pipeline:
 
     >>> B'BINARY REFINERY' | xor(0x13) | ...
     bytearray(b'QZ]RAJ3AVUZ]VAJ')
 
-You can also connect to sets and lists containing a single callable. In this
-case, the callable will be applied to each output chunk and all results will be
-collected in a list or set, respectively. Examples:
+You can also connect to sets and lists containing a single callable. In this case, the callable
+will be applied to each output chunk and all results will be collected in a list or set,
+respectively. Examples:
 
     >>> B'ABABCBABABCHB' | rex('.B') | [str]
     ['AB', 'AB', 'CB', 'AB', 'AB', 'HB']
@@ -136,17 +129,15 @@ You can also consume into a dictionary in a similar way:
     >>> B'ABABCBABABCHB' | rex('.(?P<k>.)B') | {'k': str}
     {A: ['BAB', 'BAB'], H: ['CHB']}
 
-Here, the dictionary is expected to contain exactly one key-value pair. The key
-is the name of a meta variable and the value is a conversion function. The
-result will be a dictionary where all converted results have been grouped under
-the respective value of their meta variable. With all of the above options, it
-is always possible to use a literal ellipsis (`...`).
+Here, the dictionary is expected to contain exactly one key-value pair. The key is the name of a
+meta variable and the value is a conversion function. The result will be a dictionary where all
+converted results have been grouped under the respective value of their meta variable. With all of
+the above options, it is always possible to use a literal ellipsis (`...`).
 
-You can connect pipelines to `bytearray` and (writable) `memoryview` instances.
-In this case, the output will be appended to the end of this buffer. Finally, if
-you connect a pipeline to `None`, this will execute the unit but discard all
-output. This is useful for using units with side effects, like `refinery.peek`,
-in a REPL.
+You can connect pipelines to `bytearray` and (writable) `memoryview` instances. In this case, the
+output will be appended to the end of this buffer. Finally, if you connect a pipeline to `None`,
+this will execute the unit but discard all output. This is useful for using units with side
+effects, like `refinery.peek`, in a REPL.
 """
 from __future__ import annotations
 
@@ -314,10 +305,19 @@ class Arg(Argument):
     all its parameters will automatically be forwarded to that base class.
     """
 
-    class delete: pass
-    class omit: pass
+    class delete:
+        """
+        A sentinel class to mark deleted arguments for the argument parser.
+        """
+
+    class omit:
+        """
+        A sentinel class to mark arguments as omitted for the argument parser.
+        """
 
     args: List[str]
+
+    __slots__ = 'args', 'group', 'guessed'
 
     def __init__(
         self, *args: str,
@@ -1328,8 +1328,6 @@ class Unit(UnitBase, abstract=True):
     implement the _framing_ syntax for producing multiple outputs and ingesting
     multiple inputs in a common format. For more details, see `refinery.lib.frame`.
     """
-    Arg = Arg
-
     required_dependencies: Optional[Set[str]] = None
     optional_dependencies: Optional[Dict[str, Set[str]]] = None
 

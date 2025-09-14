@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.units.crypto.hash import HashUnit
+from refinery.units.crypto.hash import HashUnit, Arg
 from refinery.lib.thirdparty.xxhash import xxhash
 
 
@@ -10,7 +10,7 @@ class xxh(HashUnit):
     """
     def __init__(
         self,
-        seed: HashUnit.Arg.Number(metavar='seed', help='specify the seed value; the default is {default}') = 0,
+        seed: Arg.Number(metavar='seed', help='specify the seed value; the default is {default}') = 0,
         text=False
     ):
         super().__init__(text, seed=seed)

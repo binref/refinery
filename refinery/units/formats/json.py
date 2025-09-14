@@ -3,8 +3,8 @@ from typing import Union, Optional, Iterable
 
 import json
 
-from refinery.units import Chunk
-from refinery.units.formats import PathExtractorUnit, UnpackResult, Unit
+from refinery.units import Chunk, Arg, Unit
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.meta import is_valid_variable_name, metavars
 
 
@@ -69,14 +69,14 @@ class xj0(Unit):
     """
     def __init__(
         self,
-        fmt: Unit.Arg.String(help=(
+        fmt: Arg.String(help=(
             'Format expression for the output chunk; may use previously extracted JSON items. '
             'The default is {default}, which represents the input data.')) = '',
-        all: Unit.Arg.Switch('-a', group='META',
+        all: Arg.Switch('-a', group='META',
             help='Extract all other fields as metadata regardless of length and type.') = False,
-        one: Unit.Arg.Switch('-x', group='META',
+        one: Arg.Switch('-x', group='META',
             help='Do not extract any other fields as metadata.') = False,
-        raw: Unit.Arg.Switch('-r',
+        raw: Arg.Switch('-r',
             help='Disable conversion of JSON strings to binary strings in metadata') = False,
     ):
         super().__init__(fmt=fmt, one=one, raw=raw, all=all)

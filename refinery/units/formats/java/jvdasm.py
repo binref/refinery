@@ -7,7 +7,7 @@ import re
 import io
 import collections
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 from refinery.lib.java import (
     opc,
@@ -73,7 +73,7 @@ class jvdasm(PathExtractorUnit):
 
     def __init__(
         self, *paths,
-        gray: PathExtractorUnit.Arg.Switch('-g', help='Disable colored output.') = False,
+        gray: Arg.Switch('-g', help='Disable colored output.') = False,
         **keywords
     ):
         super().__init__(*paths, gray=gray, **keywords)

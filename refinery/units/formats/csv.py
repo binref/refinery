@@ -6,7 +6,7 @@ import csv as _csv
 import io
 import json
 
-from refinery.units import Unit
+from refinery.units import Unit, Arg
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isodate
 
@@ -17,8 +17,8 @@ class csv(Unit):
     """
     def __init__(
         self,
-        quote: Unit.Arg('-q', help='Specify the quote character, the default is a double quote.') = B'"',
-        delim: Unit.Arg('-d', help='Specify the delimiter, the default is a single comma.') = B','
+        quote: Arg('-q', help='Specify the quote character, the default is a double quote.') = B'"',
+        delim: Arg('-d', help='Specify the delimiter, the default is a single comma.') = B','
     ):
         super().__init__(quote=quote, delim=delim)
 
