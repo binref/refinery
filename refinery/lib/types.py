@@ -4,17 +4,18 @@ It also exports important singleton types used throughout refinery.
 """
 from __future__ import annotations
 
-from typing import Annotated, Any, NamedTuple, TYPE_CHECKING
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import (
-        Union,
-        Self,
-        Collection,
+        Annotated,
         Callable,
         ClassVar,
-        Iterable,
+        Collection,
         Generator,
+        Iterable,
+        Self,
+        Union,
     )
 
     from os import PathLike as PathLike
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     JSON = Union[str, int, float, bool, None, dict[str, 'JSON'], list['JSON']]
     JSONDict = dict[str, JSON]
 else:
+    Annotated = Any
     Pattern = Any
     FsPath = Any
     Option = Any
