@@ -10,4 +10,7 @@ class iffx(SingleRegexUnit, ConditionalUnit, docs='{0}{p}{1}'):
     regular expression.
     """
     def match(self, chunk):
-        return bool(self.matcher(chunk))
+        if matcher := self._make_matcher(self.args.regex):
+            return bool(matcher(chunk))
+        else:
+            return True

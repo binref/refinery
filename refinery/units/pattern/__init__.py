@@ -199,7 +199,3 @@ class SingleRegexUnit(RegexUnit, abstract=True):
     @property
     def regex(self):
         return Arg.AsRegExp(self.codec, self.args.regex, self.args.flags)
-
-    @property
-    def matcher(self):
-        return Arg.AsRegExp(self.codec, self.args.regex, self.args.flags)
