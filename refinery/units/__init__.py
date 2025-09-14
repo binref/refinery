@@ -220,6 +220,7 @@ from refinery.lib.argformats import (
     multibin,
     number,
     numseq,
+    percent,
     ParserVariableMissing,
     pending,
     regexp,
@@ -516,6 +517,7 @@ class Arg(Argument):
         dest    : Union[Type[omit], str] = omit,
         nargs   : Union[Type[omit], int, str] = omit,
         metavar : Union[Type[omit], str] = omit,
+        default : Union[Type[omit], str, tuple[str, ...]] = omit,
         group   : Optional[str] = None,
     ):
         """
@@ -523,7 +525,7 @@ class Arg(Argument):
         """
         if metavar is cls.omit and any('-' in a for a in args):
             metavar = 'STR'
-        return cls(*args, group=group, help=help, dest=dest, nargs=nargs, type=str, metavar=metavar)
+        return cls(*args, group=group, default=default, help=help, dest=dest, nargs=nargs, type=str, metavar=metavar)
 
     @classmethod
     def RegExp(
@@ -581,6 +583,20 @@ class Arg(Argument):
             if default is not cls.omit:
                 help = F'{help} The default is {{default}}.'
         return cls(*args, group=group, help=help, default=default, nargs=nargs, dest=dest, type=parser, metavar=metavar)
+
+    @classmethod
+    def Double(
+        cls,
+        *args   : str,
+        help    : Union[Type[omit], str] = omit,
+        dest    : Union[Type[omit], str] = omit,
+        metavar : Union[Type[omit], str] = omit,
+        group   : Optional[str] = None,
+    ):
+        """
+        Used to add argparse arguments that contain a floating point number.
+        """
+        return cls(*args, group=group, help=help, dest=dest, type=percent, metavar=metavar)
 
     @classmethod
     def Number(

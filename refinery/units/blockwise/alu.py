@@ -56,18 +56,18 @@ class alu(ArithmeticUnit):
         return definition
 
     def __init__(
-        self, operator: Arg(type=str, help='A Python expression defining the operation.'), *argument,
-        seed: Arg('-s', type=str, help=(
+        self, operator: Arg.String(help='A Python expression defining the operation.'), *argument,
+        seed: Arg.String('-s', help=(
             'Optional seed value for the state variable S. The default is zero. This can be an expression '
             'involving the variable N.')) = 0,
-        prologue: Arg('-p', type=str, metavar='E', help=(
+        prologue: Arg.String('-p', metavar='E', help=(
             'Optional expression with which the state variable S is updated before a block is operated on.')) = None,
-        epilogue: Arg('-e', type=str, metavar='E', group='EPI', help=(
+        epilogue: Arg.String('-e', metavar='E', group='EPI', help=(
             'Optional expression with which the state variable S is updated after a block was operated on.')) = None,
-        inc: Arg('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
-        dec: Arg('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
-        cbc: Arg('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
-        ctr: Arg('-T', group='EPI', help='equivalent to --epilogue=S+B') = False,
+        inc: Arg.Switch('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
+        dec: Arg.Switch('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
+        cbc: Arg.Switch('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
+        ctr: Arg.Switch('-T', group='EPI', help='equivalent to --epilogue=S+B') = False,
         bigendian=False, blocksize=None, precision=None
     ):
         for flag, flag_is_set, expression in [
@@ -102,7 +102,7 @@ class alu(ArithmeticUnit):
     def _is_ecb(self):
         return not self.args.epilogue and not self.args.prologue
 
-    def _fastblock(self, _):
+    def _fastblock(self, data):
         raise FastBlockError
 
     def process(self, data):

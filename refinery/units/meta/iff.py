@@ -15,24 +15,24 @@ class iff(ConditionalUnit, docs='{0}{p}{1}'):
     """
     def __init__(
         self,
-        *expression: Arg(metavar='token', type=str, help=(
+        *expression: Arg.String(metavar='token', help=(
             'All "token" arguments to this unit are joined with spaces to produce the expression '
             'to be evaluated. This is done so that unnecessary shell quoting is avoided.')),
-        ge: Arg('-ge', type=str, metavar='RHS', group='OP',
+        ge: Arg.String('-ge', metavar='RHS', group='OP',
             help='check that the expression is greater or equal to {varname}') = None,
-        gt: Arg('-gt', type=str, metavar='RHS', group='OP',
+        gt: Arg.String('-gt', metavar='RHS', group='OP',
             help='check that the expression is greater than {varname}') = None,
-        le: Arg('-le', type=str, metavar='RHS', group='OP',
+        le: Arg.String('-le', metavar='RHS', group='OP',
             help='check that the expression is less or equal to {varname}') = None,
-        lt: Arg('-lt', type=str, metavar='RHS', group='OP',
+        lt: Arg.String('-lt', metavar='RHS', group='OP',
             help='check that the expression is less than {varname}') = None,
-        ct: Arg('-ct', type=str, metavar='RHS', group='OP',
+        ct: Arg.String('-ct', metavar='RHS', group='OP',
             help='check that the expression contains {varname}') = None,
-        ne: Arg('-ne', type=str, metavar='RHS', group='OP',
+        ne: Arg.String('-ne', metavar='RHS', group='OP',
             help='check that the expression is equal to {varname}') = None,
-        iN: Arg('-in', type=str, metavar='RHS', group='OP',
+        iN: Arg.String('-in', metavar='RHS', group='OP',
             help='check that the expression is contained in {varname}') = None,
-        eq: Arg('-eq', type=str, metavar='RHS', group='OP',
+        eq: Arg.String('-eq', metavar='RHS', group='OP',
             help='check that the expression is equal to {varname}') = None,
         retain=False,
     ):

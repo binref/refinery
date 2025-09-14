@@ -13,7 +13,7 @@ class groupby(Unit):
     blocks and cannot stream any output until the input frame is consumed: It has
     to read every input chunk to make sure that all groupings are complete.
     """
-    def __init__(self, name: Arg(type=str, help='name of the meta variable')):
+    def __init__(self, name: Arg.String(help='name of the meta variable')):
         super().__init__(name=check_variable_name(name))
 
     def process(self, data):

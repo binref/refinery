@@ -8,7 +8,6 @@ from __future__ import annotations
 import importlib
 
 from refinery.units import Arg, Unit
-from refinery.lib.argformats import number
 from refinery.lib.types import buf
 
 from enum import Enum
@@ -54,8 +53,8 @@ class KeyDerivation(Unit, abstract=True):
 
     def __init__(
         self,
-        size: Arg(help='The number of bytes to generate.', type=number),
-        salt: Arg(help='Salt for the derivation.'),
+        size: Arg.Number(help='The number of bytes to generate.'),
+        salt: Arg.Binary(help='Salt for the derivation.'),
         hash: Arg.Option(choices=HASH, metavar='hash',
             help='Specify one of these algorithms (default is {default}): {choices}') = None,
         iter: Arg.Number(metavar='iter', help='Number of iterations; default is {default}.') = None,

@@ -14,7 +14,7 @@ class vaddr(Unit):
     """
 
     def __init__(
-        self, *name: Arg(type=str, help='The name of a metadata variable holding an integer.'),
+        self, *name: Arg.String(help='The name of a metadata variable holding an integer.'),
         base : Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None
     ):
         return super().__init__(names=name, base=base)

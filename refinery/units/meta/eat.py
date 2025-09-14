@@ -13,7 +13,7 @@ class eat(Unit):
     """
     def __init__(
         self,
-        name: Arg(help='The name of the variable to be used.', type=str),
+        name: Arg.String(help='The name of the variable to be used.'),
     ):
         super().__init__(name=check_variable_name(name))
 

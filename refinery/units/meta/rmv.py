@@ -10,7 +10,7 @@ class rmv(Unit):
     variable names are given, the unit removes all of them. Note that this can recover variables from
     outer frames that were previously shadowed.
     """
-    def __init__(self, *names: Arg(type=str, metavar='name', help='Name of a variable to be removed.')):
+    def __init__(self, *names: Arg.String(metavar='name', help='Name of a variable to be removed.')):
         super().__init__(names=names)
 
     def process(self, data: Chunk):

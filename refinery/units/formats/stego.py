@@ -23,7 +23,7 @@ class stego(Unit):
     def __init__(
         self,
         split: Arg.Switch('-m', help='Emit the individual rows or columns as separate outputs.') = False,
-        parts: Arg('parts', nargs='?', type=str, help=(
+        parts: Arg.String('parts', nargs='?', help=(
             'A string containing any ordering of the letters R, G, B, and A (case-insensitive). '
             'These pixel components will be extracted from every pixel in the given order. The '
             'default value is {default}.'

@@ -27,7 +27,7 @@ class ef(Unit):
     """
 
     def __init__(self,
-        *filenames: Arg(metavar='FILEMASK', nargs='+', type=str, help=(
+        *filenames: Arg.String(metavar='FILEMASK', nargs='+', help=(
             'A list of file masks. Each matching file will be read from disk and '
             'emitted. The file masks can include format string expressions which '
             'will be substituted from the current meta variables. The masks can '

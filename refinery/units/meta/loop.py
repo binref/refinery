@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from refinery.units import RefineryPartialResult
 from refinery.units.pattern import Arg, RegexUnit
-from refinery.lib.argformats import regexp, DelayedBinaryArgument
+from refinery.lib.argformats import DelayedBinaryArgument
 from refinery.lib.tools import exception_to_string
 
 
@@ -14,26 +14,28 @@ class loop(RegexUnit):
 
         emit data | loop 20 csd[b64]:zl
 
-    Notably, the argument after the count is a suffix, which means that handlers are applied
+    Notably, the argument after the iterations is a suffix, which means that handlers are applied
     from left to right (not from right to left). The loop is aborted and the previous result
     returned if the newly computed result is empty. If the an error occurs while computing
-    the suffix and the unit is lenient (i.e. the `-L` switch is set), the last known result
+    the statements and the unit is lenient (i.e. the `-L` switch is set), the last known result
     is returned.
     """
 
     def __init__(
         self,
-        count: Arg.Number(metavar='count', help='The number of repeated applications of the suffix.'),
-        suffix: Arg(type=str, help='A multibin expression suffix.'),
-        do_while: Arg('-w', '--while', type=regexp, metavar='RE',
+        iterations: Arg.Number(metavar='iterations',
+            help='The number of repeated applications of the statements.'),
+        statements: Arg.String(metavar='statements',
+            help='A multibin expression suffix representing the loop statements.'),
+        do_while: Arg.RegExp('-w', '--while', metavar='RE',
             help='Halt when the given regular expression does not match the data.'),
-        do_until: Arg('-u', '--until', type=regexp, metavar='RE',
+        do_until: Arg.RegExp('-u', '--until', metavar='RE',
             help='Halt when the given regular expression matches the data.'),
         fullmatch=False, multiline=False, ignorecase=False,
     ):
         super().__init__(
-            count=count,
-            suffix=suffix,
+            iterations=iterations,
+            statements=statements,
             do_while=do_while,
             do_until=do_until,
             fullmatch=fullmatch,
@@ -42,7 +44,7 @@ class loop(RegexUnit):
         )
 
     def process(self, data):
-        _count = self.args.count
+        _count = self.args.iterations
         _width = len(str(_count))
         _while = self._while
         _until = self._until
@@ -56,7 +58,7 @@ class loop(RegexUnit):
                 break
             try:
                 out = DelayedBinaryArgument(
-                    self.args.suffix, reverse=True, seed=data)(data)
+                    self.args.statements, reverse=True, seed=data)(data)
             except Exception as error:
                 self.log_info(F'step {k:0{_width}}: error;', exception_to_string(error))
                 msg = F'Stopped after {k} steps, increase verbosity for additional details.'

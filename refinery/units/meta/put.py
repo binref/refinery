@@ -16,7 +16,7 @@ class put(Unit):
     """
     def __init__(
         self,
-        name : Arg(help='The name of the variable to be used.', type=str),
+        name : Arg.String(help='The name of the variable to be used.'),
         value: Arg.NumSeq(check=False, help=(
             'The value for the variable. If no value is given, the entire current chunk is stored.'
         )) = _EMPTY

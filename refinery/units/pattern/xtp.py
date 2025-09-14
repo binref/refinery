@@ -63,7 +63,7 @@ class xtp(PatternExtractor):
 
     def __init__(
         self,
-        *pattern: Arg('pattern', type=str,
+        *pattern: Arg.String('pattern',
             default=(
                 indicators.hostname.name,
                 indicators.url.name,
@@ -95,8 +95,8 @@ class xtp(PatternExtractor):
         patterns = [F'(?P<{p.name}>{p.value})' for p in patterns]
         if not patterns:
             raise RefineryCriticalException('The given mask does not match any known indicator pattern.')
-        pattern = '|'.join(patterns)
-        self.args.pattern = re.compile(pattern.encode(self.codec), flags=re.DOTALL)
+        joined = '|'.join(patterns)
+        self.args.pattern = re.compile(joined.encode(self.codec), flags=re.DOTALL)
         self.args.filter = filter
 
     _ALPHABETIC = ascii_letters.encode('ASCII')

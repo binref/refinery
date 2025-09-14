@@ -17,7 +17,7 @@ class mvg(Unit):
     """
     def __init__(
         self,
-        *names: Arg(type=str, metavar='name', help=(
+        *names: Arg.String(metavar='name', help=(
             'Name of a variable to be removed. If no variables are explicitly specified, all '
             'variables in the current chunk will be rescoped.'
         )),

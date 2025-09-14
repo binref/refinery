@@ -14,6 +14,7 @@ from datetime import datetime
 from refinery.units import Arg, Unit
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
+from refinery.lib.types import Param
 
 if TYPE_CHECKING:
     from pyxlsb2.records import SheetRecord as XlsbSheet
@@ -284,12 +285,19 @@ class xlxtr(_ExcelUnit):
     1-based. To get all elements of one sheet, use `sheet#`. The unit If parsing a sheet reference
     fails, the script will assume that the given reference specifies a sheet.
     """
-    def __init__(self, *references: Arg(metavar='reference', type=SheetReference, help=(
-        'A sheet reference to be extracted. '
-        'If no sheet references are given, the unit lists all sheet names.'
-    ))):
+    def __init__(
+        self,
+        *references: Param[SheetReference, Arg(
+            metavar='reference',
+            type=SheetReference,
+            help=(
+                'A sheet reference to be extracted. '
+                'If no sheet references are given, the unit lists all sheet names.'
+            )
+        )]
+    ):
         if not references:
-            references = [SheetReference('*')]
+            references = SheetReference('*'),
         super().__init__(references=references)
 
     def process(self, data):

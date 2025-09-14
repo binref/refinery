@@ -12,7 +12,7 @@ class min_(Unit):
 
     def __init__(
         self,
-        key: Arg('key', type=str, help='A meta variable expression to sort by instead of sorting the content.') = None,
+        key: Arg.String('key', help='A meta variable expression to sort by instead of sorting the content.') = None,
     ):
         super().__init__(key=key)
 

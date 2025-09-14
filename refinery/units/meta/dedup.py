@@ -14,7 +14,7 @@ class dedup(Unit):
     """
     def __init__(
         self,
-        key: Arg('key', type=str, help='An optional meta variable expression to deduplicate.') = None,
+        key: Arg.String('key', help='An optional meta variable expression to deduplicate.') = None,
         count: Arg.Switch('-c', help='Store the count of each deduplicated chunk.') = False
     ):
         super().__init__(key=key, count=count)

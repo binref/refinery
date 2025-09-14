@@ -17,8 +17,8 @@ class swap(Unit):
     """
     def __init__(
         self,
-        src: Arg(type=str, help='The meta variable name.'),
-        dst: Arg(type=str, help='Optional name of the second meta variable.') = None
+        src: Arg.String(help='The meta variable name.'),
+        dst: Arg.String(help='Optional name of the second meta variable.') = None
     ):
         super().__init__(
             src=check_variable_name(src),

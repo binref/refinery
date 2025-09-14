@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import List, Match
 
-from refinery.lib.argformats import utf8
 from refinery.lib.meta import metavars
 from refinery.units.pattern import Arg, SingleRegexUnit, PatternExtractor
 from refinery.units import Chunk
@@ -25,12 +24,11 @@ class rex(SingleRegexUnit, PatternExtractor):
     """
     def __init__(
         self, regex,
-        # TODO: Use positional only in Python 3.8
-        # /,
-        *transformation: Arg(type=utf8, help=(
+        /,
+        *transformation: Arg.String(help=(
             'An optional sequence of transformations to be applied to each match. '
-            'Each transformation produces one output in the order in which they   '
-            'are given. The default transformation is {0}, i.e. the entire match.  '
+            'Each transformation produces one output in the order in which they '
+            'are given. The default transformation is {0}, i.e. the entire match.'
         )),
         unicode: Arg.Switch('-u', help='Also find unicode strings.') = False,
         unique: Arg.Switch('-q', help='Yield every (transformed) match only once.') = False,
@@ -59,11 +57,11 @@ class rex(SingleRegexUnit, PatternExtractor):
         meta = metavars(data)
         self.log_debug('regular expression:', getattr(self.regex, 'pattern', self.regex))
         transformations = []
-        specs: List[bytes] = list(self.args.transformation)
+        specs: List[str] = list(self.args.transformation)
         if not specs:
-            specs.append(B'{0}')
+            specs.append('{0}')
         for spec in specs:
-            def transformation(match: Match, s=spec.decode(self.codec)):
+            def transformation(match: Match, s=spec):
                 symb: dict = match.groupdict()
                 args: list = [match.group(0), *match.groups()]
                 used = set()
@@ -85,4 +83,5 @@ class rex(SingleRegexUnit, PatternExtractor):
         yield from self.matches_filtered(memoryview(data), self.regex, *transformations)
 
 
-rex.__doc__ %= _FORWARD_VAR
+if __doc := rex.__doc__:
+    rex.__doc__ = __doc % _FORWARD_VAR

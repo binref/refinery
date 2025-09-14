@@ -23,8 +23,8 @@ class recode(Unit):
 
     def __init__(
         self,
-        decode: Arg(metavar='decode-as', type=str, help='Input encoding; Guess encoding by default.') = None,
-        encode: Arg(metavar='encode-as', type=str, help=F'Output encoding; The default is {Unit.codec}.') = Unit.codec,
+        decode: Arg.String(metavar='decode-as', help='Input encoding; Guess encoding by default.') = None,
+        encode: Arg.String(metavar='encode-as', help=F'Output encoding; The default is {Unit.codec}.') = Unit.codec,
         decerr: Arg.Option('-d', choices=Handler,
             help='Specify an error handler for decoding.') = None,
         encerr: Arg.Option('-e', choices=Handler,

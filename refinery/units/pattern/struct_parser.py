@@ -73,13 +73,13 @@ class struct(Unit):
 
     def __init__(
         self,
-        spec: Arg(type=str, help='Structure format as explained above.'),
-        *outputs: Arg(metavar='output', type=str, help='Output format as explained above.'),
+        spec: Arg.String(help='Structure format as explained above.'),
+        *outputs: Arg.String(metavar='output', help='Output format as explained above.'),
         multi: Arg.Switch('-m', help=(
             'Read as many pieces of structured data as possible intead of just one.')) = False,
         count: Arg.Number('-c', help=(
             'A limit on the number of chunks to read in multi mode; default is {default}.')) = INF,
-        until: Arg('-u', metavar='E', type=str, help=(
+        until: Arg.String('-u', metavar='E', help=(
             'An expression evaluated on each chunk in multi mode. New chunks will be parsed '
             'only if the result is nonzero.')) = None,
         format: Arg.String('-f', metavar='F', help=(

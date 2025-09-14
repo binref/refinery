@@ -295,7 +295,7 @@ class PathExtractorUnit(Unit, abstract=True):
 class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
     def __init__(
         self, *paths,
-        format: Arg('-f', type=str, metavar='F', help=(
+        format: Arg.String('-f', metavar='F', help=(
             'A format expression to be applied for computing the path of an item. This must use '
             'metadata that is available on the item. The current tag can be accessed as {{tag}}. '
             'If no format is specified, the unit attempts to derive a good attribute from the XML '

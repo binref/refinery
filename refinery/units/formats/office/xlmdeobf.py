@@ -27,32 +27,28 @@ class xlmdeobf(Unit):
             '--day',
             help='Specify the day of month',
         ) = -1,
-        output_formula_format: Arg(
+        output_formula_format: Arg.String(
             '-O', '--output-format',
-            type=str,
             metavar='FMT',
             help='Specify the format for output formulas (using [[CELL-ADDR]], [[INT-FORMULA]], and [[STATUS]])',
         ) = 'CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]',
-        extract_formula_format: Arg(
+        extract_formula_format: Arg.String(
             '-E', '--extract-format',
             metavar='FMT',
-            type=str,
             help='Specify the format for extracted formulas (using [[CELL-ADDR]], [[CELL-FORMULA]], and [[CELL-VALUE]])',
         ) = 'CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
         no_indent: Arg.Switch(
             '-I', '--no-indent',
             help='Do not show indent before formulas',
         ) = False,
-        start_point: Arg(
+        start_point: Arg.String(
             '-c', '--start-point',
-            type=str,
             help='Start interpretation from a specific cell address',
             metavar='CELL',
         ) = '',
-        password: Arg(
+        password: Arg.String(
             '-p',
             '--password',
-            type=str,
             help='Password to decrypt the protected document',
         ) = '',
         output_level: Arg.Number(

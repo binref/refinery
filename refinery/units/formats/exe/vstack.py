@@ -409,7 +409,7 @@ class vstack(Unit):
         skip_calls: Arg.Counts('-C', group='CALL',
             help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
         stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
-        stack_push: Arg('-u', action='append', type=str, metavar='REG',
+        stack_push: Arg.String('-u', action='append', metavar='REG',
             help='Push the value of a register to the stack before beginning emulation; implies -r.') = None,
         log_api_calls: Arg.Switch('-A', help='Log API calls when using Speakeasy.') = False,
         block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,

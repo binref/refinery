@@ -18,7 +18,7 @@ class rep(Unit):
             'Defines the number of outputs to generate for each input. The default is {default}. '
             'You can specify any multibin expression that defines an integer iterable here: Each '
             'input chunk will be replicated once for each element of that sequence.')) = 2,
-        label: Arg(type=str, help=(
+        label: Arg.String(help=(
             'If specified, the meta variable with this name will be populated with the index of '
             'the replicated chunk. When the count parameter is an integer, this label will be '
             'equivalent to the index meta variable.')) = None

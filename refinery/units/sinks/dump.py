@@ -46,7 +46,7 @@ class dump(Unit):
     """
 
     def __init__(
-        self, *files: Arg(metavar='file', type=str, help='Optionally formatted filename.'),
+        self, *files: Arg.String(metavar='file', help='Optionally formatted filename.'),
         tee    : Arg.Switch('-t', help='Forward all inputs to STDOUT.') = False,
         stream : Arg.Switch('-s', help='Dump all incoming data to the same file.') = False,
         plain  : Arg.Switch('-p', help='Never apply any formatting to file names.') = False,

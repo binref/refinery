@@ -24,17 +24,17 @@ class run(Unit):
     _JOIN_TIME = 0.1
 
     def __init__(
-        self, *commandline : Arg(nargs='...', type=str, metavar='(all remaining)', help=(
+        self, *commandline : Arg.String(nargs='...', metavar='(all remaining)', help=(
             'All remaining command line tokens form an arbitrary command line to be executed. Use'
             ' format string syntax to insert meta variables and incoming data chunks.')),
         stream : Arg.Switch('-s',
             help='Stream the command output rather than buffering it.') = False,
-        noinput: Arg('-x', help='Do not send any input to the new process.') = False,
-        errors : Arg('-m', help=(
+        noinput: Arg.Switch('-x', help='Do not send any input to the new process.') = False,
+        errors : Arg.Switch('-m', help=(
             'Merge stdout and stderr. By default, the standard error stream of the coupled command'
             ' is forwarded to the logger, i.e. it is only visible if -v is also specified.'
         )) = False,
-        timeout: Arg('-t', metavar='T', help=(
+        timeout: Arg.Double('-t', metavar='T', help=(
             'Optionally set an execution timeout as a floating point number in seconds.'
         )) = 0.0
     ):

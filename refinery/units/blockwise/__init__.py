@@ -85,7 +85,7 @@ class BlockTransformationBase(Unit, abstract=True):
         return 8 * self.precision
 
     @property
-    def fmask(self):
+    def fmask(self) -> int | Literal[NoMask]:
         fbits = self.fbits
         if fbits == INF:
             return NoMask

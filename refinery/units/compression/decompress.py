@@ -102,12 +102,12 @@ class decompress(Unit):
             'Maximum number of bytes to strip from the beginning of the data; '
             'The default value is 12.')
         ) = 12,
-        max_ratio: Arg('-m', metavar='R', help=(
+        max_ratio: Arg.Double('-m', metavar='R', help=(
             'To determine whether a decompression algorithm was successful, the '
             'ratio of compressed size to decompressed size may at most be as large '
             'as this number, a floating point value R; default value is {default}.')
         ) = 1.0,
-        min_ratio: Arg('-n', metavar='R', help=(
+        min_ratio: Arg.Double('-n', metavar='R', help=(
             'Require that compression ratios must be at least as large as R. This '
             'is a "too good to be true" heuristic against algorithms like lznt1 '
             'that can produce false positives. The default is {default}.')
@@ -118,7 +118,7 @@ class decompress(Unit):
             'can increase in size when compressed under many formats. Set this to :0 '
             'or use strict limits to disable this setting.')
         ) = range(0, 0x101),
-        expand_factor: Arg('-k', help=(
+        expand_factor: Arg.Double('-k', help=(
             'The number by which the maximum compression ratio is multiplied for '
             'small buffers. The default is {default}.'
         )) = 1.75,

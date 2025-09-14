@@ -88,7 +88,7 @@ class pop(Unit):
     """
     def __init__(
         self,
-        *names: Arg(type=str, metavar='instruction', help='A sequence of instructions, see above.')
+        *names: Arg.String(metavar='instruction', help='A sequence of instructions, see above.')
     ):
         if not names:
             names = _MERGE_META,

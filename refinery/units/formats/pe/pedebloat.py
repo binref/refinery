@@ -4,7 +4,6 @@ from typing import Generator, Iterable, Optional, TYPE_CHECKING
 from refinery.units.formats.pe import OverlayUnit, Arg
 from refinery.units.formats.pe.perc import RSRC
 from refinery.lib.executable import Executable
-from refinery.lib.argformats import percent
 from refinery.lib.meta import TerseSizeInt as TI, SizeInt
 
 import zlib
@@ -37,7 +36,7 @@ class pedebloat(OverlayUnit):
     """
     def __init__(
         self,
-        *names: Arg(type=str),
+        *names: Arg.String(),
         certificate=False,
         directories=False,
         memdump=False,
@@ -45,7 +44,7 @@ class pedebloat(OverlayUnit):
         sections : Arg.Switch('-s', help='Strip large sections.') = False,
         trim_code: Arg.Switch('-X', help='Lift the exception on code sections for stripping.') = False,
         trim_rsrc: Arg.Switch('-Y', help='Lift the exception on rsrc sections for stripping.') = False,
-        threshold: Arg('-t', metavar='T', type=percent, help=(
+        threshold: Arg.Double('-t', metavar='T', help=(
             'Trailing data from resources and sections is stripped until the compression ratio '
             'of the remaining data rises above this threshold. The default value is {default}. '
             'Set this to 1 to ignore the limit entirely and trim every structure as much as '

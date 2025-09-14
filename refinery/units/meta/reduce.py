@@ -13,7 +13,7 @@ class reduce(Unit):
     """
 
     def __init__(self,
-        suffix: Arg(type=str, help=(
+        suffix: Arg.String(help=(
             'The remaining command line is a multibin suffix. The reduction accumulator is initialized '
             'with the first chunk in the frame. Then, each remaining chunk is processed with the given '
             'suffix and the result is used to overwrite the accumulator.'

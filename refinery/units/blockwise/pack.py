@@ -8,7 +8,6 @@ from enum import IntEnum
 
 from refinery.units.blockwise import Arg, BlockTransformationBase
 from refinery.units.encoding.base import base as BaseUnit
-from refinery.lib.argformats import number
 from refinery.lib.patterns import formats
 
 
@@ -27,7 +26,7 @@ class pack(BlockTransformationBase):
     """
 
     def __init__(self,
-        base: Arg(type=number[2:36], help=(
+        base: Arg.Number(bound=(2, 36), help=(
             'Find only numbers in given base. Default of 0 means that '
             'common expressions for hexadecimal, octal and binary are '
             'accepted.')) = 0,
