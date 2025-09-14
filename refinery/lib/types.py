@@ -127,29 +127,29 @@ class Singleton(type):
 
 
 class _INF(metaclass=Singleton):
-    def __lt__(self, other: Any): return False
-    def __le__(self, other: Any): return False
-    def __gt__(self, other: Any): return True
-    def __ge__(self, other: Any): return True
+    def __lt__(self, _: Any): return False
+    def __le__(self, _: Any): return False
+    def __gt__(self, _: Any): return True
+    def __ge__(self, _: Any): return True
     def __eq__(self, other: Any): return other is INF
-    def __rmul__(self, other: Any): return self
-    def __radd__(self, other: Any): return self
-    def __mul__(self, other: Any): return self
-    def __add__(self, other: Any): return self
-    def __sub__(self, other: Any): return self
-    def __div__(self, other: Any): return self
-    def __mod__(self, other: Any): return self
-    def __pow__(self, other: Any): return self
-    def __iadd__(self, other: Any): return self
-    def __isub__(self, other: Any): return self
-    def __imul__(self, other: Any): return self
-    def __imod__(self, other: Any): return self
+    def __rmul__(self, _: Any): return self
+    def __radd__(self, _: Any): return self
+    def __mul__(self, _: Any): return self
+    def __add__(self, _: Any): return self
+    def __sub__(self, _: Any): return self
+    def __div__(self, _: Any): return self
+    def __mod__(self, _: Any): return self
+    def __pow__(self, _: Any): return self
+    def __iadd__(self, _: Any): return self
+    def __isub__(self, _: Any): return self
+    def __imul__(self, _: Any): return self
+    def __imod__(self, _: Any): return self
     def __abs__(self): return None
     def __repr__(self): return '∞'
-    def __truediv__(self, other: Any): return self
-    def __floordiv__(self, other: Any): return self
-    def __rrshift__(self, other: Any): return 0
-    def __format__(self, *args): return str(self)
+    def __truediv__(self, _: Any): return self
+    def __floordiv__(self, _: Any): return self
+    def __rrshift__(self, _: Any): return 0
+    def __format__(self, *_): return str(self)
 
 
 INF = _INF()
