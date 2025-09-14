@@ -311,7 +311,7 @@ def make_buffer_mutable(data: buf):
     return bytearray(data)
 
 
-def infinitize(it):
+def infinitize(it: _T | Iterable[_T]) -> Iterable[_T]:
     if not isinstance(it, (
         itertools.cycle,
         itertools.repeat,
@@ -425,7 +425,7 @@ class NoLoggingProxy:
             else:
                 proxy_class = cls
             cls.__proxy_cache__[wrap_type] = proxy_class
-        return super().__new__(proxy_class)
+        return super().__new__(proxy_class) # type:ignore
 
     def __init__(self, wrap, mode: NoLogging.Mode = NoLogging.Mode.ALL):
         self.__wrapped__ = wrap

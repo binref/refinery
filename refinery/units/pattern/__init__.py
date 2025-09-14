@@ -7,7 +7,7 @@ import re
 
 from itertools import islice
 from hashlib import blake2b
-from typing import overload, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from refinery.lib.types import INF, AST, buf, Callable, Iterable
 from refinery.units import Arg, Unit

@@ -15,12 +15,11 @@ from refinery.lib.argformats import numseq
 from refinery.lib import chunks
 from refinery.lib.tools import infinitize
 from refinery.lib.inline import iterspread
-from refinery.lib.types import NoMask, INF
+from refinery.lib.types import buf, NoMask, INF
 
 if TYPE_CHECKING:
     from numpy import ndarray
-    from typing import TypeVar, Union, Iterable, Generator, Optional, Tuple
-    _T = TypeVar('_T')
+    from typing import Literal, Union, Iterable, Generator, Optional, Tuple
     _I = Union[Iterable[int], int]
 
 
@@ -70,11 +69,11 @@ class BlockTransformationBase(Unit, abstract=True):
         return self.blocksize == 1
 
     @property
-    def blocksize(self):
+    def blocksize(self) -> int:
         return self.args.blocksize or 1
 
     @property
-    def precision(self):
+    def precision(self) -> int | Literal[INF]:
         precision = self.args.precision
         if precision is None:
             return self.blocksize
@@ -89,7 +88,7 @@ class BlockTransformationBase(Unit, abstract=True):
     @property
     def fmask(self):
         fbits = self.fbits
-        if fbits is INF:
+        if fbits == INF:
             return NoMask
         return (1 << fbits) - 1
 
@@ -103,7 +102,7 @@ class BlockTransformationBase(Unit, abstract=True):
         end = self.blocksize * (len(data) // self.blocksize)
         return data[end:]
 
-    def chunk_into_bytes(self, data: _T) -> Generator[_T | bytearray, None, None]:
+    def chunk_into_bytes(self, data: buf) -> Generator[buf]:
         """
         Returns an iterator over the blocks of the input data according to the current operational block
         size. The blocks are returned as slices of the input data. Note that zero bytes may be appended if
@@ -173,7 +172,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     ):
         super().__init__(bigendian=bigendian, blocksize=blocksize, precision=precision, argument=argument, **kw)
 
-    def _argument_parse_hook(self, it: _I) -> Tuple[bool, _I]:
+    def _argument_parse_hook(self, it: _I) -> Tuple[_I, bool]:
         return it, False
 
     def _infinitize_argument(self, it: _I, masked=False) -> Iterable[int]:
