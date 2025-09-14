@@ -29,10 +29,15 @@ if TYPE_CHECKING:
     RegExp = Union[str, Binary, Pattern[str], Pattern[bytes]]
     NumSeq = Union[int, Iterable[int]]
 
+    Param = Annotated
+
     JSON = Union[str, int, float, bool, None, dict[str, 'JSON'], list['JSON']]
     JSONDict = dict[str, JSON]
 else:
-    Annotated = Any
+    class Param:
+        def __class_getitem__(cls, annotation):
+            return annotation[1]
+
     Pattern = Any
     FsPath = Any
     Option = Any
@@ -61,7 +66,7 @@ __all__ = [
     'Binary',
     'JSON',
     'JSONDict',
-    'Annotated',
+    'Param',
     'NamedTuple',
     'Collection',
     'Iterable',
