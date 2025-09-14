@@ -188,7 +188,7 @@ from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
 from refinery.lib.frame import generate_frame_header, Framed, Chunk, MAGIC, MSIZE
 from refinery.lib.structures import MemoryFile
 from refinery.lib.environment import LogLevel, Logger, environment, logger
-from refinery.lib.types import Binary, Pattern
+from refinery.lib.types import Binary
 from refinery.lib.dependencies import dependency_accessor
 
 from refinery.lib.exceptions import (
@@ -388,38 +388,16 @@ class Arg(Argument):
         self.update_help()
         return super().__rmatmul__(method)
 
-    @overload
     @staticmethod
     def AsRegExp(
         codec: str,
-        regex: None,
-        flags: int = 0,
-    ) -> None:
-        ...
-
-    @overload
-    @staticmethod
-    def AsRegExp(
-        codec: str,
-        regex: str | Binary | Pattern[str] | Pattern[bytes],
+        regex: str | Binary,
         flags: int = 0
-    ) -> Pattern[bytes]:
-        ...
-
-    @staticmethod
-    def AsRegExp(
-        codec: str,
-        regex: str | Binary | Pattern[str] | Pattern[bytes] | None,
-        flags: int = 0
-    ) -> Pattern[bytes] | None:
+    ):
         import re
-        if regex is None:
-            return None
-        if isinstance(regex, re.Pattern):
-            regex = regex.pattern
         if isinstance(regex, str):
             regex = regex.encode(codec)
-        elif not isinstance(regex, bytes):
+        else:
             regex = bytes(regex)
         return re.compile(regex, flags=flags)
 

@@ -169,7 +169,7 @@ class RegexUnit(Unit, abstract=True):
             flags |= re.IGNORECASE
         super().__init__(flags=flags, fullmatch=fullmatch, **keywords)
 
-    def _make_matcher(self, pattern: str | Binary | re.Pattern[str] | re.Pattern[bytes] | None, default=None):
+    def _make_matcher(self, pattern: str | Binary | None, default=None):
         if pattern is None:
             return default
         regex = Arg.AsRegExp(self.codec, pattern, self.args.flags)
