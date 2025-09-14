@@ -10,7 +10,6 @@ from hashlib import blake2b
 from typing import overload, TYPE_CHECKING
 
 from refinery.lib.types import INF, AST, Binary, Callable, Iterable
-from refinery.lib.argformats import regexp
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -203,7 +202,8 @@ class RegexUnit(Unit, abstract=True):
 class SingleRegexUnit(RegexUnit, abstract=True):
 
     def __init__(
-        self, regex: Arg(type=regexp, help='Regular expression to match.'),
+        self,
+        regex: Arg.RegExp(help='Regular expression to match.'),
         count: Arg.Number('-c', help='Specify the maximum number of operations to perform.') = 0,
         fullmatch=False, multiline=False, ignorecase=False, **keywords
     ):
