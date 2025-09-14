@@ -931,12 +931,12 @@ class DelayedArgument(LazyEvaluation):
         return _pos
 
     @handler.register('rx')
-    def rx(self, str: bytes) -> bytes:
+    def rx(self, string: bytes) -> bytes:
         """
         The handler `rx:str` returns a regular expression which matches the exact string
         sequence given by `str`, with special regular expression control characters escaped.
         """
-        return re.escape(str)
+        return re.escape(string)
 
     @handler.register('c', 'copy', final=True)
     def copy(self, region: str) -> bytes:
@@ -1415,7 +1415,7 @@ class DelayedBinaryArgument(DelayedArgument):
     are implemented in `refinery.lib.argformats.DelayedArgument`.
     """
 
-    def __call__(self, data: Optional[Binary] = None) -> bytes:
+    def __call__(self, data: Binary | None = None) -> bytes:
         value = super().__call__(data=data)
         if not isbuffer(value):
             if isinstance(value, str):
@@ -1437,10 +1437,10 @@ class DelayedPathArgument(DelayedBinaryArgument):
     with the contents of an equally named file on disk.
     """
     def default_handler(self, expression: str) -> bytes:
-        try:
-            return utf8(expression)
-        except Exception:
-            return expression
+        return utf8(expression)
+
+    def __call__(self, data: Binary | None = None) -> str:
+        return super().__call__(data).decode('utf8')
 
 
 class DelayedNumSeqArgument(DelayedArgument):
@@ -1705,12 +1705,10 @@ def numseq(expression: Union[int, str], reverse=False, seed=None, typecheck=True
     return arg
 
 
-def pathvar(expression: Union[str, bytes, bytearray]) -> Union[bytes, DelayedArgument]:
+def pathvar(expression: str) -> str | DelayedArgument:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedPathArgument`.
     """
-    if not isinstance(expression, str):
-        return bytes(expression)
     arg = DelayedPathArgument(expression)
     with suppress(TooLazy):
         return arg()

@@ -159,12 +159,10 @@ class PathExtractorUnit(Unit, abstract=True):
             else:
                 paths = [u'*']
         else:
-            def check_pattern(t: Union[str, bytes]) -> str:
+            def check_pattern(t: str) -> str:
                 try:
                     if len(t) >= 0x1000:
                         raise OverflowError
-                    if not isinstance(t, str):
-                        t = codecs.decode(t, self.codec)
                 except Exception as E:
                     raise RefineryPotentialUserError(
                         F'Invalid path pattern of length {len(t)}.') from E
