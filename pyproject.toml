@@ -2,7 +2,7 @@
 requires = [
     "colorama",
     "defusedxml",
-    "lief>=0.16.0",
+    "lief>=0.17.0",
     "msgpack>=1.0.0",
     "pycryptodomex",
     "setuptools",

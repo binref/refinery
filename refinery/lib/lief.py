@@ -6,24 +6,40 @@ from __future__ import annotations
 import io
 import lief as lib
 
+import lief.ELF as ELF
+import lief.MachO as MachO
+import lief.PE as PE
+import lief.COFF as COFF
+
 if True:
     lib.logging.disable()
 
 from refinery.lib.types import buf
 
-MachO = lib.MachO
-PE = lib.PE
-ELF = lib.ELF
 AbstractBinary = lib.Binary
 Relocation = lib.Relocation
 Header = lib.Header
 Symbol = lib.Symbol
 Section = lib.Section
 
+__all__ = [
+    'ELF',
+    'MachO',
+    'PE',
+    'COFF',
+    'AbstractBinary',
+    'Relocation',
+    'Header',
+    'Symbol',
+    'Section',
+    'load_pe',
+    'load_pe_fast',
+    'load_macho',
+    'load',
+    'string',
+]
 
-__pdoc__ = {_forward: False for _forward in [
-    'MachO', 'PE', 'ELF', 'AbstractBinary', 'Header', 'Symbol', 'Section', 'Relocation'
-]}
+__pdoc__ = {_forward: False for _forward in __all__[:9]}
 
 
 def load_pe(

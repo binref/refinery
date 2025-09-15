@@ -10,7 +10,7 @@ from enum import Enum
 
 from refinery.lib import lief
 from refinery.lib.dotnet.header import DotNetHeader
-from refinery.lib.tools import NoLoggingProxy
+from refinery.lib.tools import unwrap, NoLoggingProxy
 from refinery.units import Arg, Unit
 from refinery.units.sinks.ppjson import ppjson
 from refinery.units.formats.pe import get_pe_size
@@ -326,27 +326,47 @@ class pemeta(Unit):
         aw = self._pe_address_width(pe)
         return F'0x{value:0{aw}X}'
 
-    def parse_version(self, pe: lief.PE.Binary, data=None) -> dict:
+    def parse_version(self, pe: lief.PE.Binary, data=None) -> dict | None:
         """
         Extracts a JSON-serializable and human-readable dictionary with information about
         the version resource of an input PE file, if available.
         """
         version_info = {}
-        if not pe.resources_manager.has_version:
+        rsrc = unwrap(pe.resources_manager)
+        if isinstance(rsrc, lief.lib.lief_errors) or not rsrc.has_version:
             return None
-        version = pe.resources_manager.version
+        version = rsrc.version[0]
 
         if info := version.string_file_info:
-            for lng in info.langcode_items:
+            for child in info.children:
+                entries = {e.key: e.value for e in child.entries}
                 version_info.update({
-                    k.replace(' ', ''): _STRING(v) for k, v in lng.items.items()
+                    k.replace(' ', ''): _STRING(v) for k, v in entries.items()
                 })
-                version_info.update(
-                    CodePage=lng.code_page.name,
-                    LangID=self._vint(pe, lng.lang << 0x10 | lng.sublang),
-                    Language=LCID.get(lng.lang, 'Language Neutral'),
-                    Charset=self._CHARSET.get(lng.sublang, 'Unknown Charset'),
-                )
+
+        if rsrc.has_icons:
+            icon = next(iter(rsrc.icons))
+            version_info.update(
+                LangID=self._vint(pe, icon.lang << 0x10 | icon.sublang),
+                Language=LCID.get(icon.lang, 'Language Neutral'),
+                Charset=self._CHARSET.get(icon.sublang, 'Unknown Charset'),
+            )
+
+        def _code_pages(d: lief.PE.ResourceDirectory | lief.PE.ResourceData):
+            if isinstance(d, lief.PE.ResourceData):
+                yield d.code_page
+                return
+            for child in d.childs:
+                yield from _code_pages(child)
+
+        code_pages: set[int] = set()
+
+        for t in rsrc.types:
+            code_pages.update(_code_pages(rsrc.get_node_type(t)))
+
+        if len(code_pages) == 1:
+            cp = next(iter(code_pages))
+            version_info.update(CodePage=cp)
 
         def _to_version_string(hi: int, lo: int):
             a = hi >> 0x10
@@ -360,18 +380,23 @@ class pemeta(Unit):
         # TODO: Missing: Version.LegalCopyright
         # TODO: Missing: Version.ProductName
 
-        if info := version.fixed_file_info:
-            version_info.update(
-                OSName=info.file_os.name,
-                FileType=info.file_type.name,
-            )
-            if (s := info.file_subtype).value:
-                version_info.update(FileSubType=s)
-            if t := info.file_date_MS << 32 | info.file_date_LS:
+        if info := version.file_info:
+            for name, val, T in (
+                ('FileType', info.file_type, info.FILE_TYPE),
+                ('OSName', info.file_os, info.VERSION_OS),
+                ('FileSubType', info.file_subtype, info.FILE_TYPE_DETAILS),
+            ):
+                if not val:
+                    continue
+                try:
+                    version_info[name] = T(val).name
+                except Exception:
+                    continue
+            if t := info.file_date_ms << 32 | info.file_date_ls:
                 version_info.update(Timestamp=_FILETIME(t))
             version_info.update(
-                ProductVersion=_to_version_string(info.product_version_MS, info.product_version_LS),
-                FileVersion=_to_version_string(info.file_version_MS, info.file_version_LS),
+                ProductVersion=_to_version_string(info.product_version_ms, info.product_version_ls),
+                FileVersion=_to_version_string(info.file_version_ms, info.file_version_ls),
             )
 
         if info := version.var_file_info:
@@ -601,7 +626,7 @@ class pemeta(Unit):
 
         pe = lief.load_pe(
             data,
-            parse_exports=self.args.exports,
+            parse_exports=True,
             parse_imports=self.args.imports,
             parse_rsrc=self.args.version,
             parse_reloc=False,

@@ -37,12 +37,8 @@ if TYPE_CHECKING:
         Iterable,
         List,
         Optional,
-        Type,
-        TypeVar,
         Union,
     )
-
-    _T = TypeVar('_T')
 
     AnyLIEF = Union[
         MachOBinary,
@@ -216,7 +212,7 @@ class Section(NamedTuple):
     virtual: Range
     synthetic: bool
 
-    def as_segment(self, populate_sections=False) -> Segment:
+    def as_segment(self: Section, populate_sections=False) -> Segment:
         sections = [self] if populate_sections else None
         return Segment(self.physical, self.virtual, sections, self.name)
 
@@ -310,14 +306,18 @@ class Executable(ABC):
     """
 
     _data: buf
-    _head: AnyLIEF
+    _head: AnyLIEF | None
     _base: Optional[int]
-    _type: ET
 
     blob: ClassVar[bool] = False
 
+    @property
+    @abstractmethod
+    def _type(self) -> ET:
+        pass
+
     @classmethod
-    def Load(cls: Type[_T], data: buf, base: Optional[int] = None) -> _T:
+    def Load(cls, data: buf, base: Optional[int] = None) -> LIEF:
         """
         Uses the `refinery.lib.executable.exeroute` function to parse the input data with one of
         the following specializations of this class:
@@ -328,9 +328,11 @@ class Executable(ABC):
         """
         if (parsed := lief.load(data)) is None:
             raise ValueError('LIEF was unable to parse the input.')
+        if isinstance(parsed, lief.COFF.Binary):
+            raise NotImplementedError
         return LIEF(parsed, data, base)
 
-    def __init__(self, head: AnyLIEF, data: buf, base: Optional[int] = None):
+    def __init__(self, head: AnyLIEF | None, data: buf, base: Optional[int] = None):
         self._data = data
         self._head = head
         self._base = base
@@ -499,7 +501,7 @@ class Executable(ABC):
         for section in self.sections():
             upper = max(upper, section.virtual.upper)
             lower = min(lower, section.virtual.lower)
-        if upper < lower:
+        if not isinstance(lower, int) or upper < lower:
             raise RuntimeError(F'The computed address space upper bound 0x{upper:X} is less than the computed lower bound 0x{lower:X}.')
         return Range(lower, upper)
 
@@ -652,12 +654,15 @@ class ExecutableCodeBlob(Executable):
     provided in the constructor for this object.
     """
 
-    _head: Type[None] = None
-    _type = ET.BLOB
+    _head = None
     _byte_order: BO
     _arch: Arch
 
     blob = True
+
+    @property
+    def _type(self):
+        return ET.BLOB
 
     def __init__(self, data, base=None, arch: Arch = Arch.X32, byte_order: BO = BO.LE):
         super().__init__(None, data, base)
@@ -691,9 +696,6 @@ class ExecutableCodeBlob(Executable):
 
 class LIEF(Executable):
 
-    _head: AnyLIEF
-    _type: Union[ET.PE, ET.ELF, ET.MachO]
-
     @property
     def _lh(self) -> lief.AbstractBinary:
         return self._first_header.abstract
@@ -701,7 +703,11 @@ class LIEF(Executable):
     @property
     def _first_header(self) -> Union[MachOBinary, ELFBinary, PEBinary]:
         head = self._head
-        if isinstance(self._head, lief.MachO.FatBinary):
+        if head is None:
+            raise AttributeError
+        if isinstance(head, lief.COFF.Binary):
+            raise NotImplementedError
+        if isinstance(head, lief.MachO.FatBinary):
             head = head.at(0)
         return head
 
@@ -717,11 +723,7 @@ class LIEF(Executable):
         return self._lh.imagebase
 
     def byte_order(self) -> BO:
-        LE = lief.Header.ENDIANNESS
-        return {
-            LE.BIG    : BO.BE,
-            LE.LITTLE : BO.LE,
-        }.get(self._lh.header.endianness, BO.LE)
+        return BO.BE if self._lh.header.endianness == lief.Header.ENDIANNESS.BIG else BO.LE
 
     def arch(self) -> Arch:
         LA = lief.Header.ARCHITECTURES
@@ -808,10 +810,10 @@ class LIEF(Executable):
             addr = symbol.value
             name = self.ascii(symbol.name)
             size = symbol.size
-            if isinstance(symbol, lief.PE.Symbol):
+            if isinstance(symbol, lief.COFF.Symbol):
                 yield Symbol(
                     addr, name, size,
-                    function=symbol.complex_type == lief.PE.SYMBOL_COMPLEX_TYPES.FUNCTION,
+                    function=symbol.complex_type == lief.COFF.Symbol.COMPLEX_TYPE.FUNCTION,
                     section=self._convert_section(s) if (s := symbol.section) else None,
                 )
             elif isinstance(symbol, lief.PE.ImportEntry):
@@ -899,11 +901,9 @@ class LIEF(Executable):
             for section in self.sections():
                 yield section.as_segment(populate_sections)
         else:
-            it: Iterable[Union[
-                lief.ELF.Segment,
-                lief.MachO.SegmentCommand
-            ]] = self._first_header.segments
-            for segment in it:
+            fh = self._first_header
+            assert isinstance(fh, (lief.MachO.Binary, lief.ELF.Binary))
+            for segment in fh.segments:
                 p_lower = segment.file_offset
                 try:
                     p_upper = p_lower + segment.file_size

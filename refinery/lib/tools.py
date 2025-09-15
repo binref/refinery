@@ -454,6 +454,12 @@ class NoLoggingProxy:
             attr = getattr(wrap, name)
         return NoLoggingProxy(attr, mode)
 
+    def __getitem__(self, k):
+        mode = self.__nl_mode__
+        with NoLogging(mode):
+            item = self.__wrapped__[k]
+        return NoLoggingProxy(item, mode)
+
     def __iter__(self):
         mode = self.__nl_mode__
         with NoLogging(mode):
@@ -472,6 +478,13 @@ class NoLoggingProxy:
         with NoLogging(mode):
             rv = self.__wrapped__(*args, **kwargs)
         return NoLoggingProxy(rv, mode)
+
+
+def unwrap(t: _T) -> _T:
+    """
+    Unwrap an object that is potentially wrapped, say, as a `refinery.lib.tools.NoLoggingProxy`.
+    """
+    return getattr(t, '__wrapped__', t)
 
 
 class NotOne(LookupError):
