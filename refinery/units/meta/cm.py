@@ -27,15 +27,17 @@ class cm(Unit):
         crc32   : Arg.Switch('-3', help='compute hash: CRC32') = False,
         md5     : Arg.Switch('-5', help='compute hash: MD5') = False,
         hashes  : Arg.Switch('-H', help='compute all common hashes') = False,
-        *names  : Arg(metavar='name', help=(
+        *names  : Arg.String(metavar='name', help=(
             F'A variable name that can include the common properties: {_COMMON_PROPERTIES_LIST}.'
             R' If none is given, the size variable is populated. For most of these, an optional '
             R'argument is available that can be used as a shorthand:'))
     ):
         def stringify(name):
+            if isinstance(name, (bytes, bytearray)):
+                return name.decode(self.codec)
             if isinstance(name, str):
                 return name
-            return name.decode(self.codec)
+            raise TypeError(F'Invalid type for name: {name!r}')
 
         _names = {
             stringify(name) for name in names}
