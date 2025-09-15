@@ -1,4 +1,5 @@
 import json
+import hashlib
 
 from refinery.lib.loader import load_pipeline as L
 from refinery.units.formats.pe import get_pe_size
@@ -13,6 +14,8 @@ class TestLZIP(TestUnitBase):
             'push [| rex yara:68(....)83E2FC68(....)E8 | struct x{len:L}4x{addr:L}x | pop |'
             ' vsnip addr-0x100:len+0x100 | serpent -r snip[:8]:x::0x100 | lzip ]')
         test = data | pipe | bytearray
+        self.assertEqual(hashlib.sha256(test).hexdigest(),
+            '42513efaf2e49f841875e386416075dca54f98bf187fd415217c5fd9f9f157b3')
         meta = test | self.ldu('pemeta') | json.loads
         self.assertEqual(meta['TimeStamp']['Linker'], '2022-05-04 12:29:18')
         self.assertEqual(meta['TimeStamp']['Export'], '2106-02-07 06:28:15')
