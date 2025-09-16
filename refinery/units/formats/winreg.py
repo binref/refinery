@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import io
 import shlex
 import inspect
 
@@ -135,25 +136,40 @@ class winreg(PathExtractorUnit):
                 reg = data.decode(codec).splitlines(keepends=True)
             except UnicodeError:
                 continue
-            if reg[0].startswith('Windows Registry Editor'):
+            lines = iter(reg)
+            if next(lines).startswith('Windows Registry Editor'):
                 break
         else:
             raise ParseException
-        config = WinRegFileParser()
-        config.read_string(''.join(reg[1:]))
-        for key in config.sections():
-            self.log_debug(key)
-            for value in config[key]:
-                name = next(iter(shlex.split(value)))
-                path = Path(key)
-                if name != '@':
-                    path = path / Path(name)
-                decoded = list(self._decode_registry_export(config[key][value]))
-                if len(decoded) == 1:
-                    yield UnpackResult(str(path), decoded[0])
-                    continue
-                for k, d in enumerate(decoded):
-                    yield UnpackResult(F'{path!s}.{k}', d)
+
+        def _parse():
+            parser = WinRegFileParser()
+            section.seek(0)
+            parser.read_file(section)
+            for key in parser.sections():
+                self.log_debug(key)
+                for value in parser[key]:
+                    name = next(iter(shlex.split(value)))
+                    path = Path(key)
+                    if name != '@':
+                        path = path / Path(name)
+                    decoded = list(self._decode_registry_export(parser[key][value]))
+                    if len(decoded) == 1:
+                        yield UnpackResult(str(path), decoded[0])
+                        continue
+                    for k, d in enumerate(decoded):
+                        yield UnpackResult(F'{path!s}.{k}', d)
+
+        section = io.StringIO()
+
+        for line in lines:
+            if line.lstrip().startswith('['):
+                yield from _parse()
+                section.seek(0)
+                section.truncate(0)
+            section.write(line)
+
+        yield from _parse()
 
     def unpack(self, data):
         with contextlib.suppress(ParseException):

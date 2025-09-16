@@ -6,6 +6,12 @@ from .. import TestUnitBase
 
 class TestWindowsRegistryExtractor(TestUnitBase):
 
+    def test_duplicate_sections_winreg(self):
+        data = self.download_sample('ff548cb8ff1e35ded07207b1488150571c81d5aed93758db11c60d362981a45b')
+        test = data | self.load(list=True) | [str]
+        self.assertEqual(len(test), 49)
+        self.assertIn(R'HKEY_CURRENT_USER/Control Panel/Desktop/HungAppTimeout', test)
+
     def test_registry_export(self):
         unit = self.load()
         data = inspect.cleandoc(
