@@ -145,5 +145,10 @@ class lznt1(Unit):
             out.write(chunk)
         return out.getvalue()
 
-    def __init__(self, chunk_size: Param[int, Arg.Number('-c', help='Optionally specify the chunk size for compression, default is 0x1000.')] = 0x1000):
+    def __init__(
+        self,
+        chunk_size: Param[int, Arg.Number('-c', help=(
+            'Optionally specify the chunk size for compression, default is 0x1000.')
+        )] = 0x1000
+    ):
         super().__init__(chunk_size=chunk_size)
