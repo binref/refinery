@@ -214,32 +214,32 @@ class flz(Unit):
     """
     def __init__(
         self,
-        level: Param[int, Arg.Number('-l', bound=(0, 1), help=(
+        level: Param[int, Arg.Number('-l', bound=(1, 2), help=(
             'Specify a FastLZ level (either 0 or 1). By default, compression will select a level '
             'based on buffer length like the reference implementation. Decompression reads level '
-            'information from the header by default.'))] = None
+            'information from the header by default.'))] = 0
     ):
         super().__init__(level=level)
 
     def reverse(self, data):
         if not data:
             return data
-        if (level := self.args.level) is None:
-            level = int(len(data) >= 0x10000)
+        if (level := self.args.level) <= 0:
+            level = 1 + int(len(data) >= 0x10000)
         output = bytearray()
-        _flz_compress(memoryview(data), output, level)
+        _flz_compress(memoryview(data), output, level - 1)
         return output
 
     def process(self, data):
         try:
-            hl = data[0] >> 5
+            hl = 1 + (data[0] >> 5)
         except IndexError:
             return None
-        if (level := self.args.level) is None:
+        if (level := self.args.level) == 0:
             level = hl
         if level != hl:
             self.log_info(F'Using level {level} despite header-defined level {hl}.')
-        return _flz_decompress(memoryview(data), level)
+        return _flz_decompress(memoryview(data), level - 1)
 
     @classmethod
     def handles(cls, data: bytearray):
