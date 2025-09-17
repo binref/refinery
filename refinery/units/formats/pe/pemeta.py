@@ -202,11 +202,10 @@ class pemeta(Unit):
         return x
 
     @classmethod
-    def _parse_pedict(cls, bin):
+    def _parse_pedict(cls, bin: dict):
         return {
-            cls._ensure_string(key).replace(" ", ""):
-            cls._ensure_string(val)
-         for key, val in bin.items() if val}
+            cls._ensure_string(key).replace(" ", ""): cls._ensure_string(val)
+            for key, val in bin.items() if val}
 
     @classmethod
     def parse_signature(cls, data: bytearray) -> dict:

@@ -32,8 +32,10 @@ class rsakey(Unit):
     """
     def __init__(
         self,
-        output: Param[str, Arg.Option(help='Select an output format ({choices}), default is {default}.', choices=RSAFormat)] = RSAFormat.PEM,
-        public: Param[bool, Arg.Switch('-p', help='Force public key output even if the input is private.')] = False,
+        output: Param[str, Arg.Option(choices=RSAFormat,
+            help='Select an output format ({choices}), default is {default}.')] = RSAFormat.PEM,
+        public: Param[bool, Arg.Switch('-p',
+            help='Force public key output even if the input is private.')] = False,
     ):
         super().__init__(output=Arg.AsOption(output, RSAFormat), public=public)
 
