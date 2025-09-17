@@ -56,8 +56,9 @@ class KeyDerivation(Unit, abstract=True):
         size: Param[int, Arg.Number(help='The number of bytes to generate.')],
         salt: Param[buf, Arg.Binary(help='Salt for the derivation.')],
         hash: Param[str, Arg.Option(choices=HASH, metavar='hash',
-            help='Specify one of these algorithms (default is {default}): {choices}')] = None,
-        iter: Param[int, Arg.Number(metavar='iter', help='Number of iterations; default is {default}.')] = None,
+            help='Specify one of these algorithms (default is {default}): {choices}')] = HASH.SHA1,
+        iter: Param[int, Arg.Number(metavar='iter',
+            help='Number of iterations; default is {default}.')] = 0,
         **kw
     ):
         if hash is not None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import struct
 
-from refinery.lib.types import Param, Iterable, buf
+from refinery.lib.types import Iterable, Param, buf
 from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 

@@ -394,7 +394,7 @@ class Arg(Argument):
 
     @overload
     @staticmethod
-    def AsOption(value: str | _E, cls: type[_E]) -> _E:
+    def AsOption(value: str | None | _E, cls: type[_E]) -> _E:
         ...
 
     @staticmethod
@@ -630,7 +630,7 @@ class Arg(Argument):
         help    : type[omit] | str = omit,
         metavar : type[omit] | str = omit,
         dest    : type[omit] | str = omit,
-        type    : type | Callable = str,
+        type    : type | Callable = str.lower,
         nargs   : type[omit] | int | str = omit,
         group   : str | None = None,
     ):
@@ -754,7 +754,7 @@ class Arg(Argument):
 
             guess('default', default)
 
-            if isinstance(default, (list, tuple)):
+            if isinstance(default, list):
                 guess('nargs', ZERO_OR_MORE)
             elif pt.kind is pt.POSITIONAL_ONLY:
                 guess('nargs', OPTIONAL)

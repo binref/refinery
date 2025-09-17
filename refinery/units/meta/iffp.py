@@ -4,9 +4,9 @@ from refinery.lib.patterns import formats, indicators, pattern
 from refinery.lib.types import Param
 from refinery.units.meta import Arg, ConditionalUnit
 
-_PATTERNS = {}
-_PATTERNS.update({p.name: p.value for p in formats})
-_PATTERNS.update({p.name: p.value for p in indicators})
+_PATTERNS = {
+    p.name: p.value for d in (formats, indicators) for p in d
+}
 
 
 class iffp(ConditionalUnit, docs='{0}{p}{1}'):
@@ -17,7 +17,7 @@ class iffp(ConditionalUnit, docs='{0}{p}{1}'):
 
     def __init__(
         self,
-        *patterns: Param[str, Arg.Choice(metavar='pattern', choices=_PATTERNS)],
+        *patterns: Param[str, Arg.Choice(metavar='pattern', choices=list(_PATTERNS))],
         partial: Param[bool, Arg.Switch('-p', help='Allow partial matches on the data.')] = False,
         retain=False
     ):

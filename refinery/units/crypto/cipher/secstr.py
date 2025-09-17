@@ -29,7 +29,7 @@ class secstr(Unit):
         self, key: Param[buf, Arg(
             help='Secure string encryption 16-byte AES key; the default are the bytes from 1 to 16.'
         )] = bytes(range(1, 17)),
-        iv: Param[buf, Arg('-i', help='Optionally specify an IV to use for encryption.')] = None
+        iv: Param[buf, Arg('-i', help='Optionally specify an IV to use for encryption.')] = B''
     ):
         super().__init__(key=key, iv=iv)
 
@@ -43,7 +43,7 @@ class secstr(Unit):
     @property
     def iv(self):
         iv = self.args.iv
-        if iv is not None and len(iv) != 0x10:
+        if iv and len(iv) != 0x10:
             raise ValueError('The IV has to be 16 bytes long.')
         return iv
 

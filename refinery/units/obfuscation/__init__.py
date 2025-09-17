@@ -8,7 +8,7 @@ from functools import wraps
 from zlib import crc32
 
 from refinery.lib.decorators import unicoded
-from refinery.lib.types import Param, Callable, buf
+from refinery.lib.types import Callable, Param, buf
 from refinery.units import Arg, Chunk, RefineryPartialResult, Unit
 
 __all__ = [

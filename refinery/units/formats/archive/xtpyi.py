@@ -30,8 +30,6 @@ if TYPE_CHECKING:
 
     from xdis import Instruction
 
-    from refinery.lib.types import buf
-
 
 class Unmarshal(enum.IntEnum):
     No = 0

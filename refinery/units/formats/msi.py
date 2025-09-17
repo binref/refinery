@@ -14,7 +14,7 @@ from refinery.lib import chunks
 from refinery.lib.cab import Cabinet
 from refinery.lib.mime import FileMagicInfo
 from refinery.lib.structures import StructReader
-from refinery.lib.types import Param, JSONDict, buf
+from refinery.lib.types import JSONDict, Param, buf
 from refinery.units import Arg
 from refinery.units.formats.csv import csv
 from refinery.units.formats.office.xtdoc import UnpackResult, xtdoc

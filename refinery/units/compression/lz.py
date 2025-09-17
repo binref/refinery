@@ -47,7 +47,7 @@ class lzma(Unit):
         alone: Param[bool, Arg.Switch('-a', group='MODE', help='Use the lzma container format.')] = False,
         xz: Param[bool, Arg.Switch('-x', group='MODE', help='Use the default xz format.')] = False,
         level: Param[int, Arg.Number('-l', bound=(0, 9), help='The compression level preset; between 0 and 9.')] = 9,
-        delta: Param[int, Arg.Number('-d', help='Add a delta filter when compressing.')] = None,
+        delta: Param[int, Arg.Number('-d', help='Add a delta filter when compressing.')] = 0,
     ):
         if (raw, alone, xz).count(True) > 1:
             raise ValueError('Only one container format can be enabled.')
@@ -58,7 +58,7 @@ class lzma(Unit):
 
     def reverse(self, data):
         filters = []
-        if self.args.delta is not None:
+        if self.args.delta > 0:
             self.log_debug('adding delta filter')
             filters.append({'id': FILTER_DELTA, 'dist': self.args.delta})
         if self.args.alone:

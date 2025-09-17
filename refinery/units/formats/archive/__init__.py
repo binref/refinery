@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import wraps
 
-from refinery.lib.types import Param, Callable, buf
+from refinery.lib.types import Callable, Param, buf
 from refinery.units import Arg, Executable, Unit
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 

@@ -6,7 +6,7 @@ import colorama
 
 from refinery.lib.id import is_structured_data
 from refinery.lib.tools import bounds, normalize_to_display
-from refinery.lib.types import INF, Param, NamedTuple, buf
+from refinery.lib.types import INF, NamedTuple, Param, buf
 from refinery.units import Arg, RefineryPartialResult, Unit
 
 if True:

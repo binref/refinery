@@ -11,7 +11,7 @@ import re
 
 from refinery.lib import chunks
 from refinery.lib.tools import get_terminal_size, lookahead
-from refinery.lib.types import Param, Iterable, buf
+from refinery.lib.types import Iterable, Param, buf
 from refinery.units import Arg, Unit
 
 

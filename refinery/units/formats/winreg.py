@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import inspect
-import re
 import io
+import re
 import shlex
 
 from configparser import ConfigParser

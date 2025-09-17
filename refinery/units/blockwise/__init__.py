@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from refinery.lib import chunks
 from refinery.lib.inline import iterspread
 from refinery.lib.tools import infinitize
-from refinery.lib.types import INF, Param, NoMask, buf, isq
+from refinery.lib.types import INF, NoMask, Param, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:

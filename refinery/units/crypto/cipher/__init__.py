@@ -17,7 +17,7 @@ from refinery.lib.crypto import (
     unpad,
 )
 from refinery.lib.tools import isbuffer
-from refinery.lib.types import Param, Any, ClassVar, Collection, Iterable, buf, isq
+from refinery.lib.types import Any, ClassVar, Collection, Iterable, Param, buf, isq
 from refinery.units import (
     Arg,
     Chunk,
@@ -125,13 +125,19 @@ PADDINGS_ALL = PADDINGS_LIB + [PADDING_NONE]
 
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
-        self, key, iv: Param[buf, Arg('-i', '--iv', help=(
-            'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.'))] = None,
-        padding: Param[str, Arg.Choice('-p', type=str.lower, choices=PADDINGS_ALL, metavar='P', help=(
-            'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, all other algorithms '
-            'are attempted. In most cases, the data was not correctly decrypted if none of these work.')
+        self, key,
+        iv: Param[buf, Arg('-i', '--iv', help=(
+            'Specifies the initialization vector. If none is specified, then a block of zero bytes '
+            'is used.')
+        )] = B'',
+        padding: Param[str | None, Arg.Choice('-p', choices=PADDINGS_ALL, metavar='P', help=(
+            'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, '
+            'all other algorithms are attempted. In most cases, the data was not correctly '
+            'decrypted if none of these work.')
         )] = None,
-        raw: Param[bool, Arg.Switch('-r', '--raw', help='Set the padding to raw; ignored when a padding is specified.')] = False,
+        raw: Param[bool, Arg.Switch('-r', '--raw', help=(
+            'Set the padding to raw; ignored when a padding is specified.')
+        )] = False,
         **keywords
     ):
         if not padding and raw:
@@ -289,10 +295,10 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
             'Only for EAX, GCM, OCB, and CCM: An authentication tag to verify the message. For '
             'encryption, this parameter specifies the tag length, and the tag is provided as a '
             'meta variable named "tag".'
-        ))] = None,
+        ))] = (),
         aad: Param[buf, Arg.Binary('-a', '--aad', metavar='AAD', help=(
             'Only for EAX, GCM, OCB, and CCM: Set additional authenticated data.'
-        ))] = None,
+        ))] = B'',
         **keywords
     ):
         mode = self._available_block_cipher_modes(mode or iv and 'CBC' or 'ECB')

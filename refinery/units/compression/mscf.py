@@ -45,13 +45,12 @@ class mscf(Unit):
 
     def __init__(
         self,
-        mode: Param[str, Arg.Option(choices=MODE, help=(
+        mode: Param[str | None, Arg.Option(choices=MODE, help=(
             'Manually select decompression mode ({choices}); by default the unit attempts to derive the '
             'mode from the header, but this will fail for raw streams. However, even if a header is '
             'found, a manually specified mode will take precedence.'))] = None,
     ):
-        mode = Arg.AsOption(mode, MODE)
-        super().__init__(mode=mode)
+        super().__init__(mode=Arg.AsOption(mode, MODE))
 
     def process(self, data):
         mode: MODE = self.args.mode

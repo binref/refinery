@@ -15,7 +15,7 @@ from refinery.lib.json import BytesAsArrayEncoder, BytesAsStringEncoder
 from refinery.lib.loader import load
 from refinery.lib.meta import ByteStringWrapper, LazyMetaOracle, metavars
 from refinery.lib.tools import exception_to_string
-from refinery.lib.types import Param, Callable, Iterable, buf
+from refinery.lib.types import Callable, Iterable, Param, buf
 from refinery.lib.xml import XMLNodeBase
 from refinery.units import Arg, Chunk, RefineryPartialResult, RefineryPotentialUserError, Unit
 

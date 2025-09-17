@@ -9,7 +9,7 @@ from hashlib import blake2b
 from itertools import islice
 from typing import TYPE_CHECKING
 
-from refinery.lib.types import AST, INF, Param, Callable, Iterable, buf
+from refinery.lib.types import AST, INF, Callable, Iterable, Param, buf
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:

@@ -4,7 +4,7 @@ Implements various hashing algorithms.
 from __future__ import annotations
 
 from refinery.lib.types import Param, buf
-from refinery.units import Arg, Unit, abc, buf
+from refinery.units import Arg, Unit, abc
 
 
 class HashUnit(Unit, abstract=True):
