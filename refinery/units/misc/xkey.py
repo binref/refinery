@@ -4,7 +4,7 @@ import enum
 
 from collections import Counter
 from itertools import product
-from typing import NamedTuple
+from typing import Generator, NamedTuple
 
 from Cryptodome.Util.strxor import strxor
 
@@ -12,12 +12,12 @@ from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
-def _generate_cribs(cribs: bytes | tuple[bytes | tuple[bytes, ...], ...]):
-    if isinstance(cribs, bytes):
+def _generate_cribs(cribs: bytes | tuple[bytes | tuple[bytes, ...], ...]) -> Generator[bytes]:
+    if isinstance(cribs, tuple):
+        for p in product(*[(c if isinstance(c, tuple) else (c,)) for c in cribs]):
+            yield B''.join(p)
+    else:
         yield cribs
-        return
-    for p in product(*[[c] if isinstance(c, bytes) else c for c in cribs]):
-        yield B''.join(p)
 
 
 def _cyclic_base(data: bytes, min_repeat: int = 2):
@@ -164,16 +164,25 @@ class xkey(Unit):
 
     def __init__(
         self,
-        range: Param[slice, Arg.Bounds(help='range of length values to try in Python slice syntax, the default is {default}.')] = slice(1, 32),
-        plaintext: Param[buf, Arg.Binary('-p', help='Provide a buffer of known plaintext.')] = None,
+        range: Param[slice, Arg.Bounds(help=(
+            'range of length values to try in Python slice syntax, the default is {default}.'
+        ))] = slice(1, 32),
+        plaintext: Param[buf, Arg.Binary('-p', help=(
+            'Provide a buffer of known plaintext. Without a search position, this can slow '
+            'down the key search significantly.'
+        ))] = B'',
         searchpos: Param[slice, Arg.Bounds('-s', metavar='S:E', help=(
-            'Only used when a known plaintext buffer is provided; In this case it narrows the search range '
-            'for the offset of that data to between S and E.'))] = slice(0, None),
-        alph: Param[bool, Arg.Switch('-a', help='enable search for keys via known encoder alphabets')] = False,
-        crib: Param[bool, Arg.Switch('-c', help='enable search for keys via known plaintext cribs')] = False,
-        freq: Param[bool, Arg.Switch('-f', help='enable search for keys via frequency analysis')] = False,
+            'Only used when a known plaintext buffer is provided; In this case it narrows the '
+            'search range for the offset of that data to between S and E.'
+        ))] = slice(0, None),
+        alph: Param[bool, Arg.Switch('-a',
+            help='Enable search for keys via known encoder alphabets.')] = False,
+        crib: Param[bool, Arg.Switch('-c',
+            help='Enable search for keys via known plaintext cribs.')] = False,
+        freq: Param[bool, Arg.Switch('-f',
+            help='Enable search for keys via frequency analysis.')] = False,
     ):
-        if not any((alph, crib, freq)) and plaintext is None:
+        if not any((alph, crib, freq)) and not plaintext:
             alph = crib = freq = True
         super().__init__(
             range=range,
@@ -219,22 +228,22 @@ class xkey(Unit):
         if p := self.args.plaintext:
             pos: slice = self.args.searchpos
             end = len(data) - len(p) if pos.stop is None else pos.stop
-            criblist.append((range(pos.start or 0, end + 1), {'Plaintext': [p]}))
+            criblist.append((range(pos.start or 0, end + 1), {'Plaintext': (p,)}))
         if self.args.crib:
             for r, byname in self._CRIBS.items():
                 compiled = {
-                    name: list(_generate_cribs(cribs))
+                    name: tuple(_generate_cribs(cribs))
                     for name, cribs in byname.items()
                 }
                 criblist.append((r, compiled))
 
         if self.args.alph:
-            alphabets: dict[int, list[bytes]] = {}
+            alphabets: dict[int, list[bytes]] | None = {}
             for alphabet in self._ENC_ALPHABETS:
                 for suffix in (B'', B'\x20', B'\x0A', B'\x20\x0A'):
                     a = alphabet + suffix
                     alphabets.setdefault(len(a), []).append(a)
-            alphabets[len(self._WSH_ALPHABET)] = self._WSH_ALPHABET
+            alphabets[len(self._WSH_ALPHABET)] = [self._WSH_ALPHABET]
         else:
             alphabets = None
 

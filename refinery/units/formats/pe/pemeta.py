@@ -152,18 +152,29 @@ class pemeta(Unit):
     extracted.
     """
     def __init__(
-        self, custom: Param[bool, Arg('-c', '--custom',
+        self,
+        custom: Param[bool, Arg('-c', '--custom',
             help='Unless enabled, all default categories will be extracted.')] = False,
-        debug: Param[bool, Arg.Switch('-D', help='Parse the PDB path from the debug directory.')] = False,
-        dotnet: Param[bool, Arg.Switch('-N', help='Parse the .NET header.')] = False,
-        signatures: Param[bool, Arg.Switch('-S', help='Parse digital signatures.')] = False,
-        timestamps: Param[int, Arg.Counts('-T', help='Extract time stamps. Specify twice for more detail.')] = 0,
-        version: Param[bool, Arg.Switch('-V', help='Parse the VERSION resource.')] = False,
-        header: Param[bool, Arg.Switch('-H', help='Parse base data from the PE header.')] = False,
-        exports: Param[int, Arg.Counts('-E', help='List all exported functions. Specify twice to include addresses.')] = 0,
-        imports: Param[int, Arg.Counts('-I', help='List all imported functions. Specify twice to include addresses.')] = 0,
-        tabular: Param[bool, Arg.Switch('-t', help='Print information in a table rather than as JSON')] = False,
-        timeraw: Param[bool, Arg.Switch('-r', help='Extract time stamps as numbers instead of human-readable format.')] = False,
+        debug: Param[bool, Arg.Switch('-D',
+            help='Parse the PDB path from the debug directory.')] = False,
+        dotnet: Param[bool, Arg.Switch('-N',
+            help='Parse the .NET header.')] = False,
+        signatures: Param[bool, Arg.Switch('-S',
+            help='Parse digital signatures.')] = False,
+        timestamps: Param[int, Arg.Counts('-T',
+            help='Extract time stamps. Specify twice for more detail.')] = 0,
+        version: Param[bool, Arg.Switch('-V',
+            help='Parse the VERSION resource.')] = False,
+        header: Param[bool, Arg.Switch('-H',
+            help='Parse base data from the PE header.')] = False,
+        exports: Param[int, Arg.Counts('-E',
+            help='List all exported functions. Specify twice to include addresses.')] = 0,
+        imports: Param[int, Arg.Counts('-I',
+            help='List all imported functions. Specify twice to include addresses.')] = 0,
+        tabular: Param[bool, Arg.Switch('-t',
+            help='Print information in a table rather than as JSON')] = False,
+        timeraw: Param[bool, Arg.Switch('-r',
+            help='Extract time stamps as numbers instead of human-readable format.')] = False,
     ):
         if not custom and not any((debug, dotnet, signatures, timestamps, version, header)):
             debug = dotnet = signatures = timestamps = version = header = True
@@ -270,7 +281,8 @@ class pemeta(Unit):
                     serial = F'0{serial}'
                 assert bytes.fromhex(serial) in data
                 subject = crt['subject']
-                location = [subject.get(t, '') for t in ('locality_name', 'state_or_province_name', 'country_name')]
+                location = [subject.get(t, '') for t in (
+                    'locality_name', 'state_or_province_name', 'country_name')]
                 cert_info = {}
                 cert_info.update(Subject=subject['common_name'])
                 if any(location):

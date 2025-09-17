@@ -20,22 +20,27 @@ class FMode(IntEnum):
 
 class pack(BlockTransformationBase):
     """
-    Scans the input data for numeric constants and packs them into a binary format. This is useful to convert the textual representation of
-    an array of numbers into its binary form. For example, `123,34,256,12,1,234` would be transformed into the byte sequence `7B22000C01EA`,
-    where `256` was wrapped and packed as a null byte because the default block size is one byte. If the above sequence would be packed
-    with options -EB2, the result would be equal to `007B00220100000C000100EA` in hexadecimal.
+    Scans the input data for numeric constants and packs them into a binary format. This is useful
+    to convert the textual representation of an array of numbers into its binary form. For example,
+    `123,34,256,12,1,234` would be transformed into the byte sequence `7B22000C01EA`, where `256`
+    was wrapped and packed as a null byte because the default block size is one byte. If the above
+    sequence would be packed with options -EB2, the result is `007B00220100000C000100EA`.
     """
 
     def __init__(self,
         base: Param[int, Arg.Number(bound=(2, 36), help=(
-            'Find only numbers in given base. Default of 0 means that '
-            'common expressions for hexadecimal, octal and binary are '
-            'accepted.'))] = 0,
-        prefix: Param[bool, Arg.Switch('-r', group='FLT', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.')] = False,
-        strict: Param[bool, Arg.Switch('-s', help='Only parse integers that fit in one block of the given block size.')] = False,
-        width: Param[int, Arg.Number('-w', help='Pad numbers with the specified amount of leading zeros.')] = 0,
-        single_floats: Param[bool, Arg.Switch('-f', group='FLT', help='Pack single-precision floating-point numbers. Implies -B4.')] = False,
-        double_floats: Param[bool, Arg.Switch('-d', group='FLT', help='Pack double-precision floating-point numbers. Implies -B8.')] = False,
+            'Find only numbers in given base. Default of 0 means that common expressions for '
+            'hexadecimal, octal and binary are accepted.'))] = 0,
+        prefix: Param[bool, Arg.Switch('-r', group='FLT',
+            help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.')] = False,
+        strict: Param[bool, Arg.Switch('-s',
+            help='Only parse integers that fit in one block of the given block size.')] = False,
+        width: Param[int, Arg.Number('-w',
+            help='Pad numbers with the specified amount of leading zeros.')] = 0,
+        single_floats: Param[bool, Arg.Switch('-f', group='FLT',
+            help='Pack single-precision floating-point numbers. Implies -B4.')] = False,
+        double_floats: Param[bool, Arg.Switch('-d', group='FLT',
+            help='Pack double-precision floating-point numbers. Implies -B8.')] = False,
         bigendian=False, blocksize=1
     ):
         if single_floats and double_floats:

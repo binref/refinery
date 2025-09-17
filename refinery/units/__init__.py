@@ -1653,19 +1653,20 @@ class Unit(UnitBase, abstract=True):
         return reversed
 
     def __ror__(self, stream: (
-        str |
-        Chunk |
-        tuple[Chunk] |
-        tuple[buf] |
-        tuple[str] |
-        list[Chunk] |
-        list[buf] |
-        list[str] |
-        BinaryIO |
-        Unit |
-        BufferedReader |
-        buf |
-        None
+        Unit
+        | None
+        | BinaryIO
+        | BufferedReader
+        | str
+        | int
+        | buf
+        | Chunk
+        | tuple[str]
+        | tuple[buf]
+        | tuple[Chunk]
+        | list[str]
+        | list[buf]
+        | list[Chunk]
     )):
         if stream is None:
             return self
@@ -1693,11 +1694,13 @@ class Unit(UnitBase, abstract=True):
         elif not isstream(stream):
             if isinstance(stream, str):
                 stream = stream.encode(self.codec)
-            assert isinstance(stream, (int, bytes, bytearray, memoryview))
-            if stream:
-                stream = MemoryFile(stream)
+            if isinstance(stream, int):
+                if stream > 0:
+                    stream = os.fdopen(stream, 'rb')
+                else:
+                    stream = open(os.devnull, 'rb')
             else:
-                stream = open(os.devnull, 'rb')
+                stream = MemoryFile(cast(buf, stream))
         self.reset()
         self.nozzle.source = stream
         return self
@@ -1709,7 +1712,7 @@ class Unit(UnitBase, abstract=True):
         return self | bytes
 
     @overload
-    def __or__(self, stream: type[None]) -> None: ...
+    def __or__(self, stream: None) -> None: ...
 
     @overload
     def __or__(self, stream: type[bytearray]) -> bytearray: ...
@@ -1718,7 +1721,10 @@ class Unit(UnitBase, abstract=True):
     def __or__(self, stream: type[str]) -> str: ...
 
     @overload
-    def __or__(self, stream: Unit | type[Unit]) -> Unit: ...
+    def __or__(self, stream: type[Unit]) -> Unit: ...
+
+    @overload
+    def __or__(self, stream: Unit) -> Unit: ...
 
     @overload
     def __or__(self, stream: Callable[[buf], _T]) -> _T: ...
@@ -1748,21 +1754,19 @@ class Unit(UnitBase, abstract=True):
     def __or__(self, stream: _B) -> _B: ...
 
     def __or__(self, stream: (
-        type[None] |
-        type[bytearray] |
-        type[str] |
-        Callable[[buf], _T] |
-        Unit |
-        type[Unit] |
-        dict[str, type] |
-        list |
-        set |
-        memoryview |
-        bytes |
-        bytearray |
-        BinaryIO |
-        ByteIO |
-        BufferedWriter
+        Unit
+        | None
+        | type[bytearray]
+        | type[str]
+        | Callable[[buf], _T]
+        | type[Unit]
+        | dict[str, type]
+        | list
+        | set
+        | buf
+        | BinaryIO
+        | ByteIO
+        | BufferedWriter
     )):
         def get_converter(it: Iterable):
             try:

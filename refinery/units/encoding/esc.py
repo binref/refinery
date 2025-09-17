@@ -38,13 +38,19 @@ class esc(Unit):
     }
 
     def __init__(self,
-        hex: Param[bool, Arg.Switch('-x', help='Hex encode everything, do not use C escape sequences.')] = False,
-        unicode: Param[bool, Arg.Switch('-u', help='Use unicode escape sequences and UTF-8 encoding.')] = False,
-        greedy: Param[bool, Arg.Switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.')] = False,
-        unquoted: Param[bool, Arg.Switch('-p', group='Q', help='Never remove enclosing quotes.')] = False,
-        quoted: Param[bool, Arg.Switch('-q', group='Q', help='Remove enclosing quotes while decoding and add them for encoding.')] = False,
-        bare: Param[bool, Arg.Switch('-b', help='Do not escape quote characters.')] = False,
-    ) -> Unit: pass  # noqa
+        hex: Param[bool, Arg.Switch('-x',
+            help='Hex encode everything, do not use C escape sequences.')] = False,
+        unicode: Param[bool, Arg.Switch('-u',
+            help='Use unicode escape sequences and UTF-8 encoding.')] = False,
+        greedy: Param[bool, Arg.Switch('-g',
+            help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.')] = False,
+        unquoted: Param[bool, Arg.Switch('-p', group='Q',
+            help='Never remove enclosing quotes.')] = False,
+        quoted: Param[bool, Arg.Switch('-q', group='Q',
+            help='Remove enclosing quotes while decoding and add them for encoding.')] = False,
+        bare: Param[bool, Arg.Switch('-b',
+            help='Do not escape quote characters.')] = False,
+    ): pass # noqa
 
     def process(self, data):
         data = memoryview(data)
@@ -62,7 +68,7 @@ class esc(Unit):
                 self.log_info('removing automatically detected quotes')
                 data = strip
 
-        def unescape(match):
+        def unescape(match: re.Match[bytes]):
             c = match[1]
             if len(c) > 1:
                 if c[0] == 0x75:
@@ -90,7 +96,7 @@ class esc(Unit):
             string = data.decode(self.codec).encode('UNICODE_ESCAPE')
         else:
             if not self.args.hex:
-                def escape(match):
+                def escape(match: re.Match[bytes]):
                     c = match[0][0]
                     return self._ESCAPE.get(c, RB'\x%02x' % c)
                 pattern = RB'[\x00-\x1F\x22\x27\x5C\x7F-\xFF]'
