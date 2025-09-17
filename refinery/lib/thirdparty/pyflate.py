@@ -23,10 +23,11 @@
 # be found...
 # ============================================================================
 from __future__ import annotations
-from typing import List, Tuple, Iterable, Optional, BinaryIO
 
-import itertools
 import abc
+import itertools
+
+from typing import BinaryIO, Iterable
 
 
 class BitfieldBase(abc.ABC):
@@ -140,8 +141,8 @@ class RBitfield(BitfieldBase):
 class HuffmanLength:
     code: int
     bits: int
-    symbol: Optional[int]
-    reverse_symbol: Optional[int]
+    symbol: int | None
+    reverse_symbol: int | None
 
     def __init__(self, code, bits=0):
         self.code = code
@@ -199,7 +200,7 @@ def reverse_bytes(v, n):
 
 
 class HuffmanTable:
-    table: List[HuffmanLength]
+    table: list[HuffmanLength]
 
     def __init__(self, bootstrap):
         table = []
@@ -393,7 +394,7 @@ class BZip2File(_DecompressionFile):
 
     blocksize: int
     block_header_size: int
-    block_header_type: Tuple[int, int]
+    block_header_type: tuple[int, int]
     current_block: bytearray
 
     def __init__(self, data: BinaryIO, nsis: bool = True):

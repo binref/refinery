@@ -3,14 +3,15 @@ Pure Python implementation of HC-128
 """
 from __future__ import annotations
 
-from typing import Iterable, Sequence, Iterator
-
 import array
 import itertools
 
-from refinery.lib.crypto import rotr32
+from typing import Iterable, Iterator, Sequence
+
 from refinery.lib.array import make_array
-from refinery.units.crypto.cipher import StreamCipherUnit, Arg
+from refinery.lib.crypto import rotr32
+from refinery.lib.types import Param, buf
+from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 
 def _H(q: Sequence[int], u: int) -> int:
@@ -79,7 +80,7 @@ class hc256(StreamCipherUnit):
 
     def __init__(
         self, key,
-        iv: Arg(help='An initialization vector; the default is a sequence of 32 zero bytes.') = bytes(32),
+        iv: Param[buf, Arg(help='An initialization vector; the default is a sequence of 32 zero bytes.')] = bytes(32),
         discard=0, stateful=False,
     ):
         super().__init__(key=key, iv=iv, stateful=stateful, discard=discard)

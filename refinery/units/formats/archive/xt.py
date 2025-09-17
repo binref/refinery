@@ -1,8 +1,7 @@
 from __future__ import annotations
-from typing import List, Optional, Type
 
-from refinery.units.formats.archive import PathExtractorUnit, ArchiveUnit, MultipleArchives
 from refinery.units import RefineryException
+from refinery.units.formats.archive import ArchiveUnit, MultipleArchives, PathExtractorUnit
 
 
 class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
@@ -11,7 +10,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     and use the corresponding specific extractor from among the ones implemented in refinery.
     """
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         out = False
         for engine in cls.handlers():
             engine_verdict = engine.handles(data)
@@ -63,7 +62,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.exe.vsect import vsect            ; yield vsect     # noqa
 
     def unpack(self, data):
-        fallback: List[Type[PathExtractorUnit]] = []
+        fallback: list[type[PathExtractorUnit]] = []
         errors = {}
         pos_args = self.args.paths
         key_args = dict(
@@ -81,7 +80,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         class unpacker:
             unit = self
 
-            def __init__(self, handler: Type[PathExtractorUnit], fallback: bool):
+            def __init__(self, handler: type[PathExtractorUnit], fallback: bool):
                 self.success = False
                 self.handler = handler
                 self.fallback = fallback

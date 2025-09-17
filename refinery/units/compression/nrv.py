@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import abc
 
-from refinery.lib.structures import StructReader, MemoryFile
 from refinery.lib.decompression import BitBufferedReader
-from refinery.units import Unit, Arg
+from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class NRVUnit(Unit, abstract=True):
@@ -12,7 +13,7 @@ class NRVUnit(Unit, abstract=True):
     Common base class for the NRV algorithms.
     """
 
-    def __init__(self, bits: Arg.Number(help='Specify the number of codec bits. The default is {default}.') = 32):
+    def __init__(self, bits: Param[int, Arg.Number(help='Specify the number of codec bits. The default is {default}.')] = 32):
         super().__init__(bits=bits)
 
     def process(self, data):

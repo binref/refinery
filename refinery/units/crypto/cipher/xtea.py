@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import Sequence, Tuple
-from refinery.units.crypto.cipher.tea import TEAWithRounds, TEAUnit, BlockCipherFactory
+from typing import Sequence
+
+from refinery.units.crypto.cipher.tea import BlockCipherFactory, TEAUnit, TEAWithRounds
 
 
 class XTEA(TEAWithRounds):
     """
     The XTEA cipher.
     """
-    def tea_encrypt(self, key: Sequence[int], block: Sequence[int]) -> Tuple[int, int]:
+    def tea_encrypt(self, key: Sequence[int], block: Sequence[int]) -> tuple[int, int]:
         carry = 0
         delta = 0x9E3779B9
         v0, v1 = block
@@ -19,7 +20,7 @@ class XTEA(TEAWithRounds):
             v1 = v1 + ((((v0 << 4) ^ (v0 >> 5)) + v0) ^ (carry + key[shift & 3])) & 0xFFFFFFFF
         return (v0, v1)
 
-    def tea_decrypt(self, key: Sequence[int], block: Sequence[int]) -> Tuple[int, int]:
+    def tea_decrypt(self, key: Sequence[int], block: Sequence[int]) -> tuple[int, int]:
         rounds = self.rounds
         delta = 0x9E3779B9
         carry = (delta * rounds) & 0xFFFFFFFF
@@ -36,4 +37,3 @@ class xtea(TEAUnit, cipher=BlockCipherFactory(XTEA)):
     """
     XTEA encryption and decryption.
     """
-    pass

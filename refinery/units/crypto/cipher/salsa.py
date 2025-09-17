@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import struct
 
-from Cryptodome.Cipher import Salsa20
 from abc import ABC, abstractmethod
-from typing import List, Union, Sequence, Optional, Iterable, Tuple, Type, TypeVar
+from typing import Iterable, Sequence, TypeVar
 
-from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
-from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
-from refinery.lib.types import buf
+from Cryptodome.Cipher import Salsa20
+
+from refinery.lib.crypto import PyCryptoFactoryWrapper, rotl32
 from refinery.lib.tools import asbuffer
+from refinery.lib.types import buf
+from refinery.units.crypto.cipher import LatinCipherStandardUnit, LatinCipherUnit
 
 
 class LatinCipher(ABC):
@@ -18,19 +19,19 @@ class LatinCipher(ABC):
     _idx_key32: slice
     _idx_nonce: slice
     _idx_count: slice
-    _round_access_pattern: Tuple[
-        Tuple[int, int, int, int],
-        Tuple[int, int, int, int],
-        Tuple[int, int, int, int],
-        Tuple[int, int, int, int],
-        Tuple[int, int, int, int],
-        Tuple[int, int, int, int],
-        Tuple[int, int, int, int],
-        Tuple[int, int, int, int],
+    _round_access_pattern: tuple[
+        tuple[int, int, int, int],
+        tuple[int, int, int, int],
+        tuple[int, int, int, int],
+        tuple[int, int, int, int],
+        tuple[int, int, int, int],
+        tuple[int, int, int, int],
+        tuple[int, int, int, int],
+        tuple[int, int, int, int],
     ]
 
     @classmethod
-    def FromState(cls, state: Union[Sequence[int], buf]):
+    def FromState(cls, state: Sequence[int] | buf):
         if b := asbuffer(state):
             state = struct.unpack('<16L', b)
         else:
@@ -47,7 +48,7 @@ class LatinCipher(ABC):
             '<2L', *state[cls._idx_count]), 'little')
         return cls(key, nonce, magic, counter=count)
 
-    def __init__(self, key: buf, nonce: buf, magic: Optional[buf] = None, rounds: int = 20, counter: int = 0):
+    def __init__(self, key: buf, nonce: buf, magic: buf | None = None, rounds: int = 20, counter: int = 0):
         if len(key) == 16:
             key = 2 * bytes(key)
         elif len(key) != 32:
@@ -67,7 +68,7 @@ class LatinCipher(ABC):
         self.key32 = _key[4:]
         self.magic = struct.unpack('<4L', magic)
         self.nonce = struct.unpack('<2L', nonce)
-        self.state: List[int] = [0] * 4 * 4
+        self.state: list[int] = [0] * 4 * 4
         self.rounds = rounds // 2
         self.reset(counter)
 
@@ -90,10 +91,10 @@ class LatinCipher(ABC):
 
     @staticmethod
     @abstractmethod
-    def quarter(x: List[int], a: int, b: int, c: int, d: int):
+    def quarter(x: list[int], a: int, b: int, c: int, d: int):
         raise NotImplementedError
 
-    def permute(self, x: List[int]):
+    def permute(self, x: list[int]):
         for a, b, c, d in self.rounds * self._round_access_pattern:
             self.quarter(x, a, b, c, d)
 
@@ -125,7 +126,7 @@ class SalsaCipher(LatinCipher):
     )
 
     @staticmethod
-    def quarter(x: List[int], a: int, b: int, c: int, d: int) -> None:
+    def quarter(x: list[int], a: int, b: int, c: int, d: int) -> None:
         x[b] ^= rotl32(x[a] + x[d] & 0xFFFFFFFF, 0x07)
         x[c] ^= rotl32(x[b] + x[a] & 0xFFFFFFFF, 0x09)
         x[d] ^= rotl32(x[c] + x[b] & 0xFFFFFFFF, 0x0D)
@@ -136,7 +137,7 @@ _X = TypeVar('_X', bound=LatinCipher)
 
 
 def LatinX(
-    cipher: Type[_X],
+    cipher: type[_X],
     blocks: Iterable[int],
     key: buf,
     kdn: buf,
@@ -199,4 +200,3 @@ class salsa20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(Salsa20)):
     with 20 rounds, but it uses the PyCryptodome library C implementation rather than the pure
     Python implementation used by `refinery.salsa`.
     """
-    pass

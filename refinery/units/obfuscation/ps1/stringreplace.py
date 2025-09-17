@@ -5,7 +5,7 @@ import re
 from refinery.lib.patterns import formats
 from refinery.lib.tools import lookahead
 from refinery.units.obfuscation import Deobfuscator
-from refinery.units.obfuscation.ps1 import string_unquote, string_apply, Ps1StringLiterals
+from refinery.units.obfuscation.ps1 import Ps1StringLiterals, string_apply, string_unquote
 
 
 class deob_ps1_stringreplace(Deobfuscator):

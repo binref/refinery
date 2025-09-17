@@ -3,11 +3,11 @@ Shared dependencies.
 """
 from __future__ import annotations
 
-from typing import Collection, Callable
+from typing import Callable, Collection
 
-from refinery.units import Unit
 from refinery.lib.dependencies import LazyDependency, Mod
 from refinery.lib.tools import NoLogging
+from refinery.units import Unit
 
 
 class GlobalDependenciesDummy(Unit, abstract=True):
@@ -41,9 +41,9 @@ def unicorn():
 
 @__global_dependency('speakeasy-emulator-refined', ['extended'])
 def speakeasy():
+    import speakeasy
     import speakeasy.profiler
     import speakeasy.windows.objman
-    import speakeasy
     return speakeasy
 
 
@@ -55,13 +55,14 @@ def icicle():
 
 @__global_dependency('xdis', ['arc', 'python', 'extended'])
 def xdis():
+    import sys
+
+    import xdis
     import xdis.load
     import xdis.magics
     import xdis.marsh
     import xdis.op_imports
     import xdis.version_info
-    import xdis
-    import sys
     A, B, C, *_ = sys.version_info
     version = F'{A}.{B}.{C}'
     canonic = F'{A}.{B}'

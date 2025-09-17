@@ -3,6 +3,7 @@ from __future__ import annotations
 import codecs
 import enum
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
@@ -23,15 +24,15 @@ class recode(Unit):
 
     def __init__(
         self,
-        decode: Arg.String(metavar='decode-as', help='Input encoding; Guess encoding by default.') = None,
-        encode: Arg.String(metavar='encode-as', help=F'Output encoding; The default is {Unit.codec}.') = Unit.codec,
-        decerr: Arg.Option('-d', choices=Handler,
-            help='Specify an error handler for decoding.') = None,
-        encerr: Arg.Option('-e', choices=Handler,
-            help='Specify an error handler for encoding.') = None,
-        errors: Arg.Option('-E', choices=Handler, help=(
+        decode: Param[str, Arg.String(metavar='decode-as', help='Input encoding; Guess encoding by default.')] = None,
+        encode: Param[str, Arg.String(metavar='encode-as', help=F'Output encoding; The default is {Unit.codec}.')] = Unit.codec,
+        decerr: Param[str, Arg.Option('-d', choices=Handler,
+            help='Specify an error handler for decoding.')] = None,
+        encerr: Param[str, Arg.Option('-e', choices=Handler,
+            help='Specify an error handler for encoding.')] = None,
+        errors: Param[str, Arg.Option('-E', choices=Handler, help=(
             'Specify an error handler for both encoding and decoding. '
-            'The possible choices are the following: {choices}')) = None,
+            'The possible choices are the following: {choices}'))] = None,
     ):
         super().__init__(
             decode=decode,

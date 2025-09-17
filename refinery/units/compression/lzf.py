@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from refinery.units import Unit, Arg, RefineryPartialResult
-from refinery.lib.structures import MemoryFile, Struct, StructReader
-
 import itertools
+
+from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.types import Param
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 _MAX_LIT = 1 << 5
 _MAX_OFF = 1 << 13
@@ -38,7 +39,7 @@ class lzf(Unit):
     This unit implements LZF compression and decompression.
     """
 
-    def __init__(self, fast: Arg.Switch('-x', help='Enable fast compression mode.') = False):
+    def __init__(self, fast: Param[bool, Arg.Switch('-x', help='Enable fast compression mode.')] = False):
         super().__init__(fast=fast)
 
     def reverse(self, data):

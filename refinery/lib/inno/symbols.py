@@ -4,17 +4,17 @@ Contains a library of known external function symbols for the IFPS runtime in In
 """
 from __future__ import annotations
 
-from typing import NamedTuple, Optional
-
 import inspect
 import re
+
+from typing import NamedTuple
 
 from refinery.lib.inno import CaseInsensitiveDict
 
 
 class IFPSParam(NamedTuple):
     name: str
-    type: Optional[str]
+    type: str | None
     const: bool
 
 
@@ -22,10 +22,10 @@ class IFPSSignature(NamedTuple):
     name: str
     kind: str
     parameters: tuple[IFPSParam]
-    return_type: Optional[str]
+    return_type: str | None
     void: bool
-    readable: Optional[bool] = None
-    writable: Optional[bool] = None
+    readable: bool | None = None
+    writable: bool | None = None
 
     def is_property(self):
         return self.kind == 'property'
@@ -51,7 +51,7 @@ class ParsingError(RuntimeError):
         super().__init__(F'{what}: {symbol}')
 
 
-def parse_decl(decl: str, kind: str, void: Optional[bool] = None, **kwargs):
+def parse_decl(decl: str, kind: str, void: bool | None = None, **kwargs):
     def try_type(type: str):
         if not type:
             return None
@@ -458,7 +458,7 @@ def _parse_class_reference(cls) -> IFPSClassReference:
                 attributes = attributes.strip().split()
                 kwargs.update(
                     writable=('write' in attributes),
-                    readable=(u'read' in attributes))
+                    readable=('read' in attributes))
             sig = parse_decl(decl, kind, **kwargs)
 
             if kind == 'property':

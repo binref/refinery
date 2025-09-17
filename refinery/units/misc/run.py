@@ -4,9 +4,10 @@ import sys
 
 from subprocess import PIPE, Popen
 
-from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Param
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 
 class run(Unit):
@@ -24,19 +25,19 @@ class run(Unit):
     _JOIN_TIME = 0.1
 
     def __init__(
-        self, *commandline : Arg.String(nargs='...', metavar='(all remaining)', help=(
+        self, *commandline: Param[str, Arg.String(nargs='...', metavar='(all remaining)', help=(
             'All remaining command line tokens form an arbitrary command line to be executed. Use'
-            ' format string syntax to insert meta variables and incoming data chunks.')),
-        stream : Arg.Switch('-s',
-            help='Stream the command output rather than buffering it.') = False,
-        noinput: Arg.Switch('-x', help='Do not send any input to the new process.') = False,
-        errors : Arg.Switch('-m', help=(
+            ' format string syntax to insert meta variables and incoming data chunks.'))],
+        stream: Param[bool, Arg.Switch('-s',
+            help='Stream the command output rather than buffering it.')] = False,
+        noinput: Param[bool, Arg.Switch('-x', help='Do not send any input to the new process.')] = False,
+        errors: Param[bool, Arg.Switch('-m', help=(
             'Merge stdout and stderr. By default, the standard error stream of the coupled command'
             ' is forwarded to the logger, i.e. it is only visible if -v is also specified.'
-        )) = False,
-        timeout: Arg.Double('-t', metavar='T', help=(
+        ))] = False,
+        timeout: Param[float, Arg.Double('-t', metavar='T', help=(
             'Optionally set an execution timeout as a floating point number in seconds.'
-        )) = 0.0
+        ))] = 0.0
     ):
         if not commandline:
             raise ValueError('you need to provide a command line.')
@@ -46,7 +47,7 @@ class run(Unit):
     def process(self, data):
         def shlexjoin():
             import shlex
-            return ' '.join(shlex.quote(cmd) for cmd in commandline)
+            return shlex.join(commandline)
 
         meta = metavars(data)
         meta.ghost = True
@@ -74,8 +75,8 @@ class run(Unit):
             yield out
             return
 
-        from threading import Thread, Event
-        from queue import Queue, Empty
+        from queue import Empty, Queue
+        from threading import Event, Thread
         from time import process_time, sleep
 
         start = 0

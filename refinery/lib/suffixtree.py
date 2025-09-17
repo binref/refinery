@@ -4,10 +4,10 @@ This module contains an implementation of Ukkonen's suffix tree algorithm.
 from __future__ import annotations
 
 from abc import ABCMeta
-from io import BytesIO
 from collections import deque
+from io import BytesIO
 
-from refinery.lib.types import buf, Iterable, Self
+from refinery.lib.types import Iterable, Self, buf
 
 
 class NodeMeta(ABCMeta):

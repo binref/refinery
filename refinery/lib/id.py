@@ -4,10 +4,9 @@ who operate on the same file format to implement the `refinery.units.Unit.handle
 """
 from __future__ import annotations
 
-from typing import Callable
-
 import re
 
+from typing import Callable
 
 _STRUCTURAL_CHECKS: list[Callable[[bytearray], str | None]] = []
 

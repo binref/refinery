@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.thirdparty import acefile
 from refinery.lib.structures import MemoryFile
+from refinery.lib.thirdparty import acefile
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class xtace(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):

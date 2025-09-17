@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from typing import Optional, Set, TYPE_CHECKING, cast
-from itertools import islice
-
 import re
+
+from itertools import islice
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from pypdf.generic import EncodedStreamObject
     from pymupdf import Page
 
-from refinery.units.formats.archive import ArchiveUnit, UnpackResult
-from refinery.lib.tools import NoLogging
 from refinery.lib.mime import get_cached_file_magic_info
 from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import NoLogging
+from refinery.units.formats.archive import ArchiveUnit, UnpackResult
 
 
 def isdict(object):
@@ -37,7 +37,7 @@ class xtpdf(ArchiveUnit):
         import pymupdf
         return pymupdf
 
-    def _walk_raw(self, blob, memo: Optional[Set[int]] = None, *path):
+    def _walk_raw(self, blob, memo: set[int] | None = None, *path):
         while isinstance(blob, self._pypdf2.generic.IndirectObject):
             try:
                 blob = blob.get_object()
@@ -162,5 +162,5 @@ class xtpdf(ArchiveUnit):
                 yield UnpackResult(F'parsed/page{k}/img{j}.{info.extension}', data)
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         return data.startswith(B'%PDF-')

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import List, Dict, Any
-
 import csv as _csv
 import io
 import json
 
-from refinery.units import Unit, Arg
+from typing import Any
+
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isodate
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 
 class csv(Unit):
@@ -17,8 +18,8 @@ class csv(Unit):
     """
     def __init__(
         self,
-        quote: Arg('-q', help='Specify the quote character, the default is a double quote.') = B'"',
-        delim: Arg('-d', help='Specify the delimiter, the default is a single comma.') = B','
+        quote: Param[buf, Arg('-q', help='Specify the quote character, the default is a double quote.')] = B'"',
+        delim: Param[buf, Arg('-d', help='Specify the delimiter, the default is a single comma.')] = B','
     ):
         super().__init__(quote=quote, delim=delim)
 
@@ -65,9 +66,9 @@ class csv(Unit):
 
     def reverse(self, data: bytearray):
         try:
-            table: List[Dict[str, Any]] = json.loads(data)
+            table: list[dict[str, Any]] = json.loads(data)
         except Exception:
-            table: List[Dict[str, Any]] = [json.loads(line) for line in data.splitlines()]
+            table: list[dict[str, Any]] = [json.loads(line) for line in data.splitlines()]
         return self.json_to_csv(table)
 
     def process(self, data):

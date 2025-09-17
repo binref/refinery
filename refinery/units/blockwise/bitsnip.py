@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Tuple
+from typing import Iterable
+
+from refinery.lib.types import Param
 from refinery.units.blockwise import Arg, BlockTransformationBase
 
 
@@ -16,19 +18,19 @@ class bitsnip(BlockTransformationBase):
     given byte ordering.
     """
     def __init__(
-        self, slices: Arg(help=(
+        self, slices: Param[list[slice], Arg(help=(
             'Specify start:stop:size, where size can be used to pad or truncate the extracted '
             'bits. If size is omitted, it defaults to (stop-start). If no slice is specified, '
             'it defaults to 0, which corresponds to 0:1:1, i.e. extracting the lowest bit.')
-        ) = [slice(0, 1)],
-        bigendian=False, blocksize=None
+        )] = [slice(0, 1)],
+        bigendian=False, blocksize=1
     ):
         super().__init__(slices=slices, bigendian=bigendian, blocksize=blocksize)
 
     def process(self, data: bytearray):
         bitsnip_data = 0
         bitsnip_size = 0
-        slices: List[Tuple[int, int, int]] = []
+        slices: list[tuple[int, int, int]] = []
         maxbits = 8 * self.blocksize
         args: Iterable[slice] = iter(self.args.slices)
         bigendian: bool = self.args.bigendian

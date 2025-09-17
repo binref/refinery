@@ -27,14 +27,14 @@
 #  - allow processing of strings rather than files
 from __future__ import annotations
 
-import re
-import os
 import io
+import os
+import re
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag, auto
-from typing import Dict, Generator, List, NamedTuple, Optional
-from collections import defaultdict
+from typing import Generator, NamedTuple
 
 
 class _T(str, Enum):
@@ -67,8 +67,8 @@ class STRIP(IntFlag):
 
 @dataclass
 class ScriptVariable:
-    definitions: Dict[int, str] = field(default_factory=dict)
-    evaluations: List[int] = field(default_factory=list)
+    definitions: dict[int, str] = field(default_factory=dict)
+    evaluations: list[int] = field(default_factory=list)
 
     @property
     def value(self):
@@ -82,8 +82,8 @@ class DeobfuscatedLine(NamedTuple):
 
 
 class BatchDeobfuscator:
-    variables: Dict[str, ScriptVariable]
-    pending_subcommand: Optional[str]
+    variables: dict[str, ScriptVariable]
+    pending_subcommand: str | None
 
     def __init__(self):
         if os.name == 'nt':
@@ -153,7 +153,7 @@ class BatchDeobfuscator:
                 logical_line.write(line)
                 logical_line.write('\n')
 
-    def commands(self, logical_line: str) -> Generator[str, None, None]:
+    def commands(self, logical_line: str) -> Generator[str]:
         state = _S.INIT
         start = 0
         for offset, token in enumerate(logical_line):
@@ -333,7 +333,7 @@ class BatchDeobfuscator:
                 state = stack.pop()
         return result.strip()
 
-    def _interpret(self, text: str, lno: int = 0, depth: int = 0) -> Generator[DeobfuscatedLine, None, None]:
+    def _interpret(self, text: str, lno: int = 0, depth: int = 0) -> Generator[DeobfuscatedLine]:
         for line in self.read_logical_lines(text):
             for command in self.commands(line):
                 normalized = self.normalize(lno, command)

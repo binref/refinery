@@ -3,17 +3,17 @@ A simple tool to queue binary data as one or more chunks in the current frame.
 """
 from __future__ import annotations
 
-from refinery.lib.types import Iterable, Generator
-from refinery.units import Arg, Unit, Chunk
+from refinery.lib.types import Param, Generator, Iterable, buf
+from refinery.units import Arg, Chunk, Unit
 
 
 class QueueUnit(Unit, abstract=True):
-    def __init__(self, *data: Arg(help=(
+    def __init__(self, *data: Param[buf, Arg(help=(
         'The arguments are inserted into the current frame in the given order. These arguments '
         'are multibin expressions; If the expression depends on the input data, it will always '
         'refer to the first chunk in the current frame. If no argument is given, a single empty'
         ' chunk is inserted.'
-    ))):
+    ))]):
         super().__init__(data=data)
 
     def act(self, data: Chunk):

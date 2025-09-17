@@ -3,13 +3,13 @@ from __future__ import annotations
 import re
 import struct
 
-from typing import NamedTuple, Optional, Dict, Tuple
 from collections import Counter
+from typing import NamedTuple
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.units.formats.pe.dotnet import CodePath
 from refinery.lib.dotnet import integer_from_ldc
 from refinery.lib.dotnet.header import DotNetHeader
+from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats.pe.dotnet import CodePath
 
 
 class FieldInfo(NamedTuple):
@@ -41,16 +41,16 @@ class dnfields(PathExtractorUnit):
         if not fields:
             return
 
-        icache: Dict[bytes, FieldInfo] = {}
+        icache: dict[bytes, FieldInfo] = {}
         memory = memoryview(data)
 
-        def _guess_field_info(t: int, signature: bytes, field_name: Optional[str] = None, sizemap: dict = {
+        def _guess_field_info(t: int, signature: bytes, field_name: str | None = None, sizemap: dict = {
             '^s?byte$'       : 1,
             '^s?char$'       : 2,
             '^[us]?int.?16$' : 2,
             '^[us]?int.?32$' : 4,
             '^[us]?int.?64$' : 8,
-        }) -> Tuple[Optional[str], FieldInfo]:
+        }) -> tuple[str | None, FieldInfo]:
             try:
                 info = icache[signature]
             except KeyError:

@@ -4,20 +4,20 @@ import itertools
 import json
 
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from refinery.lib import lief
 from refinery.lib.dotnet.header import DotNetHeader
-from refinery.lib.tools import unwrap, NoLoggingProxy
-from refinery.units import Arg, Unit
-from refinery.units.sinks.ppjson import ppjson
-from refinery.units.formats.pe import get_pe_size
-from refinery.lib.tools import date_from_timestamp
 from refinery.lib.id import is_likely_pe
 from refinery.lib.lcid import LCID
 from refinery.lib.resources import datapath
+from refinery.lib.tools import NoLoggingProxy, date_from_timestamp, unwrap
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
+from refinery.units.formats.pe import get_pe_size
+from refinery.units.sinks.ppjson import ppjson
 
 
 def _FILETIME(value: int) -> datetime:
@@ -152,18 +152,18 @@ class pemeta(Unit):
     extracted.
     """
     def __init__(
-        self, custom : Arg('-c', '--custom',
-            help='Unless enabled, all default categories will be extracted.') = False,
-        debug      : Arg.Switch('-D', help='Parse the PDB path from the debug directory.') = False,
-        dotnet     : Arg.Switch('-N', help='Parse the .NET header.') = False,
-        signatures : Arg.Switch('-S', help='Parse digital signatures.') = False,
-        timestamps : Arg.Counts('-T', help='Extract time stamps. Specify twice for more detail.') = 0,
-        version    : Arg.Switch('-V', help='Parse the VERSION resource.') = False,
-        header     : Arg.Switch('-H', help='Parse base data from the PE header.') = False,
-        exports    : Arg.Counts('-E', help='List all exported functions. Specify twice to include addresses.') = 0,
-        imports    : Arg.Counts('-I', help='List all imported functions. Specify twice to include addresses.') = 0,
-        tabular    : Arg.Switch('-t', help='Print information in a table rather than as JSON') = False,
-        timeraw    : Arg.Switch('-r', help='Extract time stamps as numbers instead of human-readable format.') = False,
+        self, custom: Param[bool, Arg('-c', '--custom',
+            help='Unless enabled, all default categories will be extracted.')] = False,
+        debug: Param[bool, Arg.Switch('-D', help='Parse the PDB path from the debug directory.')] = False,
+        dotnet: Param[bool, Arg.Switch('-N', help='Parse the .NET header.')] = False,
+        signatures: Param[bool, Arg.Switch('-S', help='Parse digital signatures.')] = False,
+        timestamps: Param[int, Arg.Counts('-T', help='Extract time stamps. Specify twice for more detail.')] = 0,
+        version: Param[bool, Arg.Switch('-V', help='Parse the VERSION resource.')] = False,
+        header: Param[bool, Arg.Switch('-H', help='Parse base data from the PE header.')] = False,
+        exports: Param[int, Arg.Counts('-E', help='List all exported functions. Specify twice to include addresses.')] = 0,
+        imports: Param[int, Arg.Counts('-I', help='List all imported functions. Specify twice to include addresses.')] = 0,
+        tabular: Param[bool, Arg.Switch('-t', help='Print information in a table rather than as JSON')] = False,
+        timeraw: Param[bool, Arg.Switch('-r', help='Extract time stamps as numbers instead of human-readable format.')] = False,
     ):
         if not custom and not any((debug, dotnet, signatures, timestamps, version, header)):
             debug = dotnet = signatures = timestamps = version = header = True
@@ -192,10 +192,10 @@ class pemeta(Unit):
 
     @classmethod
     def _parse_pedict(cls, bin):
-        return dict((
-            cls._ensure_string(key).replace(" ", ""),
+        return {
+            cls._ensure_string(key).replace(" ", ""):
             cls._ensure_string(val)
-        ) for key, val in bin.items() if val)
+         for key, val in bin.items() if val}
 
     @classmethod
     def parse_signature(cls, data: bytearray) -> dict:

@@ -3,29 +3,25 @@ This module implements an emulator abstraction layer.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Any, Generic, TypeVar, Optional, Union
-from typing import TYPE_CHECKING
-
 from abc import ABC, abstractmethod
 from enum import IntFlag
 from functools import cached_property, partial
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from refinery.lib.executable import align, Arch, ET, BO, Executable, ExecutableCodeBlob
-from refinery.lib.vfs import VirtualFileSystem
+from refinery.lib.executable import BO, ET, Arch, Executable, ExecutableCodeBlob, align
 from refinery.lib.intervals import IntIntervalUnion
-
-from refinery.lib.shared import (
-    unicorn as uc,
-    icicle as ic,
-    speakeasy as se,
-)
+from refinery.lib.shared import icicle as ic
+from refinery.lib.shared import speakeasy as se
+from refinery.lib.shared import unicorn as uc
+from refinery.lib.vfs import VirtualFileSystem
 
 if TYPE_CHECKING:
+    from icicle import Icicle as Ic
     from speakeasy import Speakeasy as Se
-    from speakeasy.common import CodeHook, Hook as SeHook
+    from speakeasy.common import CodeHook
+    from speakeasy.common import Hook as SeHook
     from speakeasy.memmgr import MemMap
     from unicorn import Uc
-    from icicle import Icicle as Ic
 else:
     class Uc: pass
     class Ic: pass
@@ -41,7 +37,6 @@ class EmulationError(Exception):
     """
     Base class for any exceptions raised by emulators.
     """
-    pass
 
 
 class Register(Generic[_R]):
@@ -61,12 +56,12 @@ class Register(Generic[_R]):
     """
     The code of a register is any emulator-specific internal identifier for the register.
     """
-    size: Optional[int]
+    size: int | None
     """
     If not `None`, this property contains the size of the register in bytes.
     """
 
-    def __init__(self, name: str, code: _R, size: Optional[int] = 0):
+    def __init__(self, name: str, code: _R, size: int | None = 0):
         self.name = name
         self.code = code
         self.size = size
@@ -109,9 +104,9 @@ class Emulator(ABC, Generic[_E, _R, _T]):
 
     def __init__(
         self,
-        data: Union[Executable, bytes, bytearray, memoryview],
-        base: Optional[int] = None,
-        arch: Optional[Arch] = None,
+        data: Executable | bytes | bytearray | memoryview,
+        base: int | None = None,
+        arch: Arch | None = None,
         hooks: Hook = Hook.OnlyErrors,
         align_size: int = 0x1000,
         alloc_size: int = 0x1000,
@@ -172,7 +167,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         return self.hooks & hook == hook
 
-    def reset(self, state: Optional[_T] = None):
+    def reset(self, state: _T | None = None):
         """
         This function resets the emulator to an initial state. This will create a new instance of
         the underlying emulator engine, map the input executable to memory, and install any of the
@@ -201,7 +196,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         finally:
             self._disable_single_step()
 
-    def base_exe_to_emu(self, address: Optional[int]):
+    def base_exe_to_emu(self, address: int | None):
         """
         Rebase a virtual address from the base executable's address space to the one used by the
         emulator.
@@ -210,7 +205,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             address = address - self.exe.base + self.base
         return address
 
-    def base_emu_to_exe(self, address: Optional[int]):
+    def base_emu_to_exe(self, address: int | None):
         """
         Rebase a virtual address from the emulator's address space to the one used by the base
         executable.
@@ -219,7 +214,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             address = address + self.exe.base - self.base
         return address
 
-    def emulate(self, start: int, end: Optional[int] = None):
+    def emulate(self, start: int, end: int | None = None):
         """
         Call this function to begin emulation. The `start` parameter is the address where execution
         should begin, the `end` parameter is an optional address to halt at.
@@ -241,7 +236,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self.push(tp)
         self.emulate(function, tp)
 
-    def mem_read_int(self, address: int, size: Optional[int] = None):
+    def mem_read_int(self, address: int, size: int | None = None):
         """
         Read an integer from memory at the given address. The default for the size parameter is
         the pointer size of the emulated executable.
@@ -250,7 +245,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             size = self.exe.pointer_size_in_bytes
         return int.from_bytes(self.mem_read(address, size), self.exe.byte_order().value)
 
-    def mem_write_int(self, address: int, value: int, size: Optional[int] = None):
+    def mem_write_int(self, address: int, value: int, size: int | None = None):
         """
         Read an integer from memory at the given address. The default for the size parameter is
         the pointer size of the emulated executable.
@@ -271,10 +266,9 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         Called at the very end of the object initializer. Can be overridden by child classes to
         initialize variables that do not depend on the emulator engine to be ready.
         """
-        pass
 
     @abstractmethod
-    def _emulate(self, start: int, end: Optional[int] = None):
+    def _emulate(self, start: int, end: int | None = None):
         """
         This is the tail call of `refinery.lib.emulator.Emulator.emulate`.
         """
@@ -302,7 +296,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         ...
 
     @abstractmethod
-    def _lookup_register(self, var: Union[_R, int]) -> Register[_R]:
+    def _lookup_register(self, var: _R | int) -> Register[_R]:
         """
         Called as part of `refinery.lib.emulator.Emulator.lookup_register`.
         """
@@ -357,7 +351,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         ...
 
-    def lookup_register(self, var: Union[str, _R, Register[_R]]):
+    def lookup_register(self, var: str | _R | Register[_R]):
         """
         Return the `refinery.lib.emulator.Register` for the given name or code. `Register` type
         inputs are passed through unaltered.
@@ -371,7 +365,6 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         This function can be implemented by a child class to update the internal memory maps before
         resizing a requested mapping to fit with the already existing maps.
         """
-        pass
 
     def is_mapped(self, address: int, size: int = 1):
         """
@@ -458,7 +451,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self._set_register(reg, val)
         return q
 
-    def push(self, val: int, size: Optional[int] = None):
+    def push(self, val: int, size: int | None = None):
         """
         Push the given integer value to the stack. If the `size` parameter is missing, the function
         will push a machine word sized value.
@@ -477,7 +470,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
                 self.sp = tos
                 break
 
-    def pop(self, size: Optional[int] = None):
+    def pop(self, size: int | None = None):
         """
         Pop an integer value from the stack. If the `size` parameter is missing, the function will
         pop a machine word sized value.
@@ -489,7 +482,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self.sp = sp + size
         return sv
 
-    def push_register(self, reg: Union[int, str, Register[_R]]):
+    def push_register(self, reg: int | str | Register[_R]):
         """
         Push the contents of the given register to the stack.
         """
@@ -504,46 +497,46 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         return align(self.align_size, value, down=down)
 
-    def set_register(self, register: Union[int, str, Register[_R]], value: int):
+    def set_register(self, register: int | str | Register[_R], value: int):
         """
         Write the given value to the given CPU register.
         """
         register = self.lookup_register(register)
         return self._set_register(register.code, value)
 
-    def get_register(self, register: Union[int, str, Register[_R]]) -> int:
+    def get_register(self, register: int | str | Register[_R]) -> int:
         """
         Read the contents of the given CPU register.
         """
         register = self.lookup_register(register)
         return self._get_register(register.code)
 
-    def hook_code_execute(self, emu: _E, address: int, size: int, state: Optional[_T] = None) -> bool:
+    def hook_code_execute(self, emu: _E, address: int, size: int, state: _T | None = None) -> bool:
         """
         Called when code execution is hooked.
         """
         return True
 
-    def hook_code_error(self, emu: _E, state: Optional[_T] = None) -> bool:
+    def hook_code_error(self, emu: _E, state: _T | None = None) -> bool:
         """
         Called when code errors are hooked.
         """
         self.halt()
         return False
 
-    def hook_mem_read(self, emu: _E, access: int, address: int, size: int, value: int, state: Optional[_T] = None) -> bool:
+    def hook_mem_read(self, emu: _E, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
         """
         Called when memory reads are hooked.
         """
         return True
 
-    def hook_mem_write(self, emu: _E, access: int, address: int, size: int, value: int, state: Optional[_T] = None) -> bool:
+    def hook_mem_write(self, emu: _E, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
         """
         Called when memory writes are hooked.
         """
         return True
 
-    def hook_mem_error(self, emu: _E, access: int, address: int, size: int, value: int, state: Optional[_T] = None) -> bool:
+    def hook_mem_error(self, emu: _E, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
         """
         Called when memory errors are hooked.
         """
@@ -613,7 +606,7 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
             self.alloc_base = 0
         else:
             raise RuntimeError(
-                U'Unable to find sufficient space for heap and stack with '
+                'Unable to find sufficient space for heap and stack with '
                 F'allocation size of 0x{alloc:X}.')
         self.stack_size = stack_size
         self.map(self.stack_base, self.stack_size)
@@ -721,15 +714,15 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
             self._single_step_hook = None
 
     def _init(self):
-        self._reg_by_name: Dict[str, Register[int]] = {}
-        self._reg_by_code: Dict[int, Register[int]] = {}
+        self._reg_by_name: dict[str, Register[int]] = {}
+        self._reg_by_code: dict[int, Register[int]] = {}
         for module in [
             uc.x86_const,
             uc.arm_const,
             uc.sparc_const,
             uc.mips_const,
         ]:
-            md: Dict[str, Any] = module.__dict__
+            md: dict[str, Any] = module.__dict__
             for name, code in md.items():
                 try:
                     u, *_, kind, name = name.split('_')
@@ -742,7 +735,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
                 self._reg_by_name[name] = reg
                 self._reg_by_code[code] = reg
 
-    def _emulate(self, start: int, end: Optional[int] = None):
+    def _emulate(self, start: int, end: int | None = None):
         if end is None:
             end = self.exe.location_from_address(start).virtual.box.upper
         try:
@@ -753,7 +746,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
     def halt(self):
         self.unicorn.emu_stop()
 
-    def _lookup_register(self, var: Union[str, int]) -> Register[int]:
+    def _lookup_register(self, var: str | int) -> Register[int]:
         reg = None
         if isinstance(var, str):
             reg = self._reg_by_name[var.casefold()]
@@ -824,7 +817,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
     def _disable_single_step(self):
         self._single_step = False
 
-    def _emulate(self, start: int, end: Optional[int] = None):
+    def _emulate(self, start: int, end: int | None = None):
         RS = ic.RunStatus
         MP = ic.MemoryProtection
         ice = self.icicle
@@ -943,7 +936,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     speakeasy: Se
 
     def _init(self):
-        self._regs: Dict[str, Register[str]] = {}
+        self._regs: dict[str, Register[str]] = {}
 
     class _singlestep:
         def __init__(self):
@@ -958,7 +951,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             return True
 
     class _stackfix:
-        hook: Optional[CodeHook]
+        hook: CodeHook | None
 
         def __init__(self, parent: SpeakeasyEmulator):
             self.hook = None
@@ -1048,7 +1041,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     def stack_region(self):
         emu = self.speakeasy
         tos = self.sp
-        mms: List[MemMap] = emu.get_mem_maps()
+        mms: list[MemMap] = emu.get_mem_maps()
         if tos != emu.get_stack_ptr():
             raise EmulationError('Unexpected stack pointer misalignment')
         try:
@@ -1090,10 +1083,10 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         stack.size = stack.size + self.alloc_size
 
     class _stop:
-        hook: Optional[SeHook]
-        address: Optional[int]
+        hook: SeHook | None
+        address: int | None
 
-        def __init__(self, address: Optional[int] = None):
+        def __init__(self, address: int | None = None):
             self.address = address
             self.hook = None
 
@@ -1103,10 +1096,10 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                     spky.stop()
                     hook.disable()
 
-    _end_hook_s: Optional[_stop]
-    _end_hook_d: Optional[_stop]
+    _end_hook_s: _stop | None
+    _end_hook_d: _stop | None
 
-    def _remove_hook(self, hook: Optional[SeHook]):
+    def _remove_hook(self, hook: SeHook | None):
         if hook is None:
             return
         hook.emu_eng.hook_del(hook.handle)
@@ -1119,7 +1112,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                     del hooklist[k]
                     break
 
-    def _set_end(self, end: Optional[int]):
+    def _set_end(self, end: int | None):
         if h := self._end_hook_s:
             self._remove_hook(h.hook)
         if h := self._end_hook_d:
@@ -1133,7 +1126,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             self._end_hook_d = h = self._stop(end)
             h.hook = self.speakeasy.add_dyn_code_hook(h)
 
-    def _emulate(self, start: int, end: Optional[int] = None):
+    def _emulate(self, start: int, end: int | None = None):
         spk = self.speakeasy
         inner = spk.emu
         assert inner

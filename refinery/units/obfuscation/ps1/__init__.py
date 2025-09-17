@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 
 from refinery.lib.patterns import formats
-from refinery.units.obfuscation import StringLiterals
 from refinery.units.encoding.escps import escps
+from refinery.units.obfuscation import StringLiterals
 
 
 def dq_unescape(string):
@@ -96,7 +96,7 @@ def string_quote(parts, quote=True):
             chunks[k] = F'${{{chunks[k][1:]}}}'
 
     result = ''.join(chunks)
-    if quote: result = '"{}"'.format(result)
+    if quote: result = f'"{result}"'
     return result
 
 

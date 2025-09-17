@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units import Unit
 from refinery.lib.java import JvClassFile
+from refinery.units import Unit
 
 
 class jvstr(Unit):

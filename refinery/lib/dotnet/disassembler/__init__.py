@@ -3,7 +3,7 @@ A library to disassemble .NET assembly
 """
 from __future__ import annotations
 
-from typing import Iterator, Optional
+from typing import Iterator
 
 from refinery.lib.dotnet.disassembler.factory import InstructionFactory
 from refinery.lib.dotnet.disassembler.model import Instruction, UnknownInstruction
@@ -15,7 +15,7 @@ class Disassembler:
         self._op_repository = OpRepository()
         self._factory = InstructionFactory()
 
-    def disasm(self, data: bytes, max_byte_count: Optional[int] = None) -> Iterator[Instruction]:
+    def disasm(self, data: bytes, max_byte_count: int | None = None) -> Iterator[Instruction]:
         i = 0
         while i < len(data):
             if max_byte_count and i >= max_byte_count:

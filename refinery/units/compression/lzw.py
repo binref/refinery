@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from enum import IntEnum
-from typing import Optional
-from array import array
-
 import itertools
 
-from refinery.units import Unit, RefineryPartialResult
+from array import array
+from enum import IntEnum
+
 from refinery.lib.structures import MemoryFile, StructReader
+from refinery.units import RefineryPartialResult, Unit
 
 
 class LZW(IntEnum):
@@ -136,7 +135,7 @@ class lzw(Unit):
         return out.getvalue()
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         sig = cls._MAGIC
         if data[:len(sig)] == sig:
             return True

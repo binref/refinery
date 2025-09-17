@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import email.utils
 import json
 import re
-import email.utils
 
-from typing import TYPE_CHECKING, Iterable, Tuple
 from email.parser import Parser
+from typing import TYPE_CHECKING, Iterable
 
+from refinery.lib.mime import file_extension
+from refinery.lib.tools import NoLogging, asbuffer, isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.pattern.mimewords import mimewords
-from refinery.lib.mime import file_extension
-from refinery.lib.tools import NoLogging, isbuffer, asbuffer
 
 if TYPE_CHECKING:
     from extract_msg import Message
@@ -46,7 +46,7 @@ class xtmail(PathExtractorUnit):
     Extract files and body from EMail messages. The unit supports both the Outlook message format
     and regular MIME documents.
     """
-    def _get_headparts(self, head: Iterable[Tuple[str, str]]):
+    def _get_headparts(self, head: Iterable[tuple[str, str]]):
         def normalize_spaces(value: str):
             return ''.join(re.sub(R'\A\s+', '\x20', t) for t in value.splitlines(False))
 

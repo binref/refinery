@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from typing import overload, get_origin, get_args, Type, TypeVar
-from types import CodeType
+import enum
+import importlib.util
+import inspect
+import marshal
+import sys
 
-from refinery.units import Unit, Arg
+from types import CodeType
+from typing import TypeVar, get_args, get_origin, overload
+
 from refinery.lib.json import BytesAsStringEncoder
 from refinery.lib.structures import StructReader
-
-import importlib.util
-import marshal
-import enum
-import sys
-import inspect
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 _T = TypeVar('_T')
 _MAX_MARSHAL_STACK_DEPTH = 2000
@@ -110,7 +111,6 @@ class Null(Exception):
     """
     Raised when the unmarshal C implementation would return a null pointer.
     """
-    pass
 
 
 class UnknownTypeCode(ValueError):
@@ -136,7 +136,7 @@ class Marshal(StructReader[memoryview]):
         self._load_code = load_code
 
     @overload
-    def object(self, typecheck: Type[_T]) -> _T:
+    def object(self, typecheck: type[_T]) -> _T:
         ...
 
     @overload
@@ -474,8 +474,8 @@ class pym(Unit):
     for more recent versions a separate Python decompiler will be required.
     """
     def __init__(
-        self, version: Arg.Choice('-V', choices=_PV_CHOICE, metavar='V',
-            help='Optionally select the Python Version. Available options are: {choices}.') = None
+        self, version: Param[str, Arg.Choice('-V', choices=_PV_CHOICE, metavar='V',
+            help='Optionally select the Python Version. Available options are: {choices}.')] = None
     ):
         if version is not None:
             version = _PV_LOOKUP[version]
@@ -487,20 +487,20 @@ class pym(Unit):
     def process(self, data):
         def toblob(data):
             if isinstance(data, (bytes, bytearray)):
-                self.log_info(U'unmarshalled a byte string, returning as is')
+                self.log_info('unmarshalled a byte string, returning as is')
                 return data
             if isinstance(data, str):
                 self.log_info(F'unmarshalled a string object, encoding as {self.codec}')
                 return data.encode(self.codec)
             if isinstance(data, CodeType):
-                self.log_info(U'unmarshalled a code object, converting to pyc')
+                self.log_info('unmarshalled a code object, converting to pyc')
                 from importlib.util import MAGIC_NUMBER
                 pyc = bytearray(MAGIC_NUMBER)
                 pyc.extend(bytes(12))
                 pyc.extend(marshal.dumps(data))
                 return pyc
             if isinstance(data, int):
-                self.log_info(U'unmarshalled an integer, returning big endian encoding')
+                self.log_info('unmarshalled an integer, returning big endian encoding')
                 q, r = divmod(data.bit_length(), 8)
                 q += int(bool(r))
                 return data.to_bytes(q, 'big')

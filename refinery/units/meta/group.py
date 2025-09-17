@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, Chunk
-
 from itertools import islice
+
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 class group(Unit):
     """
     Group incoming chunks into frames of the given size.
     """
-    def __init__(self, size: Arg.Number(help='Size of each group; must be at least 2.', bound=(2, None))):
+    def __init__(self, size: Param[int, Arg.Number(help='Size of each group; must be at least 2.', bound=(2, None))]):
         super().__init__(size=size)
 
     def process(self, data: Chunk):

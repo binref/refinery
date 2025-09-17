@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import collections
-import re
 import itertools
 import json
+import re
 
-from refinery.units import Unit
-from refinery.units.formats.pe.dotnet import CodePath
 from refinery.lib.dotnet.header import DotNetHeader, NetMetaDataTables
 from refinery.lib.structures import StructReader
 from refinery.lib.types import buf
+from refinery.units import Unit
+from refinery.units.formats.pe.dotnet import CodePath
 
 
 class dnarrays(Unit):

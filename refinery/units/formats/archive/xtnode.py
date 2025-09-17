@@ -1,20 +1,21 @@
 from __future__ import annotations
-from typing import Iterable, Optional, Dict
 
-import re
 import json
+import re
 
-from refinery.units.formats.archive import Arg, ArchiveUnit, UnpackResult
-from refinery.units.encoding.esc import esc
-from refinery.lib.structures import StructReader
+from typing import Iterable
+
 from refinery.lib.patterns import formats
-from refinery.lib.types import buf, JSON
+from refinery.lib.structures import StructReader
+from refinery.lib.types import JSON, Param, buf
+from refinery.units.encoding.esc import esc
+from refinery.units.formats.archive import ArchiveUnit, Arg, UnpackResult
 from refinery.units.pattern.carve_json import JSONCarver
 
 
 class JSONReader(StructReader):
 
-    def read_string(self) -> Optional[str]:
+    def read_string(self) -> str | None:
         quote = self.u8()
         value = bytearray()
         if quote not in B'\"\'':
@@ -65,7 +66,7 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     _PKG_COMMON_JS = B'sourceMappingURL=common.js.map'
 
     def __init__(
-        self, *paths, entry: Arg.Switch('-u', help='Only extract the entry point.') = False,
+        self, *paths, entry: Param[bool, Arg.Switch('-u', help='Only extract the entry point.')] = False,
         list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', date=b'date',
     ):
@@ -150,7 +151,7 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
         reader = JSONReader(prelude[mapping.end() - 1:])
 
-        files: Dict[str, dict] = reader.read_json()
+        files: dict[str, dict] = reader.read_json()
 
         if files is None:
             raise ValueError('failed to read file list')
@@ -222,5 +223,5 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         return True
 
     @classmethod
-    def handles(cls, data: buf) -> Optional[bool]:
+    def handles(cls, data: buf) -> bool | None:
         return cls._is_nexe(data) or cls._is_pkg(data)

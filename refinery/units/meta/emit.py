@@ -6,15 +6,16 @@ from __future__ import annotations
 
 import os
 
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
 class emit(Unit):
 
-    def __init__(self, *data: Arg(help=(
+    def __init__(self, *data: Param[buf, Arg(help=(
         'Data to be emitted. If no argument is specified, data is retrieved from '
         'the clipboard. Multiple arguments are output in framed format.'
-    ))):
+    ))]):
         super().__init__(data=data)
 
     @Unit.Requires('pyperclip')

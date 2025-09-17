@@ -1,10 +1,9 @@
 from __future__ import annotations
-from typing import List, Dict, Optional, ClassVar
 
-from refinery.units.crypto.cipher import (
-    Arg,
-    StandardBlockCipherUnit,
-)
+import struct
+
+from typing import ClassVar
+
 from refinery.lib.crypto import (
     BlockCipher,
     BlockCipherFactory,
@@ -12,8 +11,11 @@ from refinery.lib.crypto import (
     CipherInterface,
     CipherMode,
 )
-
-import struct
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher import (
+    Arg,
+    StandardBlockCipherUnit,
+)
 
 SF = [
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
@@ -469,10 +471,10 @@ class Rijndael(BlockCipher):
     block_size: int
     key_size = frozenset((16, 24, 32))
 
-    _E: List[List[int]]
-    _D: List[List[int]]
+    _E: list[list[int]]
+    _D: list[list[int]]
 
-    _ROUND_BY_KEY_AND_BLOCK_SIZE: ClassVar[Dict[int, Dict[int, int]]] = {
+    _ROUND_BY_KEY_AND_BLOCK_SIZE: ClassVar[dict[int, dict[int, int]]] = {
         16: {16: 10, 24: 12, 32: 14},
         24: {16: 12, 24: 12, 32: 14},
         32: {16: 14, 24: 14, 32: 14}
@@ -493,7 +495,7 @@ class Rijndael(BlockCipher):
         sbox_encrypt = [[0] * block_size_in_dwords for _ in range(rounds + 1)]
         sbox_decrypt = [[0] * block_size_in_dwords for _ in range(rounds + 1)]
         round_key_count = (rounds + 1) * block_size_in_dwords
-        temp: List[int] = []
+        temp: list[int] = []
         for i in range(0, key_length, 4):
             temp.append(int.from_bytes(key[i:i + 4], 'big'))
         t = 0
@@ -518,7 +520,7 @@ class Rijndael(BlockCipher):
                 k = key_length_in_dwords // 2
                 for i in range(1, k):
                     temp[i] ^= temp[i - 1]
-                temp[k] ^= int.from_bytes(bytes((SF[i] for i in temp[k - 1].to_bytes(4, 'big'))), 'big')
+                temp[k] ^= int.from_bytes(bytes(SF[i] for i in temp[k - 1].to_bytes(4, 'big')), 'big')
                 for i in range(k + 1, key_length_in_dwords):
                     temp[i] ^= temp[i - 1]
             j = 0
@@ -536,7 +538,7 @@ class Rijndael(BlockCipher):
         self._E = sbox_encrypt
         self._D = sbox_decrypt
 
-    def __init__(self, key: BufferType, mode: Optional[CipherMode], block_size: int = 16):
+    def __init__(self, key: BufferType, mode: CipherMode | None, block_size: int = 16):
         self.block_size = block_size
         super().__init__(key, mode)
 
@@ -605,7 +607,7 @@ class rijndael(StandardBlockCipherUnit, cipher=BlockCipherFactory(Rijndael)):
     """
     def __init__(
         self, key, iv=b'',
-        block_size: Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 16, 24, and 32.') = 16,
+        block_size: Param[int, Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 16, 24, and 32.')] = 16,
         **more
     ):
         return super().__init__(key, iv=iv, block_size=block_size, **more)

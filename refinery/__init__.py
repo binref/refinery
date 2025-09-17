@@ -37,14 +37,14 @@ from __future__ import annotations
 __version__ = '0.9.3'
 __distribution__ = 'binary-refinery'
 
-from typing import cast, Dict, List, Optional, Type, TypeVar, Iterable, TYPE_CHECKING
-from datetime import datetime
-from threading import RLock
-
 import pickle
 
-from refinery.units import Arg, Unit
+from datetime import datetime
+from threading import RLock
+from typing import TYPE_CHECKING, Iterable, TypeVar, cast
+
 from refinery.lib import resources
+from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 _T = TypeVar('_T')
 
 
-def _singleton(cls: Type[_T]) -> _T:
+def _singleton(cls: type[_T]) -> _T:
     return cls()
 
 
@@ -64,8 +64,8 @@ class __unit_loader__:
     reduce import times. The library ships with a pickled dictionary that maps unit names to their
     corresponding module path. This data is stored as `units.pkl` in the data directory.
     """
-    units: Dict[str, str]
-    cache: Dict[str, Type[Unit]]
+    units: dict[str, str]
+    cache: dict[str, type[Unit]]
     _lock: RLock = RLock()
 
     def __init__(self):
@@ -129,7 +129,7 @@ class __unit_loader__:
             self.save()
             self.reloading = False
 
-    def resolve(self, name) -> Optional[Type[Unit]]:
+    def resolve(self, name) -> type[Unit] | None:
         if not self.loaded:
             self.load()
         try:
@@ -175,7 +175,7 @@ class __pdoc__(dict):
                     continue
                 for base in unit.mro():
                     try:
-                        abstractmethods: List[str] = base.__abstractmethods__
+                        abstractmethods: list[str] = base.__abstractmethods__
                     except AttributeError:
                         break
                     for method in abstractmethods:
@@ -208,7 +208,7 @@ __all__ = sorted(__unit_loader__.units, key=lambda x: x.lower()) + [
     Unit.__name__, Arg.__name__, '__unit_loader__', '__pdoc__']
 
 
-def load(name) -> Optional[Type[Unit]]:
+def load(name) -> type[Unit] | None:
     with __unit_loader__ as ul:
         return ul.resolve(name)
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
 from refinery.lib.tools import integers_of_slice
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class ngrams(Unit):
@@ -11,8 +12,8 @@ class ngrams(Unit):
     as a Python slice expression.
     """
     def __init__(
-        self, size: Arg.Bounds(
-            help='Specifies the sizes of each n-gram, i.e. the number n. Defaults to {default}.') = slice(2, None),
+        self, size: Param[slice, Arg.Bounds(
+            help='Specifies the sizes of each n-gram, i.e. the number n. Defaults to {default}.')] = slice(2, None),
     ):
         super().__init__(size=size)
 

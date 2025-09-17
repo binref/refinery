@@ -148,61 +148,48 @@ import os
 import sys
 
 from abc import ABCMeta
-from enum import Enum
-from functools import wraps, partial
+from argparse import ONE_OR_MORE, OPTIONAL, REMAINDER, ZERO_OR_MORE, ArgumentTypeError, Namespace
 from collections import OrderedDict
+from enum import Enum
+from functools import partial, wraps
 from threading import Lock
-
 from typing import (
-    Dict,
+    TYPE_CHECKING,
+    Any,
     BinaryIO,
+    Callable,
+    Collection,
+    Generator,
     Iterable,
     Iterator,
-    Set,
+    Mapping,
+    Optional,
     Type,
     TypeVar,
     Union,
-    List,
-    Optional,
-    Callable,
-    Collection,
-    Mapping,
-    Tuple,
-    Any,
-    Generator,
     cast,
-    overload,
     no_type_check,
-    TYPE_CHECKING,
+    overload,
 )
 
-from argparse import (
-    ArgumentTypeError, Namespace,
-    ONE_OR_MORE,
-    OPTIONAL,
-    REMAINDER,
-    ZERO_OR_MORE
-)
-
-from refinery.lib.argparser import ArgumentParserWithKeywordHooks, ArgparseError
-from refinery.lib.frame import generate_frame_header, Framed, Chunk, MAGIC, MSIZE
-from refinery.lib.structures import MemoryFile
-from refinery.lib.environment import LogLevel, Logger, environment, logger
-from refinery.lib.types import buf
+from refinery.lib.argparser import ArgparseError, ArgumentParserWithKeywordHooks
 from refinery.lib.dependencies import dependency_accessor
-
+from refinery.lib.environment import Logger, LogLevel, environment, logger
 from refinery.lib.exceptions import (
-    RefineryPartialResult,
     RefineryCriticalException,
     RefineryException,
     RefineryImportMissing,
+    RefineryPartialResult,
     RefineryPotentialUserError,
 )
+from refinery.lib.frame import MAGIC, MSIZE, Chunk, Framed, generate_frame_header
+from refinery.lib.structures import MemoryFile
+from refinery.lib.types import buf
 
 if TYPE_CHECKING:
-    from typing import Self
     from argparse import _MutuallyExclusiveGroup
     from io import BufferedReader, BufferedWriter
+    from typing import Self
 
     DataType = TypeVar('DataType', bound=buf)
     ProcType = Callable[['Unit', Chunk], Optional[Union[DataType, Iterable[DataType]]]]
@@ -215,28 +202,27 @@ if TYPE_CHECKING:
     _E = TypeVar('_E', bound=Enum)
 
 from refinery.lib.argformats import (
-    pathvar,
+    ParserVariableMissing,
+    VariableMissing,
     manifest,
     multibin,
     number,
     numseq,
-    percent,
-    ParserVariableMissing,
+    pathvar,
     pending,
+    percent,
     regexp,
     sliceobj,
-    VariableMissing,
 )
-
 from refinery.lib.tools import (
     autoinvoke,
     documentation,
+    exception_to_string,
     isbuffer,
     isstream,
     lookahead,
     normalize_to_display,
     normalize_to_identifier,
-    exception_to_string,
     one,
     skipfirst,
 )
@@ -247,7 +233,6 @@ class Entry:
     An empty class marker. Any entry point unit (i.e. any unit that can be executed
     via the command line) is an instance of this class.
     """
-    pass
 
 
 class Argument:
@@ -259,8 +244,8 @@ class Argument:
     """
     __slots__ = 'args', 'kwargs'
 
-    args: List[Any]
-    kwargs: Dict[str, Any]
+    args: list[Any]
+    kwargs: dict[str, Any]
 
     def __init__(self, *args, **kwargs):
         self.args = list(args)
@@ -316,24 +301,24 @@ class Arg(Argument):
         A sentinel class to mark arguments as omitted for the argument parser.
         """
 
-    args: List[str]
+    args: list[str]
 
     __slots__ = 'args', 'group', 'guessed'
 
     def __init__(
         self, *args: str,
-            action   : Union[Type[omit], str]                     = omit, # noqa
-            choices  : Union[Type[omit], Iterable[Any]]           = omit, # noqa
-            const    : Union[Type[omit], Any]                     = omit, # noqa
-            default  : Union[Type[omit], Any]                     = omit, # noqa
-            dest     : Union[Type[omit], str]                     = omit, # noqa
-            help     : Union[Type[omit], str]                     = omit, # noqa
-            metavar  : Union[Type[omit], str]                     = omit, # noqa
-            nargs    : Union[Type[omit], type[delete], int, str]  = omit, # noqa
-            required : Union[Type[omit], bool]                    = omit, # noqa
-            type     : Union[Type[omit], type, Callable]          = omit, # noqa
-            group    : Optional[str]                              = None, # noqa
-            guessed  : Optional[Set[str]]                         = None, # noqa
+            action   : type[omit] | str                     = omit, # noqa
+            choices  : type[omit] | Iterable[Any]           = omit, # noqa
+            const    : type[omit] | Any                     = omit, # noqa
+            default  : type[omit] | Any                     = omit, # noqa
+            dest     : type[omit] | str                     = omit, # noqa
+            help     : type[omit] | str                     = omit, # noqa
+            metavar  : type[omit] | str                     = omit, # noqa
+            nargs    : type[omit] | type[delete] | int | str  = omit, # noqa
+            required : type[omit] | bool                    = omit, # noqa
+            type     : type[omit] | type | Callable          = omit, # noqa
+            group    : str | None                              = None, # noqa
+            guessed  : set[str] | None                         = None, # noqa
     ) -> None:
         kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
             help=help, metavar=metavar, nargs=nargs, required=required, type=type)
@@ -358,7 +343,7 @@ class Arg(Argument):
                 if key == 'choices':
                     return ', '.join(self.arg.kwargs['choices'])
                 if key == 'default':
-                    default: Union[bytes, int, str, slice] = self.arg.kwargs['default']
+                    default: bytes | int | str | slice = self.arg.kwargs['default']
                     if isinstance(default, (list, tuple, set)):
                         if not default:
                             return 'empty'
@@ -404,16 +389,16 @@ class Arg(Argument):
 
     @overload
     @staticmethod
-    def AsOption(value: Type[None], cls: Type[_E]) -> None:
+    def AsOption(value: type[None], cls: type[_E]) -> None:
         ...
 
     @overload
     @staticmethod
-    def AsOption(value: Union[str, _E], cls: Type[_E]) -> _E:
+    def AsOption(value: str | _E, cls: type[_E]) -> _E:
         ...
 
     @staticmethod
-    def AsOption(value, cls: Type[_E]) -> Optional[_E]:
+    def AsOption(value, cls: type[_E]) -> _E | None:
         """
         This method converts the input `value` to an instance of the enum `cls`. It is intended to
         be used on values that are passed as an argument marked with the `refinery.units.Arg.Option`
@@ -452,9 +437,9 @@ class Arg(Argument):
     def Counts(
         cls,
         *args   : str,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         A convenience method to add argparse arguments that introduce a counter.
@@ -465,9 +450,9 @@ class Arg(Argument):
     def Switch(
         cls,
         *args   : str, off=False,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         A convenience method to add argparse arguments that change a boolean value from True to False or
@@ -479,11 +464,11 @@ class Arg(Argument):
     def FsPath(
         cls,
         *args   : str,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        nargs   : type[omit] | int | str = omit,
+        metavar : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain path patterns.
@@ -496,11 +481,11 @@ class Arg(Argument):
     def Binary(
         cls,
         *args   : str,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        nargs   : type[omit] | int | str = omit,
+        metavar : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain binary data.
@@ -513,12 +498,12 @@ class Arg(Argument):
     def String(
         cls,
         *args   : str,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        default : Union[Type[omit], str, tuple[str, ...]] = omit,
-        group   : Optional[str] = None,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        nargs   : type[omit] | int | str = omit,
+        metavar : type[omit] | str = omit,
+        default : type[omit] | str | tuple[str, ...] = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain string data.
@@ -531,11 +516,11 @@ class Arg(Argument):
     def RegExp(
         cls,
         *args   : str,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        nargs   : type[omit] | int | str = omit,
+        metavar : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain a regular expression.
@@ -548,12 +533,12 @@ class Arg(Argument):
     def NumSeq(
         cls,
         *args   : str,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        nargs   : Union[Type[omit], int, str] = omit,
-        metavar : Union[Type[omit], str] = omit,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        nargs   : type[omit] | int | str = omit,
+        metavar : type[omit] | str = omit,
         check   : bool = True,
-        group   : Optional[str] = None,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain a numeric sequence.
@@ -565,13 +550,13 @@ class Arg(Argument):
     def Bounds(
         cls,
         *args   : str,
-        help    : Optional[Union[Type[omit], str]] = None,
-        dest    : Union[Type[omit], str] = omit,
-        nargs   : Union[Type[omit], int, str] = omit,
-        default : Union[Type[omit], Any] = omit,
+        help    : type[omit] | str | None = None,
+        dest    : type[omit] | str = omit,
+        nargs   : type[omit] | int | str = omit,
+        default : type[omit] | Any = omit,
         intok   : bool = False,
-        metavar : Union[Type[omit], str] = 'start:end:step',
-        group   : Optional[str] = None,
+        metavar : type[omit] | str = 'start:end:step',
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain a slice.
@@ -588,10 +573,10 @@ class Arg(Argument):
     def Double(
         cls,
         *args   : str,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        metavar : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain a floating point number.
@@ -602,11 +587,11 @@ class Arg(Argument):
     def Number(
         cls,
         *args   : str,
-        bound   : Union[Type[omit], Tuple[int, int]] = omit,
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        bound   : type[omit] | tuple[int, int] = omit,
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        metavar : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments that contain a number.
@@ -624,11 +609,11 @@ class Arg(Argument):
     def Option(
         cls,
         *args   : str,
-        choices : Type[Enum],
-        help    : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        group   : Optional[str] = None,
+        choices : type[Enum],
+        help    : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        metavar : type[omit] | str = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments with a fixed set of options, based on an enumeration.
@@ -641,13 +626,13 @@ class Arg(Argument):
     def Choice(
         cls,
         *args   : str,
-        choices : List[str],
-        help    : Union[Type[omit], str] = omit,
-        metavar : Union[Type[omit], str] = omit,
-        dest    : Union[Type[omit], str] = omit,
-        type    : Union[Type, Callable] = str,
-        nargs   : Union[Type[omit], int, str] = omit,
-        group   : Optional[str] = None,
+        choices : list[str],
+        help    : type[omit] | str = omit,
+        metavar : type[omit] | str = omit,
+        dest    : type[omit] | str = omit,
+        type    : type | Callable = str,
+        nargs   : type[omit] | int | str = omit,
+        group   : str | None = None,
     ):
         """
         Used to add argparse arguments with a fixed set of options, based on a list of strings.
@@ -682,31 +667,33 @@ class Arg(Argument):
             raise AttributeError(F'The argument with these values has no destination: {self!r}')
 
     @classmethod
-    def Infer(cls, pt: inspect.Parameter, module: Optional[str] = None):
+    def Infer(cls, pt: inspect.Parameter, module: str | None = None):
         """
         This class method can be used to infer the argparse argument for a Python function
         parameter. This guess is based on the annotation, name, and default value.
         """
 
-        def needs_type(item: Dict[str, str]):
-            try:
-                return item['action'] == 'store'
-            except KeyError:
-                return True
+        def needs_type(item: dict[str, str]):
+            return item.get('action', 'store') == 'store'
 
-        def get_argp_type(annotation_type: type):
-            if issubclass(annotation_type, (bytes, bytearray, memoryview)):
+        def get_argp_type(at):
+            if issubclass(at, tuple):
+                return numseq
+            if issubclass(at, (bytes, bytearray, memoryview)):
                 return multibin
-            if issubclass(annotation_type, int):
+            if issubclass(at, int):
                 return number
-            if issubclass(annotation_type, slice):
+            if issubclass(at, slice):
                 return sliceobj
-            return annotation_type
+            if issubclass(at, float):
+                return percent
+            return at
 
         name = normalize_to_display(pt.name, False)
         default = pt.default
+        empty = pt.empty
         guessed_pos_args = []
-        guessed_kwd_args: Dict[str, Any] = dict(dest=pt.name)
+        guessed_kwd_args: dict[str, Any] = dict(dest=pt.name)
         guessed = set()
         annotation = pt.annotation
 
@@ -736,7 +723,7 @@ class Arg(Argument):
                 else:
                     break
 
-        if annotation is not pt.empty:
+        if annotation is not empty:
             if isinstance(annotation, Arg):
                 if annotation.kwargs.get('dest', pt.name) != pt.name:
                     raise ValueError(
@@ -761,26 +748,22 @@ class Arg(Argument):
                 raise ValueError(F'Variadic positional arguments has nargs set to {oldnargs!r}')
             return cls(*guessed_pos_args, **guessed_kwd_args)
 
-        if default is not pt.empty:
+        if default is not empty:
             if isinstance(default, Enum):
                 default = default.name
+
+            guess('default', default)
+
             if isinstance(default, (list, tuple)):
                 guess('nargs', ZERO_OR_MORE)
-                if not pt.default:
-                    default = pt.empty
-                else:
-                    guessed_kwd_args['default'] = pt.default
-                    default = default[0]
-            else:
-                guessed_kwd_args['default'] = default
-                if pt.kind is pt.POSITIONAL_ONLY:
-                    guess('nargs', OPTIONAL)
+            elif pt.kind is pt.POSITIONAL_ONLY:
+                guess('nargs', OPTIONAL)
 
-        if default is not pt.empty:
             if isinstance(default, bool):
-                action = 'store_false' if default else 'store_true'
-                guessed_kwd_args['action'] = action
+                guessed_kwd_args['action'] = F'store_{not default!s}'.lower()
             elif needs_type(guessed_kwd_args):
+                if isinstance(default, list) and default:
+                    default = default[0]
                 guess('type', get_argp_type(type(default)))
 
         return cls(*guessed_pos_args, **guessed_kwd_args, guessed=guessed)
@@ -861,7 +844,7 @@ class ArgumentSpecification(OrderedDict):
     A container object that stores `refinery.units.Arg` specifications.
     """
 
-    def merge(self: Dict[str, Arg], argument: Arg):
+    def merge(self: dict[str, Arg], argument: Arg):
         """
         Insert or update the specification with the given argument.
         """
@@ -874,7 +857,7 @@ class ArgumentSpecification(OrderedDict):
 
 def _UnitProcessorBoilerplate(operation: ProcType[buf]) -> ProcType[Chunk]:
     @wraps(operation)
-    def wrapped(self: Unit, data: Optional[buf]) -> Optional[Union[Chunk, Iterable[Chunk]]]:
+    def wrapped(self: Unit, data: buf | None) -> Chunk | Iterable[Chunk] | None:
         if data is None:
             data = Chunk()
         elif not isinstance(data, Chunk):
@@ -937,9 +920,9 @@ class Executable(ABCMeta):
     for the other ones.
     """
 
-    _argument_specification: Dict[str, Arg]
+    _argument_specification: dict[str, Arg]
 
-    def _infer_argspec(cls, parameters: Mapping[str, inspect.Parameter], args: Optional[ArgumentSpecification], module: str):
+    def _infer_argspec(cls, parameters: Mapping[str, inspect.Parameter], args: ArgumentSpecification | None, module: str):
 
         if args is None:
             args = ArgumentSpecification()
@@ -975,7 +958,7 @@ class Executable(ABCMeta):
                 known.kwargs.setdefault('type', multibin)
         return args
 
-    def __new__(mcs, name: str, bases: Tuple[Type, ...], nmspc: Dict[str, Any], abstract=False, docs='{}'):
+    def __new__(mcs, name: str, bases: tuple[type, ...], nmspc: dict[str, Any], abstract=False, docs='{}'):
         def decorate(**decorations):
             for method, decorator in decorations.items():
                 try:
@@ -1004,10 +987,10 @@ class Executable(ABCMeta):
                 nmspc.setdefault('reverse', MissingFunction())
             bases = bases + (Entry,)
         nmspc.setdefault('__doc__', '')
-        return super(Executable, mcs).__new__(mcs, name, bases, nmspc)
+        return super().__new__(mcs, name, bases, nmspc)
 
-    def __init__(cls, name: str, bases: Tuple[Type, ...], nmspc: Dict[str, Any], abstract=False, docs='{}'):
-        super(Executable, cls).__init__(name, bases, nmspc)
+    def __init__(cls, name: str, bases: tuple[type, ...], nmspc: dict[str, Any], abstract=False, docs='{}'):
+        super().__init__(name, bases, nmspc)
         cls._argument_specification = args = ArgumentSpecification()
 
         cls_init = cls.__init__
@@ -1169,8 +1152,8 @@ class DelayedArgumentProxy:
     recomputed for each input.
     """
     _argv: Namespace
-    _argo: List[str]
-    _args: Dict[str, Any]
+    _argo: list[str]
+    _args: dict[str, Any]
     _done: bool
     _uuid: Any
     _lock: Lock
@@ -1281,7 +1264,7 @@ class UnitBase(metaclass=Executable, abstract=True):
         """
 
     @MissingFunction.Wrap
-    def reverse(self, data: Chunk, /) -> Union[Optional[buf], Iterable[buf]]:
+    def reverse(self, data: Chunk, /) -> buf | None | Iterable[buf]:
         """
         If this routine is overridden by children of `refinery.units.Unit`, then it must
         implement an operation that reverses the `refinery.units.Unit.process` operation.
@@ -1291,7 +1274,7 @@ class UnitBase(metaclass=Executable, abstract=True):
 
     @classmethod
     @abc.abstractmethod
-    def handles(cls, data: bytearray | Chunk) -> Optional[bool]:
+    def handles(cls, data: bytearray | Chunk) -> bool | None:
         """
         This tri-state routine returns `True` if the unit is certain that it can process the
         given input data, and `False` if it is convinced of the opposite. `None` is returned
@@ -1323,14 +1306,14 @@ class Unit(UnitBase, abstract=True):
     implement the _framing_ syntax for producing multiple outputs and ingesting
     multiple inputs in a common format. For more details, see `refinery.lib.frame`.
     """
-    required_dependencies: Optional[Set[str]] = None
-    optional_dependencies: Optional[Dict[str, Set[str]]] = None
+    required_dependencies: set[str] | None = None
+    optional_dependencies: dict[str, set[str]] | None = None
 
     _buffer: buf
-    _source: Optional[BinaryIO]
-    _target: Optional[BinaryIO]
-    _framed: Optional[Framed]
-    _chunks: Optional[Iterator[Union[buf, Chunk]]]
+    _source: BinaryIO | None
+    _target: BinaryIO | None
+    _framed: Framed | None
+    _chunks: Iterator[buf | Chunk] | None
     console: bool
 
     @property
@@ -1374,7 +1357,7 @@ class Unit(UnitBase, abstract=True):
     def readable(self) -> bool:
         return True
 
-    def readlines(self, hint: int = -1) -> List[bytes]:
+    def readlines(self, hint: int = -1) -> list[bytes]:
         lines = []
         while line := self.readline():
             lines.append(line)
@@ -1393,7 +1376,7 @@ class Unit(UnitBase, abstract=True):
         pass
 
     @staticmethod
-    def Requires(distribution: str, _buckets: Collection[str] = (), more: Optional[str] = None):
+    def Requires(distribution: str, _buckets: Collection[str] = (), more: str | None = None):
         """
         Proxy to `refinery.lib.dependencies.dependency_accessor`.
         """
@@ -1452,7 +1435,7 @@ class Unit(UnitBase, abstract=True):
         return LogLevel(self.logger.getEffectiveLevel())
 
     @log_level.setter
-    def log_level(self, value: Union[int, LogLevel]) -> None:
+    def log_level(self, value: int | LogLevel) -> None:
         """
         Returns the current `refinery.lib.environment.LogLevel` that the unit adheres to.
         """
@@ -1472,7 +1455,7 @@ class Unit(UnitBase, abstract=True):
         self.log_level = LogLevel.DETACHED
         return self
 
-    def __iter__(self) -> Iterator[Union[bytes, bytearray, Chunk]]:
+    def __iter__(self) -> Iterator[bytes | bytearray | Chunk]:
         return self
 
     @property
@@ -1482,7 +1465,7 @@ class Unit(UnitBase, abstract=True):
         """
         return getattr(self.args, 'lenient', 0)
 
-    def _exception_handler(self, exception: BaseException, data: Optional[buf]):
+    def _exception_handler(self, exception: BaseException, data: buf | None):
         if isinstance(exception, RefineryPartialResult):
             if self.leniency >= 1:
                 return exception.partial
@@ -1535,7 +1518,7 @@ class Unit(UnitBase, abstract=True):
             self._chunks = iter(self._framehandler)
         return self._chunks
 
-    def __next__(self) -> Union[bytes, bytearray, Chunk]:
+    def __next__(self) -> bytes | bytearray | Chunk:
         while True:
             try:
                 chunk = next(self.output())
@@ -1555,7 +1538,7 @@ class Unit(UnitBase, abstract=True):
         if self._framed:
             return self._framed
 
-        def normalized_action(data: Chunk) -> Generator[Chunk, None, None]:
+        def normalized_action(data: Chunk) -> Generator[Chunk]:
             try:
                 yield from self.act(data)
             except KeyboardInterrupt:
@@ -1584,7 +1567,7 @@ class Unit(UnitBase, abstract=True):
         return chunks
 
     @classmethod
-    def handles(cls, data: bytearray | Chunk) -> Optional[bool]:
+    def handles(cls, data: bytearray | Chunk) -> bool | None:
         return None
 
     def reset(self):
@@ -1628,7 +1611,7 @@ class Unit(UnitBase, abstract=True):
             return self
         return source.nozzle
 
-    def __getitem__(self, unit: Union[Unit, Type[Unit], slice]):
+    def __getitem__(self, unit: Unit | type[Unit] | slice):
         if isinstance(unit, type):
             unit = unit()
         alpha = self.__copy__()
@@ -1669,21 +1652,21 @@ class Unit(UnitBase, abstract=True):
         assert isinstance(reversed, Unit)
         return reversed
 
-    def __ror__(self, stream: Union[
-        str,
-        Chunk,
-        tuple[Chunk],
-        tuple[buf],
-        tuple[str],
-        list[Chunk],
-        list[buf],
-        list[str],
-        BinaryIO,
-        Unit,
-        BufferedReader,
-        buf,
+    def __ror__(self, stream: (
+        str |
+        Chunk |
+        tuple[Chunk] |
+        tuple[buf] |
+        tuple[str] |
+        list[Chunk] |
+        list[buf] |
+        list[str] |
+        BinaryIO |
+        Unit |
+        BufferedReader |
+        buf |
         None
-    ]):
+    )):
         if stream is None:
             return self
         if isinstance(stream, Chunk):
@@ -1726,34 +1709,34 @@ class Unit(UnitBase, abstract=True):
         return self | bytes
 
     @overload
-    def __or__(self, stream: Type[None]) -> None: ...
+    def __or__(self, stream: type[None]) -> None: ...
 
     @overload
-    def __or__(self, stream: Type[bytearray]) -> bytearray: ...
+    def __or__(self, stream: type[bytearray]) -> bytearray: ...
 
     @overload
-    def __or__(self, stream: Type[str]) -> str: ...
+    def __or__(self, stream: type[str]) -> str: ...
 
     @overload
-    def __or__(self, stream: Union[Unit, Type[Unit]]) -> Unit: ...
+    def __or__(self, stream: Unit | type[Unit]) -> Unit: ...
 
     @overload
     def __or__(self, stream: Callable[[buf], _T]) -> _T: ...
 
     @overload
-    def __or__(self, stream: Dict[str, Type[Ellipsis]]) -> Dict[str, bytearray]: ...
+    def __or__(self, stream: dict[str, type[Ellipsis]]) -> dict[str, bytearray]: ...
 
     @overload
-    def __or__(self, stream: Dict[str, Type[_T]]) -> Dict[str, _T]: ...
+    def __or__(self, stream: dict[str, type[_T]]) -> dict[str, _T]: ...
 
     @overload
     def __or__(self, stream: dict) -> dict: ...
 
     @overload
-    def __or__(self, stream: List[Type[_T]]) -> List[_T]: ...
+    def __or__(self, stream: list[type[_T]]) -> list[_T]: ...
 
     @overload
-    def __or__(self, stream: Set[Type[_T]]) -> Set[_T]: ...
+    def __or__(self, stream: set[type[_T]]) -> set[_T]: ...
 
     @overload
     def __or__(self, stream: bytearray) -> bytearray: ...
@@ -1764,23 +1747,23 @@ class Unit(UnitBase, abstract=True):
     @overload
     def __or__(self, stream: _B) -> _B: ...
 
-    def __or__(self, stream: Union[
-        Type[None],
-        Type[bytearray],
-        Type[str],
-        Callable[[buf], _T],
-        Unit,
-        Type[Unit],
-        Dict[str, type],
-        List,
-        Set,
-        memoryview,
-        bytes,
-        bytearray,
-        BinaryIO,
-        ByteIO,
-        BufferedWriter,
-    ]):
+    def __or__(self, stream: (
+        type[None] |
+        type[bytearray] |
+        type[str] |
+        Callable[[buf], _T] |
+        Unit |
+        type[Unit] |
+        dict[str, type] |
+        list |
+        set |
+        memoryview |
+        bytes |
+        bytearray |
+        BinaryIO |
+        ByteIO |
+        BufferedWriter
+    )):
         def get_converter(it: Iterable):
             try:
                 c = one(it)
@@ -1950,7 +1933,7 @@ class Unit(UnitBase, abstract=True):
         except StopIteration:
             return B''
 
-    def act(self, data: Chunk) -> Generator[Chunk, None, None]:
+    def act(self, data: Chunk) -> Generator[Chunk]:
         cls = self.__class__
         iff = self.args.iff
         lvl = self.log_level
@@ -1980,7 +1963,7 @@ class Unit(UnitBase, abstract=True):
         finally:
             cls.logger_locked = False
 
-    def __call__(self, data: Optional[Union[buf, Chunk]] = None) -> buf:
+    def __call__(self, data: buf | Chunk | None = None) -> buf:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
@@ -2010,7 +1993,7 @@ class Unit(UnitBase, abstract=True):
             ___br___data.meta.update(meta)
         return ___br___data
 
-    def process(self, data: Chunk, /) -> Union[Optional[buf], Generator[buf, None, None]]:
+    def process(self, data: Chunk, /) -> buf | None | Generator[buf]:
         return data
 
     @classmethod
@@ -2119,8 +2102,8 @@ class Unit(UnitBase, abstract=True):
             base.add_argument('-F', '--iff', action='count', default=0,
                 help='Only apply unit if it can handle the input format. Specify twice to drop all other chunks.')
 
-        groups: Dict[Optional[str], Union[
-            ArgumentParserWithKeywordHooks, _MutuallyExclusiveGroup]] = {None: argp}
+        groups: dict[str | None, (
+            ArgumentParserWithKeywordHooks | _MutuallyExclusiveGroup)] = {None: argp}
 
         for argument in reversed(cls._argument_specification.values()):
             gp = argument.group
@@ -2280,7 +2263,7 @@ class Unit(UnitBase, abstract=True):
             from time import process_time
             argv.remove(cls._SECRET_DEBUG_TIMING_FLAG)
             clock = process_time()
-            cls.logger.log(LogLevel.PROFILE, 'starting clock: {:.4f}'.format(clock))
+            cls.logger.log(LogLevel.PROFILE, f'starting clock: {clock:.4f}')
         else:
             def process_time():
                 return 0.0
@@ -2320,7 +2303,7 @@ class Unit(UnitBase, abstract=True):
                 unit.log_level = loglevel
 
             if clock:
-                cls.logger.log(LogLevel.PROFILE, 'unit launching: {:.4f}'.format(clock))
+                cls.logger.log(LogLevel.PROFILE, f'unit launching: {clock:.4f}')
 
             if yappi is not None:
                 yappi.set_clock_type('cpu')
@@ -2348,8 +2331,8 @@ class Unit(UnitBase, abstract=True):
 
             if clock:
                 stop_clock = process_time()
-                cls.logger.log(LogLevel.PROFILE, 'stopping clock: {:.4f}'.format(stop_clock))
-                cls.logger.log(LogLevel.PROFILE, 'time delta was: {:.4f}'.format(stop_clock - clock))
+                cls.logger.log(LogLevel.PROFILE, f'stopping clock: {stop_clock:.4f}')
+                cls.logger.log(LogLevel.PROFILE, f'time delta was: {stop_clock - clock:.4f}')
 
 
 __pdoc__ = {

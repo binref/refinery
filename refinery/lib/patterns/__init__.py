@@ -8,7 +8,7 @@ import functools
 import re
 
 from refinery.lib.patterns.tlds import tlds
-from refinery.lib.tools import normalize_to_identifier, normalize_to_display
+from refinery.lib.tools import normalize_to_display, normalize_to_identifier
 
 
 class pattern:
@@ -65,9 +65,9 @@ class alphabet(pattern):
     """
     def __init__(self, repeat, prefix='', postfix='', at_least=1, at_most=None, **kwargs):
         if not at_most:
-            count = '+' if at_least <= 1 else '{{{},}}'.format(at_least)
+            count = '+' if at_least <= 1 else f'{{{at_least},}}'
         else:
-            count = '{{{},{}}}(?!{})'.format(at_least, at_most, repeat)
+            count = f'{{{at_least},{at_most}}}(?!{repeat})'
 
         pattern.__init__(self,
             R'{b}(?:{r}){c}{a}'.format(
@@ -182,8 +182,8 @@ _pattern_ipv6 = (
     R')'                                                  # (IPv4-Embedded IPv6 Address)
 )
 
-_pattern_serrated_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=_pattern_serrated_ipv4, d=_pattern_serrated_domain)
-_pattern_defanged_socket = '(?:{ip}|{d})(?::\\d{{2,5}})'.format(ip=_pattern_defanged_ipv4, d=_pattern_defanged_domain)
+_pattern_serrated_socket = f'(?:{_pattern_serrated_ipv4}|{_pattern_serrated_domain})(?::\\d{{2,5}})'
+_pattern_defanged_socket = f'(?:{_pattern_defanged_ipv4}|{_pattern_defanged_domain})(?::\\d{{2,5}})'
 
 _pattern_serrated_hostname = _pattern_serrated_socket + '?'
 _pattern_defanged_hostname = _pattern_defanged_socket + '?'
@@ -279,7 +279,7 @@ _suffix_combined_url = R'([/?#](?:[#/=:;$!?&.,\w\+\%\-\*\'~@()](?![a-zA-Z]{2,20}
 _pattern_serrated_url = F'{_prefix_serrated_url}({_pattern_serrated_hostname}){_suffix_combined_url}'
 _pattern_defanged_url = F'{_prefix_defanged_url}({_pattern_defanged_hostname}){_suffix_combined_url}'
 
-_pattern_email = R'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{})'.format(_pattern_serrated_domain)
+_pattern_email = fR'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{_pattern_serrated_domain})'
 _pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
 _pattern_pathpart_nospace = R'[-\w+,.;@\]\[{}^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'

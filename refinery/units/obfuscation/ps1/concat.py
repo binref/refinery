@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from refinery.units.obfuscation import IterativeDeobfuscator
-from refinery.units.obfuscation.ps1 import string_unquote, string_quote, Ps1StringLiterals
+from refinery.units.obfuscation.ps1 import Ps1StringLiterals, string_quote, string_unquote
 
 
 class deob_ps1_concat(IterativeDeobfuscator):

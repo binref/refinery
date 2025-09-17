@@ -3,10 +3,10 @@ Contains functions to aid in deobfuscation.
 """
 from __future__ import annotations
 
-from typing import Optional, Any
-
 import ast
 import re
+
+from typing import Any
 
 
 class ExpressionParsingFailure(ValueError):
@@ -39,7 +39,7 @@ _ALLOWED_NODE_TYPES = frozenset({
 })
 
 
-def cautious_eval(definition: str, size_limit: Optional[int] = None, walker: Optional[ast.NodeTransformer] = None) -> Any:
+def cautious_eval(definition: str, size_limit: int | None = None, walker: ast.NodeTransformer | None = None) -> Any:
     """
     Very, very, very, very, very carefully evaluate a Python expression.
     """
@@ -70,7 +70,7 @@ def cautious_eval(definition: str, size_limit: Optional[int] = None, walker: Opt
         raise Abort('Not a Python expression')
 
     nodes = list(nodes)
-    types = set(type(node) for node in nodes)
+    types = {type(node) for node in nodes}
 
     if not types <= _ALLOWED_NODE_TYPES:
         problematic = types - _ALLOWED_NODE_TYPES
@@ -79,7 +79,7 @@ def cautious_eval(definition: str, size_limit: Optional[int] = None, walker: Opt
     return eval(definition)
 
 
-def cautious_eval_or_default(definition: str, default: Optional[Any] = None, size_limit: Optional[int] = None) -> Any:
+def cautious_eval_or_default(definition: str, default: Any | None = None, size_limit: int | None = None) -> Any:
     try:
         return cautious_eval(definition)
     except ExpressionParsingFailure:

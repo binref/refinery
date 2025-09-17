@@ -115,27 +115,22 @@ above example would not be separated by a dash.
 from __future__ import annotations
 
 import itertools
-import zlib
 import uuid
+import zlib
 
 from typing import (
-    overload,
-    Union,
-    Generator,
-    SupportsIndex,
-    Iterable,
+    TYPE_CHECKING,
+    Any,
     BinaryIO,
     Callable,
-    Optional,
-    List,
-    Tuple,
-    Dict,
-    Any,
-    TYPE_CHECKING,
+    Generator,
+    Iterable,
+    SupportsIndex,
+    overload,
 )
 
-from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import LazyMetaOracle
+from refinery.lib.structures import MemoryFile
 from refinery.lib.types import buf
 
 if TYPE_CHECKING:
@@ -216,13 +211,13 @@ class Chunk(bytearray):
 
     def __init__(
         self,
-        data: Optional[buf] = None,
-        path: Optional[List[int]] = None,
-        view: Optional[List[bool]] = None,
-        meta: Optional[Dict[str, Any]] = None,
-        seed: Optional[Dict[str, list]] = None,
-        fill_scope: Optional[bool] = None,
-        fill_batch: Optional[int] = None,
+        data: buf | None = None,
+        path: list[int] | None = None,
+        view: list[bool] | None = None,
+        meta: dict[str, Any] | None = None,
+        seed: dict[str, list] | None = None,
+        fill_scope: bool | None = None,
+        fill_batch: int | None = None,
         ignore_chunk_properties: bool = False,
     ):
         if data is None:
@@ -247,10 +242,10 @@ class Chunk(bytearray):
             fill_scope = fill_scope or data._fill_scope
             fill_batch = fill_batch or data._fill_batch
 
-        self._view: List[bool] = view
-        self._path: List[int] = path
-        self._fill_scope: Optional[bool] = fill_scope
-        self._fill_batch: Optional[bool] = fill_batch
+        self._view: list[bool] = view
+        self._path: list[int] = path
+        self._fill_scope: bool | None = fill_scope
+        self._fill_batch: bool | None = fill_batch
 
         self._meta = m = LazyMetaOracle(self, scope=self.scope, seed=seed)
         if meta is not None:
@@ -305,7 +300,7 @@ class Chunk(bytearray):
         return len(self._path)
 
     @property
-    def view(self) -> List[bool]:
+    def view(self) -> list[bool]:
         """
         This tuple of boolean values indicates the visibility of this chunk at each layer of
         the frame tree. The `refinery.scope` unit can be used to change visibility of chunks
@@ -314,7 +309,7 @@ class Chunk(bytearray):
         return self._view
 
     @property
-    def path(self) -> List[int]:
+    def path(self) -> list[int]:
         """
         The vertices in each frame tree layer are sequentially numbered by their order of
         appearance in the stream. The `refinery.lib.frame.Chunk.path` contains the numbers of
@@ -455,7 +450,7 @@ class Chunk(bytearray):
         return hash(zlib.adler32(self))
 
     @overload
-    def __getitem__(self, k: str) -> Union[int, str, float, bytes, None]:
+    def __getitem__(self, k: str) -> int | str | float | bytes | None:
         ...
 
     @overload
@@ -527,16 +522,16 @@ class FrameUnpacker(Iterable[Chunk]):
     method can be called to load the next frame, at which point the object will become an
     iterator over `[BOO, BAZ]`.
     """
-    next_chunk: Optional[Chunk]
+    next_chunk: Chunk | None
     depth: int
-    trunk: Tuple[int, ...]
-    check: Tuple[int, ...]
-    stream: Optional[BinaryIO]
+    trunk: tuple[int, ...]
+    check: tuple[int, ...]
+    stream: BinaryIO | None
     finished: bool
     framed: bool
-    unpacker: Optional[Unpacker]
+    unpacker: Unpacker | None
 
-    def __init__(self, stream: Optional[BinaryIO]):
+    def __init__(self, stream: BinaryIO | None):
         self.finished = False
         self.trunk = ()
         self.check = ()
@@ -611,13 +606,13 @@ class FrameUnpacker(Iterable[Chunk]):
         return self.trunk != self.peek
 
     @property
-    def peek(self) -> Tuple[int, ...]:
+    def peek(self) -> tuple[int, ...]:
         """
         Contains the identifier of the next frame.
         """
         return self.check
 
-    def __iter__(self) -> Generator[Chunk, None, None]:
+    def __iter__(self) -> Generator[Chunk]:
         if self.finished:
             return
         if not self.framed:
@@ -644,7 +639,7 @@ class Framed:
     def __init__(
         self,
         action : Callable[[Chunk], Iterable[Chunk]],
-        stream : Optional[BinaryIO],
+        stream : BinaryIO | None,
         filter : Callable[[Iterable[Chunk]], Iterable[Chunk]],
         finish : Callable[[], Iterable[Chunk]],
         nesting: int = 0,

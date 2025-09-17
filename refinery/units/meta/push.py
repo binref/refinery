@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, Chunk
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Chunk, Unit
 
 
 class push(Unit):
@@ -16,7 +17,7 @@ class push(Unit):
     data into just the value, which is then stored in the variable `v`. The application
     of `refinery.repl` replaces this value with the hard-coded string `censored`.
     """
-    def __init__(self, data: Arg(help='The data to be pushed, by default a copy of the input.') = B''):
+    def __init__(self, data: Param[buf, Arg(help='The data to be pushed, by default a copy of the input.')] = B''):
         super().__init__(data=data)
 
     def process(self, data: Chunk):

@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime
 
 from refinery.lib.structures import MemoryFile
-from refinery.units.formats.archive import Arg, ArchiveUnit
+from refinery.lib.types import Param
+from refinery.units.formats.archive import ArchiveUnit, Arg
 
 _ISO_FILE_SYSTEMS = ['udf', 'joliet', 'rr', 'iso', 'auto']
 
@@ -16,9 +17,9 @@ class xtiso(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         self,
         *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', date=b'date',
-        fs: Arg.Choice('-s', metavar='TYPE', choices=_ISO_FILE_SYSTEMS, help=(
+        fs: Param[str, Arg.Choice('-s', metavar='TYPE', choices=_ISO_FILE_SYSTEMS, help=(
             'Specify a file system ({choices}) extension to use. The default setting {default} will automatically '
-            'detect the first of the other available options and use it.')) = 'auto'
+            'detect the first of the other available options and use it.'))] = 'auto'
     ):
         if fs not in _ISO_FILE_SYSTEMS:
             raise ValueError(F'invalid file system {fs}: must be udf, joliet, rr, iso, or auto.')

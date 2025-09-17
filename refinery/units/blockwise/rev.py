@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
-from refinery.units.blockwise import UnaryOperation, FastBlockError
+from refinery.units.blockwise import FastBlockError, UnaryOperation
 
 if TYPE_CHECKING:
     from numpy import ndarray
@@ -13,7 +14,7 @@ class rev(UnaryOperation):
     the input data is not a multiple of the block size, the data is truncated.
     """
 
-    def __init__(self, blocksize=None):
+    def __init__(self, blocksize=1):
         super().__init__(blocksize=blocksize, _truncate=2)
 
     def inplace(self, block: ndarray):

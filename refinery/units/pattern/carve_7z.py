@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units import Unit
 from refinery.lib.structures import MemoryFile
+from refinery.units import Unit
 
 
 class MemoryFileRecorder(MemoryFile):

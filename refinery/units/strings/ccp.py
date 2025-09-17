@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
@@ -10,7 +11,7 @@ class ccp(Unit):
     instead.
     """
 
-    def __init__(self, data: Arg(help='Binary string to be prepended to the input.')):
+    def __init__(self, data: Param[buf, Arg(help='Binary string to be prepended to the input.')]):
         super().__init__(data=data)
 
     def process(self, data: bytearray):

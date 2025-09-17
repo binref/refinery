@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.patterns import formats, indicators, pattern
-
+from refinery.lib.types import Param
 from refinery.units.meta import Arg, ConditionalUnit
 
 _PATTERNS = {}
@@ -17,8 +17,8 @@ class iffp(ConditionalUnit, docs='{0}{p}{1}'):
 
     def __init__(
         self,
-        *patterns: Arg.Choice(metavar='pattern', choices=_PATTERNS),
-        partial: Arg.Switch('-p', help='Allow partial matches on the data.') = False,
+        *patterns: Param[str, Arg.Choice(metavar='pattern', choices=_PATTERNS)],
+        partial: Param[bool, Arg.Switch('-p', help='Allow partial matches on the data.')] = False,
         retain=False
     ):
         super().__init__(

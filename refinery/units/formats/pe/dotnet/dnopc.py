@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from refinery.lib.dotnet.disassembler import Disassembler
 from refinery.lib.dotnet.disassembler.factory import OutputFactory
+from refinery.lib.types import Param
 from refinery.units.sinks import Arg, Unit
 
 
@@ -13,14 +14,14 @@ class DotnetDisassemblerUnit(Unit, abstract=True):
     def __init__(
         self,
         *,
-        count: Arg.Number(
+        count: Param[int, Arg.Number(
             '-c',
             help='Maximum number of bytes to disassemble, infinite by default.',
-        ) = None,
-        until: Arg.String(
+        )] = None,
+        until: Param[str, Arg.String(
             '-u',
             help='Disassemble until the given string appears among the disassembly.',
-        ) = None,
+        )] = None,
         **more
     ):
         super().__init__(count=count, until=until, **more)
@@ -38,20 +39,20 @@ class dnopc(DotnetDisassemblerUnit):
         *,
         count=None,
         until=None,
-        nvar: Arg.String(
+        nvar: Param[str, Arg.String(
             '-n',
             help='Variable to receive the disassembled mnemonic. Default is "{default}".',
-        ) = 'name',
-        avar: Arg.String(
+        )] = 'name',
+        avar: Param[str, Arg.String(
             '-a',
             help='Variable to receive the address of the instruction. Default is "{default}".',
-        ) = 'addr',
-        ovar: Arg.String(
+        )] = 'addr',
+        ovar: Param[str, Arg.String(
             '-o',
             help=('Variable prefix for instruction operands. Default is "{default}". The complete operand '
                   'string will be in {default}s, the first argument in {default}1, the second in {default}2, '
                   'and so on.'),
-        ) = 'arg',
+        )] = 'arg',
         **more
     ):
         super().__init__(

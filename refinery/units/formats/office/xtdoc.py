@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from typing import Optional
-
+from refinery.lib.structures import MemoryFile
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.archive.xtzip import xtzip
-from refinery.lib.structures import MemoryFile
 
 
 def convert_msi_name(name: str):
@@ -52,7 +50,7 @@ class xtdoc(PathExtractorUnit):
                 yield UnpackResult(path, olestream.read())
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         if data.startswith(B'\xD0\xCF\x11\xE0'):
             return True
         if xtzip.handles(data):

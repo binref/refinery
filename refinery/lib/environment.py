@@ -4,11 +4,11 @@ variables. This module is also host to the logging configuration.
 """
 from __future__ import annotations
 
-import os
 import logging
+import os
 
 from enum import IntEnum
-from typing import Optional, TypeVar, Generic
+from typing import Generic, Optional, TypeVar
 
 _T = TypeVar('_T')
 
@@ -110,7 +110,7 @@ class EnvironmentVariableSetting(Generic[_T]):
     Abstraction of an environment variable based setting.
     """
     key: str
-    value: Optional[_T]
+    value: _T | None
 
     def __init__(self, name: str):
         self.key = F'REFINERY_{name}'

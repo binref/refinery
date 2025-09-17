@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
-
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
@@ -11,15 +10,18 @@ class trim(Unit):
     """
 
     def __init__(
-        self, *junk: Arg(help='Binary strings to be removed, default are all whitespace characters.'),
-        unpad: Arg.Switch('-u', help='Also trim partial occurrences of the junk string.') = False,
-        left: Arg.Switch('-r', '--right-only', group='SIDE', help='Do not trim left.') = True,
-        right: Arg.Switch('-l', '--left-only', group='SIDE', help='Do not trim right.') = True,
-        nocase: Arg.Switch('-i', help='Ignore capitalization for alphabetic characters.') = False,
+        self,
+        *junk : Param[buf, Arg(help='Binary strings to be removed, default are all whitespace characters.')],
+        unpad : Param[bool, Arg.Switch('-u', help='Also trim partial occurrences of the junk string.')] = False,
+        left  : Param[bool, Arg.Switch('-l', group='SIDE', help='Trim only left.')] = False,
+        right : Param[bool, Arg.Switch('-r', group='SIDE', help='Trim only right.')] = False,
+        nocase: Param[bool, Arg.Switch('-i', help='Ignore capitalization for alphabetic characters.')] = False,
     ):
+        if not left and not right:
+            left = right = True
         super().__init__(junk=junk, left=left, right=right, unpad=unpad, nocase=nocase)
 
-    def _trimfast(self, view: memoryview, *junks: bytes, right=False) -> Tuple[bool, memoryview]:
+    def _trimfast(self, view: memoryview, *junks: bytes, right=False) -> tuple[bool, memoryview]:
         done = False
         pos = 0
         while not done:

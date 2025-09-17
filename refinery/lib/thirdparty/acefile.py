@@ -1,4 +1,3 @@
-
 # acefile - read/test/extract ACE 1.0 and 2.0 archives in pure python
 # Copyright (C) 2017-2019, Daniel Roethlisberger <daniel@roe.ch>
 # All rights reserved.
@@ -2661,7 +2660,6 @@ class AceError(Exception):
     """
     Base class for all :mod:`acefile` exceptions.
     """
-    pass
 
 class MainHeaderNotFoundError(AceError):
     """
@@ -2670,7 +2668,6 @@ class MainHeaderNotFoundError(AceError):
     Either the *search* argument was to small or the archive is not an ACE
     format archive.
     """
-    pass
 
 class MultiVolumeArchiveError(AceError):
     """
@@ -2679,14 +2676,12 @@ class MultiVolumeArchiveError(AceError):
     multi-volume archive, the member headers indicate that the member
     continues in the next volume, but no next volume was found or provided.
     """
-    pass
 
 class CorruptedArchiveError(AceError):
     """
     Archive is corrupted.  Either a header or data CRC check failed, an invalid
     value was read from the archive or the archive is truncated.
     """
-    pass
 
 class EncryptedArchiveError(AceError):
     """
@@ -2705,7 +2700,6 @@ class EncryptedArchiveError(AceError):
         is assumed that the password was wrong and as a consequence,
         :class:`EncryptedArchiveError` is raised.
     """
-    pass
 
 class UnknownCompressionMethodError(AceError):
     """
@@ -2714,7 +2708,6 @@ class UnknownCompressionMethodError(AceError):
     for ACE 1.0 or ACE 2.0 archives since this implementation implements all
     existing compression methods.
     """
-    pass
 
 
 
@@ -2794,7 +2787,7 @@ class AceMember:
         # still allow a safe subset of dot syntax in the filename
         filename = os.path.normpath(filename)
         escsep = re.escape(os.sep)
-        pattern = r'(^|%s)(?:\.\.(?:%s|$))+' % (escsep, escsep)
+        pattern = r'(^|{})(?:\.\.(?:{}|$))+'.format(escsep, escsep)
         filename = re.sub(pattern, r'\1', filename)
         # remove leading path separators to ensure a relative path
         filename = filename.lstrip(os.sep)
@@ -3468,7 +3461,7 @@ class AceArchive:
         return self.__members.__iter__()
 
     def __repr__(self):
-        return "<%s %r at %#x>" % (self.__class__.__name__,
+        return "<{} {!r} at {:#x}>".format(self.__class__.__name__,
                                    self.filename,
                                    id(self))
 
@@ -3981,7 +3974,7 @@ def unace():
             self.member = ''
 
         def __str__(self):
-            return "%s: %s %s %s" % (self.argv0, self.action,
+            return "{}: {} {} {}".format(self.argv0, self.action,
                                      self.archive, self.member)
 
     status = None
@@ -4064,8 +4057,8 @@ def unace():
         with open(archive) as f:
             if args.verbose:
                 if acebitstream == None:
-                    eprint(("warning: acebitstream c extension unavailable, "
-                            "using pure-python bit stream"))
+                    eprint("warning: acebitstream c extension unavailable, "
+                            "using pure-python bit stream")
                 eprint("processing archive %s" % f.filename)
                 eprint("loaded %i volume(s) starting at volume %i" % (
                        f.volumes_loaded, f.volume))
@@ -4082,7 +4075,7 @@ def unace():
                 eprint("archive is", ''.join(archinfo))
                 eprint("last modified %s" % (
                        f.datetime.strftime('%Y-%m-%d %H:%M:%S')))
-                eprint("created on %s with ACE %s for extraction with %s+" % (
+                eprint("created on {} with ACE {} for extraction with {}+".format(
                        f.platform, f.cversion/10, f.eversion/10))
                 if f.advert:
                     eprint("advert [%s]" % f.advert)
@@ -4095,8 +4088,8 @@ def unace():
 
             if args.mode == 'extract':
                 if f.is_multivolume() and f.volume > 0 and f.is_solid():
-                    eprint(("error: need complete set of volumes to extract "
-                            "from solid multivolume archive"))
+                    eprint("error: need complete set of volumes to extract "
+                            "from solid multivolume archive")
                     sys.exit(1)
                 failed = 0
                 password = args.password
@@ -4151,8 +4144,8 @@ def unace():
 
             elif args.mode == 'test':
                 if f.is_multivolume() and f.volume > 0 and f.is_solid():
-                    eprint(("error: need complete set of volumes to test "
-                            "solid multivolume archive"))
+                    eprint("error: need complete set of volumes to test "
+                            "solid multivolume archive")
                     sys.exit(1)
                 failed = 0
                 ok = 0
@@ -4204,8 +4197,8 @@ def unace():
 
             elif args.mode == 'list':
                 if args.verbose:
-                    eprint(("CQD FES      size     packed   rel  "
-                            "timestamp            filename"))
+                    eprint("CQD FES      size     packed   rel  "
+                            "timestamp            filename")
                     count = count_size = count_packsize = 0
                     for am in f:
                         if am.is_dir():
@@ -4281,7 +4274,7 @@ def unace():
     except AceError as e:
         if DEBUG:
             raise
-        eprint("%s: %s: %s" % (args.archive, type(e).__name__, e))
+        eprint("{}: {}: {}".format(args.archive, type(e).__name__, e))
         sys.exit(1)
 
     sys.exit(0)

@@ -1,17 +1,19 @@
 from __future__ import annotations
-from typing import Generator, Iterable, Optional, TYPE_CHECKING
-
-from refinery.units.formats.pe import OverlayUnit, Arg
-from refinery.units.formats.pe.perc import RSRC
-from refinery.lib.executable import Executable
-from refinery.lib.meta import TerseSizeInt as TI, SizeInt
 
 import zlib
 
 from fnmatch import fnmatch
+from typing import TYPE_CHECKING, Generator, Iterable
+
+from refinery.lib.executable import Executable
+from refinery.lib.meta import SizeInt
+from refinery.lib.meta import TerseSizeInt as TI
+from refinery.lib.types import Param
+from refinery.units.formats.pe import Arg, OverlayUnit
+from refinery.units.formats.pe.perc import RSRC
 
 if TYPE_CHECKING:
-    from pefile import PE, Structure, SectionStructure
+    from pefile import PE, SectionStructure, Structure
 
 
 _KB = 1000
@@ -36,26 +38,26 @@ class pedebloat(OverlayUnit):
     """
     def __init__(
         self,
-        *names: Arg.String(),
+        *names: Param[str, Arg.String()],
         certificate=False,
         directories=False,
         memdump=False,
-        resources: Arg.Switch('-r', help='Strip large resources.') = False,
-        sections : Arg.Switch('-s', help='Strip large sections.') = False,
-        trim_code: Arg.Switch('-X', help='Lift the exception on code sections for stripping.') = False,
-        trim_rsrc: Arg.Switch('-Y', help='Lift the exception on rsrc sections for stripping.') = False,
-        threshold: Arg.Double('-t', metavar='T', help=(
+        resources: Param[bool, Arg.Switch('-r', help='Strip large resources.')] = False,
+        sections: Param[bool, Arg.Switch('-s', help='Strip large sections.')] = False,
+        trim_code: Param[bool, Arg.Switch('-X', help='Lift the exception on code sections for stripping.')] = False,
+        trim_rsrc: Param[bool, Arg.Switch('-Y', help='Lift the exception on rsrc sections for stripping.')] = False,
+        threshold: Param[float, Arg.Double('-t', metavar='T', help=(
             'Trailing data from resources and sections is stripped until the compression ratio '
             'of the remaining data rises above this threshold. The default value is {default}. '
             'Set this to 1 to ignore the limit entirely and trim every structure as much as '
             'possible without violating alignment. Setting this value to 0 will only strip repeated '
-            'occurrences of the last byte.')) = 0.05,
-        size_limit: Arg.Number('-l', help=(
-            'Structures below this size are not stripped. Default is {default!r}.')) = _STRIP,
-        keep_limit: Arg.Switch('-k', help=(
-            'Do not strip structures to below the above size limit.')) = False,
-        aggressive: Arg.Switch('-a', help=(
-            'Equivalent to -srt1: Strip large sections and resources aggressively.')) = False,
+            'occurrences of the last byte.'))] = 0.05,
+        size_limit: Param[int, Arg.Number('-l', help=(
+            'Structures below this size are not stripped. Default is {default!r}.'))] = _STRIP,
+        keep_limit: Param[bool, Arg.Switch('-k', help=(
+            'Do not strip structures to below the above size limit.'))] = False,
+        aggressive: Param[bool, Arg.Switch('-a', help=(
+            'Equivalent to -srt1: Strip large sections and resources aggressively.'))] = False,
     ):
         if aggressive:
             sections = True
@@ -153,8 +155,8 @@ class pedebloat(OverlayUnit):
         def adjust_attributes_of_structure(
             structure: Structure,
             gap_offset: int,
-            valid_values_lower_bound: Optional[int],
-            valid_values_upper_bound: Optional[int],
+            valid_values_lower_bound: int | None,
+            valid_values_upper_bound: int | None,
             attributes: Iterable[str]
         ):
             for attribute in attributes:
@@ -274,7 +276,7 @@ class pedebloat(OverlayUnit):
         P = self.args.names
         trimmed = 0
 
-        def find_bloated_resources(pe: PE, directory, level: int = 0, *path) -> Generator[Structure, None, None]:
+        def find_bloated_resources(pe: PE, directory, level: int = 0, *path) -> Generator[Structure]:
             for entry in directory.entries:
                 name = getattr(entry, 'name')
                 numeric = getattr(entry, 'id')

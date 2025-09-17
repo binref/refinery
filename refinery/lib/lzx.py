@@ -7,7 +7,6 @@ from __future__ import annotations
 from refinery.lib.array import make_array
 from refinery.lib.types import INF
 
-
 _NUM_PAIR_LEN_BITS = 4
 _PAIR_LEN_MASK = (1 << _NUM_PAIR_LEN_BITS) - 1
 

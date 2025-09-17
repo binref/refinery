@@ -5,7 +5,7 @@ https://docs.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptder
 from __future__ import annotations
 
 from refinery.units import RefineryPartialResult
-from refinery.units.crypto.keyderive import KeyDerivation, HASH
+from refinery.units.crypto.keyderive import HASH, KeyDerivation
 
 
 class mscdk(KeyDerivation):

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from refinery.units import Unit
-from refinery.lib.tools import NoLogging
 from contextlib import suppress
+
+from refinery.lib.tools import NoLogging
+from refinery.units import Unit
 
 
 class carve_lnk(Unit):

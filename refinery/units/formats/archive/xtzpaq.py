@@ -5,26 +5,27 @@ given the archaic nature of the file format.
 """
 from __future__ import annotations
 
-from typing import Optional, Dict, List, TYPE_CHECKING
 from types import CodeType
+from typing import TYPE_CHECKING
+
+from refinery.lib.types import Param
 
 if TYPE_CHECKING:
     from hashlib import _Hash
 
-from array import array
-from datetime import datetime
-from enum import IntEnum
-from math import log, exp
-from dataclasses import dataclass, field
-
 import hashlib
+import io
 import itertools
 import re
-import io
 
-from refinery.units.formats.archive import ArchiveUnit, Arg
+from array import array
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import IntEnum
+from math import exp, log
+
 from refinery.lib.structures import MemoryFile, StructReader
-
+from refinery.units.formats.archive import ArchiveUnit, Arg
 
 _TCU32 = 'I'
 _TCI32 = 'i'
@@ -69,7 +70,7 @@ CompSize.extend(itertools.repeat(0, 256 - len(CompSize)))
 
 class ZPAQL:
 
-    output: Optional[MemoryFile]
+    output: MemoryFile | None
     header: bytearray # hsize[2] hh hm ph pm n COMP (guard) HCOMP (guard)
     cend: int
     hbegin: int
@@ -86,10 +87,10 @@ class ZPAQL:
     f: int
     pc: int
 
-    sha1: Optional[_Hash]
+    sha1: _Hash | None
 
-    _cpu_defs: Dict[int, str]
-    _cpu_spec: Dict[int, CodeType]
+    _cpu_defs: dict[int, str]
+    _cpu_spec: dict[int, CodeType]
 
     def __init__(self):
         self.h = array(_TCU32)
@@ -581,7 +582,7 @@ class Predictor:
     h: array
     z: ZPAQL
 
-    comp: List[Component]
+    comp: list[Component]
 
     dt2k: array
     dt: array
@@ -994,7 +995,7 @@ class Decoder:
             self.curr &= 0xFFFFFFFF
         return int(rv)
 
-    def decompress(self) -> Optional[int]:
+    def decompress(self) -> int | None:
         pr = self.pr
         if pr.is_modeled():
             if self.curr == 0:
@@ -1049,7 +1050,7 @@ class PostProcessor:
     def set_hasher(self, hasher: _Hash):
         self.z.sha1 = hasher
 
-    def write(self, c: Optional[int]):
+    def write(self, c: int | None):
         assert c is None or c in range(256)
         z = self.z
         s = self.state
@@ -1155,7 +1156,7 @@ class Decompressor:
         self.first_seg = True
         return True
 
-    def read_filename(self) -> Optional[str]:
+    def read_filename(self) -> str | None:
         if self.state is not Decompressor.State.FILENAME:
             raise RuntimeError('invalid state')
         ip = self.dec.src
@@ -1169,7 +1170,7 @@ class Decompressor:
         else:
             raise RuntimeError('missing segment or end of block')
 
-    def read_comment(self) -> Optional[str]:
+    def read_comment(self) -> str | None:
         if self.state is Decompressor.State.BLOCK:
             return None
         if self.state is not Decompressor.State.COMMENT:
@@ -1201,7 +1202,7 @@ class Decompressor:
                 self.state = Decompressor.State.SEGEND
                 return
 
-    def read_segment_end(self) -> Optional[bytes]:
+    def read_segment_end(self) -> bytes | None:
         if self.state is not Decompressor.State.SEGEND:
             raise RuntimeError('invalid state')
         dec = self.dec
@@ -1226,7 +1227,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     def __init__(
         self, *paths,
-        index: Arg.Switch('-i', help='Archive is an index (no d-blocks).') = False,
+        index: Param[bool, Arg.Switch('-i', help='Archive is an index (no d-blocks).')] = False,
         **more
     ):
         for _code, _size in {
@@ -1245,7 +1246,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         super().__init__(*paths, index=index, **more)
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         return cls._MAGIC in data
 
     def unpack(self, data: bytearray):
@@ -1264,19 +1265,19 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             date: int = 0
             attr: int = 0
             name: str = ""
-            frag: List[int] = field(default_factory=list)
+            frag: list[int] = field(default_factory=list)
 
             @property
-            def dt(self) -> Optional[datetime]:
+            def dt(self) -> datetime | None:
                 if self.date > 0:
                     return mkdate(self.date)
 
         # TODO: implement password-protected archives
         # key = self.args.pwd
         index = self.args.index
-        bsize: Dict[int, int] = {}  # frag ID -> d block compressed size
-        dt: Dict[str, DT] = {}      # filename -> date, attr, frags
-        frag: List[bytes] = []      # ID -> hash[20] size[4] data
+        bsize: dict[int, int] = {}  # frag ID -> d block compressed size
+        dt: dict[str, DT] = {}      # filename -> date, attr, frags
+        frag: list[bytes] = []      # ID -> hash[20] size[4] data
         csize = 0                   # expected offset of next non d block
         streaming = False
         journaling = False

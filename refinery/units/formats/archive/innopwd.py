@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from refinery.units import Unit
-
-from refinery.lib.inno.archive import is_inno_setup, InnoArchive
+from refinery.lib.inno.archive import InnoArchive, is_inno_setup
 from refinery.lib.inno.emulator import InnoSetupEmulator, NewPassword
 from refinery.lib.inno.ifps import IFPSFile
+from refinery.units import Unit
 
 
 class innopwd(Unit):

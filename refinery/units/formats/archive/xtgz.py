@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from gzip import GzipFile, FEXTRA, FNAME
 from datetime import datetime
+from gzip import FEXTRA, FNAME, GzipFile
 from pathlib import Path
 
-from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.structures import Struct, StructReader, StreamDetour
 from refinery.lib.meta import metavars
+from refinery.lib.structures import StreamDetour, Struct, StructReader
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class GzipHeader(Struct):

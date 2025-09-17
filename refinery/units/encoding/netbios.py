@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
@@ -11,7 +12,7 @@ class netbios(Unit):
     letter A.
     """
 
-    def __init__(self, key: Arg(help="Provide a single letter to use as the offset.") = B'A'):
+    def __init__(self, key: Param[buf, Arg(help="Provide a single letter to use as the offset.")] = B'A'):
         if len(key) != 1:
             raise ValueError("The key must be a binary string of length exactly 1")
         super().__init__(key=key[0])

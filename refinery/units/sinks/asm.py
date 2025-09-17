@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from refinery.units.formats.exe.opc import opc
-from refinery.units.sinks import Arg, hexdump, HexDumpMetrics
 from refinery.lib.tools import one
+from refinery.lib.types import Param
+from refinery.units.formats.exe.opc import opc
+from refinery.units.sinks import Arg, HexDumpMetrics, hexdump
 
 
 class asm(opc):
@@ -13,8 +14,8 @@ class asm(opc):
     """
     def __init__(
         self, mode='x32', *, count=None, until=None,
-        no_address: Arg.Switch('-A', help='Disable address display.') = False,
-        no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
+        no_address: Param[bool, Arg.Switch('-A', help='Disable address display.')] = False,
+        no_hexdump: Param[bool, Arg.Switch('-H', help='Disable opcodes hexdump.')] = False,
     ):
         super().__init__(
             mode=mode,

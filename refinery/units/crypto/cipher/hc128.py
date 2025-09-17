@@ -6,11 +6,9 @@ from __future__ import annotations
 from itertools import cycle
 from typing import Iterable
 
+from refinery.lib.crypto import rotl32 as lx
+from refinery.lib.crypto import rotr32 as rx
 from refinery.units.crypto.cipher import StreamCipherUnit
-from refinery.lib.crypto import (
-    rotl32 as lx,
-    rotr32 as rx,
-)
 
 
 class HC128:

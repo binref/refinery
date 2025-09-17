@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
@@ -9,7 +10,7 @@ class b64(Unit):
     """
     Base64 encoding and decoding.
     """
-    def __init__(self, urlsafe: Arg.Switch('-u', help='use URL-safe alphabet') = False):
+    def __init__(self, urlsafe: Param[bool, Arg.Switch('-u', help='use URL-safe alphabet')] = False):
         super().__init__(urlsafe=urlsafe)
 
     def reverse(self, data):

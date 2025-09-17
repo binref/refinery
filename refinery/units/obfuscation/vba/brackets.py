@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from refinery.units.obfuscation import Deobfuscator, StringLiterals
 from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator, StringLiterals
 
 
 class deob_vba_brackets(Deobfuscator):

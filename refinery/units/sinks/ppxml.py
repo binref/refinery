@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import io
 
+from refinery.lib.types import Param
+from refinery.lib.xml import ForgivingParse, is_xml
 from refinery.units import Arg, Unit
-from refinery.lib.xml import is_xml, ForgivingParse
 
 
 class ppxml(Unit):
@@ -12,9 +13,9 @@ class ppxml(Unit):
     """
 
     def __init__(self,
-        indent: Arg.Number('-i', help=(
-            'Controls the amount of space characters used for indentation in the output. Default is 4.')) = 4,
-        header: Arg.Switch('-x', help='Add an XML header to the formatted output.') = False
+        indent: Param[int, Arg.Number('-i', help=(
+            'Controls the amount of space characters used for indentation in the output. Default is 4.'))] = 4,
+        header: Param[bool, Arg.Switch('-x', help='Add an XML header to the formatted output.')] = False
     ):
         super().__init__(indent=indent, header=header)
 

@@ -15,7 +15,6 @@ from refinery.lib.speck import (
     speck_encrypt32,
 )
 
-
 MARU_MAX_STR = 64
 MARU_BLK_LEN = 16
 MARU_HASH_LEN = 8

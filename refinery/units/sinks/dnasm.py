@@ -5,6 +5,7 @@ import re
 from refinery.lib.dotnet.disassembler import Disassembler
 from refinery.lib.dotnet.disassembler.factory import OutputFactory
 from refinery.lib.meta import metavars
+from refinery.lib.types import Param
 from refinery.units.formats.pe.dotnet.dnopc import DotnetDisassemblerUnit
 from refinery.units.sinks import Arg
 
@@ -18,11 +19,11 @@ class dnasm(DotnetDisassemblerUnit):
     def __init__(
         self, *,
         count=None, until=None,
-        no_il_refs: Arg.Switch('-I', help='Disable reference resolution to IL_*.') = False,
-        no_address: Arg.Switch('-A', help='Disable address display.') = False,
-        no_hexdump: Arg.Switch('-H', help='Disable opcodes hexdump.') = False,
-        no_args: Arg.Switch('-O', help='Disable output of instruction arguments.') = False,
-        description: Arg.Switch('-d', help='Enable opcodes descriptions in output.') = False,
+        no_il_refs: Param[bool, Arg.Switch('-I', help='Disable reference resolution to IL_*.')] = False,
+        no_address: Param[bool, Arg.Switch('-A', help='Disable address display.')] = False,
+        no_hexdump: Param[bool, Arg.Switch('-H', help='Disable opcodes hexdump.')] = False,
+        no_args: Param[bool, Arg.Switch('-O', help='Disable output of instruction arguments.')] = False,
+        description: Param[bool, Arg.Switch('-d', help='Enable opcodes descriptions in output.')] = False,
     ):
         self._output_factory = OutputFactory(
             il_refs=not no_il_refs,

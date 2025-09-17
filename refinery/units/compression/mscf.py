@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from typing import Callable, Optional
-
-import zlib
 import enum
+import zlib
 
-from refinery.lib.structures import StructReader, MemoryFile
-from refinery.lib.decompression import make_huffman_decode_table, read_huffman_symbol, BitBufferedReader
-from refinery.units import Unit, Arg
+from typing import Callable
 
+from refinery.lib.decompression import (
+    BitBufferedReader,
+    make_huffman_decode_table,
+    read_huffman_symbol,
+)
+from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 XPRESS_NUM_CHARS        = 256    # noqa
 XPRESS_NUM_SYMBOLS      = 512    # noqa   
@@ -41,10 +45,10 @@ class mscf(Unit):
 
     def __init__(
         self,
-        mode: Arg.Option(choices=MODE, help=(
+        mode: Param[str, Arg.Option(choices=MODE, help=(
             'Manually select decompression mode ({choices}); by default the unit attempts to derive the '
             'mode from the header, but this will fail for raw streams. However, even if a header is '
-            'found, a manually specified mode will take precedence.')) = None,
+            'found, a manually specified mode will take precedence.'))] = None,
     ):
         mode = Arg.AsOption(mode, MODE)
         super().__init__(mode=mode)
@@ -135,7 +139,7 @@ class mscf(Unit):
                 self.log_info(F'compression complete with {reader.remaining_bytes} bytes remaining in input')
             return writer.getvalue()
 
-    def _get_handler(self, mode: MODE) -> Callable[[StructReader, MemoryFile, Optional[int]], None]:
+    def _get_handler(self, mode: MODE) -> Callable[[StructReader, MemoryFile, int | None], None]:
         decompress = {
             mode.MSZIP       : self._decompress_mszip,
             mode.XPRESS_HUFF : self._decompress_xpress_huffman,
@@ -145,7 +149,7 @@ class mscf(Unit):
             raise NotImplementedError(F'algorithm {mode.name} is not yet implemented')
         return decompress
 
-    def _decompress_mszip(self, reader: StructReader, writer: MemoryFile, target: Optional[int] = None):
+    def _decompress_mszip(self, reader: StructReader, writer: MemoryFile, target: int | None = None):
         header = bytes(reader.read(2))
         if header != B'CK':
             raise ValueError(F'chunk did not begin with CK header, got {header!r} instead')
@@ -157,7 +161,7 @@ class mscf(Unit):
         self,
         reader: StructReader,
         writer: MemoryFile,
-        target: Optional[int] = None,
+        target: int | None = None,
         max_chunk_size: int = 0x10000
     ) -> None:
         limit = writer.tell()
@@ -211,7 +215,7 @@ class mscf(Unit):
                 length += XPRESS_MIN_MATCH_LEN
                 writer.replay(offset, length)
 
-    def _decompress_xpress(self, reader: StructReader, writer: MemoryFile, target: Optional[int] = None) -> bytearray:
+    def _decompress_xpress(self, reader: StructReader, writer: MemoryFile, target: int | None = None) -> bytearray:
         if target is not None:
             target += writer.tell()
         flags = BitBufferedReader(reader)
@@ -245,7 +249,7 @@ class mscf(Unit):
             writer.replay(offset, length)
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         sig = cls._SIGNATURE
         if data[:len(sig)] == sig:
             return True

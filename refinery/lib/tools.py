@@ -5,24 +5,24 @@ from __future__ import annotations
 
 import datetime
 import inspect
+import io
 import itertools
 import logging
 import os
-import sys
-import io
-import warnings
 import re
+import sys
+import warnings
 
-from typing import Callable, Generator, Iterable, Optional, Tuple, TypeVar, Any, Type
+from enum import Enum, IntFlag
 from math import log
-from enum import IntFlag, Enum
+from typing import Any, Callable, Generator, Iterable, TypeVar
 
 from refinery.lib.types import INF, buf
 
 _T = TypeVar('_T')
 
 
-def lookahead(iterator: Iterable[_T]) -> Generator[Tuple[bool, _T], None, None]:
+def lookahead(iterator: Iterable[_T]) -> Generator[tuple[bool, _T]]:
     """
     Implements a new iterator from a given one which returns elements `(last, item)` where each
     `item` is taken from the original iterator and `last` is a boolean indicating whether this is
@@ -70,8 +70,8 @@ def terminalfit(text: str, delta: int = 0, width: int = 0, parsep: str = '\n\n',
     """
     Reformats text to fit the given width while not mangling bullet point lists.
     """
-    import textwrap
     import re
+    import textwrap
 
     width = width or get_terminal_size()
     width = width - delta
@@ -85,7 +85,7 @@ def terminalfit(text: str, delta: int = 0, width: int = 0, parsep: str = '\n\n',
     def bulletpoint(line):
         wrapped = textwrap.wrap(line, width - 2, **kw)
         indent = '  ' if isul(line) else '   '
-        wrapped[1:] = ['{}{}'.format(indent, line) for line in wrapped[1:]]
+        wrapped[1:] = [f'{indent}{line}' for line in wrapped[1:]]
         return '\n'.join(wrapped)
 
     def fitted(paragraphs):
@@ -124,7 +124,7 @@ def documentation(unit):
     return docs.replace('`', '')
 
 
-def begin(iterable: Iterable[_T]) -> Optional[Tuple[_T, Iterable[_T]]]:
+def begin(iterable: Iterable[_T]) -> tuple[_T, Iterable[_T]] | None:
     """
     Iterates the first element of an iterator and returns None if this fails. Otherwise, it returns
     both the first element and a new iterable which will return the same elements as the input.
@@ -141,7 +141,7 @@ def begin(iterable: Iterable[_T]) -> Optional[Tuple[_T, Iterable[_T]]]:
         return head, _fused()
 
 
-def skipfirst(iterable: Iterable[_T]) -> Generator[_T, None, None]:
+def skipfirst(iterable: Iterable[_T]) -> Generator[_T]:
     """
     Returns an interable where the first element of the input iterable was skipped.
     """
@@ -260,7 +260,7 @@ def isbuffer(obj) -> bool:
         return False
 
 
-def asbuffer(obj) -> Optional[memoryview]:
+def asbuffer(obj) -> memoryview | None:
     """
     Attempts to acquire a memoryview of the given object. This works for bytes and bytearrays, or
     memoryview objects themselves. The return value is `None` for objects that do not support the
@@ -275,7 +275,7 @@ def asbuffer(obj) -> Optional[memoryview]:
 def splitchunks(
     data: buf,
     size: int,
-    step: Optional[int] = None,
+    step: int | None = None,
     truncate: bool = False
 ) -> Iterable[buf]:
     """
@@ -517,7 +517,7 @@ def one(iterable: Iterable[_T]) -> _T:
         raise NotOne(False)
 
 
-def isodate(iso: str) -> Optional[datetime.datetime]:
+def isodate(iso: str) -> datetime.datetime | None:
     """
     Convert an input date string in ISO format to a `datetime` object. Contains fallbacks for early
     Python versions.
@@ -618,7 +618,7 @@ def nopdoc(obj: object):
     return obj
 
 
-def convert(x: _T | Any, t: Type[_T]) -> _T:
+def convert(x: _T | Any, t: type[_T]) -> _T:
     """
     Convert the given object `x` to the type `t`.
     """

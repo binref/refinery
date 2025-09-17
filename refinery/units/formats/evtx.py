@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Unit, Arg
+from refinery.lib.types import Param
 from refinery.lib.vfs import VirtualFileSystem
+from refinery.units import Arg, Unit
 
 
 class evtx(Unit):
@@ -10,7 +11,7 @@ class evtx(Unit):
     output chunk in XML format.
     """
 
-    def __init__(self, raw: Arg.Switch('-r', help='Extract raw event data rather than XML.') = False):
+    def __init__(self, raw: Param[bool, Arg.Switch('-r', help='Extract raw event data rather than XML.')] = False):
         super().__init__(raw=raw)
 
     @Unit.Requires('python-evtx', ['formats'])

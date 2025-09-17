@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
@@ -14,14 +15,14 @@ class snip(Unit):
     """
     def __init__(
         self,
-        slices: Arg(help='Specify start:stop:step in Python slice syntax.') = [slice(None, None)],
-        length: Arg.Switch('-l', help=(
-            'Interpret the end of a slice as a length rather than as an offset.')) = False,
-        stream: Arg.Switch('-s', help=(
+        slices: Param[list[slice], Arg(help='Specify start:stop:step in Python slice syntax.')] = [slice(None, None)],
+        length: Param[bool, Arg.Switch('-l', help=(
+            'Interpret the end of a slice as a length rather than as an offset.'))] = False,
+        stream: Param[bool, Arg.Switch('-s', help=(
             'After each slice, consider only the data that follows after it for subsequent '
-            'slicing. This mode is incompatible with negative step sizes.')) = False,
-        remove: Arg.Switch('-r', help=(
-            'Remove the slices from the input rather than selecting them.')) = False,
+            'slicing. This mode is incompatible with negative step sizes.'))] = False,
+        remove: Param[bool, Arg.Switch('-r', help=(
+            'Remove the slices from the input rather than selecting them.'))] = False,
     ):
         super().__init__(slices=slices, length=length, stream=stream, remove=remove)
 

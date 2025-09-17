@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import abc
-import re
 import io
+import re
 
 from functools import wraps
 from zlib import crc32
 
-from refinery.units import Arg, Unit, Chunk, RefineryPartialResult
 from refinery.lib.decorators import unicoded
-from refinery.lib.types import buf, Callable
-
+from refinery.lib.types import Param, Callable, buf
+from refinery.units import Arg, Chunk, RefineryPartialResult, Unit
 
 __all__ = [
     'Deobfuscator',
@@ -64,7 +63,7 @@ class Deobfuscator(Unit, abstract=True):
 
 class IterativeDeobfuscator(Deobfuscator, abstract=True):
 
-    def __init__(self, timeout: Arg('-t', help='Maximum number of iterations; the default is 100.') = 100):
+    def __init__(self, timeout: Param[int, Arg('-t', help='Maximum number of iterations; the default is 100.')] = 100):
         if timeout < 1:
             raise ValueError('The timeout must be at least 1.')
         super().__init__()

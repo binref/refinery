@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from refinery.units import Unit, Arg
+from Cryptodome.Hash import HMAC, SHA256
+
+from refinery.lib.structures import StructReader
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 from refinery.units.crypto.cipher.aes import aes
 from refinery.units.encoding.b64 import b64
-from refinery.lib.structures import StructReader
-
-from Cryptodome.Hash import HMAC, SHA256
 
 
 class fernet(Unit):
     """
     Decrypt Fernet messages.
     """
-    def __init__(self, key: Arg(help='A fernet key, either in base64 or raw binary.')):
+    def __init__(self, key: Param[buf, Arg(help='A fernet key, either in base64 or raw binary.')]):
         super().__init__(key=key)
 
     def _b64(self, data):

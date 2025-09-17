@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.structures import MemoryFile, StructReader, Struct
 from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
@@ -48,7 +48,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         return carve_zip
 
     def unpack(self, data: bytearray):
-        from zipfile import ZipInfo, ZipFile, BadZipFile
+        from zipfile import BadZipFile, ZipFile, ZipInfo
 
         def password_invalid(password: bytes | None):
             nonlocal archive, fallback

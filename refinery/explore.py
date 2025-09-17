@@ -3,15 +3,15 @@ A commandline script to search for binary refinery units based on keywords.
 """
 from __future__ import annotations
 
-import re
 import argparse
-
-from refinery.lib.tools import documentation, terminalfit, get_terminal_size, normalize_to_display
-from refinery.units import Unit, ArgparseError
-from refinery.lib.argparser import RawDescriptionHelpFormatter
+import re
 
 import refinery
 import refinery.units
+
+from refinery.lib.argparser import RawDescriptionHelpFormatter
+from refinery.lib.tools import documentation, get_terminal_size, normalize_to_display, terminalfit
+from refinery.units import ArgparseError, Unit
 
 
 def highlight(text: str, expression: re.Pattern[str], color: str):
@@ -40,6 +40,7 @@ def get_help_string(unit: type[Unit], brief: bool = False, width: int = 0, remov
         return terminalfit(documentation(unit), width=width)
     else:
         from io import StringIO
+
         from refinery.lib.environment import environment
         term_size = environment.term_size.value
         if width > 0:

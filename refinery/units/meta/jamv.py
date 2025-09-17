@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, Chunk
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Chunk, Unit
 
 
 class jamv(Unit):
@@ -10,10 +11,10 @@ class jamv(Unit):
     """
     def __init__(
         self,
-        name: Arg.String(metavar='format', help=(
-            'A format string that specifies the variable name for storing the chunk.')),
-        data: Arg.Binary(metavar='data', help=(
-            'Optionally specify the body of the fused output chunk; empty by default.')) = None,
+        name: Param[str, Arg.String(metavar='format', help=(
+            'A format string that specifies the variable name for storing the chunk.'))],
+        data: Param[buf, Arg.Binary(metavar='data', help=(
+            'Optionally specify the body of the fused output chunk; empty by default.'))] = None,
     ):
         super().__init__(name=name, data=data)
 

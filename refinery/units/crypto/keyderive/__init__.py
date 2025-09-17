@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import importlib
 
-from refinery.units import Arg, Unit
-from refinery.lib.types import buf
-
 from enum import Enum
-from typing import Callable, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Callable, cast
+
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
     from typing import Protocol
@@ -53,11 +53,11 @@ class KeyDerivation(Unit, abstract=True):
 
     def __init__(
         self,
-        size: Arg.Number(help='The number of bytes to generate.'),
-        salt: Arg.Binary(help='Salt for the derivation.'),
-        hash: Arg.Option(choices=HASH, metavar='hash',
-            help='Specify one of these algorithms (default is {default}): {choices}') = None,
-        iter: Arg.Number(metavar='iter', help='Number of iterations; default is {default}.') = None,
+        size: Param[int, Arg.Number(help='The number of bytes to generate.')],
+        salt: Param[buf, Arg.Binary(help='Salt for the derivation.')],
+        hash: Param[str, Arg.Option(choices=HASH, metavar='hash',
+            help='Specify one of these algorithms (default is {default}): {choices}')] = None,
+        iter: Param[int, Arg.Number(metavar='iter', help='Number of iterations; default is {default}.')] = None,
         **kw
     ):
         if hash is not None:

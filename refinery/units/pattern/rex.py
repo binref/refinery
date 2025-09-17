@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Match
+from typing import Match
 
 from refinery.lib.meta import metavars
-from refinery.units.pattern import Arg, SingleRegexUnit, PatternExtractor
+from refinery.lib.types import Param
 from refinery.units import Chunk
+from refinery.units.pattern import Arg, PatternExtractor, SingleRegexUnit
 
 _FORWARD_VAR = '.'
 
@@ -25,13 +26,13 @@ class rex(SingleRegexUnit, PatternExtractor):
     def __init__(
         self, regex,
         /,
-        *transformation: Arg.String(help=(
+        *transformation: Param[str, Arg.String(help=(
             'An optional sequence of transformations to be applied to each match. '
             'Each transformation produces one output in the order in which they '
             'are given. The default transformation is {0}, i.e. the entire match.'
-        )),
-        unicode: Arg.Switch('-u', help='Also find unicode strings.') = False,
-        unique: Arg.Switch('-q', help='Yield every (transformed) match only once.') = False,
+        ))],
+        unicode: Param[bool, Arg.Switch('-u', help='Also find unicode strings.')] = False,
+        unique: Param[bool, Arg.Switch('-q', help='Yield every (transformed) match only once.')] = False,
         multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
         longest=False, take=None
     ):
@@ -57,7 +58,7 @@ class rex(SingleRegexUnit, PatternExtractor):
         meta = metavars(data)
         self.log_debug('regular expression:', getattr(self.regex, 'pattern', self.regex))
         transformations = []
-        specs: List[str] = list(self.args.transformation)
+        specs: list[str] = list(self.args.transformation)
         if not specs:
             specs.append('{0}')
         for spec in specs:

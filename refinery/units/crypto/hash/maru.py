@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from refinery.lib.maru import maru32digest
-from refinery.units.crypto.hash import HashUnit, Arg
+from refinery.lib.types import Param
+from refinery.units.crypto.hash import Arg, HashUnit
 
 
 class maru(HashUnit):
@@ -10,7 +11,7 @@ class maru(HashUnit):
     """
     def __init__(
         self,
-        seed: Arg.Number(help='optional seed value') = 0,
+        seed: Param[int, Arg.Number(help='optional seed value')] = 0,
         reps=1,
         text=False,
     ):

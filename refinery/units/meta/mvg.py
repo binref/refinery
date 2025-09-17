@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class mvg(Unit):
@@ -17,11 +18,11 @@ class mvg(Unit):
     """
     def __init__(
         self,
-        *names: Arg.String(metavar='name', help=(
+        *names: Param[str, Arg.String(metavar='name', help=(
             'Name of a variable to be removed. If no variables are explicitly specified, all '
             'variables in the current chunk will be rescoped.'
-        )),
-        top: Arg.Switch('-t', help='Move the variable(s) to the topmost frame layer.') = False
+        ))],
+        top: Param[bool, Arg.Switch('-t', help='Move the variable(s) to the topmost frame layer.')] = False
     ):
         super().__init__(names=names, top=top)
 

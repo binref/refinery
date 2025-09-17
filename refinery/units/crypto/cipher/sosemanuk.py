@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from refinery.lib import chunks
-
-from refinery.units.crypto.cipher import Arg, StreamCipherUnit
-from refinery.lib.crypto import rotl32
-
 from array import array
+
+from refinery.lib import chunks
+from refinery.lib.crypto import rotl32
+from refinery.lib.types import Param, buf
+from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 
 class Sosemanuk:
@@ -2221,7 +2221,7 @@ class sosemanuk(StreamCipherUnit):
 
     def __init__(
         self, key, stateful=False, discard=0,
-        nonce: Arg(help='The nonce. Default is empty, which is equivalent to 16 null bytes.') = B'',
+        nonce: Param[buf, Arg(help='The nonce. Default is empty, which is equivalent to 16 null bytes.')] = B'',
     ):
         super().__init__(key=key, nonce=nonce, stateful=stateful, discard=discard)
 

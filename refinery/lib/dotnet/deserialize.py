@@ -26,6 +26,7 @@ from refinery.lib.dotnet.types import (
     Int64,
     LengthPrefixedString,
     Null,
+    ParserEOF,
     SByte,
     Single,
     StreamReader,
@@ -36,7 +37,6 @@ from refinery.lib.dotnet.types import (
     UInt32,
     UInt64,
     unpack,
-    ParserEOF
 )
 
 
@@ -66,7 +66,7 @@ class Record(Struct):
             if issubclass(parser, Record):
                 kw.setdefault('context', self._context)
         except TypeError as e:
-            raise TypeError('{}: {}'.format(e, repr(type(parser))))
+            raise TypeError(f'{e}: {repr(type(parser))}')
         return Struct.expect_with_meta(self, parser, **kw)
 
     def decode(self):

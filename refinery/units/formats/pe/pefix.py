@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from refinery.units import Unit
-from refinery.lib.structures import StructReader
-from refinery.lib.executable import align
-
 from enum import Enum
+
+from refinery.lib.executable import align
+from refinery.lib.structures import StructReader
+from refinery.units import Unit
 
 
 class ImgState(bytes, Enum):

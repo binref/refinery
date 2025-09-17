@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Sequence, Optional
+from typing import Sequence
 
-from refinery.units.crypto.cipher.tea import StandardBlockCipherUnit, TEAUnit, TEABase, Arg
-from refinery.lib.crypto import BlockCipherFactory, CipherInterface, BufferType, CipherMode
+from refinery.lib.crypto import BlockCipherFactory, BufferType, CipherInterface, CipherMode
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher.tea import Arg, StandardBlockCipherUnit, TEABase, TEAUnit
 
 
 class XXTEA(TEABase):
@@ -11,7 +12,7 @@ class XXTEA(TEABase):
     def __init__(
         self,
         key: BufferType,
-        mode: Optional[CipherMode],
+        mode: CipherMode | None,
         big_endian: bool = False,
         block_size: int = TEABase.block_size
     ):
@@ -55,9 +56,9 @@ class xxtea(TEAUnit, cipher=BlockCipherFactory(XXTEA)):
 
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False, swap=False,
-        block_size: Arg.Number('-b', help=(
+        block_size: Param[int, Arg.Number('-b', help=(
             'Cipher block size in 32-bit words. The default value {default} implies that the input '
-            'is treated as a single block, which is common behaviour of many implementations.')) = 1
+            'is treated as a single block, which is common behaviour of many implementations.'))] = 1
     ):
         super().__init__(
             key, iv=iv, padding=padding, mode=mode, raw=raw, swap=swap, block_size=block_size)

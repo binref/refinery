@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Union, Dict, List
 from email.parser import BytesParser
 from enum import Enum
 from urllib.parse import parse_qs
 
-from refinery.units import Unit
 from refinery.lib.tools import isbuffer
+from refinery.units import Unit
 
 
 def _parseparam(parameter: str):
@@ -76,7 +75,7 @@ class httprequest(Unit):
             except ValueError:
                 mode = _Fmt.RawBody
 
-        def chunks(upload: Dict[Union[str, bytes], List[bytes]]):
+        def chunks(upload: dict[str | bytes, list[bytes]]):
             for key, values in upload.items():
                 if not isinstance(key, str):
                     key = key.decode('utf8')

@@ -5,14 +5,14 @@ disk.
 """
 from __future__ import annotations
 
-import re
-import io
 import dataclasses
+import io
+import re
 
-from refinery.units import Arg, Unit
-from refinery.lib.tools import get_terminal_size, lookahead
-from refinery.lib.types import buf, Iterable
 from refinery.lib import chunks
+from refinery.lib.tools import get_terminal_size, lookahead
+from refinery.lib.types import Param, Iterable, buf
+from refinery.units import Arg, Unit
 
 
 @dataclasses.dataclass
@@ -189,11 +189,11 @@ class HexViewer(Unit, abstract=True):
 
     def __init__(
         self,
-        blocks  : Arg.Number('-B', help='Group hexadecimal bytes in blocks of the given size; default is {default}.') = 1,
-        dense   : Arg.Switch('-D', help='Do not insert spaces in hexdump.') = False,
-        expand  : Arg.Switch('-E', help='Do not compress sequences of identical lines in hexdump') = False,
-        narrow  : Arg.Switch('-N', help='Do not show addresses in hexdump') = False,
-        width   : Arg.Number('-W', help='Specify the number of hexadecimal characters to use in preview.') = 0,
+        blocks: Param[int, Arg.Number('-B', help='Group hexadecimal bytes in blocks of the given size; default is {default}.')] = 1,
+        dense: Param[bool, Arg.Switch('-D', help='Do not insert spaces in hexdump.')] = False,
+        expand: Param[bool, Arg.Switch('-E', help='Do not compress sequences of identical lines in hexdump')] = False,
+        narrow: Param[bool, Arg.Switch('-N', help='Do not show addresses in hexdump')] = False,
+        width: Param[int, Arg.Number('-W', help='Specify the number of hexadecimal characters to use in preview.')] = 0,
         **kwargs
     ):
         super().__init__(

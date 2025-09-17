@@ -11,13 +11,10 @@ orders for the various parts of the algorithm.
 """
 from __future__ import annotations
 
-from typing import List
 from struct import pack, unpack
 
-from refinery.lib.crypto import (
-    rotl32 as ROL,
-    rotr32 as ROR,
-)
+from refinery.lib.crypto import rotl32 as ROL
+from refinery.lib.crypto import rotr32 as ROR
 
 PHI = 0x9E3779B9
 
@@ -222,7 +219,7 @@ def make_subkeys(key: bytearray, swap: bool = False):
     return K
 
 
-def serpent_encrypt(plaintext: bytearray, subkeys: List[int], swap: bool = False) -> bytes:
+def serpent_encrypt(plaintext: bytearray, subkeys: list[int], swap: bool = False) -> bytes:
     if swap:
         a, b, c, d = unpack('<4L', plaintext)
     else:
@@ -441,7 +438,7 @@ def InvRND07(a, b, c, d):
     return w, x, y, z
 
 
-def serpent_decrypt(ciphertext: bytearray, subkeys: List[int], swap: bool = False) -> bytes:
+def serpent_decrypt(ciphertext: bytearray, subkeys: list[int], swap: bool = False) -> bytes:
     if swap:
         a, b, c, d = unpack('<4L', ciphertext)
     else:

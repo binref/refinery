@@ -4,12 +4,12 @@ import inspect
 import operator
 import re
 
-from typing import Dict, List, Type, NamedTuple
+from typing import NamedTuple
 
-from refinery.units.sinks import HexViewer
-from refinery.units import RefineryPartialResult
 from refinery.lib.patterns import make_hexline_pattern
 from refinery.lib.tools import lookahead
+from refinery.units import RefineryPartialResult
+from refinery.units.sinks import HexViewer
 
 
 class HexLineCheck(NamedTuple):
@@ -18,7 +18,7 @@ class HexLineCheck(NamedTuple):
     matched_binary: bool
 
 
-def regex(cls: Type) -> re.Pattern:
+def regex(cls: type) -> re.Pattern:
     return re.compile(inspect.getdoc(cls))
 
 
@@ -64,10 +64,10 @@ class hexload(HexViewer):
             return None
 
         result = bytearray()
-        encoded_byte_matches: List[Dict[int, int]] = []
+        encoded_byte_matches: list[dict[int, int]] = []
 
         for check in lines:
-            matches: Dict[int, int] = {}
+            matches: dict[int, int] = {}
             encoded_byte_matches.append(matches)
             for match in self._ENCODED_BYTES.finditer(check):
                 a, b = match.span()
@@ -79,7 +79,7 @@ class hexload(HexViewer):
             offsets.intersection_update(matches.keys())
         if not offsets:
             raise ValueError('unable to determine the position of the hex bytes in this dump')
-        lengths: Dict[int, List[int]] = {offset: [] for offset in offsets}
+        lengths: dict[int, list[int]] = {offset: [] for offset in offsets}
         del offsets
         for matches in encoded_byte_matches:
             for offset in lengths:

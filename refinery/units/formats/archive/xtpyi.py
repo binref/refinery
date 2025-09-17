@@ -1,31 +1,35 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, NamedTuple
 
-import marshal
+import codecs
+import contextlib
+import dataclasses
 import enum
 import io
+import marshal
+import os
+import os.path
 import re
 import uuid
 import zlib
-import os
-import os.path
-import contextlib
-import codecs
-import dataclasses
 
-from refinery.units.formats.archive import Arg, ArchiveUnit
-from refinery.units.pattern.carve import carve
-from refinery.units.formats.pym import Marshal
-from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
-from refinery.lib.tools import NoLogging, normalize_word_separators
-from refinery.lib.shared import xdis, decompyle3, uncompyle6
+from typing import TYPE_CHECKING, NamedTuple
 
 from Cryptodome.Cipher import AES
 
+from refinery.lib.shared import decompyle3, uncompyle6, xdis
+from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
+from refinery.lib.tools import NoLogging, normalize_word_separators
+from refinery.lib.types import Param, buf
+from refinery.units.formats.archive import ArchiveUnit, Arg
+from refinery.units.formats.pym import Marshal
+from refinery.units.pattern.carve import carve
+
 if TYPE_CHECKING:
     from types import CodeType
-    from typing import cast, Callable, Dict, List, Tuple, Optional, Set, Union, Generator, Iterable
+    from typing import Callable, Generator, Iterable, cast
+
     from xdis import Instruction
+
     from refinery.lib.types import buf
 
 
@@ -41,7 +45,7 @@ def version2tuple(version: str):
     raise ValueError(version)
 
 
-def decompress_peek(buffer, size=512) -> Optional[bytes]:
+def decompress_peek(buffer, size=512) -> bytes | None:
     try:
         return zlib.decompressobj().decompress(buffer[:size])
     except zlib.error:
@@ -49,7 +53,7 @@ def decompress_peek(buffer, size=512) -> Optional[bytes]:
 
 
 class Code(NamedTuple):
-    version: Tuple[int]
+    version: tuple[int]
     timestamp: int
     magic: int
     container: CodeType
@@ -57,7 +61,7 @@ class Code(NamedTuple):
     code_objects: dict
 
 
-def extract_code_from_buffer(buffer: buf, file_name: Optional[str] = None) -> Generator[Code, None, None]:
+def extract_code_from_buffer(buffer: buf, file_name: str | None = None) -> Generator[Code]:
     code_objects = {}
     file_name = file_name or '<unknown>'
     load = xdis.load.load_module_from_file_object
@@ -81,7 +85,7 @@ def disassemble_code(code: CodeType, version=None) -> Iterable[Instruction]:
     return xdis.std.Bytecode(code, opc=opc)
 
 
-def decompile_buffer(buffer: Union[Code, buf], file_name: Optional[str] = None) -> buf:
+def decompile_buffer(buffer: Code | buf, file_name: str | None = None) -> buf:
     errors = ''
     python = ''
 
@@ -184,7 +188,7 @@ class PzType(enum.IntEnum):
 class PiMeta:
     type: PiType
     name: str
-    data: Union[Callable[[], buf], buf]
+    data: Callable[[], buf] | buf
 
     def unpack(self) -> buf:
         if callable(self.data):
@@ -232,9 +236,9 @@ class PYZ(Struct):
         self.magic = magic + padding_size * b'\0'
         self.toc_offset = reader.i32()
         self.reader = reader
-        self.entries: List[PiMeta] = []
+        self.entries: list[PiMeta] = []
 
-    def unpack(self, decompile: bool, key: Optional[bytes] = None) -> bool:
+    def unpack(self, decompile: bool, key: bytes | None = None) -> bool:
         with StreamDetour(self.reader, self.base + self.toc_offset):
             toc_data = self.reader.read()
         try:
@@ -346,7 +350,7 @@ class PyInstallerArchiveEpilogue(Struct):
 
     MagicSignature = bytes.fromhex('4D45490C0B0A0B0E')
 
-    def _read_libname(self, reader: StructReader) -> Optional[str]:
+    def _read_libname(self, reader: StructReader) -> str | None:
         position = reader.tell()
         try:
             libname, t, rest = reader.read_bytes(64).partition(B'\0')
@@ -380,7 +384,7 @@ class PyInstallerArchiveEpilogue(Struct):
         self.py_libname = self._read_libname(reader)
         self.offset = reader.tell() - self.size
 
-        self.toc: Dict[str, PiTOCEntry] = {}
+        self.toc: dict[str, PiTOCEntry] = {}
         toc_end = self.offset + toc_offset + toc_length
         reader.seekset(self.offset + toc_offset)
         while reader.tell() < toc_end:
@@ -396,9 +400,9 @@ class PyInstallerArchiveEpilogue(Struct):
                 raise KeyError(F'duplicate name {entry.name}')
             self.toc[entry.name] = entry
 
-        self.files: Dict[str, PiMeta] = {}
+        self.files: dict[str, PiMeta] = {}
         no_pyz_found = True
-        pyz_entries: Dict[str, PYZ] = {}
+        pyz_entries: dict[str, PYZ] = {}
 
         for entry in list(self.toc.values()):
             if entry.type is not PiType.PYZ:
@@ -430,7 +434,7 @@ class PyInstallerArchiveEpilogue(Struct):
             xtpyi.logger.warning('more than one magic signature was recovered; this is unusual.')
 
         magics = list(magics)
-        keys: Set[bytes] = set()
+        keys: set[bytes] = set()
 
         for entry in self.toc.values():
             extracted = self.extract(entry.name)
@@ -501,15 +505,15 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', date=b'date',
-        decompile: Arg.Switch('-c', help='Attempt to decompile PYC files.') = False,
-        user_code: Arg.Switch('-u', group='FILTER', help=(
+        decompile: Param[bool, Arg.Switch('-c', help='Attempt to decompile PYC files.')] = False,
+        user_code: Param[bool, Arg.Switch('-u', group='FILTER', help=(
             'Extract only source code files from the root of the archive. These usually implement '
-            'the actual domain logic. This implies the --decompile option.')) = False,
-        unmarshal: Arg('-y', action='count', group='FILTER', help=(
+            'the actual domain logic. This implies the --decompile option.'))] = False,
+        unmarshal: Param[int, Arg('-y', action='count', group='FILTER', help=(
             '(DANGEROUS) Unmarshal embedded PYZ archives. Warning: Maliciously crafted packages can '
             'potentially exploit this to execute code. It is advised to only use this option inside '
             'an isolated environment. Specify twice to decompile unmarshalled Python bytecode.'
-        )) = 0
+        ))] = 0
     ):
         super().__init__(
             *paths,
@@ -551,5 +555,5 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             yield self._pack(name, None, file.data, type=file.type.name)
 
     @classmethod
-    def handles(cls, data: buf) -> Optional[bool]:
+    def handles(cls, data: buf) -> bool | None:
         return PyInstallerArchiveEpilogue.MagicSignature in data

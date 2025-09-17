@@ -12,7 +12,7 @@ class bitrev(UnaryOperation):
     def operate(arg):
         raise RuntimeError('operate was called before the unit was initialized')
 
-    def __init__(self, bigendian=False, blocksize=None):
+    def __init__(self, bigendian=False, blocksize=1):
         """
         Unreadable bit reversal operations due to:
         https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv

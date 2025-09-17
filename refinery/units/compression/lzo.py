@@ -3,10 +3,10 @@ from __future__ import annotations
 from enum import IntEnum, IntFlag
 from zlib import adler32, crc32
 
-from refinery.units import Unit
-from refinery.lib.types import buf, Generator
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.tools import date_from_timestamp
+from refinery.lib.types import Generator, buf
+from refinery.units import Unit
 
 
 class LZOError(Exception):

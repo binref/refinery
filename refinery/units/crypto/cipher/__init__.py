@@ -5,27 +5,26 @@ from __future__ import annotations
 
 import abc
 
-from refinery.lib.tools import isbuffer
-from refinery.lib.types import buf, Collection, Iterable, ClassVar, Any
-
-from refinery.lib.crypto import (
-    pad,
-    unpad,
-    CipherObjectFactory,
-    CipherInterface,
-)
 from refinery.lib.argformats import (
     Option,
-    extract_options,
     OptionFactory,
+    extract_options,
 )
+from refinery.lib.crypto import (
+    CipherInterface,
+    CipherObjectFactory,
+    pad,
+    unpad,
+)
+from refinery.lib.tools import isbuffer
+from refinery.lib.types import Param, Any, ClassVar, Collection, Iterable, buf, isq
 from refinery.units import (
     Arg,
+    Chunk,
     Executable,
     RefineryCriticalException,
     RefineryPartialResult,
     Unit,
-    Chunk,
 )
 
 
@@ -34,7 +33,7 @@ class CipherUnit(Unit, abstract=True):
     key_size: Collection[int] | None = None
     block_size: int
 
-    def __init__(self, key: Arg(help='The encryption key.'), **keywords):
+    def __init__(self, key: Param[buf, Arg(help='The encryption key.')], **keywords):
         super().__init__(key=key, **keywords)
 
     @abc.abstractmethod
@@ -77,8 +76,8 @@ class StreamCipherUnit(CipherUnit, abstract=True):
 
     def __init__(
         self, key,
-        discard: Arg.Number('-d', help='Discard the first {varname} bytes of the keystream, {default} by default.') = 0,
-        stateful: Arg.Switch('-s', help='Do not reset the key stream while processing the chunks of one frame.') = False,
+        discard: Param[int, Arg.Number('-d', help='Discard the first {varname} bytes of the keystream, {default} by default.')] = 0,
+        stateful: Param[bool, Arg.Switch('-s', help='Do not reset the key stream while processing the chunks of one frame.')] = False,
         **keywords
     ):
         super().__init__(key=key, stateful=stateful, discard=discard, **keywords)
@@ -126,13 +125,13 @@ PADDINGS_ALL = PADDINGS_LIB + [PADDING_NONE]
 
 class BlockCipherUnitBase(CipherUnit, abstract=True):
     def __init__(
-        self, key, iv: Arg('-i', '--iv', help=(
-            'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.')) = None,
-        padding: Arg.Choice('-p', type=str.lower, choices=PADDINGS_ALL, metavar='P', help=(
+        self, key, iv: Param[buf, Arg('-i', '--iv', help=(
+            'Specifies the initialization vector. If none is specified, then a block of zero bytes is used.'))] = None,
+        padding: Param[str, Arg.Choice('-p', type=str.lower, choices=PADDINGS_ALL, metavar='P', help=(
             'Choose a padding algorithm ({choices}). The raw algorithm does nothing. By default, all other algorithms '
             'are attempted. In most cases, the data was not correctly decrypted if none of these work.')
-        ) = None,
-        raw: Arg.Switch('-r', '--raw', help='Set the padding to raw; ignored when a padding is specified.') = False,
+        )] = None,
+        raw: Param[bool, Arg.Switch('-r', '--raw', help='Set the padding to raw; ignored when a padding is specified.')] = False,
         **keywords
     ):
         if not padding and raw:
@@ -188,11 +187,11 @@ class StandardCipherExecutable(Executable):
 
     def __new__(mcs, name, bases, nmspc, cipher: CipherObjectFactory | None = None):
         keywords: dict = dict(abstract=(cipher is None))
-        return super(StandardCipherExecutable, mcs).__new__(mcs, name, bases, nmspc, **keywords)
+        return super().__new__(mcs, name, bases, nmspc, **keywords)
 
     def __init__(_class, name, bases, nmspc, cipher: CipherObjectFactory | None = None):
         abstract = cipher is None
-        super(StandardCipherExecutable, _class).__init__(name, bases, nmspc, abstract=abstract)
+        super().__init__(name, bases, nmspc, abstract=abstract)
         _class._cipher_factory = cipher
         if abstract:
             return
@@ -279,21 +278,21 @@ class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
         self, key, *,
         iv=B'',
         padding=None, mode=None, raw=False,
-        little_endian: Arg.Switch('-e', '--little-endian', help=(
+        little_endian: Param[bool, Arg.Switch('-e', '--little-endian', help=(
             'Only for CTR: Use a little endian counter instead of the default big endian.'
-        )) = False,
-        segment_size: Arg.Number('-S', '--segment-size', help=(
+        ))] = False,
+        segment_size: Param[int, Arg.Number('-S', '--segment-size', help=(
             'Only for CFB: Number of segmentation bits. It must be a multiple of 8. The default '
             'of {default} means that the block size will be used as the segment size.'
-        )) = 0,
-        tag: Arg.NumSeq('-t', '--tag', metavar='TAG', help=(
+        ))] = 0,
+        tag: Param[isq, Arg.NumSeq('-t', '--tag', metavar='TAG', help=(
             'Only for EAX, GCM, OCB, and CCM: An authentication tag to verify the message. For '
             'encryption, this parameter specifies the tag length, and the tag is provided as a '
             'meta variable named "tag".'
-        )) = None,
-        aad: Arg.Binary('-a', '--aad', metavar='AAD', help=(
+        ))] = None,
+        aad: Param[buf, Arg.Binary('-a', '--aad', metavar='AAD', help=(
             'Only for EAX, GCM, OCB, and CCM: Set additional authenticated data.'
-        )) = None,
+        ))] = None,
         **keywords
     ):
         mode = self._available_block_cipher_modes(mode or iv and 'CBC' or 'ECB')
@@ -405,10 +404,10 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
 
     def __init__(
         self, key, stateful=False, discard=0,
-        nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY',
-        magic: Arg('-m', help='The magic constant; depends on the key size by default.') = B'',
-        offset: Arg.Number('-x', help='Optionally specify the stream index, default is {default}.') = 0,
-        rounds: Arg.Number('-r', help='The number of rounds. Has to be an even number. Default is {default}.') = 20,
+        nonce: Param[buf, Arg(help='The nonce. Default is the string {default}.')] = B'REFINERY',
+        magic: Param[buf, Arg('-m', help='The magic constant; depends on the key size by default.')] = B'',
+        offset: Param[int, Arg.Number('-x', help='Optionally specify the stream index, default is {default}.')] = 0,
+        rounds: Param[int, Arg.Number('-r', help='The number of rounds. Has to be an even number. Default is {default}.')] = 20,
     ):
         super().__init__(
             key=key,
@@ -422,7 +421,7 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
 
 
 class LatinCipherStandardUnit(StandardCipherUnit):
-    def __init__(self, key, nonce: Arg(help='The nonce. Default is the string {default}.') = B'REFINERY'):
+    def __init__(self, key, nonce: Param[buf, Arg(help='The nonce. Default is the string {default}.')] = B'REFINERY'):
         super().__init__(key, nonce=nonce)
 
     def _new_cipher(self, **optionals) -> Any:

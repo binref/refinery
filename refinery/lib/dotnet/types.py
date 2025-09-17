@@ -4,13 +4,13 @@ parsing library.
 """
 from __future__ import annotations
 
-import struct
-import datetime
-import time
 import base64
+import datetime
+import struct
+import time
 
 from io import BytesIO
-from typing import Type, TypeVar
+from typing import TypeVar
 
 T = TypeVar('T')
 
@@ -64,13 +64,13 @@ class MetaBox(metaclass=RepresentedByNameOnly):
 
 class Box(dict, MetaBox):
     def __init__(self, **kw):
-        super(Box, self).__init__()
+        super().__init__()
         for key, value in kw.items():
             setattr(self, key, value)
 
     def __getattr__(self, key):
         try:
-            return super(Box, self).__getattribute__(key)
+            return super().__getattribute__(key)
         except AttributeError:
             if key in self:
                 return self[key]
@@ -79,7 +79,7 @@ class Box(dict, MetaBox):
 
     def __setattr__(self, name, value):
         if name.startswith('_') or hasattr(self.__class__, name):
-            return super(Box, self).__setattr__(name, value)
+            return super().__setattr__(name, value)
         return self.__setitem__(name, value)
 
 
@@ -153,10 +153,10 @@ class StreamReader(BytesIO):
 
         return streamframe()
 
-    def expect(self, parser: Type[T], **kw) -> T:
+    def expect(self, parser: type[T], **kw) -> T:
         return unpack(self.expect_with_meta(parser, **kw))
 
-    def expect_with_meta(self, parser: Type[T], **kw) -> T:
+    def expect_with_meta(self, parser: type[T], **kw) -> T:
         return parser(self, **kw)
 
 
@@ -192,7 +192,7 @@ class Blob(metaclass=RepresentedByNameOnly):
 
     def _raise(self, msg):
         raise ParserException(
-            'attempted to parse {}: {}.'.format(repr(self), msg))
+            f'attempted to parse {repr(self)}: {msg}.')
 
     def __len__(self):
         return self._size
@@ -219,7 +219,7 @@ class StringPrimitive(Blob):
     @property
     def Value(self):
         try:
-            return self._data.decode(self._codec).rstrip(u'\x00')
+            return self._data.decode(self._codec).rstrip('\x00')
         except UnicodeDecodeError:
             codec = 'utf-16le' if self._data.count(B'\0') == len(self._data) // 2 else 'latin-1'
         try:
@@ -319,7 +319,7 @@ class TypeCode(FixedSize):
     lookup = {}
 
     def parser(self, x):
-        assert x in self.lookup, 'unknown {}({}) encountered'.format(repr(self), x)
+        assert x in self.lookup, f'unknown {repr(self)}({x}) encountered'
         return self.lookup[x]
 
 

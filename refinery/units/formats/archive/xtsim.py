@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from typing import NamedTuple, Optional
-
-import struct
+import difflib
 import json
 import re
-import difflib
+import struct
 
-from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.structures import StructReader
-from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
+from typing import NamedTuple
+
 from refinery.lib.cab import Cabinet
+from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
+from refinery.lib.structures import StructReader
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class SIMOffsets(NamedTuple):
@@ -264,7 +264,7 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         check_empty_reader(content, 'content')
 
     @classmethod
-    def get_offsets(cls, data: bytearray) -> Optional[SIMOffsets]:
+    def get_offsets(cls, data: bytearray) -> SIMOffsets | None:
         if len(data) < 0x1000:
             return None
 

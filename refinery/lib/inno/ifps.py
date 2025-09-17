@@ -9,27 +9,22 @@ import enum
 import io
 import itertools
 
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 from typing import (
     Callable,
-    Dict,
     Generator,
-    List,
     NamedTuple,
-    Optional,
-    Tuple,
     Type,
     TypeVar,
     Union,
 )
-
 from uuid import UUID
-from dataclasses import dataclass, field
-from collections import OrderedDict
-from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 
-from refinery.lib.structures import Struct, StructReader
-from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents
 from refinery.lib.inno import CaseInsensitiveDict
+from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents
+from refinery.lib.structures import Struct, StructReader
 
 _E = TypeVar('_E', bound=Type[enum.Enum])
 _C = TypeVar('_C', bound=Type)
@@ -255,8 +250,8 @@ class IFPSTypeMixin:
     """
     A helper class to mix additional properties into various IFPS type classes.
     """
-    symbol: Optional[str] = None
-    attributes: Optional[List[FunctionAttribute]] = None
+    symbol: str | None = None
+    attributes: list[FunctionAttribute] | None = None
 
     def __str__(self):
         if self.symbol is not None:
@@ -284,7 +279,7 @@ class IFPSTypeBase(abc.ABC):
         return indent * _TAB + self.code.name
 
     @abc.abstractmethod
-    def py_type(self, key: Optional[int] = None) -> Optional[type]:
+    def py_type(self, key: int | None = None) -> type | None:
         """
         If possible, provide a Python type equivalent for this IFPS type. The optional key argument
         is required only for the `refinery.lib.inno.ifps.TRecord` class.
@@ -292,7 +287,7 @@ class IFPSTypeBase(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def default(self, key: Optional[int] = None):
+    def default(self, key: int | None = None):
         """
         Compute the default value for this type. The optional key argument is required only for the
         `refinery.lib.inno.ifps.TRecord` class.
@@ -317,7 +312,7 @@ class IFPSTypeBase(abc.ABC):
         return self.display(0)
 
 
-def ifpstype(cls: _C) -> Union[_C, Type[IFPSTypeMixin]]:
+def ifpstype(cls: _C) -> _C | type[IFPSTypeMixin]:
     """
     A decorator for IFPS types to mix the `refinery.lib.inno.ifps.IFPSTypeMixin` into the dataclass
     definition.
@@ -334,7 +329,7 @@ class TPrimitive(IFPSTypeBase):
     """
     A primitive IFPS type.
     """
-    def py_type(self, *_) -> Optional[type]:
+    def py_type(self, *_) -> type | None:
         return {
             TC.ReturnAddress       : int,
             TC.U08                 : int,
@@ -459,12 +454,12 @@ class TArray(IFPSTypeBase):
     """
     type: TPrimitive
 
-    def py_type(self, key: Optional[int] = None):
+    def py_type(self, key: int | None = None):
         if key is None:
             return list
         return self.type.py_type()
 
-    def default(self, key: Optional[int] = None):
+    def default(self, key: int | None = None):
         if key is None:
             return []
         return self.type.default()
@@ -484,14 +479,14 @@ class TStaticArray(IFPSTypeBase):
     """
     type: TPrimitive
     size: int
-    offset: Optional[int] = None
+    offset: int | None = None
 
-    def py_type(self, key: Optional[int] = None):
+    def py_type(self, key: int | None = None):
         if key is None:
             return list
         return self.type.py_type(key)
 
-    def default(self, key: Optional[int] = None):
+    def default(self, key: int | None = None):
         if key is None:
             return [self.type.default() for _ in range(self.size)]
         return self.type.default()
@@ -509,18 +504,18 @@ class TRecord(IFPSTypeBase):
     """
     An IFPS type representing a structure.
     """
-    members: Tuple[TPrimitive, ...]
+    members: tuple[TPrimitive, ...]
 
     @property
     def size(self):
         return len(self.members)
 
-    def py_type(self, key: Optional[int] = None):
+    def py_type(self, key: int | None = None):
         if key is None:
             return list
         return self.members[key].py_type()
 
-    def default(self, key: Optional[int] = None):
+    def default(self, key: int | None = None):
         if key is None:
             return [member.default() for member in self.members]
         return self.members[key].default()
@@ -579,7 +574,7 @@ class Value(NamedTuple):
     A value of the given type within the IFPS runtime.
     """
     type: IFPSType
-    value: Union[str, int, float, bytes, Function]
+    value: str | int | float | bytes | Function
 
     def convert(self, *_):
         return self.type.py_type()
@@ -605,7 +600,7 @@ class FunctionAttribute(NamedTuple):
     A function attribute.
     """
     name: str
-    fields: Tuple[Value, ...]
+    fields: tuple[Value, ...]
 
     def __repr__(self):
         name = self.name
@@ -623,11 +618,11 @@ class DeclSpecParam:
     """
     True if this parameter is passed by value, not by reference.
     """
-    type: Optional[TPrimitive] = None
+    type: TPrimitive | None = None
     """
     The type of this parameter.
     """
-    name: Optional[str] = None
+    name: str | None = None
     """
     The name of this parameter.
     """
@@ -652,14 +647,14 @@ class DeclSpec:
     This class captures the declaration info of a function symbol.
     """
     void: bool
-    parameters: List[DeclSpecParam] = field(default_factory=list)
+    parameters: list[DeclSpecParam] = field(default_factory=list)
     name: str = ''
-    calling_convention: Optional[str] = None
-    return_type: Optional[IFPSType] = None
-    module: Optional[str] = None
-    classname: Optional[str] = None
+    calling_convention: str | None = None
+    return_type: IFPSType | None = None
+    module: str | None = None
+    classname: str | None = None
     delay_load: bool = False
-    vtable_index: Optional[int] = None
+    vtable_index: int | None = None
     load_with_altered_search_path: bool = False
     is_property: bool = False
     is_accessor: bool = False
@@ -808,13 +803,13 @@ class Function:
     Represents a function in the IFPS runtime.
     """
     symbol: str = ''
-    decl: Optional[DeclSpec] = None
-    body: Optional[List[Instruction]] = None
-    attributes: Optional[List[FunctionAttribute]] = None
-    _bbs: Optional[Dict[int, BasicBlock]] = None
-    _ins: Optional[Dict[int, Instruction]] = None
-    getter: Optional[Function] = None
-    setter: Optional[Function] = None
+    decl: DeclSpec | None = None
+    body: list[Instruction] | None = None
+    attributes: list[FunctionAttribute] | None = None
+    _bbs: dict[int, BasicBlock] | None = None
+    _ins: dict[int, Instruction] | None = None
+    getter: Function | None = None
+    setter: Function | None = None
 
     @property
     def is_property(self):
@@ -856,14 +851,14 @@ class Function:
             return CallType.Symbol
         return self.decl.type
 
-    def get_basic_blocks(self) -> Dict[int, BasicBlock]:
+    def get_basic_blocks(self) -> dict[int, BasicBlock]:
         if (bbs := self._bbs) is not None:
             return bbs
         if self.body is None:
             bbs = self._bbs = {}
             return bbs
 
-        bbs: Dict[int, BasicBlock] = {0: (bb := BasicBlock(0))}
+        bbs: dict[int, BasicBlock] = {0: (bb := BasicBlock(0))}
         self._bbs = bbs
         jump = False
 
@@ -902,7 +897,7 @@ class Function:
         visited: set[int] = set()
         errored: set[int] = set()
 
-        def trace_stack(offset: int, stack: Optional[int]):
+        def trace_stack(offset: int, stack: int | None):
             if offset in errored:
                 return
             bb = bbs[offset]
@@ -950,7 +945,7 @@ class VariableBase:
     """
     The type of the variable, see `refinery.lib.inno.ifps.IFPSType`.
     """
-    spec: Optional[VariableSpec]
+    spec: VariableSpec | None
     """
     A `refinery.lib.inno.ifps.VariableSpec` that uniquely identifies the base variable. If this
     property is `None`, the variable is unbound: The `refinery.lib.inno.ifps.Op.SetPtrToCopy`
@@ -1040,9 +1035,9 @@ class Operand(NamedTuple):
     operand is encoded as an `refinery.lib.inno.ifps.OperandType`.
     """
     type: OperandType
-    variable: Optional[VariableSpec] = None
-    value: Optional[Value] = None
-    index: Optional[Union[VariableSpec, int]] = None
+    variable: VariableSpec | None = None
+    value: Value | None = None
+    index: VariableSpec | int | None = None
 
     def __repr__(self):
         return self.__tostring(repr)
@@ -1082,9 +1077,9 @@ class Instruction:
     offset: int
     opcode: Op
     encoded: bytes = B''
-    stack: Optional[int] = None
-    operands: List[Union[str, bool, int, float, Operand, IFPSType, Function, None]] = field(default_factory=list)
-    operator: Optional[Union[AOp, COp]] = None
+    stack: int | None = None
+    operands: list[str | bool | int | float | Operand | IFPSType | Function | None] = field(default_factory=list)
+    operator: AOp | COp | None = None
     jumptarget: bool = False
 
     def op(self, index: int):
@@ -1120,7 +1115,7 @@ class Instruction:
     def stack_delta(self):
         return _Op_StackD.get(self.opcode, 0)
 
-    def oprep(self, labels: Optional[dict[int, str]] = None):
+    def oprep(self, labels: dict[int, str] | None = None):
         if self.branches:
             dst = self.operands[0]
             if not labels or not (label := labels.get(dst)):
@@ -1151,7 +1146,7 @@ class Instruction:
         else:
             return ', '.join(str(op) for op in self.operands)
 
-    def pretty(self, labels: Optional[dict[int, str]] = None):
+    def pretty(self, labels: dict[int, str] | None = None):
         return F'{self.opcode!s:<{_Op_Maxlen}}{_TAB}{self.oprep(labels)}'.strip()
 
     def __repr__(self):
@@ -1164,10 +1159,10 @@ class Instruction:
 @dataclass
 class BasicBlock:
     offset: int
-    stack: Optional[int] = None
-    body: List[Instruction] = field(default_factory=list)
-    sources: Dict[int, BasicBlock] = field(default_factory=dict)
-    targets: Dict[int, BasicBlock] = field(default_factory=dict)
+    stack: int | None = None
+    body: list[Instruction] = field(default_factory=list)
+    sources: dict[int, BasicBlock] = field(default_factory=dict)
+    targets: dict[int, BasicBlock] = field(default_factory=dict)
 
     @property
     def stack_delta(self):
@@ -1196,10 +1191,10 @@ class IFPSFile(Struct):
     def __init__(self, reader: StructReader[memoryview], codec: str = 'latin1', unicode: bool = True):
         self.codec = codec
         self.unicode = unicode
-        self.types: List[IFPSType] = []
-        self.functions: List[Function] = []
-        self.globals: List[VariableBase] = []
-        self.strings: List[str] = []
+        self.types: list[IFPSType] = []
+        self.functions: list[Function] = []
+        self.globals: list[VariableBase] = []
+        self.strings: list[str] = []
         self.reader = reader
         if reader.remaining_bytes < 28:
             raise ValueError('Less than 28 bytes in file, not enough data to parse.')
@@ -1237,7 +1232,7 @@ class IFPSFile(Struct):
 
         del self._known_type_names
 
-    def _name_types(self, missing_types: Optional[set[str]] = None):
+    def _name_types(self, missing_types: set[str] | None = None):
         tbn: dict[str, IFPSType] = CaseInsensitiveDict()
         self.types_by_name = tbn
         for t in self.types:
@@ -1378,12 +1373,12 @@ class IFPSFile(Struct):
             if self.version >= 21:
                 t.attributes = list(self._read_attributes())
 
-    def _read_value(self, reader: Optional[StructReader] = None) -> Value:
+    def _read_value(self, reader: StructReader | None = None) -> Value:
         if reader is None:
             reader = self.reader
         type = self.types[reader.u32()]
         size = type.code.width
-        processor: Optional[Callable[[], Union[int, float, str, bytes]]] = {
+        processor: Callable[[], int | float | str | bytes] | None = {
             TC.U08           : reader.u8,
             TC.S08           : reader.i8,
             TC.U16           : reader.u16,
@@ -1414,7 +1409,7 @@ class IFPSFile(Struct):
             self.strings.append(data)
         return Value(type, data)
 
-    def _read_attributes(self) -> Generator[FunctionAttribute, None, None]:
+    def _read_attributes(self) -> Generator[FunctionAttribute]:
         reader = self.reader
         count = reader.u32()
         for _ in range(count):
@@ -1423,7 +1418,7 @@ class IFPSFile(Struct):
             yield FunctionAttribute(name, fields)
 
     def _load_functions(self):
-        def _signature(name: str, decl: Optional[DeclSpec]):
+        def _signature(name: str, decl: DeclSpec | None):
             signature = IFPSAPI.get(name, IFPSEvents.get(name)) if name else None
             if decl and decl.classname and (ic := IFPSClasses.Classes.get(decl.classname)):
                 if ic.name not in self.types_by_name:
@@ -1490,7 +1485,7 @@ class IFPSFile(Struct):
             else:
                 break
 
-        byfqn: Dict[str, List[Function]] = {}
+        byfqn: dict[str, list[Function]] = {}
 
         for function in self.functions:
             key = str(function)
@@ -1629,8 +1624,8 @@ class IFPSFile(Struct):
             kw.update(index=index)
         return Operand(ot, **kw)
 
-    def _parse_bytecode(self, data: memoryview, void: bool) -> Generator[Instruction, None, None]:
-        disassembly: Dict[int, Instruction] = OrderedDict()
+    def _parse_bytecode(self, data: memoryview, void: bool) -> Generator[Instruction]:
+        disassembly: dict[int, Instruction] = OrderedDict()
         reader = StructReader(data)
 
         argcount = {

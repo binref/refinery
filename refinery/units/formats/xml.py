@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from refinery.lib.structures import MemoryFile
-from refinery.lib.meta import metavars, is_valid_variable_name
 from refinery.lib import xml
+from refinery.lib.meta import is_valid_variable_name, metavars
+from refinery.lib.structures import MemoryFile
+from refinery.units.formats import UnpackResult, XMLToPathExtractorUnit
 from refinery.units.sinks.ppxml import ppxml
-from refinery.units.formats import XMLToPathExtractorUnit, UnpackResult
 
 
 class xtxml(XMLToPathExtractorUnit):

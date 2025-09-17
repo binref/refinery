@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from enum import IntFlag
 
+from refinery.lib.structures import StreamDetour, Struct, StructReader
 from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.structures import Struct, StructReader, StreamDetour
 
 
 class CPUType(IntFlag):

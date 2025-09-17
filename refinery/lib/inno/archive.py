@@ -9,51 +9,44 @@ data structures.
 """
 from __future__ import annotations
 
+import bz2
+import codecs
+import dataclasses
 import enum
+import functools
+import lzma
 import re
 import struct
-import functools
-import dataclasses
-import codecs
-
-import lzma
 import zlib
-import bz2
 
 from datetime import datetime, timezone
-from hashlib import sha256, sha1, md5
 from functools import cached_property
+from hashlib import md5, sha1, sha256
+from typing import TYPE_CHECKING, NamedTuple
 
-from refinery.units.formats.pe.perc import perc
-from refinery.lib.structures import Struct, StructReader
-
-from refinery.lib.tools import exception_to_string, one
-from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
-from refinery.lib.types import buf
 from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.inno.ifps import IFPSFile
-
+from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
+from refinery.lib.structures import Struct, StructReader
+from refinery.lib.tools import exception_to_string, one
+from refinery.lib.types import buf
 from refinery.units import Unit
-from refinery.units.crypto.cipher.rc4 import rc4
 from refinery.units.crypto.cipher.chacha import xchacha
+from refinery.units.crypto.cipher.rc4 import rc4
 from refinery.units.crypto.keyderive.pbkdf2 import pbkdf2
-
-from typing import TYPE_CHECKING, NamedTuple
+from refinery.units.formats.pe.perc import perc
 
 if TYPE_CHECKING:
     from typing import (
-        List,
-        Optional,
-        Type,
-        TypeVar,
         ClassVar,
+        TypeVar,
     )
     _T = TypeVar('_T')
     _E = TypeVar('_E', bound=enum.IntEnum)
 
 
 class InvalidPassword(ValueError):
-    def __init__(self, password: Optional[str] = None):
+    def __init__(self, password: str | None = None):
         if password is None:
             super().__init__('A password is required and none was given.')
         else:
@@ -79,7 +72,7 @@ class IVF(enum.IntFlag):
     IsLegacy = 0b0011
 
 
-def _enum(options: Type[_E], value: int, default: _E):
+def _enum(options: type[_E], value: int, default: _E):
     try:
         return options(value)
     except ValueError:
@@ -130,7 +123,7 @@ class InnoVersion(NamedTuple):
 
     @classmethod
     def Parse(cls, dfn: bytes):
-        versions: List[InnoVersion] = []
+        versions: list[InnoVersion] = []
         for match in [m.groups() for m in re.finditer(rb'(.*?)\((\d+(?:\.\d+){2,3})(?:.*?\(([uU])\))?', dfn)]:
             sv = tuple(map(int, match[1].split(B'.')))
             sv = (sv + (0,))[:4]
@@ -657,8 +650,8 @@ class InnoFile:
     meta: SetupDataEntry
     path: str = ""
     dupe: bool = False
-    setup: Optional[SetupFile] = None
-    compression_method: Optional[CompressionMethod] = None
+    setup: SetupFile | None = None
+    compression_method: CompressionMethod | None = None
     password_hash: bytes = B''
     password_salt: bytes = B''
     password_type: PasswordType = PasswordType.Nothing
@@ -737,7 +730,7 @@ class InnoFile:
 class InnoStream:
     header: StreamHeader
     blocks: list[CrcCompressedBlock] = dataclasses.field(default_factory=list)
-    data: Optional[bytearray] = None
+    data: bytearray | None = None
 
     @property
     def compression(self):
@@ -1943,7 +1936,7 @@ class TSetup(InnoStruct):
         super().__init__(reader, version)
         self.Header = h = SetupHeader(reader, version)
 
-        def _array(count: int, parser: Type[_T]) -> List[_T]:
+        def _array(count: int, parser: type[_T]) -> list[_T]:
             return [parser(reader, version, self) for _ in range(count)]
 
         self.Languages = _array(h.LanguageCount, SetupLanguage)
@@ -2140,10 +2133,10 @@ class TData(InnoStruct):
 
 class InnoParseResult(NamedTuple):
     version: InnoVersion
-    streams: List[InnoStream]
-    files: List[InnoFile]
+    streams: list[InnoStream]
+    files: list[InnoFile]
     warnings: int
-    failures: List[str]
+    failures: list[str]
     setup_info: TSetup
     setup_data: TData
 
@@ -2168,7 +2161,7 @@ class InnoArchive:
     def __init__(
         self,
         data: bytearray,
-        unit: Optional[Unit] = None,
+        unit: Unit | None = None,
     ):
         if not (meta := TSetupOffsets.FindInBinary(data)):
             try:
@@ -2230,7 +2223,7 @@ class InnoArchive:
 
         self._log_comment(F'inno {version!s} via {method} header: {header}')
 
-        class _notok(object):
+        class _notok:
             def __init__(self, e: Exception):
                 self.failures = [str(e)]
 
@@ -2326,8 +2319,8 @@ class InnoArchive:
     @cached_property
     def emulator(self):
         from refinery.lib.inno.emulator import (
-            InnoSetupEmulator,
             IFPSEmulatorConfig,
+            InnoSetupEmulator,
         )
         return InnoSetupEmulator(self, IFPSEmulatorConfig(
             temp_path='{tmp}',
@@ -2376,7 +2369,7 @@ class InnoArchive:
             self._password = ''
             return True
 
-    def get_encrypted_sample(inno) -> Optional[InnoFile]:
+    def get_encrypted_sample(inno) -> InnoFile | None:
         """
         If the archive has a password, this function returns the smallest encrypted file record.
         """
@@ -2390,8 +2383,8 @@ class InnoArchive:
         version: InnoVersion,
         max_failures: int = 5
     ):
-        streams: List[InnoStream] = []
-        files: List[InnoFile] = []
+        streams: list[InnoStream] = []
+        files: list[InnoFile] = []
         warnings = 0
 
         for _ in range(3):
@@ -2552,7 +2545,7 @@ class InnoArchive:
         else:
             return True
 
-    def read_chunk(self, file: InnoFile, password: Optional[str] = None, check_only: bool = False):
+    def read_chunk(self, file: InnoFile, password: str | None = None, check_only: bool = False):
         """
         Decompress and read the chunk containing the given file. If the chunk is encrypted, the
         function requires the correct password. If the `check_only` parameter is set, then only
@@ -2642,7 +2635,7 @@ class InnoArchive:
     def read_file(
         self,
         file: InnoFile,
-        password: Optional[str] = None,
+        password: str | None = None,
     ):
         """
         Read the contents of the given file record from the archive without performing any checks.
@@ -2671,7 +2664,7 @@ class InnoArchive:
     def read_file_and_check(
         self,
         file: InnoFile,
-        password: Optional[str] = None,
+        password: str | None = None,
     ):
         """
         Read the contents of the given file record from the archive. Raises a `ValueError` if the

@@ -1,18 +1,18 @@
 from __future__ import annotations
-from typing import List, Optional
+
 from enum import Enum
 
 from refinery.lib import chunks
-from refinery.units.crypto.cipher import StandardBlockCipherUnit, Arg
-
 from refinery.lib.crypto import (
-    rotl32,
     BlockCipher,
     BlockCipherFactory,
     BufferType,
     CipherInterface,
     CipherMode,
+    rotl32,
 )
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher import Arg, StandardBlockCipherUnit
 
 
 class SBOX(tuple, Enum):
@@ -54,12 +54,12 @@ class SBOX(tuple, Enum):
 
 class GOST(BlockCipher):
 
-    _key_data: List[int]
+    _key_data: list[int]
 
     block_size = 8
     key_size = frozenset({32})
 
-    def __init__(self, key: BufferType, mode: Optional[CipherMode], swap: bool = False, sbox: SBOX = SBOX.R34):
+    def __init__(self, key: BufferType, mode: CipherMode | None, swap: bool = False, sbox: SBOX = SBOX.R34):
         self.swap = swap
 
         sbox = sbox.expand()
@@ -109,11 +109,11 @@ class gost(StandardBlockCipherUnit, cipher=BlockCipherFactory(GOST)):
     """
     def __init__(
         self, key, iv=B'', padding=None, mode=None, raw=False,
-        swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False,
-        sbox: Arg.Option('-x', choices=SBOX, help=(
+        swap: Param[bool, Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.')] = False,
+        sbox: Param[str, Arg.Option('-x', choices=SBOX, help=(
             'Choose an SBOX. The default is {default}, which corresponds to the R-34.12.2015 standard. '
             'The other option is CBR, which is the SBOX used by the Central Bank of Russia.'
-        )) = SBOX.R34, **more
+        ))] = SBOX.R34, **more
     ):
         sbox = Arg.AsOption(sbox, SBOX)
         super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, swap=swap, sbox=sbox, **more)

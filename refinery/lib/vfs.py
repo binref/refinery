@@ -8,17 +8,16 @@ standard library functions `builtins.open`, `os.stat`, and `mmap.mmap`.
 from __future__ import annotations
 
 import builtins
+import io
+import mmap
 import os
 import os.path
-import io
 import stat
-import uuid
 import threading
-import mmap
+import uuid
 
-from typing import Dict, Optional
-from refinery.lib.types import buf
 from refinery.lib.structures import MemoryFile, MemoryFileMethods
+from refinery.lib.types import buf
 
 
 class VirtualFile:
@@ -34,9 +33,9 @@ class VirtualFile:
     name: str
     path: str
     node: int
-    data: Optional[buf]
+    data: buf | None
 
-    def __init__(self, fs: VirtualFileSystem, data: Optional[buf] = None, extension: Optional[str] = None):
+    def __init__(self, fs: VirtualFileSystem, data: buf | None = None, extension: str | None = None):
         extension = extension and F'.{extension}' or ''
         self.uuid = uuid.uuid4()
         self.name = F'{self.uuid!s}{extension}'
@@ -139,10 +138,10 @@ class VirtualFileSystem:
 
     def __init__(self):
         self._lock: threading.RLock = threading.RLock()
-        self._by_name: Dict[str, VirtualFile] = {}
-        self._by_node: Dict[int, VirtualFile] = {}
+        self._by_name: dict[str, VirtualFile] = {}
+        self._by_node: dict[int, VirtualFile] = {}
 
-    def new(self, data: Optional[buf] = None, extension: Optional[str] = None):
+    def new(self, data: buf | None = None, extension: str | None = None):
         return VirtualFile(self, data, extension)
 
     def install(self, file: VirtualFile):

@@ -4,12 +4,12 @@ A wrapper around the LIEF library.
 from __future__ import annotations
 
 import io
-import lief as lib
 
+import lief as lib
+import lief.COFF as COFF
 import lief.ELF as ELF
 import lief.MachO as MachO
 import lief.PE as PE
-import lief.COFF as COFF
 
 if True:
     lib.logging.disable()

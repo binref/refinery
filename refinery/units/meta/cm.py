@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from refinery.lib.meta import LazyMetaOracle, metavars
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
-from refinery.lib.meta import metavars, LazyMetaOracle
-
 
 _COMMON_PROPERTIES_LIST = ', '.join(LazyMetaOracle.derivations)
 
@@ -14,23 +14,23 @@ class cm(Unit):
     """
     def __init__(
         self,
-        invert  : Arg.Switch('-x', group='ALL', help='populate only options that have not been specified') = False,
-        all     : Arg.Switch('-a', group='ALL', help='populate all options') = False,
-        reset   : Arg.Switch('-r', help='discard all meta variables that were not explicitly specified') = False,
-        size    : Arg.Switch('-S', help='size of the chunk') = False,
-        ext     : Arg.Switch('-X', help='guess file extension') = False,
-        entropy : Arg.Switch('-E', help='compute data entropy') = False,
-        ic      : Arg.Switch('-C', help='compute the index of coincidence') = False,
-        magic   : Arg.Switch('-M', help='compute file magic') = False,
-        sha1    : Arg.Switch('-1', help='compute hash: SHA-1') = False,
-        sha256  : Arg.Switch('-2', help='compute hash: SHA-256') = False,
-        crc32   : Arg.Switch('-3', help='compute hash: CRC32') = False,
-        md5     : Arg.Switch('-5', help='compute hash: MD5') = False,
-        hashes  : Arg.Switch('-H', help='compute all common hashes') = False,
-        *names  : Arg.String(metavar='name', help=(
+        invert: Param[bool, Arg.Switch('-x', group='ALL', help='populate only options that have not been specified')] = False,
+        all: Param[bool, Arg.Switch('-a', group='ALL', help='populate all options')] = False,
+        reset: Param[bool, Arg.Switch('-r', help='discard all meta variables that were not explicitly specified')] = False,
+        size: Param[bool, Arg.Switch('-S', help='size of the chunk')] = False,
+        ext: Param[bool, Arg.Switch('-X', help='guess file extension')] = False,
+        entropy: Param[bool, Arg.Switch('-E', help='compute data entropy')] = False,
+        ic: Param[bool, Arg.Switch('-C', help='compute the index of coincidence')] = False,
+        magic: Param[bool, Arg.Switch('-M', help='compute file magic')] = False,
+        sha1: Param[bool, Arg.Switch('-1', help='compute hash: SHA-1')] = False,
+        sha256: Param[bool, Arg.Switch('-2', help='compute hash: SHA-256')] = False,
+        crc32: Param[bool, Arg.Switch('-3', help='compute hash: CRC32')] = False,
+        md5: Param[bool, Arg.Switch('-5', help='compute hash: MD5')] = False,
+        hashes: Param[bool, Arg.Switch('-H', help='compute all common hashes')] = False,
+        *names: Param[str, Arg.String(metavar='name', help=(
             F'A variable name that can include the common properties: {_COMMON_PROPERTIES_LIST}.'
             R' If none is given, the size variable is populated. For most of these, an optional '
-            R'argument is available that can be used as a shorthand:'))
+            R'argument is available that can be used as a shorthand:'))]
     ):
         def stringify(name):
             if isinstance(name, (bytes, bytearray)):

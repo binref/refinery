@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from refinery.lib.dotnet.deserialize import BinaryFormatterParser
+from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
-from refinery.lib.dotnet.deserialize import BinaryFormatterParser
 
 
 class dnds(DotNetJSONEncoderUnit):
@@ -13,8 +14,8 @@ class dnds(DotNetJSONEncoderUnit):
 
     def __init__(
         self,
-        dereference: Arg.Switch('-r', '--keep-references', off=True,
-            help='Do not resolve Object references in serialized data.') = True,
+        dereference: Param[bool, Arg.Switch('-r', '--keep-references', off=True,
+            help='Do not resolve Object references in serialized data.')] = True,
         encode=None, digest=None, arrays=False
     ):
         super().__init__(encode=encode, digest=digest, arrays=arrays, dereference=dereference)

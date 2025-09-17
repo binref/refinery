@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from io import BytesIO, SEEK_END
+from io import SEEK_END, BytesIO
 
 from refinery.units import Unit
 

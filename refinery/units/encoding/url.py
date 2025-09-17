@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 
 from urllib.parse import unquote_to_bytes
+
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
@@ -15,8 +17,8 @@ class url(Unit):
 
     def __init__(
         self,
-        plus: Arg.Switch('-p', help='also replace plus signs by spaces') = False,
-        hex : Arg.Switch('-x', help='hex encode every character in reverse mode') = False
+        plus: Param[bool, Arg.Switch('-p', help='also replace plus signs by spaces')] = False,
+        hex: Param[bool, Arg.Switch('-x', help='hex encode every character in reverse mode')] = False
     ):
         super().__init__(plus=plus, hex=hex)
 

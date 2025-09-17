@@ -1,33 +1,33 @@
 from __future__ import annotations
-from typing import List, Optional
 
-from refinery.units.crypto.cipher import (
-    Arg,
-    StandardBlockCipherUnit,
-)
-from refinery.lib.serpent import (
-    make_subkeys,
-    serpent_encrypt,
-    serpent_decrypt,
-)
 from refinery.lib.crypto import (
     BlockCipher,
     BlockCipherFactory,
     BufferType,
-    CipherMode,
     CipherInterface,
+    CipherMode,
+)
+from refinery.lib.serpent import (
+    make_subkeys,
+    serpent_decrypt,
+    serpent_encrypt,
+)
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher import (
+    Arg,
+    StandardBlockCipherUnit,
 )
 
 
 class Serpent(BlockCipher):
 
-    _key_data: List[int]
-    _key_derivation: List[int]
+    _key_data: list[int]
+    _key_derivation: list[int]
 
     block_size = 0x10
     key_size = frozenset(range(4, 0x101, 4))
 
-    def __init__(self, key: BufferType, mode: Optional[CipherMode], swap: bool = True):
+    def __init__(self, key: BufferType, mode: CipherMode | None, swap: bool = True):
         super().__init__(key, mode)
         self.swap = swap
 
@@ -61,7 +61,7 @@ class serpent(StandardBlockCipherUnit, cipher=BlockCipherFactory(Serpent)):
     """
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,
-        swap: Arg.Switch('-s', help='Read the bytes in each block in reverse order.') = False
+        swap: Param[bool, Arg.Switch('-s', help='Read the bytes in each block in reverse order.')] = False
     ):
         super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, swap=swap)
 

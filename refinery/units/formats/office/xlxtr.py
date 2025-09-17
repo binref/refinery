@@ -1,27 +1,27 @@
 from __future__ import annotations
 
-from typing import Union, Iterable, List, TYPE_CHECKING
-from fnmatch import fnmatch
-
-import re
-import io
 import enum
-import defusedxml
 import functools
+import io
+import re
 
 from datetime import datetime
+from fnmatch import fnmatch
+from typing import TYPE_CHECKING, Iterable
 
-from refinery.units import Arg, Unit
+import defusedxml
+
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from pyxlsb2.records import SheetRecord as XlsbSheet
-    from pyxlsb2 import Workbook as XlsbWorkbook
-    from xlrd2 import Book as XlrdWorkbook
     from openpyxl import Workbook as PyxlWorkbook
     from openpyxl.worksheet.worksheet import Worksheet as PyxlSheet
+    from pyxlsb2 import Workbook as XlsbWorkbook
+    from pyxlsb2.records import SheetRecord as XlsbSheet
+    from xlrd2 import Book as XlrdWorkbook
 
 
 defusedxml.defuse_stdlib()
@@ -139,7 +139,7 @@ class SheetReference:
 
 class Workbook:
 
-    workbook: Union[XlsbWorkbook, XlrdWorkbook, PyxlWorkbook]
+    workbook: XlsbWorkbook | XlrdWorkbook | PyxlWorkbook
 
     class _xlmode(enum.IntEnum):
         openpyxl = 1
@@ -211,7 +211,7 @@ class Workbook:
                 return value.isoformat(' ', 'seconds')
             return str(value)
 
-        def _padded(data: List[List[str]]):
+        def _padded(data: list[list[str]]):
             ncols = max((len(row) for row in data), default=0)
             for row in data:
                 row.extend([None] * (ncols - len(row)))

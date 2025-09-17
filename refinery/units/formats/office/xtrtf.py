@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 if TYPE_CHECKING:
@@ -14,8 +15,8 @@ class xtrtf(PathExtractorUnit):
     @PathExtractorUnit.Requires('oletools', ['formats', 'office', 'extended'])
     def _oletools():
         import oletools
-        import oletools.rtfobj
         import oletools.oleobj
+        import oletools.rtfobj
         return oletools
 
     def unpack(self, data):

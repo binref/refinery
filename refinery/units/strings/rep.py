@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from itertools import repeat
 
+from refinery.lib.types import Param, isq
 from refinery.units import Arg, Unit
 
 
@@ -14,14 +15,14 @@ class rep(Unit):
 
     def __init__(
         self,
-        count: Arg.NumSeq(help=(
+        count: Param[isq, Arg.NumSeq(help=(
             'Defines the number of outputs to generate for each input. The default is {default}. '
             'You can specify any multibin expression that defines an integer iterable here: Each '
-            'input chunk will be replicated once for each element of that sequence.')) = 2,
-        label: Arg.String(help=(
+            'input chunk will be replicated once for each element of that sequence.'))] = 2,
+        label: Param[str, Arg.String(help=(
             'If specified, the meta variable with this name will be populated with the index of '
             'the replicated chunk. When the count parameter is an integer, this label will be '
-            'equivalent to the index meta variable.')) = None
+            'equivalent to the index meta variable.'))] = ''
     ):
         super().__init__(count=count, label=label)
 
@@ -39,12 +40,10 @@ class rep(Unit):
 
         self.log_debug('emitting each repeated item as an individual chunk')
 
-        label = self.args.label
-        if label is None:
+        if label := self.args.label:
+            meta = {}
+            for counter in self.args.count:
+                meta[label] = counter
+                yield self.labelled(data, **meta)
+        else:
             yield from repeat(data, count())
-            return
-
-        meta = {}
-        for counter in self.args.count:
-            meta[label] = counter
-            yield self.labelled(data, **meta)

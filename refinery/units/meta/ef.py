@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-import re
 import os
 import os.path
+import re
 import sys
 
-from pathlib import Path
 from datetime import datetime
-from typing import Iterable, Dict, Set, Optional
+from pathlib import Path
+from typing import Iterable
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import bounds, exception_to_string
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
-
 
 _ERROR_IGNORES = {
     'nt': {'system volume information'}
@@ -27,7 +27,7 @@ class ef(Unit):
     """
 
     def __init__(self,
-        *filenames: Arg.String(metavar='FILEMASK', nargs='+', help=(
+        *filenames: Param[str, Arg.String(metavar='FILEMASK', nargs='+', help=(
             'A list of file masks. Each matching file will be read from disk and '
             'emitted. The file masks can include format string expressions which '
             'will be substituted from the current meta variables. The masks can '
@@ -35,25 +35,25 @@ class ef(Unit):
             'Posix platforms, where it has to be enabled explicitly using the -w '
             'switch. On Windows, the feature is enabled by default and can be '
             'disabled using the -t switch.'
-        )),
-        list: Arg.Switch('-l', help='Only lists files with metadata.') = False,
-        meta: Arg.Switch('-m', help=(
+        ))],
+        list: Param[bool, Arg.Switch('-l', help='Only lists files with metadata.')] = False,
+        meta: Param[bool, Arg.Switch('-m', help=(
             'Adds the atime, mtime, ctime, and size metadata variables.'
-        )) = False,
-        size: Arg.Bounds('-s', help=(
-            'If specified, only files are read whose size is in the given range.')) = None,
-        read: Arg.Number('-r', help=(
+        ))] = False,
+        size: Param[slice, Arg.Bounds('-s', help=(
+            'If specified, only files are read whose size is in the given range.'))] = None,
+        read: Param[int, Arg.Number('-r', help=(
             'If specified, files will be read in chunks of size N and each '
             'chunk is emitted as one element in the output list.'
-        )) = 0,
-        wild: Arg.Switch('-w', group='W', help='Force use of wildcard patterns in file masks.') = False,
-        tame: Arg.Switch('-t', group='W', help='Disable wildcard patterns in file masks.') = False,
-        symlinks: Arg.Switch('-y', help='Follow symbolic links and junctions, these are ignored by default.') = False,
-        linewise: Arg.Switch('-i', help=(
+        ))] = 0,
+        wild: Param[bool, Arg.Switch('-w', group='W', help='Force use of wildcard patterns in file masks.')] = False,
+        tame: Param[bool, Arg.Switch('-t', group='W', help='Disable wildcard patterns in file masks.')] = False,
+        symlinks: Param[bool, Arg.Switch('-y', help='Follow symbolic links and junctions, these are ignored by default.')] = False,
+        linewise: Param[bool, Arg.Switch('-i', help=(
             'Read the file linewise. By default, one line is read at a time. '
             'In line mode, the --read argument can be used to read the given '
             'number of lines in each chunk.'
-        )) = False
+        ))] = False
     ):
         if wild and tame:
             raise ValueError('Cannot be both wild and tame!')
@@ -166,8 +166,7 @@ class ef(Unit):
 
         try:
             os.scandir = _patched_scandir
-            for match in path.glob(pattern):
-                yield match
+            yield from path.glob(pattern)
         finally:
             os.scandir = scandir
 
@@ -186,8 +185,8 @@ class ef(Unit):
             unit = self
 
             def __init__(self):
-                self._history: Set[type] = set()
-                self._message: Dict[type, Optional[str]] = {
+                self._history: set[type] = set()
+                self._message: dict[type, str | None] = {
                     ValueError: (
                         None
                     ), PermissionError: (

@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import abc
 
-from refinery.units import Arg, Unit, Chunk
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 class FrameSlicer(Unit, abstract=True):
 
-    def __init__(self, *slice: Arg.Bounds(nargs='*', default=[slice(None, None)]), **keywords):
+    def __init__(self, *slice: Param[slice, Arg.Bounds(nargs='*', default=[slice(None, None)])], **keywords):
         super().__init__(slice=list(slice), **keywords)
         for s in self.args.slice:
             if s.step and s.step < 0:
@@ -24,8 +25,8 @@ class ConditionalUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        retain: Arg.Switch('-r',
-            help='Move non-matching chunks out of scope rather than discarding them.') = False,
+        retain: Param[bool, Arg.Switch('-r',
+            help='Move non-matching chunks out of scope rather than discarding them.')] = False,
         **kwargs
     ):
         super().__init__(retain=retain, **kwargs)

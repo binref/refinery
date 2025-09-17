@@ -1,16 +1,16 @@
 from __future__ import annotations
-from typing import List, Dict, Tuple, Callable, Optional
 
 import enum
-import struct
 import json
+import struct
 
-from refinery.units.formats import UnpackResult, PathExtractorUnit, Arg
+from typing import Callable
 
 from refinery.lib import lief
 from refinery.lib.lcid import LCID
 from refinery.lib.structures import Struct, StructReader
-from refinery.lib.types import buf
+from refinery.lib.types import Param, buf
+from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 
 class RSRC(enum.IntEnum):
@@ -65,7 +65,7 @@ class perc(PathExtractorUnit):
     """
     def __init__(
         self, *paths,
-        pretty: Arg.Switch('-p', help='Add missing headers to bitmap and icon resources.') = False,
+        pretty: Param[bool, Arg.Switch('-p', help='Add missing headers to bitmap and icon resources.')] = False,
         **kwargs
     ):
         super().__init__(*paths, pretty=pretty, **kwargs)
@@ -126,7 +126,7 @@ class perc(PathExtractorUnit):
                     offset=entry.offset,
                 )
 
-    def _get_lcid(self, node_data) -> Optional[str]:
+    def _get_lcid(self, node_data) -> str | None:
         try:
             pid = node_data.id & 0x3FF
             sid = node_data.id >> 0x0A
@@ -150,7 +150,7 @@ class perc(PathExtractorUnit):
         self,
         pe: lief.PE.Binary,
         extract_raw_data: Callable[[], buf],
-        parts: Tuple[RSRC, int, int]
+        parts: tuple[RSRC, int, int]
     ) -> buf:
         try:
             icondir = self._get_icon_dir(pe)
@@ -189,7 +189,7 @@ class perc(PathExtractorUnit):
             return
         yield from self._search(pe, pe.resources)
 
-    def _mktbl(ids: List[Tuple[int, int, int]]) -> Dict[int, Dict[int, int]]:
+    def _mktbl(ids: list[tuple[int, int, int]]) -> dict[int, dict[int, int]]:
         table = {}
         for pid, sid, lcid in ids:
             if pid not in table:

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from itertools import islice
+from typing import TYPE_CHECKING
 
-from refinery.units import Unit
 from refinery.lib.structures import MemoryFile
+from refinery.units import Unit
 
 if TYPE_CHECKING:
     from PIL.Image import Image

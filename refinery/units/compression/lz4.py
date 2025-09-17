@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import io
 
-from refinery.lib.structures import StructReader, StreamDetour
+from refinery.lib.structures import StreamDetour, StructReader
+from refinery.units import RefineryPartialResult, Unit
 from refinery.units.crypto.hash.xxhash import xxhash
-from refinery.units import Unit, RefineryPartialResult
 
 
 class LZ4Reader(StructReader):

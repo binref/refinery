@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Union
-
 from refinery.lib.tools import isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
-def _txt(value: Union[bytes, str]):
+def _txt(value: bytes | str):
     if value is None:
         return None
     if not isinstance(value, str):

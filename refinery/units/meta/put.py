@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import itertools
 
-from refinery.units import Arg, Unit, Chunk
-from refinery.lib.tools import isbuffer, typename
 from refinery.lib.meta import check_variable_name
+from refinery.lib.tools import isbuffer, typename
+from refinery.lib.types import Param, isq
+from refinery.units import Arg, Chunk, Unit
 
 _EMPTY = object()
 
@@ -16,10 +17,10 @@ class put(Unit):
     """
     def __init__(
         self,
-        name : Arg.String(help='The name of the variable to be used.'),
-        value: Arg.NumSeq(check=False, help=(
+        name: Param[str, Arg.String(help='The name of the variable to be used.')],
+        value: Param[isq, Arg.NumSeq(check=False, help=(
             'The value for the variable. If no value is given, the entire current chunk is stored.'
-        )) = _EMPTY
+        ))] = _EMPTY
     ):
         super().__init__(name=check_variable_name(name), value=value)
 

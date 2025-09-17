@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import Iterable, List
-from refinery.units import Arg, Unit, Chunk
+from typing import Iterable
+
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Chunk, Unit
 
 
 class transpose(Unit):
@@ -18,7 +20,7 @@ class transpose(Unit):
 
     def __init__(
         self,
-        padding: Arg(help='Optional byte sequence to use as padding for incomplete rows.') = B'',
+        padding: Param[buf, Arg(help='Optional byte sequence to use as padding for incomplete rows.')] = B'',
     ):
         super().__init__(bigendian=False, padding=padding)
 
@@ -36,7 +38,7 @@ class transpose(Unit):
         yield matrix
 
     def process(self, data: Chunk):
-        chunks: List[Chunk] = data.temp
+        chunks: list[Chunk] = data.temp
         if not chunks:
             return
         length = [len(chunk) for chunk in chunks]

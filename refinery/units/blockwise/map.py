@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, Sequence
-
 from itertools import cycle
+from typing import Sequence
 
-from refinery.units.blockwise import Arg, BlockTransformation
 from refinery.lib.tools import isbuffer
+from refinery.lib.types import Param, isq
+from refinery.units.blockwise import Arg, BlockTransformation
 
 
 class map(BlockTransformation):
@@ -19,17 +19,17 @@ class map(BlockTransformation):
     do not occur in the index sequence. If this argument is not specified, such blocks are left
     unchanged.
     """
-    _map: Optional[Dict[int, int]]
+    _map: dict[int, int]
 
     def __init__(
         self,
-        index: Arg.NumSeq(help='index characters'),
-        image: Arg.NumSeq(help='image characters'),
-        default: Arg.NumSeq(help='default value') = None,
-        blocksize=None
+        index   : Param[isq, Arg.NumSeq(help='index characters')],
+        image   : Param[isq, Arg.NumSeq(help='image characters')],
+        default : Param[isq, Arg.NumSeq(help='default value')] = (),
+        blocksize=1
     ):
         super().__init__(blocksize=blocksize, index=index, image=image, default=default, _truncate=2)
-        self._map = None
+        self._map = {}
 
     def reverse(self, data):
         return self._process(data, self.args.image, self.args.index, self.args.default)
@@ -37,7 +37,7 @@ class map(BlockTransformation):
     def process(self, data):
         return self._process(data, self.args.index, self.args.image, self.args.default)
 
-    def _process(self, data: bytearray, index: Sequence[int], image: Sequence[int], default: Optional[Sequence[int]]):
+    def _process(self, data: bytearray, index: Sequence[int], image: Sequence[int], default: Sequence[int]):
         if not self.bytestream:
             if isbuffer(index):
                 self.log_info(F'chunking index sequence into blocks of size {self.blocksize}')
@@ -58,7 +58,7 @@ class map(BlockTransformation):
 
         if self.bytestream:
             mapping = dict(zip(index, image))
-            if default is not None:
+            if default:
                 d = iter(cycle(default))
                 mapping = bytes(mapping.get(c, d) for c in range(0x100))
             else:
@@ -69,12 +69,12 @@ class map(BlockTransformation):
             return data
         try:
             self.log_info(default)
-            self._def = default if default is None else cycle(default)
+            self._def = cycle(default) if default else None
             self._map = dict(zip(index, image))
             return super().process(data)
         finally:
-            self._map = None
+            self._map = {}
 
-    def process_block(self, token):
-        default = next(it) if (it := self._def) else token
-        return self._map.get(token, default)
+    def process_block(self, block):
+        default = next(it) if (it := self._def) else block
+        return self._map.get(block, default)

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from refinery.units import Arg, Unit
-
-from refinery.lib.meta import check_variable_name
 from refinery.lib.frame import Chunk
+from refinery.lib.meta import check_variable_name
 from refinery.lib.tools import isbuffer
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class swap(Unit):
@@ -17,8 +17,8 @@ class swap(Unit):
     """
     def __init__(
         self,
-        src: Arg.String(help='The meta variable name.'),
-        dst: Arg.String(help='Optional name of the second meta variable.') = None
+        src: Param[str, Arg.String(help='The meta variable name.')],
+        dst: Param[str, Arg.String(help='Optional name of the second meta variable.')] = None
     ):
         super().__init__(
             src=check_variable_name(src),

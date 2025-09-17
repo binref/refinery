@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import List, NamedTuple
 from struct import unpack
+from typing import NamedTuple
 
-from refinery.units.crypto.cipher import StandardBlockCipherUnit
 from refinery.lib.crypto import (
-    rotl128,
-    rotl8,
-    rotr8,
     BlockCipher,
     BlockCipherFactory,
     BufferType,
+    rotl8,
+    rotl128,
+    rotr8,
 )
+from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 M32 = 0x0000000_FFFFFFFF
 M64 = 0xFFFFFFFFFFFFFFFF
@@ -61,8 +61,8 @@ _F_SBOX_SELECT = [
 
 
 class CamelliaKey(NamedTuple):
-    ks: List[int]
-    kw: List[int]
+    ks: list[int]
+    kw: list[int]
 
 
 def F(F_IN: int, KE: int):
@@ -176,7 +176,7 @@ class Camellia(BlockCipher):
         ks = []
         kw = []
 
-        def add_key_part(key_list: List[int], key_part: int) -> None:
+        def add_key_part(key_list: list[int], key_part: int) -> None:
             key_list.append(key_part >> 64)
             key_list.append(key_part & M64)
 
@@ -221,4 +221,3 @@ class camellia(StandardBlockCipherUnit, cipher=BlockCipherFactory(Camellia)):
     """
     Camellia encryption and decryption.
     """
-    pass

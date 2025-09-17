@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
 from refinery.lib.tools import splitchunks
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class chop(Unit):
@@ -11,12 +12,12 @@ class chop(Unit):
 
     def __init__(
         self,
-        size: Arg.Number('size', help='Chop data into chunks of this size'),
-        step: Arg.Number('step', help=(
+        size: Param[int, Arg.Number('size', help='Chop data into chunks of this size')],
+        step: Param[int, Arg.Number('step', help=(
             'Optionally specify a step size (which is equal to the size by default) which indicates the number of bytes by '
-            'which the cursor will be increased after extracting a chunk.')) = None,
-        truncate: Arg.Switch('-t', help=(
-            'Truncate possible excess bytes at the end of the input, by default they are appended as a single chunk.')) = False,
+            'which the cursor will be increased after extracting a chunk.'))] = None,
+        truncate: Param[bool, Arg.Switch('-t', help=(
+            'Truncate possible excess bytes at the end of the input, by default they are appended as a single chunk.'))] = False,
     ):
         return super().__init__(size=size, step=step, truncate=truncate)
 

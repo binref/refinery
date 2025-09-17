@@ -2,15 +2,13 @@
 A module with common functions used by decompression units.
 """
 from __future__ import annotations
-from typing import List, Optional, Union
+
+import lzma
 
 from collections import Counter
 from itertools import repeat
 
-import lzma
-
 from refinery.lib.structures import StructReader
-
 
 DECODE_TABLE_SYMBOL_SHIFT = 4
 DECODE_TABLE_MAX_SYMBOL = ((1 << (16 - DECODE_TABLE_SYMBOL_SHIFT)) - 1)
@@ -38,11 +36,11 @@ def make_huffman_decode_table(
     table_data: bytearray,
     table_bits: int,
     max_codeword_len: int,
-) -> List[int]:
+) -> list[int]:
     remainder = 1
     codeword_length = 1
     entry_pos = 0
-    decode_table: List[int] = [0] * (1 << table_bits)
+    decode_table: list[int] = [0] * (1 << table_bits)
     sym_count = len(table_data)
     len_counts = Counter(table_data)
 
@@ -127,7 +125,7 @@ class BitBufferedReader:
     A helper class to read bitwise from the compressed input stream.
     """
 
-    def __init__(self, buffer: Union[bytearray, StructReader], bits_per_read: int = 32):
+    def __init__(self, buffer: bytearray | StructReader, bits_per_read: int = 32):
         if not isinstance(buffer, StructReader):
             buffer = StructReader(memoryview(buffer), bigendian=False)
         self._reader: StructReader[memoryview] = buffer
@@ -183,7 +181,7 @@ class BitBufferedReader:
         assert bits.bit_length() <= count
         return bits
 
-    def collect(self, count: Optional[int] = None) -> int:
+    def collect(self, count: int | None = None) -> int:
         if count is None:
             count = self._bits_per_read
         offset = self._bit_buffer_size - count
@@ -204,7 +202,7 @@ class BitBufferedReader:
         self._bit_buffer_data = 0
 
 
-def read_huffman_symbol(reader: BitBufferedReader, decode_table: List[int], table_bits: int, max_codeword_len: int):
+def read_huffman_symbol(reader: BitBufferedReader, decode_table: list[int], table_bits: int, max_codeword_len: int):
     reader.collect(max_codeword_len)
     entry = decode_table[reader.peek(table_bits)]
     symbol = entry >> DECODE_TABLE_SYMBOL_SHIFT

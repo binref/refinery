@@ -1,28 +1,29 @@
 from __future__ import annotations
-from typing import List, Optional, ClassVar, Dict
 
-from refinery.lib.speck import (
-    speck_encrypt32,
-    speck_encrypt64,
-    speck_decrypt32,
-    speck_decrypt64,
-    Speck6496KeySchedule,
-    Speck64128KeySchedule,
-    Speck128128KeySchedule,
-    Speck128192KeySchedule,
-    Speck128256KeySchedule,
-)
+from typing import ClassVar
 
-from refinery.units.crypto.cipher import (
-    Arg,
-    StandardBlockCipherUnit,
-)
 from refinery.lib.crypto import (
     BlockCipher,
     BlockCipherFactory,
     BufferType,
     CipherInterface,
     CipherMode,
+)
+from refinery.lib.speck import (
+    Speck6496KeySchedule,
+    Speck64128KeySchedule,
+    Speck128128KeySchedule,
+    Speck128192KeySchedule,
+    Speck128256KeySchedule,
+    speck_decrypt32,
+    speck_decrypt64,
+    speck_encrypt32,
+    speck_encrypt64,
+)
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher import (
+    Arg,
+    StandardBlockCipherUnit,
 )
 
 
@@ -31,10 +32,10 @@ class Speck(BlockCipher):
     block_size: int
     key_size = frozenset((12, 16, 24, 32))
 
-    _round_keys: List[int]
+    _round_keys: list[int]
     _rounds: int
 
-    _ROUND_BY_BLOCK_AND_KEY_SIZE: ClassVar[Dict[int, Dict[int, int]]] = {
+    _ROUND_BY_BLOCK_AND_KEY_SIZE: ClassVar[dict[int, dict[int, int]]] = {
         8: {12: 26, 16: 27},
         16: {16: 32, 24: 33, 32: 34}
     }
@@ -63,7 +64,7 @@ class Speck(BlockCipher):
             elif key_length == 16:
                 self._round_keys = Speck64128KeySchedule(key)
 
-    def __init__(self, key: BufferType, mode: Optional[CipherMode], block_size: int = 16):
+    def __init__(self, key: BufferType, mode: CipherMode | None, block_size: int = 16):
         self.block_size = block_size
         super().__init__(key, mode)
 
@@ -88,7 +89,7 @@ class speck(StandardBlockCipherUnit, cipher=BlockCipherFactory(Speck)):
     """
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,
-        block_size: Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 8 and 16.') = 16,
+        block_size: Param[int, Arg.Number('-b', help='Cipher block size, default is {default}. Valid choices are 8 and 16.')] = 16,
         **more
     ):
         return super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, block_size=block_size, **more)

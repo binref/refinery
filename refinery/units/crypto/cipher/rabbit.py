@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import struct
 
-from refinery.lib.types import Iterable, buf
+from refinery.lib.types import Param, Iterable, buf
 from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 
@@ -93,7 +93,7 @@ class rabbit(StreamCipherUnit):
     """
     key_size = {16}
 
-    def __init__(self, key, discard=0, stateful=False, iv: Arg('-i', '--iv', help='Optional initialization vector.') = B''):
+    def __init__(self, key, discard=0, stateful=False, iv: Param[buf, Arg('-i', '--iv', help='Optional initialization vector.')] = B''):
         super().__init__(key=key, iv=iv, stateful=stateful, discard=discard)
 
     def keystream(self) -> Iterable[int]:

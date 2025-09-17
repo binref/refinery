@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import abc
 import enum
+
 from struct import unpack
-from typing import List
 
 
 class OpArgument(abc.ABC):
@@ -182,7 +182,7 @@ class Op(abc.ABC):
         op_type: OpType,
         code: bytes,
         mnemonic: str,
-        arguments: List[OpArgument],
+        arguments: list[OpArgument],
         description: str,
         is_switch: bool = False,
         is_alias: bool = False,
@@ -230,7 +230,7 @@ class Instruction:
     describing the data in memory.
     """
 
-    def __init__(self, data: bytes, offset: int, op: Op, arguments: List[Argument]):
+    def __init__(self, data: bytes, offset: int, op: Op, arguments: list[Argument]):
         self.data = data
         self.offset = offset
         self.op = op

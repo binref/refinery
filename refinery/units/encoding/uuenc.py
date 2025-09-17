@@ -4,10 +4,10 @@ import itertools
 import pathlib
 import re
 
-from refinery.units import Unit, RefineryPartialResult
-from refinery.lib.structures import MemoryFile
 from refinery.lib import chunks
 from refinery.lib.meta import metavars
+from refinery.lib.structures import MemoryFile
+from refinery.units import RefineryPartialResult, Unit
 
 
 class uuenc(Unit):

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from itertools import combinations, combinations_with_replacement, permutations, product
 from typing import Iterable
-from itertools import product, combinations, combinations_with_replacement, permutations
 
 from refinery.lib.argformats import sliceobj
-from refinery.units import Arg, Unit, Chunk
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 class urn(Unit):
@@ -15,14 +16,14 @@ class urn(Unit):
     """
 
     def __init__(self,
-        size: Arg.String(metavar='a:b', help=(
+        size: Param[str, Arg.String(metavar='a:b', help=(
             'Generate sequences of length x, where x is in [a:b]. The default value is {default}, '
-            'where N is the number of chunks in the current frame.')) = 'N:N',
-        keep: Arg.Switch('-k', help=(
-            'Chunks are not returned back to the urn after being drawn.')) = False,
-        sort: Arg.Switch('-s', help=(
+            'where N is the number of chunks in the current frame.'))] = 'N:N',
+        keep: Param[bool, Arg.Switch('-k', help=(
+            'Chunks are not returned back to the urn after being drawn.'))] = False,
+        sort: Param[bool, Arg.Switch('-s', help=(
             'The order of items does not matter; for the output, chunks are sorted according to '
-            'their original position in the frame.')) = False
+            'their original position in the frame.'))] = False
     ):
         super().__init__(size=size, keep=keep, sort=sort)
 

@@ -8,61 +8,6 @@ and seems mildly insane in hindsight.
 """
 from __future__ import annotations
 
-from typing import (
-    get_origin,
-    Any,
-    TYPE_CHECKING,
-    Callable,
-    ClassVar,
-    Generator,
-    Dict,
-    Set,
-    Generic,
-    List,
-    Tuple,
-    NamedTuple,
-    Optional,
-    Sequence,
-    TypeVar,
-    Union,
-)
-
-from dataclasses import dataclass, field
-from enum import auto, Enum, IntFlag
-from functools import partial, wraps, cached_property
-from pathlib import Path
-from string import Formatter
-from time import process_time
-from urllib.parse import unquote
-from datetime import datetime, timedelta
-
-from refinery.lib.inno import CaseInsensitiveDict
-from refinery.lib.inno.archive import InnoArchive, Flags
-from refinery.lib.types import AST, INF, NoMask
-from refinery.lib.patterns import formats
-
-from refinery.lib.inno.ifps import (
-    AOp,
-    COp,
-    EHType,
-    Function,
-    IFPSFile,
-    IFPSType,
-    Op,
-    Instruction,
-    Operand,
-    OperandType,
-    TArray,
-    TC,
-    TRecord,
-    TStaticArray,
-    TPrimitive,
-    Value,
-    VariableBase,
-    VariableSpec,
-    VariableType,
-)
-
 import fnmatch
 import hashlib
 import inspect
@@ -73,6 +18,52 @@ import random
 import re
 import struct
 
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum, IntFlag, auto
+from functools import cached_property, partial, wraps
+from pathlib import Path
+from string import Formatter
+from time import process_time
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Generator,
+    Generic,
+    NamedTuple,
+    Sequence,
+    TypeVar,
+    get_origin,
+)
+from urllib.parse import unquote
+
+from refinery.lib.inno import CaseInsensitiveDict
+from refinery.lib.inno.archive import Flags, InnoArchive
+from refinery.lib.inno.ifps import (
+    TC,
+    AOp,
+    COp,
+    EHType,
+    Function,
+    IFPSFile,
+    IFPSType,
+    Instruction,
+    Op,
+    Operand,
+    OperandType,
+    TArray,
+    TPrimitive,
+    TRecord,
+    TStaticArray,
+    Value,
+    VariableBase,
+    VariableSpec,
+    VariableType,
+)
+from refinery.lib.patterns import formats
+from refinery.lib.types import AST, INF, NoMask
 
 if TYPE_CHECKING:
     from typing import ParamSpec
@@ -104,12 +95,12 @@ class Variable(VariableBase, Generic[_T]):
     """
     This class represents a global or stack variable in the IFPS runtime.
     """
-    data: Optional[Union[List[Variable], _T]]
+    data: list[Variable] | _T | None
     """
     The variable's value. This is a list of `refinery.lib.inno.emulator.Variable`s for container
     types, a `refinery.lib.inno.emulator.Variable` for pointer types, and a basic type otherwise.
     """
-    path: Tuple[int, ...]
+    path: tuple[int, ...]
     """
     A tuple of integers that specify the seuqnce of indices required to access it, relative to the
     base variable given via `spec`.
@@ -179,9 +170,9 @@ class Variable(VariableBase, Generic[_T]):
     def __init__(
         self,
         type: IFPSType,
-        spec: Optional[VariableSpec] = None,
-        path: Tuple[int, ...] = (),
-        data: Optional[Union[_T, List]] = None
+        spec: VariableSpec | None = None,
+        path: tuple[int, ...] = (),
+        data: _T | list | None = None
     ):
         super().__init__(type, spec)
         self.path = path
@@ -239,7 +230,7 @@ class Variable(VariableBase, Generic[_T]):
 
         self.data = default(self.type)
 
-    def _wrap(self, value: Union[Value, _T], key: Optional[int] = None) -> _T:
+    def _wrap(self, value: Value | _T, key: int | None = None) -> _T:
         if (t := self.type.py_type(key)) and not isinstance(value, t):
             if issubclass(t, int):
                 if isinstance(value, str) and len(value) == 1:
@@ -292,7 +283,7 @@ class Variable(VariableBase, Generic[_T]):
             var = Variable(var.type, data=var.get())
         self.data = var
 
-    def set(self, value: Union[_T, Sequence, Variable]):
+    def set(self, value: _T | Sequence | Variable):
         """
         Assign a new value to the variable. This can either be an immediate value or a variable.
         For container types, it can also be a sequence of those.
@@ -321,7 +312,7 @@ class Variable(VariableBase, Generic[_T]):
         if self.pointer:
             return self.deref().get()
         if self.container:
-            data: List[Variable] = self.data
+            data: list[Variable] = self.data
             return [v.get() for v in data]
         return self.data
 
@@ -358,7 +349,6 @@ class NeedSymbol(NotImplementedError):
     An exception raised by `refinery.lib.inno.emulator.IFPSEmulator` if the runtime calls out to
     an external symbol that is not implemented.
     """
-    pass
 
 
 class OpCodeNotImplemented(NotImplementedError):
@@ -366,14 +356,12 @@ class OpCodeNotImplemented(NotImplementedError):
     An exception raised by `refinery.lib.inno.emulator.IFPSEmulator` if an unsupported opcode is
     encountered during emulation.
     """
-    pass
 
 
 class EmulatorException(RuntimeError):
     """
     A generic exception representing any error that occurs during emulation.
     """
-    pass
 
 
 class AbortEmulation(Exception):
@@ -381,7 +369,6 @@ class AbortEmulation(Exception):
     This exception can be raised by an external function handler to signal the emulator that script
     execution should be aborted.
     """
-    pass
 
 
 class IFPSException(RuntimeError):
@@ -389,7 +376,7 @@ class IFPSException(RuntimeError):
     This class represents an exception within the IFPS runtime, i.e. an exception that is subject
     to IFPS exception handling.
     """
-    def __init__(self, msg: str, parent: Optional[BaseException] = None):
+    def __init__(self, msg: str, parent: BaseException | None = None):
         super().__init__(msg)
         self.parent = parent
 
@@ -398,28 +385,24 @@ class EmulatorTimeout(TimeoutError):
     """
     The emulation timed out based on the given time limit in the configuration.
     """
-    pass
 
 
 class EmulatorExecutionLimit(TimeoutError):
     """
     The emulation timed out based on the given execution limit in the configuration.
     """
-    pass
 
 
 class EmulatorMaxStack(MemoryError):
     """
     The emulation was aborted because the stack limit given in the configuration was exceeded.
     """
-    pass
 
 
 class EmulatorMaxCalls(MemoryError):
     """
     The emulation was aborted because the call stack limit given in the configuration was exceeded.
     """
-    pass
 
 
 @dataclass
@@ -427,15 +410,15 @@ class ExceptionHandler:
     """
     This class represents an exception handler within the IFPS runtime.
     """
-    finally_one: Optional[int]
+    finally_one: int | None
     """
     Code offset of the first finally handler.
     """
-    catch_error: Optional[int]
+    catch_error: int | None
     """
     Code offset of the catch handler.
     """
-    finally_two: Optional[int]
+    finally_two: int | None
     """
     Code offset of the second finally handler.
     """
@@ -457,7 +440,7 @@ class IFPSEmulatedFunction(NamedTuple):
     """
     The actual callable function that implements the symbol.
     """
-    spec: List[bool]
+    spec: list[bool]
     """
     A list of boolean values, one for each parameter of the function. Each boolean indicates
     whether the parameter at that index is passed by reference.
@@ -488,8 +471,8 @@ class IFPSEmulatorConfig:
     """
     x64: bool = True
     admin: bool = True
-    windows_os_version: Tuple[int, int, int] = (10, 0, 10240)
-    windows_sp_version: Tuple[int, int] = (2, 0)
+    windows_os_version: tuple[int, int, int] = (10, 0, 10240)
+    windows_sp_version: tuple[int, int] = (2, 0)
     throw_abort: bool = False
     log_calls: bool = False
     log_passwords: bool = True
@@ -503,7 +486,7 @@ class IFPSEmulatorConfig:
     sleep_scale: float = 0.0
     max_data_stack: int = 1_000_000
     max_call_stack: int = 4096
-    environment: Dict[str, str] = field(default_factory=dict)
+    environment: dict[str, str] = field(default_factory=dict)
     user_name: str = 'Frank'
     temp_path: str = ''
     host_name: str = 'Frank-PC'
@@ -592,7 +575,6 @@ class NewPassword(str):
     An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each
     password that is entered by the emulated setup script to a password edit control.
     """
-    pass
 
 
 class NewMutex(str):
@@ -600,7 +582,6 @@ class NewMutex(str):
     An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each
     mutex registered by the script.
     """
-    pass
 
 
 class NewInstruction(NamedTuple):
@@ -626,7 +607,7 @@ class EventCall(Generic[_Y, _T]):
     def __init__(self, call: Generator[_Y, Any, _T]):
         self._call = call
         self._done = False
-        self._buffer: List[_Y] = []
+        self._buffer: list[_Y] = []
         self._value = None
 
     @classmethod
@@ -687,8 +668,8 @@ class IFPSEmulator:
 
     def __init__(
         self,
-        archive: Union[InnoArchive, IFPSFile],
-        options: Optional[IFPSEmulatorConfig] = None,
+        archive: InnoArchive | IFPSFile,
+        options: IFPSEmulatorConfig | None = None,
         **more
     ):
         if isinstance(archive, InnoArchive):
@@ -701,9 +682,9 @@ class IFPSEmulator:
             self.ifps = ifps = archive
         self.config = options or IFPSEmulatorConfig(**more)
         self.globals = [Variable(v.type, v.spec) for v in ifps.globals]
-        self.stack: List[Variable] = []
-        self.mutexes: Set[str] = set()
-        self.symbols: Dict[str, Function] = CaseInsensitiveDict()
+        self.stack: list[Variable] = []
+        self.mutexes: set[str] = set()
+        self.symbols: dict[str, Function] = CaseInsensitiveDict()
         self.reset()
         for pfn in ifps.functions:
             self.symbols[pfn.name] = pfn
@@ -771,7 +752,7 @@ class IFPSEmulator:
         def operator_in(a, b):
             return a in b
 
-        def getvar(op: Union[VariableSpec, Operand]) -> Variable:
+        def getvar(op: VariableSpec | Operand) -> Variable:
             if not isinstance(op, Operand):
                 v = op
                 k = None
@@ -811,9 +792,9 @@ class IFPSEmulator:
             fn: Function
             ip: int
             sp: int
-            eh: List[ExceptionHandler]
+            eh: list[ExceptionHandler]
 
-        callstack: List[CallState] = []
+        callstack: list[CallState] = []
         exec_start = process_time()
         stack = self.stack
         _cfg_max_call_stack = self.config.max_call_stack
@@ -845,7 +826,7 @@ class IFPSEmulator:
                         decl.classname or decl.module or '')
 
                 name = function.name
-                registry: Dict[str, IFPSEmulatedFunction] = self.external_symbols.get(namespace, {})
+                registry: dict[str, IFPSEmulatedFunction] = self.external_symbols.get(namespace, {})
                 handler = registry.get(name)
 
                 if handler:
@@ -1115,8 +1096,8 @@ class IFPSEmulator:
                 raise RuntimeError(F'Instruction pointer moved out of bounds to 0x{ip:X}.')
 
     external_symbols: ClassVar[
-        Dict[str,                        # class name for methods or empty string for functions
-        Dict[str, IFPSEmulatedFunction]] # method or function name to emulation info
+        dict[str,                        # class name for methods or empty string for functions
+        dict[str, IFPSEmulatedFunction]] # method or function name to emulation info
     ] = CaseInsensitiveDict()
 
     def external(*args, static=True, __reg: dict = external_symbols, **kwargs):
@@ -1135,7 +1116,7 @@ class IFPSEmulator:
             pfn.__doc__ = docs
 
             void = kwargs.get('void', signature.return_annotation == signature.empty)
-            parameters: List[bool] = []
+            parameters: list[bool] = []
             specs = iter(signature.parameters.values())
             if not static:
                 next(specs)
@@ -1386,8 +1367,8 @@ class IFPSEmulator:
     def expand_constant(
         self,
         string: str,
-        custom_var: Optional[str] = None,
-        custom_val: Optional[str] = None,
+        custom_var: str | None = None,
+        custom_val: str | None = None,
         unescape: bool = False
     ):
         config = self.config
@@ -1571,14 +1552,14 @@ class IFPSEmulator:
             raise IFPSException(F'Custom message with name {msg_name} not found.')
 
     @external
-    def FmtMessage(fmt: str, args: List[str]) -> str:
+    def FmtMessage(fmt: str, args: list[str]) -> str:
         fmt = fmt.replace('{', '{{')
         fmt = fmt.replace('}', '}}')
         fmt = '%'.join(re.sub('%(\\d+)', '{\\1}', p) for p in fmt.split('%%'))
         return fmt.format(*args)
 
     @external
-    def Format(fmt: str, args: List[Union[str, int, float]]) -> str:
+    def Format(fmt: str, args: list[str | int | float]) -> str:
         try:
             formatted = fmt % tuple(args)
         except Exception:
@@ -1833,11 +1814,11 @@ class IFPSEmulator:
         return string.rstrip()
 
     @external
-    def StringJoin(sep: str, values: List[str]) -> str:
+    def StringJoin(sep: str, values: list[str]) -> str:
         return sep.join(values)
 
     @external
-    def StringSplitEx(string: str, separators: List[str], quote: str, how: TSplitType) -> List[str]:
+    def StringSplitEx(string: str, separators: list[str], quote: str, how: TSplitType) -> list[str]:
         if not quote:
             parts = [string]
         else:
@@ -1860,7 +1841,7 @@ class IFPSEmulator:
         return out
 
     @external(static=False)
-    def StringSplit(self, string: str, separators: List[str], how: TSplitType) -> List[str]:
+    def StringSplit(self, string: str, separators: list[str], how: TSplitType) -> list[str]:
         return self.StringSplitEx(string, separators, None, how)
 
     @external(alias='StrToInt64')
@@ -2042,14 +2023,14 @@ class IFPSEmulator:
         return version
 
     @external(static=False)
-    def GetWindowsVersionEx(self, tv: Variable[Union[int, bool]]):
+    def GetWindowsVersionEx(self, tv: Variable[int | bool]):
         tv[0], tv[1], tv[2] = self.config.windows_os_version # noqa
         tv[3], tv[4]        = self.config.windows_sp_version # noqa
         tv[5], tv[6], tv[7] = True, 0, 0
 
     @external(static=False)
     def GetWindowsVersionString(self) -> str:
-        return '{0}.{1:02d}.{2:04d}'.format(*self.config.windows_os_version)
+        return '{}.{:02d}.{:04d}'.format(*self.config.windows_os_version)
 
     @external
     def CreateOleObject(name: str) -> OleObject:

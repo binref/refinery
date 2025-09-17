@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import tarfile
 import datetime
+import tarfile
 
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats.archive import ArchiveUnit

@@ -8,17 +8,16 @@ import collections
 import fnmatch
 import re
 
-from zlib import adler32
 from collections import Counter
-from typing import List, Union, Optional
+from zlib import adler32
 
-from refinery.units import Arg, Unit, Chunk, RefineryPartialResult, RefineryPotentialUserError
-from refinery.lib.meta import metavars, ByteStringWrapper, LazyMetaOracle
-from refinery.lib.xml import XMLNodeBase
-from refinery.lib.tools import exception_to_string
-from refinery.lib.types import buf, Iterable, Callable
 from refinery.lib.json import BytesAsArrayEncoder, BytesAsStringEncoder
 from refinery.lib.loader import load
+from refinery.lib.meta import ByteStringWrapper, LazyMetaOracle, metavars
+from refinery.lib.tools import exception_to_string
+from refinery.lib.types import Param, Callable, Iterable, buf
+from refinery.lib.xml import XMLNodeBase
+from refinery.units import Arg, Chunk, RefineryPartialResult, RefineryPotentialUserError, Unit
 
 
 def pathspec(expression):
@@ -36,7 +35,7 @@ class UnpackResult:
             self.data = self.data()
         return self.data
 
-    def __init__(self, _br__path: str, _br__data: Union[buf, Callable[[], buf]], **_br__meta):
+    def __init__(self, _br__path: str, _br__data: buf | Callable[[], buf], **_br__meta):
         self.path = _br__path
         self.data = _br__data
         self.meta = _br__meta
@@ -50,7 +49,7 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, query: Union[str, re.Pattern], regex=False, fuzzy=0):
+    def __init__(self, query: str | re.Pattern, regex=False, fuzzy=0):
         self.query = query
         self.regex = regex
         self.fuzzy = fuzzy
@@ -110,28 +109,28 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        *paths: Arg.FsPath(metavar='path', nargs='*', help=(
+        *paths: Param[str, Arg.FsPath(metavar='path', nargs='*', help=(
             'Wildcard pattern for the path of the item to be extracted. Each item is returned '
             'as a separate output of this unit. Paths may contain wildcards; The default '
             'argument is a single wildcard, which means that every item will be extracted. If '
             'a given path yields no results, the unit performs increasingly fuzzy searches '
-            'with it. This can be disabled using the --exact switch.')),
-        list: Arg.Switch('-l',
-            help='Return all matching paths as UTF8-encoded output chunks.') = False,
-        join_path: Arg.Switch('-j', group='PATH', help=(
-            'Join path names with the previously existing one.')) = False,
-        drop_path: Arg.Switch('-d', group='PATH',
-            help='Do not modify the path variable for output chunks.') = False,
-        fuzzy: Arg.Counts('-z', group='MATCH', help=(
+            'with it. This can be disabled using the --exact switch.'))],
+        list: Param[bool, Arg.Switch('-l',
+            help='Return all matching paths as UTF8-encoded output chunks.')] = False,
+        join_path: Param[bool, Arg.Switch('-j', group='PATH', help=(
+            'Join path names with the previously existing one.'))] = False,
+        drop_path: Param[bool, Arg.Switch('-d', group='PATH',
+            help='Do not modify the path variable for output chunks.')] = False,
+        fuzzy: Param[int, Arg.Counts('-z', group='MATCH', help=(
             'Specify once to add a leading wildcard to each patterns, twice to also add a '
-            'trailing wildcard.')) = 0,
-        exact: Arg.Switch('-e', group='MATCH',
-            help='Path patterns never match on substrings.') = False,
-        regex: Arg.Switch('-r',
-            help='Use regular expressions instead of wildcard patterns.') = False,
-        path: Arg('-P', metavar='NAME', help=(
+            'trailing wildcard.'))] = 0,
+        exact: Param[bool, Arg.Switch('-e', group='MATCH',
+            help='Path patterns never match on substrings.')] = False,
+        regex: Param[bool, Arg.Switch('-r',
+            help='Use regular expressions instead of wildcard patterns.')] = False,
+        path: Param[buf, Arg('-P', metavar='NAME', help=(
             'Name of the meta variable to receive the extracted path. The default value is '
-            '"{default}".')) = b'path',
+            '"{default}".'))] = b'path',
         **keywords
     ):
         super().__init__(
@@ -156,7 +155,7 @@ class PathExtractorUnit(Unit, abstract=True):
             if self.args.regex:
                 paths = ['.*']
             else:
-                paths = [u'*']
+                paths = ['*']
         else:
             def check_pattern(t: str) -> str:
                 try:
@@ -184,7 +183,7 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def process(self, data: Chunk) -> buf:
         meta = metavars(data)
-        results: List[UnpackResult] = list(self.unpack(data))
+        results: list[UnpackResult] = list(self.unpack(data))
 
         patterns = self._patterns
 
@@ -295,12 +294,12 @@ class PathExtractorUnit(Unit, abstract=True):
 class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
     def __init__(
         self, *paths,
-        format: Arg.String('-f', metavar='F', help=(
+        format: Param[str, Arg.String('-f', metavar='F', help=(
             'A format expression to be applied for computing the path of an item. This must use '
             'metadata that is available on the item. The current tag can be accessed as {{tag}}. '
             'If no format is specified, the unit attempts to derive a good attribute from the XML '
             'tree to use for generating paths.'
-        )) = None,
+        ))] = None,
         list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path', **keywords
     ):
@@ -335,7 +334,7 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         self,
         meta: LazyMetaOracle,
         root: XMLNodeBase
-    ) -> Callable[[XMLNodeBase, Optional[int]], str]:
+    ) -> Callable[[XMLNodeBase, int | None], str]:
 
         nfmt = self.args.format
         nkey = self._normalize_key
@@ -398,16 +397,16 @@ class JSONEncoderUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        encode: Arg.String('-e', group='BIN', metavar='U', help=(
+        encode: Param[str, Arg.String('-e', group='BIN', metavar='U', help=(
             'Select an encoder unit used to represent binary data in the JSON output. This unit '
             'must be reversible and produce UTF8 encoded string output when operated in reverse.'
-            ' Common examples are hex and b64.')) = None,
-        digest: Arg.String('-d', group='BIN', metavar='U', help=(
+            ' Common examples are hex and b64.'))] = None,
+        digest: Param[str, Arg.String('-d', group='BIN', metavar='U', help=(
             'Select a hashing unit to digest all byte strings: Instead of the data, only the hash '
-            'will be displayed.')) = None,
-        arrays: Arg.Switch('-a', group='BIN', help=(
+            'will be displayed.'))] = None,
+        arrays: Param[bool, Arg.Switch('-a', group='BIN', help=(
             'Encode all byte strings as integer arrays. These arrays will have unsigned integer '
-            'entires between 0 and 255.')) = False,
+            'entires between 0 and 255.'))] = False,
         **keywords
     ):
         if sum(1 for x in (encode, digest, arrays) if x) > 1:

@@ -1,11 +1,13 @@
 from __future__ import annotations
-from typing import Union, Optional, Iterable
 
 import json
 
-from refinery.units import Chunk, Arg, Unit
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from typing import Iterable
+
 from refinery.lib.meta import is_valid_variable_name, metavars
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class xtjson(PathExtractorUnit):
@@ -45,7 +47,7 @@ class xtjson(PathExtractorUnit):
             yield UnpackResult(path, extract, type=typename)
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         from refinery.units.pattern.carve_json import JSONCarver
         carver = JSONCarver(data)
         try:
@@ -69,15 +71,15 @@ class xj0(Unit):
     """
     def __init__(
         self,
-        fmt: Arg.String(help=(
+        fmt: Param[str, Arg.String(help=(
             'Format expression for the output chunk; may use previously extracted JSON items. '
-            'The default is {default}, which represents the input data.')) = '',
-        all: Arg.Switch('-a', group='META',
-            help='Extract all other fields as metadata regardless of length and type.') = False,
-        one: Arg.Switch('-x', group='META',
-            help='Do not extract any other fields as metadata.') = False,
-        raw: Arg.Switch('-r',
-            help='Disable conversion of JSON strings to binary strings in metadata') = False,
+            'The default is {default}, which represents the input data.'))] = '',
+        all: Param[bool, Arg.Switch('-a', group='META',
+            help='Extract all other fields as metadata regardless of length and type.')] = False,
+        one: Param[bool, Arg.Switch('-x', group='META',
+            help='Do not extract any other fields as metadata.')] = False,
+        raw: Param[bool, Arg.Switch('-r',
+            help='Disable conversion of JSON strings to binary strings in metadata')] = False,
     ):
         super().__init__(fmt=fmt, one=one, raw=raw, all=all)
 
@@ -146,7 +148,7 @@ class xjl(Unit):
 
     def process(self, data):
         try:
-            doc: Union[list, dict] = json.loads(data)
+            doc: list | dict = json.loads(data)
         except Exception:
             from refinery.units.pattern.carve_json import carve_json
             doc = data | carve_json | json.loads

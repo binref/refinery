@@ -3,15 +3,21 @@ Provides a customized argument parser that is used by all refinery `refinery.uni
 """
 from __future__ import annotations
 
-from typing import List, Dict, Any, Sequence, cast, TYPE_CHECKING
-from argparse import ArgumentParser, ArgumentError, ArgumentTypeError, Action, RawDescriptionHelpFormatter
+from argparse import (
+    Action,
+    ArgumentError,
+    ArgumentParser,
+    ArgumentTypeError,
+    RawDescriptionHelpFormatter,
+)
+from typing import TYPE_CHECKING, Any, Sequence, cast
 
 if TYPE_CHECKING:
     from _typeshed import SupportsWrite
 
 import sys
 
-from refinery.lib.tools import terminalfit, get_terminal_size
+from refinery.lib.tools import get_terminal_size, terminalfit
 
 
 class ArgparseError(ValueError):
@@ -66,8 +72,8 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
     parsed as if they had been passed as keyword arguments on the command line.
     """
 
-    order: List[str]
-    keywords: Dict[str, Any]
+    order: list[str]
+    keywords: dict[str, Any]
 
     class RememberOrder:
         __wrapped__: Action

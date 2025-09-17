@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 from functools import partial
 
-from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 
 class pf(Unit):
@@ -21,14 +23,14 @@ class pf(Unit):
 
     def __init__(
         self,
-        *formats : Arg.Binary(help='Format strings.', metavar='format'),
-        variable : Arg.String('-n', metavar='N', help='Store the formatted string in a meta variable.') = None,
-        separator: Arg.String('-s', group='SEP', metavar='S',
-            help='Separator to insert between format strings. The default is a space character.') = ' ',
-        multiplex: Arg.Switch('-m', group='SEP',
-            help='Do not join the format strings along the separator, generate one output for each.') = False,
-        binary   : Arg.Switch('-b', help='Use the binary formatter instead of the string formatter.') = False,
-        unescape : Arg.Switch('-e', help='Interpret escape sequences in format strings.') = False,
+        *formats: Param[buf, Arg.Binary(help='Format strings.', metavar='format')],
+        variable: Param[str, Arg.String('-n', metavar='N', help='Store the formatted string in a meta variable.')] = None,
+        separator: Param[str, Arg.String('-s', group='SEP', metavar='S',
+            help='Separator to insert between format strings. The default is a space character.')] = ' ',
+        multiplex: Param[bool, Arg.Switch('-m', group='SEP',
+            help='Do not join the format strings along the separator, generate one output for each.')] = False,
+        binary: Param[bool, Arg.Switch('-b', help='Use the binary formatter instead of the string formatter.')] = False,
+        unescape: Param[bool, Arg.Switch('-e', help='Interpret escape sequences in format strings.')] = False,
     ):
         def fixfmt(fmt: bytes | str):
             if unescape:

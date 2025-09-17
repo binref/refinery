@@ -7,8 +7,9 @@ import os.path
 from itertools import cycle
 from string import Formatter
 
-from refinery.units import Arg, Unit, RefineryCriticalException
 from refinery.lib.meta import metavars
+from refinery.lib.types import Param
+from refinery.units import Arg, RefineryCriticalException, Unit
 
 
 def _is_path_obstruction(p: str):
@@ -46,11 +47,11 @@ class dump(Unit):
     """
 
     def __init__(
-        self, *files: Arg.String(metavar='file', help='Optionally formatted filename.'),
-        tee    : Arg.Switch('-t', help='Forward all inputs to STDOUT.') = False,
-        stream : Arg.Switch('-s', help='Dump all incoming data to the same file.') = False,
-        plain  : Arg.Switch('-p', help='Never apply any formatting to file names.') = False,
-        force  : Arg.Switch('-f', help='Remove files if necessary to create dump path.') = False,
+        self, *files: Param[str, Arg.String(metavar='file', help='Optionally formatted filename.')],
+        tee: Param[bool, Arg.Switch('-t', help='Forward all inputs to STDOUT.')] = False,
+        stream: Param[bool, Arg.Switch('-s', help='Dump all incoming data to the same file.')] = False,
+        plain: Param[bool, Arg.Switch('-p', help='Never apply any formatting to file names.')] = False,
+        force: Param[bool, Arg.Switch('-f', help='Remove files if necessary to create dump path.')] = False,
     ):
         if stream and len(files) != 1:
             raise ValueError('Can only use exactly one file in stream mode.')
@@ -152,7 +153,7 @@ class dump(Unit):
             return
         if self._clipcopy:
             if os.name == 'nt':
-                from refinery.lib.winclip import ClipBoard, CF
+                from refinery.lib.winclip import CF, ClipBoard
                 try:
                     img = self._image.open(self.stream)
                     with io.BytesIO() as out:

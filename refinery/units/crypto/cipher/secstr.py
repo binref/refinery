@@ -6,6 +6,7 @@ from Cryptodome.Cipher import AES
 from Cryptodome.Random import urandom
 from Cryptodome.Util.Padding import pad, unpad
 
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
@@ -25,10 +26,10 @@ class secstr(Unit):
     _PSVER = 2
 
     def __init__(
-        self, key: Arg(
+        self, key: Param[buf, Arg(
             help='Secure string encryption 16-byte AES key; the default are the bytes from 1 to 16.'
-        ) = bytes(range(1, 17)),
-        iv: Arg('-i', help='Optionally specify an IV to use for encryption.') = None
+        )] = bytes(range(1, 17)),
+        iv: Param[buf, Arg('-i', help='Optionally specify an IV to use for encryption.')] = None
     ):
         super().__init__(key=key, iv=iv)
 

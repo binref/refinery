@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 from refinery.lib.murmur import (
-    v3_mmh128digest32,
-    v3_mmh128digest64,
-    v3_mmh32digest,
     v2_mmh32digest,
     v2_mmh32digestA,
     v2_mmh64digestA,
     v2_mmh64digestB,
+    v3_mmh32digest,
+    v3_mmh128digest32,
+    v3_mmh128digest64,
 )
-from refinery.units.crypto.hash import HashUnit, Arg
+from refinery.lib.types import Param
+from refinery.units.crypto.hash import Arg, HashUnit
 
 
 class MurMurHash(HashUnit, abstract=True):
     def __init__(
         self,
-        seed: Arg.Number(help='Optional seed value, defaults to {default}.') = 0,
+        seed: Param[int, Arg.Number(help='Optional seed value, defaults to {default}.')] = 0,
         reps=1,
         text=False,
     ):

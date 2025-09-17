@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from functools import wraps
 from datetime import datetime
+from functools import wraps
 
-from refinery.units import Executable, Unit, Arg
+from refinery.lib.types import Param, Callable, buf
+from refinery.units import Arg, Executable, Unit
 from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.types import buf, Callable
 
 
 class MultipleArchives(Exception):
@@ -15,7 +15,7 @@ class MultipleArchives(Exception):
 class ArchiveExecutable(Executable):
 
     def __init__(cls, name, bases, nmspc, **kwargs):
-        super(ArchiveExecutable, cls).__init__(name, bases, nmspc, **kwargs)
+        super().__init__(name, bases, nmspc, **kwargs)
 
         carver = cls._carver()
 
@@ -63,9 +63,9 @@ class ArchiveExecutable(Executable):
 class ArchiveUnit(PathExtractorUnit, metaclass=ArchiveExecutable, abstract=True):
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False, path=b'path',
-        date: Arg('-D', metavar='NAME',
-            help='Name of the meta variable to receive the extracted file date. The default value is "{default}".') = b'date',
-        pwd: Arg('-p', help='Optionally specify an extraction password.') = B'',
+        date: Param[buf, Arg('-D', metavar='NAME',
+            help='Name of the meta variable to receive the extracted file date. The default value is "{default}".')] = b'date',
+        pwd: Param[buf, Arg('-p', help='Optionally specify an extraction password.')] = B'',
         **kwargs
     ):
         super().__init__(

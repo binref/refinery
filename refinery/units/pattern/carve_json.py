@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import string
 import json
 import re
+import string
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
-
 
 _JSON_DELIMITER = re.compile(BR'[\[\]\{\}"]')
 
@@ -98,9 +98,9 @@ class carve_json(Unit):
     Extracts anything from the input data that looks like JSON.
     """
     def __init__(
-        self, all: Arg.Switch('-a', help=(
+        self, all: Param[bool, Arg.Switch('-a', help=(
             'By default, only dictionaries are carved. Specify this flag to also carve lists.'
-        )) = False
+        ))] = False
     ):
         super().__init__(all=all)
 

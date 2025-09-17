@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from typing import Optional
-
-from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.vfs import VirtualFileSystem
 from refinery.lib.tools import NoLogging
+from refinery.lib.vfs import VirtualFileSystem
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class xtxs(PathExtractorUnit):
@@ -46,7 +44,7 @@ class xtxs(PathExtractorUnit):
                         yield UnpackResult(F'{name}/{k}/{header}', entry)
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         view = memoryview(data)
         if b'Standard ACE DB' in view[:20]:
             return True

@@ -9,7 +9,6 @@ import sys
 
 from typing import Iterable
 
-
 _BIG_ENDIAN = sys.byteorder == 'big'
 _TYPE_CODES = {array.array(t).itemsize: t for t in 'BHILQ'}
 

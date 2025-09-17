@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from refinery.units.formats.archive import ArchiveUnit
-
-from refinery.lib.mime import FileMagicInfo as magic
-from refinery.lib.json import BytesAsArrayEncoder
-
 from refinery.lib.inno.archive import (
-    is_inno_setup,
     InnoArchive,
     InvalidPassword,
     SetupFileFlags,
+    is_inno_setup,
 )
+from refinery.lib.json import BytesAsArrayEncoder
+from refinery.lib.mime import FileMagicInfo as magic
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class _ps:

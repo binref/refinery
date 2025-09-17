@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
@@ -37,12 +38,12 @@ class esc(Unit):
     }
 
     def __init__(self,
-        hex     : Arg.Switch('-x', help='Hex encode everything, do not use C escape sequences.') = False,
-        unicode : Arg.Switch('-u', help='Use unicode escape sequences and UTF-8 encoding.') = False,
-        greedy  : Arg.Switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.') = False,
-        unquoted: Arg.Switch('-p', group='Q', help='Never remove enclosing quotes.') = False,
-        quoted  : Arg.Switch('-q', group='Q', help='Remove enclosing quotes while decoding and add them for encoding.') = False,
-        bare    : Arg.Switch('-b', help='Do not escape quote characters.') = False,
+        hex: Param[bool, Arg.Switch('-x', help='Hex encode everything, do not use C escape sequences.')] = False,
+        unicode: Param[bool, Arg.Switch('-u', help='Use unicode escape sequences and UTF-8 encoding.')] = False,
+        greedy: Param[bool, Arg.Switch('-g', help='Replace \\x by x and \\u by u when not followed by two or four hex digits, respectively.')] = False,
+        unquoted: Param[bool, Arg.Switch('-p', group='Q', help='Never remove enclosing quotes.')] = False,
+        quoted: Param[bool, Arg.Switch('-q', group='Q', help='Remove enclosing quotes while decoding and add them for encoding.')] = False,
+        bare: Param[bool, Arg.Switch('-b', help='Do not escape quote characters.')] = False,
     ) -> Unit: pass  # noqa
 
     def process(self, data):

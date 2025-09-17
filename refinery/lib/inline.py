@@ -2,7 +2,6 @@
 Implements programmatic inlining, specifically for the units in `refinery.units.blockwise`.
 """
 from __future__ import annotations
-from typing import Any, Callable, Generator, Optional, Type, TypeVar
 
 import ast
 import inspect
@@ -26,6 +25,7 @@ from ast import (
     arg,
     comprehension,
 )
+from typing import Any, Callable, Generator, TypeVar
 
 _R = TypeVar('_R')
 
@@ -53,7 +53,6 @@ class ArgumentCountMismatch(ValueError):
     Raised by `refinery.lib.inline.iterspread` if the input method expects a different number of
     arguments than provided by the arguments to `refinery.lib.inline.iterspread`.
     """
-    pass
 
 
 class NoFunctionDefinitionFound(ValueError):
@@ -61,15 +60,14 @@ class NoFunctionDefinitionFound(ValueError):
     When `refinery.lib.inline.iterspread` fails to find a function definition when parsing the
     source code that belongs to the input method, this error is raised.
     """
-    pass
 
 
 def iterspread(
     method: Callable[..., _R],
     iterator,
     *inline_args,
-    mask: Optional[int] = None
-) -> Callable[..., Generator[_R, None, None]]:
+    mask: int | None = None
+) -> Callable[..., Generator[_R]]:
     """
     This function receives an arbitrary callable `method`, a primary iterator called `iterator`,
     and an arbitrary number of additional arguments, collected in the `inline_args` variable. The
@@ -118,7 +116,7 @@ def iterspread(
     def as_var(name: str): return F'_var_{name}'
     def as_tmp(name: str): return F'_tmp_{name}'
 
-    def apply_node_transformation(cls: Type[NodeTransformer]):
+    def apply_node_transformation(cls: type[NodeTransformer]):
         nonlocal code
         code = ast.fix_missing_locations(cls().visit(code))
 

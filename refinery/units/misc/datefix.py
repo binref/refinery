@@ -4,10 +4,10 @@ import re
 
 from datetime import datetime, timedelta
 
-from refinery.units import Arg, Unit
 from refinery.lib.decorators import linewise
 from refinery.lib.tools import date_from_timestamp
-
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 _DATETIME_PATTERNS = {
     '%m/%d/%Y',
@@ -52,8 +52,8 @@ class datefix(Unit):
 
     def __init__(
         self,
-        format: Arg(help='Specify the output format as a strftime-like string, using ISO by default.') = '%Y-%m-%d %H:%M:%S',
-        dos: Arg('-d', help='Parse timestamps in DOS rather than Unix format.') = False
+        format: Param[str, Arg(help='Specify the output format as a strftime-like string, using ISO by default.')] = '%Y-%m-%d %H:%M:%S',
+        dos: Param[bool, Arg('-d', help='Parse timestamps in DOS rather than Unix format.')] = False
     ):
         super().__init__(format=format, dos=dos)
 

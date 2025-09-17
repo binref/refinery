@@ -4,7 +4,7 @@ It also exports important singleton types used throughout refinery.
 """
 from __future__ import annotations
 
-from typing import Any, NamedTuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from typing import (
@@ -18,22 +18,23 @@ if TYPE_CHECKING:
         Union,
     )
 
+    Param = Annotated
     JSON = Union[str, int, float, bool, None, dict[str, 'JSON'], list['JSON']]
     JSONDict = dict[str, JSON]
-    Param = Annotated
 
     buf = Union[bytes, bytearray, memoryview]
-    ints = Union[int, Iterable[int]]
+    isq = Union[int, Iterable[int]]
 
 else:
-    class Param:
-        def __class_getitem__(cls, annotation):
+    class __P:
+        def __getitem__(self, annotation):
             return annotation[1]
 
+    Param = __P()
     JSON = Any
     JSONDict = Any
     buf = Any
-    ints = Any
+    isq = Any
 
     Callable = Any
     ClassVar = Any
@@ -47,7 +48,7 @@ __all__ = [
     'JSON',
     'JSONDict',
     'buf',
-    'ints',
+    'isq',
     'Param',
     'NamedTuple',
     'Collection',

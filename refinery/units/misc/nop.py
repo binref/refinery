@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Unit
 from refinery.lib.argparser import ArgumentParserWithKeywordHooks
 from refinery.lib.tools import documentation
+from refinery.units import Unit
 
 
 class NopArgParser(ArgumentParserWithKeywordHooks):

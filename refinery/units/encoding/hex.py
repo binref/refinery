@@ -15,8 +15,8 @@ class hex(Unit):
         return base64.b16encode(data)
 
     def process(self, data):
-        import re
         import base64
+        import re
         data = re.sub(B'[^A-Fa-f0-9]+', B'', data)
         if len(data) % 2:
             data = data[:-1]

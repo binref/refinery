@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from refinery.units.obfuscation import Deobfuscator, outside
 from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator, outside
 
 
 class deob_ps1_cases(Deobfuscator):

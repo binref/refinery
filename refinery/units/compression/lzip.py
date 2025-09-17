@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from itertools import count
-from typing import ClassVar, List, Optional, overload
+from typing import ClassVar, overload
 from zlib import crc32
 
+from refinery.lib.structures import EOF, MemoryFile, Struct, StructReader
 from refinery.units import Unit
-from refinery.lib.structures import MemoryFile, Struct, StructReader, EOF
 
 
 class State:
@@ -70,16 +70,16 @@ class BitModel:
 
     @overload
     @classmethod
-    def Array(cls, x: int) -> List[BitModel]:
+    def Array(cls, x: int) -> list[BitModel]:
         ...
 
     @overload
     @classmethod
-    def Array(cls, x: int, y: int) -> List[List[BitModel]]:
+    def Array(cls, x: int, y: int) -> list[list[BitModel]]:
         ...
 
     @classmethod
-    def Array(cls, x: int, y: Optional[int] = None):
+    def Array(cls, x: int, y: int | None = None):
         if y is None:
             return [cls() for _ in range(x)]
         return [cls.Array(y) for _ in range(x)]
@@ -149,13 +149,13 @@ class RangeDecoder(Struct):
             self.code = (self.code << 8) | self.get_byte()
         return symbol
 
-    def decode_tree(self, bm: List[BitModel], num_bits: int, bmx: int = 0) -> int:
+    def decode_tree(self, bm: list[BitModel], num_bits: int, bmx: int = 0) -> int:
         symbol = 1
         for _ in range(num_bits):
             symbol = (symbol << 1) | self.decode_bit(bm[bmx + symbol])
         return symbol - (1 << num_bits)
 
-    def decode_tree_reversed(self, bm: List[BitModel], num_bits: int, bmx: int = 0) -> int:
+    def decode_tree_reversed(self, bm: list[BitModel], num_bits: int, bmx: int = 0) -> int:
         symbol = self.decode_tree(bm, num_bits, bmx)
         reversed_symbol = 0
         for i in range(num_bits):
@@ -163,7 +163,7 @@ class RangeDecoder(Struct):
             symbol >>= 1
         return reversed_symbol
 
-    def decode_matched(self, bm: List[BitModel], match_byte: int) -> int:
+    def decode_matched(self, bm: list[BitModel], match_byte: int) -> int:
         symbol = 1
         for i in range(7, -1, -1):
             match_bit = (match_byte >> i) & 1

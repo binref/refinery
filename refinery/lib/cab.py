@@ -3,19 +3,19 @@ Parsing of CAB archives.
 """
 from __future__ import annotations
 
-from typing import NamedTuple, Optional, Iterable
-from enum import IntFlag, IntEnum
-from datetime import date, time, datetime
-
 import zlib
 
-from refinery.lib.structures import Struct, StructReader
+from datetime import date, datetime, time
+from enum import IntEnum, IntFlag
+from typing import Iterable, NamedTuple
+
 from refinery.lib import chunks
 from refinery.lib.lzx import LzxDecoder
+from refinery.lib.structures import Struct, StructReader
 
 
 class CabVolumeMissing(LookupError):
-    def __init__(self, idx: int = -1, ref: Optional[CabRef] = None):
+    def __init__(self, idx: int = -1, ref: CabRef | None = None):
         self.idx = idx
         self.ref = ref
 
@@ -132,7 +132,7 @@ class CabFolder(Struct):
 
 class CabFile(Struct):
 
-    folder: Optional[CabFolder]
+    folder: CabFolder | None
 
     def __init__(self, reader: StructReader[memoryview]):
         self.size = reader.u32()
@@ -295,7 +295,7 @@ class CabDisk(Struct):
         if self.flags.value > 7:
             raise ValueError(F'Invalid flags: {self.flags.value}.')
         if any(self._reserved):
-            raise ValueError(U'Reserved field was nonzero.')
+            raise ValueError('Reserved field was nonzero.')
         if self.size < 36:
             raise ValueError(F'Archive header specifies invalid size of {self.size} bytes.')
         return self
@@ -312,7 +312,7 @@ class Cabinet:
         self.no_magic = no_magic
         self.extend(disks)
 
-    def get_files(self, id: Optional[int] = None):
+    def get_files(self, id: int | None = None):
         if id is None:
             if len(self.files) != 1:
                 raise LookupError
@@ -340,7 +340,7 @@ class Cabinet:
     def process(self):
         for id, disks in self.disks.items():
             files = self.files[id] = []
-            partial: Optional[CabFolder] = None
+            partial: CabFolder | None = None
             folders: list[CabFolder] = []
             for disk in disks:
                 folders.clear()

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from typing import NamedTuple, Optional, Union, List, Dict, Iterable, Tuple, Generator, Set
-from enum import Enum
-
 import io
 import math
 import struct
 
-from refinery.lib.structures import Struct, StructReader, MemoryFile
-from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.tools import date_from_timestamp
+from enum import Enum
+from typing import Generator, Iterable, NamedTuple
 
+from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.tools import date_from_timestamp
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 A3X_KEYWORDS = [
     '',
@@ -510,12 +509,12 @@ A3X_OPCODES = {
     0x58: ':',
 }
 
-_PRETTY: Dict[str, str] = {}
+_PRETTY: dict[str, str] = {}
 _PRETTY.update((name.lower(), name) for name in A3X_APICALLS)
 _PRETTY.update((name.lower(), name) for name in A3X_KEYWORDS)
 
 
-def a3x_number_representation(value: Union[float, int]) -> str:
+def a3x_number_representation(value: float | int) -> str:
     """
     The AutoIt3 compiler will emit constants for -inf/inf/nan. However, AutoIt3 itself has no
     keywords for these values; The output of this function is valid AutoIt3 code that will
@@ -532,7 +531,7 @@ def a3x_number_representation(value: Union[float, int]) -> str:
         return RF'{value!s}'
 
 
-def a3x_decompile(bytecode: bytearray) -> Generator[Tuple[int, str]]:
+def a3x_decompile(bytecode: bytearray) -> Generator[tuple[int, str]]:
     class _decompiler(dict):
         def __missing__(self, key):
             if key == 's':
@@ -561,8 +560,8 @@ def a3x_decompile(bytecode: bytearray) -> Generator[Tuple[int, str]]:
     decompiler = _decompiler()
     reader = A3xReader(bytecode)
     num_lines = reader.u32()
-    tokens: List[str] = []
-    expected_terminators: List[str] = []
+    tokens: list[str] = []
+    expected_terminators: list[str] = []
     line = 0
 
     while line < num_lines and not reader.eof:
@@ -941,7 +940,7 @@ class A3xScript(Struct, parser=A3xReader):
         if not self.type.startswith(B'AU3!'):
             self.body = []
             return
-        self.body: List[A3xRecord] = []
+        self.body: list[A3xRecord] = []
         last_known_good_position = reader.tell()
         types = {at.version: at for at in A3xEncryptionType}
         while not reader.eof:
@@ -970,12 +969,12 @@ class a3x(PathExtractorUnit):
     def unpack(self, data: bytearray):
         view = memoryview(data)
         cursor = 0
-        errors: Dict[int, Exception] = {}
+        errors: dict[int, Exception] = {}
         script_count = 0
-        truncated: Set[A3xRecord] = set()
-        intact: Set[A3xRecord] = set()
+        truncated: set[A3xRecord] = set()
+        intact: set[A3xRecord] = set()
 
-        def _package(records: Iterable[A3xRecord]) -> Generator[UnpackResult, None, None]:
+        def _package(records: Iterable[A3xRecord]) -> Generator[UnpackResult]:
             for k, record in enumerate(records, 1):
                 self.log_info(F'record {k} type:', record.type)
                 self.log_info(F'record {k} path:', record.src_path)
@@ -1052,5 +1051,5 @@ class a3x(PathExtractorUnit):
                 raise error
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         return A3xScript.MAGIC in data or A3xRecord.MAGIC in data

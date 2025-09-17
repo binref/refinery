@@ -3,7 +3,8 @@ Implements various hashing algorithms.
 """
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, buf, abc
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit, abc, buf
 
 
 class HashUnit(Unit, abstract=True):
@@ -14,8 +15,8 @@ class HashUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        reps: Arg.Number('-r', help='Optionally specify a number of times to apply the hash to its own output.') = 1,
-        text: Arg.Switch('-t', help='Output a hexadecimal representation of the hash.') = False,
+        reps: Param[int, Arg.Number('-r', help='Optionally specify a number of times to apply the hash to its own output.')] = 1,
+        text: Param[bool, Arg.Switch('-t', help='Output a hexadecimal representation of the hash.')] = False,
         **kwargs
     ):
         super().__init__(text=text, reps=reps, **kwargs)

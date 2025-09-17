@@ -6,15 +6,14 @@ References:
 """
 from __future__ import annotations
 
-from typing import List
-
 from refinery.lib import lief
 from refinery.lib.dotnet.types import (
-    RawBytes,
     Box,
     Byte,
     NullTerminatedString,
+    ParserEOF,
     ParserException,
+    RawBytes,
     StreamReader,
     StringGUID,
     StringPrimitive,
@@ -24,7 +23,6 @@ from refinery.lib.dotnet.types import (
     UInt64,
     UnicodeString,
     unpack,
-    ParserEOF
 )
 
 
@@ -57,7 +55,7 @@ class BitMask:
                 yield k
 
     def __repr__(self):
-        return '{:b}'.format(self._bitmask)
+        return f'{self._bitmask:b}'
 
 
 def bits_required(n):
@@ -141,7 +139,7 @@ class MultiTableIndex(Struct):
         try:
             self.RowName = self.refs[raw & self.mask]
         except IndexError:
-            self.Error = 'no ref at index {}'.format(raw & self.mask)
+            self.Error = f'no ref at index {raw & self.mask}'
             self.RowName = None
         if self.RowName is not None:
             self.RowType = self._name_to_id[self.RowName]
@@ -773,51 +771,51 @@ class NetMetaDataTables(Struct):
         if self.Header.Flags[6]:
             self.ExtraData = self.expect(UInt32)
 
-        self.Module: List[Module] = []
-        self.TypeRef: List[TypeRef] = []
-        self.TypeDef: List[TypeDef] = []
-        self.FieldPtr: List[FieldPtr] = []
-        self.Field: List[Field] = []
-        self.MethodPtr: List[MethodPtr] = []
-        self.MethodDef: List[MethodDef] = []
-        self.ParamPtr: List[ParamPtr] = []
-        self.Param: List[Param] = []
-        self.InterfaceImpl: List[InterfaceImpl] = []
-        self.MemberRef: List[MemberRef] = []
-        self.Constant: List[Constant] = []
-        self.CustomAttribute: List[CustomAttribute] = []
-        self.FieldMarshal: List[FieldMarshal] = []
-        self.Permission: List[Permission] = []
-        self.ClassLayout: List[ClassLayout] = []
-        self.FieldLayout: List[FieldLayout] = []
-        self.StandAloneSig: List[StandAloneSig] = []
-        self.EventMap: List[EventMap] = []
-        self.EventPtr: List[EventPtr] = []
-        self.Event: List[Event] = []
-        self.PropertyMap: List[PropertyMap] = []
-        self.PropertyPtr: List[PropertyPtr] = []
-        self.Property: List[Property] = []
-        self.MethodSemantics: List[MethodSemantics] = []
-        self.MethodImpl: List[MethodImpl] = []
-        self.ModuleRef: List[ModuleRef] = []
-        self.TypeSpec: List[TypeSpec] = []
-        self.ImplMap: List[ImplMap] = []
-        self.FieldRVA: List[FieldRVA] = []
-        self.ENCLog: List[ENCLog] = []
-        self.ENCMap: List[ENCMap] = []
-        self.Assembly: List[Assembly] = []
-        self.AssemblyProcessor: List[AssemblyProcessor] = []
-        self.AssemblyOS: List[AssemblyOS] = []
-        self.AssemblyRef: List[AssemblyRef] = []
-        self.AssemblyRefProcessor: List[AssemblyRefProcessor] = []
-        self.AssemblyRefOS: List[AssemblyRefOS] = []
-        self.File: List[File] = []
-        self.ExportedType: List[ExportedType] = []
-        self.ManifestResource: List[ManifestResource] = []
-        self.NestedClass: List[NestedClass] = []
-        self.GenericParam: List[GenericParam] = []
-        self.MethodSpec: List[MethodSpec] = []
-        self.GenericParamConstraint: List[GenericParamConstraint] = []
+        self.Module: list[Module] = []
+        self.TypeRef: list[TypeRef] = []
+        self.TypeDef: list[TypeDef] = []
+        self.FieldPtr: list[FieldPtr] = []
+        self.Field: list[Field] = []
+        self.MethodPtr: list[MethodPtr] = []
+        self.MethodDef: list[MethodDef] = []
+        self.ParamPtr: list[ParamPtr] = []
+        self.Param: list[Param] = []
+        self.InterfaceImpl: list[InterfaceImpl] = []
+        self.MemberRef: list[MemberRef] = []
+        self.Constant: list[Constant] = []
+        self.CustomAttribute: list[CustomAttribute] = []
+        self.FieldMarshal: list[FieldMarshal] = []
+        self.Permission: list[Permission] = []
+        self.ClassLayout: list[ClassLayout] = []
+        self.FieldLayout: list[FieldLayout] = []
+        self.StandAloneSig: list[StandAloneSig] = []
+        self.EventMap: list[EventMap] = []
+        self.EventPtr: list[EventPtr] = []
+        self.Event: list[Event] = []
+        self.PropertyMap: list[PropertyMap] = []
+        self.PropertyPtr: list[PropertyPtr] = []
+        self.Property: list[Property] = []
+        self.MethodSemantics: list[MethodSemantics] = []
+        self.MethodImpl: list[MethodImpl] = []
+        self.ModuleRef: list[ModuleRef] = []
+        self.TypeSpec: list[TypeSpec] = []
+        self.ImplMap: list[ImplMap] = []
+        self.FieldRVA: list[FieldRVA] = []
+        self.ENCLog: list[ENCLog] = []
+        self.ENCMap: list[ENCMap] = []
+        self.Assembly: list[Assembly] = []
+        self.AssemblyProcessor: list[AssemblyProcessor] = []
+        self.AssemblyOS: list[AssemblyOS] = []
+        self.AssemblyRef: list[AssemblyRef] = []
+        self.AssemblyRefProcessor: list[AssemblyRefProcessor] = []
+        self.AssemblyRefOS: list[AssemblyRefOS] = []
+        self.File: list[File] = []
+        self.ExportedType: list[ExportedType] = []
+        self.ManifestResource: list[ManifestResource] = []
+        self.NestedClass: list[NestedClass] = []
+        self.GenericParam: list[GenericParam] = []
+        self.MethodSpec: list[MethodSpec] = []
+        self.GenericParamConstraint: list[GenericParamConstraint] = []
 
         for k in sorted(self.Header.RowCount):
             count = self.Header.RowCount[k]
@@ -834,7 +832,7 @@ class NetMetaDataTables(Struct):
         try:
             Type = self.lookup[k]
         except KeyError:
-            return super(NetMetaDataTables, self).__getitem__(k)
+            return super().__getitem__(k)
         else:
             return getattr(self, repr(Type))
 

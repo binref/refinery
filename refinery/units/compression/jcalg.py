@@ -1,9 +1,9 @@
 from __future__ import annotations
-from typing import Optional
 
-from refinery.units import Unit, Arg
-from refinery.lib.structures import MemoryFile, StructReader
 from refinery.lib.decompression import BitBufferedReader
+from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class jcalg(Unit):
@@ -12,8 +12,8 @@ class jcalg(Unit):
     """
     def __init__(
         self,
-        ignore_header: Arg('-g', help=(
-            'Keep decompressing even after the output has reached the final size as given by the header value.')) = False,
+        ignore_header: Param[bool, Arg('-g', help=(
+            'Keep decompressing even after the output has reached the final size as given by the header value.'))] = False,
     ):
         super().__init__(ignore_header=ignore_header)
 
@@ -60,7 +60,7 @@ class jcalg(Unit):
             checksum &= 0xFFFFFFFF
         return checksum
 
-    def _decompress(self, writer: MemoryFile, reader_: StructReader[bytearray], size: Optional[int] = None):
+    def _decompress(self, writer: MemoryFile, reader_: StructReader[bytearray], size: int | None = None):
         index = 1
         base = 8
         literal_bits = None

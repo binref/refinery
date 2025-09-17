@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.units import Unit, RefineryPartialResult
+from refinery.units import RefineryPartialResult, Unit
 
 
 class zstd(Unit):

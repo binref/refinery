@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import functools
 import sqlite3
 import sys
-import functools
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.json import BytesAsStringEncoder
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class xtsql(PathExtractorUnit):

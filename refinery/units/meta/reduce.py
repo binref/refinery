@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from refinery.units import Arg, Unit, Chunk
 from refinery.lib.argformats import DelayedBinaryArgument
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 class reduce(Unit):
@@ -13,15 +14,15 @@ class reduce(Unit):
     """
 
     def __init__(self,
-        suffix: Arg.String(help=(
+        suffix: Param[str, Arg.String(help=(
             'The remaining command line is a multibin suffix. The reduction accumulator is initialized '
             'with the first chunk in the frame. Then, each remaining chunk is processed with the given '
             'suffix and the result is used to overwrite the accumulator.'
-        )),
-        just: Arg.Number('-j',
-            help='Optionally specify a maximum number of chunks to process beyond the first.') = 0,
-        temp: Arg.String('-t', metavar='name',
-            help='The name of the accumulator variable. The default is "{default}".') = 't',
+        ))],
+        just: Param[int, Arg.Number('-j',
+            help='Optionally specify a maximum number of chunks to process beyond the first.')] = 0,
+        temp: Param[str, Arg.String('-t', metavar='name',
+            help='The name of the accumulator variable. The default is "{default}".')] = 't',
     ):
         super().__init__(suffix=suffix, temp=temp, just=just)
 

@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import re
 import io
 import shlex
-import inspect
 
-from typing import List, TYPE_CHECKING
 from configparser import ConfigParser
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult, PathPattern
-from refinery.units.encoding.esc import esc
-from refinery.lib.structures import MemoryFile
 from refinery.lib.id import get_reg_export_type
+from refinery.lib.structures import MemoryFile
+from refinery.units.encoding.esc import esc
+from refinery.units.formats import PathExtractorUnit, PathPattern, UnpackResult
 
 if TYPE_CHECKING:
     from Registry.Registry import RegistryKey, RegistryValue
@@ -40,7 +40,7 @@ class winreg(PathExtractorUnit):
         return Registry
 
     @staticmethod
-    def _walk(patterns: List[PathPattern], key: RegistryKey, *path: str):
+    def _walk(patterns: list[PathPattern], key: RegistryKey, *path: str):
         here = '/'.join(path)
         if not any(p.reach(here) for p in patterns):
             winreg.log_debug(F'pruning search at {here}')

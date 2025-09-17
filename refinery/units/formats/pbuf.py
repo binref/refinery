@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import enum
 import codecs
+import enum
 import re
 
+from refinery.lib.structures import StructReader
+from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.formats import JSONEncoderUnit
-from refinery.lib.structures import StructReader
 
 
 class WireType(enum.IntEnum):
@@ -183,8 +184,8 @@ class pbuf(JSONEncoderUnit):
     """
     def __init__(
         self,
-        try_repeated: Arg.Switch('-r',
-            help='Try to detect and decode repeated integer fields.') = False,
+        try_repeated: Param[bool, Arg.Switch('-r',
+            help='Try to detect and decode repeated integer fields.')] = False,
         encode=None,
         digest=None,
         arrays=False,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from operator import __lshift__, __rshift__
-from typing import Iterable, List
+from typing import Iterable
 
 from refinery.lib import chunks
 from refinery.units.crypto.cipher import StreamCipherUnit
@@ -18,8 +18,8 @@ class isaac(StreamCipherUnit):
         A: int = 0
         B: int = 0
         C: int = 0
-        S: List[int] = [0x9E3779B9] * 8
-        T: List[int] = []
+        S: list[int] = [0x9E3779B9] * 8
+        T: list[int] = []
         K = list(chunks.unpack(key + bytearray(0x400 - len(key)), 4, bigendian=False))
         U = 0xFFFFFFFF
 
@@ -36,7 +36,7 @@ class isaac(StreamCipherUnit):
             S[:] = a, b, c, d, e, f, g, h
             return S
 
-        def _initialize_with(R: List[int]):
+        def _initialize_with(R: list[int]):
             for i in range(0, 0x100, 8):
                 S[:] = (x + R[j] & U for j, x in enumerate(S, i))
                 T[i:i + 8] = _mix_state()

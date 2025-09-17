@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from refinery.units.formats import Unit, Arg
-from refinery.lib.vfs import VirtualFileSystem
 from refinery.lib.tools import NoLogging
+from refinery.lib.types import Param
+from refinery.lib.vfs import VirtualFileSystem
+from refinery.units.formats import Arg, Unit
 
 
 class xlmdeobf(Unit):
@@ -12,58 +13,58 @@ class xlmdeobf(Unit):
 
     def __init__(
         self,
-        extract_only: Arg.Switch(
+        extract_only: Param[bool, Arg.Switch(
             '-x', help='Only extract cells without any emulation.'
-        ) = False,
-        sort_formulas: Arg.Switch(
+        )] = False,
+        sort_formulas: Param[bool, Arg.Switch(
             '-s', '--sort-formulas',
             help='Sort extracted formulas based on their cell address (implies -x).',
-        ) = False,
-        with_ms_excel: Arg.Switch(
+        )] = False,
+        with_ms_excel: Param[bool, Arg.Switch(
             '-X', '--with-ms-excel', help='Use MS Excel to process XLS files.'
-        ) = False,
-        day: Arg.Number(
+        )] = False,
+        day: Param[int, Arg.Number(
             '-d',
             '--day',
             help='Specify the day of month',
-        ) = -1,
-        output_formula_format: Arg.String(
+        )] = -1,
+        output_formula_format: Param[str, Arg.String(
             '-O', '--output-format',
             metavar='FMT',
             help='Specify the format for output formulas (using [[CELL-ADDR]], [[INT-FORMULA]], and [[STATUS]])',
-        ) = 'CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]',
-        extract_formula_format: Arg.String(
+        )] = 'CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]',
+        extract_formula_format: Param[str, Arg.String(
             '-E', '--extract-format',
             metavar='FMT',
             help='Specify the format for extracted formulas (using [[CELL-ADDR]], [[CELL-FORMULA]], and [[CELL-VALUE]])',
-        ) = 'CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
-        no_indent: Arg.Switch(
+        )] = 'CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
+        no_indent: Param[bool, Arg.Switch(
             '-I', '--no-indent',
             help='Do not show indent before formulas',
-        ) = False,
-        start_point: Arg.String(
+        )] = False,
+        start_point: Param[str, Arg.String(
             '-c', '--start-point',
             help='Start interpretation from a specific cell address',
             metavar='CELL',
-        ) = '',
-        password: Arg.String(
+        )] = '',
+        password: Param[str, Arg.String(
             '-p',
             '--password',
             help='Password to decrypt the protected document',
-        ) = '',
-        output_level: Arg.Number(
+        )] = '',
+        output_level: Param[int, Arg.Number(
             '-o',
             '--output-level',
             help=(
                 'Set the level of details to be shown (0:all commands, 1: commands no jump 2:important '
                 'commands 3:strings in important commands).'
             ),
-        ) = 0,
-        timeout: Arg.Number(
+        )] = 0,
+        timeout: Param[int, Arg.Number(
             '-t',
             '--timeout',
             help='Stop emulation after N seconds (0: not interruption N>0: stop emulation after N seconds)',
-        ) = 0,
+        )] = 0,
     ):
         extract_only = sort_formulas or extract_only
         self.superinit(super(), **vars())

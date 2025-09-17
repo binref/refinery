@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from refinery.units.crypto.keyderive import Arg, KeyDerivation
-from refinery.units import RefineryPartialResult
-
-from typing import List
-
-import struct
 import itertools
+import struct
 
+from refinery.lib.types import Param, buf
+from refinery.units import RefineryPartialResult
+from refinery.units.crypto.keyderive import Arg, KeyDerivation
 
 __all__ = ['ucrypt']
 
@@ -223,7 +221,7 @@ class UnixCrypt:
         return self.__key
 
     @property
-    def schedule(self) -> List[int]:
+    def schedule(self) -> list[int]:
         return self.__schedule
 
     @key.setter
@@ -240,10 +238,10 @@ class UnixCrypt:
         c, d = self._perm(c, d, 8, 0x00FF00FF)
         d, c = self._perm(d, c, 1, 0x55555555)
         d = (
-            ((0x0000FF00 & d))         | # noqa 
+            (0x0000FF00 & d)         | # noqa 
             ((0x000000FF & d) << 0x10) | # noqa
             ((0x00FF0000 & d) >> 0x10) | # noqa
-            ((0x0F000000 & (c >> 4)))
+            (0x0F000000 & (c >> 4))
         )
         c &= 0x0FFFFFFF
 
@@ -330,7 +328,7 @@ class UnixCrypt:
             (b >> 18) & 0x3F, (b >> 12) & 0x3F, (b >> 6) & 0x3F, b & 0x3F,
             (c >> 18) & 0x3F, (c >> 12) & 0x3F, (c >> 6) & 0x3F
         ]
-        return self.salt[:2] + bytes((COV_ALPHABET[x] for x in sixbit))
+        return self.salt[:2] + bytes(COV_ALPHABET[x] for x in sixbit)
 
 
 class ucrypt(KeyDerivation):
@@ -339,8 +337,8 @@ class ucrypt(KeyDerivation):
     """
     def __init__(
         self,
-        size: Arg(help='The number of bytes to generate, default is 13.') = 13,
-        salt: Arg(help='Salt for the derivation, the default is "AA".') = B'AA'
+        size: Param[int, Arg(help='The number of bytes to generate, default is 13.')] = 13,
+        salt: Param[buf, Arg(help='Salt for the derivation, the default is "AA".')] = B'AA'
     ):
         super().__init__(size=size, salt=salt)
 

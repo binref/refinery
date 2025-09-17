@@ -1,40 +1,40 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param, isq
+
 if True:
     import colorama
     colorama.init()
     FG = colorama.Fore
     RS = colorama.Style.RESET_ALL
 
-from typing import cast, Any, Union, Literal, List, Dict, TYPE_CHECKING
-
 import enum
 import functools
 import re
 
-from refinery.units import Arg, Unit
-from refinery.lib.executable import Arch, Range
-from refinery.lib.types import INF
-from refinery.lib.meta import metavars
-from refinery.lib.tools import isbuffer, exception_to_string, bounds
-from refinery.lib.intervals import MemoryIntervalUnion
-from refinery.lib.argformats import PythonExpression, ParserVariableMissing
-from refinery.lib.structures import StructReader
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+from refinery.lib.argformats import ParserVariableMissing, PythonExpression
 from refinery.lib.emulator import (
+    EmulationError,
     Emulator,
+    Hook,
+    IcicleEmulator,
     SpeakeasyEmulator,
     UnicornEmulator,
-    IcicleEmulator,
-    Hook,
-    EmulationError,
 )
-
-from dataclasses import dataclass, field
-from collections import defaultdict
+from refinery.lib.executable import Arch, Range
+from refinery.lib.intervals import MemoryIntervalUnion
+from refinery.lib.meta import metavars
+from refinery.lib.structures import StructReader
+from refinery.lib.tools import bounds, exception_to_string, isbuffer
+from refinery.lib.types import INF
+from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Optional, TypeVar
+    from typing import TypeVar
     FN = TypeVar('FN')
 
 
@@ -82,19 +82,19 @@ class EmuState:
     expected_address: int
     address_width: int
     waiting: int = 0
-    callstack: List[int] = field(default_factory=list)
-    retaddr: Optional[int] = None
-    stop: Optional[int] = None
+    callstack: list[int] = field(default_factory=list)
+    retaddr: int | None = None
+    stop: int | None = None
     previous_address: int = 0
     callstack_ceiling: int = 0
     invalid_instructions: int = 0
     synthesized: dict[bytes, str] = field(default_factory=dict)
     ticks: int | Literal[INF] = field(default_factory=lambda: INF)
-    visits: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    visits: dict[int, int] = field(default_factory=lambda: defaultdict(int))
     memory: MemoryIntervalUnion = field(default_factory=MemoryIntervalUnion)
-    init_registers: List[int] = field(default_factory=list)
-    last_read: Optional[int] = None
-    last_api: Optional[int] = None
+    init_registers: list[int] = field(default_factory=list)
+    last_read: int | None = None
+    last_api: int | None = None
 
     def log(self, msg: str) -> str:
         _width = len(str(w)) if (w := self.cfg.wait) else 8
@@ -193,7 +193,7 @@ class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
                 what = F'empty buffer at 0x{retval:X}'
             else:
                 retval = 0
-                what = U'0'
+                what = '0'
             vstack.log_debug(F'exception of type {e.__class__.__name__} while emulating api routine, returning {what}')
             self.ip = self.pop()
         return retval
@@ -385,40 +385,40 @@ class vstack(Unit):
     """
     def __init__(
         self,
-        *address: Arg.NumSeq(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.'),
-        stop: Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.') = None,
-        base: Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.') = None,
-        arch: Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch) = Arch.X32,
-        engine: Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
-            help='The emulator engine. The default is {default}, options are: {choices}') = _engine.unicorn,
-        se: Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy') = False,
-        ic: Arg.Switch(group='EMU', help='Equivalent to --engine=icicle') = False,
-        uc: Arg.Switch(group='EMU', help='Equivalent to --engine=unicorn') = False,
-        meta_registers: Arg.Switch('-r', help=(
+        *address: Param[isq, Arg.NumSeq(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.')],
+        stop: Param[int, Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.')] = None,
+        base: Param[int, Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.')] = None,
+        arch: Param[str, Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
+        engine: Param[str, Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
+            help='The emulator engine. The default is {default}, options are: {choices}')] = _engine.unicorn,
+        se: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy')] = False,
+        ic: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=icicle')] = False,
+        uc: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=unicorn')] = False,
+        meta_registers: Param[bool, Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
-            'the data will be mapped.')) = False,
-        timeout: Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.') = None,
-        patch_range: Arg.Bounds('-p', metavar='MIN:MAX',
-            help='Extract only patches that are in the given range, default is {default}.') = slice(5, None),
-        write_range: Arg.Bounds('-n', metavar='MIN:MAX',
-            help='Log only writes whose size is in the given range, default is {default}.') = slice(1, None),
-        wait: Arg.Number('-w', help=(
-            'When this many instructions did not write to memory, emulation is halted. The default is {default}.')) = 20,
-        wait_calls: Arg.Switch('-c', group='CALL',
-            help='Wait indefinitely when inside a function call.') = False,
-        skip_calls: Arg.Counts('-C', group='CALL',
-            help='Skip function calls entirely. Use twice to treat each call as allocating memory.') = 0,
-        stack_size: Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.') = 0x10000,
-        stack_push: Arg.String('-u', action='append', metavar='REG',
-            help='Push the value of a register to the stack before beginning emulation; implies -r.') = None,
-        log_api_calls: Arg.Switch('-A', help='Log API calls when using Speakeasy.') = False,
-        block_size: Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.') = 0x1000,
-        max_visits: Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.') = 0x10000,
-        log_writes_in_calls: Arg.Switch('-W', help='Log writes of values that occur in functions calls.') = False,
-        log_stack_addresses: Arg.Switch('-X', help='Log writes of values that are stack addresses.') = False,
-        log_other_addresses: Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.') = False,
-        log_zero_overwrites: Arg.Switch('-Z', help='Log writes of zeros to memory that contained nonzero values.') = False,
-        log_stack_cookies  : Arg.Switch('-E', help='Log writes that look like stack cookies.') = False,
+            'the data will be mapped.'))] = False,
+        timeout: Param[int, Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.')] = None,
+        patch_range: Param[slice, Arg.Bounds('-p', metavar='MIN:MAX',
+            help='Extract only patches that are in the given range, default is {default}.')] = slice(5, None),
+        write_range: Param[slice, Arg.Bounds('-n', metavar='MIN:MAX',
+            help='Log only writes whose size is in the given range, default is {default}.')] = slice(1, None),
+        wait: Param[int, Arg.Number('-w', help=(
+            'When this many instructions did not write to memory, emulation is halted. The default is {default}.'))] = 20,
+        wait_calls: Param[bool, Arg.Switch('-c', group='CALL',
+            help='Wait indefinitely when inside a function call.')] = False,
+        skip_calls: Param[int, Arg.Counts('-C', group='CALL',
+            help='Skip function calls entirely. Use twice to treat each call as allocating memory.')] = 0,
+        stack_size: Param[int, Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.')] = 0x10000,
+        stack_push: Param[str, Arg.String('-u', action='append', metavar='REG',
+            help='Push the value of a register to the stack before beginning emulation; implies -r.')] = None,
+        log_api_calls: Param[bool, Arg.Switch('-A', help='Log API calls when using Speakeasy.')] = False,
+        block_size: Param[int, Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.')] = 0x1000,
+        max_visits: Param[int, Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.')] = 0x10000,
+        log_writes_in_calls: Param[bool, Arg.Switch('-W', help='Log writes of values that occur in functions calls.')] = False,
+        log_stack_addresses: Param[bool, Arg.Switch('-X', help='Log writes of values that are stack addresses.')] = False,
+        log_other_addresses: Param[bool, Arg.Switch('-Y', help='Log writes of values that are addresses to mapped segments.')] = False,
+        log_zero_overwrites: Param[bool, Arg.Switch('-Z', help='Log writes of zeros to memory that contained nonzero values.')] = False,
+        log_stack_cookies: Param[bool, Arg.Switch('-E', help='Log writes that look like stack cookies.')] = False,
     ):
         if sum((se, uc, ic)) > 1:
             raise ValueError('Too many emulators selected.')
@@ -508,7 +508,7 @@ class vstack(Unit):
                 meta.discard(var)
                 register_values[register] = var, value
 
-        def parse_address(a: Union[int, bytes]):
+        def parse_address(a: int | bytes):
             if isinstance(a, int):
                 return a
             a = a.decode(self.codec)

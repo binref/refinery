@@ -7,9 +7,9 @@ from operator import (
     __xor__,
 )
 
-from refinery.units import Arg, Unit
 from refinery.lib.decorators import unicoded
-
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 _opeator_inverse = {
     __add__: __sub__,
@@ -25,19 +25,19 @@ class vigenere(Unit):
 
     def __init__(
         self,
-        key: Arg(help='The encryption key'),
-        alphabet: Arg(
+        key: Param[buf, Arg(help='The encryption key')],
+        alphabet: Param[buf, Arg(
             help='The alphabet, by default the Latin one is used: "{default}"'
-        ) = b'abcdefghijklmnopqrstuvwxyz',
-        operator: Arg.Choice('-:', choices=['add', 'sub', 'xor'], metavar='OP', help=(
-            'Choose the vigenere block operation. The default is {default}, and the available options are: {choices}')) = 'add',
-        case_sensitive: Arg.Switch('-c', help=(
+        )] = b'abcdefghijklmnopqrstuvwxyz',
+        operator: Param[str, Arg.Choice('-:', choices=['add', 'sub', 'xor'], metavar='OP', help=(
+            'Choose the vigenere block operation. The default is {default}, and the available options are: {choices}'))] = 'add',
+        case_sensitive: Param[bool, Arg.Switch('-c', help=(
             'Unless this option is set, the key will be case insensitive. Uppercase letters from the input are transformed '
-            'using the same shift as would be the lowercase variant, but case is retained.')) = False,
-        ignore_unknown: Arg.Switch('-i', help=(
+            'using the same shift as would be the lowercase variant, but case is retained.'))] = False,
+        ignore_unknown: Param[bool, Arg.Switch('-i', help=(
             'Unless this option is set, the key stream will be iterated even '
             'for letters that are not contained in the alphabet.'
-        )) = False
+        ))] = False
     ):
         if not callable(operator):
             operator = {

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Unit, Arg
 from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class pdfcrypt(Unit):
@@ -22,8 +23,8 @@ class pdfcrypt(Unit):
 
     def __init__(
         self,
-        owner: Arg.String('-w', metavar='PWD', help='Optionally specify an owner password.') = '',
-        user : Arg.String('-u', metavar='PWD', help='Optionally specify a user password.') = '',
+        owner: Param[str, Arg.String('-w', metavar='PWD', help='Optionally specify an owner password.')] = '',
+        user: Param[str, Arg.String('-u', metavar='PWD', help='Optionally specify a user password.')] = '',
     ):
         super().__init__(user=user, owner=owner)
 

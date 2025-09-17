@@ -6,12 +6,13 @@ import itertools
 import json
 import textwrap
 
-from refinery.units import Arg, Unit
-from refinery.lib.json import flattened
-from refinery.units.crypto.cipher.rsa import normalize_rsa_key
-
-from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Util import number
+from Cryptodome.Util.asn1 import DerSequence
+
+from refinery.lib.json import flattened
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
+from refinery.units.crypto.cipher.rsa import normalize_rsa_key
 
 
 class RSAFormat(str, enum.Enum):
@@ -31,8 +32,8 @@ class rsakey(Unit):
     """
     def __init__(
         self,
-        output: Arg.Option(help='Select an output format ({choices}), default is {default}.', choices=RSAFormat) = RSAFormat.PEM,
-        public: Arg.Switch('-p', help='Force public key output even if the input is private.') = False,
+        output: Param[str, Arg.Option(help='Select an output format ({choices}), default is {default}.', choices=RSAFormat)] = RSAFormat.PEM,
+        public: Param[bool, Arg.Switch('-p', help='Force public key output even if the input is private.')] = False,
     ):
         super().__init__(output=Arg.AsOption(output, RSAFormat), public=public)
 
@@ -42,7 +43,7 @@ class rsakey(Unit):
         return base64.b64encode(number.to_bytes(size, 'big'))
 
     def process(self, data):
-        from refinery.lib.mscrypto import TYPES, ALGORITHMS
+        from refinery.lib.mscrypto import ALGORITHMS, TYPES
         fmt, key = normalize_rsa_key(data, force_public=self.args.public)
         self.log_info(F'parsing input as {fmt.value} format')
         out = self.args.output

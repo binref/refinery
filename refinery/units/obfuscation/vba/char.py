@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from refinery.units.obfuscation import Deobfuscator, StringLiterals
 from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator, StringLiterals
 
 
 class deob_vba_char_function(Deobfuscator):
@@ -23,6 +23,6 @@ class deob_vba_char_function(Deobfuscator):
             c = repr(c)[1:-1]
             if len(c) > 1:
                 return match[0]
-            return '"{}"'.format(c)
+            return f'"{c}"'
 
         return re.sub(R'(?i)\bchrw?\s*\(\s*(\d+)\s*\)', evaluate_char_function, data)

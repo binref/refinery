@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from typing import Generator, Optional
-
-import sys
-import os
-import textwrap
 import codecs
-import itertools
 import collections
+import itertools
+import os
+import sys
+import textwrap
 
-from refinery.units.sinks import Arg, HexViewer
-from refinery.lib.meta import ByteStringWrapper, metavars, CustomStringRepresentation, SizeInt
-from refinery.lib.types import INF
-from refinery.lib.tools import get_terminal_size, isbuffer
+from typing import Generator
+
 from refinery.lib.environment import environment
+from refinery.lib.meta import ByteStringWrapper, CustomStringRepresentation, SizeInt, metavars
+from refinery.lib.tools import get_terminal_size, isbuffer
+from refinery.lib.types import INF, Param
+from refinery.units.sinks import Arg, HexViewer
 
 
 class peek(HexViewer):
@@ -25,18 +25,18 @@ class peek(HexViewer):
 
     def __init__(
         self,
-        lines  : Arg.Number('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.') = 10,
-        all    : Arg.Switch('-a', group='SIZE', help='Output all possible preview lines without restriction') = False,
-        brief  : Arg.Switch('-b', group='SIZE', help='One line peek, implies --lines=1.') = False,
-        decode : Arg.Counts('-d', group='MODE', help=(
-            'Attempt to decode and display printable data. Specify twice to enable line wrapping.')) = 0,
-        escape : Arg.Switch('-e', group='MODE', help='Always peek data as string, escape characters if necessary.') = False,
-        bare   : Arg.Switch('-r', group='META', help='Only peek the data itself, do not show a metadata preview.') = False,
-        meta   : Arg.Counts('-m', group='META', help=(
-            'Show more auto-derivable metadata. Specify multiple times to populate more variables.')) = 0,
-        gray   : Arg.Switch('-g', help='Do not colorize the output.') = False,
-        index  : Arg.Switch('-i', help='Display the index of each chunk within the current frame.') = False,
-        stdout : Arg.Switch('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.') = False,
+        lines: Param[int, Arg.Number('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.')] = 10,
+        all: Param[bool, Arg.Switch('-a', group='SIZE', help='Output all possible preview lines without restriction')] = False,
+        brief: Param[bool, Arg.Switch('-b', group='SIZE', help='One line peek, implies --lines=1.')] = False,
+        decode: Param[int, Arg.Counts('-d', group='MODE', help=(
+            'Attempt to decode and display printable data. Specify twice to enable line wrapping.'))] = 0,
+        escape: Param[bool, Arg.Switch('-e', group='MODE', help='Always peek data as string, escape characters if necessary.')] = False,
+        bare: Param[bool, Arg.Switch('-r', group='META', help='Only peek the data itself, do not show a metadata preview.')] = False,
+        meta: Param[int, Arg.Counts('-m', group='META', help=(
+            'Show more auto-derivable metadata. Specify multiple times to populate more variables.'))] = 0,
+        gray: Param[bool, Arg.Switch('-g', help='Do not colorize the output.')] = False,
+        index: Param[bool, Arg.Switch('-i', help='Display the index of each chunk within the current frame.')] = False,
+        stdout: Param[bool, Arg.Switch('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.')] = False,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if decode and escape:
@@ -46,7 +46,7 @@ class peek(HexViewer):
         if environment.colorless.value:
             gray = True
         lines = 1 if brief else INF if all else lines
-        super(peek, self).__init__(
+        super().__init__(
             brief=brief,
             gray=gray,
             blocks=blocks,
@@ -98,7 +98,7 @@ class peek(HexViewer):
             self.log_info('forwarding input to next unit')
             yield data
 
-    def _peekmeta(self, linewidth, sep, meta: dict, peek=None) -> Generator[str, None, None]:
+    def _peekmeta(self, linewidth, sep, meta: dict, peek=None) -> Generator[str]:
         if not meta and not peek:
             return
         width = max((len(name) for name in meta), default=0)
@@ -131,7 +131,7 @@ class peek(HexViewer):
             yield from separators
             yield metavar
 
-    def _trydecode(self, data, codec: Optional[str], width: int, linecount: int) -> str:
+    def _trydecode(self, data, codec: str | None, width: int, linecount: int) -> str:
         remaining = linecount
         result = []
         wrap = self.args.decode > 1
@@ -196,7 +196,7 @@ class peek(HexViewer):
             result.extend(wrapped)
         return result[:abs(linecount)]
 
-    def _peeklines(self, data: bytearray, colorize: bool) -> Generator[str, None, None]:
+    def _peeklines(self, data: bytearray, colorize: bool) -> Generator[str]:
 
         meta = metavars(data)
 

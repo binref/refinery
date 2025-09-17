@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import struct
-from refinery.units import Arg
 
-from refinery.units.crypto.cipher import StreamCipherUnit
 from refinery.lib.crypto import rotr64
+from refinery.lib.types import Param, buf
+from refinery.units import Arg
+from refinery.units.crypto.cipher import StreamCipherUnit
 
 _M64 = 0xFFFFFFFFFFFFFFFF
 
@@ -18,8 +19,8 @@ class blabla(StreamCipherUnit):
 
     def __init__(
         self, key,
-        nonce: Arg(help='The 16-byte nonce. The default are 16 null bytes.') = bytes(16),
-        rounds: Arg.Number('-r', help='The number of rounds, default is {default}.') = 10,
+        nonce: Param[buf, Arg(help='The 16-byte nonce. The default are 16 null bytes.')] = bytes(16),
+        rounds: Param[int, Arg.Number('-r', help='The number of rounds, default is {default}.')] = 10,
         discard=0, stateful=False
     ):
         super().__init__(key=key, nonce=nonce, rounds=rounds, discard=discard, stateful=stateful)

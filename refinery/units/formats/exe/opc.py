@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
-from refinery.units.sinks import Arg, Unit
+
 from refinery.lib.shared import capstone as cs
+from refinery.lib.types import Param
+from refinery.units.sinks import Arg, Unit
 
 if TYPE_CHECKING:
     from capstone import Cs
@@ -18,19 +21,19 @@ class opc(Unit):
     """
     def __init__(
         self,
-        mode: Arg.Choice(
+        mode: Param[str, Arg.Choice(
             help='Machine code architecture, default is {default}. Select from the following list: {choices}.',
-            choices=_ARCHES, metavar='[x32|x64|..]') = 'x32', *,
-        count: Arg.Number('-c', help='Maximum number of bytes to disassemble, infinite by default.') = None,
-        until: Arg.String('-u', help='Disassemble until the given string appears among the disassembly.') = None,
-        nvar: Arg.String('-n', help=(
-            'Variable to receive the disassembled mnemonic. Default is "{default}".')) = 'name',
-        avar: Arg.String('-a', help=(
-            'Variable to receive the address of the instruction. Default is "{default}".')) = 'addr',
-        ovar: Arg.String('-o', help=(
+            choices=_ARCHES, metavar='[x32|x64|..]')] = 'x32', *,
+        count: Param[int, Arg.Number('-c', help='Maximum number of bytes to disassemble, infinite by default.')] = None,
+        until: Param[str, Arg.String('-u', help='Disassemble until the given string appears among the disassembly.')] = None,
+        nvar: Param[str, Arg.String('-n', help=(
+            'Variable to receive the disassembled mnemonic. Default is "{default}".'))] = 'name',
+        avar: Param[str, Arg.String('-a', help=(
+            'Variable to receive the address of the instruction. Default is "{default}".'))] = 'addr',
+        ovar: Param[str, Arg.String('-o', help=(
             'Variable prefix for instruction operands. Default is "{default}". The complete operand '
             'string will be in {default}s, the first argument in {default}1, the second in {default}2, '
-            'and so on.')) = 'arg',
+            'and so on.'))] = 'arg',
         **more
     ):
         super().__init__(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from io import StringIO
-from typing import Callable, Dict, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from defusedxml.ElementTree import XML
 
@@ -26,7 +26,7 @@ class doctxt(Unit):
         return olefile
 
     def process(self, data: bytearray):
-        extractors: Dict[str, Callable[[bytearray], str]] = OrderedDict(
+        extractors: dict[str, Callable[[bytearray], str]] = OrderedDict(
             doc=self._extract_ole,
             docx=self._extract_docx,
             odt=self._extract_odt,

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import re
 import itertools
+import re
 
-from refinery.units import Arg, Unit
 from refinery.lib.meta import metavars
 from refinery.lib.tools import integers_of_slice
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 
 class bruteforce(Unit):
@@ -16,27 +17,27 @@ class bruteforce(Unit):
     """
     def __init__(
         self,
-        name  : Arg.String(help='Name of the meta variable to be populated.'),
-        length: Arg.Bounds(metavar='length', help=(
+        name: Param[str, Arg.String(help='Name of the meta variable to be populated.')],
+        length: Param[slice, Arg.Bounds(metavar='length', help=(
             'Specifies the range of characters to brute force, default is {default}.'
-        )) = slice(1, None),
-        format: Arg.String(help=(
+        ))] = slice(1, None),
+        format: Param[str, Arg.String(help=(
             'Optional format expression for the output string. The format sequence "{0}" is the '
             'current brute force string, the sequence "{1}" represents the input data.'
-        )) = None,
-        alphabet  : Arg.Binary('-a', group='ALPH', help=(
+        ))] = None,
+        alphabet: Param[buf, Arg.Binary('-a', group='ALPH', help=(
             'The alphabet from which to choose the letters. Entire byte range by default.'
-        )) = None,
-        pattern   : Arg.RegExp('-r', group='ALPH',
-            help='Provide a regular expression pattern to define the alphabet.') = None,
-        printable : Arg.Switch('-p', group='ALPH',
-            help='Equivalent to --pattern=[\\s\\x20-\\x7E]') = False,
-        digits    : Arg.Switch('-d', group='ALPH',
-            help='Equivalent to --pattern=\\d') = False,
-        identifier: Arg.Switch('-i', group='ALPH',
-            help='Equivalent to --pattern=\\w') = False,
-        letters   : Arg.Switch('-l', group='ALPH',
-            help='Equivalent to --pattern=[a-zA-Z]') = False,
+        ))] = None,
+        pattern: Param[str, Arg.RegExp('-r', group='ALPH',
+            help='Provide a regular expression pattern to define the alphabet.')] = None,
+        printable: Param[bool, Arg.Switch('-p', group='ALPH',
+            help='Equivalent to --pattern=[\\s\\x20-\\x7E]')] = False,
+        digits: Param[bool, Arg.Switch('-d', group='ALPH',
+            help='Equivalent to --pattern=\\d')] = False,
+        identifier: Param[bool, Arg.Switch('-i', group='ALPH',
+            help='Equivalent to --pattern=\\w')] = False,
+        letters: Param[bool, Arg.Switch('-l', group='ALPH',
+            help='Equivalent to --pattern=[a-zA-Z]')] = False,
     ):
         options = sum(1 for x in [printable, digits, identifier, letters] if x)
 

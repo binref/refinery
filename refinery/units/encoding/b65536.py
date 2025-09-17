@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from refinery.lib.structures import MemoryFile
+
 # Reference: https://github.com/Parkayun/base65536
 from refinery.units import Unit
-from refinery.lib.structures import MemoryFile
 
 _BLOCK_START = {
     0: 13312, 1: 13568, 2: 13824, 3: 14080, 4: 14336, 5: 14592, 6: 14848, 7:

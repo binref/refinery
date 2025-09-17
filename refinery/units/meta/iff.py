@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import operator
-from typing import Any, Callable, Optional
 
-from refinery.lib.meta import metavars
+from typing import Any, Callable
+
 from refinery.lib.argformats import DelayedNumSeqArgument, PythonExpression
+from refinery.lib.meta import metavars
+from refinery.lib.types import Param
 from refinery.units.meta import Arg, ConditionalUnit
 
 
@@ -15,25 +17,25 @@ class iff(ConditionalUnit, docs='{0}{p}{1}'):
     """
     def __init__(
         self,
-        *expression: Arg.String(metavar='token', help=(
+        *expression: Param[str, Arg.String(metavar='token', help=(
             'All "token" arguments to this unit are joined with spaces to produce the expression '
-            'to be evaluated. This is done so that unnecessary shell quoting is avoided.')),
-        ge: Arg.String('-ge', metavar='RHS', group='OP',
-            help='check that the expression is greater or equal to {varname}') = None,
-        gt: Arg.String('-gt', metavar='RHS', group='OP',
-            help='check that the expression is greater than {varname}') = None,
-        le: Arg.String('-le', metavar='RHS', group='OP',
-            help='check that the expression is less or equal to {varname}') = None,
-        lt: Arg.String('-lt', metavar='RHS', group='OP',
-            help='check that the expression is less than {varname}') = None,
-        ct: Arg.String('-ct', metavar='RHS', group='OP',
-            help='check that the expression contains {varname}') = None,
-        ne: Arg.String('-ne', metavar='RHS', group='OP',
-            help='check that the expression is equal to {varname}') = None,
-        iN: Arg.String('-in', metavar='RHS', group='OP',
-            help='check that the expression is contained in {varname}') = None,
-        eq: Arg.String('-eq', metavar='RHS', group='OP',
-            help='check that the expression is equal to {varname}') = None,
+            'to be evaluated. This is done so that unnecessary shell quoting is avoided.'))],
+        ge: Param[str, Arg.String('-ge', metavar='RHS', group='OP',
+            help='check that the expression is greater or equal to {varname}')] = None,
+        gt: Param[str, Arg.String('-gt', metavar='RHS', group='OP',
+            help='check that the expression is greater than {varname}')] = None,
+        le: Param[str, Arg.String('-le', metavar='RHS', group='OP',
+            help='check that the expression is less or equal to {varname}')] = None,
+        lt: Param[str, Arg.String('-lt', metavar='RHS', group='OP',
+            help='check that the expression is less than {varname}')] = None,
+        ct: Param[str, Arg.String('-ct', metavar='RHS', group='OP',
+            help='check that the expression contains {varname}')] = None,
+        ne: Param[str, Arg.String('-ne', metavar='RHS', group='OP',
+            help='check that the expression is equal to {varname}')] = None,
+        iN: Param[str, Arg.String('-in', metavar='RHS', group='OP',
+            help='check that the expression is contained in {varname}')] = None,
+        eq: Param[str, Arg.String('-eq', metavar='RHS', group='OP',
+            help='check that the expression is equal to {varname}')] = None,
         retain=False,
     ):
         def encodings(v: str):
@@ -85,9 +87,9 @@ class iff(ConditionalUnit, docs='{0}{p}{1}'):
 
     def match(self, chunk):
         meta = metavars(chunk)
-        lhs: Optional[str] = self.args.lhs
-        rhs: Optional[Any] = self.args.rhs
-        cmp: Optional[Callable[[Any, Any], bool]] = self.args.cmp
+        lhs: str | None = self.args.lhs
+        rhs: Any | None = self.args.rhs
+        cmp: Callable[[Any, Any], bool] | None = self.args.cmp
 
         if cmp is None and rhs is not None:
             raise ValueError('right hand side defined but no operator')

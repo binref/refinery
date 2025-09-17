@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from refinery.units.misc.xkey import xkey
-from refinery.lib.mime import FileMagicInfo as magic
 from refinery.lib.loader import get_entry_point
+from refinery.lib.mime import FileMagicInfo as magic
+from refinery.units.misc.xkey import xkey
 
 
 class autoxor(xkey, docs='{0}{p}{1}'):

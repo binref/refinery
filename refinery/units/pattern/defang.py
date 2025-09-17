@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import re
 import itertools
+import re
 
 from urllib.parse import urlparse, urlunparse
 
-from refinery.units import Arg, Unit
 from refinery.lib.patterns import defanged, indicators, tlds
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class defang(Unit):
@@ -29,10 +30,10 @@ class defang(Unit):
 
     def __init__(
         self,
-        url_only: Arg.Switch('-u', help='Only defang URLs, do not look for domains or IPs.') = False,
-        url_protocol: Arg.Switch('-p', help='Escape the protocol in URLs.') = False,
-        dot_only: Arg.Switch('-d', help='Do not escape the protocol colon in URLs.') = False,
-        quote_md: Arg.Switch('-q', help='Wrap all indicators in backticks for markdown code.') = False
+        url_only: Param[bool, Arg.Switch('-u', help='Only defang URLs, do not look for domains or IPs.')] = False,
+        url_protocol: Param[bool, Arg.Switch('-p', help='Escape the protocol in URLs.')] = False,
+        dot_only: Param[bool, Arg.Switch('-d', help='Do not escape the protocol colon in URLs.')] = False,
+        quote_md: Param[bool, Arg.Switch('-q', help='Wrap all indicators in backticks for markdown code.')] = False
     ):
         self.superinit(super(), **vars())
 

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from refinery.units import Unit, Arg
-
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 from refinery.units.pattern.carve_7z import carve_7z
 from refinery.units.pattern.carve_json import carve_json
 from refinery.units.pattern.carve_lnk import carve_lnk
 from refinery.units.pattern.carve_pe import carve_pe
+from refinery.units.pattern.carve_rtf import carve_rtf
 from refinery.units.pattern.carve_xml import carve_xml
 from refinery.units.pattern.carve_zip import carve_zip
-from refinery.units.pattern.carve_rtf import carve_rtf
 
 
 class subfiles(Unit):
@@ -25,10 +25,10 @@ class subfiles(Unit):
 
     def __init__(
         self,
-        memdump  : Arg.Switch('-m',
-            help='Assume that the input is a memdump for PE file carving.') = False,
-        recursive: Arg.Switch('-r',
-            help='Extract files that are subfiles of other extracted files as separate chunks.') = False,
+        memdump: Param[bool, Arg.Switch('-m',
+            help='Assume that the input is a memdump for PE file carving.')] = False,
+        recursive: Param[bool, Arg.Switch('-r',
+            help='Extract files that are subfiles of other extracted files as separate chunks.')] = False,
     ):
         super().__init__(memdump=memdump, recursive=recursive)
 

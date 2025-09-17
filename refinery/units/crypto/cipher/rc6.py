@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-from typing import List, Optional
 from math import log2
 
-from refinery.units.crypto.cipher import StandardBlockCipherUnit, Arg
-from refinery.units.crypto.cipher.rc5 import rc5constants
 from refinery.lib import chunks
 from refinery.lib.crypto import (
-    rotr,
-    rotl,
     BlockCipher,
     BlockCipherFactory,
-    CipherMode,
-    CipherInterface,
     BufferType,
+    CipherInterface,
+    CipherMode,
+    rotl,
+    rotr,
 )
-
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher import Arg, StandardBlockCipherUnit
+from refinery.units.crypto.cipher.rc5 import rc5constants
 
 _W = 32
 _R = 20
@@ -25,7 +24,7 @@ class RC6(BlockCipher):
 
     block_size: int
     key_size = range(256)
-    _S: List[int]
+    _S: list[int]
     _w: int
     _r: int
     _u: int
@@ -34,7 +33,7 @@ class RC6(BlockCipher):
 
     __slots__ = '_S', '_w', '_r', '_u', '_m', '_g'
 
-    def __init__(self, key: BufferType, mode: Optional[CipherMode] = None, word_size: int = _W, rounds: int = _R):
+    def __init__(self, key: BufferType, mode: CipherMode | None = None, word_size: int = _W, rounds: int = _R):
         if word_size < 8 or word_size % 8:
             raise ValueError(F'Invalid word size: {word_size}')
         self._w = word_size
@@ -123,8 +122,8 @@ class rc6(StandardBlockCipherUnit, cipher=BlockCipherFactory(RC6)):
     """
     def __init__(
         self, key, *, iv=b'', padding=None, mode=None, raw=False, little_endian=False, segment_size=0,
-        rounds    : Arg.Number('-k', help='Number of rounds to use, the default is {default}') = _R,
-        word_size : Arg.Number('-w', help='The word size in bits, {default} by default.') = _W,
+        rounds: Param[int, Arg.Number('-k', help='Number of rounds to use, the default is {default}')] = _R,
+        word_size: Param[int, Arg.Number('-w', help='The word size in bits, {default} by default.')] = _W,
     ):
         super().__init__(
             key,

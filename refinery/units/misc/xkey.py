@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import NamedTuple, Optional
-
-from itertools import product
-from collections import Counter
-from Cryptodome.Util.strxor import strxor
-
 import enum
 
-from refinery.units import Unit, Arg
+from collections import Counter
+from itertools import product
+from typing import NamedTuple
+
+from Cryptodome.Util.strxor import strxor
+
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 
 def _generate_cribs(cribs: bytes | tuple[bytes | tuple[bytes, ...], ...]):
@@ -159,18 +160,18 @@ class xkey(Unit):
     class _result(NamedTuple):
         key: bytes
         how: xkey._rt
-        xor: Optional[bool] = None
+        xor: bool | None = None
 
     def __init__(
         self,
-        range: Arg.Bounds(help='range of length values to try in Python slice syntax, the default is {default}.') = slice(1, 32),
-        plaintext: Arg.Binary('-p', help='Provide a buffer of known plaintext.') = None,
-        searchpos: Arg.Bounds('-s', metavar='S:E', help=(
+        range: Param[slice, Arg.Bounds(help='range of length values to try in Python slice syntax, the default is {default}.')] = slice(1, 32),
+        plaintext: Param[buf, Arg.Binary('-p', help='Provide a buffer of known plaintext.')] = None,
+        searchpos: Param[slice, Arg.Bounds('-s', metavar='S:E', help=(
             'Only used when a known plaintext buffer is provided; In this case it narrows the search range '
-            'for the offset of that data to between S and E.')) = slice(0, None),
-        alph: Arg.Switch('-a', help='enable search for keys via known encoder alphabets') = False,
-        crib: Arg.Switch('-c', help='enable search for keys via known plaintext cribs') = False,
-        freq: Arg.Switch('-f', help='enable search for keys via frequency analysis') = False,
+            'for the offset of that data to between S and E.'))] = slice(0, None),
+        alph: Param[bool, Arg.Switch('-a', help='enable search for keys via known encoder alphabets')] = False,
+        crib: Param[bool, Arg.Switch('-c', help='enable search for keys via known plaintext cribs')] = False,
+        freq: Param[bool, Arg.Switch('-f', help='enable search for keys via frequency analysis')] = False,
     ):
         if not any((alph, crib, freq)) and plaintext is None:
             alph = crib = freq = True

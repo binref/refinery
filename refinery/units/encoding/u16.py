@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units import Unit
 from refinery.lib.id import guess_text_encoding
+from refinery.units import Unit
 
 
 class u16(Unit):

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
 from refinery.lib.dotnet.header import DotNetHeader
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class dnstr(Unit):
@@ -11,8 +12,8 @@ class dnstr(Unit):
 
     def __init__(
         self,
-        user: Arg.Switch('-m', '--meta', off=True, group='HEAP', help='Only extract from #Strings.') = True,
-        meta: Arg.Switch('-u', '--user', off=True, group='HEAP', help='Only extract from #US.') = True,
+        user: Param[bool, Arg.Switch('-m', '--meta', off=True, group='HEAP', help='Only extract from #Strings.')] = True,
+        meta: Param[bool, Arg.Switch('-u', '--user', off=True, group='HEAP', help='Only extract from #US.')] = True,
     ):
         if not meta and not user:
             raise ValueError('Either ascii or utf16 strings must be enabled.')

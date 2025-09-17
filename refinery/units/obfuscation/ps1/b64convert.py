@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import re
 import base64
+import re
 
-from refinery.units.obfuscation import Deobfuscator
-from refinery.units.obfuscation.ps1 import string_unquote, Ps1StringLiterals
 from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation.ps1 import Ps1StringLiterals, string_unquote
 
 
 class deob_ps1_b64convert(Deobfuscator):

@@ -6,15 +6,10 @@ from __future__ import annotations
 
 import struct
 
-from typing import Tuple, List
-
-from refinery.lib.crypto import (
-    rotl32 as ROL32,
-    rotr32 as ROR32,
-    rotl64 as ROL64,
-    rotr64 as ROR64,
-)
-
+from refinery.lib.crypto import rotl32 as ROL32
+from refinery.lib.crypto import rotl64 as ROL64
+from refinery.lib.crypto import rotr32 as ROR32
+from refinery.lib.crypto import rotr64 as ROR64
 
 SPECK_ROUNDS = {
     "64_96": 26,
@@ -33,7 +28,7 @@ def make_qword(x: int) -> int:
     return x & 0xFFFFFFFFFFFFFFFF
 
 
-def words_to_bytes(words: List[int], word_size=32) -> bytes:
+def words_to_bytes(words: list[int], word_size=32) -> bytes:
     numwords = len(words)
     if word_size == 32:
         bytes_out = struct.pack("<" + "I" * numwords, *words[::-1])
@@ -42,7 +37,7 @@ def words_to_bytes(words: List[int], word_size=32) -> bytes:
     return bytes_out
 
 
-def bytes_to_words(bytes_in: bytes, word_size=32) -> List[int]:
+def bytes_to_words(bytes_in: bytes, word_size=32) -> list[int]:
     numbytes = len(bytes_in)
     if word_size == 32:
         numwords = numbytes // 4
@@ -53,7 +48,7 @@ def bytes_to_words(bytes_in: bytes, word_size=32) -> List[int]:
     return list(words[::-1])
 
 
-def Speck6496KeySchedule(key: bytearray) -> List[int]:
+def Speck6496KeySchedule(key: bytearray) -> list[int]:
     """
     Calculate the round key rk for SPECK 64/96
     """
@@ -70,7 +65,7 @@ def Speck6496KeySchedule(key: bytearray) -> List[int]:
     return rk
 
 
-def Speck64128KeySchedule(key: bytearray) -> List[int]:
+def Speck64128KeySchedule(key: bytearray) -> list[int]:
     """
     Calculate the round key rk for SPECK 64/128
     """
@@ -90,7 +85,7 @@ def Speck64128KeySchedule(key: bytearray) -> List[int]:
     return rk
 
 
-def Speck128128KeySchedule(key: bytearray) -> List[int]:
+def Speck128128KeySchedule(key: bytearray) -> list[int]:
     """
     Calculate the round key rk for SPECK 128/128
     """
@@ -105,7 +100,7 @@ def Speck128128KeySchedule(key: bytearray) -> List[int]:
     return rk
 
 
-def Speck128192KeySchedule(key: bytearray) -> List[int]:
+def Speck128192KeySchedule(key: bytearray) -> list[int]:
     """
     Calculate the round key rk for SPECK 128/192
     """
@@ -123,7 +118,7 @@ def Speck128192KeySchedule(key: bytearray) -> List[int]:
     return rk
 
 
-def Speck128256KeySchedule(key: bytearray) -> List[int]:
+def Speck128256KeySchedule(key: bytearray) -> list[int]:
     """
     Calculate the round key rk for SPECK 128/256
     """
@@ -144,77 +139,77 @@ def Speck128256KeySchedule(key: bytearray) -> List[int]:
     return rk
 
 
-def speck_encrypt_round32(x: int, y: int, k: int) -> Tuple[int]:
+def speck_encrypt_round32(x: int, y: int, k: int) -> tuple[int]:
     x = make_dword(ROR32(x, 8) + y) ^ k
     y = ROL32(y, 3) ^ x
     return x, y
 
 
-def speck_encrypt_round64(x: int, y: int, k: int) -> Tuple[int]:
+def speck_encrypt_round64(x: int, y: int, k: int) -> tuple[int]:
     x = make_qword(ROR64(x, 8) + y) ^ k
     y = ROL64(y, 3) ^ x
     return x, y
 
 
-def speck_decrypt_round32(x: int, y: int, k: int) -> Tuple[int]:
+def speck_decrypt_round32(x: int, y: int, k: int) -> tuple[int]:
     y = ROR32(y ^ x, 3)
     x = ROL32(make_dword((x ^ k) - y), 8)
     return x, y
 
 
-def speck_decrypt_round64(x: int, y: int, k: int) -> Tuple[int]:
+def speck_decrypt_round64(x: int, y: int, k: int) -> tuple[int]:
     y = ROR64(y ^ x, 3)
     x = ROL64(make_qword((x ^ k) - y), 8)
     return x, y
 
 
-def _internal_speck_encrypt32(plaintext: List[int], rk: List[int], rounds: int) -> List[int]:
+def _internal_speck_encrypt32(plaintext: list[int], rk: list[int], rounds: int) -> list[int]:
     cipher = plaintext
     for i in range(0, rounds):
         cipher[0], cipher[1] = speck_encrypt_round32(cipher[0], cipher[1], rk[i])
     return cipher
 
 
-def _internal_speck_encrypt64(plaintext: List[int], rk: List[int], rounds: int) -> List[int]:
+def _internal_speck_encrypt64(plaintext: list[int], rk: list[int], rounds: int) -> list[int]:
     cipher = plaintext
     for i in range(0, rounds):
         cipher[0], cipher[1] = speck_encrypt_round64(cipher[0], cipher[1], rk[i])
     return cipher
 
 
-def _internal_speck_decrypt32(cipher: List[int], rk: List[int], rounds: int) -> List[int]:
+def _internal_speck_decrypt32(cipher: list[int], rk: list[int], rounds: int) -> list[int]:
     plaintext = cipher
     for i in range(rounds - 1, -1, -1):
         plaintext[0], plaintext[1] = speck_decrypt_round32(plaintext[0], plaintext[1], rk[i])
     return plaintext
 
 
-def _internal_speck_decrypt64(cipher: List[int], rk: List[int], rounds: int) -> List[int]:
+def _internal_speck_decrypt64(cipher: list[int], rk: list[int], rounds: int) -> list[int]:
     plaintext = cipher
     for i in range(rounds - 1, -1, -1):
         plaintext[0], plaintext[1] = speck_decrypt_round64(plaintext[0], plaintext[1], rk[i])
     return plaintext
 
 
-def speck_encrypt32(plaintext: bytearray, rk: List[int], rounds: int) -> bytes:
+def speck_encrypt32(plaintext: bytearray, rk: list[int], rounds: int) -> bytes:
     pt_words = bytes_to_words(plaintext)
     cipher = _internal_speck_encrypt32(pt_words, rk, rounds)
     return words_to_bytes(cipher)
 
 
-def speck_encrypt64(plaintext: bytearray, rk: List[int], rounds: int) -> bytes:
+def speck_encrypt64(plaintext: bytearray, rk: list[int], rounds: int) -> bytes:
     pt_words = bytes_to_words(plaintext, 64)
     cipher = _internal_speck_encrypt64(pt_words, rk, rounds)
     return words_to_bytes(cipher, 64)
 
 
-def speck_decrypt32(cipher: bytearray, rk: List[int], rounds: int) -> bytes:
+def speck_decrypt32(cipher: bytearray, rk: list[int], rounds: int) -> bytes:
     ct_words = bytes_to_words(cipher)
     plaintext = _internal_speck_decrypt32(ct_words, rk, rounds)
     return words_to_bytes(plaintext)
 
 
-def speck_decrypt64(cipher: bytearray, rk: List[int], rounds: int) -> bytes:
+def speck_decrypt64(cipher: bytearray, rk: list[int], rounds: int) -> bytes:
     ct_words = bytes_to_words(cipher, 64)
     plaintext = _internal_speck_decrypt64(ct_words, rk, rounds)
     return words_to_bytes(plaintext, 64)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from refinery.units import Unit, Arg
-from refinery.lib.tools import isbuffer
-from refinery.lib.meta import metavars
-from refinery.lib.argformats import PythonExpression
-
 from hashlib import md5
+
+from refinery.lib.argformats import PythonExpression
+from refinery.lib.meta import metavars
+from refinery.lib.tools import isbuffer
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class dedup(Unit):
@@ -14,8 +15,8 @@ class dedup(Unit):
     """
     def __init__(
         self,
-        key: Arg.String('key', help='An optional meta variable expression to deduplicate.') = None,
-        count: Arg.Switch('-c', help='Store the count of each deduplicated chunk.') = False
+        key: Param[str, Arg.String('key', help='An optional meta variable expression to deduplicate.')] = None,
+        count: Param[bool, Arg.Switch('-c', help='Store the count of each deduplicated chunk.')] = False
     ):
         super().__init__(key=key, count=count)
 

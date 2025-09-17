@@ -1,10 +1,11 @@
 from __future__ import annotations
+
+import re
+
 from typing import TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats.archive import ArchiveUnit
-
-import re
 
 if TYPE_CHECKING:
     from py7zr import SevenZipFile
@@ -67,7 +68,7 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 yield from self._COMMON_PASSWORDS
             for pwd in passwords():
                 if pwd is None:
-                    self.log_debug(U'trying empty password')
+                    self.log_debug('trying empty password')
                 else:
                     self.log_debug(F'trying password: {pwd}')
                 try:

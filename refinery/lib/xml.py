@@ -3,15 +3,16 @@ Custom XML parser that is intended to be less strict than the standard library o
 """
 from __future__ import annotations
 
+import collections
+import re
 import uuid
 import weakref
-import re
-import defusedxml.ElementTree as et
-import collections
 
-from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
-from xml.parsers import expat
+from typing import TYPE_CHECKING, Any, Iterable
 from xml.etree.ElementTree import Element, ElementTree
+from xml.parsers import expat
+
+import defusedxml.ElementTree as et
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import exception_to_string
@@ -129,21 +130,21 @@ class XMLNodeBase:
 
     __slots__ = 'tag', 'index', 'children', 'empty', 'attributes', 'content', '_parent', '__weakref__'
 
-    attributes: Dict[str, Any]
-    children: List[Self]
-    content: Optional[str]
-    _parent: Optional[weakref.ReferenceType[Self]]
+    attributes: dict[str, Any]
+    children: list[Self]
+    content: str | None
+    _parent: weakref.ReferenceType[Self] | None
     empty: bool
-    tag: Optional[str]
+    tag: str | None
 
     def __init__(
         self,
-        tag: Optional[str],
-        index: Optional[int] = None,
-        parent: Optional[Self] = None,
-        content: Optional[str] = None,
+        tag: str | None,
+        index: int | None = None,
+        parent: Self | None = None,
+        content: str | None = None,
         empty: bool = False,
-        attributes: Optional[Dict[str, Any]] = None,
+        attributes: dict[str, Any] | None = None,
     ):
         if parent is None and index is not None:
             raise ValueError('Cannot set index for XML node without parent.')
@@ -158,7 +159,7 @@ class XMLNodeBase:
         self.parent = parent
 
     @property
-    def parent(self) -> Optional[XMLNodeBase]:
+    def parent(self) -> XMLNodeBase | None:
         parent = self._parent
         if parent is not None:
             parent = parent()
@@ -248,9 +249,9 @@ class XMLNode(XMLNodeBase):
     """
     __slots__ = 'source',
 
-    source: Optional[Element]
+    source: Element | None
 
-    def __init__(self, tag: str, parent: Optional[Self] = None, source: Optional[Element] = None):
+    def __init__(self, tag: str, parent: Self | None = None, source: Element | None = None):
         super().__init__(tag, parent=parent)
         self.source = source
 
@@ -261,7 +262,7 @@ class XMLNode(XMLNodeBase):
         return ElementTree(self.source).write(stream)
 
 
-def parse(data) -> Optional[XMLNode]:
+def parse(data) -> XMLNode | None:
     """
     This function is the primary export of the `refinery.lib.xml` module. It accepts raw XML data
     as input and returns an `refinery.lib.xml.XMLNode` representing the document root node as

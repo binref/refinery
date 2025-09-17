@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
-
 from refinery.lib.dotnet.disassembler.model import (
     Argument,
     DisassemblerException,
     Instruction,
-    Method, Op, String, )
+    Method,
+    Op,
+    String,
+)
 
 
 class InstructionFactory:
@@ -61,7 +62,7 @@ class OutputFactory:
         address: bool = True,
         hexdump: bool = True,
         arguments: bool = True,
-        token_labels: Optional[Dict[int, str]] = None,
+        token_labels: dict[int, str] | None = None,
     ):
         self._il_refs = il_refs
         self._address = address
@@ -69,7 +70,7 @@ class OutputFactory:
         self._arguments = arguments
         self._token_labels = {} if token_labels is None else token_labels
 
-    def extend_token_labels(self, token_labels: Dict[int, str]):
+    def extend_token_labels(self, token_labels: dict[int, str]):
         self._token_labels.update(token_labels)
 
     def instruction(self, instruction: Instruction) -> str:

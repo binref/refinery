@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import List, NamedTuple
+from typing import NamedTuple
+from urllib.parse import urlunparse
 
 from refinery.units import Unit
 from refinery.units.formats.httpresponse import httpresponse
 from refinery.units.formats.pcap import pcap
-
-from urllib.parse import urlunparse
 
 
 class _HTTP_Request(NamedTuple):
@@ -49,8 +48,8 @@ class pcap_http(Unit):
     """
     def process(self, data):
         http_parser = httpresponse()
-        requests: List[_HTTP_Request] = []
-        responses: List[bytearray] = []
+        requests: list[_HTTP_Request] = []
+        responses: list[bytearray] = []
 
         def lookup(src, dst):
             for k, request in enumerate(requests):

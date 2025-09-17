@@ -4,8 +4,6 @@ json module in order to support custom encoding of already serializable types.
 """
 from __future__ import annotations
 
-from typing import List, Tuple, Union
-
 import datetime
 import json
 import re
@@ -136,7 +134,7 @@ class BytesAsStringEncoder(BytesEncoder):
         return obj.decode('latin1')
 
 
-def flattened(data: dict, prefix='', separator='.') -> List[Tuple[str, Union[int, float, str]]]:
+def flattened(data: dict, prefix='', separator='.') -> list[tuple[str, int | float | str]]:
     def flatten(cursor, prefix):
         if isinstance(cursor, dict):
             for key, value in cursor.items():

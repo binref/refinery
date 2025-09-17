@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from typing import List, Union, TYPE_CHECKING
+import dataclasses
 
-from refinery.units import Arg, Unit
-from refinery.lib.vfs import VirtualFileSystem, VirtualFile
+from typing import TYPE_CHECKING, Union
+
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
-
-import dataclasses
+from refinery.lib.types import Param
+from refinery.lib.vfs import VirtualFile, VirtualFileSystem
+from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
     from ipaddress import IPv4Address, IPv6Address
-    from pcapkit.foundation.reassembly.data.tcp import Datagram, DatagramID
+
     from pcapkit.foundation.extraction import Packet
+    from pcapkit.foundation.reassembly.data.tcp import Datagram, DatagramID
     TIPAddr = Union[IPv4Address, IPv6Address]
 
 
@@ -72,9 +74,9 @@ class pcap(Unit):
 
     def __init__(
         self,
-        merge: Arg.Switch('-m', help='Merge both parts of each TCP conversation into one chunk.') = False,
-        client: Arg.Switch('-c', group='D', help='Show only the client part of each conversation.') = False,
-        server: Arg.Switch('-s', group='D', help='Show only the server part of each conversation.') = False,
+        merge: Param[bool, Arg.Switch('-m', help='Merge both parts of each TCP conversation into one chunk.')] = False,
+        client: Param[bool, Arg.Switch('-c', group='D', help='Show only the client part of each conversation.')] = False,
+        server: Param[bool, Arg.Switch('-s', group='D', help='Show only the server part of each conversation.')] = False,
     ):
         super().__init__(merge=merge, client=client, server=server)
 
@@ -109,7 +111,7 @@ class pcap(Unit):
                 reassembly=True,
                 reasm_strict=True,
             )
-            tcp: List[Datagram] = list(pcap.reassembly.tcp)
+            tcp: list[Datagram] = list(pcap.reassembly.tcp)
             tcp.sort(key=lambda p: min(p.index, default=0))
 
         count, convo = 0, None

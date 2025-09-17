@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from refinery.lib.meta import metavars
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.archive.xtpyi import decompile_buffer, extract_code_from_buffer
-from refinery.lib.meta import metavars
 
 
 class pyc(ArchiveUnit):

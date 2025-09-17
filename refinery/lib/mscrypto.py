@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import enum
 
-from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
+from Cryptodome.PublicKey import RSA
 
 from refinery.lib.structures import Struct, StructReader
 

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from Cryptodome.Cipher import ChaCha20, ChaCha20_Poly1305
-from typing import List, Iterable
-
 import struct
 
+from typing import Iterable
+
+from Cryptodome.Cipher import ChaCha20, ChaCha20_Poly1305
+
+from refinery.lib.crypto import PyCryptoFactoryWrapper, rotl32
+from refinery.units.crypto.cipher import LatinCipherStandardUnit, LatinCipherUnit
 from refinery.units.crypto.cipher.salsa import LatinCipher, LatinX
-from refinery.units.crypto.cipher import LatinCipherUnit, LatinCipherStandardUnit
-from refinery.lib.crypto import rotl32, PyCryptoFactoryWrapper
 
 
 class ChaChaCipher(LatinCipher):
@@ -28,7 +29,7 @@ class ChaChaCipher(LatinCipher):
     )
 
     @staticmethod
-    def quarter(x: List[int], a: int, b: int, c: int, d: int) -> None:
+    def quarter(x: list[int], a: int, b: int, c: int, d: int) -> None:
         x[a] = x[a] + x[b] & 0xFFFFFFFF; x[d] = rotl32(x[d] ^ x[a] & 0xFFFFFFFF, 0x10) # noqa
         x[c] = x[c] + x[d] & 0xFFFFFFFF; x[b] = rotl32(x[b] ^ x[c] & 0xFFFFFFFF, 0x0C) # noqa
         x[a] = x[a] + x[b] & 0xFFFFFFFF; x[d] = rotl32(x[d] ^ x[a] & 0xFFFFFFFF, 0x08) # noqa
@@ -43,7 +44,6 @@ class chacha20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20))
     but this unit uses the PyCryptodome library C implementation rather than the pure
     Python implementation used by `refinery.chacha`.
     """
-    pass
 
 
 class chacha20poly1305(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20_Poly1305)):

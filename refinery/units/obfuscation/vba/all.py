@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Type, List, TYPE_CHECKING
-
 import re
+
+from typing import TYPE_CHECKING
 
 from refinery.units.obfuscation import IterativeDeobfuscator
 
@@ -22,7 +22,7 @@ from .stringreverse import deob_vba_stringreverse
 
 class deob_vba(IterativeDeobfuscator):
 
-    _SUBUNITS: List[Type[Deobfuscator]] = [
+    _SUBUNITS: list[type[Deobfuscator]] = [
         deob_vba_comments,
         deob_vba_brackets,
         deob_vba_char_function,

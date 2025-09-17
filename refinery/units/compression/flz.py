@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from refinery.units import Unit, Arg
-from refinery.lib.structures import MemoryFile
 from refinery.lib.array import make_array
-
+from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 _MAX_CPY = 0x20
 _MAX_LEN = 0x100 + 8
@@ -214,10 +214,10 @@ class flz(Unit):
     """
     def __init__(
         self,
-        level: Arg.Number('-l', bound=(0, 1), help=(
+        level: Param[int, Arg.Number('-l', bound=(0, 1), help=(
             'Specify a FastLZ level (either 0 or 1). By default, compression will select a level '
             'based on buffer length like the reference implementation. Decompression reads level '
-            'information from the header by default.')) = None
+            'information from the header by default.'))] = None
     ):
         super().__init__(level=level)
 

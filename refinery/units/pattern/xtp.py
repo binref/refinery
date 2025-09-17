@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import re
 
+from enum import Enum
 from fnmatch import fnmatch
 from ipaddress import ip_address
-from typing import AnyStr, Union
-from urllib.parse import urlparse
-from string import ascii_letters
 from pathlib import Path
-from enum import Enum
+from string import ascii_letters
+from typing import AnyStr
+from urllib.parse import urlparse
 
-from refinery.units.pattern import Arg, PatternExtractor
-from refinery.units import RefineryCriticalException
 from refinery.lib.patterns import indicators
+from refinery.lib.types import Param
+from refinery.units import RefineryCriticalException
+from refinery.units.pattern import Arg, PatternExtractor
 
 
 class LetterWeight:
@@ -63,7 +64,7 @@ class xtp(PatternExtractor):
 
     def __init__(
         self,
-        *pattern: Arg.String('pattern',
+        *pattern: Param[str, Arg.String('pattern',
             default=(
                 indicators.hostname.name,
                 indicators.url.name,
@@ -73,14 +74,12 @@ class xtp(PatternExtractor):
                 'asterix character to select all available patterns. The available patterns '
                 'are: {}'.format(', '.join(p.display for p in indicators))
             )
-        ),
-        filter: Arg('-f', dest='filter', action='count',
-            help=(
-                'If this setting is enabled, the xtp unit will attempt to reduce the number '
-                'of false positives by certain crude heuristics. Specify multiple times to '
-                'make the filtering more aggressive.'
-            )
-        ) = 0,
+        )],
+        filter: Param[int, Arg.Counts('-f', help=(
+            'If this setting is enabled, the xtp unit will attempt to reduce the number '
+            'of false positives by certain crude heuristics. Specify multiple times to '
+            'make the filtering more aggressive.')
+        )] = 0,
         min=1, max=None, len=None, stripspace=False, duplicates=False, longest=False, take=None
     ):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
@@ -221,7 +220,7 @@ class xtp(PatternExtractor):
                 return False
         return True
 
-    def _check_match(self, data: Union[memoryview, bytearray], pos: int, name: str, value: bytes):
+    def _check_match(self, data: memoryview | bytearray, pos: int, name: str, value: bytes):
         term = self._BRACKETING.get(data[pos - 1], None)
         text = value.decode(self.codec)
         if term:
@@ -331,7 +330,7 @@ class xtp(PatternExtractor):
                     if len(hostparts[-1]) > 3:
                         prefix = '.'.join(hostparts[:-1])
                         seen_before = len(set(re.findall(
-                            R'{}(?:\.\w+)+'.format(prefix).encode('ascii'), data)))
+                            fR'{prefix}(?:\.\w+)+'.encode('ascii'), data)))
                         if seen_before > 2:
                             self.log_debug(F'excluding indicator that was already seen: {text}')
                             return None

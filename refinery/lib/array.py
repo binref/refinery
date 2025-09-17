@@ -5,12 +5,12 @@ architecture. This module is a small wrapper around the standard library module 
 to create arrays with a given block length.
 """
 from __future__ import annotations
-from typing import Iterable, Union
 
 import array
 
-from refinery.lib.tools import NoLogging
+from typing import Iterable
 
+from refinery.lib.tools import NoLogging
 
 CodeMap: dict[tuple[bool, int], str] = {}
 """
@@ -29,7 +29,7 @@ def make_array(
     itemsize: int,
     length: int = 0,
     unsigned: bool = True,
-    init: Union[int, Iterable[int]] = 0
+    init: int | Iterable[int] = 0
 ) -> array.array[int]:
     """
     Create an array of the given length and itemsize. Optionally specify whether it should

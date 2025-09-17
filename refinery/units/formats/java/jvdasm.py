@@ -3,22 +3,22 @@ Java disassembler. The main logic is implemented int `refinery.lib.java.JvOpCode
 """
 from __future__ import annotations
 
-import re
-import io
 import collections
-
-from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
+import io
+import re
 
 from refinery.lib.java import (
-    opc,
+    JvBaseType,
     JvClassFile,
     JvClassMember,
+    JvClassProperty,
     JvCode,
     JvString,
-    JvClassProperty,
-    JvBaseType,
     JvTypePath,
+    opc,
 )
+from refinery.lib.types import Param
+from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 
 def _parse_descriptor(
@@ -73,7 +73,7 @@ class jvdasm(PathExtractorUnit):
 
     def __init__(
         self, *paths,
-        gray: Arg.Switch('-g', help='Disable colored output.') = False,
+        gray: Param[bool, Arg.Switch('-g', help='Disable colored output.')] = False,
         **keywords
     ):
         super().__init__(*paths, gray=gray, **keywords)

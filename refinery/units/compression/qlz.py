@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from refinery.units import Unit, RefineryPartialResult
 from refinery.lib.meta import SizeInt
-
+from refinery.units import RefineryPartialResult, Unit
 
 _HASH_VALUES             = 0x1000  # noqa
 _HASH_MASK               = 0x0FFF  # noqa

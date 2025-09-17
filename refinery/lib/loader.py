@@ -5,28 +5,28 @@ from __future__ import annotations
 
 import functools
 import importlib
-import pkgutil
-import shlex
 import logging
 import pathlib
+import pkgutil
+import shlex
+
+from typing import TYPE_CHECKING, Generator, TypeVar
 
 import refinery
-
-from typing import Dict, Generator, Type, TypeVar
-from typing import TYPE_CHECKING
 
 _T = TypeVar('_T')
 
 if TYPE_CHECKING:
-    from refinery.units import Unit
     from types import ModuleType
+
+    from refinery.units import Unit
 
 
 class EntryNotFound(NameError):
     pass
 
 
-def get_all_entry_points() -> Generator[Type[Unit], None, None]:
+def get_all_entry_points() -> Generator[type[Unit]]:
     """
     The function returns an iterator over all entry points, i.e.
     all subclasses of the `refinery.units.Entry` class.
@@ -35,7 +35,7 @@ def get_all_entry_points() -> Generator[Type[Unit], None, None]:
     root = __import__(path).units
     mark = root.Entry
 
-    def iterate(parent: ModuleType, path: str, is_package: bool = True) -> Generator[Type[Unit], None, None]:
+    def iterate(parent: ModuleType, path: str, is_package: bool = True) -> Generator[type[Unit]]:
         for attr in dir(parent):
             item = getattr(parent, attr)
             if getattr(item, '__module__', None) != path:
@@ -62,7 +62,7 @@ def get_all_entry_points() -> Generator[Type[Unit], None, None]:
 
 
 @functools.lru_cache(maxsize=1, typed=True)
-def get_entry_point_map() -> Dict[str, Type[Unit]]:
+def get_entry_point_map() -> dict[str, type[Unit]]:
     """
     Returns a dictionary of all available unit names, mapping to the class that implements it.
     The dictionary is cached.
@@ -70,7 +70,7 @@ def get_entry_point_map() -> Dict[str, Type[Unit]]:
     return {exe.name: exe for exe in get_all_entry_points()}
 
 
-def get_entry_point(name: str) -> Type[Unit]:
+def get_entry_point(name: str) -> type[Unit]:
     """
     Retrieve a refinery entry point by name.
     """
@@ -79,7 +79,7 @@ def get_entry_point(name: str) -> Type[Unit]:
     except AttributeError:
         pass
 
-    def get_subclasses(cls: Type[_T]) -> Generator[Type[_T], None, None]:
+    def get_subclasses(cls: type[_T]) -> Generator[type[_T]]:
         for sc in cls.__subclasses__():
             yield sc
             yield from get_subclasses(sc)
@@ -93,7 +93,7 @@ def get_entry_point(name: str) -> Type[Unit]:
         raise EntryNotFound(F'no entry point named "{name}" was found.')
 
 
-def resolve(name: str) -> Type[Unit]:
+def resolve(name: str) -> type[Unit]:
     """
     Attempts to import the unit with the given name from the refinery package
     and falls back to using `refinery.lib.loader.get_entry_point` if this fails.

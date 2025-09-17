@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units.formats import UnpackResult, PathExtractorUnit, Arg
 from refinery.lib.executable import Executable
+from refinery.lib.types import Param
+from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 
 class vsect(PathExtractorUnit):
@@ -10,12 +11,12 @@ class vsect(PathExtractorUnit):
     """
     def __init__(
         self, *paths,
-        meta: Arg.Switch('-m', help=(
+        meta: Param[bool, Arg.Switch('-m', help=(
             'Populates the metadata variables vaddr and vsize containing the virtual address and size '
-            'of each section, respectively.')) = False,
-        synthetic: Arg.Switch('-s', help=(
+            'of each section, respectively.'))] = False,
+        synthetic: Param[bool, Arg.Switch('-s', help=(
             'Include synthesized sections: These represent data regions that are outside the sections '
-            'as listed by the executable metadata, such as headers and overlays.')) = False,
+            'as listed by the executable metadata, such as headers and overlays.'))] = False,
         **keywords
     ):
         super().__init__(*paths, meta=meta, synthetic=synthetic, **keywords)

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-import defusedxml.minidom
 
-from typing import Optional
 from contextlib import suppress
+
+import defusedxml.minidom
 
 from refinery.units import Unit
 
@@ -32,7 +32,7 @@ class XMLCarver:
     def __iter__(self):
         return self
 
-    def _try_decode(self, data: bytes) -> Optional[str]:
+    def _try_decode(self, data: bytes) -> str | None:
         def printable(s):
             return re.sub('\\s+', '', s).isprintable()
 

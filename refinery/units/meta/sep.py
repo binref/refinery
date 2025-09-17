@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
@@ -11,9 +12,9 @@ class sep(Unit):
     """
 
     def __init__(
-        self, separator: Arg(help='Separator; the default is a line break.') = B'\n',
-        scoped: Arg.Switch('-s', help=(
-            'Maintain chunk scope; i.e. do not turn all input chunks visible.')) = False
+        self, separator: Param[buf, Arg(help='Separator; the default is a line break.')] = B'\n',
+        scoped: Param[bool, Arg.Switch('-s', help=(
+            'Maintain chunk scope; i.e. do not turn all input chunks visible.'))] = False
     ):
         super().__init__(separator=separator, scoped=scoped)
         self.separate = False

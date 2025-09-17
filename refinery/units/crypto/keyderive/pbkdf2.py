@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
+
 from refinery.units.crypto.keyderive import KeyDerivation, multidecode
 
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
-from refinery.units import RefineryPartialResult
-from refinery.lib.tools import isbuffer
 from refinery.lib.dotnet.resources import NetStructuredResources, NoManagedResource
+from refinery.lib.tools import isbuffer
+from refinery.lib.types import Param
+from refinery.units import RefineryPartialResult
+from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 
 class dnmr(PathExtractorUnit):
@@ -12,7 +13,7 @@ class dnmr(PathExtractorUnit):
     """
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, exact=False, fuzzy=0, regex=False, path=b'name',
-        raw: Arg.Switch('-w', help='Do not deserialize the managed resource entry data.') = False
+        raw: Param[bool, Arg.Switch('-w', help='Do not deserialize the managed resource entry data.')] = False
     ):
         super().__init__(
             *paths,

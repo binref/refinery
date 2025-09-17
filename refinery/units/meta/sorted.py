@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
-
 from refinery.lib.argformats import PythonExpression
 from refinery.lib.meta import metavars
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class sorted(Unit):
@@ -14,8 +14,8 @@ class sorted(Unit):
 
     def __init__(
         self,
-        key: Arg.String('key', help='A meta variable expression to sort by instead of sorting the content.') = None,
-        ascending: Arg.Switch('-a', help='Sort in ascending order, the default is descending.') = False
+        key: Param[str, Arg.String('key', help='A meta variable expression to sort by instead of sorting the content.')] = None,
+        ascending: Param[bool, Arg.Switch('-a', help='Sort in ascending order, the default is descending.')] = False
     ):
         super().__init__(key=key, ascending=ascending)
 

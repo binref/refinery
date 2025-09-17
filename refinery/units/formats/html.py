@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from refinery.lib.xml import XMLNodeBase
-from refinery.lib.meta import metavars
-from refinery.units.formats import XMLToPathExtractorUnit, UnpackResult, Arg
-
-from io import StringIO
 from html.parser import HTMLParser
+from io import StringIO
+
+from refinery.lib.meta import metavars
+from refinery.lib.types import Param
+from refinery.lib.xml import XMLNodeBase
+from refinery.units.formats import Arg, UnpackResult, XMLToPathExtractorUnit
 
 _HTML_DATA_ROOT_TAG = 'html'
 
@@ -132,8 +133,8 @@ class xthtml(XMLToPathExtractorUnit):
     """
     def __init__(
         self, *paths,
-        outer: Arg.Switch('-o', help='Include the HTML tags for an extracted element.') = False,
-        attributes: Arg.Switch('-a', help='Populate chunk metadata with HTML tag attributes.') = False,
+        outer: Param[bool, Arg.Switch('-o', help='Include the HTML tags for an extracted element.')] = False,
+        attributes: Param[bool, Arg.Switch('-a', help='Populate chunk metadata with HTML tag attributes.')] = False,
         list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         path=b'path'
     ):

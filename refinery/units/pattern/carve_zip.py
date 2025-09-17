@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from refinery.lib.structures import Struct, StructReader
 from refinery.units import Unit
 from refinery.units.misc.datefix import datefix
-from refinery.lib.structures import StructReader, Struct
 
 
 class ZipEndOfCentralDirectory(Struct):

@@ -7,13 +7,13 @@ Main Reference: https://source.android.com/devices/tech/dalvik/dex-format
 """
 from __future__ import annotations
 
+import hashlib
+import zlib
+
 from typing import Generator
 
-import zlib
-import hashlib
-
-from refinery.lib.structures import StreamDetour, Struct, StructReader
 from refinery.lib.java import JvClassFile
+from refinery.lib.structures import StreamDetour, Struct, StructReader
 
 
 class DexFile(Struct):
@@ -54,7 +54,7 @@ class DexFile(Struct):
         self.strings_offset = reader.u32()
         self._reader = reader
 
-    def read_strings(self) -> Generator[str, None, None]:
+    def read_strings(self) -> Generator[str]:
         size = self.strings_size
         offset = self.strings_offset
         reader = self._reader

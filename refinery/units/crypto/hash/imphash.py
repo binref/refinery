@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units.crypto.hash import HashUnit
 from refinery.lib import lief
+from refinery.units.crypto.hash import HashUnit
 
 
 class imphash(HashUnit):

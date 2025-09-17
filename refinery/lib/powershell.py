@@ -3,12 +3,12 @@ Windows-specific module to determine whether the current Python process is runni
 """
 from __future__ import annotations
 
-from typing import TextIO
-from pathlib import Path
-
 import ctypes
-import os
 import enum
+import os
+
+from pathlib import Path
+from typing import TextIO
 
 from refinery.lib.environment import environment
 
@@ -192,12 +192,12 @@ class PS1OutputWrapper(Ps1Wrapper):
             if not Ps1Wrapper.WRAPPED and not environment.silence_ps1_warning.value:
                 import logging
                 logging.getLogger('root').critical(
-                    U'WARNING: PowerShell has no support for binary pipelines or streaming. Binary Refinery '
-                    U'uses an unreliable and slow workaround: It is strongly recommended to use the command '
-                    U'processor instead. Proceed at your own peril!\n'
+                    'WARNING: PowerShell has no support for binary pipelines or streaming. Binary Refinery '
+                    'uses an unreliable and slow workaround: It is strongly recommended to use the command '
+                    'processor instead. Proceed at your own peril!\n'
                     F'- To silence this warning: $env:{environment.silence_ps1_warning.key}=1\n'
                     F'- To disable the band-aid: $env:{environment.disable_ps1_bandaid.key}=1\n'
-                    U'- To get more information: https://github.com/binref/refinery/issues/5'
+                    '- To get more information: https://github.com/binref/refinery/issues/5'
                 )
         view = memoryview(data)
         size = 1 << 15

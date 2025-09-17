@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-from refinery.units import Unit, Arg
 from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class PIXEL_PART(IntEnum):
@@ -22,12 +23,12 @@ class stego(Unit):
     """
     def __init__(
         self,
-        split: Arg.Switch('-m', help='Emit the individual rows or columns as separate outputs.') = False,
-        parts: Arg.String('parts', nargs='?', help=(
+        split: Param[bool, Arg.Switch('-m', help='Emit the individual rows or columns as separate outputs.')] = False,
+        parts: Param[str, Arg.String('parts', nargs='?', help=(
             'A string containing any ordering of the letters R, G, B, and A (case-insensitive). '
             'These pixel components will be extracted from every pixel in the given order. The '
             'default value is {default}.'
-        )) = 'RGB'
+        ))] = 'RGB'
     ):
         super().__init__(
             split=split,

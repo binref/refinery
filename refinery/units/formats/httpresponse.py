@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from http.client import HTTPResponse, IncompleteRead
 
-from refinery.units import Unit, RefineryPartialResult
 from refinery.lib.structures import MemoryFile
+from refinery.units import RefineryPartialResult, Unit
 
 
 class SockWrapper(MemoryFile):

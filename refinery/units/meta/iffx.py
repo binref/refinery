@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units.pattern import SingleRegexUnit
 from refinery.units.meta import ConditionalUnit
+from refinery.units.pattern import SingleRegexUnit
 
 
 class iffx(SingleRegexUnit, ConditionalUnit, docs='{0}{p}{1}'):

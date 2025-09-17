@@ -7,18 +7,19 @@ from __future__ import annotations
 import abc
 import itertools
 
-from typing import TYPE_CHECKING
 from functools import cached_property
+from typing import TYPE_CHECKING
 
-from refinery.units import Arg, Unit
 from refinery.lib import chunks
-from refinery.lib.tools import infinitize
 from refinery.lib.inline import iterspread
-from refinery.lib.types import buf, NoMask, INF
+from refinery.lib.tools import infinitize
+from refinery.lib.types import INF, Param, NoMask, buf, isq
+from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
+    from typing import Generator, Iterable, Literal, Union
+
     from numpy import ndarray
-    from typing import Literal, Union, Iterable, Generator, Optional, Tuple
     _I = Union[Iterable[int], int]
 
 
@@ -30,17 +31,17 @@ class BlockTransformationBase(Unit, abstract=True):
 
     def __init__(
         self,
-        bigendian: Arg.Switch('-E', help='Read chunks in big endian.') = False,
-        blocksize: Arg.Number('-B', help=(
-            'The size of each block in bytes, default is 1.'
-        )) = None,
-        precision: Arg.Number('-P', help=(
+        bigendian: Param[bool, Arg.Switch('-E', help='Read chunks in big endian.')] = False,
+        blocksize: Param[int, Arg.Number('-B', help=(
+            'The size of each block in bytes. The default is {default}.'
+        ))] = 1,
+        precision: Param[int, Arg.Number('-P', help=(
             'The size of the variables used for computing the result. By default, this is equal to the block size. '
-            'The value may be zero, indicating that arbitrary precision is required.')) = None,
+            'The value may be zero, indicating that arbitrary precision is required.'))] = -1,
         _truncate: Arg.Delete() = 0,
         **keywords
     ):
-        if precision is None:
+        if precision < 0:
             precision = blocksize
         self._truncate = _truncate
         super().__init__(bigendian=bigendian, blocksize=blocksize, precision=precision, **keywords)
@@ -74,7 +75,7 @@ class BlockTransformationBase(Unit, abstract=True):
     @property
     def precision(self) -> int | Literal[INF]:
         precision = self.args.precision
-        if precision is None:
+        if precision < 0:
             return self.blocksize
         if precision == 0:
             return INF
@@ -162,16 +163,16 @@ class BlockTransformation(BlockTransformationBase, abstract=True):
 
 class ArithmeticUnit(BlockTransformation, abstract=True):
 
-    def __init__(self, *argument: Arg.NumSeq(help=(
+    def __init__(self, *argument: Param[isq, Arg.NumSeq(help=(
         'A single numeric expression which provides the right argument to the operation, '
         'where the left argument is each block in the input data. This argument can also '
         'contain a sequence of bytes which is then split into blocks of the same size as '
-        'the input data and used cyclically.')),
-        bigendian=False, blocksize=None, precision=None, **kw
+        'the input data and used cyclically.'))],
+        bigendian=False, blocksize=1, precision=-1, **kw
     ):
         super().__init__(bigendian=bigendian, blocksize=blocksize, precision=precision, argument=argument, **kw)
 
-    def _argument_parse_hook(self, it: _I) -> Tuple[_I, bool]:
+    def _argument_parse_hook(self, it: _I) -> tuple[_I, bool]:
         return it, False
 
     def _infinitize_argument(self, it: _I, masked=False) -> Iterable[int]:
@@ -196,7 +197,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def inplace(self, block: ndarray, *args) -> Optional[ndarray]:
+    def inplace(self, block: ndarray, *args) -> ndarray | None:
         tmp: ndarray = self.operate(block, *args)
         if tmp.dtype != block.dtype:
             tmp = tmp.astype(block.dtype)
@@ -308,7 +309,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
 
 
 class UnaryOperation(ArithmeticUnit, abstract=True):
-    def __init__(self, bigendian=False, blocksize=None, **kw):
+    def __init__(self, bigendian=False, blocksize=1, **kw):
         super().__init__(
             bigendian=bigendian, blocksize=blocksize, **kw)
 
@@ -317,7 +318,7 @@ class UnaryOperation(ArithmeticUnit, abstract=True):
 
 
 class BinaryOperation(ArithmeticUnit, abstract=True):
-    def __init__(self, *argument, bigendian=False, blocksize=None):
+    def __init__(self, *argument, bigendian=False, blocksize=1):
         super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
 
     def inplace(self, block, argument) -> None:
@@ -327,16 +328,16 @@ class BinaryOperation(ArithmeticUnit, abstract=True):
 class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
     def __init__(
         self, *argument, bigendian=False,
-        blocksize: Arg.Number(help=(
+        blocksize: Param[int, Arg.Number(help=(
             'The size of each block in bytes. It is chosen, by default, to be the smallest size that can '
             'hold the provided argument without loss of precision. For example, passing the value 0x1234 '
             'will result in a default block size of 2, while passing the value 12 will mean that the '
             'default block size is 1.'
-        )) = None
+        ))] = 0
     ):
         super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
 
-    def _argument_parse_hook(self, it: _I) -> Tuple[bool, _I]:
+    def _argument_parse_hook(self, it: _I) -> tuple[bool, _I]:
         try:
             n = len(it)
         except TypeError:
@@ -345,7 +346,7 @@ class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
             if n == 1:
                 it = it[0]
         if masked := isinstance(it, int):
-            if self.args.blocksize is None:
+            if self.args.blocksize == 0:
                 self.log_debug('detected numeric argument with no specified block size')
                 bits = it.bit_length()
                 if bits > self.blocksize * 8:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import re
 import codecs
+import re
 
-from refinery.units.obfuscation import Deobfuscator
-from refinery.units.obfuscation.ps1 import string_quote, Ps1StringLiterals
 from refinery.lib.patterns import formats
+from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation.ps1 import Ps1StringLiterals, string_quote
 
 
 class deob_ps1_encodings(Deobfuscator):

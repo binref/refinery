@@ -3,13 +3,13 @@ Primitives used in custom cryptographic implementations.
 """
 from __future__ import annotations
 
-from typing import Callable, ClassVar, Collection, Generator, Optional, Type, Dict
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Callable, ClassVar, Collection, Generator
 
 from refinery.lib.types import buf as BufferType
 
-CIPHER_MODES: Dict[str, Type[CipherMode]] = {}
+CIPHER_MODES: dict[str, type[CipherMode]] = {}
 
 
 def strxor(a: bytes, b: bytes):
@@ -20,7 +20,7 @@ def strxor(a: bytes, b: bytes):
     return bytes(a ^ b for a, b in zip(a, b))
 
 
-def _register_cipher_mode(cls: Type[CipherMode]):
+def _register_cipher_mode(cls: type[CipherMode]):
     cls._identifier = len(CIPHER_MODES)
     CIPHER_MODES[cls.__name__] = cls
     return cls
@@ -383,7 +383,7 @@ class CFB(CipherMode):
     segment_size: int
     aligned = False
 
-    def __init__(self, iv: BufferType, segment_size: Optional[int] = None):
+    def __init__(self, iv: BufferType, segment_size: int | None = None):
         if segment_size is None:
             segment_size = 8
         if segment_size % 8 != 0:
@@ -478,10 +478,10 @@ class CTR(CipherMode):
 
     def __init__(
         self,
-        block_size: Optional[int] = None,
-        counter: Optional[Dict] = None,
-        nonce: Optional[BufferType] = None,
-        initial_value: Optional[int] = 0,
+        block_size: int | None = None,
+        counter: dict | None = None,
+        nonce: BufferType | None = None,
+        initial_value: int | None = 0,
         little_endian: bool = False
     ):
         if counter is not None:
@@ -587,21 +587,21 @@ class CipherObjectFactory(ABC):
     """
 
     name: str
-    key_size: Optional[Collection[int]] = None
-    block_size: Optional[int] = None
+    key_size: Collection[int] | None = None
+    block_size: int | None = None
 
     @abstractmethod
     def new(
         self,
         key: BufferType,
         *,
-        iv: Optional[BufferType] = None,
-        counter: Optional[int] = None,
-        initial_value: Optional[int] = 0,
-        nonce: Optional[BufferType] = None,
-        mode: Optional[str] = None,
-        segment_size: Optional[int] = None,
-        block_size: Optional[int] = None,
+        iv: BufferType | None = None,
+        counter: int | None = None,
+        initial_value: int | None = 0,
+        nonce: BufferType | None = None,
+        mode: str | None = None,
+        segment_size: int | None = None,
+        block_size: int | None = None,
         **cipher_args
     ) -> CipherInterface:
         """
@@ -656,9 +656,9 @@ class BlockCipherFactory(CipherObjectFactory):
     A `refinery.lib.crypto.CipherObjectFactory` for custom block ciphers.
     """
 
-    cipher: Type[BlockCipher]
+    cipher: type[BlockCipher]
 
-    def __init__(self, cipher: Type[BlockCipher]):
+    def __init__(self, cipher: type[BlockCipher]):
         self.cipher = cipher
         self._modes = []
         for name, mode in CIPHER_MODES.items():
@@ -720,7 +720,7 @@ class BlockCipher(CipherInterface, ABC):
     mode: CipherMode
     key_size: Collection[int]
 
-    def __init__(self, key: BufferType, mode: Optional[CipherMode]):
+    def __init__(self, key: BufferType, mode: CipherMode | None):
         if len(key) not in self.key_size:
             raise ValueError(F'The key size {len(key)} is not supported by {self.__class__.__name__.lower()}.')
         self.key = key

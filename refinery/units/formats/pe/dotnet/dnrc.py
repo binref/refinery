@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.dotnet.header import DotNetHeader
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class dnrc(PathExtractorUnit):

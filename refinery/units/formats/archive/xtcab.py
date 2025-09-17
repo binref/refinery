@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from refinery.units.formats.archive import ArchiveUnit
+from refinery.lib.cab import CabDisk, Cabinet
 from refinery.units import Chunk
-from refinery.lib.cab import Cabinet, CabDisk
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class xtcab(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):

@@ -3,8 +3,8 @@ from __future__ import annotations
 import struct
 import zlib
 
-from refinery.units import Unit, RefineryPartialResult
-from refinery.lib.structures import StructReader, MemoryFile
+from refinery.lib.structures import MemoryFile, StructReader
+from refinery.units import RefineryPartialResult, Unit
 
 
 class blz(Unit):

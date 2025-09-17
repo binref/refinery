@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from typing import ClassVar
-from uuid import UUID
-from dataclasses import dataclass, field
-from functools import cached_property
-
 import codecs
 import math
 
+from dataclasses import dataclass, field
+from functools import cached_property
+from typing import ClassVar
+from uuid import UUID
 
-from refinery.lib.structures import Struct, StructReader
+from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
 from refinery.lib.lzx import LzxDecoder
-from refinery.lib.lcid import LCID, DEFAULT_CODEPAGE
-
+from refinery.lib.structures import Struct, StructReader
 
 _LZX_HLP = UUID('0a9007c6-4076-11d3-8789-0000f8105754')
 _LZX_CHM = UUID('7fc28940-9d31-11d0-9b27-00a0c91e9c7c')

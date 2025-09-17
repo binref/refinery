@@ -5,9 +5,10 @@ import re
 import textwrap
 import unicodedata
 
-from refinery.units import Arg, Unit
 from refinery.lib.json import flattened
 from refinery.lib.tools import get_terminal_size
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 def is_printable(s: str):
@@ -23,8 +24,8 @@ class ppjson(Unit):
 
     def __init__(
         self,
-        tabular: Arg.Switch('-t', group='OUT', help='Convert JSON input into a flattened table.') = False,
-        indent : Arg.Number('-i', group='OUT', help='Number of spaces used for indentation. Default is {default}.') = 4
+        tabular: Param[bool, Arg.Switch('-t', group='OUT', help='Convert JSON input into a flattened table.')] = False,
+        indent: Param[int, Arg.Number('-i', group='OUT', help='Number of spaces used for indentation. Default is {default}.')] = 4
     ):
         return super().__init__(indent=indent, tabular=tabular)
 

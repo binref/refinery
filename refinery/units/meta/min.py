@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from typing import Iterable
-from refinery.units import Arg, Unit, Chunk
+
 from refinery.lib.meta import metavars
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 class min_(Unit):
@@ -12,7 +14,7 @@ class min_(Unit):
 
     def __init__(
         self,
-        key: Arg.String('key', help='A meta variable expression to sort by instead of sorting the content.') = None,
+        key: Param[str, Arg.String('key', help='A meta variable expression to sort by instead of sorting the content.')] = None,
     ):
         super().__init__(key=key)
 

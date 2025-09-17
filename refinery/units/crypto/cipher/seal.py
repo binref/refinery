@@ -7,11 +7,11 @@ https://link.springer.com/article/10.1007/s001459900048
 from __future__ import annotations
 
 import struct
+
 from typing import Iterable
 
-from refinery.units.crypto.cipher import StreamCipherUnit
 from refinery.lib.crypto import rotr32
-
+from refinery.units.crypto.cipher import StreamCipherUnit
 
 __all__ = ['seal']
 
@@ -165,10 +165,9 @@ class SEAL_Cipher:
                 c &= 0xFFFFFFFF
                 d &= 0xFFFFFFFF
 
-                for byte in bytearray(struct.pack('<IIII',
+                yield from bytearray(struct.pack('<IIII',
                         (b + self.S[4 * i + 0]) & 0xFFFFFFFF, c ^ self.S[4 * i + 1],
-                        (d + self.S[4 * i + 2]) & 0xFFFFFFFF, a ^ self.S[4 * i + 3])):
-                    yield byte
+                        (d + self.S[4 * i + 2]) & 0xFFFFFFFF, a ^ self.S[4 * i + 3]))
 
                 if i & 1:
                     a += y

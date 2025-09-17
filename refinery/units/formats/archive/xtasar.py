@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Union, Type
-
-from refinery.units.formats.archive import ArchiveUnit, UnpackResult
-from refinery.lib.structures import StructReader, Struct
-
 import json
+
+from typing import Dict, Type, Union
+
+from refinery.lib.structures import Struct, StructReader
+from refinery.units.formats.archive import ArchiveUnit, UnpackResult
 
 JSONDict = Dict[str, Union[int, float, str, Type[None], 'JSONDict']]
 
@@ -62,5 +62,5 @@ class xtasar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         yield from _unpack(header.directory)
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         return data[:4] == b'\04\0\0\0' and data[0x10:0x18] == B'{"files"'

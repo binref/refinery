@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
-from refinery.units.blockwise import Arg, UnaryOperation, FastBlockError
+from refinery.lib.types import Param
+from refinery.units.blockwise import Arg, FastBlockError, UnaryOperation
 
 if TYPE_CHECKING:
     from numpy import ndarray
@@ -12,7 +14,7 @@ class byteswap(UnaryOperation):
     Reverses the order of bytes in each block. Excess bytes that are not an integer multiple of the block
     size are discarded.
     """
-    def __init__(self, size: Arg.Number(help='the block size in bytes; the default is {default}.') = 4):
+    def __init__(self, size: Param[int, Arg.Number(help='the block size in bytes; the default is {default}.')] = 4):
         super().__init__(blocksize=size, _truncate=2)
 
     def inplace(self, block: ndarray) -> None:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units.pattern import Arg, PatternExtractor
 from refinery.lib.patterns import formats
+from refinery.lib.types import Param
+from refinery.units.pattern import Arg, PatternExtractor
 
 
 class carve(PatternExtractor):
@@ -9,11 +10,11 @@ class carve(PatternExtractor):
     Extracts patches of data in particular formats from the input.
     """
     def __init__(
-        self, format: Arg.Choice(choices=[p.display for p in formats], metavar='format',
-            help='Specify one of the following formats: {choices}'),
-        unique: Arg.Switch('-q', help='Yield every match only once.') = False,
-        decode: Arg.Switch('-d', help='Automatically decode known patterns.') = False,
-        single: Arg.Switch('-s', help='Only get the biggest match; equivalent to -qlt1') = False,
+        self, format: Param[str, Arg.Choice(choices=[p.display for p in formats], metavar='format',
+            help='Specify one of the following formats: {choices}')],
+        unique: Param[bool, Arg.Switch('-q', help='Yield every match only once.')] = False,
+        decode: Param[bool, Arg.Switch('-d', help='Automatically decode known patterns.')] = False,
+        single: Param[bool, Arg.Switch('-s', help='Only get the biggest match; equivalent to -qlt1')] = False,
         min=1, max=None, len=None,
         stripspace=False, longest=False, take=None, utf16=True, ascii=True
     ):

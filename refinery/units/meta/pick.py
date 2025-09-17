@@ -1,22 +1,23 @@
 from __future__ import annotations
 
-from typing import Iterable, Iterator, List, Deque, Optional
-from refinery.units import Arg, Unit, Chunk
-from refinery.lib.tools import begin
-from refinery.lib.argformats import sliceobj
-
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Deque, Iterable, Iterator
+
+from refinery.lib.argformats import sliceobj
+from refinery.lib.tools import begin
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 @dataclass
 class _PickState:
     slices: Deque[slice]
     chunks: Iterator[Chunk]
-    accessor: Optional[slice] = None
+    accessor: slice | None = None
     consumed: bool = False
     discarded: int = 0
-    remaining: List[Chunk] = field(default_factory=list)
+    remaining: list[Chunk] = field(default_factory=list)
 
     def next(self):
         try:
@@ -45,7 +46,7 @@ class pick(Unit):
     Picks sequences from the array of multiple inputs. For example, `pick 0 2:`
     will return all but the second ingested input (which has index `1`).
     """
-    def __init__(self, *bounds: Arg.Bounds(nargs='*', default=[0])):
+    def __init__(self, *bounds: Param[slice, Arg.Bounds(nargs='*', default=[0])]):
         super().__init__(bounds=[sliceobj(s) for s in bounds])
 
     def process(self, data: Chunk):

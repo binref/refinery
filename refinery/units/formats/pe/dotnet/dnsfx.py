@@ -1,16 +1,9 @@
 from __future__ import annotations
 
+from refinery.lib.dotnet.types import Byte, ParserEOF, StreamReader, StringPrimitive, UInt32, UInt64
+from refinery.lib.meta import SizeInt
 from refinery.units.compression.zl import zl
 from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.meta import SizeInt
-from refinery.lib.dotnet.types import (
-    Byte,
-    StreamReader,
-    StringPrimitive,
-    UInt32,
-    UInt64,
-    ParserEOF
-)
 
 
 class dnsfx(PathExtractorUnit):

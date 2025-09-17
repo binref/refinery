@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param, buf
 from refinery.units.blockwise import Arg, BlockTransformationBase
 
 
@@ -14,8 +15,8 @@ class terminate(BlockTransformationBase):
     """
     def __init__(
         self,
-        sentinel: Arg(help='sentinel value to look for; default is {default}') = B'\0',
-        blocksize=None, bigendian=False
+        sentinel: Param[buf, Arg(help='sentinel value to look for; default is {default}')] = B'\0',
+        blocksize=1, bigendian=False
     ):
         super().__init__(blocksize=blocksize, bigendian=bigendian, sentinel=sentinel)
 

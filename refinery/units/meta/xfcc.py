@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable, Dict
+from typing import Iterable
 
-from refinery.units import Arg, Unit, Chunk
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 class xfcc(Unit):
@@ -25,12 +26,12 @@ class xfcc(Unit):
     """
     def __init__(
         self,
-        variable: Arg(help='The variable which is used as the accumulator') = 'count',
-        relative: Arg.Switch('-r', help='Normalize the accumulator to a number between 0 and 1.') = False
+        variable: Param[str, Arg(help='The variable which is used as the accumulator')] = 'count',
+        relative: Param[bool, Arg.Switch('-r', help='Normalize the accumulator to a number between 0 and 1.')] = False
     ):
         super().__init__(variable=variable, relative=relative)
         self._trunk = None
-        self._store: Dict[Chunk, int] = defaultdict(int)
+        self._store: dict[Chunk, int] = defaultdict(int)
 
     def finish(self):
         vn = self.args.variable

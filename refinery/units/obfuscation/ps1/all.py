@@ -1,30 +1,30 @@
 from __future__ import annotations
 
-from typing import Type, List, TYPE_CHECKING
-
 import re
+
+from typing import TYPE_CHECKING
 
 from refinery.units.obfuscation import IterativeDeobfuscator
 
 if TYPE_CHECKING:
     from .. import Deobfuscator
 
-from .brackets import deob_ps1_brackets
-from .concat import deob_ps1_concat
-from .escape import deob_ps1_escape
-from .cases import deob_ps1_cases
-from .format import deob_ps1_format
-from .typecast import deob_ps1_typecast
-from .stringreplace import deob_ps1_stringreplace
-from .uncurly import deob_ps1_uncurly
-from .invoke import deob_ps1_invoke
 from .b64convert import deob_ps1_b64convert
+from .brackets import deob_ps1_brackets
+from .cases import deob_ps1_cases
+from .concat import deob_ps1_concat
 from .encodings import deob_ps1_encodings
+from .escape import deob_ps1_escape
+from .format import deob_ps1_format
+from .invoke import deob_ps1_invoke
+from .stringreplace import deob_ps1_stringreplace
+from .typecast import deob_ps1_typecast
+from .uncurly import deob_ps1_uncurly
 
 
 class deob_ps1(IterativeDeobfuscator):
 
-    _SUBUNITS: List[Type[Deobfuscator]] = [
+    _SUBUNITS: list[type[Deobfuscator]] = [
         deob_ps1_escape,
         deob_ps1_cases,
         deob_ps1_brackets,

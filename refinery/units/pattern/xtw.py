@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 
-from refinery.units.pattern import PatternExtractor
-from refinery.units import RefineryCriticalException
 from refinery.lib.patterns import wallets
+from refinery.units import RefineryCriticalException
+from refinery.units.pattern import PatternExtractor
 
 
 class xtw(PatternExtractor):

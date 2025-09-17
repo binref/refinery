@@ -3,8 +3,8 @@ from __future__ import annotations
 import math
 import re
 
+from refinery.lib.types import Param, isq
 from refinery.units import Arg, Unit
-
 
 _DEFAULT_ALPH_STR = R'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 _DEFAULT_ALPHABET = B'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -22,13 +22,13 @@ class base(Unit):
     """
     def __init__(
         self,
-        base: Arg.NumSeq(metavar='base|alphabet', help=(
+        base: Param[isq, Arg.NumSeq(metavar='base|alphabet', help=(
             R'Either the base to be used or an alphabet. If an explicit alphabet is given, its length '
             R'determines the base. The default base 0 treats the input as a Python integer literal. If '
-            F'a numeric base is given, digits from the alphabet "{_DEFAULT_ALPH_STR}" are used. ')) = 0,
-        strip_padding: Arg.Switch('-s', help='Do not add leading zeros to the output.') = False,
-        little_endian: Arg.Switch('-e', help='Use little endian byte order instead of big endian.') = False,
-        strict_digits: Arg.Switch('-d', help='Check that all input digits are part of the alphabet.') = False,
+            F'a numeric base is given, digits from the alphabet "{_DEFAULT_ALPH_STR}" are used. '))] = 0,
+        strip_padding: Param[bool, Arg.Switch('-s', help='Do not add leading zeros to the output.')] = False,
+        little_endian: Param[bool, Arg.Switch('-e', help='Use little endian byte order instead of big endian.')] = False,
+        strict_digits: Param[bool, Arg.Switch('-d', help='Check that all input digits are part of the alphabet.')] = False,
     ):
         super().__init__(
             base=base,

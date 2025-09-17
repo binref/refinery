@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import io
 import enum
+import io
 
-from refinery.units import Unit, Arg
 from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class T(enum.IntEnum):
@@ -26,7 +27,7 @@ class imgtp(Unit):
     """
     def __init__(
         self,
-        transformation: Arg.String(help='The transformation sequence; default is {default}.') = 'R'
+        transformation: Param[str, Arg.String(help='The transformation sequence; default is {default}.')] = 'R'
     ):
         transformation = [Arg.AsOption(t, T) for t in transformation]
         super().__init__(transformation=transformation)

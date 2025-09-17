@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import List, Dict, NamedTuple, Union, Optional
 
 import codecs
 import collections
@@ -9,16 +8,16 @@ import re
 import struct
 
 from functools import cached_property
+from typing import NamedTuple
 
-from refinery.lib.structures import StructReader
-from refinery.units import Arg
-from refinery.units.formats.office.xtdoc import xtdoc, UnpackResult
 from refinery.lib import chunks
-from refinery.lib.types import buf, JSONDict
-from refinery.lib.mime import FileMagicInfo
 from refinery.lib.cab import Cabinet
-
+from refinery.lib.mime import FileMagicInfo
+from refinery.lib.structures import StructReader
+from refinery.lib.types import Param, JSONDict, buf
+from refinery.units import Arg
 from refinery.units.formats.csv import csv
+from refinery.units.formats.office.xtdoc import UnpackResult, xtdoc
 
 
 class MsiType(enum.IntEnum):
@@ -91,9 +90,9 @@ class MSIStringData:
     def __init__(self, string_data: buf, string_pool: buf):
         data = StructReader(string_data)
         pool = StructReader(string_pool)
-        self.strings: List[bytes] = []
-        self.provided_ref_count: List[int] = []
-        self.computed_ref_count: List[int] = []
+        self.strings: list[bytes] = []
+        self.provided_ref_count: list[int] = []
+        self.computed_ref_count: list[int] = []
         self.codepage = pool.u16()
         self._unknown = pool.u16()
         while not pool.eof:
@@ -122,7 +121,7 @@ class MSIStringData:
     def __contains__(self, index):
         return 0 < index <= len(self)
 
-    def ref(self, index: int, increment=True) -> Union[str, bytes]:
+    def ref(self, index: int, increment=True) -> str | bytes:
         assert index > 0
         index -= 1
         if increment:
@@ -167,7 +166,7 @@ class xtmsi(xtdoc):
     def __init__(
             self, *paths,
             list=False, path=b'path', join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-            nocab: Arg.Switch('-N', help='Do not list and extract embedded CAB archives.') = False, **kw,
+            nocab: Param[bool, Arg.Switch('-N', help='Do not list and extract embedded CAB archives.')] = False, **kw,
     ):
         super().__init__(
             *paths,
@@ -188,7 +187,7 @@ class xtmsi(xtdoc):
         def stream(name: str):
             return streams.pop(name).get_data()
 
-        def column_formats(table: Dict[str, MSITableColumnInfo]) -> str:
+        def column_formats(table: dict[str, MSITableColumnInfo]) -> str:
             return ''.join(v.struct_format for v in table.values())
 
         def stream_to_rows(data: buf, row_format: str):
@@ -199,7 +198,7 @@ class xtmsi(xtdoc):
             for i in range(row_count):
                 yield [c[i] for c in columns]
 
-        tables: Dict[str, Dict[str, MSITableColumnInfo]] = collections.defaultdict(collections.OrderedDict)
+        tables: dict[str, dict[str, MSITableColumnInfo]] = collections.defaultdict(collections.OrderedDict)
         strings = MSIStringData(stream('!_StringData'), stream('!_StringPool'))
 
         for tbl_name_id, col_number, col_name_id, col_attributes in stream_to_rows(stream('!_Columns'), 'HHHH'):
@@ -217,13 +216,13 @@ class xtmsi(xtdoc):
 
         class ScriptItem(NamedTuple):
             row_index: int
-            extension: Optional[str]
+            extension: str | None
 
-        processed_table_data: Dict[str, List[Dict[str, str]]] = {}
-        tbl_properties: Dict[str, str] = {}
-        tbl_files: Dict[str, str] = {}
-        tbl_components: Dict[str, str] = {}
-        postprocessing: List[ScriptItem] = []
+        processed_table_data: dict[str, list[dict[str, str]]] = {}
+        tbl_properties: dict[str, str] = {}
+        tbl_files: dict[str, str] = {}
+        tbl_components: dict[str, str] = {}
+        postprocessing: list[ScriptItem] = []
 
         def format_string(string: str):
             # https://learn.microsoft.com/en-us/windows/win32/msi/formatted
@@ -366,13 +365,13 @@ class xtmsi(xtdoc):
         else:
             def _iscab(path):
                 return media_info and any(item.get('Cabinet', '') == F'#{path}' for item in media_info)
-            media_info: List[JSONDict] = processed_table_data.get('Media', [])
-            cabs: Dict[str, UnpackResult] = {
+            media_info: list[JSONDict] = processed_table_data.get('Media', [])
+            cabs: dict[str, UnpackResult] = {
                 path: item for path, item in streams.items() if _iscab(path)}
             for cab in cabs:
                 self.log_info(F'found cab file: {cab}')
         if cabs:
-            file_names: Dict[str, JSONDict] = {}
+            file_names: dict[str, JSONDict] = {}
 
             for file_info in processed_table_data.get('File', []):
                 try:

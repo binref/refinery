@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import struct
 
-from refinery.units.crypto.cipher import StandardBlockCipherUnit
 from refinery.lib.crypto import (
-    rotl32,
     BlockCipher,
     BlockCipherFactory,
     BufferType,
+    rotl32,
 )
+from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 
 class SM4(BlockCipher):
@@ -109,4 +109,3 @@ class sm4(StandardBlockCipherUnit, cipher=BlockCipherFactory(SM4)):
     The SM4 symmetric blockcipher algorithm published as GB/T 32907-2016 by the State Cryptography
     Administration of China (SCA).
     """
-    pass

@@ -1,21 +1,21 @@
 from __future__ import annotations
-from typing import Tuple, Optional
 
 from struct import pack, unpack
-
-from refinery.units.crypto.cipher import (
-    Arg,
-    StandardBlockCipherUnit,
-)
+from typing import Tuple
 
 from refinery.lib.crypto import (
     BlockCipher,
     BlockCipherFactory,
     BufferType,
-    CipherMode,
     CipherInterface,
+    CipherMode,
     rotl32,
     rotr32,
+)
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher import (
+    Arg,
+    StandardBlockCipherUnit,
 )
 
 _R = 12
@@ -27,11 +27,11 @@ class Chaskey(BlockCipher):
     key_size = {0x10}
     block_size = 0x10
 
-    _k: Optional[Tuple[_K, _K, _K]]
+    _k: tuple[_K, _K, _K] | None
     _s: bool
     _r: int
 
-    def __init__(self, key: BufferType, mode: Optional[CipherMode], swap: bool = False, rounds: int = _R):
+    def __init__(self, key: BufferType, mode: CipherMode | None, swap: bool = False, rounds: int = _R):
         self._r = rounds
         self._f = '>IIII' if swap else '<IIII'
         self._k = None
@@ -106,8 +106,8 @@ class chaskey(StandardBlockCipherUnit, cipher=BlockCipherFactory(Chaskey)):
     """
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,
-        rounds: Arg.Number('-k', help='Number of rounds to use, the default is {default}') = _R,
-        swap: Arg.Switch('-s', help='Use big endian byte order for all blocks.') = False,
+        rounds: Param[int, Arg.Number('-k', help='Number of rounds to use, the default is {default}')] = _R,
+        swap: Param[bool, Arg.Switch('-s', help='Use big endian byte order for all blocks.')] = False,
         **more
     ):
         super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, rounds=rounds, swap=swap, **more)

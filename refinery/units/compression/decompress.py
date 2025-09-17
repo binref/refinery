@@ -2,39 +2,39 @@ from __future__ import annotations
 
 from enum import IntFlag
 
-from refinery.units import Arg, Unit, RefineryPartialResult
-from refinery.lib.types import INF, buf, NamedTuple
-from refinery.lib.tools import bounds, normalize_to_display
-from refinery.lib.id import is_structured_data
-
 import colorama
+
+from refinery.lib.id import is_structured_data
+from refinery.lib.tools import bounds, normalize_to_display
+from refinery.lib.types import INF, Param, NamedTuple, buf
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 if True:
     colorama.init()
+
+from colorama import Fore, Style
 
 from .ap import aplib
 from .blz import blz
 from .brotli import brotli
 from .bz2 import bz2
+from .flz import flz
 from .jcalg import jcalg
 from .lz import _auto_decompress_lzma as lzma
 from .lz4 import lz4
+from .lzf import lzf
 from .lzjb import lzjb
 from .lznt1 import lznt1
 from .lzo import lzo
+from .lzw import lzw
+from .mscf import MODE as MSCF_MODE
+from .mscf import mscf
+from .nrv import nrv2b, nrv2d, nrv2e
+from .pkw import pkw
+from .qlz import qlz
 from .szdd import szdd
 from .zl import zl
-from .qlz import qlz
-from .lzf import lzf
-from .flz import flz
-from .lzw import lzw
-from .nrv import nrv2b, nrv2d, nrv2e
 from .zstd import zstd
-from .pkw import pkw
-from .mscf import mscf, MODE as MSCF_MODE
-
-from colorama import Fore, Style
-
 
 _COLOR_FAILURE = Fore.LIGHTRED_EX
 _COLOR_SUCCESS = Fore.LIGHTCYAN_EX
@@ -93,40 +93,40 @@ class decompress(Unit):
     """
     def __init__(
         self,
-        prepend: Arg.Switch('-P', '--no-prepend', off=True, help=(
+        prepend: Param[bool, Arg.Switch('-P', '--no-prepend', off=True, help=(
             'By default, if decompression fails, the unit attempts to prefix '
             'the data with all possible values of a single byte and decompress '
             'the result. This behavior can be disabled with this flag.')
-        ) = True,
-        tolerance: Arg.Number('-t', help=(
+        )] = True,
+        tolerance: Param[int, Arg.Number('-t', help=(
             'Maximum number of bytes to strip from the beginning of the data; '
             'The default value is 12.')
-        ) = 12,
-        max_ratio: Arg.Double('-m', metavar='R', help=(
+        )] = 12,
+        max_ratio: Param[float, Arg.Double('-m', metavar='R', help=(
             'To determine whether a decompression algorithm was successful, the '
             'ratio of compressed size to decompressed size may at most be as large '
             'as this number, a floating point value R; default value is {default}.')
-        ) = 1.0,
-        min_ratio: Arg.Double('-n', metavar='R', help=(
+        )] = 1.0,
+        min_ratio: Param[float, Arg.Double('-n', metavar='R', help=(
             'Require that compression ratios must be at least as large as R. This '
             'is a "too good to be true" heuristic against algorithms like lznt1 '
             'that can produce false positives. The default is {default}.')
-        ) = 0.0001,
-        expand_limits: Arg.Bounds('-d', metavar='a:b', help=(
+        )] = 0.0001,
+        expand_limits: Param[slice, Arg.Bounds('-d', metavar='a:b', help=(
             'Ratio limits are expanded for sizes of input data in the given range, '
             'the default being 0:0x100. The reason for this is that small buffers '
             'can increase in size when compressed under many formats. Set this to :0 '
             'or use strict limits to disable this setting.')
-        ) = range(0, 0x101),
-        expand_factor: Arg.Double('-k', help=(
+        )] = range(0, 0x101),
+        expand_factor: Param[float, Arg.Double('-k', help=(
             'The number by which the maximum compression ratio is multiplied for '
             'small buffers. The default is {default}.'
-        )) = 1.75,
-        strict_limits: Arg.Switch('-l', help=(
+        ))] = 1.75,
+        strict_limits: Param[bool, Arg.Switch('-l', help=(
             'For recognized formats i.e. when a magic signature is present, the '
             'above limits are disabled by default. Activate this flag to enforce '
             'them in every case.')
-        ) = False
+        )] = False
 
     ):
         if min_ratio <= 0:

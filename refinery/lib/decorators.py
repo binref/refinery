@@ -4,14 +4,14 @@ A selection of refinery-specific decorators.
 from __future__ import annotations
 
 import codecs
-import re
 import itertools
+import re
 
-from functools import wraps, WRAPPER_ASSIGNMENTS
-from typing import cast, overload, TYPE_CHECKING, Any, Callable, Iterable, Optional, TypeVar
+from functools import WRAPPER_ASSIGNMENTS, wraps
+from typing import TYPE_CHECKING, Any, Callable, Iterable, TypeVar, cast, overload
 
 if TYPE_CHECKING:
-    from refinery.units import Unit, Chunk
+    from refinery.units import Chunk, Unit
 
 
 _F = TypeVar('_F', bound=Callable)
@@ -37,11 +37,11 @@ def unicoded(method: Callable[[Any, str], str]) -> Callable[[Any, Chunk], bytes]
 
 
 @overload
-def unicoded(method: Callable[[Any, str], Optional[str]]) -> Callable[[Any, Chunk], Optional[bytes]]:
+def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk], bytes | None]:
     ...
 
 
-def unicoded(method: Callable[[Any, str], Optional[str]]) -> Callable[[Any, Chunk], Optional[bytes]]:
+def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk], bytes | None]:
     """
     Can be used to decorate a `refinery.units.Unit.process` routine that takes a
     string argument and also returns one. The resulting routine takes a binary buffer
@@ -50,7 +50,7 @@ def unicoded(method: Callable[[Any, str], Optional[str]]) -> Callable[[Any, Chun
     once for each string patch that was successfully decoded.
     """
     @wraps_without_annotations(method)
-    def method_wrapper(self: Unit, data: Chunk) -> Optional[bytes]:
+    def method_wrapper(self: Unit, data: Chunk) -> bytes | None:
         input_codec = self.codec if any(data[::2]) else 'UTF-16LE'
         partial = re.split(R'([\uDC80-\uDCFF]+)',  # surrogate escape range
             codecs.decode(data, input_codec, errors='surrogateescape'))

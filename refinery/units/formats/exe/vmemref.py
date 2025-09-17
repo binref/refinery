@@ -1,11 +1,12 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Container
+
 from collections import deque
+from typing import TYPE_CHECKING, Container
 
-from refinery.units import Arg, Unit
-from refinery.lib.executable import Range, Executable, CompartmentNotFound
+from refinery.lib.executable import CompartmentNotFound, Executable, Range
 from refinery.lib.tools import NoLogging
-
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
     from smda.common.SmdaFunction import SmdaFunction
@@ -90,21 +91,21 @@ class vmemref(Unit):
 
     def __init__(
         self,
-        *address: Arg.Number(metavar='ADDR', help=(
+        *address: Param[int, Arg.Number(metavar='ADDR', help=(
             'Specify the address of a function to scan. If no argument is given, the unit will scan'
-            ' all functions for memory references.')),
-        take: Arg.Number('-t', metavar='SIZE', help=(
+            ' all functions for memory references.'))],
+        take: Param[int, Arg.Number('-t', metavar='SIZE', help=(
             'Optionally specify the number of bytes to read from each reference; by default, all '
-            'data until the end of the section is returned.')) = None,
-        base: Arg.Number('-b', metavar='ADDR',
-            help='Optionally specify a custom base address B.') = None,
-        deref_count: Arg.Number('-c', help=(
+            'data until the end of the section is returned.'))] = None,
+        base: Param[int, Arg.Number('-b', metavar='ADDR',
+            help='Optionally specify a custom base address B.')] = None,
+        deref_count: Param[int, Arg.Number('-c', help=(
             'Optionally specify the number of items to inspect at a discovered memory address as '
-            'as a potential pointer. The default is {default}.')) = 1,
-        deref_depth: Arg.Number('-d', help=(
+            'as a potential pointer. The default is {default}.'))] = 1,
+        deref_depth: Param[int, Arg.Number('-d', help=(
             'Optionally specify the maximum number of times that referenced data is dereferenced '
             'as a pointer, potentially leading to another referenced memory location. The default '
-            'is {default}.')) = 2,
+            'is {default}.'))] = 2,
     ):
         super().__init__(
             address=address,

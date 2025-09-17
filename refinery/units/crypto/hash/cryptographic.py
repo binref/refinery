@@ -3,13 +3,13 @@ Implements various cryptographic hashing algorithms.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
-
 import hashlib
 
+from typing import TYPE_CHECKING, Callable
+
+from refinery.lib.tools import normalize_to_display
 from refinery.units import Executable
 from refinery.units.crypto.hash import HashUnit
-from refinery.lib.tools import normalize_to_display
 
 if TYPE_CHECKING:
     from refinery.lib.types import buf

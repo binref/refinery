@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Iterable, Iterator
 from itertools import chain
+from typing import Iterable, Iterator
 
-from refinery.units import Arg, Unit, Chunk
 from refinery.lib.argformats import DelayedNumSeqArgument
 from refinery.lib.meta import check_variable_name
-
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 _MERGE_META = '@'
 _CONVERSION = ':'
@@ -88,7 +88,7 @@ class pop(Unit):
     """
     def __init__(
         self,
-        *names: Arg.String(metavar='instruction', help='A sequence of instructions, see above.')
+        *names: Param[str, Arg.String(metavar='instruction', help='A sequence of instructions, see above.')]
     ):
         if not names:
             names = _MERGE_META,

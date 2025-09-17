@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import cast, Collection, Generic, Callable, TypeVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Collection, Generic, TypeVar, cast
+
 from refinery.lib.exceptions import RefineryImportMissing
 
 if TYPE_CHECKING:

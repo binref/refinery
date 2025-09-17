@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
@@ -9,16 +10,16 @@ class ppjscript(Unit):
     """
     def __init__(
         self,
-        indent: Arg.Number('-i', help=(
-            'Number of space characters used for indentation in the output. Default is {default}.')) = 4,
-        strip_comments: Arg.Switch('-c', help=(
-            'Remove all comments from the input before pretty-printing.')) = False,
-        strip_lines: Arg.Switch('-b', group='LINES', help=(
-            'Remove all line breaks after potentially stripping comments, before beautifying.')) = False,
-        keep_lines: Arg.Switch('-B', group='LINES', help=(
-            'Preserve line breaks as they occur in the input.')) = False,
-        keep_escapes: Arg.Switch('-E', help=(
-            'Preserve unnecessary escape sequences in string literals.')) = False,
+        indent: Param[int, Arg.Number('-i', help=(
+            'Number of space characters used for indentation in the output. Default is {default}.'))] = 4,
+        strip_comments: Param[bool, Arg.Switch('-c', help=(
+            'Remove all comments from the input before pretty-printing.'))] = False,
+        strip_lines: Param[bool, Arg.Switch('-b', group='LINES', help=(
+            'Remove all line breaks after potentially stripping comments, before beautifying.'))] = False,
+        keep_lines: Param[bool, Arg.Switch('-B', group='LINES', help=(
+            'Preserve line breaks as they occur in the input.'))] = False,
+        keep_escapes: Param[bool, Arg.Switch('-E', help=(
+            'Preserve unnecessary escape sequences in string literals.'))] = False,
     ):
         return super().__init__(
             indent=indent,
@@ -32,6 +33,7 @@ class ppjscript(Unit):
     def _jsb():
         import jsbeautifier
         import jsbeautifier.unpackers.javascriptobfuscator
+
         # TODO: This is a workaround for the following bug:
         # https://github.com/beautify-web/js-beautify/issues/1350
         jsbeautifier.unpackers.javascriptobfuscator.detect = lambda *_: False

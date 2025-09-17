@@ -14,24 +14,24 @@ from refinery.lib.dotnet.types import (
     Box,
     Byte,
     Char,
-    LengthPrefixedString,
-    StreamReader,
-    StringPrimitive,
+    DateTime,
+    Double,
     EncodedInteger,
-    Struct,
-    UInt16,
-    UInt32,
     Int16,
     Int32,
     Int64,
+    LengthPrefixedString,
+    Null,
     SByte,
     Single,
-    Double,
-    Null,
+    StreamReader,
+    StringPrimitive,
+    Struct,
+    TimeSpan,
+    UInt16,
+    UInt32,
     UInt64,
     unpack,
-    DateTime,
-    TimeSpan
 )
 
 
@@ -47,7 +47,7 @@ class String(LengthPrefixedString):
 class Boolean(Byte):
     @property
     def Value(self):
-        return bool(super(Boolean, self).Value)
+        return bool(super().Value)
 
 
 class Decimal(Blob):
@@ -168,12 +168,12 @@ class NetManifestResource(Struct):
                         keep_meta=False
                     )
                 except Exception as error:
-                    Entry.Error = 'failed to deserialize entry data: {}'.format(error)
+                    Entry.Error = f'failed to deserialize entry data: {error}'
                     continue
                 try:
                     _, _, _, Data = Deserialized
                 except ValueError:
-                    Entry.Error = 'deserialized entry has {} records, 4 were expected.'.format(len(Deserialized))
+                    Entry.Error = f'deserialized entry has {len(Deserialized)} records, 4 were expected.'
                     continue
                 if Data not in Entry.Data:
                     Entry.Error = 'the computed entry value is not a substring of the entry data.'
@@ -187,7 +187,7 @@ class NetManifestResource(Struct):
                 package = StreamReader(Entry.Data).expect_with_meta(Type)
                 Entry.Value = unpack(package)
             else:
-                Entry.TypeName = 'UNKNOWN TYPE 0x{:X}'.format(TypeCode)
+                Entry.TypeName = f'UNKNOWN TYPE 0x{TypeCode:X}'
 
 
 class NetStructuredResources(list):

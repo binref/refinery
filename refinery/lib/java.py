@@ -4,8 +4,8 @@ Parsing of the Java Class file format as per
 """
 from __future__ import annotations
 
-from typing import Union, Any, Dict, List, Type, Optional, TypeVar, Generic
 from enum import IntEnum
+from typing import Any, Generic, TypeVar
 
 from refinery.lib.structures import (
     AttrType,
@@ -37,7 +37,7 @@ __all__ = (
 
 
 class Index(PerInstanceAttribute):
-    def __init__(self, jtype: Type[AttrType]):
+    def __init__(self, jtype: type[AttrType]):
         super().__init__()
         self.jtype = jtype
 
@@ -181,7 +181,7 @@ class JvAttribute(JvStructWithName, Generic[ParserType]):
         self.name = reader.u16()
         self.data = reader.read(reader.u32())
 
-    def parse(self, parser: Type[ParserType]) -> ParserType:
+    def parse(self, parser: type[ParserType]) -> ParserType:
         return parser(self.data, pool=self.pool)
 
 
@@ -507,7 +507,7 @@ class JvOpCode(Struct):
     def __init__(self, reader: StructReader, pool: list):
         with StreamDetour(reader):
             self.code = opc(reader.read_byte())
-            self.table: Optional[Dict[int, int]] = None
+            self.table: dict[int, int] | None = None
             try:
                 fmt = self.OPC_ARGMAP[self.code]
             except KeyError:
@@ -569,7 +569,7 @@ class JvCode(Struct):
         reader.bigendian = True
         self.max_stack = reader.u16()
         self.max_locals = reader.u16()
-        self.disassembly: List[JvOpCode] = []
+        self.disassembly: list[JvOpCode] = []
         with StructReader(reader.read(reader.u32())) as code:
             code.bigendian = True
             while not code.eof:
@@ -580,7 +580,7 @@ class JvCode(Struct):
 
 class JvClassFile(Struct):
 
-    TYPEHANDLER: Dict[JvConstType, Struct] = {
+    TYPEHANDLER: dict[JvConstType, Struct] = {
         JvConstType.Class            : JvString,
         JvConstType.String           : JvString,
         JvConstType.Field            : JvClassProperty,
@@ -606,10 +606,10 @@ class JvClassFile(Struct):
         major = reader.u16()
         self.version = (major, minor)
 
-        self.pool: List[Union[Struct, int, float, str]] = []
+        self.pool: list[Struct | int | float | str] = []
         self._read_pool(reader)
 
-        self.strings: List[str] = {
+        self.strings: list[str] = {
             s.value for s in self.pool if isinstance(s, Struct) and s.tag == JvConstType.String}
 
         self.access = JvAccessFlags(reader)

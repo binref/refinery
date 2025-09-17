@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
 from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 
 class officecrypt(Unit):
@@ -9,9 +10,9 @@ class officecrypt(Unit):
     A simple proxy for the `msoffcrypto` package to decrypt office documents.
     """
 
-    def __init__(self, password: Arg.Binary(help=(
+    def __init__(self, password: Param[buf, Arg.Binary(help=(
         'The document password. By default, the Excel default password "{default}" is used.'
-    )) = b'VelvetSweatshop'):
+    ))] = b'VelvetSweatshop'):
         super().__init__(password=password)
 
     @Unit.Requires('msoffcrypto-tool', ['formats', 'office'])

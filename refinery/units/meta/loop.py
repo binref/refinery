@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from refinery.units import RefineryPartialResult
-from refinery.units.pattern import Arg, RegexUnit
 from refinery.lib.argformats import DelayedBinaryArgument
 from refinery.lib.tools import exception_to_string
+from refinery.lib.types import Param
+from refinery.units import RefineryPartialResult
+from refinery.units.pattern import Arg, RegexUnit
 
 
 class loop(RegexUnit):
@@ -23,14 +24,14 @@ class loop(RegexUnit):
 
     def __init__(
         self,
-        iterations: Arg.Number(metavar='iterations',
-            help='The number of repeated applications of the statements.'),
-        statements: Arg.String(metavar='statements',
-            help='A multibin expression suffix representing the loop statements.'),
-        do_while: Arg.RegExp('-w', '--while', metavar='RE',
-            help='Halt when the given regular expression does not match the data.'),
-        do_until: Arg.RegExp('-u', '--until', metavar='RE',
-            help='Halt when the given regular expression matches the data.'),
+        iterations: Param[int, Arg.Number(metavar='iterations',
+            help='The number of repeated applications of the statements.')],
+        statements: Param[str, Arg.String(metavar='statements',
+            help='A multibin expression suffix representing the loop statements.')],
+        do_while: Param[str, Arg.RegExp('-w', '--while', metavar='RE',
+            help='Halt when the given regular expression does not match the data.')],
+        do_until: Param[str, Arg.RegExp('-u', '--until', metavar='RE',
+            help='Halt when the given regular expression matches the data.')],
         fullmatch=False, multiline=False, ignorecase=False,
     ):
         super().__init__(

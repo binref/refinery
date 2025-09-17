@@ -100,39 +100,41 @@ from __future__ import annotations
 
 import ast
 import builtins
-import itertools
 import inspect
+import itertools
 import re
-import sys
 
 from abc import ABC, abstractmethod
-from pathlib import Path
 from argparse import ArgumentTypeError
 from contextlib import suppress
-from functools import update_wrapper, reduce, lru_cache
-
+from functools import lru_cache, reduce, update_wrapper
+from pathlib import Path
 from typing import (
-    AnyStr,
-    Deque,
-    Optional,
-    Tuple,
-    Union,
-    Mapping,
-    Any,
-    List,
-    TypeVar,
-    Iterable,
-    Callable,
     TYPE_CHECKING,
+    Any,
+    AnyStr,
+    Callable,
+    Deque,
+    Iterable,
+    Mapping,
+    TypeVar,
+    Union,
     get_type_hints,
     overload,
 )
 
 from refinery.lib.frame import Chunk
-from refinery.lib.tools import bounds, isbuffer, infinitize, one, normalize_to_identifier, exception_to_string
-from refinery.lib.types import NoMask, RepeatedInteger, buf
-from refinery.lib.meta import is_valid_variable_name, metavars, Percentage
+from refinery.lib.meta import Percentage, is_valid_variable_name, metavars
 from refinery.lib.patterns import formats
+from refinery.lib.tools import (
+    bounds,
+    exception_to_string,
+    infinitize,
+    isbuffer,
+    normalize_to_identifier,
+    one,
+)
+from refinery.lib.types import NoMask, RepeatedInteger, buf
 
 if TYPE_CHECKING:
     from refinery import Unit
@@ -149,7 +151,6 @@ class ParserError(ArgumentTypeError):
     """
     An exception raised by the `refinery.lib.argformats.PythonExpression` parser.
     """
-    pass
 
 
 class ParserVariableMissing(ParserError):
@@ -157,14 +158,12 @@ class ParserVariableMissing(ParserError):
     Raised when the `refinery.lib.argformats.PythonExpression` parser fails to evaluate an
     expression because of a missing variable.
     """
-    pass
 
 
 class LazyEvaluation:
     """
     Empty parent class for any parse result that throws `refinery.lib.argformats.TooLazy`.
     """
-    pass
 
 
 class PythonExpression:
@@ -187,14 +186,10 @@ class PythonExpression:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}; {exception_to_string(error)}')
 
         class Postprocessor(ast.NodeTransformer):
-            if sys.version_info >= (3, 8):
-                def visit_Constant(self, node: ast.Constant):
-                    if not isinstance(node.value, str):
-                        return node
-                    return ast.Constant(value=node.value.encode('utf8'))
-            else:
-                def visit_Str(self, node: ast.Str):
-                    return ast.Bytes(s=node.s.encode('utf8'))
+            def visit_Constant(self, node: ast.Constant):
+                if not isinstance(node.value, str):
+                    return node
+                return ast.Constant(value=node.value.encode('utf8'))
 
             def visit_MatMult(self, node: ast.MatMult) -> Any:
                 return ast.BitXor()
@@ -275,7 +270,7 @@ class SliceAgain(LazyEvaluation):
     Raised by `refinery.lib.argformats.sliceobj` to indicate that meta variables are required to
     compute this slice.
     """
-    def __init__(self, expr: Union[DelayedBinaryArgument, str]):
+    def __init__(self, expr: DelayedBinaryArgument | str):
         self.expr = expr
 
     def __call__(self, data):
@@ -295,16 +290,16 @@ def percent(expression: str):
 
 
 @overload
-def relslice(expression: Union[int, str, slice], data: Chunk) -> slice:
+def relslice(expression: int | str | slice, data: Chunk) -> slice:
     ...
 
 
 @overload
-def relslice(expression: Union[int, str, slice]) -> slice | SliceAgain:
+def relslice(expression: int | str | slice) -> slice | SliceAgain:
     ...
 
 
-def relslice(expression: Union[int, str, slice], data: Optional[Chunk] = None) -> slice | SliceAgain:
+def relslice(expression: int | str | slice, data: Chunk | None = None) -> slice | SliceAgain:
     """
     Uses `refinery.lib.argformats.sliceobj` to parse a slice from the input, but
     interprets the second part of the slice as a relative length (which can also
@@ -345,7 +340,7 @@ def sliceobj(
     data: Chunk | None = None,
     intok: bool = False,
     final: bool = False,
-) -> Union[slice, SliceAgain]:
+) -> slice | SliceAgain:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
@@ -429,7 +424,6 @@ class TooLazy(Exception):
     Exception which indicates that an argument parser requires input data before it can be
     evaluated.
     """
-    pass
 
 
 class VariableMissing(ArgumentTypeError):
@@ -481,7 +475,7 @@ class DelayedArgumentDispatch:
         self.final = {}
         self.units = {}
 
-    def _get_unit(self, name: str, *args) -> Optional[Unit]:
+    def _get_unit(self, name: str, *args) -> Unit | None:
         name, rev, empty = normalize_to_identifier(name).partition(_REVERSE_SIGN)
         if empty:
             return None
@@ -542,7 +536,7 @@ class DelayedArgumentDispatch:
         return _register
 
 
-def LazyPythonExpression(expression: str, variables: Optional[dict] = None) -> MaybeDelayedType[Any]:
+def LazyPythonExpression(expression: str, variables: dict | None = None) -> MaybeDelayedType[Any]:
     """
     Wraps the given expression for use as a `refinery.lib.argformats.multibin` expression. If it
     contains no variables, the expression is evaluated immediately, otherwise the function returns
@@ -624,7 +618,7 @@ class DelayedArgument(LazyEvaluation):
             self.seed = expression
         self.modifiers.reverse()
 
-    def _split_expression(self, expression: str, reverse: bool = False) -> Tuple[str, Optional[str]]:
+    def _split_expression(self, expression: str, reverse: bool = False) -> tuple[str, str | None]:
         argument_list_visited = False
         brackets = 0
         inc = self._ARG_BEGIN_TOKEN
@@ -655,7 +649,7 @@ class DelayedArgument(LazyEvaluation):
                 return (head, tail) if reverse else (tail, head)
         return expression, None
 
-    def _split_modifier(self, expression: str, reverse: bool = False) -> Tuple[Optional[str], Tuple[str], str]:
+    def _split_modifier(self, expression: str, reverse: bool = False) -> tuple[str | None, tuple[str], str]:
         brackets = 0
         name = None
         argoffset = 0
@@ -693,7 +687,7 @@ class DelayedArgument(LazyEvaluation):
                 raise ArgumentTypeError(F'Unexpected error parsing "{expression}".')
         return name, arguments, rest
 
-    def __call__(self, data: Optional[buf] = None) -> bytes:
+    def __call__(self, data: buf | None = None) -> bytes:
         arg = self.seed
         mod = iter(self.modifiers)
         if not self.finalized:
@@ -826,8 +820,8 @@ class DelayedArgument(LazyEvaluation):
         else:
             return self._file(path, region)
 
-    def _file(self, pattern: str, region: str) -> Optional[bytes]:
-        def read(data: Optional[Chunk] = None):
+    def _file(self, pattern: str, region: str) -> bytes | None:
+        def read(data: Chunk | None = None):
             if not region:
                 k = slice(0, None)
             else:
@@ -866,7 +860,7 @@ class DelayedArgument(LazyEvaluation):
         `bounds` is just a single integer, it is interpreted as the upper bound for a sequence
         of bytes starting at zero.
         """
-        def compute_range(data: Optional[Chunk] = None):
+        def compute_range(data: Chunk | None = None):
             try:
                 s = sliceobj(region, data, intok=True)
             except ParserVariableMissing:
@@ -956,7 +950,7 @@ class DelayedArgument(LazyEvaluation):
         The handler `cut:region` work like `refinery.lib.argformats.DelayedBinaryArgument.copy`,
         but the bytes are removed from the input data after copying them.
         """
-        def _cut(data: Union[bytearray, Chunk]):
+        def _cut(data: bytearray | Chunk):
             bounds = relslice(region, data)
             result = bytearray(data[bounds])
             del data[bounds]
@@ -964,7 +958,7 @@ class DelayedArgument(LazyEvaluation):
         return _cut
 
     @handler.register('pp')
-    def pp(self, input: bytes, region: Union[slice, str] = slice(1, None, 1), separator: bytes = B'/') -> bytes:
+    def pp(self, input: bytes, region: slice | str = slice(1, None, 1), separator: bytes = B'/') -> bytes:
         """
         The handler `pp[region=1:,sep=/]:input` splits the input at the given string `sep`
         and reverses the sequence. Parts are then selected according to the `region` parameter,
@@ -975,7 +969,7 @@ class DelayedArgument(LazyEvaluation):
 
         will return the string `/path/to/some/item`.
         """
-        def _pp(data: Optional[Chunk] = None):
+        def _pp(data: Chunk | None = None):
             b: slice = sliceobj(region, data=data, final=True)
             pp = input.split(separator)
             pp.reverse()
@@ -995,7 +989,7 @@ class DelayedArgument(LazyEvaluation):
         return self.pp(input, slice(0, 1, 1), separator=separator)
 
     @handler.register('pn')
-    def pn(self, path: Union[str, bytes]) -> bytes:
+    def pn(self, path: str | bytes) -> bytes:
         """
         The handler `pn:/path/to/file.ext` returns `/path/to/file`, i.e. the path without its
         extension. The handler name is short for "path name". If the last part does not have
@@ -1006,7 +1000,7 @@ class DelayedArgument(LazyEvaluation):
         return Path(path).with_suffix('').as_posix().encode()
 
     @handler.register('px')
-    def px(self, path: Union[str, bytes]) -> bytes:
+    def px(self, path: str | bytes) -> bytes:
         """
         The handler `px:/path/to/file.ext` returns `ext`, i.e. the extension
         extension. The handler name is short for "path name".
@@ -1184,7 +1178,7 @@ class DelayedArgument(LazyEvaluation):
         return delay
 
     @handler.register('take')
-    def take(self, it: Iterable[int], bounds: Optional[str] = None):
+    def take(self, it: Iterable[int], bounds: str | None = None):
         """
         The handler `take[start:stop:step]` expects an integer sequence as input and applies a slice
         to it. Slices are given in Python syntax, so `take[::2]` will extract every second item from
@@ -1239,7 +1233,7 @@ class DelayedArgument(LazyEvaluation):
     def prng(
         self,
         size: str,
-        seed: Optional[str] = None
+        seed: str | None = None
     ) -> bytes:
         """
         The `prng[seed]:count` handler generates `count` random bytes using Python's built-in random
@@ -1274,9 +1268,9 @@ class DelayedArgument(LazyEvaluation):
     def accu(
         self,
         spec: str,
-        seed: Optional[str] = None,
-        skip: Optional[str] = None,
-        precision: Optional[str] = None
+        seed: str | None = None,
+        skip: str | None = None,
+        precision: str | None = None
     ) -> Iterable[int]:
         """
         The final handler
@@ -1324,7 +1318,7 @@ class DelayedArgument(LazyEvaluation):
         precision = precision and int(precision, 0) or _DEFAULT_BITS
         mask = precision and (1 << precision) - 1
 
-        def finalize(data: Optional[Chunk] = None):
+        def finalize(data: Chunk | None = None):
             @lru_cache(maxsize=512, typed=False)
             def accumulate(A):
                 return update(meta, A=A)
@@ -1349,7 +1343,7 @@ class DelayedArgument(LazyEvaluation):
             return finalize()
 
     @handler.register('be')
-    def be(self, arg: Union[int, buf], size: Optional[str] = None) -> int:
+    def be(self, arg: int | buf, size: str | None = None) -> int:
         """
         The handler `be[size=0]:data` converts a binary input into the integer that it encodes in
         big endian format, and vice versa. The optional parameter `size` can be used to specify
@@ -1367,7 +1361,7 @@ class DelayedArgument(LazyEvaluation):
             return int.from_bytes(arg[:size], 'big')
 
     @handler.register('le')
-    def le(self, arg: Union[int, buf], size: Optional[str] = None) -> int:
+    def le(self, arg: int | buf, size: str | None = None) -> int:
         """
         The handler `be[size=0]:data` converts a binary input into the integer that it encodes in
         little endian format, and vice versa. The optional parameter `size` can be used to specify
@@ -1385,7 +1379,7 @@ class DelayedArgument(LazyEvaluation):
             return int.from_bytes(arg[:size], 'little')
 
     @handler.register('reduce')
-    def reduce(self, it: Iterable[int], reduction: str, seed: Optional[str] = None) -> int:
+    def reduce(self, it: Iterable[int], reduction: str, seed: str | None = None) -> int:
         """
         The handler `reduce[reduction, seed=0]` has two parameters. The string `reduction` is a
         Python expression that involves the two special variables `S` (the state) and `B`
@@ -1396,7 +1390,7 @@ class DelayedArgument(LazyEvaluation):
         seed = seed and PythonExpression.Lazy(seed)
         reduction = PythonExpression.Lazy(reduction)
 
-        def finalize(data: Optional[Chunk] = None):
+        def finalize(data: Chunk | None = None):
             def _reduction(S, B):
                 v = reduction(args, S=S, B=B)
                 return v
@@ -1472,7 +1466,7 @@ class DelayedNumSeqArgument(DelayedArgument):
                 return super().default_handler(expression)
             return expression
 
-    def __call__(self, data: Optional[Union[buf, Chunk]] = None) -> Iterable[int]:
+    def __call__(self, data: buf | Chunk | None = None) -> Iterable[int]:
         value = super().__call__(data)
         if isbuffer(value):
             return value
@@ -1545,7 +1539,7 @@ class DelayedRegexpArgument(DelayedArgument):
                 tick += 1
                 pattern = str(formats.get(match[1], indicators.get(match[1], match[0])))
                 pattern = re.sub(r'(?<=\(\?P[<=])__(\w+)__', F'__\\1_{tick}__', pattern)
-                return '(?:{})'.format(pattern)
+                return f'(?:{pattern})'
 
             def replace_variable_assignment(match):
                 return F'(?P<{match[1]}>'
@@ -1575,8 +1569,8 @@ class DelayedRegexpArgument(DelayedArgument):
         except LookupError:
             raise ArgumentTypeError(
                 F'Based on the prefix "f:", the parser looked for a carve format named "{name}".'
-                U' No such format is known; prefix the entire expression with "s:" if this was '
-                U'unintended, otherwise correct the format name spelling.')
+                ' No such format is known; prefix the entire expression with "s:" if this was '
+                'unintended, otherwise correct the format name spelling.')
 
     @handler.register('yara', 'y', 'Y')
     def yara(self, pattern: bytes) -> bytes:
@@ -1639,14 +1633,14 @@ class DelayedNumberArgument(DelayedArgument):
         self.max = max
         super().__init__(expression)
 
-    def __call__(self, data: Union[buf, Chunk, None] = None) -> int:
+    def __call__(self, data: buf | Chunk | None = None) -> int:
         value = super().__call__(data)
         if not isinstance(value, int):
             tv = type(value).__name__
             raise ArgumentTypeError(F'The value computed from {self.expression} is of type {tv}, it should be an integer.')
         if self.min is not None and value < self.min or self.max is not None and value > self.max:
             a = '-∞' if self.min is None else self.min
-            b = u'∞' if self.max is None else self.max
+            b = '∞' if self.max is None else self.max
             raise ArgumentTypeError(F'value {value} is out of bounds [{a},{b}]')
         return value
 
@@ -1693,7 +1687,7 @@ expressions.
 """
 
 
-def numseq(expression: Union[int, str], reverse=False, seed=None, typecheck=True) -> Union[Iterable[int], DelayedNumSeqArgument]:
+def numseq(expression: int | str, reverse=False, seed=None, typecheck=True) -> Iterable[int] | DelayedNumSeqArgument:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedNumSeqArgument`.
     """
@@ -1715,7 +1709,7 @@ def pathvar(expression: str) -> str | DelayedArgument:
     return arg
 
 
-def multibin(expression: Union[str, bytes, bytearray], reverse=False, seed=None) -> Union[bytes, DelayedArgument]:
+def multibin(expression: str | bytes | bytearray, reverse=False, seed=None) -> bytes | DelayedArgument:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedBinaryArgument`.
     """
@@ -1727,7 +1721,7 @@ def multibin(expression: Union[str, bytes, bytearray], reverse=False, seed=None)
     return arg
 
 
-def regexp(expression: str) -> Union[int, bytes, DelayedRegexpArgument]:
+def regexp(expression: str) -> int | bytes | DelayedRegexpArgument:
     """
     This is the argument parser type that uses `refinery.lib.argformats.DelayedRegexpArgument`.
     """
@@ -1790,7 +1784,7 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
                         name = key
                         break
             if name not in options:
-                raise ValueError('The option %s is not one of these: %s' % (name, list(options)))
+                raise ValueError('The option {} is not one of these: {}'.format(name, list(options)))
             self.mode = options[name]
             self.name = name
 
@@ -1814,7 +1808,7 @@ def extract_options(symbols, prefix: str, *exceptions: str):
     return {k: v for k, v in candidates.items() if isinstance(v, int)}
 
 
-def pending(argument: Union[Any, Iterable[Any]]) -> bool:
+def pending(argument: Any | Iterable[Any]) -> bool:
     """
     This function returns a boolean value which indicates whether the given
     argument is a `refinery.lib.argformats.LazyEvaluation`.
@@ -1824,7 +1818,7 @@ def pending(argument: Union[Any, Iterable[Any]]) -> bool:
     return isinstance(argument, LazyEvaluation)
 
 
-def manifest(argument: Union[Any, List[Any]], data: bytearray) -> Union[Any, List[Any]]:
+def manifest(argument: Any | list[Any], data: bytearray) -> Any | list[Any]:
     """
     Returns the manifestation of a `refinery.lib.argformats.LazyEvaluation`
     on the given data. This function can change the data.

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Union
-
 import enum
 import re
 
-from refinery.units import Unit, RefineryPartialResult
-from refinery.lib.structures import MemoryFile, StructReader, Struct
+from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.units import RefineryPartialResult, Unit
 
 
 class LZGMethod(enum.IntEnum):
@@ -15,7 +13,7 @@ class LZGMethod(enum.IntEnum):
 
 
 class LZGCheckSum:
-    def __init__(self, reader: Union[bytearray, StructReader[bytearray]], size: int = 0):
+    def __init__(self, reader: bytearray | StructReader[bytearray], size: int = 0):
         if not isinstance(reader, StructReader):
             reader = StructReader(reader)
         self.reader = reader

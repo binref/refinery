@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from itertools import cycle
 
+from refinery.lib.types import Param
 from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 
@@ -12,7 +13,7 @@ class rc4mod(StreamCipherUnit):
 
     def __init__(
         self, key, stateful=False, discard=0, *,
-        size: Arg.Number('-t', help='Table size, {default} by default.', bound=(1, None)) = 0x100
+        size: Param[int, Arg.Number('-t', help='Table size, {default} by default.', bound=(1, None))] = 0x100
     ):
         super().__init__(key=key, stateful=stateful, discard=discard, size=size)
 

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import itertools
 import json
+
 import msgpack as mp
 
-from refinery.units import RefineryPartialResult, Unit
 from refinery.lib.structures import MemoryFile
+from refinery.units import RefineryPartialResult, Unit
 
 
 class msgpack(Unit):

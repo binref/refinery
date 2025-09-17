@@ -1,23 +1,30 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import List, Iterable, Sequence, Optional
+from typing import Iterable, Sequence
 
-from refinery.units.crypto.cipher import StandardBlockCipherUnit, Arg
-from refinery.lib.crypto import BlockCipher, BlockCipherFactory, CipherInterface, BufferType, CipherMode
 from refinery.lib.chunks import pack, unpack
+from refinery.lib.crypto import (
+    BlockCipher,
+    BlockCipherFactory,
+    BufferType,
+    CipherInterface,
+    CipherMode,
+)
+from refinery.lib.types import Param
+from refinery.units.crypto.cipher import Arg, StandardBlockCipherUnit
 
 
 class TEABase(BlockCipher):
 
     block_size = 8
     key_size = {16}
-    derived_key: List[int]
+    derived_key: list[int]
     big_endian: bool
 
     def __init__(
         self,
-        key: BufferType, mode: Optional[CipherMode],
+        key: BufferType, mode: CipherMode | None,
         big_endian: bool = False
     ):
         self.big_endian = big_endian
@@ -91,8 +98,8 @@ class TEA(TEAWithRounds):
 class TEAUnit(StandardBlockCipherUnit):
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,
-        swap: Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.') = False,
-        rounds: Arg.Number('-k', help='Specify the number of rounds, {default} by default.') = 32,
+        swap: Param[bool, Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.')] = False,
+        rounds: Param[int, Arg.Number('-k', help='Specify the number of rounds, {default} by default.')] = 32,
         **more
     ):
         super().__init__(key, iv=iv, padding=padding, mode=mode, raw=raw, swap=swap, rounds=rounds, **more)

@@ -3,8 +3,7 @@ from __future__ import annotations
 import re
 
 from refinery.lib.patterns import formats
-from refinery.units.obfuscation import IterativeDeobfuscator
-from refinery.units.obfuscation import StringLiterals
+from refinery.units.obfuscation import IterativeDeobfuscator, StringLiterals
 
 
 class deob_vba_concat(IterativeDeobfuscator):

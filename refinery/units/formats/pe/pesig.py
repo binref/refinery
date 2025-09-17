@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import struct
 
-from refinery.units import Unit, RefineryPartialResult
 from refinery.lib import lief
+from refinery.units import RefineryPartialResult, Unit
 
 
 class pesig(Unit):

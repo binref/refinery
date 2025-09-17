@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from enum import IntFlag
-from itertools import repeat, product
-
+from itertools import product, repeat
 from lzma import (
     FILTER_DELTA,
     FILTER_LZMA1,
@@ -10,15 +9,16 @@ from lzma import (
     FORMAT_ALONE,
     FORMAT_RAW,
     FORMAT_XZ,
+    PRESET_EXTREME,
     LZMACompressor,
     LZMADecompressor,
     LZMAError,
-    PRESET_EXTREME,
 )
 
-from refinery.units import Arg, Unit, RefineryPartialResult
-from refinery.lib.structures import MemoryFile
 from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Param
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 __all__ = ['lzma', '_auto_decompress_lzma']
 
@@ -43,11 +43,11 @@ class lzma(Unit):
 
     def __init__(
         self,
-        raw   : Arg.Switch('-r', group='MODE', help='Use raw (no container) format.') = False,
-        alone : Arg.Switch('-a', group='MODE', help='Use the lzma container format.') = False,
-        xz    : Arg.Switch('-x', group='MODE', help='Use the default xz format.') = False,
-        level : Arg.Number('-l', bound=(0, 9), help='The compression level preset; between 0 and 9.') = 9,
-        delta : Arg.Number('-d', help='Add a delta filter when compressing.') = None,
+        raw: Param[bool, Arg.Switch('-r', group='MODE', help='Use raw (no container) format.')] = False,
+        alone: Param[bool, Arg.Switch('-a', group='MODE', help='Use the lzma container format.')] = False,
+        xz: Param[bool, Arg.Switch('-x', group='MODE', help='Use the default xz format.')] = False,
+        level: Param[int, Arg.Number('-l', bound=(0, 9), help='The compression level preset; between 0 and 9.')] = 9,
+        delta: Param[int, Arg.Number('-d', help='Add a delta filter when compressing.')] = None,
     ):
         if (raw, alone, xz).count(True) > 1:
             raise ValueError('Only one container format can be enabled.')

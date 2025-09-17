@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, RefineryPartialResult
-from refinery.lib.tools import splitchunks
-from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
-from refinery.lib.xml import ForgivingParse
-
-from base64 import b64decode, b16decode
+from base64 import b16decode, b64decode
 from contextlib import suppress
-from enum import IntEnum, Enum
+from enum import Enum, IntEnum
 
-from Cryptodome.Random import get_random_bytes
 from Cryptodome.Cipher import PKCS1_OAEP
 from Cryptodome.PublicKey import RSA
+from Cryptodome.Random import get_random_bytes
 from Cryptodome.Util import number
+
+from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
+from refinery.lib.tools import splitchunks
+from refinery.lib.types import Param, buf
+from refinery.lib.xml import ForgivingParse
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 
 class KF(str, Enum):
@@ -89,13 +90,13 @@ class rsa(Unit):
     """
     def __init__(
         self,
-        key: Arg(help='RSA key in PEM, DER, or Microsoft BLOB format.'),
-        swapkeys: Arg.Switch('-s', help='Swap public and private exponent.') = False,
-        textbook: Arg.Switch('-t', group='PAD', help='Equivalent to --padding=NONE.') = False,
-        padding : Arg.Option('-p', group='PAD', choices=PAD,
-            help='Choose one of the following padding modes: {choices}. The default is AUTO.') = PAD.AUTO,
-        rsautl  : Arg.Switch('-r', group='PAD',
-            help='Act as rsautl from OpenSSH; This is equivalent to --swapkeys --padding=PKCS10') = False,
+        key: Param[buf, Arg(help='RSA key in PEM, DER, or Microsoft BLOB format.')],
+        swapkeys: Param[bool, Arg.Switch('-s', help='Swap public and private exponent.')] = False,
+        textbook: Param[bool, Arg.Switch('-t', group='PAD', help='Equivalent to --padding=NONE.')] = False,
+        padding: Param[str, Arg.Option('-p', group='PAD', choices=PAD,
+            help='Choose one of the following padding modes: {choices}. The default is AUTO.')] = PAD.AUTO,
+        rsautl: Param[bool, Arg.Switch('-r', group='PAD',
+            help='Act as rsautl from OpenSSH; This is equivalent to --swapkeys --padding=PKCS10')] = False,
     ):
         padding = Arg.AsOption(padding, PAD)
         if textbook:

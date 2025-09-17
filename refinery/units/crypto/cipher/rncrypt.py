@@ -32,15 +32,15 @@ RNCryptor is Copyright (C) 2013-2016 Rob Napier, Yan Kalchevskiy, Brant Young.
 """
 from __future__ import annotations
 
-from refinery.units import Unit
-
 import hashlib
 import hmac
 
 from Cryptodome import Random
 from Cryptodome.Cipher import AES
 from Cryptodome.Protocol import KDF
-from Cryptodome.Util.Padding import unpad, pad
+from Cryptodome.Util.Padding import pad, unpad
+
+from refinery.units import Unit
 
 
 class rncrypt(Unit):

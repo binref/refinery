@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from refinery.lib.structures import StructReader, MemoryFile
-from refinery.units import Unit
-
 import itertools
+
+from refinery.lib.structures import MemoryFile, StructReader
+from refinery.units import Unit
 
 
 class xtmagtape(Unit):

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from refinery.lib.dotnet.types import Blob
 from refinery.lib.dotnet.header import DotNetHeader
-from refinery.units.formats import JSONEncoderUnit, BytesAsStringEncoder
+from refinery.lib.dotnet.types import Blob
+from refinery.units.formats import BytesAsStringEncoder, JSONEncoderUnit
 
 
 class DotNetEncoder(BytesAsStringEncoder):

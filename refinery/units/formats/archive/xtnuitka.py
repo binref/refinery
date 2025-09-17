@@ -1,9 +1,10 @@
 from __future__ import annotations
-from typing import Iterable, Optional
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.structures import StructReader, Struct
+from typing import Iterable
+
+from refinery.lib.structures import Struct, StructReader
 from refinery.lib.types import buf
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class xtnuitka(PathExtractorUnit):
@@ -59,7 +60,7 @@ class xtnuitka(PathExtractorUnit):
                 yield UnpackResult(path, data)
 
     @classmethod
-    def handles(cls, data: buf) -> Optional[bool]:
+    def handles(cls, data: buf) -> bool | None:
         if data[:2] == b'MZ':
             try:
                 next(cls._pe_candidates(data))

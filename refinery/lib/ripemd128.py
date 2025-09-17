@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import itertools
 
-from refinery.lib.crypto import rotl32 as rol
 from refinery.lib import chunks
+from refinery.lib.crypto import rotl32 as rol
 
 
 def _ripemd128_blocks(msg):

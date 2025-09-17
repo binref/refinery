@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.lib.chm import CHM, ChmHeader
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class xtchm(PathExtractorUnit, docs='{0}{p}{PathExtractorUnit}'):

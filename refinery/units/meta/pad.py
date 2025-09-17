@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
@@ -10,13 +11,13 @@ class pad(Unit):
 
     def __init__(
         self,
-        width: Arg.Number(help='Input is padded to the nearest multiple of this size.'),
-        padding: Arg(help=(
+        width: Param[int, Arg.Number(help='Input is padded to the nearest multiple of this size.')],
+        padding: Param[buf, Arg(help=(
             'This custom binary sequence is used (repeatedly, if necessary) to pad the '
-            'input. The default is a zero byte.')) = B'\0',
-        left: Arg.Switch('-l', help='Pad on the left instead of the right.') = False,
-        absolute: Arg.Switch('-a', help=(
-            'The width argument specifies an absolute size, not a block size.')) = False
+            'input. The default is a zero byte.'))] = B'\0',
+        left: Param[bool, Arg.Switch('-l', help='Pad on the left instead of the right.')] = False,
+        absolute: Param[bool, Arg.Switch('-a', help=(
+            'The width argument specifies an absolute size, not a block size.'))] = False
     ):
         super().__init__(width=width, padding=padding, left=left, absolute=absolute)
 

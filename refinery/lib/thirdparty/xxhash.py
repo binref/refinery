@@ -133,4 +133,4 @@ class xxhash:
         return struct.pack('>I', self.intdigest())
 
     def hexdigest(self):
-        return '{:08x}'.format(self.intdigest())
+        return f'{self.intdigest():08x}'

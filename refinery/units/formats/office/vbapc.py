@@ -3,9 +3,10 @@ from __future__ import annotations
 import io
 import re
 
-from refinery.units import Unit, Arg
-from refinery.lib.vfs import VirtualFileSystem
 from refinery.lib.tools import NoLogging
+from refinery.lib.types import Param
+from refinery.lib.vfs import VirtualFileSystem
+from refinery.units import Arg, Unit
 
 
 class vbapc(Unit):
@@ -15,7 +16,7 @@ class vbapc(Unit):
     use VBA code stomping, i.e. the embedded macro source code is stomped and does not represent
     the p-code functionality that the document will actually execute.
     """
-    def __init__(self, raw: Arg.Switch('-r', help='Return disassembled p-code, do not try to decompile.') = False):
+    def __init__(self, raw: Param[bool, Arg.Switch('-r', help='Return disassembled p-code, do not try to decompile.')] = False):
         super().__init__(raw=raw)
 
     @Unit.Requires('oletools', ['formats', 'office', 'extended'])

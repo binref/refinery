@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.units import Unit
 from refinery.lib.json import BytesAsStringEncoder
+from refinery.units import Unit
 
 
 class JavaEncoder(BytesAsStringEncoder):

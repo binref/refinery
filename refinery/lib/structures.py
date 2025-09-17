@@ -3,37 +3,32 @@ Interfaces and classes to read structured data.
 """
 from __future__ import annotations
 
-import contextlib
 import codecs
-import itertools
+import contextlib
 import enum
 import functools
 import io
+import itertools
 import re
 import struct
 import weakref
 
-from uuid import UUID
-
 from typing import (
-    overload,
-    cast,
+    TYPE_CHECKING,
     Any,
-    Dict,
     Generic,
-    Sized,
     Iterable,
-    List,
-    Optional,
-    Tuple,
-    Type,
+    Sized,
     TypeVar,
     Union,
-    TYPE_CHECKING,
+    cast,
+    overload,
 )
+from uuid import UUID
 
 if TYPE_CHECKING:
     from collections.abc import Buffer
+
     from refinery.lib.types import buf
 
     T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
@@ -77,7 +72,7 @@ class StreamDetour(Generic[R]):
     A stream detour is used as a context manager to temporarily read from a different location
     in the stream and then return to the original offset when the context ends.
     """
-    def __init__(self, stream: R, offset: Optional[int] = None, whence: int = io.SEEK_SET):
+    def __init__(self, stream: R, offset: int | None = None, whence: int = io.SEEK_SET):
         self.stream = stream
         self.offset = offset
         self.whence = whence
@@ -112,10 +107,10 @@ class MemoryFileMethods(Generic[T, B]):
 
     def __init__(
         self,
-        data: Optional[T] = None,
-        output: Optional[type[B]] = None,
-        fileno: Optional[int] = None,
-        size_limit: Optional[int] = None,
+        data: T | None = None,
+        output: type[B] | None = None,
+        fileno: int | None = None,
+        size_limit: int | None = None,
     ) -> None:
         if data is None:
             if TYPE_CHECKING:
@@ -187,16 +182,16 @@ class MemoryFileMethods(Generic[T, B]):
     def remaining_bytes(self) -> int:
         return len(self._data) - self.tell()
 
-    def detour(self, offset: Optional[int] = None, whence: int = io.SEEK_SET):
+    def detour(self, offset: int | None = None, whence: int = io.SEEK_SET):
         return StreamDetour(cast(io.IOBase, self), offset, whence=whence)
 
-    def detour_absolute(self, offset: Optional[int] = None):
+    def detour_absolute(self, offset: int | None = None):
         return self.detour(offset, io.SEEK_SET)
 
-    def detour_relative(self, offset: Optional[int] = None):
+    def detour_relative(self, offset: int | None = None):
         return self.detour(offset, io.SEEK_CUR)
 
-    def detour_from_end(self, offset: Optional[int] = None):
+    def detour_from_end(self, offset: int | None = None):
         return self.detour(offset, io.SEEK_END)
 
     def writable(self) -> bool:
@@ -206,13 +201,13 @@ class MemoryFileMethods(Generic[T, B]):
             return not self._data.readonly
         return isinstance(self._data, bytearray)
 
-    def read_as(self, cast: Type[C], size: int = -1, peek: bool = False) -> C:
+    def read_as(self, cast: type[C], size: int = -1, peek: bool = False) -> C:
         out = self.read(size, peek)
         if not isinstance(out, cast):
             out = cast(out)
         return out
 
-    def read(self, size: Optional[int] = None, peek: bool = False) -> B:
+    def read(self, size: int | None = None, peek: bool = False) -> B:
         beginning = self._cursor
         if size is None or size < 0:
             end = len(self._data)
@@ -233,14 +228,14 @@ class MemoryFileMethods(Generic[T, B]):
             self._cursor = stop
         return match
 
-    def peek(self, size: Optional[int] = None) -> memoryview:
+    def peek(self, size: int | None = None) -> memoryview:
         cursor = self._cursor
         mv = memoryview(self._data)
         if size is None or size < 0:
             return mv[cursor:]
         return mv[cursor:cursor + size]
 
-    def read1(self, size: Optional[int] = None, peek: bool = False) -> B:
+    def read1(self, size: int | None = None, peek: bool = False) -> B:
         return self.read(size, peek)
 
     def _find_linebreak(self, beginning: int, end: int) -> int:
@@ -250,7 +245,7 @@ class MemoryFileMethods(Generic[T, B]):
             if self._data[k] == 0xA: return k
         return -1
 
-    def readline(self, size: Optional[int] = None) -> B:
+    def readline(self, size: int | None = None) -> B:
         beginning, end = self._cursor, len(self._data)
         if size is not None and size >= 0:
             end = beginning + size
@@ -261,7 +256,7 @@ class MemoryFileMethods(Generic[T, B]):
             result = t(result)
         return result
 
-    def readlines_iter(self, hint: Optional[int] = None) -> Iterable[B]:
+    def readlines_iter(self, hint: int | None = None) -> Iterable[B]:
         if hint is None or hint < 0:
             yield from self
         else:
@@ -271,7 +266,7 @@ class MemoryFileMethods(Generic[T, B]):
                 total += len(line)
                 yield line
 
-    def readlines(self, hint: Optional[int] = None) -> list[bytes]:
+    def readlines(self, hint: int | None = None) -> list[bytes]:
         it = self.readlines_iter(hint)
         if issubclass(self._output, bytes):
             return list(it)
@@ -320,11 +315,11 @@ class MemoryFileMethods(Generic[T, B]):
         self._cursor = min(self._cursor, len(self._data))
         return self._cursor
 
-    def writelines(self, lines: Union[Iterable[Iterable[int]], Iterable[Buffer]]) -> None:
+    def writelines(self, lines: Iterable[Iterable[int]] | Iterable[Buffer]) -> None:
         for line in lines:
             self.write(line)
 
-    def truncate(self, size: Optional[int] = None) -> int:
+    def truncate(self, size: int | None = None) -> int:
         if not isinstance(self._data, bytearray):
             raise TypeError
         if size is not None:
@@ -354,7 +349,7 @@ class MemoryFileMethods(Generic[T, B]):
         else:
             self._cursor = nc
 
-    def write(self, _data: Union[Buffer, Iterable[int]]) -> int:
+    def write(self, _data: Buffer | Iterable[int]) -> int:
         out = self._data
         end = len(out)
 
@@ -486,7 +481,7 @@ class StructReader(MemoryFile[T, T]):
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read_exactly(self, size: Optional[int] = None, peek: bool = False) -> B:
+    def read_exactly(self, size: int | None = None, peek: bool = False) -> B:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
@@ -510,7 +505,7 @@ class StructReader(MemoryFile[T, T]):
         """
         return not self._nbits
 
-    def byte_align(self, blocksize: int = 1) -> Tuple[int, int]:
+    def byte_align(self, blocksize: int = 1) -> tuple[int, int]:
         """
         This method clears the internal bit buffer and moves the cursor to the next byte. It returns a
         tuple containing the size and contents of the bit buffer.
@@ -528,7 +523,7 @@ class StructReader(MemoryFile[T, T]):
     def remaining_bits(self) -> int:
         return 8 * self.remaining_bytes + self._nbits
 
-    def read_integer(self, length: Optional[int] = None, peek: bool = False, bigendian: Optional[bool] = None) -> int:
+    def read_integer(self, length: int | None = None, peek: bool = False, bigendian: bool | None = None) -> int:
         """
         Read `length` many bits from the underlying stream as an integer.
         """
@@ -603,7 +598,7 @@ class StructReader(MemoryFile[T, T]):
         """
         return self.read_integer(1)
 
-    def read_bits(self, nbits: int, bigendian: Optional[bool] = None) -> Iterable[int]:
+    def read_bits(self, nbits: int, bigendian: bool | None = None) -> Iterable[int]:
         """
         This method returns the bits of `refinery.lib.structures.StructReader.read_integer` one by one.
         """
@@ -628,7 +623,7 @@ class StructReader(MemoryFile[T, T]):
         item, = self.read_struct(spec, peek=peek)
         return item
 
-    def read_struct(self, spec: str, peek=False) -> List[UnpackType]:
+    def read_struct(self, spec: str, peek=False) -> list[UnpackType]:
         """
         Read structured data from the stream in any format supported by the `struct` module. The `format`
         argument can be used to override the current byte ordering. If the `unwrap` parameter is `True`, a
@@ -746,7 +741,7 @@ class StructReader(MemoryFile[T, T]):
     def read_c_string(self, encoding: str) -> str:
         ...
 
-    def read_c_string(self, encoding=None) -> Union[str, bytearray]:
+    def read_c_string(self, encoding=None) -> str | bytearray:
         data = self.read_terminated_array(B'\0')
         if encoding is not None:
             data = codecs.decode(data, encoding)
@@ -760,7 +755,7 @@ class StructReader(MemoryFile[T, T]):
     def read_w_string(self, encoding: str) -> str:
         ...
 
-    def read_w_string(self, encoding=None) -> Union[str, bytearray]:
+    def read_w_string(self, encoding=None) -> str | bytearray:
         data = self.read_terminated_array(B'\0\0', 2)
         if encoding is not None:
             data = codecs.decode(data, encoding)
@@ -792,7 +787,7 @@ class StructReader(MemoryFile[T, T]):
     def read_length_prefixed(self, prefix_size: int, *, block_size: int = 1) -> T:
         ...
 
-    def read_length_prefixed(self, prefix_size: int = 32, encoding: Optional[str] = None, block_size: int = 1) -> Union[T, str]:
+    def read_length_prefixed(self, prefix_size: int = 32, encoding: str | None = None, block_size: int = 1) -> T | str:
         prefix = self.read_integer(prefix_size) * block_size
         data = self.read(prefix)
         if encoding is not None:
@@ -825,7 +820,7 @@ class StructMeta(type):
         return type.__new__(mcls, name, bases, nmspc)
 
     def __init__(cls, name, bases, nmspc, parser=StructReader):
-        super(StructMeta, cls).__init__(name, bases, nmspc)
+        super().__init__(name, bases, nmspc)
         original__init__ = cls.__init__
 
         @functools.wraps(original__init__)
@@ -857,7 +852,7 @@ class Struct(metaclass=StructMeta):
     as `reader`. Otherwise, the argument will be wrapped in a `refinery.lib.structures.StructReader`.
     Additional arguments to the struct are passed through.
     """
-    _data: Union[memoryview, bytearray]
+    _data: memoryview | bytearray
 
     def __len__(self):
         return len(self._data)
@@ -882,8 +877,8 @@ class PerInstanceAttribute(Generic[AttrType]):
         return value
 
     def __init__(self):
-        self.__set: Dict[int, Any] = {}
-        self.__get: Dict[int, AttrType] = {}
+        self.__set: dict[int, Any] = {}
+        self.__get: dict[int, AttrType] = {}
 
     def __set__(self, parent: Any, value: Any) -> None:
         pid = id(parent)

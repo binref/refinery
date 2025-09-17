@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 
-from refinery.units import Arg, Unit
 from refinery.lib.patterns import formats
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class wshenc(Unit):
@@ -102,10 +103,10 @@ class wshenc(Unit):
 
     def __init__(
         self,
-        marker: Arg.Switch('-m', '--no-marker', off=True, help=(
+        marker: Param[bool, Arg.Switch('-m', '--no-marker', off=True, help=(
             'Do not require magic marker when encoding and do not search for '
             'marker when decoding.')
-        ) = True
+        )] = True
     ):
         super().__init__(marker=marker)
 

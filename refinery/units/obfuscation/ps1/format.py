@@ -4,8 +4,8 @@ import re
 
 from refinery.lib.patterns import formats
 from refinery.lib.tools import lookahead
-from refinery.units.obfuscation.ps1 import string_apply, string_unquote
 from refinery.units.obfuscation import Deobfuscator
+from refinery.units.obfuscation.ps1 import string_apply, string_unquote
 
 
 class deob_ps1_format(Deobfuscator):

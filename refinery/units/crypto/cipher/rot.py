@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 _UCASE = range(ord('A'), ord('Z') + 1)
@@ -12,7 +13,7 @@ class rot(Unit):
     amount is 13, providing the common (and weak) string obfuscation method.
     """
 
-    def __init__(self, amount: Arg.Number(help='Number of letters to rotate by; Default is 13.') = 13):
+    def __init__(self, amount: Param[int, Arg.Number(help='Number of letters to rotate by; Default is 13.')] = 13):
         super().__init__(amount=amount)
 
     def process(self, data: bytearray):

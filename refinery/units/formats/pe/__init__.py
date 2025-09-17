@@ -3,9 +3,9 @@ A package containing Portable Executable (PE) file related units.
 """
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
 from refinery.lib import lief
-from refinery.lib.types import buf
+from refinery.lib.types import Param, buf
+from refinery.units import Arg, Unit
 
 
 def get_pe_size(
@@ -69,11 +69,11 @@ def get_pe_size(
 class OverlayUnit(Unit, abstract=True):
     def __init__(
         self,
-        certificate: Arg.Switch('--cert', '-c',
-            help='Include digital signatures for the size computation.') = False,
-        directories: Arg.Switch('--dirs', '-d',
-            help='Include data directories for size computation.') = False,
-        memdump: Arg.Switch('-m', help='Assume that the file data was a memory-mapped PE file.') = False,
+        certificate: Param[bool, Arg.Switch('--cert', '-c',
+            help='Include digital signatures for the size computation.')] = False,
+        directories: Param[bool, Arg.Switch('--dirs', '-d',
+            help='Include data directories for size computation.')] = False,
+        memdump: Param[bool, Arg.Switch('-m', help='Assume that the file data was a memory-mapped PE file.')] = False,
         **other
     ):
         super().__init__(certificate=certificate, directories=directories, memdump=memdump, **other)

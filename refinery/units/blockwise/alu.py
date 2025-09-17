@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from refinery.units.blockwise import Arg, ArithmeticUnit, FastBlockError
-from refinery.lib.meta import metavars
 from refinery.lib.argformats import PythonExpression
-from refinery.lib.types import INF
+from refinery.lib.meta import metavars
+from refinery.lib.types import INF, Param
+from refinery.units.blockwise import Arg, ArithmeticUnit, FastBlockError
 
 
 class IndexCounter:
@@ -50,25 +50,29 @@ class alu(ArithmeticUnit):
 
     @staticmethod
     def _parse_op(definition, default=None):
-        definition = definition or default
-        if not definition:
+        if definition:
+            return definition
+        elif not default:
             raise ValueError('No definition given')
-        return definition
+        else:
+            return default
 
     def __init__(
-        self, operator: Arg.String(help='A Python expression defining the operation.'), *argument,
-        seed: Arg.String('-s', help=(
+        self,
+        operator: Param[str, Arg.String(help='A Python expression defining the operation.')],
+        *argument,
+        seed: Param[int | str, Arg.String('-s', help=(
             'Optional seed value for the state variable S. The default is zero. This can be an expression '
-            'involving the variable N.')) = 0,
-        prologue: Arg.String('-p', metavar='E', help=(
-            'Optional expression with which the state variable S is updated before a block is operated on.')) = None,
-        epilogue: Arg.String('-e', metavar='E', group='EPI', help=(
-            'Optional expression with which the state variable S is updated after a block was operated on.')) = None,
-        inc: Arg.Switch('-I', group='EPI', help='equivalent to --epilogue=S+1') = False,
-        dec: Arg.Switch('-D', group='EPI', help='equivalent to --epilogue=S-1') = False,
-        cbc: Arg.Switch('-X', group='EPI', help='equivalent to --epilogue=(B)') = False,
-        ctr: Arg.Switch('-T', group='EPI', help='equivalent to --epilogue=S+B') = False,
-        bigendian=False, blocksize=None, precision=None
+            'involving the variable N.'))] = 0,
+        prologue: Param[str, Arg.String('-p', metavar='E', help=(
+            'Optional expression with which the state variable S is updated before a block is operated on.'))] = '',
+        epilogue: Param[str, Arg.String('-e', metavar='E', group='EPI', help=(
+            'Optional expression with which the state variable S is updated after a block was operated on.'))] = '',
+        inc: Param[bool, Arg.Switch('-I', group='EPI', help='equivalent to --epilogue=S+1')] = False,
+        dec: Param[bool, Arg.Switch('-D', group='EPI', help='equivalent to --epilogue=S-1')] = False,
+        cbc: Param[bool, Arg.Switch('-X', group='EPI', help='equivalent to --epilogue=(B)')] = False,
+        ctr: Param[bool, Arg.Switch('-T', group='EPI', help='equivalent to --epilogue=S+B')] = False,
+        bigendian=False, blocksize=1, precision=-1
     ):
         for flag, flag_is_set, expression in [
             ('--cbc', cbc, '(B)'),
@@ -77,11 +81,10 @@ class alu(ArithmeticUnit):
             ('--ctr', ctr, 'S+B'),
         ]:
             if flag_is_set:
-                if epilogue is not None:
+                if epilogue:
                     raise ValueError(
                         F'Ambiguous specification; epilogue was already set to {epilogue} '
-                        F'when {flag} was parsed.'
-                    )
+                        F'when {flag} was parsed.')
                 epilogue = expression
 
         self._index = IndexCounter()

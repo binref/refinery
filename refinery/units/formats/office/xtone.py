@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Optional
 from uuid import UUID
 
-from refinery.units.formats import PathExtractorUnit, UnpackResult
-from refinery.lib.structures import MemoryFile
 from refinery.lib.mime import get_cached_file_magic_info
+from refinery.lib.structures import MemoryFile
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class xtone(PathExtractorUnit):
@@ -30,5 +29,5 @@ class xtone(PathExtractorUnit):
             yield UnpackResult(F'{guid}{extension}', chunk)
 
     @classmethod
-    def handles(cls, data: bytearray) -> Optional[bool]:
+    def handles(cls, data: bytearray) -> bool | None:
         return UUID('7b5c52e4-d88c-4da7-aeb1-5378d02996d3').bytes_le in data

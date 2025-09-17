@@ -5,9 +5,9 @@ import json
 from contextlib import suppress
 from datetime import datetime
 
-from refinery.units import Unit
 from refinery.lib.json import BytesAsStringEncoder
 from refinery.lib.tools import convert
+from refinery.units import Unit
 
 
 class pkcs7(Unit):

@@ -112,24 +112,25 @@ ways to merge down the metadata from chunks inside sub-pipelines.
 from __future__ import annotations
 
 import abc
-import contextlib
-import string
 import codecs
+import contextlib
 import itertools
 import os
 import re
+import string
 
 from io import StringIO
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 from urllib.parse import unquote_to_bytes
-from typing import Callable, Dict, List, Tuple, Any, Iterable, Optional, Union, TYPE_CHECKING
 
-from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import isbuffer, entropy, typename, index_of_coincidence
 from refinery.lib.environment import environment
+from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import entropy, index_of_coincidence, isbuffer, typename
 from refinery.lib.types import buf
 
 if TYPE_CHECKING:
     from typing import Protocol
+
     from refinery.lib.frame import Chunk
 
     class _Derivation(Protocol):
@@ -137,7 +138,7 @@ if TYPE_CHECKING:
         name: str
         wrap: type
 
-        def __call__(self, object: LazyMetaOracle) -> Union[str, int, float]:
+        def __call__(self, object: LazyMetaOracle) -> str | int | float:
             ...
 
 
@@ -189,12 +190,12 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
     }
 
     @classmethod
-    def Wrap(cls, string: Union[str, buf, ByteStringWrapper], codec: Optional[str] = None):
+    def Wrap(cls, string: str | buf | ByteStringWrapper, codec: str | None = None):
         if isinstance(string, cls):
             return string
         return cls(string, codec=codec)
 
-    def __init__(self, string: Union[str, buf], codec: Optional[str] = None):
+    def __init__(self, string: str | buf, codec: str | None = None):
         if isinstance(string, str):
             self._string = string
             codec = codec or 'utf8'
@@ -315,7 +316,7 @@ def is_valid_variable_name(name: str, allow_wildcards: bool = False) -> bool:
         return True
 
 
-def check_variable_name(name: Optional[str], allow_derivations=False) -> None:
+def check_variable_name(name: str | None, allow_derivations=False) -> None:
     """
     All single-letter, uppercase variable names are reserved. Additionally, derived
     property names should not be overwritten.
@@ -419,7 +420,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     key `'sha256'`.
     """
 
-    derivations: Dict[str, _Derivation] = {}
+    derivations: dict[str, _Derivation] = {}
     """
     A dictionary mapping the names of common properties to anonymous functions that compute their
     corresponding value on a chunk of binary input data.
@@ -427,14 +428,14 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     ghost: bool
     chunk: buf
-    cache: Dict[str, Union[str, int, float]]
-    index: Optional[int]
+    cache: dict[str, str | int | float]
+    index: int | None
 
-    history: Dict[str, List[Tuple[bool, Any]]]
-    current: Dict[str, Any]
-    updated: Dict[str, bool]
+    history: dict[str, list[tuple[bool, Any]]]
+    current: dict[str, Any]
+    updated: dict[str, bool]
 
-    def __init__(self, chunk: buf, scope: Optional[int] = 1, seed: Optional[Dict[str, List[Tuple[bool, Any]]]] = None):
+    def __init__(self, chunk: buf, scope: int | None = 1, seed: dict[str, list[tuple[bool, Any]]] | None = None):
         self.ghost = False
         self.chunk = chunk
         self.cache = {}
@@ -465,7 +466,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         else:
             self.history = {}
 
-    def update(self, other: Union[dict, LazyMetaOracle]):
+    def update(self, other: dict | LazyMetaOracle):
         if isinstance(other, LazyMetaOracle):
             self.current.update(other.current)
             self.updated.update(other.updated)
@@ -528,7 +529,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             return scope - k + 1
         return scope
 
-    def serialize(self, target_scope: int) -> Dict[str, List[Tuple[bool, Any]]]:
+    def serialize(self, target_scope: int) -> dict[str, list[tuple[bool, Any]]]:
         if not target_scope:
             return {}
         current_scope = self.scope
@@ -611,9 +612,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         self,
         spec: str,
         codec: str,
-        args: Optional[Iterable] = None,
-        symb: Optional[dict] = None,
-        used: Optional[set] = None,
+        args: Iterable | None = None,
+        symb: dict | None = None,
+        used: set | None = None,
     ) -> str:
         """
         Formats the input expression like a normal Python format string expression. Certain refinery
@@ -631,9 +632,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         self,
         spec: str,
         codec: str,
-        args: Optional[Iterable] = None,
-        symb: Optional[dict] = None,
-        used: Optional[set] = None,
+        args: Iterable | None = None,
+        symb: dict | None = None,
+        used: set | None = None,
     ) -> buf:
         """
         Formats the input expression using a Python F-string like expression. These strings contain
@@ -658,12 +659,12 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         self,
         spec    : str,
         codec   : str,
-        args    : Union[list, tuple],
+        args    : list | tuple,
         symb    : dict,
         binary  : bool,
         fixup   : bool = True,
-        used    : Optional[set] = None,
-    ) -> Union[str, buf]:
+        used    : set | None = None,
+    ) -> str | buf:
         """
         Formats a string using Python-like string fomatting syntax. The formatter for `binary`
         mode is different; each formatting is documented in one of the following two proxy methods:
@@ -673,7 +674,11 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         """
         # prevents circular import:
         from refinery.lib.argformats import (
-            DelayedNumSeqArgument, ParserError, PythonExpression, Chunk)
+            Chunk,
+            DelayedNumSeqArgument,
+            ParserError,
+            PythonExpression,
+        )
 
         symb = symb or {}
 
@@ -1002,7 +1007,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         return hashlib.md5(self.chunk).hexdigest()
 
 
-def metavars(chunk: Union[Chunk, buf]) -> LazyMetaOracle:
+def metavars(chunk: Chunk | buf) -> LazyMetaOracle:
     """
     This method is the main function used by refinery units to get the meta variable dictionary
     of an input chunk. This dictionary is wrapped using the `refinery.lib.meta.LazyMetaOracleFactory`

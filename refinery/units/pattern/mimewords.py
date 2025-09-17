@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 import codecs
+import re
 
 from email.header import decode_header
 
-from refinery.units import Unit
 from refinery.lib.decorators import unicoded
+from refinery.units import Unit
 
 
 class mimewords(Unit):

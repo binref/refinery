@@ -3,11 +3,12 @@ Murmur hash implementation, orignally written by Fredrik Kihlander and enhanced 
 See also their [original source code](https://github.com/wc-duck/pymmh3).
 """
 from __future__ import annotations
-from refinery.lib import chunks
-from refinery.lib.types import buf
 
 from itertools import zip_longest
 from struct import unpack
+
+from refinery.lib import chunks
+from refinery.lib.types import buf
 
 
 def mmh32(key: buf, seed=0) -> int:

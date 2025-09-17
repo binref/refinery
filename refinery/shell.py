@@ -14,7 +14,8 @@ multibin format expressions, see `refinery.lib.argformats`.
 """
 from __future__ import annotations
 
-from functools import wraps, WRAPPER_ASSIGNMENTS
+from functools import WRAPPER_ASSIGNMENTS, wraps
+
 from refinery import __unit_loader__
 
 with __unit_loader__:

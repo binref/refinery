@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from urllib.parse import urlparse, urlunparse, parse_qsl, unquote, quote
+from urllib.parse import parse_qsl, quote, unquote, urlparse, urlunparse
 
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
@@ -14,12 +15,12 @@ class urlfix(Unit):
     """
     def __init__(
         self,
-        meta: Arg.Switch('-m', help='Extract the query string parameters as metadata.') = False,
-        keep: Arg.Counts('-k', help=(
+        meta: Param[bool, Arg.Switch('-m', help='Extract the query string parameters as metadata.')] = False,
+        keep: Param[int, Arg.Counts('-k', help=(
             'If specified once, keeps the it keeps the URL params and query string. If specified '
             'twice, it keeps the URL fragment as well. At this level, the unit still filters out '
             'anything that does not parse as a URL.'
-        )) = 0
+        ))] = 0
     ):
         super().__init__(keep=keep, meta=meta)
 

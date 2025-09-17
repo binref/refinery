@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit
-from refinery.lib.executable import Executable
 from refinery.lib.argformats import metavars
+from refinery.lib.executable import Executable
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class vaddr(Unit):
@@ -14,8 +15,8 @@ class vaddr(Unit):
     """
 
     def __init__(
-        self, *name: Arg.String(help='The name of a metadata variable holding an integer.'),
-        base : Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.') = None
+        self, *name: Param[str, Arg.String(help='The name of a metadata variable holding an integer.')],
+        base: Param[int, Arg.Number('-b', metavar='ADDR', help='Optionally specify a custom base address B.')] = None
     ):
         return super().__init__(names=name, base=base)
 

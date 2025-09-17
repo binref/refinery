@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import html as html_entities
 
-from refinery.units import Unit
 from refinery.lib.decorators import unicoded
+from refinery.units import Unit
 
 
 class htmlesc(Unit):

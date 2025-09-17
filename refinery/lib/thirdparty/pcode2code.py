@@ -59,7 +59,6 @@ class Pcode2codeException(Exception):
     """
     Simply a custom exception class, permitting to make the difference between generic python exceptions and the one we are pushing
     """
-    pass
 
 
 class Stack:
@@ -2288,7 +2287,6 @@ class Operations:
         example3: same for unlock
         """
         #pass on purpose
-        pass
 
     # integer representation on 2 bytes (decimal base10)
     def litdi2(self, value):
@@ -3707,7 +3705,6 @@ class Operations:
         gives: TODO macaroni
         """
         #pass on purposes
-        pass
             
     def startforvariable(self):
         """
@@ -3716,7 +3713,6 @@ class Operations:
         gives: TODO macaroni
         """
         #pass on purposes
-        pass
             
     def newredim(self, *args):
         raise Pcode2codeException('not implemented newredim')
@@ -3732,7 +3728,6 @@ class Operations:
              # With
         """
         #pass on purposes
-        pass
             
     def setorst(self, *args):
         raise Pcode2codeException('not implemented setorst')

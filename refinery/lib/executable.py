@@ -9,36 +9,31 @@ The provided interface is the same for all executables. It powers the following 
 """
 from __future__ import annotations
 
-import sys
-import itertools
 import codecs
-
-from typing import NamedTuple, TYPE_CHECKING
+import itertools
 
 from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
+from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib import lief
-from refinery.lib.types import INF, buf
 from refinery.lib.shared import capstone as cs
+from refinery.lib.types import INF, buf
 
 if TYPE_CHECKING:
-    from lief.ELF import Binary as ELFBinary
-    from lief.MachO import Binary as MachOBinary
-    from lief.MachO import FatBinary as MachOFatBinary
-    from lief.PE import Binary as PEBinary
-
-    from capstone import Cs
-
     from typing import (
         ClassVar,
         Generator,
         Iterable,
-        List,
-        Optional,
         Union,
     )
+
+    from capstone import Cs
+    from lief.ELF import Binary as ELFBinary
+    from lief.MachO import Binary as MachOBinary
+    from lief.MachO import FatBinary as MachOFatBinary
+    from lief.PE import Binary as PEBinary
 
     AnyLIEF = Union[
         MachOBinary,
@@ -113,7 +108,7 @@ class Range(NamedTuple):
     def __repr__(self):
         return F'<{self.__class__.__name__}:{self!s}>'
 
-    def __sub__(self, them: Range) -> List[Range]:
+    def __sub__(self, them: Range) -> list[Range]:
         pieces = []
         if self.lower < them.lower:
             pieces.append(Range(self.lower, min(them.lower, self.upper)))
@@ -240,13 +235,13 @@ class Relocation(NamedTuple):
 
 class Symbol(NamedTuple):
     address: int
-    name: Optional[str] = None
-    size: Optional[int] = None
-    function: Optional[bool] = None
-    exported: Optional[bool] = None
-    imported: Optional[bool] = None
+    name: str | None = None
+    size: int | None = None
+    function: bool | None = None
+    exported: bool | None = None
+    imported: bool | None = None
     is_entry: bool = False
-    section: Optional[Section] = None
+    section: Section | None = None
 
     def get_name(self):
         name = self.name
@@ -266,8 +261,8 @@ class Segment(NamedTuple):
     """
     physical: Range
     virtual: Range
-    sections: Optional[List[Section]]
-    name: Optional[str] = None
+    sections: list[Section] | None
+    name: str | None = None
 
     def as_section(self) -> Section:
         if self.name is None:
@@ -307,7 +302,7 @@ class Executable(ABC):
 
     _data: buf
     _head: AnyLIEF | None
-    _base: Optional[int]
+    _base: int | None
 
     blob: ClassVar[bool] = False
 
@@ -317,7 +312,7 @@ class Executable(ABC):
         pass
 
     @classmethod
-    def Load(cls, data: buf, base: Optional[int] = None) -> LIEF:
+    def Load(cls, data: buf, base: int | None = None) -> LIEF:
         """
         Uses the `refinery.lib.executable.exeroute` function to parse the input data with one of
         the following specializations of this class:
@@ -332,7 +327,7 @@ class Executable(ABC):
             raise NotImplementedError
         return LIEF(parsed, data, base)
 
-    def __init__(self, head: AnyLIEF | None, data: buf, base: Optional[int] = None):
+    def __init__(self, head: AnyLIEF | None, data: buf, base: int | None = None):
         self._data = data
         self._head = head
         self._base = base
@@ -351,10 +346,10 @@ class Executable(ABC):
         """
         return self._type
 
-    def __getitem__(self, key: Union[int, slice, Range]):
+    def __getitem__(self, key: int | slice | Range):
         return self.read(key)
 
-    def __contains__(self, key: Union[int, slice, Range]):
+    def __contains__(self, key: int | slice | Range):
         try:
             self.read(key)
         except LookupError:
@@ -362,7 +357,7 @@ class Executable(ABC):
         else:
             return True
 
-    def read_integer(self, address: int, size: Optional[int] = None):
+    def read_integer(self, address: int, size: int | None = None):
         """
         Read an integer at the given address. The size defaults to the pointer size in bytes.
         """
@@ -370,7 +365,7 @@ class Executable(ABC):
             size = self.pointer_size_in_bytes
         return int.from_bytes(self[address:address + size], self.byte_order().value)
 
-    def read(self, key: Union[int, slice, Range]) -> memoryview:
+    def read(self, key: int | slice | Range) -> memoryview:
         """
         Read data from the binary based on a given address. If the input `key` is a single integer,
         the function reads a single byte from the given address.
@@ -396,7 +391,7 @@ class Executable(ABC):
         return self.data[box.physical.position:end]
 
     @staticmethod
-    def ascii(string: Union[str, buf]) -> str:
+    def ascii(string: str | buf) -> str:
         """
         If the input `string` is a `str` instance, the function returns the input value. Byte
         strings are truncated to the first occurrence of a null byte and then decoded using
@@ -436,8 +431,7 @@ class Executable(ABC):
         Return a (readonly) view to the raw bytes of the executable image.
         """
         view = memoryview(self._data)
-        if sys.version_info >= (3, 8):
-            view = view.toreadonly()
+        view = view.toreadonly()
         return view
 
     @property
@@ -526,10 +520,10 @@ class Executable(ABC):
             raise CompartmentNotFound(lt, location)
 
     @abstractmethod
-    def _symbols(self) -> Generator[Symbol, None, None]:
+    def _symbols(self) -> Generator[Symbol]:
         ...
 
-    def symbols(self) -> Generator[Symbol, None, None]:
+    def symbols(self) -> Generator[Symbol]:
         """
         Generates a list of symbols in the executable.
         """
@@ -559,30 +553,30 @@ class Executable(ABC):
         ...
 
     @abstractmethod
-    def _sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section]:
         ...
 
     @abstractmethod
-    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment]:
         ...
 
     @abstractmethod
-    def _relocations(self) -> Generator[Relocation, None, None]:
+    def _relocations(self) -> Generator[Relocation]:
         ...
 
-    def segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def segments(self, populate_sections=False) -> Generator[Segment]:
         """
         An iterable of all `refinery.lib.executable.Segment`s in this executable.
         """
         yield from self._segments(populate_sections=populate_sections)
 
-    def relocations(self) -> Generator[Relocation, None, None]:
+    def relocations(self) -> Generator[Relocation]:
         """
         An iterable of all `refinery.lib.executable.Relocation`s defined in this executable.
         """
         yield from self._relocations()
 
-    def sections(self) -> Generator[Section, None, None]:
+    def sections(self) -> Generator[Section]:
         """
         An iterable of all `refinery.lib.executable.Section`s in this executable.
         """
@@ -678,18 +672,18 @@ class ExecutableCodeBlob(Executable):
     def arch(self) -> Arch:
         return self._arch
 
-    def _symbols(self) -> Generator[Symbol, None, None]:
+    def _symbols(self) -> Generator[Symbol]:
         yield Symbol(0, is_entry=True)
 
     def _relocations(self):
         yield from ()
 
-    def _sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section]:
         v = Range(self.base, self.base + len(self.data))
         p = Range(0, len(self.data))
         yield Section('blob', p, v, False)
 
-    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment]:
         for s in self.sections():
             yield s.as_segment(populate_sections=populate_sections)
 
@@ -701,7 +695,7 @@ class LIEF(Executable):
         return self._first_header.abstract
 
     @property
-    def _first_header(self) -> Union[MachOBinary, ELFBinary, PEBinary]:
+    def _first_header(self) -> MachOBinary | ELFBinary | PEBinary:
         head = self._head
         if head is None:
             raise AttributeError
@@ -803,7 +797,7 @@ class LIEF(Executable):
                 else:
                     raise TypeError(F'Unexpected relocation type: {type(rel).__qualname__}')
 
-    def _symbols(self) -> Generator[Symbol, None, None]:
+    def _symbols(self) -> Generator[Symbol]:
         yield Symbol(self._lh.entrypoint, is_entry=True)
         it: Iterable[lief.Symbol] = self._lh.symbols
         for symbol in it:
@@ -842,7 +836,7 @@ class LIEF(Executable):
             else:
                 yield Symbol(addr, name, size)
 
-    def _convert_section(self, section: lief.Section, segment_name: Optional[str] = None) -> Section:
+    def _convert_section(self, section: lief.Section, segment_name: str | None = None) -> Section:
         p_lower = section.offset
         p_upper = p_lower + section.size
 
@@ -875,7 +869,7 @@ class LIEF(Executable):
     def is_macho(self):
         return isinstance(self._head, (lief.MachO.Binary, lief.MachO.FatBinary))
 
-    def _sections(self) -> Generator[Section, None, None]:
+    def _sections(self) -> Generator[Section]:
         if self.is_pe:
             it: Iterable[lief.Section] = self._lh.sections
             for section in it:
@@ -896,7 +890,7 @@ class LIEF(Executable):
             if sections := segment.sections:
                 yield from sections
 
-    def _segments(self, populate_sections=False) -> Generator[Segment, None, None]:
+    def _segments(self, populate_sections=False) -> Generator[Segment]:
         if self.is_pe:
             for section in self.sections():
                 yield section.as_segment(populate_sections)

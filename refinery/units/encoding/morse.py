@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import enum
 import io
 import re
-import enum
 
-from refinery.units import Arg, Unit
 from refinery.lib.decorators import unicoded
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class MorseLanguage(str, enum.Enum):
@@ -39,9 +40,9 @@ class morse(Unit):
     """
     def __init__(
         self,
-        language: Arg.Option(choices=MorseLanguage, help=(
+        language: Param[str, Arg.Option(choices=MorseLanguage, help=(
             'Optionally choose a language. If none is specified, the unit will attempt to detect '
-            'the language automatically. Options are: {choices}')) = None,
+            'the language automatically. Options are: {choices}'))] = None,
     ):
         super().__init__(language=Arg.AsOption(language, MorseLanguage))
 

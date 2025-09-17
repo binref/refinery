@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from refinery.lib.dotnet.header import DotNetHeader
+from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
-from refinery.lib.dotnet.header import DotNetHeader
 
 
 class dnhdr(DotNetJSONEncoderUnit):
@@ -12,7 +13,7 @@ class dnhdr(DotNetJSONEncoderUnit):
     """
     def __init__(
         self,
-        resources: Arg.Switch('-r', '--resources', help='Also parse .NET resources.') = False,
+        resources: Param[bool, Arg.Switch('-r', '--resources', help='Also parse .NET resources.')] = False,
         encode=None, digest=None, arrays=False,
     ):
         super().__init__(encode=encode, digest=digest, arrays=arrays, resources=resources)

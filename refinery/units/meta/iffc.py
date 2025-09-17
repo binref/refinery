@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.types import INF
+from refinery.lib.types import INF, Param
 from refinery.units.meta import Arg, ConditionalUnit
 
 
@@ -10,7 +10,7 @@ class iffc(ConditionalUnit, docs='{0}{p}{1}'):
     """
     def __init__(
         self,
-        *bounds: Arg.Bounds(help='Specifies an (inclusive) range to check for.', intok=True),
+        *bounds: Param[slice, Arg.Bounds(help='Specifies an (inclusive) range to check for.', intok=True)],
         retain=False,
     ):
         if not bounds:

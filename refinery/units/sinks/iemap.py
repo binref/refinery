@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import math
 import itertools
+import math
 import random
 
-from refinery.units import Unit, Arg
-from refinery.lib.tools import get_terminal_size, entropy
-from refinery.lib.structures import MemoryFile
 from refinery.lib.meta import metavars
+from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import entropy, get_terminal_size
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 
 
 class iemap(Unit):
@@ -17,14 +18,14 @@ class iemap(Unit):
     """
     def __init__(
         self,
-        legend: Arg.Switch('-l', help='Show entropy color legend.') = False,
-        bgfill: Arg.Switch('-b', help='Generate the bar by coloring the bgfill.') = False,
-        fgchar: Arg.String('-c', '--block-char', metavar='C',
-            help='Character used for filling the bar, default is {default}') = '#',
-        *label: Arg.String(metavar='label-part', help=(
+        legend: Param[bool, Arg.Switch('-l', help='Show entropy color legend.')] = False,
+        bgfill: Param[bool, Arg.Switch('-b', help='Generate the bar by coloring the bgfill.')] = False,
+        fgchar: Param[str, Arg.String('-c', '--block-char', metavar='C',
+            help='Character used for filling the bar, default is {default}')] = '#',
+        *label: Param[str, Arg.String(metavar='label-part', help=(
             'The remaining command line specifies a format string expression that will be printed '
             'over the heat map display of each processed chunk.'
-        ))
+        ))]
     ):
         super().__init__(label=' '.join(label), bgfill=bgfill, legend=legend, fgchar=fgchar)
 
@@ -34,8 +35,8 @@ class iemap(Unit):
         return colorama
 
     def process(self, data):
-        from sys import stderr
         from os import name as os_name
+        from sys import stderr
         colorama = self._colorama
         colorama.init(autoreset=False, convert=(os_name == 'nt'))
 

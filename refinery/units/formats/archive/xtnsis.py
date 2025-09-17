@@ -1,35 +1,28 @@
 from __future__ import annotations
 
+import dataclasses
 import enum
+import io
 import itertools
+import lzma
 import re
 import struct
-import io
-import dataclasses
-
-import lzma
 import zlib
 
 from datetime import datetime
-
-from refinery.units import RefineryPartialResult
-from refinery.units.formats.archive import ArchiveUnit
-from refinery.lib.structures import MemoryFile, Struct, StructReader, StreamDetour
-
-from refinery.lib.thirdparty.pyflate import BZip2File, GZipFile
-from refinery.lib.tools import exception_to_string
-from refinery.lib.decompression import parse_lzma_properties
-
 from typing import (
     BinaryIO,
-    Dict,
     Iterable,
     Iterator,
-    List,
     NamedTuple,
-    Optional,
-    Type,
 )
+
+from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
+from refinery.lib.thirdparty.pyflate import BZip2File, GZipFile
+from refinery.lib.tools import exception_to_string
+from refinery.units import RefineryPartialResult
+from refinery.units.formats.archive import ArchiveUnit
 
 
 class DeflateFile(io.RawIOBase):
@@ -411,17 +404,17 @@ class NSCharCode(enum.IntEnum):
 @dataclasses.dataclass
 class NSItem:
     offset: int
-    name: Optional[str] = None
-    mtime: Optional[datetime] = None
+    name: str | None = None
+    mtime: datetime | None = None
     is_compressed: bool = True
     is_uninstaller: bool = False
-    attributes: Optional[int] = None
-    size: Optional[int] = None
-    compressed_size: Optional[int] = None
-    estimated_size: Optional[int] = None
+    attributes: int | None = None
+    size: int | None = None
+    compressed_size: int | None = None
+    estimated_size: int | None = None
     dictionary_size: int = 1
     patch_size: int = 0
-    prefix: Optional[str] = None
+    prefix: str | None = None
 
     @property
     def path(self):
@@ -451,7 +444,7 @@ class NSHeader(Struct):
     NS_OUTDIR_225       = 29         # noqa NSIS 2.04 - 2.25
     NS_OUTDIR_226       = 31         # noqa NSIS 2.26+
 
-    def _string_args_to_single_arg(self, n: int, m: Optional[int] = None) -> int:
+    def _string_args_to_single_arg(self, n: int, m: int | None = None) -> int:
         if self.type >= NSType.Park1:
             return n & 0x7FFF
         else:
@@ -489,7 +482,7 @@ class NSHeader(Struct):
             raise RuntimeError(F'Unknown NSIS type {self.type}')
         return lookup.get(char, NSCharCode.NONE)
 
-    def _string_code_shell(self, index1: int, index2: Optional[int] = None) -> str:
+    def _string_code_shell(self, index1: int, index2: int | None = None) -> str:
         if index2 is None:
             index2 = index1 >> 8
             index1 = index1 & 0xFF
@@ -564,7 +557,7 @@ class NSHeader(Struct):
 
         reader.seekset(self.bh_entries.offset)
         InsnParser = NSScriptExtendedInstruction if extended else NSScriptInstruction
-        self.instructions: List[NSScriptInstruction] = [
+        self.instructions: list[NSScriptInstruction] = [
             InsnParser(reader) for _ in range(self.bh_entries.count)]
 
         if self.bh_entries.offset > size:
@@ -577,7 +570,7 @@ class NSHeader(Struct):
             raise ValueError(
                 F'Invalid NSIS header: Size is 0x{size:08X}, but language list header offset is 0x{self.bh_langtbl.offset:08X}.')
         if self.bh_langtbl.offset < self.bh_strings.offset:
-            raise ValueError(U'Invalid NSIS header: Language table lies before string table.')
+            raise ValueError('Invalid NSIS header: Language table lies before string table.')
         string_table_size = self.bh_langtbl.offset - self.bh_strings.offset
         if string_table_size < 2:
             raise ValueError(F'The calculated string table size is {string_table_size}, too small to parse.')
@@ -585,13 +578,13 @@ class NSHeader(Struct):
         self.string_data = strings = reader.read(string_table_size)
         self.unicode = strings[:2] == B'\0\0'
         if strings[-1] != 0 or (self.unicode and strings[-2] != 0):
-            raise ValueError(U'The last string table character was unexpectedly nonzero.')
+            raise ValueError('The last string table character was unexpectedly nonzero.')
         if self.unicode and string_table_size % 2 != 0:
-            raise ValueError(U'Unicode strings detected, but string table length was odd.')
+            raise ValueError('Unicode strings detected, but string table length was odd.')
 
         self.strings = StructReader(strings)
         if self.bh_entries.count > (1 << 25):
-            raise ValueError(U'Entries num was out of bounds.')
+            raise ValueError('Entries num was out of bounds.')
 
         self._log_cmd_is_enabled = False
         self._is_nsis225 = False
@@ -600,7 +593,7 @@ class NSHeader(Struct):
 
         self._guess_nsis_version()
 
-        items: Dict[(str, int), NSItem] = {}
+        items: dict[(str, int), NSItem] = {}
         for item in self._read_items():
             items.setdefault((item.path, item.offset), item)
         self.items = [items[t] for t in sorted(items.keys())]
@@ -666,14 +659,14 @@ class NSHeader(Struct):
         pos = position * self.charsize
         return self.strings.seek(pos) == pos
 
-    def _read_string(self, position: int) -> Optional[str]:
+    def _read_string(self, position: int) -> str | None:
         if position < 0:
             return self._string_code_language(-(position + 1))
         if not self._seek_to_string(position):
             return None
         return self._read_current_string()
 
-    def _read_string_raw(self, position: int) -> Optional[str]:
+    def _read_string_raw(self, position: int) -> str | None:
         if not self._seek_to_string(position):
             return None
         if self.unicode:
@@ -710,7 +703,7 @@ class NSHeader(Struct):
             return False
         return var_index == index
 
-    def _get_var_index(self, position: int) -> Optional[int]:
+    def _get_var_index(self, position: int) -> int | None:
         if not self._seek_to_string(position):
             raise LookupError(F'Invalid string offset 0x{position:08X}')
         try:
@@ -731,7 +724,7 @@ class NSHeader(Struct):
         except EOFError:
             return None
 
-    def _get_res(self, position: int) -> Optional[int]:
+    def _get_res(self, position: int) -> int | None:
         if self.unicode:
             if len(self.strings) - position >= 4:
                 return 2
@@ -740,7 +733,7 @@ class NSHeader(Struct):
                 return 3
         return None
 
-    def _get_res_finished(self, position: int, terminator: int) -> Optional[int]:
+    def _get_res_finished(self, position: int, terminator: int) -> int | None:
         if not self._seek_to_string(position):
             return None
         self.strings.seekrel(3)
@@ -904,7 +897,7 @@ class NSHeader(Struct):
                 self._log_cmd_is_enabled = False
                 self._find_bad_cmd()
 
-    def _read_items(self) -> List[NSItem]:
+    def _read_items(self) -> list[NSItem]:
         prefixes = ['$INSTDIR']
         out_dir = ''
         out_dir_index = (
@@ -912,7 +905,7 @@ class NSHeader(Struct):
         ) if self._is_nsis225 else (
             self.NS_OUTDIR_226
         )
-        items: List[NSItem] = []
+        items: list[NSItem] = []
 
         for cmd_index, instruction in enumerate(self.instructions):
             def setpath(index: int) -> None:
@@ -1027,7 +1020,7 @@ class NSArchive(Struct):
         offset: int
         data: bytearray
         size: int
-        decompression_error: Optional[Exception] = None
+        decompression_error: Exception | None = None
 
     def __init__(self, reader: StructReader[bytearray]):
         self.flags = NSHeaderFlags(reader.u32())
@@ -1091,10 +1084,10 @@ class NSArchive(Struct):
         self.solid = True
         self.extended = False
 
-        self.lzma_options: Optional[LZMAOptions] = None
+        self.lzma_options: LZMAOptions | None = None
         self.method = NSMethod.Deflate
 
-        self.entries: Dict[int, bytearray] = {}
+        self.entries: dict[int, bytearray] = {}
         self.entry_offset_delta = 4
         self._solid_iter = None
 
@@ -1140,7 +1133,7 @@ class NSArchive(Struct):
             header_entry = next(it)
             if header_entry.decompression_error:
                 raise NotImplementedError(
-                    U'This archive seems to use an NSIS-specific deflate algorithm which has not been implemented yet. '
+                    'This archive seems to use an NSIS-specific deflate algorithm which has not been implemented yet. '
                     F'Original error: {exception_to_string(header_entry.decompression_error)}')
             if self.solid:
                 self._solid_iter = it
@@ -1217,7 +1210,7 @@ class NSArchive(Struct):
             return NSArchive.Entry(offset, data, size)
 
     class PartsReader(SolidReader):
-        def __init__(self, src: BinaryIO, decompressor: Optional[Type[BinaryIO]], prefix_length: int):
+        def __init__(self, src: BinaryIO, decompressor: type[BinaryIO] | None, prefix_length: int):
             super().__init__(src, prefix_length)
             self._dc = decompressor
 
@@ -1272,7 +1265,7 @@ class NSArchive(Struct):
                 _stream = d
             return lzma.LZMAFile(_stream, filters=_filter, format=_format)
 
-        decompressor: Type[BinaryIO] = {
+        decompressor: type[BinaryIO] = {
             NSMethod.Copy    : None,
             NSMethod.Deflate : DeflateFile,
             NSMethod.NSGzip  : GZipFile,

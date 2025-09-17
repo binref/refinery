@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from struct import unpack
 
+from refinery.lib import lief
+from refinery.lib.mime import FileMagicInfo as magic
+from refinery.lib.types import Param
 from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 from refinery.units.formats.pe import get_pe_size
 from refinery.units.formats.pe.pemeta import pemeta
-from refinery.lib.mime import FileMagicInfo as magic
-from refinery.lib import lief
 
 
 class carve_pe(PathExtractorUnit):
@@ -16,10 +17,10 @@ class carve_pe(PathExtractorUnit):
     """
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, path=b'name',
-        recursive: Arg.Switch('-r', help='Extract PE files that are contained in already extracted PEs.') = False,
-        keep_root: Arg.Switch('-k', help='If the input chunk is itself a PE, include it as an output chunk.') = False,
-        memdump  : Arg.Switch('-m', help='Use the virtual memory layout of a PE file to calculate its size.') = False,
-        fileinfo : Arg.Switch('-f', help='Use the PE meta information to deduce a file name meta variable.') = False
+        recursive: Param[bool, Arg.Switch('-r', help='Extract PE files that are contained in already extracted PEs.')] = False,
+        keep_root: Param[bool, Arg.Switch('-k', help='If the input chunk is itself a PE, include it as an output chunk.')] = False,
+        memdump: Param[bool, Arg.Switch('-m', help='Use the virtual memory layout of a PE file to calculate its size.')] = False,
+        fileinfo: Param[bool, Arg.Switch('-f', help='Use the PE meta information to deduce a file name meta variable.')] = False
     ):
         super().__init__(
             *paths,

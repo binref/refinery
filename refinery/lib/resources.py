@@ -3,9 +3,9 @@ A wrapper module to read local data resources.
 """
 from __future__ import annotations
 
-from importlib import resources
-
 import sys
+
+from importlib import resources
 
 
 def datapath(name: str):

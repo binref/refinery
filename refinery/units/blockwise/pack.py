@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 import struct
 
-from typing import Iterable
 from enum import IntEnum
+from typing import Iterable
 
+from refinery.lib.patterns import formats
+from refinery.lib.types import Param
 from refinery.units.blockwise import Arg, BlockTransformationBase
 from refinery.units.encoding.base import base as BaseUnit
-from refinery.lib.patterns import formats
 
 
 class FMode(IntEnum):
@@ -26,16 +27,16 @@ class pack(BlockTransformationBase):
     """
 
     def __init__(self,
-        base: Arg.Number(bound=(2, 36), help=(
+        base: Param[int, Arg.Number(bound=(2, 36), help=(
             'Find only numbers in given base. Default of 0 means that '
             'common expressions for hexadecimal, octal and binary are '
-            'accepted.')) = 0,
-        prefix : Arg.Switch('-r', group='FLT', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.') = False,
-        strict : Arg.Switch('-s', help='Only parse integers that fit in one block of the given block size.') = False,
-        width  : Arg.Number('-w', help='Pad numbers with the specified amount of leading zeros.') = 0,
-        single_floats: Arg.Switch('-f', group='FLT', help='Pack single-precision floating-point numbers. Implies -B4.') = False,
-        double_floats: Arg.Switch('-d', group='FLT', help='Pack double-precision floating-point numbers. Implies -B8.') = False,
-        bigendian=False, blocksize=None
+            'accepted.'))] = 0,
+        prefix: Param[bool, Arg.Switch('-r', group='FLT', help='Add numeric prefixes like 0x, 0b, and 0o in reverse mode.')] = False,
+        strict: Param[bool, Arg.Switch('-s', help='Only parse integers that fit in one block of the given block size.')] = False,
+        width: Param[int, Arg.Number('-w', help='Pad numbers with the specified amount of leading zeros.')] = 0,
+        single_floats: Param[bool, Arg.Switch('-f', group='FLT', help='Pack single-precision floating-point numbers. Implies -B4.')] = False,
+        double_floats: Param[bool, Arg.Switch('-d', group='FLT', help='Pack double-precision floating-point numbers. Implies -B8.')] = False,
+        bigendian=False, blocksize=1
     ):
         if single_floats and double_floats:
             raise ValueError('The floats and doubles option are mutually exclusive.')

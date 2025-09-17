@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import string
 import itertools
 import re
+import string
 
-from refinery.units import Arg, Unit, Chunk
-
-from refinery.lib.meta import SizeInt, metavars, check_variable_name
-from refinery.lib.structures import StructReader, StreamDetour
 from refinery.lib.argformats import ParserError, PythonExpression, numseq
-from refinery.lib.types import INF
+from refinery.lib.meta import SizeInt, check_variable_name, metavars
+from refinery.lib.structures import StreamDetour, StructReader
+from refinery.lib.types import INF, Param
+from refinery.units import Arg, Chunk, Unit
 
 
 def identity(x):
@@ -73,24 +72,24 @@ class struct(Unit):
 
     def __init__(
         self,
-        spec: Arg.String(help='Structure format as explained above.'),
-        *outputs: Arg.String(metavar='output', help='Output format as explained above.'),
-        multi: Arg.Switch('-m', help=(
-            'Read as many pieces of structured data as possible intead of just one.')) = False,
-        count: Arg.Number('-c', help=(
-            'A limit on the number of chunks to read in multi mode; default is {default}.')) = INF,
-        until: Arg.String('-u', metavar='E', help=(
+        spec: Param[str, Arg.String(help='Structure format as explained above.')],
+        *outputs: Param[str, Arg.String(metavar='output', help='Output format as explained above.')],
+        multi: Param[bool, Arg.Switch('-m', help=(
+            'Read as many pieces of structured data as possible intead of just one.'))] = False,
+        count: Param[int, Arg.Number('-c', help=(
+            'A limit on the number of chunks to read in multi mode; default is {default}.'))] = INF,
+        until: Param[str, Arg.String('-u', metavar='E', help=(
             'An expression evaluated on each chunk in multi mode. New chunks will be parsed '
-            'only if the result is nonzero.')) = None,
-        format: Arg.String('-f', metavar='F', help=(
+            'only if the result is nonzero.'))] = None,
+        format: Param[str, Arg.String('-f', metavar='F', help=(
             'Optionally specify a format string expression to auto-name extracted fields without a '
             'given name. The format string accepts the field {{c}} for the type code and {{n}} for '
-            'the variable index.')) = None,
-        name: Arg.String('-n', metavar='VAR', group='FIELDS', help=(
-            U'Equivalent to --format=VAR{{n}}.')) = None,
-        more: Arg.Switch('-M', help=(
+            'the variable index.'))] = None,
+        name: Param[str, Arg.String('-n', metavar='VAR', group='FIELDS', help=(
+            'Equivalent to --format=VAR{{n}}.'))] = None,
+        more: Param[bool, Arg.Switch('-M', help=(
             'After parsing the struct, emit one chunk that contains the data that was left '
-            'over in the buffer. If no data was left over, this chunk will be empty.')) = False
+            'over in the buffer. If no data was left over, this chunk will be empty.'))] = False
     ):
         if name:
             format = format or F'{name}{{n}}'

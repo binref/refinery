@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, Chunk
 from refinery.lib.meta import check_variable_name, metavars
 from refinery.lib.tools import isbuffer
+from refinery.lib.types import Param
+from refinery.units import Arg, Chunk, Unit
 
 
 class eat(Unit):
@@ -13,7 +14,7 @@ class eat(Unit):
     """
     def __init__(
         self,
-        name: Arg.String(help='The name of the variable to be used.'),
+        name: Param[str, Arg.String(help='The name of the variable to be used.')],
     ):
         super().__init__(name=check_variable_name(name))
 

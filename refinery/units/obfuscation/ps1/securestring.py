@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 
-from refinery.units.obfuscation import Deobfuscator
-from refinery.units.crypto.cipher.secstr import secstr
-from refinery.units.blockwise.pack import pack
 from refinery.lib.patterns import formats
+from refinery.units.blockwise.pack import pack
+from refinery.units.crypto.cipher.secstr import secstr
+from refinery.units.obfuscation import Deobfuscator
 
 
 class deob_ps1_secstr(Deobfuscator):
@@ -33,7 +33,7 @@ class deob_ps1_secstr(Deobfuscator):
 
     def _decrypt_block(self, data, match):
         if '..' in match[5]:
-            a, b = [int(x.strip(), 0) for x in match[5].split('..')]
+            a, b = (int(x.strip(), 0) for x in match[5].split('..'))
             key = range(min(a, b), max(a, b) + 1)
             if a > b:
                 key = reversed(key)

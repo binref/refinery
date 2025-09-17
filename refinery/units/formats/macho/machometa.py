@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from typing import Iterable, Dict, List
-from hashlib import md5
-from enum import IntEnum
-
-import plistlib
 import itertools
+import plistlib
 
+from enum import IntEnum
+from hashlib import md5
+from typing import Iterable
+
+from refinery.lib import lief
+from refinery.lib.structures import StreamDetour, Struct, StructReader
+from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 from refinery.units.formats.pe.pemeta import pemeta
 from refinery.units.sinks.ppjson import ppjson
-from refinery.lib.structures import Struct, StructReader, StreamDetour
-from refinery.lib import lief
-
 
 CS_ADHOC = 0x0000_0002
 
@@ -139,16 +139,16 @@ class machometa(Unit):
     Extract metadata from Mach-O files.
     """
     def __init__(
-        self, all: Arg('-c', '--custom',
-            help='Unless enabled, all default categories will be extracted.') = True,
-        header: Arg('-H', help='Parse basic data from the Mach-O header.') = False,
-        linked_images: Arg('-K', help='Parse all library images linked by the Mach-O.') = False,
-        signatures: Arg('-S', help='Parse signature and entitlement information.') = False,
-        version: Arg('-V', help='Parse version information from the Mach-O load commands.') = False,
-        load_commands: Arg('-D', help='Parse load commands from the Mach-O header.') = False,
-        exports: Arg('-E', help='List all exported functions.') = False,
-        imports: Arg('-I', help='List all imported functions.') = False,
-        tabular: Arg('-t', help='Print information in a table rather than as JSON') = False,
+        self, all: Param[bool, Arg('-c', '--custom',
+            help='Unless enabled, all default categories will be extracted.')] = True,
+        header: Param[bool, Arg('-H', help='Parse basic data from the Mach-O header.')] = False,
+        linked_images: Param[bool, Arg('-K', help='Parse all library images linked by the Mach-O.')] = False,
+        signatures: Param[bool, Arg('-S', help='Parse signature and entitlement information.')] = False,
+        version: Param[bool, Arg('-V', help='Parse version information from the Mach-O load commands.')] = False,
+        load_commands: Param[bool, Arg('-D', help='Parse load commands from the Mach-O header.')] = False,
+        exports: Param[bool, Arg('-E', help='List all exported functions.')] = False,
+        imports: Param[bool, Arg('-I', help='List all imported functions.')] = False,
+        tabular: Param[bool, Arg('-t', help='Print information in a table rather than as JSON')] = False,
     ):
         super().__init__(
             header=all or header,
@@ -161,7 +161,7 @@ class machometa(Unit):
             tabular=tabular,
         )
 
-    def compute_symhash(self, macho: lief.MachO.Binary) -> Dict:
+    def compute_symhash(self, macho: lief.MachO.Binary) -> dict:
         def _symbols(symbols: Iterable[lief.MachO.Symbol]):
             for sym in symbols:
                 if sym.category != lief.MachO.Symbol.CATEGORY.UNDEFINED:
@@ -171,7 +171,7 @@ class machometa(Unit):
         symbols: str = ','.join(symbols)
         return md5(symbols.encode('utf8')).hexdigest()
 
-    def parse_macho_header(self, macho: lief.MachO.Binary, data=None) -> Dict:
+    def parse_macho_header(self, macho: lief.MachO.Binary, data=None) -> dict:
         info = {}
         if header := macho.header:
             st = header.cpu_subtype & 0x7FFFFFFF
@@ -190,17 +190,17 @@ class machometa(Unit):
             info['Reserved'] = header.reserved
         return info
 
-    def parse_linked_images(self, macho: lief.MachO.Binary, data=None) -> Dict:
+    def parse_linked_images(self, macho: lief.MachO.Binary, data=None) -> dict:
         load_command_images = {}
         load_commands: Iterable[lief.MachO.LoadCommand] = macho.commands
         for load_command in load_commands:
             if not isinstance(load_command, lief.MachO.DylibCommand):
                 continue
-            images: List[str] = load_command_images.setdefault(load_command.command.__name__, [])
+            images: list[str] = load_command_images.setdefault(load_command.command.__name__, [])
             images.append(load_command.name)
         return load_command_images
 
-    def parse_signature(self, macho_image: lief.MachO.Binary, data=None) -> Dict:
+    def parse_signature(self, macho_image: lief.MachO.Binary, data=None) -> dict:
 
         if not macho_image.has_code_signature:
             return {}
@@ -254,7 +254,7 @@ class machometa(Unit):
 
         return info
 
-    def parse_version(self, macho: lief.MachO.Binary, data=None) -> Dict:
+    def parse_version(self, macho: lief.MachO.Binary, data=None) -> dict:
         info = {}
         load_commands: Iterable[lief.MachO.LoadCommand] = macho.commands
         for load_command in load_commands:
@@ -270,15 +270,15 @@ class machometa(Unit):
                     cmd: lief.MachO.BuildVersion = load_command
                     info['BuildVersion'] = {}
                     info['BuildVersion']['Platform'] = cmd.platform.__name__
-                    info['BuildVersion']['MinOS'] = '.'.join((str(v) for v in cmd.minos))
-                    info['BuildVersion']['SDK'] = '.'.join((str(v) for v in cmd.sdk))
+                    info['BuildVersion']['MinOS'] = '.'.join(str(v) for v in cmd.minos)
+                    info['BuildVersion']['SDK'] = '.'.join(str(v) for v in cmd.sdk)
                     info['BuildVersion']['Ntools'] = len(cmd.tools)
                 else:
                     self.log_warn('More than one load command of type BUILD_VERSION found; the MachO file is possibly malformed')
                 continue
         return info
 
-    def parse_load_commands(self, macho: lief.MachO.Binary, data=None) -> List:
+    def parse_load_commands(self, macho: lief.MachO.Binary, data=None) -> list:
         info = []
         load_commands: Iterable[lief.MachO.LoadCommand] = macho.commands
         for load_command in load_commands:
@@ -289,14 +289,14 @@ class machometa(Unit):
             ))
         return info
 
-    def parse_imports(self, macho: lief.MachO.Binary, data=None) -> List:
+    def parse_imports(self, macho: lief.MachO.Binary, data=None) -> list:
         info = []
         imports: Iterable[lief.MachO.Symbol] = macho.imported_symbols
         for imp in imports:
             info.append(lief.string(imp.name))
         return info
 
-    def parse_exports(self, macho: lief.MachO.Binary, data=None) -> List:
+    def parse_exports(self, macho: lief.MachO.Binary, data=None) -> list:
         info = []
         exports: Iterable[lief.MachO.Symbol] = macho.exported_symbols
         for exp in exports:
@@ -307,7 +307,7 @@ class machometa(Unit):
         result = {}
         slices = []
         macho = lief.load_macho(data)
-        macho_slices: List[lief.MachO.Binary] = []
+        macho_slices: list[lief.MachO.Binary] = []
 
         for k in itertools.count():
             if not (ms := macho.at(k)):

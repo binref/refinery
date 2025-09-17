@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.lzx import LzxDecoder
+from refinery.lib.types import Param
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 
 class lzx(Unit):
 
     def __init__(
         self,
-        window: Arg.Number('window', metavar='window',
-            help='Optionally specify the window size; the default is {default}.') = 15,
-        wim: Arg.Switch('-w', help='Use the WIM flavor of LZX.') = False,
+        window: Param[int, Arg(help='Optionally specify the window size; the default is {default}.')] = 15,
+        wim: Param[bool, Arg('-w', help='Use the WIM flavor of LZX.')] = False,
     ):
         super().__init__(window=window, wim=wim)
 

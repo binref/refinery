@@ -1,5 +1,8 @@
 from __future__ import annotations
-from typing import Generator, TYPE_CHECKING
+
+from typing import TYPE_CHECKING, Generator
+
+from refinery.lib.types import Param
 
 if TYPE_CHECKING:
     from refinery.lib.frame import Chunk
@@ -16,8 +19,8 @@ class scope(FrameSlicer):
     frame closes or the frame is being rescoped by a second application of
     this unit, they become visible again.
     """
-    def __init__(self, *slice, visible: Arg.Switch('-n', '--not', off=True, help=(
-        'Hide the given chunks instead of making them the only ones visible.')) = True
+    def __init__(self, *slice, visible: Param[bool, Arg.Switch('-n', '--not', off=True, help=(
+        'Hide the given chunks instead of making them the only ones visible.'))] = True
     ):
         super().__init__(*slice, visible=visible)
         # Sort any slices with negative arguments to the back so we check
@@ -31,7 +34,7 @@ class scope(FrameSlicer):
         consumed = None
         size = None
 
-        def buffered() -> Generator[Chunk, None, None]:
+        def buffered() -> Generator[Chunk]:
             yield from it
             while consumed:
                 yield consumed.popleft()

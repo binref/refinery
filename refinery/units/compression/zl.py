@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import zlib
 import itertools
+import zlib
 
-from refinery.units import Arg, Unit, RefineryPartialResult
 from refinery.lib.tools import exception_to_string
+from refinery.lib.types import Param
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 
 class zl(Unit):
@@ -14,10 +15,10 @@ class zl(Unit):
 
     def __init__(
         self,
-        level  : Arg.Number('-l', bound=(0, 0X9), help='Specify a compression level between 0 and 9.') = 9,
-        window : Arg.Number('-w', bound=(8, 0XF), help='Manually specify the window size between 8 and 15.') = 15,
-        zlib_header: Arg.Switch('-z', group='MODE', help='Use a ZLIB header.') = False,
-        gzip_header: Arg.Switch('-g', group='MODE', help='Use a GZIP header.') = False
+        level: Param[int, Arg.Number('-l', bound=(0, 0X9), help='Specify a compression level between 0 and 9.')] = 9,
+        window: Param[int, Arg.Number('-w', bound=(8, 0XF), help='Manually specify the window size between 8 and 15.')] = 15,
+        zlib_header: Param[bool, Arg.Switch('-z', group='MODE', help='Use a ZLIB header.')] = False,
+        gzip_header: Param[bool, Arg.Switch('-g', group='MODE', help='Use a GZIP header.')] = False
     ):
         if zlib_header and gzip_header:
             raise ValueError('You can only specify one header type (ZLIB or GZIP).')
