@@ -39,7 +39,12 @@ _ALLOWED_NODE_TYPES = frozenset({
 })
 
 
-def cautious_eval(definition: str, size_limit: int | None = None, walker: ast.NodeTransformer | None = None) -> Any:
+def cautious_eval(
+    definition: str,
+    size_limit: int | None = None,
+    walker: ast.NodeTransformer | None = None,
+    environment: dict[str, Any] | None = None,
+) -> Any:
     """
     Very, very, very, very, very carefully evaluate a Python expression.
     """
@@ -51,7 +56,12 @@ def cautious_eval(definition: str, size_limit: int | None = None, walker: ast.No
 
     if size_limit and len(definition) > size_limit:
         raise Abort(F'Size limit {size_limit} was exceeded while parsing')
-    if any(x not in '.^%|&~<>()-+/*0123456789xabcdefABCDEF' for x in definition):
+
+    test = definition
+    if environment:
+        for symbol in environment:
+            test = re.sub(RF'\b{symbol}\b', '', test)
+    if any(x not in '.^%|&~<>()-+/*0123456789xabcdefABCDEF' for x in test):
         raise Abort('Unknown characters in expression')
     try:
         expression = ast.parse(definition)
@@ -76,11 +86,17 @@ def cautious_eval(definition: str, size_limit: int | None = None, walker: ast.No
         problematic = types - _ALLOWED_NODE_TYPES
         raise Abort('Expression contains operations that are not allowed: {}'.format(', '.join(str(p) for p in problematic)))
 
-    return eval(definition)
+    return eval(definition, environment)
 
 
-def cautious_eval_or_default(definition: str, default: Any | None = None, size_limit: int | None = None) -> Any:
+def cautious_eval_or_default(
+    definition: str,
+    default: Any | None = None,
+    size_limit: int | None = None,
+    walker: ast.NodeTransformer | None = None,
+    environment: dict[str, Any] | None = None,
+):
     try:
-        return cautious_eval(definition)
+        return cautious_eval(definition, size_limit, walker, environment)
     except ExpressionParsingFailure:
         return default
