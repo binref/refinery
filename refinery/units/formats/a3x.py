@@ -792,30 +792,8 @@ class A3xEncryptionConstants(NamedTuple):
 
 
 class A3xEncryptionType(A3xEncryptionConstants, Enum):
-    EA06 = A3xEncryptionConstants(
-        b'AU3!EA06',
-        tag_size=0xADBC,
-        tag=0xB33F,
-        path_size=0xF820,
-        path=0xF479,
-        compressed_size=0x87BC,
-        decompressed_size=0x87BC,
-        checksum=0xA685,
-        data=0x2477,
-        is_current=True
-    )
-    EA05 = A3xEncryptionConstants(
-        b'AU3!EA05',
-        tag_size=0x29BC,
-        tag=0xA25E,
-        path_size=0x29AC,
-        path=0xF25E,
-        compressed_size=0x45AA,
-        decompressed_size=0x45AA,
-        checksum=0xC3D2,
-        data=0x22AF,
-        is_current=False
-    )
+    EA06 = (b'AU3!EA06', 0xADBC, 0xB33F, 0xF820, 0xF479, 0x87BC, 0x87BC, 0xA685, 0x2477, True)
+    EA05 = (b'AU3!EA05', 0x29BC, 0xA25E, 0x29AC, 0xF25E, 0x45AA, 0x45AA, 0xC3D2, 0x22AF, False)
 
 
 class A3xReader(StructReader[memoryview]):
