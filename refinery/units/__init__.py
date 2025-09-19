@@ -172,6 +172,7 @@ from typing import (
     overload,
 )
 
+from refinery.lib.annotations import evaluate
 from refinery.lib.argparser import ArgparseError, ArgumentParserWithKeywordHooks
 from refinery.lib.dependencies import dependency_accessor
 from refinery.lib.environment import Logger, LogLevel, environment, logger
@@ -677,6 +678,8 @@ class Arg(Argument):
             return item.get('action', 'store') == 'store'
 
         def get_argp_type(at):
+            if at is type(None):
+                return None
             if issubclass(at, tuple):
                 return numseq
             if issubclass(at, (bytes, bytearray, memoryview)):
@@ -706,22 +709,15 @@ class Arg(Argument):
                 return value
 
         if isinstance(annotation, str):
-            symbols = None
-            while symbols is not False:
-                try:
-                    annotation = eval(annotation, symbols)
-                except (NameError, TypeError):
-                    if symbols is not None or module is None:
-                        break
-                    try:
-                        import importlib
-                        symbols = importlib.import_module(module).__dict__
-                    except Exception:
-                        symbols = False
-                except Exception:
-                    raise
-                else:
-                    break
+            if module is None:
+                _symbols = None
+            else:
+                __import__(module)
+                _symbols = sys.modules[module].__dict__
+            try:
+                annotation = evaluate(annotation, _symbols)
+            except Exception:
+                pass
 
         if annotation is not empty:
             if isinstance(annotation, Arg):

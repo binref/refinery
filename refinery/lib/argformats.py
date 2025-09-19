@@ -119,10 +119,10 @@ from typing import (
     Mapping,
     TypeVar,
     Union,
-    get_type_hints,
     overload,
 )
 
+from refinery.lib.annotations import get_type_hints
 from refinery.lib.frame import Chunk
 from refinery.lib.meta import Percentage, is_valid_variable_name, metavars
 from refinery.lib.patterns import formats
