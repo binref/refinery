@@ -22,12 +22,12 @@ import sys
 
 __pdoc__ = {
     'evaluate': (
-        'The same as `eval` on Python 3.10 and beyond, otherwise a backwards-compatibility layer that converts modern '
-        'type hints back to compatible expressions.'
+        'The same as `eval` on Python 3.10 and beyond, otherwise a backwards-compatibility layer '
+        'that converts modern type hints back to compatible expressions.'
     ),
     'get_type_hints': (
-        'Implements the same functionality as `typing.get_type_hints` but uses `refinery.lib.annotations.evaluate` for'
-        ' evaluation when the Python version is below 3.10.'
+        'Implements the same functionality as `typing.get_type_hints` but uses `evaluate` rather '
+        'than `eval` when the Python version is below 3.10.'
     ),
 }
 
