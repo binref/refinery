@@ -336,12 +336,14 @@ class xtmsi(xtdoc):
                 streams[path] = UnpackResult(path, script.encode(self.codec))
 
         for ignored_stream in [
-            '[5]SummaryInformation',
-            '[5]DocumentSummaryInformation',
-            '[5]DigitalSignature',
-            '[5]MsiDigitalSignatureEx'
+            'SummaryInformation',
+            'DocumentSummaryInformation',
+            'DigitalSignature',
+            'MsiDigitalSignatureEx'
         ]:
-            streams.pop(ignored_stream, None)
+            if r := streams.pop(F'[5]{ignored_stream}', None):
+                r.path = F'Meta/{ignored_stream}'
+                yield r
 
         inconsistencies = 0
         w1 = len(str(len(strings)))
