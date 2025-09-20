@@ -17,6 +17,17 @@ Block = List[BatchCode]
 IntOrStr = TypeVar('IntOrStr', int, str)
 
 
+def batchint(expr: str):
+    m = int(expr.startswith('-'))
+    if expr[m:m + 2] in ('0x', '0X'):
+        base = 16
+    elif expr[m:m + 1] == '0':
+        base = 8
+    else:
+        base = 10
+    return int(expr, base)
+
+
 class IfEq(Generic[IntOrStr]):
     def __init__(
         self,
@@ -168,18 +179,20 @@ class BatchFileEmulator:
         toupper: bool = False,
         uncaret: bool = True,
         unquote: bool = False,
-        terminator: str | None = None,
+        terminator_letters: bytes = B'\x20\x09\x0B',
+        terminator_strings: tuple[bytes, ...] = (),
     ):
         quote = False
         caret = False
         token = array.array("H")
         utf16 = expression.encode('utf-16le')
         utf16 = memoryview(utf16).cast('H')
-        t = terminator
+        t1 = terminator_letters
+        t2 = terminator_strings
 
         for k, char in enumerate(utf16):
             if not quote and not caret:
-                if t and expression[k:k + len(t)] == t or char in B'\x20\x09\x0B':
+                if char in t1 or any(utf16[k:k + len(t)] == t for t in t2):
                     tail = expression[k:]
                     break
             if char == _QUOTE:
@@ -213,7 +226,7 @@ class BatchFileEmulator:
     def expand(self, block: BatchCode, delay: bool = False):
         def expansion(match: re.Match[str]):
             name = match.group(1)
-            base = self.environment.get(name.casefold(), '')
+            base = self.environment.get(name.upper(), '')
             if not (modifier := match.group(2)):
                 return base
             if '=' in modifier:
@@ -256,16 +269,18 @@ class BatchFileEmulator:
             arithmetic = False
         if not command:
             return
+        command, _ = self.split_head(command, terminator_letters=B'')
         if command.startswith('"'):
             # This is how it works based on testing, even if it seems insane.
-            command, _, _ = command[1:].rpartition('"')
+            command, _, what = command[1:].rpartition('"')
+            command = command or what
         if arithmetic:
             integers = {}
             updated = {}
             for name, value in self.environment.items():
                 try:
-                    integers[name] = int(value, 0)
-                except Exception:
+                    integers[name] = batchint(value)
+                except ValueError:
                     pass
             for assignment in command.split(','):
                 assignment = assignment.strip()
@@ -277,7 +292,8 @@ class BatchFileEmulator:
                 self.environment.update(updated)
         else:
             name, _, content = command.partition('=')
-            name = name.casefold()
+            name = name.upper()
+            content, _ = self.split_head(content, terminator_letters=B'')
             if not content:
                 self.environment.pop(name, None)
             else:
@@ -306,13 +322,13 @@ class BatchFileEmulator:
             condition = self.exists_file(path)
         elif check == 'DEFINED':
             name, rest = self.split_head(rest)
-            condition = name.casefold() in self.environment
+            condition = name.upper() in self.environment
         else:
             lhs, rest = self.split_head(
                 command,
                 toupper=False,
                 unquote=True,
-                terminator='==',
+                terminator_strings=(B'==',)
             )
             if rest.startswith('=='):
                 rest = rest[2:].lstrip()
@@ -322,15 +338,6 @@ class BatchFileEmulator:
                     rhs = rhs.casefold()
                 condition = lhs == rhs
             else:
-                def intfold(expr: str):
-                    m = int(expr.startswith('-'))
-                    if expr[m:m + 2] in ('0x', '0X'):
-                        base = 16
-                    elif expr[m:m + 1] == '0':
-                        base = 8
-                    else:
-                        base = 10
-                    return int(expr, base)
                 cmp, rest = self.split_head(rest)
                 if self.extension_version < 1:
                     raise UnexpectedToken(cmp)
@@ -342,8 +349,8 @@ class BatchFileEmulator:
                 if cmp == 'NEQ':
                     negate, cmp = not negate, 'EQU'
                 try:
-                    ilh = intfold(lhs)
-                    irh = intfold(rhs)
+                    ilh = batchint(lhs)
+                    irh = batchint(rhs)
                 except ValueError:
                     pair = IfEq(lhs, rhs)
                 else:
@@ -438,8 +445,8 @@ class BatchFileEmulator:
                 parent, _, k = self.goto(index)
                 yield from self.emulate_block(parent, k)
             except Goto as goto:
-                label = goto.label.casefold()
-                if label == 'eof':
+                label = goto.label.upper()
+                if label == 'EOF':
                     break
                 try:
                     index = self.labels[label]
@@ -516,6 +523,8 @@ class BatchFileEmulator:
                             yield EmulatedCommand(cmd)
                 elif head == 'GOTO':
                     label, tail = self.split_head(tail)
+                    if label.startswith(':'):
+                        label = label[1:]
                     yield EmulatedCommand(command)
                     raise Goto(label)
                 elif head == 'FOR':
@@ -566,12 +575,15 @@ class BatchFileEmulator:
                 return
             if label[0] == ':':
                 return
-            label = label.casefold()
-            self.labels[label] = [len(n) - 1 for n in path_to_root]
+            label = label.upper()
+            index = [len(n) - 1 for n in path_to_root]
+            index.append(len(lines) - 1)
+            self.labels[label] = index
 
         for k, char in enumerate(utf16):
             if char == _QUOTE:
-                quote = not quote
+                if quote := not quote:
+                    caret = False
                 continue
             if char == _LINEBREAK:
                 if caret:
