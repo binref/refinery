@@ -1708,7 +1708,7 @@ class Unit(UnitBase, abstract=True):
         return self | bytes
 
     @overload
-    def __or__(self, stream: None) -> None: ...
+    def __or__(self, stream: int | None) -> None: ...
 
     @overload
     def __or__(self, stream: type[bytearray]) -> bytearray: ...
@@ -1760,6 +1760,7 @@ class Unit(UnitBase, abstract=True):
         | list
         | set
         | buf
+        | int
         | BinaryIO
         | ByteIO
         | BufferedWriter
@@ -1780,9 +1781,12 @@ class Unit(UnitBase, abstract=True):
             if callable(c):
                 return c
 
-        if stream is None:
-            with open(os.devnull, 'wb') as null:
-                _ = self | null
+        if stream is None or isinstance(stream, int):
+            if not stream:
+                stream = open(os.devnull, 'wb')
+            else:
+                stream = os.fdopen(stream, 'wb')
+            _ = self | stream
             return
         if isinstance(stream, type) and issubclass(stream, Entry):
             stream = cast(Type[Unit], stream)()
