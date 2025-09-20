@@ -17,8 +17,8 @@ Python version requirement to Python 3.10 or higher.
 """
 from __future__ import annotations
 
-import typing
 import sys
+import typing
 
 __pdoc__ = {
     'evaluate': (
