@@ -1,20 +1,65 @@
 from __future__ import annotations
 
+import array
 import codecs
 import enum
+import itertools
+import ntpath
 import re
 
-from typing import List, Union, overload
+from typing import Generator, Generic, List, TypeVar, Union, overload
 
 from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
 
-Block = Union[str, List['Block']]
+BatchCode = Union[str, List['BatchCode']]
+Block = List[BatchCode]
+IntOrStr = TypeVar('IntOrStr', int, str)
 
 
-class UnexpectedToken(RuntimeError):
-    def __init__(self, token: str):
-        super().__init__(F'Unexpected token: "{token}"')
+class IfEq(Generic[IntOrStr]):
+    def __init__(
+        self,
+        lhs: IntOrStr,
+        rhs: IntOrStr,
+    ):
+        self.lhs = lhs
+        self.rhs = rhs
+
+    def EQU(self):
+        return self.lhs == self.rhs
+
+    def LEQ(self):
+        return self.lhs <= self.rhs
+
+    def LSS(self):
+        return self.lhs < self.rhs
+
+
+_PAREN_OPEN = 0x28
+_PAREN_CLOSE = 0x29
+_CARET = 0x5E
+_QUOTE = 0x22
+_LINEBREAK = 0x0A
+
+
+class EmulatorError(Exception):
+    pass
+
+
+class UnexpectedToken(EmulatorError):
+    def __init__(self, token: str) -> None:
+        super().__init__(F'Unexpected token: {token}')
+
+
+class Goto(Exception):
+    def __init__(self, label: str):
+        self.label = label
+
+
+class InvalidLabel(EmulatorError):
+    def __init__(self, label: str):
+        super().__init__(F'The following label was not found: {label}')
 
 
 class EmulatedCommand(str):
@@ -27,24 +72,87 @@ class Condition(str, enum.Enum):
     IfNotOk = '||'
 
 
+class If(enum.IntFlag):
+    Inactive = 0b0000
+    Active = 0b0001
+    Block = 0b0010
+    Then = 0b0100
+    Else = 0b1000
+
+    def skip_block(self):
+        skip = If.Then not in self
+        if If.Else in self:
+            skip = not skip
+        return skip
+
+
 class BatchFileEmulator:
 
     environments: list[dict[str, str]]
-    blocks: list[Block]
+    code: Block
     labels: dict[str, list[int]]
 
-    def __init__(self, data: str | buf, delayed_expansion: bool = False):
+    _current_index: int | None
+    _current_block: BatchCode | None
+
+    def __init__(
+        self,
+        data: str | buf,
+        delayed_expansion: bool = False,
+        extension_version: int = 1,
+        file_system: dict | None = None,
+        cwd: str = 'C:\\'
+    ):
         self.delayed_expansion = delayed_expansion
+        self.extension_version = extension_version
+        self.file_sytem_seed = file_system or {}
+        self.cwd = cwd
         self.parse(data)
 
+    @property
+    def cwd(self):
+        return self._cwd
+
+    @cwd.setter
+    def cwd(self, new: str):
+        new = new.replace('/', '\\')
+        if not new.endswith('\\'):
+            new = F'{new}\\'
+        if not ntpath.isabs(new):
+            raise ValueError(F'Invalid absolute path: {new}')
+        self._cwd = ntpath.normcase(ntpath.normpath(new))
+
     def reset(self):
-        self.blocks = []
         self.labels = {}
         self.environments = [{}]
         self.delayexpands = [self.delayed_expansion]
+        self.file_system = dict(self.file_sytem_seed)
         self.errorlevel = 0
         self._current_index = None
         self._current_block = None
+
+    def _resolved(self, path: str) -> str:
+        if not ntpath.isabs(path):
+            path = F'{self.cwd}{path}'
+        return ntpath.normcase(ntpath.normpath(path))
+
+    def create_file(self, path: str, data: str = ''):
+        self.file_system[self._resolved(path)] = data
+
+    def append_file(self, path: str, data: str):
+        path = self._resolved(path)
+        if left := self.file_system.get(path, None):
+            data = F'{left}{data}'
+        self.file_system[path] = data
+
+    def remove_file(self, path: str):
+        self.file_system.pop(self._resolved(path), None)
+
+    def ingest_file(self, path: str) -> str | None:
+        return self.file_system.get(self._resolved(path))
+
+    def exists_file(self, path: str) -> bool:
+        return self._resolved(path) in self.file_system
 
     @property
     def environment(self):
@@ -55,25 +163,44 @@ class BatchFileEmulator:
         return self.delayexpands[-1]
 
     @staticmethod
-    def split_head(expression: str, uppercase_head: bool = True):
+    def split_head(
+        expression: str,
+        toupper: bool = False,
+        uncaret: bool = True,
+        unquote: bool = False,
+        terminator: str | None = None,
+    ):
         quote = False
-        split = 0
-        for k, token in enumerate(expression):
-            if token.isspace():
-                if not quote:
-                    split = k
-            elif split:
-                head = expression[:split]
-                tail = expression[k:]
-                break
-            elif token == '"':
+        caret = False
+        token = array.array("H")
+        utf16 = expression.encode('utf-16le')
+        utf16 = memoryview(utf16).cast('H')
+        t = terminator
+
+        for k, char in enumerate(utf16):
+            if not quote and not caret:
+                if t and expression[k:k + len(t)] == t or char in B'\x20\x09\x0B':
+                    tail = expression[k:]
+                    break
+            if char == _QUOTE:
                 quote = not quote
+                if unquote:
+                    continue
+            elif quote:
+                pass
+            elif caret:
+                caret = False
+            elif char == _CARET:
+                caret = True
+                if uncaret:
+                    continue
+            token.append(char)
         else:
-            head = expression
             tail = ''
-        if uppercase_head:
+        head = token.tobytes().decode('utf-16le')
+        if toupper:
             head = head.upper()
-        return head, tail
+        return head, tail.lstrip()
 
     @overload
     def expand(self, block: str, delay: bool = False) -> str:
@@ -83,7 +210,7 @@ class BatchFileEmulator:
     def expand(self, block: list, delay: bool = False) -> list:
         ...
 
-    def expand(self, block: Block, delay: bool = False):
+    def expand(self, block: BatchCode, delay: bool = False):
         def expansion(match: re.Match[str]):
             name = match.group(1)
             base = self.environment.get(name.casefold(), '')
@@ -98,7 +225,7 @@ class BatchFileEmulator:
                 return base.replace(old, new, **kwargs)
             else:
                 if not modifier.startswith(':~'):
-                    raise RuntimeError
+                    raise EmulatorError
                 offset, _, length = modifier[2:].partition(',')
                 offset = int(offset)
                 if offset < 0:
@@ -118,7 +245,7 @@ class BatchFileEmulator:
             return [self.expand(child) for child in block]
 
     def execute_set(self, command: str):
-        check, rest = self.split_head(command)
+        check, rest = self.split_head(command, toupper=True)
         if check == '/P':
             yield EmulatedCommand(F'set {command}')
             return
@@ -156,6 +283,83 @@ class BatchFileEmulator:
             else:
                 self.environment[name] = content
 
+    def execute_if(self, command: str):
+        casefold = False
+        negate = False
+        check, rest = self.split_head(command, toupper=True)
+        if check == '/I':
+            casefold = True
+            command, check, rest = rest, *self.split_head(rest)
+        if check == 'NOT':
+            negate = True
+            command, check, rest = rest, *self.split_head(rest)
+        if check == 'ERRORLEVEL':
+            limit, rest = self.split_head(rest)
+            limit = int(limit.strip(), 0)
+            condition = limit <= self.errorlevel
+        elif check == 'CMDEXTVERSION':
+            limit, rest = self.split_head(rest)
+            limit = int(limit.strip(), 0)
+            condition = limit <= self.extension_version
+        elif check == 'EXIST':
+            path, rest = self.split_head(rest, unquote=True)
+            condition = self.exists_file(path)
+        elif check == 'DEFINED':
+            name, rest = self.split_head(rest)
+            condition = name.casefold() in self.environment
+        else:
+            lhs, rest = self.split_head(
+                command,
+                toupper=False,
+                unquote=True,
+                terminator='==',
+            )
+            if rest.startswith('=='):
+                rest = rest[2:].lstrip()
+                rhs, rest = self.split_head(rest, toupper=False, unquote=True)
+                if casefold:
+                    lhs = lhs.casefold()
+                    rhs = rhs.casefold()
+                condition = lhs == rhs
+            else:
+                def intfold(expr: str):
+                    m = int(expr.startswith('-'))
+                    if expr[m:m + 2] in ('0x', '0X'):
+                        base = 16
+                    elif expr[m:m + 1] == '0':
+                        base = 8
+                    else:
+                        base = 10
+                    return int(expr, base)
+                cmp, rest = self.split_head(rest)
+                if self.extension_version < 1:
+                    raise UnexpectedToken(cmp)
+                rhs, rest = self.split_head(rest)
+                if cmp == 'GTR':
+                    rhs, lhs, cmp = lhs, rhs, 'LSS'
+                if cmp == 'GEQ':
+                    rhs, lhs, cmp = lhs, rhs, 'LEQ'
+                if cmp == 'NEQ':
+                    negate, cmp = not negate, 'EQU'
+                try:
+                    ilh = intfold(lhs)
+                    irh = intfold(rhs)
+                except ValueError:
+                    pair = IfEq(lhs, rhs)
+                else:
+                    pair = IfEq(ilh, irh)
+                if cmp == 'EQU':
+                    condition = pair.EQU()
+                elif cmp == 'LSS':
+                    condition = pair.LSS()
+                elif cmp == 'LEQ':
+                    condition = pair.LEQ()
+                else:
+                    raise UnexpectedToken(cmp)
+        if negate:
+            condition = not condition
+        return condition, rest
+
     def _commands(self, line: str):
         quote = False
         caret = False
@@ -164,7 +368,7 @@ class BatchFileEmulator:
         for k, char in enumerate(line):
             if again:
                 if quote or caret:
-                    raise RuntimeError
+                    raise EmulatorError
                 how = None
                 end = None
                 if again == char:
@@ -206,64 +410,80 @@ class BatchFileEmulator:
             return self.errorlevel == 0
         raise TypeError(condition)
 
-    def _start_access(self, index: list[int]):
+    def goto(self, index: list[int]) -> tuple[Block, BatchCode, int]:
+        if not index:
+            index = [0]
+        code = self.code
         path = iter(index)
-        main = next(path)
-        if self._current_index == main:
+        line = next(path)
+        if self._current_index == line:
             cursor = self._current_block
             if cursor is None:
-                raise RuntimeError
+                raise EmulatorError
         else:
-            cursor = self.blocks[main]
+            cursor = self.code[line]
             cursor = self.expand(cursor)
-            self._current_index = main
+            self._current_index = line
             self._current_block = cursor
-        return cursor, path
+        for line in path:
+            code = cursor
+            cursor = cursor[line]
+        assert isinstance(code, list)
+        return code, cursor, line
 
-    def goto(self, index: list[int], advance=True):
-        cursor, path = self._start_access(index)
-        for k in path:
-            cursor = cursor[k]
-        return cursor
-
-    def advance(self, index: list[int], condition: Condition) -> str | None:
-        cursor, path = self._start_access(index)
-        ceiling = [self.blocks]
-        for k in path:
-            if not isinstance(cursor, list):
-                raise IndexError
-            ceiling.append(cursor)
-            cursor = cursor[k]
-        if execute_block := self._check_condition(condition):
-            while isinstance(cursor, list):
-                index.append(0)
-                ceiling.append(cursor)
-                cursor = cursor[0]
-        for i in range(len(index) - 1, -1, -1):
-            k = index[i] + 1
-            if k < len(ceiling[i]):
-                index[i] = k
-                del index[i + 1:]
-                break
-        else:
-            index.clear()
-        if execute_block:
-            if not isinstance(cursor, str):
-                raise RuntimeError
-            return cursor
-
-    def emulate(self):
+    def emulate(self) -> Generator[EmulatedCommand]:
         index = [0]
-        condition = Condition.Always
-
-        while index:
-            if (block := self.advance(index, condition)) is None:
-                condition = Condition.Always
+        while True:
+            try:
+                parent, _, k = self.goto(index)
+                yield from self.emulate_block(parent, k)
+            except Goto as goto:
+                label = goto.label.casefold()
+                if label == 'eof':
+                    break
+                try:
+                    index = self.labels[label]
+                except KeyError:
+                    raise InvalidLabel(label) from goto
                 continue
-            for command, condition in self._commands(block):
+            else:
+                break
+
+    def emulate_block(self, block: Block, offset: int = 0) -> Generator[EmulatedCommand]:
+        it = block if offset <= 0 else itertools.islice(block, offset, None)
+        ifelse = If.Inactive
+        expand = block is self.code
+        for lno, code in enumerate(it, offset):
+            if expand:
+                code = self.expand(code)
+                self._current_block = code
+                self._current_index = lno
+            if If.Block in ifelse:
+                if not isinstance(code, list):
+                    raise EmulatorError(F'Expected a block while parsing If/Else; {ifelse!r}')
+                if not ifelse.skip_block():
+                    yield from self.emulate_block(code)
+                if If.Else in ifelse:
+                    ifelse = If.Inactive
+                else:
+                    ifelse |= If.Else
+                    ifelse &= ~If.Block
+                continue
+            if isinstance(code, list):
+                if ifelse != If.Inactive:
+                    raise EmulatorError('Unexpected block in the middle of if/else statement.')
+                yield from self.emulate_block(code)
+                continue
+            condition = Condition.Always
+            for command, next_condition in self._commands(code):
+                if not self._check_condition(condition):
+                    break
+                condition = next_condition
                 if self.delayexpand:
                     command = self.expand(command, True)
-                head, tail = self.split_head(command, True)
+                head, tail = self.split_head(
+                    command, toupper=True, uncaret=False)
+                head = head.lstrip('@')
                 if head == 'SET':
                     yield from self.execute_set(tail)
                 elif head == 'SETLOCAL':
@@ -276,8 +496,33 @@ class BatchFileEmulator:
                 elif head == 'ENDLOCAL' and len(self.environments) > 1:
                     self.environments.pop()
                     self.delayexpands.pop()
+                elif head == 'IF':
+                    then, cmd = self.execute_if(tail)
+                    if not cmd:
+                        ifelse = If.Active | If.Block
+                        if then:
+                            ifelse |= If.Then
+                        continue
+                    elif then:
+                        yield EmulatedCommand(cmd)
+                elif head == 'ELSE':
+                    if If.Else not in ifelse:
+                        raise UnexpectedToken(head)
+                    if If.Then not in ifelse:
+                        if not (cmd := tail.lstrip()):
+                            ifelse |= If.Block
+                            continue
+                        else:
+                            yield EmulatedCommand(cmd)
+                elif head == 'GOTO':
+                    label, tail = self.split_head(tail)
+                    yield EmulatedCommand(command)
+                    raise Goto(label)
+                elif head == 'FOR':
+                    yield EmulatedCommand(command)
                 else:
                     yield EmulatedCommand(command)
+                ifelse = If.Inactive
 
     def _decode(self, data: buf):
         if data[:3] == B'\xEF\xBB\xBF':
@@ -297,34 +542,42 @@ class BatchFileEmulator:
         text = '\n'.join(
             line.rstrip() for line in re.split(r'[\r\n]+', text.strip()))
 
+        utf16 = text.encode('utf-16le')
+        utf16 = memoryview(utf16).cast('H')
+
         quote = False
         caret = False
         check = 0
-        lines = self.blocks
+        lines = self.code = []
         path_to_root = []
 
-        def commit(k: int):
+        def linebreak(k: int):
             nonlocal check
             line = text[check:k]
             check = k + 1
-            if not line.strip():
+            strip = line.strip()
+            if not strip:
                 return
             lines.append(line)
-            if not line.startswith(':'):
+            if strip[0] != ':':
                 return
-            label = line[1:].strip().casefold()
-            if not label.startswith(':'):
-                self.labels[label] = [len(n) - 1 for n in path_to_root]
+            label = strip[1:].strip()
+            if not label:
+                return
+            if label[0] == ':':
+                return
+            label = label.casefold()
+            self.labels[label] = [len(n) - 1 for n in path_to_root]
 
-        for k, char in enumerate(text):
-            if char == '"':
+        for k, char in enumerate(utf16):
+            if char == _QUOTE:
                 quote = not quote
                 continue
-            if char == '\n':
+            if char == _LINEBREAK:
                 if caret:
                     caret = False
                 else:
-                    commit(k)
+                    linebreak(k)
                     quote = False
                 continue
             if quote:
@@ -332,20 +585,19 @@ class BatchFileEmulator:
             if caret:
                 caret = False
                 continue
-            if char == '^':
+            if char == _CARET:
                 caret = True
                 continue
-            if char == '(':
-                commit(k)
+            if char == _PAREN_OPEN:
+                linebreak(k)
                 path_to_root.append(lines)
                 block = []
                 lines.append(block)
                 lines = block
-            if char == ')':
-                commit(k)
-                try:
-                    lines = path_to_root.pop()
-                except IndexError as IE:
-                    raise UnexpectedToken(char) from IE
+            if char == _PAREN_CLOSE:
+                if not path_to_root:
+                    continue
+                linebreak(k)
+                lines = path_to_root.pop()
 
-        commit(len(text))
+        linebreak(len(text))
