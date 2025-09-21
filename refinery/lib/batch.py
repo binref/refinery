@@ -7,6 +7,7 @@ import itertools
 import ntpath
 import re
 
+from abc import abstractmethod, ABC
 from typing import Generator, Generic, List, TypeVar, Union, overload
 
 from refinery.lib.deobfuscation import cautious_eval_or_default
@@ -64,9 +65,27 @@ class UnexpectedToken(EmulatorError):
         super().__init__(F'Unexpected token: {token}')
 
 
-class Goto(Exception):
+class ExecutionResult(ABC):
+    @abstractmethod
+    def longjump(self) -> bool:
+        pass
+
+
+class Exit(ExecutionResult):
+    def __init__(self, code: int = 0, script_only: bool = True):
+        self.code = code
+        self.script_only = script_only
+
+    def longjump(self) -> bool:
+        return not self.script_only
+
+
+class Goto(ExecutionResult):
     def __init__(self, label: str):
         self.label = label
+
+    def longjump(self) -> bool:
+        return True
 
 
 class InvalidLabel(EmulatorError):
@@ -103,20 +122,20 @@ class BatchFileEmulator:
     environments: list[dict[str, str]]
     code: Block
     labels: dict[str, list[int]]
-
-    _current_index: int | None
-    _current_block: BatchCode | None
+    args: list[str]
 
     def __init__(
         self,
         data: str | buf,
         delayed_expansion: bool = False,
-        extension_version: int = 1,
+        extensions_enabled: bool = True,
+        extensions_version: int = 2,
         file_system: dict | None = None,
         cwd: str = 'C:\\'
     ):
         self.delayed_expansion = delayed_expansion
-        self.extension_version = extension_version
+        self.extensions_version = extensions_version
+        self.extensions_enabled = extensions_enabled
         self.file_sytem_seed = file_system or {}
         self.cwd = cwd
         self.parse(data)
@@ -134,14 +153,25 @@ class BatchFileEmulator:
             raise ValueError(F'Invalid absolute path: {new}')
         self._cwd = ntpath.normcase(ntpath.normpath(new))
 
+    @property
+    def ec(self) -> int:
+        return self.errorlevel
+
+    @ec.setter
+    def ec(self, value: int | None):
+        ec = value or 0
+        self.environment['ERRORLEVEL'] = str(ec)
+        self.errorlevel = ec
+
     def reset(self):
         self.labels = {}
         self.environments = [{}]
         self.delayexpands = [self.delayed_expansion]
+        self.ext_settings = [self.extensions_enabled]
         self.file_system = dict(self.file_sytem_seed)
-        self.errorlevel = 0
-        self._current_index = None
-        self._current_block = None
+        self.dirstack = []
+        self.args = []
+        self.ec = None
 
     def _resolved(self, path: str) -> str:
         if not ntpath.isabs(path):
@@ -173,6 +203,10 @@ class BatchFileEmulator:
     @property
     def delayexpand(self):
         return self.delayexpands[-1]
+
+    @property
+    def ext_setting(self):
+        return self.ext_settings[-1]
 
     @staticmethod
     def split_head(
@@ -261,7 +295,7 @@ class BatchFileEmulator:
     def execute_set(self, command: str):
         check, rest = self.split_head(command, toupper=True)
         if check == '/P':
-            yield EmulatedCommand(F'set {command}')
+            self.ec = yield EmulatedCommand(F'set {command}')
             return
         if check == '/A':
             arithmetic = True
@@ -312,12 +346,12 @@ class BatchFileEmulator:
             command, check, rest = rest, *self.split_head(rest)
         if check == 'ERRORLEVEL':
             limit, rest = self.split_head(rest)
-            limit = int(limit.strip(), 0)
-            condition = limit <= self.errorlevel
+            limit = int(limit.strip(), 10)
+            condition = limit <= self.ec
         elif check == 'CMDEXTVERSION':
             limit, rest = self.split_head(rest)
-            limit = int(limit.strip(), 0)
-            condition = limit <= self.extension_version
+            limit = int(limit.strip(), 10)
+            condition = limit <= self.extensions_version
         elif check == 'EXIST':
             path, rest = self.split_head(rest, unquote=True)
             condition = self.exists_file(path)
@@ -340,7 +374,7 @@ class BatchFileEmulator:
                 condition = lhs == rhs
             else:
                 cmp, rest = self.split_head(rest)
-                if self.extension_version < 1:
+                if self.extensions_version < 1:
                     raise UnexpectedToken(cmp)
                 rhs, rest = self.split_head(rest)
                 if cmp == 'GTR':
@@ -413,64 +447,64 @@ class BatchFileEmulator:
         if condition == Condition.Always:
             return True
         if condition == Condition.IfNotOk:
-            return self.errorlevel != 0
+            return self.ec != 0
         if condition == Condition.IfOk:
-            return self.errorlevel == 0
+            return self.ec == 0
         raise TypeError(condition)
 
     def goto(self, index: list[int]) -> tuple[Block, BatchCode, int]:
         if not index:
             index = [0]
-        code = self.code
-        path = iter(index)
-        line = next(path)
-        if self._current_index == line:
-            cursor = self._current_block
-            if cursor is None:
-                raise EmulatorError
-        else:
-            cursor = self.code[line]
-            cursor = self.expand(cursor)
-            self._current_index = line
-            self._current_block = cursor
-        for line in path:
-            code = cursor
-            cursor = cursor[line]
+        line = 0
+        code = cursor = self.code
+        for line in index:
+            code, cursor = cursor, cursor[line]
         assert isinstance(code, list)
         return code, cursor, line
 
-    def emulate(self) -> Generator[EmulatedCommand]:
+    def emulate(self, *args: str) -> Generator[EmulatedCommand, int | None, ExecutionResult]:
         index = [0]
+        self.args[:] = args
         while True:
-            try:
-                parent, _, k = self.goto(index)
-                yield from self.emulate_block(parent, k)
-            except Goto as goto:
-                label = goto.label.upper()
+            block, _, offset = self.goto(index)
+            state = yield from self.emulate_block(
+                block,
+                offset=offset,
+                expand=True,
+            )
+            if isinstance(state, Goto):
+                label = state.label.upper()
                 if label == 'EOF':
-                    break
+                    return Exit()
                 try:
                     index = self.labels[label]
-                except KeyError:
-                    raise InvalidLabel(label) from goto
-                continue
-            else:
-                break
+                except KeyError as KE:
+                    raise InvalidLabel(label) from KE
+                else:
+                    continue
+            if isinstance(state, Exit):
+                self.ec = state.code
+                return state
+            raise TypeError(state)
 
-    def emulate_block(self, block: Block, offset: int = 0) -> Generator[EmulatedCommand]:
+    def emulate_block(
+        self,
+        block: Block,
+        offset: int = 0,
+        expand: bool = False,
+    ) -> Generator[EmulatedCommand, int | None, ExecutionResult]:
         it = block if offset <= 0 else itertools.islice(block, offset, None)
         ifelse = If.Inactive
-        expand = block is self.code
-        for lno, code in enumerate(it, offset):
+        for code in it:
             if expand:
                 code = self.expand(code)
-                self._current_block = code
-                self._current_index = lno
             if If.Block in ifelse:
                 if not isinstance(code, list):
                     raise EmulatorError(F'Expected a block while parsing If/Else; {ifelse!r}')
                 if not ifelse.skip_block():
-                    yield from self.emulate_block(code)
+                    exit = (yield from self.emulate_block(code))
+                    if exit.longjump():
+                        return exit
                 if If.Else in ifelse:
                     ifelse = If.Inactive
                 else:
@@ -480,7 +514,9 @@ class BatchFileEmulator:
             if isinstance(code, list):
                 if ifelse != If.Inactive:
                     raise EmulatorError('Unexpected block in the middle of if/else statement.')
-                yield from self.emulate_block(code)
+                exit = (yield from self.emulate_block(code))
+                if exit.longjump():
+                    return exit
                 continue
             condition = Condition.Always
             for command, next_condition in self._commands(code):
@@ -495,11 +531,17 @@ class BatchFileEmulator:
                 if head == 'SET':
                     yield from self.execute_set(tail)
                 elif head == 'SETLOCAL':
+                    setting = tail.strip().upper()
                     delay = {
                         'DISABLEDELAYEDEXPANSION': False,
                         'ENABLEDELAYEDEXPANSION' : True,
-                    }.get(tail.strip().upper(), self.delayexpand)
+                    }.get(setting, self.delayexpand)
+                    cmdxt = {
+                        'DISABLEEXTENSIONS': False,
+                        'ENABLEEXTENSIONS' : True,
+                    }.get(setting, self.ext_setting)
                     self.delayexpands.append(delay)
+                    self.ext_settings.append(cmdxt)
                     self.environments.append(dict(self.environment))
                 elif head == 'ENDLOCAL' and len(self.environments) > 1:
                     self.environments.pop()
@@ -512,7 +554,7 @@ class BatchFileEmulator:
                             ifelse |= If.Then
                         continue
                     elif then:
-                        yield EmulatedCommand(cmd)
+                        self.ec = yield EmulatedCommand(cmd)
                 elif head == 'ELSE':
                     if If.Else not in ifelse:
                         raise UnexpectedToken(head)
@@ -521,18 +563,40 @@ class BatchFileEmulator:
                             ifelse |= If.Block
                             continue
                         else:
-                            yield EmulatedCommand(cmd)
+                            self.ec = yield EmulatedCommand(cmd)
+                elif head == 'EXIT':
+                    token, tail = self.split_head(tail, toupper=True)
+                    script_only = False
+                    if token == '/B':
+                        script_only = True
+                        token, tail = self.split_head(tail)
+                    try:
+                        exit_code = int(token, 10)
+                    except ValueError:
+                        exit_code = 0
+                    return Exit(exit_code, script_only)
+                elif head == 'CD' or head == 'CHDIR':
+                    directory, _ = self.split_head(tail, unquote=True, terminator_letters=B'')
+                    self.cwd = directory.rstrip()
+                elif head == 'PUSHD':
+                    directory, _ = self.split_head(tail, unquote=True, terminator_letters=B'')
+                    self.dirstack.append(self.cwd)
+                    self.cwd = directory.rstrip()
+                elif head == 'POPD':
+                    try:
+                        self.cwd = self.dirstack.pop()
+                    except IndexError:
+                        pass
                 elif head == 'GOTO':
                     label, tail = self.split_head(tail)
                     if label.startswith(':'):
                         label = label[1:]
-                    yield EmulatedCommand(command)
-                    raise Goto(label)
-                elif head == 'FOR':
-                    yield EmulatedCommand(command)
+                    self.ec = yield EmulatedCommand(command)
+                    return Goto(label)
                 else:
-                    yield EmulatedCommand(command)
+                    self.ec = yield EmulatedCommand(command)
                 ifelse = If.Inactive
+        return Exit()
 
     def _decode(self, data: buf):
         if data[:3] == B'\xEF\xBB\xBF':

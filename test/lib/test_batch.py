@@ -4,6 +4,12 @@ from refinery.lib.batch import BatchFileEmulator
 from .. import TestBase
 
 
+def emulate(cls):
+    if code := getdoc(cls):
+        return BatchFileEmulator(code)
+    raise ValueError
+
+
 class TestBatchEmulator(TestBase):
 
     def test_arithmetic_if(self):
@@ -22,8 +28,7 @@ class TestBatchEmulator(TestBase):
         self.assertEqual(_bat('"^="==^='), 'false')
 
     def test_file_exists(self):
-        @BatchFileEmulator
-        @getdoc
+        @emulate
         class bat:
             '''
             @echo off
@@ -35,8 +40,7 @@ class TestBatchEmulator(TestBase):
         self.assertListEqual(list(bat.emulate()), ['@echo off'])
 
     def test_labels_can_be_variables(self):
-        @BatchFileEmulator
-        @getdoc
+        @emulate
         class bat:
             '''
             @echo off
@@ -69,8 +73,7 @@ class TestBatchEmulator(TestBase):
             next(it)
 
     def test_delayed_expansion(self):
-        @BatchFileEmulator
-        @getdoc
+        @emulate
         class bat:
             '''
             @echo off
@@ -95,8 +98,7 @@ class TestBatchEmulator(TestBase):
             next(it)
 
     def test_else_without_block(self):
-        @BatchFileEmulator
-        @getdoc
+        @emulate
         class bat:
             '''
             @echo off
@@ -110,8 +112,7 @@ class TestBatchEmulator(TestBase):
             next(it)
 
     def test_set_has_weird_escaping_rules(self):
-        @BatchFileEmulator
-        @getdoc
+        @emulate
         class bat:
             '''
             @echo off
@@ -129,9 +130,48 @@ class TestBatchEmulator(TestBase):
         with self.assertRaises(StopIteration):
             next(it)
 
+    def test_block_not_treated_as_block_after_goto(self):
+        @emulate
+        class bat:
+            '''
+            @ECHO OFF
+            SET FOO=FOO
+            SET BAR=BAR
+            (
+                :BLOCK
+                SET BAR=BAROQUE
+                ECHO FOO=%FOO%
+                ECHO BAR=%BAR%
+                GOTO :%FOO%
+            )
+            :FOO
+            SET FOO=END
+            SET BAR=BARILLA
+            SET END=END
+            GOTO :BLOCK
+            :END
+            '''
+        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('ECHO'))
+        self.assertEqual(next(it), 'FOO=FOO')
+        self.assertEqual(next(it), 'BAR=BAR')
+        self.assertEqual(next(it), 'FOO=END')
+        self.assertEqual(next(it), 'BAR=BAROQUE')
+        with self.assertRaises(StopIteration):
+            next(it)
+
+    def test_default_errorlevel_is_zero(self):
+        @emulate
+        class bat:
+            '''
+            ECHO %ERRORLEVEL%
+            '''
+        it = iter(bat.emulate())
+        self.assertEqual(next(it), 'ECHO 0')
+        with self.assertRaises(StopIteration):
+            next(it)
+
     def test_batch_integers_in_variable_expansion(self):
-        @BatchFileEmulator
-        @getdoc
+        @emulate
         class bat:
             '''
             @echo off
