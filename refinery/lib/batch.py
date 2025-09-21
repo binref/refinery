@@ -11,6 +11,7 @@ from typing import Generator, Generic, List, TypeVar, Union, overload
 
 from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
+from refinery.lib.patterns import formats
 
 BatchCode = Union[str, List['BatchCode']]
 Block = List[BatchCode]
@@ -240,18 +241,18 @@ class BatchFileEmulator:
                 if not modifier.startswith(':~'):
                     raise EmulatorError
                 offset, _, length = modifier[2:].partition(',')
-                offset = int(offset)
+                offset = batchint(offset)
                 if offset < 0:
                     offset = max(0, len(base) + offset)
                 if length:
-                    end = offset + int(length)
+                    end = offset + batchint(length)
                 else:
                     end = len(base)
                 return base[offset:end]
         if delay:
             pattern = r'!([^!:\n]*)()!'
         else:
-            pattern = r'%([^%:\n]*)(:(?:~-?\d+(?:,-?\d+)?|[^=%\n]+=[^%\r\n]*))?%'
+            pattern = rf'%([^%:\n]*)(:(?:~{formats.integer}(?:,{formats.integer})?|[^=%\n]+=[^%\r\n]*))?%'
         if isinstance(block, str):
             return re.sub(pattern, expansion, block)
         else:

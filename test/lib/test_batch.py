@@ -128,3 +128,17 @@ class TestBatchEmulator(TestBase):
         self.assertEqual(next(it), 'THIRD')
         with self.assertRaises(StopIteration):
             next(it)
+
+    def test_batch_integers_in_variable_expansion(self):
+        @BatchFileEmulator
+        @getdoc
+        class bat:
+            '''
+            @echo off
+            set ALPHA=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+            echo %ALPHA:~0x10,010%
+            '''
+        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
+        self.assertEqual(next(it), 'QRSTUVWX')
+        with self.assertRaises(StopIteration):
+            next(it)
