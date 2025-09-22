@@ -41,8 +41,6 @@ class BlockTransformationBase(Unit, abstract=True):
         _truncate: Arg.Delete() = 0,
         **keywords
     ):
-        if precision < 0:
-            precision = blocksize
         self._truncate = _truncate
         super().__init__(bigendian=bigendian, blocksize=blocksize, precision=precision, **keywords)
 
@@ -54,11 +52,8 @@ class BlockTransformationBase(Unit, abstract=True):
             return '<'
 
     @cached_property
-    def _byte_order_adjective(self):
-        if self.args.bigendian:
-            return 'big'
-        else:
-            return 'little'
+    def _byte_order_adjective(self) -> Literal['big', 'little']:
+        return 'big' if self.args.bigendian else 'little'
 
     @property
     def bytestream(self):
@@ -208,7 +203,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         import numpy
         return numpy
 
-    def _fastblock(self, data):
+    def _fastblock(self, data) -> bytes | bytearray:
         """
         Attempts to perform the operation more quickly by using numpy arrays.
         """
@@ -221,7 +216,8 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         num_blocks = len(data) // self.blocksize
 
         try:
-            if self.precision is None:
+            if self.precision is INF:
+                # NumPy type for Python Objects
                 dtype = numpy.dtype('O')
             else:
                 dtype = numpy.dtype(F'{byte_order}u{self.precision!s}')
@@ -245,31 +241,55 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                 npa = numpy.fromiter(na, dtype, num_blocks)
             np_args.append(npa)
 
-        overlap = len(data) - num_blocks * self.blocksize
+        if (_truncate := self._truncate) >= 2 or (_t := len(data) - num_blocks * self.blocksize) <= 0:
+            rest = ()
+        else:
+            rest = data[-_t:]
+            if _truncate < 1:
+                last_ops = [next(a) for a in br_args]
+                last_int = int.from_bytes(rest, self._byte_order_adjective)
+                dst_tail = self.operate(last_int, *last_ops) & self.fmask
+                dst_tail = dst_tail.to_bytes(self.blocksize, self._byte_order_adjective)
+                rest = dst_tail[:_t]
 
         try:
             stype = numpy.dtype(F'{byte_order}u{self.blocksize}')
         except TypeError as T:
             raise FastBlockError from T
 
-        src = numpy.frombuffer(memoryview(data), stype, num_blocks)
+        if not isinstance(data, bytearray):
+            data = bytearray(data)
+
+        dst = data
+        src = numpy.frombuffer(dst, stype, num_blocks)
         if stype != dtype:
             src = src.astype(dtype)
+
         tmp = self.inplace(src, *np_args)
+
         if tmp is not None:
             src = tmp
+            dst = None
         if stype != dtype:
             src = src.astype(stype)
-        dst = bytearray(memoryview(src))
-        if overlap and self._truncate < 2:
-            rest = self.rest(data)
-            if self._truncate < 1:
-                last_ops = [next(a) for a in br_args]
-                last_int = int.from_bytes(rest, self._byte_order_adjective)
-                dst_tail = self.operate(last_int, *last_ops) & self.fmask
-                dst_tail = dst_tail.to_bytes(self.blocksize, self._byte_order_adjective)
-                rest = dst_tail[:overlap]
-            dst.extend(rest)
+            dst = None
+
+        mem = memoryview(src)
+
+        if dst is None:
+            dst = bytearray(mem)
+        elif (n := mem.nbytes) < len(dst):
+            del tmp
+            del mem
+            del src
+            try:
+                del dst[n:]
+            except BufferError:
+                import gc
+                gc.collect()
+                del dst[n:]
+
+        dst.extend(rest)
         return dst
 
     def process(self, data):
@@ -279,6 +299,8 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         except FastBlockError:
             pass
         except Exception as error:
+            if self.log_debug():
+                raise
             self.log_warn('falling back to default method after fast block failed with error:', error)
         else:
             self.log_debug('fast block method successful')
@@ -337,7 +359,7 @@ class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
     ):
         super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
 
-    def _argument_parse_hook(self, it: _I) -> tuple[bool, _I]:
+    def _argument_parse_hook(self, it: _I) -> tuple[_I, bool]:
         try:
             n = len(it)
         except TypeError:
@@ -346,7 +368,7 @@ class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
             if n == 1:
                 it = it[0]
         if masked := isinstance(it, int):
-            if self.args.blocksize == 0:
+            if not self.args.blocksize:
                 self.log_debug('detected numeric argument with no specified block size')
                 bits = it.bit_length()
                 if bits > self.blocksize * 8:
@@ -363,11 +385,11 @@ class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
         try:
             blocksize = self._blocksize
         except AttributeError:
-            blocksize = None
+            blocksize = 0
         return blocksize or super().blocksize
 
     def process(self, data):
         try:
             return super().process(data)
         finally:
-            self._blocksize = None
+            self._blocksize = 0

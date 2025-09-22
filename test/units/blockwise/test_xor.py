@@ -9,6 +9,22 @@ class TestXOR(TestUnitBase):
         c = a | self.load(b) | bytes
         self.assertEqual(c, 2 * b)
 
+    def test_fastblock_01(self):
+        from refinery.units.blockwise.xor import xor
+        data = bytes.fromhex('39 39 31 7B 67 66 39 30 3B 27 30 1E')
+        unit = xor(0x55)
+        test = bytearray(unit._fastblock(data))
+        test.reverse()
+        self.assertEqual(test, b'Kernel32.dll')
+
+    def test_fastblock_02(self):
+        from refinery.units.blockwise.xor import xor
+        data = bytes.fromhex('39 39 31 7B 67 66 39 30 3B 27 30 1E')
+        unit = xor(0x55)
+        test = bytearray(unit._fastblock_fallback(data))
+        test.reverse()
+        self.assertEqual(test, b'Kernel32.dll')
+
     def test_accu_reduction(self):
         xor1 = self.ldu('xor', 'accu[12]:(A*7+23)')
         xor2 = self.ldu('xor', 'accu[12]:(A*7+23)&0xFF')
