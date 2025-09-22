@@ -59,6 +59,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.archive.xtnuitka import xtnuitka  ; yield xtnuitka  # noqa
         # fallbacks that have to be attempted last
         from refinery.units.formats.json import xtjson                ; yield xtjson    # noqa
+        from refinery.units.formats.xml import xtxml                  ; yield xtxml     # noqa
         from refinery.units.formats.exe.vsect import vsect            ; yield vsect     # noqa
 
     def unpack(self, data):
