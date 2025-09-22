@@ -348,20 +348,31 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
                 return (1 / length, scount)
 
             def walk(node: XMLNodeBase):
-                candidates = [
-                    candidate for candidate, count in Counter(
-                        key for child in node.children for key, val in child.attributes.items()
-                        if len(val) in range(2, 65) and re.fullmatch(R'[-\s\w+,.;@()]+', nval(val))
-                    ).items()
-                    if count == len(node.children) == len(
-                        {child.attributes[candidate] for child in node.children})
-                ]
+                children = node.children
+                __tags = set()
+                for child in children:
+                    if (tag := child.tag) not in __tags:
+                        __tags.add(tag)
+                        continue
+                    candidates = [
+                        candidate for candidate, count in Counter(
+                            key for child in children for key, val in child.attributes.items()
+                            if len(val) in range(2, 65) and re.fullmatch(R'[-\s\w+,.;@()]+', nval(val))
+                        ).items()
+                        if count == len(children) == len(
+                            {child.attributes[candidate] for child in children})
+                    ]
+                    break
+                else:
+                    candidates = None
                 if not candidates:
                     attr = None
                 else:
                     candidates.sort(key=rank_attribute)
+                    import sys
+                    print(candidates, file=sys.stderr)
                     attr = candidates[0]
-                for child in node.children:
+                for child in children:
                     nmap[child.path] = attr
                     walk(child)
 
