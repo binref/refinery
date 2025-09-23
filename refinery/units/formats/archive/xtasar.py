@@ -31,7 +31,8 @@ class AsarHeader(Struct):
 
 class xtasar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
-    Extract files from a ASAR archive.
+    Extract files from Atom Shell Archives (ASAR). These are often used to bundle Electron application
+    data and resources.
     """
     def unpack(self, data: bytearray):
         def _unpack(dir: JSONDict, *path):
