@@ -35,7 +35,11 @@ class SampleStore:
             try:
                 with urllib.request.urlopen(req, timeout=remaining) as response:
                     encoded_sample = tobytearray(response.read())
-            except (http.client.RemoteDisconnected, socket.timeout, urllib.error.HTTPError):
+            except (
+                http.client.RemoteDisconnected,
+                socket.timeout,
+                urllib.error.URLError,
+            ):
                 time.sleep(wait)
                 wait *= 2
                 backoff += 1
