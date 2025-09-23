@@ -369,8 +369,6 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
                     attr = None
                 else:
                     candidates.sort(key=rank_attribute)
-                    import sys
-                    print(candidates, file=sys.stderr)
                     attr = candidates[0]
                 for child in children:
                     nmap[child.path] = attr
