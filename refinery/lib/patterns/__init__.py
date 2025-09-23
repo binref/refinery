@@ -287,7 +287,10 @@ _pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=_pattern_pathpart_nos
 _pattern_nix_path_element = R'(?:{n} ){{0,1}}{n}'.format(n=_pattern_pathpart_nospace)
 _pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]*%'
 
-_pattern_win_path_template = R'(?:{s}|{p}|)(?P<__pathsep__>[\\\/])(?:{p}(?P=__pathsep__))*{p}(?:(?P=__pathsep__)|\b)'
+_pattern_win_path_template_abs = R'(?:{s})(?P<__pathsep__>[\\\/])(?:{p}(?P=__pathsep__))*{p}(?:(?P=__pathsep__)|\b)'
+_pattern_win_path_template_rel = R'(?:{p}|)\\(?:{p}\\)*{p}(?:\\|\b)'
+_pattern_win_path_template = F'(?:{_pattern_win_path_template_abs}|{_pattern_win_path_template_rel})'
+
 _pattern_win_root = '|'.join([
     _pattern_win_env_variable,    # environment variable
     R'[A-Za-z]:',                 # drive letter with colon
