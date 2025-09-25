@@ -6,9 +6,17 @@
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
 ## Version 0.9.4
+- The `xtmsi` unit now exposes several metadata streams that were discarded before,
+  one important example being the digital signature.
+- Changes have been made to how the `xtxml` unit constructs paths into the document structure,
+  in cases where tag names are unique these will now be prioritized.
+- The backend for the `bat` unit was swapped for a new and rudimentary emulator;
+  this will be improved upon in future releases.
 - The `decompress` unit was extended with a new heuristic tier:
   If any decompression produces output that is recognized as matching a known format,
   the unit will pick the best result from among all results with this property.
+- Type hints across the refinery code base have undergone massive refactoring and should be
+  better compatible with modern type checkers now.
 
 ## Version 0.9.3 - bugfix release
 
