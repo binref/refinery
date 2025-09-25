@@ -648,7 +648,7 @@ class StructReader(MemoryFile[T, T]):
                     if part == 'a':
                         data.append(self.read_c_string())
                     elif part == 'g':
-                        data.append(self.read_guid())
+                        data.append(str(self.read_guid()))
                     elif part == 'u':
                         data.append(self.read_w_string())
                     elif part == 'w':
