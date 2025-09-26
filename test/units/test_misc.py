@@ -434,7 +434,7 @@ class TestScoping(TestUnitBase):
                 ]| resplit '\b[A-Z0-9]{5,}\(((??ps1str))\)'
                  | scope 1::2
                  | escvb
-                 | rex '(.*?)IDWTOQ(.*)' {1:map[{2},v:v:keymap]:escvb!}
+                 | rex '(.*?)IDWTOQ(.*)' {1:map[{2},v:v:keymap]:!escvb}
             ]| xtp url
         ''')
         test = data | pipe | str

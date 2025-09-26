@@ -476,7 +476,7 @@ class DelayedArgumentDispatch:
         self.units = {}
 
     def _get_unit(self, name: str, *args) -> Unit | None:
-        name, rev, empty = normalize_to_identifier(name).partition(_REVERSE_SIGN)
+        empty, rev, name = normalize_to_identifier(name).rpartition(_REVERSE_SIGN)
         if empty:
             return None
         uhash = hash((name,) + args)
@@ -759,10 +759,10 @@ class DelayedArgument(LazyEvaluation):
         """
         return string.encode('LATIN-1')
 
-    @handler.register('h!', 'H!')
-    def hexencode(self, string: bytes) -> bytes:
-        """
-        The modifier `h!` (or `H!`) encodes the input as hexadecimal.
+    @handler.register(F'{_REVERSE_SIGN}h', F'{_REVERSE_SIGN}H')
+    def bang_h(self, string: bytes) -> bytes:
+        F"""
+        The modifier `{_REVERSE_SIGN}h` (or `{_REVERSE_SIGN}H`) encodes the input as hexadecimal.
         """
         import base64
         return base64.b16encode(string)
@@ -783,6 +783,15 @@ class DelayedArgument(LazyEvaluation):
         """
         from refinery.units.encoding.esc import esc
         return esc().process(string)
+
+    @handler.register(F'{_REVERSE_SIGN}n')
+    def bang_n(self, string: bytes) -> bytes:
+        F"""
+        The modifier `{_REVERSE_SIGN}n:string` returns an escaped and quoted version of the
+        input string.
+        """
+        from refinery.units.encoding.esc import esc
+        return esc(quoted=True).reverse(string)
 
     @handler.register('q', 'Q', final=True)
     def q(self, string: str) -> bytes:
