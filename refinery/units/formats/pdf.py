@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
+import json
 
 from itertools import islice
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pypdf.generic import EncodedStreamObject
+    from pikepdf import Object
     from pymupdf import Page
 
 from refinery.lib.mime import get_cached_file_magic_info
@@ -23,11 +24,10 @@ class xtpdf(ArchiveUnit):
     """
     Extract objects from PDF documents.
     """
-    @ArchiveUnit.Requires('pypdf>=3.1.0', ['formats', 'default', 'extended'])
-    def _pypdf2():
-        import pypdf
-        import pypdf.generic
-        return pypdf
+    @ArchiveUnit.Requires('pikepdf~=9.0', ['formats', 'default', 'extended'])
+    def _pikepdf():
+        import pikepdf
+        return pikepdf
 
     @ArchiveUnit.Requires('pymupdf', ['formats', 'default', 'extended'])
     def _mupdf():
@@ -37,18 +37,14 @@ class xtpdf(ArchiveUnit):
         import pymupdf
         return pymupdf
 
-    def _walk_raw(self, blob, memo: set[int] | None = None, *path):
-        while isinstance(blob, self._pypdf2.generic.IndirectObject):
-            try:
-                blob = blob.get_object()
-            except Exception:
-                break
+    def _walk_raw(self, blob: Object, memo: list[Object] | None = None, *keys):
         if memo is None:
-            memo = {id(blob)}
-        elif id(blob) in memo:
+            memo = [blob]
+        elif blob in memo:
             return
         else:
-            memo.add(id(blob))
+            memo.append(blob)
+
         try:
             name = blob['/F']
             blob = blob['/EF']['/F']
@@ -57,92 +53,76 @@ class xtpdf(ArchiveUnit):
         else:
             def unhex(match):
                 return bytes.fromhex(match[1]).decode('latin1')
-            name = re.sub('#([0-9a-fA-F]{2})', unhex, name)
-            path = *path[:-1], F'/{name}'
-        try:
-            def extract():
-                with NoLogging():
-                    return get_data()
-            if TYPE_CHECKING:
-                blob = cast(EncodedStreamObject, blob)
-            get_data = blob.get_data
-        except AttributeError:
-            pass
-        else:
-            yield UnpackResult(''.join(path), extract, kind='object')
-            return
+            name = re.sub('#([0-9a-fA-F]{2})', unhex, str(name))
+            keys = *keys, F'/{name}'
 
-        if isinstance(blob, self._pypdf2.generic.ByteStringObject):
-            yield UnpackResult(''.join(path), blob, kind='bytes')
-            return
-        if isinstance(blob, self._pypdf2.generic.TextStringObject):
-            yield UnpackResult(''.join(path), blob.encode(self.codec), kind='string')
-            return
+        pike = self._pikepdf
+        meta = {}
+        path = ''.join(keys)
+        done = set()
 
-        if isinstance(blob, (
-            self._pypdf2.generic.BooleanObject,
-            self._pypdf2.generic.ByteStringObject,
-            self._pypdf2.generic.FloatObject,
-            self._pypdf2.generic.NameObject,
-            self._pypdf2.generic.NullObject,
-            self._pypdf2.generic.NumberObject,
-            self._pypdf2.generic.RectangleObject,
-        )):
-            # unhandled PDF objects
-            return
-
-        if isinstance(blob, self._pypdf2.generic.TreeObject):
-            blob = list(blob)
-
-        pdf = self._pypdf2.generic.PdfObject
-
-        if isinstance(blob, list):
-            if (
-                len(blob) % 2 == 0
-                and all(isinstance(key, str) for key in islice(iter(blob), 0, None, 2))
-                and all(isinstance(key, pdf) for key in islice(iter(blob), 1, None, 2))
-            ):
-                blob = dict(zip(*([iter(blob)] * 2)))
-            else:
-                for key, value in enumerate(blob):
-                    yield from self._walk_raw(value, memo, *path, F'/{key}')
+        if isinstance(blob, pike.Dictionary):
+            nested = {}
+            for key, value in blob.items():
+                if isinstance(value, pike.Name):
+                    value = str(value)
+                if isinstance(value, (int, float, str, bool)):
+                    key = key.lstrip('/')
+                    meta[key] = value
+                    continue
+                nested[key] = value
+                done.add(key)
+            for key, value in nested.items():
+                yield from self._walk_raw(value, memo, *keys, key)
+            if meta:
+                yield UnpackResult(path, blob.to_json(dereference=True))
                 return
-
-        if not isdict(blob):
+        elif isinstance(blob, pike.Array):
+            for key, value in enumerate(iter(blob)):
+                if isinstance(value, pike.Object):
+                    yield from self._walk_raw(value, memo, *keys, F'/{key}')
             return
 
-        assert isinstance(blob, dict)
-
-        for key, value in blob.items():
-            if not isinstance(key, str):
-                continue
-            if not key.startswith('/'):
-                key = F'/{key}'
-            yield from self._walk_raw(value, memo, *path, key)
+        try:
+            buffer = blob.get_stream_buffer()
+        except Exception:
+            try:
+                buffer = blob.get_raw_stream_buffer()
+            except Exception:
+                buffer = None
+        if buffer or buffer:
+            yield UnpackResult(path, bytearray(buffer))
+        elif isinstance(blob, pike.String):
+            yield UnpackResult(path, bytes(blob))
+        elif isinstance(blob, pike.Object):
+            yield UnpackResult(path, blob.to_json())
 
     def unpack(self, data):
         try:
             mu = self._mupdf.open(stream=data, filetype='pdf')
         except Exception:
-            mu = password = None
+            mu = None
+            password = ''
         else:
-            if password := self.args.pwd or None:
+            if password := self.args.pwd or '':
                 if mu.is_encrypted:
                     mu.authenticate(password)
                 else:
                     self.log_warn('This PDF document is not protected; ignoring password argument.')
-                    password = None
+                    password = ''
             elif mu.is_encrypted:
                 raise ValueError('This PDF is password protected.')
 
         with MemoryFile(data, output=bytes) as stream:
-            with NoLogging():
-                pdf = self._pypdf2.PdfReader(stream, password=password)
-                catalog = pdf.trailer['/Root']
-                yield from self._walk_raw(catalog, None, 'raw')
+            pdf = self._pikepdf.open(stream, password=password)
+            yield from self._walk_raw(pdf.trailer, None, 'raw')
 
         if mu is None:
             return
+
+        if (md := mu.metadata) and (md := {k: v for k, v in md.items() if v}):
+            md = json.dumps(md, indent=4)
+            yield UnpackResult('parsed/meta.json', md.encode(self.codec))
 
         for k in range(len(mu)):
             with NoLogging(NoLogging.Mode.ALL):

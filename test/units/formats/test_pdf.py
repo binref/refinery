@@ -6,15 +6,15 @@ class TestPDF(TestUnitBase):
     def test_pdf_maldoc_with_embedded_flash(self):
         data = self.download_sample('76b19c1e705328cab4d98e546095eb5eb601d23d8102e6e0bfb0a8a6ab157366')
 
-        unit = self.load('raw/*', list=True)
-        self.assertSetEqual(data | unit | {str}, {
-            'raw/Metadata',
-            'raw/OpenAction/JS',
-            'raw/Pages/Kids/0/Annots/0/NM',
-            'raw/Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/fqMBgzoMVutzNwk.swf',
-        })
+        test = data | self.load('raw/*', list=True) | {str}
+        self.assertLessEqual({
+            'raw/Root/Metadata',
+            'raw/Root/OpenAction/JS',
+            'raw/Root/Pages/Kids/0/Annots/0/NM',
+            'raw/Root/Pages/Kids/0/Annots/0/RichMediaContent/Assets/Names/1/fqMBgzoMVutzNwk.swf',
+        }, test)
 
-        unit = self.load('Pages/*')
+        unit = self.load('Pages/*NM', 'Pages/*.swf')
         name, swf = data | unit
         self.assertEqual(name, B'fqMBgzoMVutzNwk.swf')
         self.assertEqual(swf[:3], B'CWS')
