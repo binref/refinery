@@ -390,6 +390,8 @@ class formats(PatternEnum):
     "A hex-encoded buffer using URL escape sequences"
     intarray = tokenize(_pattern_integer, sep=R'[;,]', bound='', unique_sep=True)
     "Sequences of integers, separated by commas or semicolons"
+    strarray = tokenize(_pattern_string, sep=R'[;,]', bound='', unique_sep=True)
+    "Sequences of strings, separated by commas or semicolons"
     numarray = tokenize(_pattern_number, sep=R'[;,]', bound='', unique_sep=True)
     "Sequences of numbers, separated by commas or semicolons"
     word = alphabet(R'\\w')
