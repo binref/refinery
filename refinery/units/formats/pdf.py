@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import json
 
-from itertools import islice
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
