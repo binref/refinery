@@ -7,12 +7,12 @@ import itertools
 import ntpath
 import re
 
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from typing import Generator, Generic, List, TypeVar, Union, overload
 
 from refinery.lib.deobfuscation import cautious_eval_or_default
-from refinery.lib.types import buf
 from refinery.lib.patterns import formats
+from refinery.lib.types import buf
 
 BatchCode = Union[str, List['BatchCode']]
 Block = List[BatchCode]
