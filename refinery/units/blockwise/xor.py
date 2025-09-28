@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from itertools import islice
+
 from refinery.units.blockwise import BinaryOperationWithAutoBlockAdjustment, FastBlockError
 
 
@@ -13,7 +15,6 @@ class xor(BinaryOperationWithAutoBlockAdjustment):
     def inplace(a, b): a ^= b
 
     def _fastblock_fallback(self, data):
-        from itertools import islice
         from Cryptodome.Util import strxor
         size = len(data)
         it, masked = self._argument_parse_hook(self.args.argument[0])
