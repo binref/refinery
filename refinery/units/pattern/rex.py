@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Match
 
-from refinery.lib.meta import metavars
+from refinery.lib.meta import ByteStringWrapper, metavars
 from refinery.lib.types import Param
 from refinery.units import Chunk
 from refinery.units.pattern import Arg, PatternExtractor, SingleRegexUnit
@@ -56,31 +56,35 @@ class rex(SingleRegexUnit, PatternExtractor):
 
     def process(self, data):
         meta = metavars(data)
+        wrap = ByteStringWrapper.Wrap(data)
         self.log_debug('regular expression:', getattr(self.regex, 'pattern', self.regex))
         transformations = []
         specs: list[str] = list(self.args.transformation)
         if not specs:
             specs.append('{0}')
         for spec in specs:
-            def transformation(match: Match, s=spec):
-                symb: dict = match.groupdict()
-                args: list = [match.group(0), *match.groups()]
-                used = set()
-                for key, value in symb.items():
-                    if value is None:
-                        symb[key] = B''
-                symb[_FORWARD_VAR] = data
-                item = meta.format(s, self.codec, args, symb, True, True, used)
-                used.update(key for key, value in symb.items() if not value)
-                used.add(_FORWARD_VAR)
-                for variable in used:
-                    symb.pop(variable, None)
-                symb.update(offset=match.start())
-                chunk = Chunk(item)
-                chunk.meta.update(meta)
-                chunk.meta.update(symb)
-                return chunk
-            transformations.append(transformation)
+            if spec.startswith('{') and spec.endswith('}') and (group := spec[1:-1]).isdigit():
+                transformations.append(int(group))
+            else:
+                def transformation(match: Match, s=spec):
+                    symb: dict = match.groupdict()
+                    args: list = [match.group(0), *match.groups()]
+                    used = set()
+                    for key, value in symb.items():
+                        if value is None:
+                            symb[key] = B''
+                    symb[_FORWARD_VAR] = wrap
+                    item = meta.format(s, self.codec, args, symb, True, True, used)
+                    used.update(key for key, value in symb.items() if not value)
+                    used.add(_FORWARD_VAR)
+                    for variable in used:
+                        symb.pop(variable, None)
+                    symb.update(offset=match.start())
+                    chunk = Chunk(item)
+                    chunk.meta.update(meta)
+                    chunk.meta.update(symb)
+                    return chunk
+                transformations.append(transformation)
         yield from self.matches_filtered(memoryview(data), self.regex, *transformations)
 
 

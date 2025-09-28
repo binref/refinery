@@ -13,7 +13,9 @@ from refinery.lib.types import AST, INF, Callable, Iterable, Param, buf
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    MT = tuple[int, re.Match[bytes]]
+    from typing import Tuple
+    MT = Tuple[int, re.Match[bytes]]
+    MB = re.Match[bytes]
 
 
 class PatternExtractorBase(Unit, abstract=True):
@@ -85,20 +87,25 @@ class PatternExtractorBase(Unit, abstract=True):
                 break
 
     def _postfilter(self, matches: Iterable[MT]) -> Iterable[MT]:
-        result = matches
-        if self.args.longest and self.args.take and self.args.take is not INF:
-            if not isinstance(result, (list, tuple)):
-                result = list(result)
-            indices = sorted(
-                range(len(result)),
-                key=lambda k: len(result[k][1][0]),
-                reverse=True)
-            for k in sorted(islice(indices, abs(self.args.take))):
-                yield result[k]
+        if (t := self.args.take) is not INF:
+            if self.args.longest:
+                result = matches
+                if not isinstance(result, (list, tuple)):
+                    result = list(result)
+                indices = sorted(
+                    range(len(result)),
+                    key=lambda k: len(result[k][1][0]),
+                    reverse=True)
+                for k in sorted(islice(indices, t)):
+                    yield result[k]
+            else:
+                yield from islice(matches, t)
         elif self.args.longest:
-            yield from sorted(result, key=lambda m: m[1].end() - m[1].start(), reverse=True)
-        elif self.args.take:
-            yield from islice(result, abs(self.args.take))
+            def sortkey(m: MT):
+                return m[1].end() - m[1].start()
+            yield from sorted(matches, key=sortkey, reverse=True)
+        else:
+            yield from matches
 
     def matchfilter(self, matches: Iterable[MT]) -> Iterable[MT]:
         yield from self._postfilter(self._prefilter(matches))
@@ -107,7 +114,7 @@ class PatternExtractorBase(Unit, abstract=True):
         self,
         data: buf,
         pattern: buf | re.Pattern,
-        *transforms: Callable[[re.Match[bytes]], buf] | None
+        *transforms: int | buf | Callable[[MB], buf | None]
     ):
         """
         This is a wrapper for `AbstractRegexUint.matches` which filters the
@@ -115,19 +122,21 @@ class PatternExtractorBase(Unit, abstract=True):
         dictionary mapping its position (start, end) in the input data to the
         filtered and transformed match that was found at this position.
         """
-        tf = [(f if callable(f) else lambda _: f) for f in transforms]
-        tf = tf or [lambda m: m[0]]
-
         if self.args.stripspace:
             data = re.sub(BR'\s+', B'', data)
         for k, (offset, match) in enumerate(self.matchfilter(self.matches(memoryview(data), pattern))):
-            for transform in tf:
-                t = transform(match)
-                if t is None:
-                    continue
-                t = self.labelled(t, offset=offset)
-                t.set_next_batch(k)
-                yield t
+            for transform in transforms:
+                if isinstance(transform, int):
+                    transformed = match[transform]
+                elif callable(transform):
+                    transformed = transform(match)
+                    if transformed is None:
+                        continue
+                else:
+                    transformed = transform
+                chunk = self.labelled(transformed, offset=offset)
+                chunk.set_next_batch(k)
+                yield chunk
 
 
 class PatternExtractor(PatternExtractorBase, abstract=True):
