@@ -85,7 +85,12 @@ class rex(SingleRegexUnit, PatternExtractor):
                     chunk.meta.update(symb)
                     return chunk
                 transformations.append(transformation)
-        yield from self.matches_filtered(memoryview(data), self.regex, *transformations)
+        yield from self.matches_filtered(
+            memoryview(data),
+            self.regex,
+            *transformations,
+            expose_named_groups=True
+        )
 
 
 if __doc := rex.__doc__:

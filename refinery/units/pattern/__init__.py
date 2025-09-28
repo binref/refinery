@@ -114,7 +114,8 @@ class PatternExtractorBase(Unit, abstract=True):
         self,
         data: buf,
         pattern: buf | re.Pattern,
-        *transforms: int | buf | Callable[[MB], buf | None]
+        *transforms: int | buf | Callable[[MB], buf | None],
+        expose_named_groups: bool = False,
     ):
         """
         This is a wrapper for `AbstractRegexUint.matches` which filters the
@@ -128,15 +129,21 @@ class PatternExtractorBase(Unit, abstract=True):
             transforms = 0,
         for k, (offset, match) in enumerate(self.matchfilter(self.matches(memoryview(data), pattern))):
             for transform in transforms:
-                if isinstance(transform, int):
-                    transformed = match[transform]
-                elif callable(transform):
+                kwargs: dict = {
+                    'offset': offset
+                }
+                if callable(transform):
                     transformed = transform(match)
                     if transformed is None:
                         continue
                 else:
-                    transformed = transform
-                chunk = self.labelled(transformed, offset=offset)
+                    if isinstance(transform, int):
+                        transformed = match[transform]
+                    else:
+                        transformed = transform
+                    if expose_named_groups:
+                        kwargs.update(match.groupdict())
+                chunk = self.labelled(transformed, **kwargs)
                 chunk.set_next_batch(k)
                 yield chunk
 
