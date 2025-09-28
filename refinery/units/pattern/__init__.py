@@ -124,6 +124,8 @@ class PatternExtractorBase(Unit, abstract=True):
         """
         if self.args.stripspace:
             data = re.sub(BR'\s+', B'', data)
+        if not transforms:
+            transforms = 0,
         for k, (offset, match) in enumerate(self.matchfilter(self.matches(memoryview(data), pattern))):
             for transform in transforms:
                 if isinstance(transform, int):
