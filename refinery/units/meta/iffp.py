@@ -36,4 +36,5 @@ class iffp(ConditionalUnit, docs='{0}{p}{1}'):
         return False
 
 
-iffp.__doc__ = iffp.__doc__.format(", ".join(_PATTERNS))
+if __doc := iffp.__doc__:
+    iffp.__doc__ = __doc.format(", ".join(_PATTERNS))
