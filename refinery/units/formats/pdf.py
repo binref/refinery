@@ -23,7 +23,7 @@ class xtpdf(ArchiveUnit):
     """
     Extract objects from PDF documents.
     """
-    @ArchiveUnit.Requires('pikepdf==9.2.1', ['formats', 'default', 'extended'])
+    @ArchiveUnit.Requires('pikepdf<=9.5', ['formats', 'default', 'extended'])
     def _pikepdf():
         import pikepdf
         return pikepdf
