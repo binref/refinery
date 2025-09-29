@@ -4,7 +4,9 @@ import io
 import os
 import os.path
 
+from functools import lru_cache
 from itertools import cycle
+from pathlib import Path
 from string import Formatter
 
 from refinery.lib.meta import metavars
@@ -12,9 +14,9 @@ from refinery.lib.types import Param
 from refinery.units import Arg, RefineryCriticalException, Unit
 
 
-def _is_path_obstruction(p: str):
+def _is_path_obstruction(p: Path):
     try:
-        return os.path.exists(p) and not os.path.isdir(p)
+        return p.exists() and not p.is_dir()
     except Exception:
         return False
 
@@ -79,71 +81,56 @@ class dump(Unit):
     def _clipcopy(self):
         return not self.args.files
 
-    def _components(self, path: str):
-        def _reversed_components(path: str):
-            while True:
-                path, component = os.path.split(path)
-                if not component:
-                    break
-                yield component
-            yield path
-        components = list(_reversed_components(path))
-        components.reverse()
-        return components
-
-    def _fix_path(self, path) -> str:
-        base = ''
-        *parts, name = self._components(path)
-        while parts:
-            segment, *parts = parts
-            base = os.path.join(base, segment)
-            if not _is_path_obstruction(base):
-                continue
-            elif self.args.force:
-                try:
-                    os.unlink(base)
-                except Exception:
-                    raise RefineryCriticalException(F'Unable to dump to {path} because {base} is not a directory.')
-                else:
-                    self.log_info(F'removing path obstruction: {base}')
-                    continue
+    @lru_cache(maxsize=None)
+    def _fix_path_part(self, base: Path) -> Path:
+        if not _is_path_obstruction(base):
+            return base
+        if self.args.force:
+            try:
+                os.unlink(base)
+            except Exception:
+                raise RefineryCriticalException(F'Unable to remove path obstruction: {base}.')
             else:
-                stem, _, ex = base.rpartition('.')
-                base = stem = stem or ex
-                counter = 1
-                while _is_path_obstruction(base):
-                    base = F'{stem}.{counter}'
-                    counter += 1
-        return os.path.join(base, name)
+                self.log_info(F'removed path obstruction: {base}')
+                return base
+        else:
+            stem = base = base.with_suffix('')
+            counter = 0
+            while _is_path_obstruction(base):
+                base = stem.with_suffix(F'.{counter}')
+                counter += 1
+            return base
+
+    def _fix_path(self, path: Path) -> Path:
+        fixed = Path()
+        for p in path.parent.parts:
+            fixed = self._fix_path_part(fixed / p)
+        return fixed / path.name
 
     def _open(self, path, unc=False):
         if hasattr(path, 'close'):
             return path
-        for is_second_attempt in (False, True):
-            path = os.path.abspath(path)
-            base = os.path.dirname(path)
-            try:
-                os.makedirs(base, exist_ok=True)
-            except FileNotFoundError:
-                if is_second_attempt:
-                    raise
-                elif unc or os.name != 'nt':
-                    path = self._fix_path(path)
-                else:
-                    return self._open(F'\\\\?\\{path}', unc=True)
-            except FileExistsError:
-                if is_second_attempt:
-                    raise RefineryCriticalException(F'Unknown error while attempting to create directory: {base}')
-                path = self._fix_path(path)
-            except OSError as e:
-                if not self.log_info():
-                    self.log_warn('opening:', path)
-                self.log_warn('errored:', e.args[1])
-                return open(os.devnull, 'wb')
-            else:
-                self.log_info('opening:', path[4:] if unc else path)
-                mode = 'ab' if self.args.stream else 'wb'
-                return open(path, mode)
+        path = self._fix_path(Path(path).absolute())
+        base = path.parent
+        try:
+            os.makedirs(base, exist_ok=True)
+        except FileNotFoundError:
+            if unc or os.name != 'nt':
+                raise
+            return self._open(F'\\\\?\\{path}', unc=True)
+        except FileExistsError:
+            raise RefineryCriticalException(
+                F'Unknown error while attempting to create parent directory: {base}')
+        except OSError as e:
+            if not self.log_info():
+                self.log_warn('opening:', path)
+            self.log_warn('errored:', e.args[1])
+            return open(os.devnull, 'wb')
+        else:
+            info = str(path)
+            self.log_info('opening:', info[4:] if unc else info)
+            mode = 'ab' if self.args.stream else 'wb'
+            return path.open(mode)
 
     def _close(self, final=False):
         if not self.stream:
