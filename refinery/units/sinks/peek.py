@@ -296,27 +296,36 @@ class peek(HexViewer):
             self._colorama.init(wrap=False)
         except ImportError:
             pass
-        discarded = 0
-        it = iter(chunks)
-        buffer = collections.deque(itertools.islice(it, 0, 2))
-        buffer.reverse()
 
-        while buffer:
-            if self.isatty() and not buffer[0].visible:
-                buffer.popleft()
-                discarded += 1
-            else:
-                item = buffer.pop()
-                last = not bool(buffer)
-                item.temp = last
-                if not item.visible and self.isatty():
+        discarded = 0
+
+        if self.args.brief:
+            for chunk in chunks:
+                if not chunk.visible and self.isatty():
+                    discarded += 1
+                    continue
+                self.log_debug(chunk)
+                yield chunk
+        else:
+            it = iter(chunks)
+            buffer = collections.deque(itertools.islice(it, 0, 2))
+            buffer.reverse()
+            while buffer:
+                if self.isatty() and not buffer[0].visible:
+                    buffer.popleft()
                     discarded += 1
                 else:
-                    yield item
-            try:
-                buffer.appendleft(next(it))
-            except StopIteration:
-                pass
+                    item = buffer.pop()
+                    last = not bool(buffer)
+                    item.temp = last
+                    if not item.visible and self.isatty():
+                        discarded += 1
+                    else:
+                        yield item
+                try:
+                    buffer.appendleft(next(it))
+                except StopIteration:
+                    pass
 
         if discarded:
             self.log_warn(F'discarded {discarded} invisible chunks to prevent them from leaking into the terminal.')
