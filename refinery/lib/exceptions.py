@@ -20,18 +20,29 @@ class RefineryPartialResult(ValueError):
         return self.message
 
 
-class RefineryImportMissing(ModuleNotFoundError):
+class RefineryImportError(ImportError):
     """
-    A special variant of the `ModuleNotFoundError` exception which is raised when a dependency of a
+    A special variant of the `ImportError` exception used for missing dependencies.
+    """
+    def __init__(self, info: str | None):
+        super().__init__()
+        self.info = info
+
+    def __repr__(self):
+        return F'{self.__class__.__name__}({self.info!r})'
+
+
+class RefineryImportMissing(RefineryImportError):
+    """
+    A special variant of the `ImportError` exception which is raised when a dependency of a
     refinery unit is not installed in the current environment. The exception also provides hints
     about what package has to be installed in order to make that module available.
     """
-    def __init__(self, missing: str, dependencies: Collection[str] = (), more: str | None = None):
-        super().__init__()
+    def __init__(self, missing: str, dependencies: Collection[str] = (), info: str | None = None):
+        super().__init__(info)
         import shlex
         self.missing = missing
         self.install = shlex.join(dependencies)
-        self.more = more
         self.dependencies = dependencies or (missing,)
 
     def __repr__(self):

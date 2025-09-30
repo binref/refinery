@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Collection, Generic, TypeVar, cast
 
-from refinery.lib.exceptions import RefineryImportMissing
+from refinery.lib.exceptions import RefineryImportError, RefineryImportMissing
 
 if TYPE_CHECKING:
     from refinery.units import Unit
@@ -15,15 +15,18 @@ class MissingModule:
     This class can wrap a module import that is currently missing. If any attribute of the missing
     module is accessed, it raises `refinery.units.RefineryImportMissing`.
     """
-    def __init__(self, name, install=None, more=None):
+    def __init__(self, name, install=None, info=None, error=None):
         self.name = name
         self.install = install or [name]
-        self.more = more
+        self.info = info
+        self.error = error
 
     def __getattr__(self, key: str):
         if key.startswith('__') and key.endswith('__'):
             raise AttributeError(key)
-        raise RefineryImportMissing(self.name, self.install, more=self.more)
+        if (error := self.error) and isinstance(error, RefineryImportError):
+            raise error
+        raise RefineryImportMissing(self.name, self.install, info=self.info)
 
 
 class LazyDependency(Generic[Mod]):
@@ -38,7 +41,7 @@ class LazyDependency(Generic[Mod]):
     _imp: Callable[[], Mod]
     name: str
     dist: Collection[str]
-    more: str | None
+    info: str | None
 
     __slots__ = (
         '_mod',
@@ -46,13 +49,13 @@ class LazyDependency(Generic[Mod]):
         '_who',
         'name',
         'dist',
-        'more',
+        'info',
     )
 
-    def __init__(self, imp: Callable[[], Mod], name: str, dist: Collection[str], more: str | None):
+    def __init__(self, imp: Callable[[], Mod], name: str, dist: Collection[str], info: str | None):
         self.name = name
         self.dist = dist
-        self.more = more
+        self.info = info
         self._imp = imp
         self._mod = None
         self._who: set[type[Unit]] = set()
@@ -81,13 +84,14 @@ class LazyDependency(Generic[Mod]):
         if (mod := self._mod) is None:
             try:
                 mod = self._imp()
-            except ImportError:
+            except ImportError as error:
                 install = {self.name}
                 for unit in self._who:
                     if deps := unit.optional_dependencies:
                         for v in deps.values():
                             install.update(v)
-                mod = cast(Mod, MissingModule(self.name, install=install, more=self.more))
+                mod = cast(Mod, MissingModule(
+                    self.name, install=install, info=self.info, error=error))
             self._mod = mod
         return mod
 
@@ -116,7 +120,7 @@ class DependencyAccessor(Generic[Mod]):
         self.dependency.register(unit)
 
 
-def dependency(name: str, dist: Collection[str] = (), more: str | None = None, local: bool = False):
+def dependency(name: str, dist: Collection[str] = (), info: str | None = None, local: bool = False):
     """
     A decorator to mark up an optional dependency. The decorated function can import the module
     and return the module object. The `name` argument of the decorator specifies the name of the
@@ -125,11 +129,11 @@ def dependency(name: str, dist: Collection[str] = (), more: str | None = None, l
     method will turn into a `refinery.lib.dependencies.LazyDependency`.
     """
     def decorator(imp: Callable[[], Mod]):
-        return LazyDependency(imp, name, dist, more)
+        return LazyDependency(imp, name, dist, info)
     return decorator
 
 
-def dependency_accessor(name: str, dist: Collection[str] = (), more: str | None = None):
+def dependency_accessor(name: str, dist: Collection[str] = (), info: str | None = None):
     """
     The same description as for `refinery.lib.dependencies.dependency` applies here, except that
     this decorator is used to decorate static class methods which then turn into a property-like
@@ -148,5 +152,5 @@ def dependency_accessor(name: str, dist: Collection[str] = (), more: str | None 
     The `brotli` dependency is installed only when refinery is installed with the `all` extra.
     """
     def decorator(imp: Callable[[], Mod]):
-        return DependencyAccessor(LazyDependency(imp, name, dist, more))
+        return DependencyAccessor(LazyDependency(imp, name, dist, info))
     return decorator

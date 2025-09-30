@@ -179,6 +179,7 @@ from refinery.lib.environment import Logger, LogLevel, environment, logger
 from refinery.lib.exceptions import (
     RefineryCriticalException,
     RefineryException,
+    RefineryImportError,
     RefineryImportMissing,
     RefineryPartialResult,
     RefineryPotentialUserError,
@@ -1372,11 +1373,11 @@ class Unit(UnitBase, abstract=True):
         pass
 
     @staticmethod
-    def Requires(distribution: str, _buckets: Collection[str] = (), more: str | None = None):
+    def Requires(distribution: str, _buckets: Collection[str] = (), info: str | None = None):
         """
         Proxy to `refinery.lib.dependencies.dependency_accessor`.
         """
-        return dependency_accessor(distribution, _buckets, more)
+        return dependency_accessor(distribution, _buckets, info)
 
     @property
     def is_reversible(self) -> bool:
@@ -1482,10 +1483,11 @@ class Unit(UnitBase, abstract=True):
             self.log_warn('critical error:', exception.args[0])
         elif isinstance(exception, GeneratorExit):
             raise exception
-        elif isinstance(exception, RefineryImportMissing):
-            self.log_fail(F'dependency {exception.missing} is missing; run pip install {exception.install}')
-            if more := exception.more:
-                self.log_fail(more)
+        elif isinstance(exception, RefineryImportError):
+            if isinstance(exception, RefineryImportMissing):
+                self.log_fail(F'dependency {exception.missing} is missing; run pip install {exception.install}')
+            if info := exception.info:
+                self.log_fail(info)
         elif isinstance(exception, RefineryException):
             self.log_fail(exception.args[0])
         else:

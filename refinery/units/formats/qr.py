@@ -1,7 +1,43 @@
 from __future__ import annotations
 
+import sys
+
+from refinery.lib.exceptions import RefineryImportError
 from refinery.lib.structures import MemoryFile
 from refinery.units import Unit
+
+if sys.platform.startswith('win'):
+    _ZBAR_FOOTNOTE = None
+    _ZBAR_ON_ERROR = None
+    _ZBAR__INSTALL = None
+else:
+    _ZBAR_FOOTNOTE = 'you will also have to install the zbar shared library'
+    _ZBAR_ON_ERROR = 'you have to install the zbar shared library'
+    _ZBAR__INSTALL = None
+    if sys.platform == 'darwin':
+        _ZBAR__INSTALL = 'brew install zbar'
+    if sys.platform == 'linux':
+        import shutil
+        for mngr, cmd in {
+            'apt'    : 'install libzbar0',
+            'dnf'    : 'install zbar',
+            'yum'    : 'install zbar',
+            'pacman' : '-S zbar',
+            'zypper' : 'instasll zbar',
+            'apk'    : 'add zbar',
+            'emerge' : 'media-libs/zbar',
+        }.items():
+            try:
+                if shutil.which(mngr):
+                    _ZBAR__INSTALL = F'{mngr} {cmd}'
+                    break
+            except BaseException:
+                break
+
+
+if _ZBAR_ON_ERROR:
+    _ZBAR_FOOTNOTE = F'{_ZBAR_FOOTNOTE}; {_ZBAR__INSTALL}'
+    _ZBAR_ON_ERROR = F'{_ZBAR_ON_ERROR}; {_ZBAR__INSTALL}'
 
 
 class qr(Unit):
@@ -9,11 +45,19 @@ class qr(Unit):
     Extract information from bar codes, especially QR codes. This unit is a thin proxy around the
     pyzbar library, which itself only provides Python bindings for the ZBar library.
     """
-    @Unit.Requires('pyzbar', ['formats', 'extended', 'all'],
-        more='you also have to install the zbar shared library separately')
+    @Unit.Requires('pyzbar', ['formats', 'extended', 'all'], info=_ZBAR_FOOTNOTE)
     def _pyzbar():
-        import pyzbar
-        import pyzbar.pyzbar
+        try:
+            import pyzbar
+            import pyzbar.pyzbar
+        except ModuleNotFoundError:
+            raise
+        except ImportError as ie:
+            msg = str(ie).split()
+            if 'zbar' in msg and 'shared' in msg:
+                if info := _ZBAR_ON_ERROR:
+                    raise RefineryImportError(info)
+            raise RefineryImportError(F'there was an unexpected error importing pyzbar: {ie!s}')
         return pyzbar
 
     @Unit.Requires('Pillow', ['formats', 'extended', 'all'])
@@ -22,8 +66,14 @@ class qr(Unit):
         return Image
 
     def process(self, data):
-        img = self._image.open(MemoryFile(data, output=bytes))
-        bar = self._pyzbar.pyzbar.decode(img)
+        try:
+            img = self._image.open(MemoryFile(data, output=bytes))
+        except ImportError:
+            raise
+        except Exception:
+            raise ValueError('the input data is not recognized as an image')
+        else:
+            bar = self._pyzbar.pyzbar.decode(img)
         for data in bar:
             self.log_debug(data)
             if not (data := getattr(data, 'data', None)):
