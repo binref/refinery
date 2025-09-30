@@ -385,8 +385,8 @@ class vstack(Unit):
     """
     def __init__(
         self,
-        *address: Param[str, Arg.Bounds(metavar='a[:b]',
-            help='Specify the (virtual) addresses of what to emulate; optionally specify a stop address.')],
+        *address: Param[str, Arg.Bounds(metavar='a[:end|::size]',
+            help='Specify the (virtual) addresses of what to emulate; optionally specify a stop address or a length.')],
         base: Param[int | None, Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.')] = None,
         arch: Param[str | Arch, Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
         engine: Param[str | _engine, Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
@@ -527,7 +527,9 @@ class vstack(Unit):
                 if isinstance(sliced, int):
                     sliced = slice(sliced, None)
                 elif sliced.step and sliced.step != 1:
-                    raise RuntimeError(F'emulation ranges cannot specify a step: {a}')
+                    if sliced.stop is not None:
+                        raise RuntimeError(F'invalid emulation range: {a}')
+                    sliced = slice(sliced.start, sliced.start + sliced.step, None)
                 return sliced
 
         addresses = [parse_address(a) for a in args.address]
