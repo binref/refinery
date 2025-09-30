@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.types import Param, isq
+from refinery.lib.types import Param
 
 if True:
     import colorama
@@ -14,12 +14,11 @@ import re
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TypeVar, Callable, Literal, cast
 
-from refinery.lib.argformats import ParserVariableMissing, PythonExpression
+from refinery.lib.argformats import sliceobj
 from refinery.lib.emulator import (
     EmulationError,
-    Emulator,
     Hook,
     IcicleEmulator,
     SpeakeasyEmulator,
@@ -31,11 +30,9 @@ from refinery.lib.meta import metavars
 from refinery.lib.structures import StructReader
 from refinery.lib.tools import bounds, exception_to_string, isbuffer
 from refinery.lib.types import INF
-from refinery.units import Arg, Unit
+from refinery.units import Arg, Unit, Chunk
 
-if TYPE_CHECKING:
-    from typing import TypeVar
-    FN = TypeVar('FN')
+FN = TypeVar('FN', bound=Callable)
 
 
 class _engine(enum.Enum):
@@ -111,261 +108,264 @@ class EmuState:
         return F'0x{address:0{self.address_width}X}'
 
 
-def inject_state_argument(pfn: FN) -> FN:
-    @functools.wraps(pfn)
-    def wrapped(self: VStackEmulatorMixin, *args, **kwargs):
-        if 'state' in kwargs:
-            kwargs.update(state=self.state)
-        else:
-            *head, state = args
-            if state is None:
-                args = *head, self.state
-        try:
-            return pfn(self, *args, **kwargs)
-        except KeyboardInterrupt:
-            self.halt()
-            return False
-    return wrapped
+def EmuFactory(base: Literal[SpeakeasyEmulator | IcicleEmulator | UnicornEmulator]):
 
-
-class VStackEmulatorMixin(Emulator[Any, Any, EmuState]):
-
-    def stackrange(self):
-        return Range(self.stack_base, self.stack_base + self.stack_size)
-
-    def disassemble(self, address: int):
-        try:
-            return self.disassemble_instruction(address)
-        except Exception:
-            return None
-
-    def hook_api_call(self, _, name: str, function, args: tuple[int, ...], **ka) -> bool:
-        def _repr(x):
-            if not isinstance(x, int):
-                return repr(x)
-            try:
-                data = self.mem_read(x, 0x200)
-            except Exception:
-                data = None
+    def inject_state_argument(pfn: FN) -> FN:
+        @functools.wraps(pfn)
+        def wrapped(self: VStackEmulator, *args, **kwargs):
+            if 'state' in kwargs:
+                kwargs.update(state=self.state)
             else:
-                read = StructReader(data)
-                try:
-                    utf16 = read.read_w_string('utf-16le')
-                except UnicodeDecodeError:
-                    utf16 = ''
-                try:
-                    read.seek(0)
-                    ascii = read.read_c_string('latin1')
-                except UnicodeDecodeError:
-                    ascii = ''
-                string = utf16
-                if not symbol.endswith('W') and len(ascii) > 1 and ascii.isprintable():
-                    string = ascii
-                if len(string) in range(5, 80):
-                    return repr(string)
-            return F'0x{x:X}'
-
-        self.state.last_api = self.ip
-        module, dot, symbol = name.partition('.')
-        if dot != '.':
-            return
-        module, _, _ = module.lower().partition('.')
-        logged_args = [_repr(a) for a in args]
-        if symbol == 'connect':
-            sockaddr = StructReader(self.mem_read(args[1], 8))
-            if sockaddr.u16() == 2:
-                sockaddr.bigendian = True
-                port = sockaddr.u16()
-                host = '.'.join(map(str, sockaddr.read(4)))
-                self.state.synthesized[F'{host}:{port}'.encode(vstack.codec)] = F'{module}::{symbol}'
-                logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
-        if self.state.cfg.log_api_calls:
-            for k, arg in enumerate(logged_args):
-                if arg.startswith('"') or arg.startswith("'"):
-                    logged_args[k] = F'{FG.LIGHTRED_EX}{arg}{RS}'
-            vstack.log_always(
-                F'{FG.LIGHTCYAN_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
-        try:
-            retval = function(args)
-        except Exception as e:
-            if self.state.cfg.skip_calls > 1:
-                retval = self.malloc(self.alloc_size)
-                what = F'empty buffer at 0x{retval:X}'
-            else:
-                retval = 0
-                what = '0'
-            vstack.log_debug(F'exception of type {e.__class__.__name__} while emulating api routine, returning {what}')
-            self.ip = self.pop()
-        return retval
-
-    @inject_state_argument
-    def hook_mem_read(self, _, access: int, address: int, size: int, value: int, state: EmuState):
-        mask = (1 << (size * 8)) - 1
-        state.last_read = value & mask
-
-    @inject_state_argument
-    def hook_mem_write(self, _, access: int, address: int, size: int, value: int, state: EmuState):
-        mask = (1 << (size * 8)) - 1
-        unsigned_value = value & mask
-
-        if unsigned_value == state.expected_address:
-            callstack = state.callstack
-            state.retaddr = unsigned_value
-            if not state.cfg.skip_calls:
-                if not callstack:
-                    state.callstack_ceiling = self.sp
-                callstack.append(unsigned_value)
-            return
-        else:
-            state.retaddr = None
-
-        skipped = False
-
-        if (
-            not state.cfg.log_stack_cookies
-            and self.sp ^ unsigned_value == state.last_read
-        ):
-            skipped = 'no -E and stack cookie written'
-        elif size not in bounds[state.cfg.write_range]:
-            skipped = 'size excluded'
-        elif (
-            state.callstack_ceiling > 0
-            and not state.cfg.log_writes_in_calls
-            and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling)
-        ):
-            skipped = 'no -W and inside call'
-        elif not state.cfg.log_stack_addresses and unsigned_value in self.stackrange():
-            skipped = 'no -X and stack address written'
-        elif not state.cfg.log_other_addresses and not self.exe.blob:
-            for s in self.exe.sections():
-                if address in s.virtual:
-                    skipped = F'no -Y and write to section {s.name}'
-                    break
-
-        if (
-            not skipped
-            and unsigned_value == 0
-            and state.cfg.log_zero_overwrites is False
-            and state.contains(address)
-        ):
+                *head, state = args
+                if state is None:
+                    args = *head, self.state
             try:
-                if any(self.mem_read(address, size)):
-                    skipped = 'no -Z and zero overwrite detected'
-            except Exception:
-                pass
-
-        if not skipped:
-            state.write(address, unsigned_value.to_bytes(size, 'little'))
-            state.waiting = 0
-
-        def info():
-            data = unsigned_value.to_bytes(size, self.exe.byte_order().value)
-            ph = self.exe.pointer_size // 4
-            pt = self.exe.pointer_size // 8
-            h = data.hex().upper()
-            t = re.sub('[^!-~]', '.', data.decode('latin1'))
-            msg = state.log(F'{state.fmt(address)} <- {h:_<{ph}} {t:_<{pt}}')
-            if skipped:
-                msg = F'{msg} (ignored: {skipped})'
-            return msg
-
-        vstack.log_info(info)
-
-    @inject_state_argument
-    def hook_mem_error(self, _, access: int, address: int, size: int, value: int, state: EmuState) -> bool:
-        if address == self.state.last_api:
-            self.state.last_api = None
-            return True
-        if address == (1 << self.exe.pointer_size) - 1:
-            self.halt()
-            return False
-        msg = F'{state.fmt(address)}:{size:02X} memory error'
-        if self.is_mapped(address, size):
-            vstack.log_info(self.state.log(F'{msg}; fatal, this area was already mapped'))
-        else:
-            try:
-                self.map(self.align(address, down=True), self.alloc_size)
-            except Exception as error:
-                vstack.log_info(self.state.log(F'{msg}; fatal, {exception_to_string(error)}'))
-            else:
-                vstack.log_debug(self.state.log(F'{msg}; recovery, space mapped'))
-        return True
-
-    def hook_code_error(self, _, state: EmuState):
-        vstack.log_debug('aborting emulation; instruction error')
-        self.halt()
-        return False
-
-    @inject_state_argument
-    def hook_code_execute(self, _, address: int, size: int, state: EmuState):
-
-        if _init := state.init_registers:
-            tos = self.sp
-            for reg in _init:
-                self.set_register(reg, tos)
-            _init.clear()
-
-        if (max_visits := state.cfg.max_visits) > 0:
-            state.visits[address] += 1
-            if state.visits[address] > max_visits:
-                vstack.log_info(
-                    F'aborting emulation: 0x{address:0{self.exe.pointer_size // 8}X}'
-                    F' was visited more than {state.cfg.max_visits} times.')
+                return pfn(self, *args, **kwargs)
+            except KeyboardInterrupt:
                 self.halt()
                 return False
+        return cast(FN, wrapped)
 
-        if address == state.stop or (ticks := state.ticks - 1) <= 0:
-            self.halt()
-            return False
-        else:
-            state.ticks = ticks
+    class VStackEmulator(base):
 
-        waiting = state.waiting
-        callstack = state.callstack
-        depth = len(callstack)
-        state.previous_address = address
-        retaddr = state.retaddr
-        state.retaddr = None
+        def stackrange(self):
+            return Range(self.stack_base, self.stack_base + self.stack_size)
 
-        if address != state.expected_address:
-            if retaddr is not None and state.cfg.skip_calls:
-                if state.cfg.skip_calls > 1:
-                    self.rv = self.malloc(state.cfg.block_size)
-                self.ip = _ip = self.pop()
-                if _ip != retaddr:
-                    raise RuntimeError(
-                        'Trying to return from call: top of stack was not the execpted return address.')
+        def disassemble(self, address: int):
+            try:
+                return self.disassemble_instruction(address)
+            except Exception:
+                return None
+
+        def hook_api_call(self, _, name: str, function, args: tuple[int, ...], **ka):
+            def _repr(x):
+                if not isinstance(x, int):
+                    return repr(x)
+                try:
+                    data = self.mem_read(x, 0x200)
+                except Exception:
+                    data = None
+                else:
+                    read = StructReader(data)
+                    try:
+                        utf16 = read.read_w_string('utf-16le')
+                    except UnicodeDecodeError:
+                        utf16 = ''
+                    try:
+                        read.seek(0)
+                        ascii = read.read_c_string('latin1')
+                    except UnicodeDecodeError:
+                        ascii = ''
+                    string = utf16
+                    if not symbol.endswith('W') and len(ascii) > 1 and ascii.isprintable():
+                        string = ascii
+                    if len(string) in range(5, 80):
+                        return repr(string)
+                return F'0x{x:X}'
+
+            self.state.last_api = self.ip
+            module, dot, symbol = name.partition('.')
+            if dot != '.':
+                return None
+            module, _, _ = module.lower().partition('.')
+            logged_args = [_repr(a) for a in args]
+            if symbol == 'connect':
+                sockaddr = StructReader(self.mem_read(args[1], 8))
+                if sockaddr.u16() == 2:
+                    sockaddr.bigendian = True
+                    port = sockaddr.u16()
+                    host = '.'.join(map(str, sockaddr.read(4)))
+                    self.state.synthesized[F'{host}:{port}'.encode(vstack.codec)] = F'{module}::{symbol}'
+                    logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
+            if self.state.cfg.log_api_calls:
+                for k, arg in enumerate(logged_args):
+                    if arg.startswith('"') or arg.startswith("'"):
+                        logged_args[k] = F'{FG.LIGHTRED_EX}{arg}{RS}'
+                vstack.log_always(
+                    F'{FG.LIGHTCYAN_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
+            try:
+                retval = function(args)
+            except Exception as e:
+                if self.state.cfg.skip_calls > 1:
+                    retval = self.malloc(self.alloc_size)
+                    what = F'empty buffer at 0x{retval:X}'
+                else:
+                    retval = 0
+                    what = '0'
+                vstack.log_debug(F'exception of type {e.__class__.__name__} while emulating api routine, returning {what}')
+                self.ip = self.pop()
+            return retval
+
+        @inject_state_argument
+        def hook_mem_read(self, _, access: int, address: int, size: int, value: int, state: EmuState):
+            mask = (1 << (size * 8)) - 1
+            state.last_read = value & mask
+
+        @inject_state_argument
+        def hook_mem_write(self, _, access: int, address: int, size: int, value: int, state: EmuState):
+            mask = (1 << (size * 8)) - 1
+            unsigned_value = value & mask
+
+            if unsigned_value == state.expected_address:
+                callstack = state.callstack
+                state.retaddr = unsigned_value
+                if not state.cfg.skip_calls:
+                    if not callstack:
+                        state.callstack_ceiling = self.sp
+                    callstack.append(unsigned_value)
                 return
-            if depth and address == callstack[-1]:
-                depth -= 1
-                state.callstack.pop()
-                if depth == 0:
-                    state.callstack_ceiling = 0
-            state.expected_address = address
-        elif retaddr is not None and not state.cfg.skip_calls:
-            # The present address was moved to the stack but we did not branch.
-            # This is not quite accurate, of course: We could be calling the
-            # next instruction. However, that sort of code is usually not really
-            # a function call anyway, but rather a way to get the IP.
-            callstack.pop()
+            else:
+                state.retaddr = None
 
-        if waiting > state.cfg.wait > 0:
+            skipped = False
+
+            if (
+                not state.cfg.log_stack_cookies
+                and self.sp ^ unsigned_value == state.last_read
+            ):
+                skipped = 'no -E and stack cookie written'
+            elif size not in bounds[state.cfg.write_range]:
+                skipped = 'size excluded'
+            elif (
+                state.callstack_ceiling > 0
+                and not state.cfg.log_writes_in_calls
+                and address in range(state.callstack_ceiling - 0x200, state.callstack_ceiling)
+            ):
+                skipped = 'no -W and inside call'
+            elif not state.cfg.log_stack_addresses and unsigned_value in self.stackrange():
+                skipped = 'no -X and stack address written'
+            elif not state.cfg.log_other_addresses and not self.exe.blob:
+                for s in self.exe.sections():
+                    if address in s.virtual:
+                        skipped = F'no -Y and write to section {s.name}'
+                        break
+
+            if (
+                not skipped
+                and unsigned_value == 0
+                and state.cfg.log_zero_overwrites is False
+                and state.contains(address)
+            ):
+                try:
+                    if any(self.mem_read(address, size)):
+                        skipped = 'no -Z and zero overwrite detected'
+                except Exception:
+                    pass
+
+            if not skipped:
+                state.write(address, unsigned_value.to_bytes(size, 'little'))
+                state.waiting = 0
+
+            def info():
+                data = unsigned_value.to_bytes(size, self.exe.byte_order().value)
+                ph = self.exe.pointer_size // 4
+                pt = self.exe.pointer_size // 8
+                h = data.hex().upper()
+                t = re.sub('[^!-~]', '.', data.decode('latin1'))
+                msg = state.log(F'{state.fmt(address)} <- {h:_<{ph}} {t:_<{pt}}')
+                if skipped:
+                    msg = F'{msg} (ignored: {skipped})'
+                return msg
+
+            vstack.log_info(info)
+
+        @inject_state_argument
+        def hook_mem_error(self, _, access: int, address: int, size: int, value: int, state: EmuState) -> bool:
+            if address == self.state.last_api:
+                self.state.last_api = None
+                return True
+            if address == (1 << self.exe.pointer_size) - 1:
+                self.halt()
+                return False
+            msg = F'{state.fmt(address)}:{size:02X} memory error'
+            if self.is_mapped(address, size):
+                vstack.log_info(self.state.log(F'{msg}; fatal, this area was already mapped'))
+            else:
+                try:
+                    self.map(self.align(address, down=True), self.alloc_size)
+                except Exception as error:
+                    vstack.log_info(self.state.log(F'{msg}; fatal, {exception_to_string(error)}'))
+                else:
+                    vstack.log_debug(self.state.log(F'{msg}; recovery, space mapped'))
+            return True
+
+        def hook_code_error(self, _, state: EmuState):
+            vstack.log_debug('aborting emulation; instruction error')
             self.halt()
             return False
-        if not depth or not state.cfg.wait_calls:
-            state.waiting += 1
-        state.expected_address += size
 
-        instruction = self.disassemble(address)
-        if instruction:
-            state.invalid_instructions = 0
-            vstack.log_debug(state.log(F'{instruction.mnemonic} {instruction.op_str}'))
-        else:
-            iv = state.invalid_instructions + 1
-            state.invalid_instructions += iv
-            vstack.log_debug(state.log('unrecognized instruction'))
-            if iv > 2:
+        @inject_state_argument
+        def hook_code_execute(self, _, address: int, size: int, state: EmuState):
+
+            if _init := state.init_registers:
+                tos = self.sp
+                for reg in _init:
+                    self.set_register(reg, tos)
+                _init.clear()
+
+            if (max_visits := state.cfg.max_visits) > 0:
+                state.visits[address] += 1
+                if state.visits[address] > max_visits:
+                    vstack.log_info(
+                        F'aborting emulation: 0x{address:0{self.exe.pointer_size // 8}X}'
+                        F' was visited more than {state.cfg.max_visits} times.')
+                    self.halt()
+                    return False
+
+            if address == state.stop or (ticks := state.ticks - 1) <= 0:
                 self.halt()
+                return False
+            else:
+                state.ticks = ticks
+
+            waiting = state.waiting
+            callstack = state.callstack
+            depth = len(callstack)
+            state.previous_address = address
+            retaddr = state.retaddr
+            state.retaddr = None
+
+            if address != state.expected_address:
+                if retaddr is not None and state.cfg.skip_calls:
+                    if state.cfg.skip_calls > 1:
+                        self.rv = self.malloc(state.cfg.block_size)
+                    self.ip = _ip = self.pop()
+                    if _ip != retaddr:
+                        raise RuntimeError(
+                            'Trying to return from call: top of stack was not the execpted return address.')
+                    return
+                if depth and address == callstack[-1]:
+                    depth -= 1
+                    state.callstack.pop()
+                    if depth == 0:
+                        state.callstack_ceiling = 0
+                state.expected_address = address
+            elif retaddr is not None and not state.cfg.skip_calls:
+                # The present address was moved to the stack but we did not branch.
+                # This is not quite accurate, of course: We could be calling the
+                # next instruction. However, that sort of code is usually not really
+                # a function call anyway, but rather a way to get the IP.
+                callstack.pop()
+
+            if waiting > state.cfg.wait > 0:
+                self.halt()
+                return False
+            if not depth or not state.cfg.wait_calls:
+                state.waiting += 1
+            state.expected_address += size
+
+            instruction = self.disassemble(address)
+            if instruction:
+                state.invalid_instructions = 0
+                vstack.log_debug(state.log(F'{instruction.mnemonic} {instruction.op_str}'))
+            else:
+                iv = state.invalid_instructions + 1
+                state.invalid_instructions += iv
+                vstack.log_debug(state.log('unrecognized instruction'))
+                if iv > 2:
+                    self.halt()
+
+    return VStackEmulator
 
 
 class vstack(Unit):
@@ -385,11 +385,11 @@ class vstack(Unit):
     """
     def __init__(
         self,
-        *address: Param[isq, Arg.NumSeq(metavar='start', help='Specify the (virtual) addresses of a stack string instruction sequences.')],
-        stop: Param[int, Arg.Number('-s', metavar='stop', help='Optional: Stop when reaching this address.')] = None,
-        base: Param[int, Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.')] = None,
-        arch: Param[str, Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
-        engine: Param[str, Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
+        *address: Param[str, Arg.Bounds(metavar='a[:b]',
+            help='Specify the (virtual) addresses of what to emulate; optionally specify a stop address.')],
+        base: Param[int | None, Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.')] = None,
+        arch: Param[str | Arch, Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
+        engine: Param[str | _engine, Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
             help='The emulator engine. The default is {default}, options are: {choices}')] = _engine.unicorn,
         se: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy')] = False,
         ic: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=icicle')] = False,
@@ -397,7 +397,7 @@ class vstack(Unit):
         meta_registers: Param[bool, Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
             'the data will be mapped.'))] = False,
-        timeout: Param[int, Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.')] = None,
+        timeout: Param[int, Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.')] = 0,
         patch_range: Param[slice, Arg.Bounds('-p', metavar='MIN:MAX',
             help='Extract only patches that are in the given range, default is {default}.')] = slice(5, None),
         write_range: Param[slice, Arg.Bounds('-n', metavar='MIN:MAX',
@@ -409,7 +409,7 @@ class vstack(Unit):
         skip_calls: Param[int, Arg.Counts('-C', group='CALL',
             help='Skip function calls entirely. Use twice to treat each call as allocating memory.')] = 0,
         stack_size: Param[int, Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.')] = 0x10000,
-        stack_push: Param[str, Arg.String('-u', action='append', metavar='REG',
+        stack_push: Param[tuple[str] | None, Arg('-u', action='append', metavar='REG',
             help='Push the value of a register to the stack before beginning emulation; implies -r.')] = None,
         log_api_calls: Param[bool, Arg.Switch('-A', help='Log API calls when using Speakeasy.')] = False,
         block_size: Param[int, Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.')] = 0x1000,
@@ -431,7 +431,6 @@ class vstack(Unit):
 
         super().__init__(
             address=address,
-            stop=stop,
             base=base,
             arch=Arg.AsOption(arch, Arch),
             engine=Arg.AsOption(engine, _engine),
@@ -454,7 +453,7 @@ class vstack(Unit):
             log_stack_cookies=log_stack_cookies
         )
 
-    def process(self, data):
+    def process(self, data: Chunk):
         meta = metavars(data)
         args = self.args
 
@@ -465,11 +464,7 @@ class vstack(Unit):
         if engine is _engine.speakeasy:
             flags |= Hook.ApiCall
 
-        ET: type[Emulator] = cast('type[Emulator]', engine.value) \
-            if TYPE_CHECKING else engine.value
-
-        class Emu(ET, VStackEmulatorMixin):
-            pass
+        Emu = EmuFactory(engine.value)
 
         emu = Emu(
             data,
@@ -508,41 +503,43 @@ class vstack(Unit):
                 meta.discard(var)
                 register_values[register] = var, value
 
-        def parse_address(a: int | bytes):
-            if isinstance(a, int):
-                return a
-            a = a.decode(self.codec)
-            if m := re.fullmatch('(?i)(?:sub_|fun_|0x)?([A-F0-9]+)H?', a):
-                return int(m[1], 16)
+        def parse_address(a: str):
             try:
-                return PythonExpression.Evaluate(a, meta)
-            except ParserVariableMissing:
-                pass
-            symbols = list(emu.exe.symbols())
-            for filter in [
-                lambda s: s.get_name().casefold() == a.casefold(),
-                lambda s: s.name == a,
-                lambda s: s.function,
-                lambda s: s.exported,
-            ]:
-                symbols = [s for s in symbols if filter(s)]
-                if len(symbols) == 1:
-                    return symbols[0].address
-            if len(symbols) > 1:
-                raise RuntimeError(F'there are {len(symbols)} exported function symbol named "{a}", please specify the address')
-            if not symbols:
-                raise LookupError(F'no symbol with name "{a}" was found')
+                sliced = sliceobj(a, data, intok=True)
+            except Exception:
+                if m := re.fullmatch('(?i)(?:sub_|fun_|0x)?([A-F0-9]+)H?', a):
+                    return slice(int(m[1], 16), None)
+                symbols = list(emu.exe.symbols())
+                for filter in [
+                    lambda s: s.get_name().casefold() == a.casefold(),
+                    lambda s: s.name == a,
+                    lambda s: s.function,
+                    lambda s: s.exported,
+                ]:
+                    symbols = [s for s in symbols if filter(s)]
+                    if len(symbols) == 1:
+                        return slice(symbols[0].address, None)
+                if len(symbols) > 1:
+                    raise RuntimeError(F'there are {len(symbols)} exported function symbol named "{a}", please specify the address')
+                else:
+                    raise LookupError(F'no symbol with name "{a}" was found')
+            else:
+                if isinstance(sliced, int):
+                    sliced = slice(sliced, None)
+                elif sliced.step and sliced.step != 1:
+                    raise RuntimeError(F'emulation ranges cannot specify a step: {a}')
+                return sliced
 
         addresses = [parse_address(a) for a in args.address]
 
         if not addresses:
             for symbol in emu.exe.symbols():
                 if symbol.name is None:
-                    addresses.append(symbol.address)
+                    addresses.append(slice(symbol.address, None))
                     break
 
         for cursor in addresses:
-            state = EmuState(cfg, cursor, emu.exe.pointer_size // 4, stop=args.stop)
+            state = EmuState(cfg, cursor.start, emu.exe.pointer_size // 4, stop=cursor.stop)
             emu.reset(state)
             emu.push((1 << emu.exe.pointer_size) - 1)
 
@@ -571,14 +568,14 @@ class vstack(Unit):
                     emu.push_register(reg)
 
             timeout = args.timeout
-            if timeout is not None:
+            if timeout:
                 self.log_info(F'setting timeout of {timeout} steps')
                 state.ticks = timeout
 
             try:
                 emu.emulate(
-                    emu.base_exe_to_emu(cursor),
-                    emu.base_exe_to_emu(args.stop),
+                    emu.base_exe_to_emu(cursor.start),
+                    emu.base_exe_to_emu(cursor.stop),
                 )
             except EmulationError:
                 pass

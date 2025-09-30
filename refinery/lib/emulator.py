@@ -546,8 +546,8 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             pass
         return True
 
-    def hook_api_call(self, emu: _E, api_name: str, func: str, *args, **kwargs) -> bool:
-        return True
+    def hook_api_call(self, emu: _E, api_name: str, func: str, *args, **kwargs) -> Any:
+        return None
 
     def disassemble_instruction(self, address: int):
         """
