@@ -45,6 +45,9 @@ class RefineryImportMissing(RefineryImportError):
         self.install = shlex.join(dependencies)
         self.dependencies = dependencies or (missing,)
 
+    def __str__(self):
+        return self.missing
+
     def __repr__(self):
         return F'{self.__class__.__name__}({self.missing!r})'
 
