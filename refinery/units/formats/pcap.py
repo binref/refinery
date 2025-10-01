@@ -45,10 +45,6 @@ class Conversation:
             (self.src, self.src_port),
             (self.dst, self.dst_port))))
 
-    def swapped(self):
-        cls = self.__class__
-        return cls(self.dst_addr, self.src_addr, self.dst_port, self.src_port)
-
     def __eq__(self, other):
         return hash(self) == hash(other)
 
@@ -102,7 +98,7 @@ class pcap(Unit):
             vf = VirtualFile(fs, data, 'pcap')
             pcap = pcapkit.extract(
                 fin=vf.path,
-                engine=pcapkit.Scapy,
+                engine='scapy',
                 store=True,
                 nofile=True,
                 extension=False,
@@ -122,15 +118,13 @@ class pcap(Unit):
         PT = self._scapy.packet
 
         def payload(packet: Packet):
-            ok = (bytes, bytearray, PT.Raw)
-            no = (PT.NoPayload, PT.Padding)
             circle = set()
             while True:
                 try:
                     inner = packet.payload
                 except AttributeError:
                     break
-                if isinstance(packet, ok) and not isinstance(packet, no):
+                if isinstance(packet, PT.Raw) and not isinstance(packet, (PT.NoPayload, PT.Padding)):
                     return packet.original
                 if id(inner) in circle:
                     break
@@ -157,21 +151,25 @@ class pcap(Unit):
         def commit():
             if src_buffer.tell():
                 if not server:
+                    assert convo is not None
                     yield self.labelled(src_buffer.getvalue(), **convo.src_to_dst())
                 src_buffer.truncate(0)
             if dst_buffer.tell():
                 if not client:
+                    assert convo is not None
                     yield self.labelled(dst_buffer.getvalue(), **convo.dst_to_src())
                 dst_buffer.truncate(0)
 
         for datagram in tcp:
+            self.log_info(datagram.header)
+
             this_convo = Conversation.FromID(datagram.id)
             if this_convo != convo:
                 if count and merge:
                     yield from commit()
                 count = count + 1
                 convo = this_convo
-
+            assert convo is not None
             data = bytearray()
             for index in sorted(datagram.index, key=sequence):
                 data.extend(payload(pcap.frame[index - 1]))
