@@ -2094,7 +2094,8 @@ class Unit(UnitBase, abstract=True):
 
         base.set_defaults(reverse=False, squeeze=False, iff=0)
         base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
-        base.add_argument('-L', '--lenient', action='count', default=0, help='Allow partial results as output.')
+        base.add_argument('-L', '--lenient', action='count', default=0,
+            help='Increase the leniency, allowing partial results and ignoring more errors.')
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
         base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
         base.add_argument('-v', '--verbose', action='count', default=0,
