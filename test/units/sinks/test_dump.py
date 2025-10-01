@@ -184,7 +184,7 @@ class TestDump(TestUnitBase):
         ]
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'file-{index:02d}-{foobar}-{crc32}-{md5}.{ext}')
-            dump = self.load(path)
+            dump = self.load(path, lenient=1)
             self.ldu('emit', *samples)[dump]()
             for filename, data in zip(filenames, samples):
                 result_path = os.path.join(root, filename)
