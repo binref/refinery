@@ -14,7 +14,7 @@ import re
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TypeVar, Callable, Literal, cast
+from typing import Callable, Literal, TypeVar, cast
 
 from refinery.lib.argformats import sliceobj
 from refinery.lib.emulator import (
@@ -30,7 +30,7 @@ from refinery.lib.meta import metavars
 from refinery.lib.structures import StructReader
 from refinery.lib.tools import bounds, exception_to_string, isbuffer
 from refinery.lib.types import INF
-from refinery.units import Arg, Unit, Chunk
+from refinery.units import Arg, Chunk, Unit
 
 FN = TypeVar('FN', bound=Callable)
 
