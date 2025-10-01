@@ -33,9 +33,11 @@ class imgdb(Unit):
             raise ValueError('input could not be parsed as an image')
         test = image.getpixel((0, 0))
         if isinstance(test, int):
+            self.log_info('reading each pixel as an integer')
             for row in self._get_rows(image):
                 yield bytearray(row)
         else:
+            self.log_info('reading each pixel as a color value tuple')
             count = len(test)
             total = count * image.width
             out = bytearray(total)
