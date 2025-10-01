@@ -221,6 +221,10 @@ class dump(Unit):
                         meta.ghost = True
                         meta.index = index
                         path = meta.format_str(path, self.codec, [chunk])
+                        if self._has_format(path) and self.leniency < 1:
+                            raise ValueError(
+                                F'Could not resolve formatting in path "{path}"; '
+                                R'increase leniency to ignore this.')
                     self.stream = self._open(path)
             yield chunk
 
