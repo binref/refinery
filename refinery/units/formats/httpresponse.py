@@ -3,12 +3,16 @@ from __future__ import annotations
 from http.client import HTTPResponse, IncompleteRead
 
 from refinery.lib.structures import MemoryFile
-from refinery.units import RefineryPartialResult, Unit
+from refinery.units import Chunk, RefineryPartialResult, Unit
+from refinery.units.misc.datefix import datefix
 
 
 class SockWrapper(MemoryFile):
-    def sendall(self, ___): pass
-    def makefile(self, *_): return self
+    def sendall(self, ___):
+        pass
+
+    def makefile(self, *_):
+        return self
 
 
 class httpresponse(Unit):
@@ -19,10 +23,22 @@ class httpresponse(Unit):
     def process(self, data):
         with SockWrapper(data) as mock:
             mock.seek(0)
-            parser = HTTPResponse(mock)
+            parser = HTTPResponse(mock) # type:ignore
             parser.begin()
             try:
-                return parser.read()
+                payload = parser.read()
             except IncompleteRead as incomplete:
                 msg = F'incomplete read: {len(incomplete.partial)} bytes processed, {incomplete.expected} more expected'
                 raise RefineryPartialResult(msg, incomplete.partial) from incomplete
+            try:
+                date = parser.headers['date'] | datefix | str
+            except Exception:
+                pass
+            else:
+                if len(date) == 19:
+                    payload = self.labelled(payload, date=date)
+            return payload
+
+    @classmethod
+    def handles(cls, data: bytearray | Chunk) -> bool | None:
+        return data.startswith(B'HTTP/1')
