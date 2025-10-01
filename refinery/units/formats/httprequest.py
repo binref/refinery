@@ -4,8 +4,8 @@ from email.parser import BytesParser
 from enum import Enum
 from urllib.parse import parse_qs
 
-from refinery.lib.tools import isbuffer
-from refinery.units import Unit
+from refinery.lib.tools import asbuffer
+from refinery.units import Chunk, Unit
 
 
 def _parseparam(parameter: str):
@@ -49,7 +49,7 @@ class httprequest(Unit):
     Parses HTTP request data, as you would obtain from a packet dump. The unit extracts
     POST data in any format; each uploaded file is emitted as a separate chunk.
     """
-    def process(self, data):
+    def process(self, data: Chunk):
         def header(line: bytes):
             name, colon, data = line.decode('utf8').partition(':')
             if colon:
@@ -75,12 +75,10 @@ class httprequest(Unit):
             except ValueError:
                 mode = _Fmt.RawBody
 
-        def chunks(upload: dict[str | bytes, list[bytes]]):
+        def chunks(upload: dict[bytes, list[bytes]]):
             for key, values in upload.items():
-                if not isinstance(key, str):
-                    key = key.decode('utf8')
                 for value in values:
-                    yield self.labelled(value, name=key)
+                    yield self.labelled(value, name=key.decode('utf8'))
 
         if mode is _Fmt.RawBody:
             yield body
@@ -93,14 +91,13 @@ class httprequest(Unit):
                 if not isinstance(payloads, list):
                     payloads = [payloads]
                 for payload in payloads:
-                    if not isbuffer(payload):
-                        continue
-                    if name := part.get_filename():
-                        payload = self.labelled(payload, name=name)
-                    yield payload
+                    if buffer := asbuffer(payload):
+                        if name := part.get_filename():
+                            buffer = self.labelled(buffer, name=name)
+                        yield buffer
 
         if mode is _Fmt.UrlEncode:
-            yield from chunks(parse_qs(body, keep_blank_values=1))
+            yield from chunks(parse_qs(body, keep_blank_values=True))
 
     @classmethod
     def handles(cls, data: bytearray) -> bool | None:
