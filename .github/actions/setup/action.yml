@@ -36,3 +36,4 @@ runs:
         python -m pip install --upgrade pip
         pip install .[all]
         python -m pip install pycodestyle pyflakes pytest-xdist
+        python -m pip uninstall pip
