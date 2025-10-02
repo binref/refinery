@@ -64,24 +64,28 @@ class _bits_compress(BytesIO):
 
 
 class _bits_decompress(BytesIO):
+
+    __slots__ = 'bitcount', 'bitbuffer', 'bytebuf', 'decompressed'
+
     def __init__(self, data):
         super().__init__(data)
-        self.__bitcount = 0
-        self.__bitbuffer = 0
+        self.bitcount = 0
+        self.bitbuffer = 0
+        self.bytebuf = bytearray(1)
         self.decompressed = bytearray()
 
     def read_byte(self):
-        buffer = self.read(1)
-        if len(buffer) != 1:
+        bb = self.bytebuf
+        if self.readinto(bb) != 1:
             raise BufferError('received zero bytes from read')
-        return buffer[0]
+        return bb[0]
 
     def read_bits(self, nbits):
-        while self.__bitcount < nbits:
-            self.__bitbuffer = (self.__bitbuffer << 8) | self.read_byte()
-            self.__bitcount += 8
-        self.__bitcount -= nbits
-        value, self.__bitbuffer = divmod(self.__bitbuffer, (1 << self.__bitcount))
+        while self.bitcount < nbits:
+            self.bitbuffer = (self.bitbuffer << 8) | self.read_byte()
+            self.bitcount += 8
+        self.bitcount -= nbits
+        value, self.bitbuffer = divmod(self.bitbuffer, (1 << self.bitcount))
         return value
 
     def read_variablenumber(self):
@@ -92,9 +96,17 @@ class _bits_decompress(BytesIO):
         return result
 
     def back_copy(self, offset, length=1):
-        for _ in range(length):
-            self.decompressed.append(self.decompressed[-offset])
-        return
+        buffer = self.decompressed
+        end = len(buffer)
+        write = buffer.extend
+        rep, r = divmod(length, offset)
+        offset = end - offset
+        replay = buffer[offset:offset + r]
+        if rep > 0:
+            chunk = buffer[offset:end]
+            for _ in range(rep):
+                write(chunk)
+        write(replay)
 
 
 def lengthdelta(offset):
