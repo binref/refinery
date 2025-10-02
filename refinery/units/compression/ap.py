@@ -77,22 +77,31 @@ class _bits_decompress(BytesIO):
     def read_byte(self):
         bb = self.bytebuf
         if self.readinto(bb) != 1:
-            raise BufferError('received zero bytes from read')
+            raise EOFError
         return bb[0]
 
-    def read_bits(self, nbits):
-        while self.bitcount < nbits:
-            self.bitbuffer = (self.bitbuffer << 8) | self.read_byte()
-            self.bitcount += 8
-        self.bitcount -= nbits
-        value, self.bitbuffer = divmod(self.bitbuffer, (1 << self.bitcount))
+    def read_bits(self, nbits=1):
+        r1 = self.bytebuf
+        bc = self.bitcount
+        bb = self.bitbuffer
+        while bc < nbits:
+            if self.readinto(r1) != 1:
+                raise EOFError
+            bb <<= 8
+            bb |= r1[0]
+            bc += 8
+        bc -= nbits
+        value, bb = divmod(bb, (1 << bc))
+        self.bitbuffer = bb
+        self.bitcount = bc
         return value
 
     def read_variablenumber(self):
+        bit = self.read_bits
         result = 1
-        result = (result << 1) + self.read_bits(1)
-        while self.read_bits(1):
-            result = (result << 1) + self.read_bits(1)
+        result = (result << 1) + bit()
+        while bit():
+            result = (result << 1) + bit()
         return result
 
     def back_copy(self, offset, length=1):
@@ -213,68 +222,65 @@ class compressor(_bits_compress):
 
 
 class decompressor(_bits_decompress):
+
+    __slots__ = 'pair', 'lastoffset'
+
     def __init__(self, data):
         super().__init__(data)
-        self.__pair = True
-        self.__lastoffset = 0
-        self.__functions = [
-            self.__literal,
-            self.__block,
-            self.__shortblock,
-            self.__singlebyte
-        ]
+        self.pair = True
+        self.lastoffset = 0
 
-    def __literal(self):
+    def literal(self):
         self.decompressed.append(self.read_byte())
-        self.__pair = True
+        self.pair = True
         return False
 
-    def __block(self):
+    def block(self):
         b = self.read_variablenumber()
-        if b == 2 and self.__pair:
-            offset = self.__lastoffset
+        if b == 2 and self.pair:
+            offset = self.lastoffset
             length = self.read_variablenumber()
         else:
             high = b - 2
-            if self.__pair:
+            if self.pair:
                 high -= 1
             offset = (high << 8) + self.read_byte()
             length = self.read_variablenumber()
             length += lengthdelta(offset)
-        self.__lastoffset = offset
+        self.lastoffset = offset
         self.back_copy(offset, length)
-        self.__pair = False
+        self.pair = False
         return False
 
-    def __shortblock(self):
+    def shortblock(self):
         b = self.read_byte()
-        if b <= 1:  # likely 0
+        if b <= 1:
             return True
-        length = 2 + (b & 0x01)  # 2-3
-        offset = b >> 1  # 1-127
+        length = 2 + (b & 1)
+        offset = b >> 1
         self.back_copy(offset, length)
-        self.__lastoffset = offset
-        self.__pair = False
+        self.lastoffset = offset
+        self.pair = False
         return False
 
-    def __singlebyte(self):
-        offset = self.read_bits(4)  # 0-15
+    def singlebyte(self):
+        offset = self.read_bits(4)
         if offset:
             self.back_copy(offset)
         else:
             self.decompressed.append(0)
-        self.__pair = True
+        self.pair = True
         return False
 
     def read_sequence(self):
         if not self.read_bits(1):
-            return self.__literal()
+            return self.literal()
         if not self.read_bits(1):
-            return self.__block()
+            return self.block()
         if not self.read_bits(1):
-            return self.__shortblock()
+            return self.shortblock()
         else:
-            return self.__singlebyte()
+            return self.singlebyte()
 
     def decompress(self):
         self.seek(0)
