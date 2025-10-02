@@ -106,16 +106,25 @@ class _bits_decompress(BytesIO):
 
     def back_copy(self, offset, length=1):
         buffer = self.decompressed
-        end = len(buffer)
-        write = buffer.extend
-        rep, r = divmod(length, offset)
-        offset = end - offset
-        replay = buffer[offset:offset + r]
-        if rep > 0:
-            chunk = buffer[offset:end]
-            for _ in range(rep):
-                write(chunk)
-        write(replay)
+        if offset == 0:
+            end = len(buffer)
+            buffer[end:end + length] = (buffer[0] for _ in range(length))
+        elif 1 <= length <= 8:
+            append = buffer.append
+            for _ in range(length):
+                append(buffer[-offset])
+        else:
+            write = buffer.extend
+            rep, rest = divmod(length, offset)
+            offset = len(buffer) - offset
+            if offset < 0:
+                raise IndexError
+            if rep > 0:
+                head = buffer[offset:]
+                for _ in range(rep):
+                    write(head)
+            if rest > 0:
+                write(buffer[offset:offset + rest])
 
 
 def lengthdelta(offset):
