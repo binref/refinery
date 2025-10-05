@@ -235,11 +235,11 @@ class Relocation(NamedTuple):
 
 class Symbol(NamedTuple):
     address: int
-    name: str | None = None
-    size: int | None = None
-    function: bool | None = None
-    exported: bool | None = None
-    imported: bool | None = None
+    name: str | None
+    size: int | None
+    function: bool
+    exported: bool
+    imported: bool
     is_entry: bool = False
     section: Section | None = None
 
@@ -673,7 +673,17 @@ class ExecutableCodeBlob(Executable):
         return self._arch
 
     def _symbols(self) -> Generator[Symbol]:
-        yield Symbol(0, is_entry=True)
+        section, = self._sections()
+        yield Symbol(
+            0,
+            None,
+            None,
+            function=True,
+            exported=True,
+            imported=False,
+            is_entry=True,
+            section=section,
+        )
 
     def _relocations(self):
         yield from ()
@@ -798,29 +808,65 @@ class LIEF(Executable):
                     raise TypeError(F'Unexpected relocation type: {type(rel).__qualname__}')
 
     def _symbols(self) -> Generator[Symbol]:
-        yield Symbol(self._lh.entrypoint, is_entry=True)
+        yield Symbol(
+            self._lh.entrypoint,
+            None,
+            None,
+            function=True,
+            exported=True,
+            imported=False,
+            is_entry=True,
+        )
+
         it: Iterable[lief.Symbol] = self._lh.symbols
+        ps = self.pointer_size_in_bytes
+        ib = self.image_defined_base()
+
         for symbol in it:
             addr = symbol.value
             name = self.ascii(symbol.name)
             size = symbol.size
             if isinstance(symbol, lief.COFF.Symbol):
+                name = self.ascii(symbol.demangled_name) or name
+                code = symbol.is_function or (
+                    symbol.complex_type == lief.COFF.Symbol.COMPLEX_TYPE.FUNCTION)
+                ext = symbol.is_external
+                imp = not ext
                 yield Symbol(
-                    addr, name, size,
-                    function=symbol.complex_type == lief.COFF.Symbol.COMPLEX_TYPE.FUNCTION,
+                    addr,
+                    name,
+                    size,
+                    function=code,
+                    exported=ext,
+                    imported=imp,
                     section=self._convert_section(s) if (s := symbol.section) else None,
                 )
             elif isinstance(symbol, lief.PE.ImportEntry):
+                name = self.ascii(symbol.demangled_name) or name
                 yield Symbol(
-                    addr, name, size,
+                    addr + ib,
+                    name,
+                    ps,
                     function=True,
-                    imported=True,
                     exported=False,
+                    imported=True,
+                )
+            elif isinstance(symbol, lief.PE.ExportEntry):
+                name = self.ascii(symbol.demangled_name) or name
+                yield Symbol(
+                    addr + ib,
+                    name,
+                    ps,
+                    function=True,
+                    exported=True,
+                    imported=False,
                 )
             elif isinstance(symbol, lief.ELF.Symbol):
                 name = self.ascii(symbol.demangled_name) or name
                 yield Symbol(
-                    addr, name, size,
+                    addr,
+                    name,
+                    size,
                     exported=symbol.exported,
                     imported=symbol.imported,
                     function=symbol.is_function,
@@ -829,12 +875,22 @@ class LIEF(Executable):
             elif isinstance(symbol, lief.MachO.Symbol):
                 name = self.ascii(symbol.demangled_name) or name
                 yield Symbol(
-                    addr, name, size,
+                    addr,
+                    name,
+                    size,
+                    function=True,
                     imported=symbol.is_external,
                     exported=symbol.has_export_info,
                 )
             else:
-                yield Symbol(addr, name, size)
+                yield Symbol(
+                    addr,
+                    name,
+                    size,
+                    function=False,
+                    imported=False,
+                    exported=False,
+                )
 
     def _convert_section(self, section: lief.Section, segment_name: str | None = None) -> Section:
         p_lower = section.offset
