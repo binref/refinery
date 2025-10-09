@@ -314,12 +314,7 @@ class Executable(ABC):
     @classmethod
     def Load(cls, data: buf, base: int | None = None) -> LIEF:
         """
-        Uses the `refinery.lib.executable.exeroute` function to parse the input data with one of
-        the following specializations of this class:
-
-        - `refinery.lib.executable.ExecutableELF`
-        - `refinery.lib.executable.ExecutableMachO`
-        - `refinery.lib.executable.ExecutablePE`
+        Uses the `refinery.lib.lief.load` function to parse the input data.
         """
         if (parsed := lief.load(data)) is None:
             raise ValueError('LIEF was unable to parse the input.')
