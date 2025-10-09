@@ -20,7 +20,7 @@ class autoxor(xkey, docs='{0}{p}{1}'):
         try:
             result = next(self._attack(data))
         except StopIteration:
-            pass
+            result = None
         else:
             key = result.key
             units: list[type[xor] | type[sub]] = []
@@ -64,14 +64,15 @@ class autoxor(xkey, docs='{0}{p}{1}'):
                     key = (b'\x20' * len(key)) | unit(key) | bytes
                     return self.labelled(as_text, key=key, method=name)
 
-            if fallback is None:
-                self.log_warn('No key was found; returning original data.')
-                return data
-            else:
-                name, key, bin, is_blob = fallback
-                if is_blob and result.how == self._rt.freq and result.score < 8:
-                    self.log_warn(
-                        F'unrecognized format, no confirmed crib, low score ({result.score:.2f}%); '
-                        'the output is likely junk'
-                    )
-                return self.labelled(bin, key=key)
+        if fallback is None:
+            self.log_warn('No key was found; returning original data.')
+            return data
+        else:
+            assert result is not None
+            name, key, bin, is_blob = fallback
+            if is_blob and result.how == self._rt.freq and result.score < 8:
+                self.log_warn(
+                    F'unrecognized format, no confirmed crib, low score ({result.score:.2f}%); '
+                    'the output is likely junk'
+                )
+            return self.labelled(bin, key=key)
