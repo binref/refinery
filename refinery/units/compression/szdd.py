@@ -53,4 +53,4 @@ class szdd(Unit):
 
     @classmethod
     def handles(cls, data: bytearray):
-        return data[:4] == B'SZDD'
+        return data.startswith(B'SZDD')

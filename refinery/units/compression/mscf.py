@@ -249,6 +249,5 @@ class mscf(Unit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool | None:
-        sig = cls._SIGNATURE
-        if data[:len(sig)] == sig:
+        if data.startswith(cls._SIGNATURE):
             return True

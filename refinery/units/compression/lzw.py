@@ -136,6 +136,5 @@ class lzw(Unit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool | None:
-        sig = cls._MAGIC
-        if data[:len(sig)] == sig:
+        if data.startswith(cls._MAGIC):
             return True
