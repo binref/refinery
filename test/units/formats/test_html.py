@@ -76,4 +76,4 @@ class TestHTMLExtractor(TestUnitBase):
         path = max(test, key=len)
         self.assertEqual(str(path),
             'html/20.alertset/alertdisplay/daid/html/body/a/1.form/select/option/option/option/option/option/option')
-        self.assertEqual(len(test), 1007)
+        self.assertEqual(len(test), 1127)

@@ -294,7 +294,7 @@ class PathExtractorUnit(Unit, abstract=True):
 class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
     def __init__(
         self, *paths,
-        format: Param[str, Arg.String('-f', metavar='F', help=(
+        format: Param[str | None, Arg.String('-f', metavar='F', help=(
             'A format expression to be applied for computing the path of an item. This must use '
             'metadata that is available on the item. The current tag can be accessed as {{tag}}. '
             'If no format is specified, the unit attempts to derive a good attribute from the XML '
@@ -334,7 +334,7 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         self,
         meta: LazyMetaOracle,
         root: XMLNodeBase
-    ) -> Callable[[XMLNodeBase, int | None], str]:
+    ) -> Callable[[XMLNodeBase], str]:
 
         nfmt = self.args.format
         nkey = self._normalize_key
@@ -377,6 +377,8 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
             walk(root)
 
         def path_builder(node: XMLNodeBase) -> str:
+            if node.tag is None:
+                raise ValueError(F'Attempt to format node without a tag: {node!r}')
             attrs = node.attributes
             if nfmt and meta is not None:
                 try:
@@ -406,11 +408,11 @@ class JSONEncoderUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        encode: Param[str, Arg.String('-e', group='BIN', metavar='U', help=(
+        encode: Param[str | None, Arg.String('-e', group='BIN', metavar='U', help=(
             'Select an encoder unit used to represent binary data in the JSON output. This unit '
             'must be reversible and produce UTF8 encoded string output when operated in reverse.'
             ' Common examples are hex and b64.'))] = None,
-        digest: Param[str, Arg.String('-d', group='BIN', metavar='U', help=(
+        digest: Param[str | None, Arg.String('-d', group='BIN', metavar='U', help=(
             'Select a hashing unit to digest all byte strings: Instead of the data, only the hash '
             'will be displayed.'))] = None,
         arrays: Param[bool, Arg.Switch('-a', group='BIN', help=(

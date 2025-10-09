@@ -55,6 +55,9 @@ class HTMLTreeParser(HTMLParser):
         'wb',
     }
 
+    tos: HTMLNode
+    root: HTMLNode
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.root = self.tos = HTMLNode(_HTML_DATA_ROOT_TAG)
@@ -71,17 +74,25 @@ class HTMLTreeParser(HTMLParser):
         else:
             return end
 
-    def handle_starttag(self, tag: str, attributes):
+    def _cleanup_self_closing_tags(self):
+        while (tag := self.tos.tag) in self._SELF_CLOSING_TAGS:
+            if parent := self.tos.parent:
+                self.tos = parent
+            else:
+                raise RuntimeError(F'Unable to traverse up from self-closing tag {tag}.')
+
+    def handle_starttag(self, tag: str, attrs):
+        self._cleanup_self_closing_tags()
         tag, _, _ = tag.partition('=')
-        if tag in self._SELF_CLOSING_TAGS:
-            return
         node = HTMLNode(tag, None, self.tos, self.get_starttag_text(), attributes={
-            key: value for key, value in attributes if key and value})
+            key: value for key, value in attrs if key and value})
         children = self.tos.children
         previous = children[-1] if children else None
         self.tos = node
         children.append(node)
-        if not previous or previous.tag is not None:
+        if previous is None:
+            return
+        if previous.tag is not None:
             return
         if self.getpos() == (1, len(previous.content)):
             node.content = previous.content + node.content
@@ -97,6 +108,7 @@ class HTMLTreeParser(HTMLParser):
         previous.content = previous.content[:lf]
 
     def handle_entityref(self, name: str) -> None:
+        self._cleanup_self_closing_tags()
         ntt = F'&{name};'
         if self.tos.children:
             last = self.tos.children[-1]
@@ -108,15 +120,18 @@ class HTMLTreeParser(HTMLParser):
     def handle_charref(self, name: str) -> None:
         self.handle_entityref(F'#{name}')
 
-    def handle_startendtag(self, tag: str, attributes) -> None:
-        self.handle_starttag(tag, attributes)
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        self.handle_starttag(tag, attrs)
         self.tos.empty = True
-        self.tos = self.tos.parent
+        parent = self.tos.parent
+        assert parent is not None
+        self.tos = parent
 
     def handle_endtag(self, tag: str):
         cursor = self.tos
         while cursor.parent and cursor.tag != tag:
-            xthtml.log_info(F'skipping unclosed tag: {cursor.tag}')
+            if cursor.tag not in self._SELF_CLOSING_TAGS:
+                xthtml.log_info(F'skipping unclosed tag: {cursor.tag}')
             cursor = cursor.parent
         if not cursor.parent:
             xthtml.log_warn(F'ignoring closing tag that never opened: {tag}')
@@ -124,6 +139,7 @@ class HTMLTreeParser(HTMLParser):
         self.tos = cursor.parent
 
     def handle_data(self, data):
+        self._cleanup_self_closing_tags()
         self.tos.children.append(HTMLNode(None, None, self.tos, data))
 
 
@@ -136,8 +152,13 @@ class xthtml(XMLToPathExtractorUnit):
         self, *paths,
         outer: Param[bool, Arg.Switch('-o', help='Include the HTML tags for an extracted element.')] = False,
         attributes: Param[bool, Arg.Switch('-a', help='Populate chunk metadata with HTML tag attributes.')] = False,
-        list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-        path=b'path'
+        list=False,
+        join_path=False,
+        drop_path=False,
+        fuzzy=0,
+        exact=False,
+        regex=False,
+        path=b'path',
     ):
         super().__init__(
             *paths,
