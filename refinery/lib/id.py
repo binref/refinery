@@ -460,7 +460,7 @@ def guess_text_encoding(
         step, bom, lsb = 2, 2, 3
     elif data[:4] == B'\0\0\xFE\xFF':
         step, bom, lsb = 4, 4, 7
-    elif any(data[4] == bom for bom in (
+    elif any(data[:4] == bom for bom in (
         b'\x2B\x2F\x76\x38',
         b'\x2B\x2F\x76\x39',
         b'\x2B\x2F\x76\x2B',
