@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import islice
 from typing import TYPE_CHECKING
 
+from refinery.lib.id import get_image_format
 from refinery.lib.structures import MemoryFile
 from refinery.units import Unit
 
@@ -45,3 +46,8 @@ class imgdb(Unit):
                 for pixel, offset in zip(row, range(0, total, count)):
                     out[offset:offset + count] = pixel
             yield out
+
+    @classmethod
+    def handles(cls, data: bytearray) -> bool | None:
+        if get_image_format(data) is not None:
+            return True

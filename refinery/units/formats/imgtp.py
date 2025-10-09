@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 import io
 
+from refinery.lib.id import get_image_format
 from refinery.lib.structures import MemoryFile
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -56,3 +57,8 @@ class imgtp(Unit):
         with io.BytesIO() as out:
             image.save(out, format)
             return out.getvalue()
+
+    @classmethod
+    def handles(cls, data: bytearray) -> bool | None:
+        if get_image_format(data) is not None:
+            return True
