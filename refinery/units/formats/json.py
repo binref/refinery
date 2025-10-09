@@ -4,6 +4,7 @@ import json
 
 from typing import Iterable
 
+from refinery.lib.id import is_likely_json
 from refinery.lib.meta import is_valid_variable_name, metavars
 from refinery.lib.types import Param
 from refinery.units import Arg, Chunk, Unit
@@ -48,18 +49,7 @@ class xtjson(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool | None:
-        from refinery.units.pattern.carve_json import JSONCarver
-        carver = JSONCarver(data)
-        try:
-            _, c = next(carver)
-        except Exception:
-            return False
-        try:
-            _, _ = next(carver)
-        except StopIteration:
-            return c == data.strip()
-        else:
-            return False
+        return is_likely_json(data)
 
 
 class xj0(Unit):

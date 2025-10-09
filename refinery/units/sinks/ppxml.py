@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import io
 
+from refinery.lib.id import is_likely_xml
 from refinery.lib.types import Param
-from refinery.lib.xml import ForgivingParse, is_xml
+from refinery.lib.xml import ForgivingParse
 from refinery.units import Arg, Unit
 
 
@@ -74,4 +75,4 @@ class ppxml(Unit):
 
     @classmethod
     def handles(cls, data):
-        return is_xml(data)
+        return is_likely_xml(data)

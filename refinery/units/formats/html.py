@@ -3,6 +3,7 @@ from __future__ import annotations
 from html.parser import HTMLParser
 from io import StringIO
 
+from refinery.lib.id import is_likely_htm
 from refinery.lib.meta import metavars
 from refinery.lib.types import Param
 from refinery.lib.xml import XMLNodeBase
@@ -205,11 +206,5 @@ class xthtml(XMLToPathExtractorUnit):
         yield from tree(root, path(root))
 
     @classmethod
-    def handles(cls, data: bytearray):
-        from refinery.lib import mime
-        info = mime.get_cached_file_magic_info(data)
-        if info.extension == 'html':
-            return True
-        if info.mime.endswith('html'):
-            return True
-        return False
+    def handles(cls, data):
+        return is_likely_htm(data)

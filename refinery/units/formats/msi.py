@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 from refinery.lib import chunks
 from refinery.lib.cab import Cabinet
-from refinery.lib.mime import FileMagicInfo
+from refinery.lib.id import is_likely_msi
 from refinery.lib.structures import StructReader
 from refinery.lib.types import JSONDict, Param, buf
 from refinery.units import Arg
@@ -426,9 +426,8 @@ class xtmsi(xtdoc):
 
     @classmethod
     def handles(cls, data: bytearray):
-        if not data[:4] == B'\xD0\xCF\x11\xE0':
-            return False
-        return FileMagicInfo(data).extension == 'msi'
+        return is_likely_msi(data)
 
 
-xtmsi.__doc__ = xtmsi.__doc__.format(FN=xtmsi._SYNTHETIC_STREAMS_FILENAME)
+if _d := xtmsi.__doc__:
+    xtmsi.__doc__ = _d.format(FN=xtmsi._SYNTHETIC_STREAMS_FILENAME)

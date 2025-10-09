@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib import xml
+from refinery.lib.id import is_likely_xml
 from refinery.lib.meta import is_valid_variable_name, metavars
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats import UnpackResult, XMLToPathExtractorUnit
@@ -41,4 +42,4 @@ class xtxml(XMLToPathExtractorUnit):
 
     @classmethod
     def handles(cls, data):
-        return xml.is_xml(data)
+        return is_likely_xml(data)

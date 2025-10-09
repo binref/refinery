@@ -4,7 +4,7 @@ from enum import IntFlag
 
 import colorama
 
-from refinery.lib.id import is_structured_data
+from refinery.lib.id import get_structured_data_type
 from refinery.lib.tools import bounds, normalize_to_display
 from refinery.lib.types import INF, NamedTuple, Param, buf
 from refinery.units import Arg, RefineryPartialResult, Unit
@@ -251,8 +251,9 @@ class decompress(Unit):
                 result = None
             else:
                 rating |= _R.Successful
-                magic = is_structured_data(result)
+                magic = get_structured_data_type(result)
                 if magic is not None:
+                    magic = magic.mnemonic
                     rating |= _R.KnownFormatOut
 
             return Decompression(method, engine, rating, result, cutoff, prefix, magic)

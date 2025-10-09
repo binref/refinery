@@ -7,6 +7,7 @@ import re
 from email.parser import Parser
 from typing import TYPE_CHECKING, Iterable
 
+from refinery.lib.id import is_likely_email
 from refinery.lib.mime import file_extension
 from refinery.lib.tools import NoLogging, asbuffer, isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -15,30 +16,7 @@ from refinery.units.pattern.mimewords import mimewords
 if TYPE_CHECKING:
     from extract_msg import Message
 
-
 CDFv2_MARKER = B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
-
-
-_EMAIL_TXT_MARKERS = [
-    b'\nReceived:\x20from'
-    b'\nSubject:\x20',
-    b'\nTo:\x20',
-    b'\nFrom:\x20',
-    B'\nMessage-ID:\x20',
-    b'\nBcc:\x20',
-    b'\nContent-Transfer-Encoding:\x20',
-    b'\nContent-Type:\x20',
-    b'\nReturn-Path:\x20',
-]
-
-_EMAIL_BIN_MARKERS = [
-    marker.encode('utf-16le') for marker in (
-        "__nameid_version"        # root node
-        "__recip_version"         # recipients
-        "__properties_version"    # properties
-        "__substg1.0_"            # strings
-    )
-]
 
 
 class xtmail(PathExtractorUnit):
@@ -244,17 +222,4 @@ class xtmail(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool:
-        counter = 0
-        if data.startswith(CDFv2_MARKER):
-            markers = _EMAIL_BIN_MARKERS
-            threshold = 1
-        else:
-            markers = _EMAIL_TXT_MARKERS
-            threshold = 2
-        for marker in markers:
-            if re.search(re.escape(marker), data, flags=re.IGNORECASE):
-                counter += 1
-            if counter >= threshold:
-                return True
-        else:
-            return False
+        return is_likely_email(data)

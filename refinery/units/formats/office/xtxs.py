@@ -45,6 +45,7 @@ class xtxs(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data: bytearray) -> bool | None:
-        view = memoryview(data)
-        if b'Standard ACE DB' in view[:20]:
+        if data.startswith(b'\0\01\0\0Standard ACE DB'):
+            return True
+        if data.startswith(b'\0\01\0\0Standard Jet DB'):
             return True

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from refinery.lib.id import is_likely_vbe
 from refinery.lib.patterns import formats
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -165,9 +166,4 @@ class wshenc(Unit):
 
     @classmethod
     def handles(cls, data: bytearray):
-        view = memoryview(data)
-        if not re.search(BR'#@~\^[!-~]{6}==', view[:+64]):
-            return None
-        if not re.search(BR'[!-~]{6}==\^#~@', view[-64:]):
-            return None
-        return True
+        return is_likely_vbe(data)

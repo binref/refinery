@@ -17,4 +17,5 @@ class u16(Unit):
 
     @classmethod
     def handles(cls, data: bytearray):
-        return guess_text_encoding(data) == 2
+        if encoding := guess_text_encoding(data):
+            return encoding.step == 2
