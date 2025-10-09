@@ -3,7 +3,7 @@ from __future__ import annotations
 from http.client import HTTPResponse, IncompleteRead
 
 from refinery.lib.structures import MemoryFile
-from refinery.units import Chunk, RefineryPartialResult, Unit
+from refinery.units import RefineryPartialResult, Unit
 from refinery.units.misc.datefix import datefix
 
 

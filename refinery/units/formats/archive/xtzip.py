@@ -5,7 +5,7 @@ from datetime import datetime
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
-from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
+from refinery.units.pattern.carve_zip import carve_zip
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
 
