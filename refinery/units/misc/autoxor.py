@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.loader import get_entry_point
-from refinery.lib.mime import FileMagicInfo as magic
+from refinery.lib.id import get_structured_data_type
 from refinery.units.blockwise.sub import sub
 from refinery.units.blockwise.xor import xor
 from refinery.units.misc.xkey import xkey
@@ -15,7 +14,7 @@ class autoxor(xkey, docs='{0}{p}{1}'):
     plaintext automatically.
     """
     def process(self, data: bytearray):
-        fallback: tuple[str, bytes, bytearray, bool] | None = None
+        fallback: tuple[str, bytes, bytearray] | None = None
 
         try:
             result = next(self._attack(data))
@@ -36,15 +35,12 @@ class autoxor(xkey, docs='{0}{p}{1}'):
                 bin = data | unit(key) | bytearray
                 space = B'\0' | unit(0x20) | bytes
 
-                for k in range(4):
-                    b = bin[k:k + 0x1000]
-                    m = magic(b)
-                    if not m.blob:
-                        self.log_info(F'method {name} resulted in non-blob data ({m.mime}) at offset {k}; returning buffer')
-                        return self.labelled(bin, key=key, method=name)
+                if t := get_structured_data_type(bin):
+                    self.log_info(F'method {name} resulted in non-blob data ({t.mnemonic}); returning buffer')
+                    return self.labelled(bin, key=key, method=name)
 
-                if fallback is None:
-                    fallback = name, key, bin, m.blob
+                if not fallback:
+                    fallback = name, key, bin
 
                 if not any(bin):
                     continue
@@ -69,8 +65,8 @@ class autoxor(xkey, docs='{0}{p}{1}'):
             return data
         else:
             assert result is not None
-            name, key, bin, is_blob = fallback
-            if is_blob and result.how == self._rt.freq and result.score < 8:
+            name, key, bin = fallback
+            if result.how == self._rt.freq and result.score < 8:
                 self.log_warn(
                     F'unrecognized format, no confirmed crib, low score ({result.score:.2f}%); '
                     'the output is likely junk'
