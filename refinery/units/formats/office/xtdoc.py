@@ -52,4 +52,6 @@ class xtdoc(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data) -> bool | None:
+        if data[:8] == B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1':
+            return True
         return is_likely_doc(data)
