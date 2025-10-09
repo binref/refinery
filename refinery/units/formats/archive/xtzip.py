@@ -130,5 +130,9 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             yield self._pack(filename, date, xt)
 
     @classmethod
-    def handles(cls, data: bytearray):
-        return data.rfind(ZipEndOfCentralDirectory.SIGNATURE) > 0 and data[:2] == B'PK'
+    def handles(cls, data):
+        return data[:4] in (
+            B'PK\x03\x04',
+            B'PK\x05\x06',
+            B'PK\x07\x08',
+        )

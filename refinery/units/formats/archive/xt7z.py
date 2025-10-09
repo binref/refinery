@@ -4,6 +4,7 @@ import re
 
 from typing import TYPE_CHECKING
 
+from refinery.lib.id import contained
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats.archive import ArchiveUnit
 
@@ -121,5 +122,5 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             )
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
-        return B'7z\xBC\xAF\x27\x1C' in data
+    def handles(cls, data) -> bool:
+        return contained(B'7z\xBC\xAF\x27\x1C', data)

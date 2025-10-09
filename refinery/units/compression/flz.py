@@ -242,6 +242,6 @@ class flz(Unit):
         return _flz_decompress(memoryview(data), level - 1)
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         if data and (data[0] >> 5) > 1:
             return False

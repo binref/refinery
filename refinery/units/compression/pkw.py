@@ -65,7 +65,7 @@ class pkw(Unit):
         return output.getvalue()
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
+    def handles(cls, data) -> bool:
         return (len(data) > 2) and (0 <= data[0] <= 1) and (4 <= data[1] <= 6)
 
 

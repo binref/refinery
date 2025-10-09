@@ -319,7 +319,7 @@ class aplib(Unit):
         return decompressor(view[size:]).decompress()
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         if len(data) < 2:
             return False
         if data[:4] == B'AP32':

@@ -43,7 +43,7 @@ class jcalg(Unit):
             return data
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         if data[:2] == B'JC':
             return True
 

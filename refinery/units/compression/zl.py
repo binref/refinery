@@ -95,7 +95,7 @@ class zl(Unit):
         return zz + zl.flush(zlib.Z_FINISH)
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         for sig in (
             B'\x1F\x8B',  # gzip header
             B'\x78\x01',  # zlib low compression

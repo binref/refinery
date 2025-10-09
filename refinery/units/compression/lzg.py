@@ -187,6 +187,6 @@ class lzg(Unit):
         return out
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         if data[:3] == B'LZG':
             return True

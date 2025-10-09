@@ -20,5 +20,5 @@ class bz2(Unit):
         return bz2_.compress(data, self.args.level)
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         return data[:3] == B'BZh'

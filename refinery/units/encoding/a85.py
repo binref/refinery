@@ -19,6 +19,6 @@ class a85(Unit):
         return base64.a85decode(data)
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         from refinery.lib.patterns import formats
         return formats.spaced_a85.value.bin.fullmatch(data) is not None

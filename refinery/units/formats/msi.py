@@ -425,7 +425,7 @@ class xtmsi(xtdoc):
             yield streams[path]
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         return is_likely_msi(data)
 
 

@@ -36,6 +36,6 @@ class imgto(Unit):
             return out.getvalue()
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
+    def handles(cls, data) -> bool | None:
         if get_image_format(data) is not None:
             return True

@@ -40,5 +40,5 @@ class xtcab(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             yield box
 
     @classmethod
-    def handles(cls, data: bytearray):
-        return data.startswith(CabDisk.MAGIC)
+    def handles(cls, data):
+        return data[:4] == CabDisk.MAGIC

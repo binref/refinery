@@ -238,5 +238,5 @@ class xtpdf(ArchiveUnit):
                 yield UnpackResult(F'parsed/page{k}/img{j}.{info.extension}', data)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        return data.startswith(B'%PDF-')
+    def handles(cls, data) -> bool | None:
+        return data[:5] == B'%PDF-'

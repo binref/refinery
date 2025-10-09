@@ -14,6 +14,7 @@ from threading import RLock
 from typing import Callable, NamedTuple
 
 from refinery.lib.tools import entropy
+from refinery.lib.types import buf
 
 
 class Format:
@@ -215,19 +216,19 @@ class Fmt(Format, enum.Enum):
 
 
 FormatDetails = {format.mnemonic: format for format in Fmt}
-StructuralChecks: list[Callable[[bytearray], Fmt | None]] = []
+StructuralChecks: list[Callable[[buf], Fmt | None]] = []
 
 
 class _id_cached:
     __slots__ = 'argid', 'cache', 'rlock', 'function'
 
-    def __init__(self, function: Callable[[bytearray], Fmt | None]):
+    def __init__(self, function: Callable[[buf], Fmt | None]):
         self.argid = None
         self.cache = None
         self.rlock = RLock()
         self.function = function
 
-    def __call__(self, arg: bytearray):
+    def __call__(self, arg: buf):
         argid = id(arg)
         rlock = self.rlock
         with rlock:
@@ -240,14 +241,14 @@ class _id_cached:
         return result
 
 
-def _structural_check(fn: Callable[[bytearray], Fmt | None]):
+def _structural_check(fn: Callable[[buf], Fmt | None]):
     fn = _id_cached(fn)
     StructuralChecks.append(fn)
     return fn
 
 
 @_structural_check
-def get_pe_type(data: bytearray):
+def get_pe_type(data: buf):
     """
     Get the correct file type extension for a PE file, or None if the input is unlikely to be a
     portable executable in the first place.
@@ -286,11 +287,11 @@ def get_pe_type(data: bytearray):
 
 
 @_structural_check
-def get_elf_type(data: bytearray):
+def get_elf_type(data: buf):
     """
     Get arch and byte order information of an ELF file or return None if the input is unlikely to be one.
     """
-    if not data.startswith(b'\x7FELF'):
+    if not data[:4] == b'\x7FELF':
         return None
     abo = data[4:6]
     if len(data) < 0x40:
@@ -308,7 +309,7 @@ def get_elf_type(data: bytearray):
 
 
 @_structural_check
-def get_macho_type(data: bytearray):
+def get_macho_type(data: buf):
     """
     Get arch and byte order information of a MachO file or return None if the input is unlikely to be one.
     """
@@ -365,7 +366,7 @@ def get_macho_type(data: bytearray):
         return mtype
 
 
-def get_executable_type(data: bytearray):
+def get_executable_type(data: buf):
     """
     Determine the type of an executable.
     """
@@ -377,7 +378,7 @@ def get_executable_type(data: bytearray):
         return t
 
 
-def is_likely_pe(data: bytearray):
+def is_likely_pe(data: buf):
     """
     Tests whether the input data is likely a PE file by checking the first two bytes and the magic
     bytes at the beginning of what should be the NT header.
@@ -385,30 +386,41 @@ def is_likely_pe(data: bytearray):
     return get_pe_type(data) is not None
 
 
-def is_likely_pe_dotnet(data: bytearray):
+def contained(needle: bytes, haystack: buf):
+    """
+    Performs a substring search of `needle` in `haystack`. If `haystack` is a `bytes`-like object,
+    it uses the standard operator. If it is a `memoryview`, it uses a regular expression search
+    because I have not found a better way to do it.
+    """
+    if isinstance(haystack, (bytes, bytearray)):
+        return needle in haystack
+    return re.search(re.escape(needle), haystack) is not None
+
+
+def is_likely_pe_dotnet(data: buf):
     """
     Tests whether the input data is likely a .NET PE file by running `refinery.lib.id.is_likely_pe`
     and also checking for the characteristic strings `BSJB`, `#Strings`, and `#Blob`.
     """
     if not is_likely_pe(data):
         return False
-    if b'BSJB' not in data:
+    if not contained(b'BSJB', data):
         return False
-    if b'#Strings' not in data:
+    if not contained(b'#Strings', data):
         return False
-    if b'#Blob' not in data:
+    if not contained(b'#Blob', data):
         return False
     return True
 
 
 @_structural_check
-def get_reg_export_type(data: bytearray):
+def get_reg_export_type(data: buf):
     """
     Check whether the input data is a Windows registry file export.
     """
-    if data.startswith(b'regf'):
+    if data[:4] == b'regf':
         return Fmt.REG_HIVE
-    if data.startswith(b'Windows Registry Editor Version'):
+    if data[:31] == b'Windows Registry Editor Version':
         return Fmt.REG_TEXT
 
 
@@ -419,7 +431,7 @@ class TextEncoding(NamedTuple):
 
 
 def guess_text_encoding(
-    data: bytearray,
+    data: buf,
     window_size: int = 0x1000,
     ascii_ratio: float = 0.98,
 ) -> TextEncoding | None:
@@ -437,18 +449,18 @@ def guess_text_encoding(
     bom = 0
     lsb = 0
 
-    if data.startswith(B'\xEF\xBB\xBF'):
+    if data[:3] == B'\xEF\xBB\xBF':
         # BOM: UTF8
         bom = 3
-    elif data.startswith(B'\xFF\xFE\0\0'):
+    elif data[:4] == B'\xFF\xFE\0\0':
         step = bom = lsb = 4 # UTF-32LE
-    elif data.startswith(B'\xFF\xFE'):
+    elif data[:2] == B'\xFF\xFE':
         step = bom = lsb = 2 # UTF-16LE
-    elif data.startswith(B'\xFE\xFF'):
+    elif data[:2] == B'\xFE\xFF':
         step, bom, lsb = 2, 2, 3
-    elif data.startswith(B'\0\0\xFE\xFF'):
+    elif data[:4] == B'\0\0\xFE\xFF':
         step, bom, lsb = 4, 4, 7
-    elif any(data.startswith(bom) for bom in (
+    elif any(data[4] == bom for bom in (
         b'\x2B\x2F\x76\x38',
         b'\x2B\x2F\x76\x39',
         b'\x2B\x2F\x76\x2B',
@@ -478,7 +490,13 @@ def guess_text_encoding(
     if not size:
         return TextEncoding(bom, lsb, step)
 
-    histogram = [data.count(b, bom, size) for b in range(0x100)]
+    if isinstance(data, (bytes, bytearray)):
+        histogram = [data.count(b, bom, size) for b in range(0x100)]
+    else:
+        histogram = [0] * 256
+        for b in view[bom:size]:
+            histogram[b] += 1
+
     presence = memoryview(bytes(1 if v else 0 for v in histogram))
 
     if sum(presence) > 102:
@@ -515,7 +533,7 @@ def guess_text_encoding(
         size <<= 1
 
 
-def xml_or_html(view: memoryview):
+def xml_or_html(view: buf):
     """
     Returns an `refinery.lib.Fmt` indicating either XML or HTML, or None if the data does not
     look like either of these formats at all.
@@ -551,7 +569,7 @@ def xml_or_html(view: memoryview):
 
 
 def ascii_view(
-    data: bytearray,
+    data: buf,
     window_size: int = 0x1000,
     ascii_ratio: float = 0.98,
 ):
@@ -565,7 +583,7 @@ def ascii_view(
 
 
 def is_likely_eml(
-    data: bytearray,
+    data: buf,
     window_size: int = 0x10000,
 ):
     """
@@ -573,6 +591,7 @@ def is_likely_eml(
     the function returns True.
     """
     hits = 0
+    view = memoryview(data)[:window_size]
     for marker in (
         b'\nReceived:\x20from'
         b'\nSubject:\x20',
@@ -584,15 +603,15 @@ def is_likely_eml(
         b'\nContent-Type:\x20',
         b'\nReturn-Path:\x20',
     ):
-        if data.find(marker, 0, window_size) >= 0:
-            hits += 1
-            if hits >= 2:
-                return True
+        if re.search(re.escape(marker), view) is None:
+            continue
+        if (hits := hits + 1) >= 2:
+            return True
     else:
         return False
 
 
-def is_likely_vbe(data: bytearray | memoryview | bytes):
+def is_likely_vbe(data: buf):
     """
     Checks whether the input contains the known markers used by encoded Visual Basic scripts.
     """
@@ -604,7 +623,7 @@ def is_likely_vbe(data: bytearray | memoryview | bytes):
     return True
 
 
-def is_likely_json(data: bytearray | memoryview | bytes):
+def is_likely_json(data: buf):
     """
     A fast regular expression based check for whether the input looks like JSON. The expression
     checks whether the input is a sequence of valid JSON tokens: quoted strings, constants,
@@ -629,7 +648,7 @@ def is_likely_json(data: bytearray | memoryview | bytes):
 
 
 @_structural_check
-def get_text_format(data: bytearray):
+def get_text_format(data: buf):
     """
     Implements a heuristic check for whether the input is likely XML data.
     """
@@ -660,21 +679,21 @@ def get_text_format(data: bytearray):
 
 
 @_structural_check
-def get_microsoft_format(data: bytearray):
+def get_microsoft_format(data: buf):
     """
     Checks for various Microsoft formats. This includes Access Database files and OneNote, but most
     importantly it can distinguish between various compound document formats like MSI, Word, Excel,
     PowerPoint, and Outlook.
     """
-    if data.startswith(b'\0\01\0\0Standard ACE DB'):
+    if data[:19] == b'\0\01\0\0Standard ACE DB':
         return Fmt.MDB
-    if data.startswith(b'\0\01\0\0Standard Jet DB'):
+    if data[:19] == b'\0\01\0\0Standard Jet DB':
         return Fmt.MDB
-    if not data.startswith(B'\xD0\xCF\x11\xE0'):
+    if data[:4] != B'\xD0\xCF\x11\xE0':
         return None
     if data[4:8] != B'\xA1\xB1\x1A\xE1' and any(data[4:12]):
         return None
-    if b'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3' in data:
+    if contained(b'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3', data):
         return Fmt.ONE
     for k in range(0x200, 0x10000, 0x200):
         mark = int.from_bytes(data[k:k + 4], 'little')
@@ -688,28 +707,28 @@ def get_microsoft_format(data: bytearray):
             return Fmt.PPT
         if mark == 0x03E8000F:
             return Fmt.PPT
-    if b'W\0o\0r\0d\0D\0o\0c\0u\0m\0e\0n\0t\0' in data:
+    if contained(b'W\0o\0r\0d\0D\0o\0c\0u\0m\0e\0n\0t\0', data):
         # WordDocument
         return Fmt.DOC
-    if b'P\0o\0w\0e\0r\0P\0o\0i\0n\0t\0' in data:
+    if contained(b'P\0o\0w\0e\0r\0P\0o\0i\0n\0t\0', data):
         # PowerPoint
         return Fmt.PPT
-    if b'W\0o\0r\0k\0b\0o\0o\0k\0' in data:
+    if contained(b'W\0o\0r\0k\0b\0o\0o\0k\0', data):
         # Workbook
         return Fmt.XLS
-    if b'_\0_\0s\0u\0b\0s\0t\0g\01\0.\00\0_\0' in data:
+    if contained(b'_\0_\0s\0u\0b\0s\0t\0g\01\0.\00\0_\0', data):
         # __substg1._
         return Fmt.MSG
-    if b'_\0_\0n\0a\0m\0e\0i\0d\0_\0v\0e\0r\0s\0i\0o\0n\0' in data:
+    if contained(b'_\0_\0n\0a\0m\0e\0i\0d\0_\0v\0e\0r\0s\0i\0o\0n\0', data):
         # __nameid_version
         return Fmt.MSG
-    if b'_\0_\0r\0e\0c\0i\0p\0_\0v\0e\0r\0s\0i\0o\0n\0' in data:
+    if contained(b'_\0_\0r\0e\0c\0i\0p\0_\0v\0e\0r\0s\0i\0o\0n\0', data):
         # __recip_version
         return Fmt.MSG
-    if b'_\0_\0p\0r\0o\0p\0e\0r\0t\0i\0e\0s\0_\0v\0e\0r\0s\0i\0o\0n\0' in data:
+    if contained(b'_\0_\0p\0r\0o\0p\0e\0r\0t\0i\0e\0s\0_\0v\0e\0r\0s\0i\0o\0n\0', data):
         # __properties_version
         return Fmt.MSG
-    if b'B\0o\0o\0k\0' in data:
+    if contained(b'B\0o\0o\0k\0', data):
         # Book
         return Fmt.XLS
     if re.search(b'Property|ProductCode|UpgradeCode|PackageCode|InstallExecuteSequence|Component|Feature|File|Media', data):
@@ -721,25 +740,25 @@ def get_microsoft_format(data: bytearray):
 
 
 @_structural_check
-def get_office_xml_type(data: bytearray):
+def get_office_xml_type(data: buf):
     """
     Checks for known XML-based Office document types like DOCX, XLSX, and PPTX.
     """
-    if not data.startswith(B'PK\x03\x04'):
+    if data[:2] != B'PK':
         return None
-    if B'_rels/.rels' not in data or B'[Content_Types].xml' not in data:
+    if not contained(B'_rels/.rels', data) or not contained(B'[Content_Types].xml', data):
         return None
-    if B'word/document.xml' in data:
+    if contained(B'word/document.xml', data):
         return Fmt.DOCX
-    if B'xl/document.xml' in data:
+    if contained(B'xl/document.xml', data):
         return Fmt.XLSX
-    if B'ppt/presentation.xml' in data:
+    if contained(B'ppt/presentation.xml', data):
         return Fmt.PPTX
 
 
 @_structural_check
 def get_compression_type(
-    data: bytearray,
+    data: buf,
     entropy_minimum: float = 0.7,
     entropy_look_at: int = 0x2000,
 ):
@@ -795,9 +814,9 @@ def get_compression_type(
         (Fmt.CPIO        , F, 0, B'070701'),                                    # noqa
         (Fmt.CPIO        , F, 0, B'070702'),                                    # noqa
         (Fmt.CPIO        , F, 0, B'070707'),                                    # noqa
-        (Fmt.ZIP         , T, 0, B'PK\03\04'),                                  # noqa
-        (Fmt.ZIP         , T, 0, B'PK\05\06'),                                  # noqa
-        (Fmt.ZIP         , T, 0, B'PK\07\08'),                                  # noqa
+        (Fmt.ZIP         , T, 0, B'PK\x03\x04'),                                # noqa
+        (Fmt.ZIP         , T, 0, B'PK\x05\x06'),                                # noqa
+        (Fmt.ZIP         , T, 0, B'PK\x07\x08'),                                # noqa
         (Fmt.ISO         , F, 0x8001, B'CD001'),                                # noqa
         (Fmt.ISO         , F, 0x8801, B'CD001'),                                # noqa
         (Fmt.ISO         , F, 0x9001, B'CD001'),                                # noqa
@@ -824,7 +843,7 @@ def get_compression_type(
 
 
 @_structural_check
-def get_image_format(data: bytearray):
+def get_image_format(data: buf):
     """
     Determine an image format based on known magic signatures or return None if there is no
     match.
@@ -893,17 +912,17 @@ def get_image_format(data: bytearray):
         (Fmt.LEP, B'\xCF\x84\x01'),
         (Fmt.HDR, B'#?RADIANCE\n'),
     ):
-        if data.startswith(signature):
+        if data[:len(signature)] == signature:
             return format
 
 
 @_structural_check
-def get_media_format(data: bytearray):
+def get_media_format(data: buf):
     """
     Determine a multi-media format based on known magic signatures or return None if there is no
     match.
     """
-    if data.startswith(B'RIFF'):
+    if data[:4] == B'RIFF':
         if data[8:12] == b'WAVE':
             return Fmt.WAV
         if data[8:12] == b'AVI ':
@@ -926,7 +945,7 @@ def get_media_format(data: bytearray):
         (Fmt.SWF, B'FWS'),
         (Fmt.SIL, B'#!SILK\n'),
     ):
-        if data.startswith(signature):
+        if data[:len(signature)] == signature:
             return format
 
     if data[4:12] in (B'ftypisom', B'ftypMSNV'):
@@ -942,19 +961,19 @@ def get_media_format(data: bytearray):
 
 
 @_structural_check
-def get_serialization_format(data: bytearray):
+def get_serialization_format(data: buf):
     """
     Checks for known data serialization formats.
     """
-    if data.startswith(B'\xAC\xED\x00\x05'):
+    if data[:4] == B'\xAC\xED\x00\x05':
         return Fmt.S_JAV
-    if data.startswith(B'\0\01\0\0\0\xFF\xFF\xFF\xFF\x01\0\0\0\0\0\0\0'):
+    if data[:17] == B'\0\01\0\0\0\xFF\xFF\xFF\xFF\x01\0\0\0\0\0\0\0':
         if data[17] in range(18) or data[17] in range(0x14, 0x17):
             return Fmt.S_DOT
 
 
 @_structural_check
-def get_misc_binary_formats(data: bytearray):
+def get_misc_binary_formats(data: buf):
     """
     Checks for various other binary formats that are not covered by other methods in this module.
     """
@@ -981,11 +1000,11 @@ def get_misc_binary_formats(data: bytearray):
         (Fmt.EVT, B'LfLe'),
         (Fmt.EVTX, B'ElfFile'),
     ):
-        if data.startswith(signature):
+        if data[:len(signature)] == signature:
             return format
 
 
-def get_structured_data_type(data: bytearray):
+def get_structured_data_type(data: buf):
     """
     Attempts to determine whether the input data is just a meaningless blob or whether it has
     structure, i.e. adheres to a known file format.
@@ -995,7 +1014,7 @@ def get_structured_data_type(data: bytearray):
             return t
 
 
-def is_likely_xml(data: bytearray):
+def is_likely_xml(data: buf):
     """
     Checks whether the input data is likely an XML document.
     """
@@ -1004,7 +1023,7 @@ def is_likely_xml(data: bytearray):
     return False
 
 
-def is_likely_htm(data: bytearray):
+def is_likely_htm(data: buf):
     """
     Checks whether the input data is likely an HTML document.
     """
@@ -1013,17 +1032,25 @@ def is_likely_htm(data: bytearray):
     return False
 
 
-def is_likely_msi(data: bytearray):
+def is_likely_msi(data: buf):
     """
     Checks whether the input data is likely an MSI.
     """
     return get_microsoft_format(data) == Fmt.MSI
 
 
-def is_likely_email(data: bytearray):
+def is_likely_email(data: buf):
     """
     Checks whether the input data is likely a plain-text or Outlook email document.
     """
     if is_likely_eml(data):
         return True
     return get_microsoft_format(data) == Fmt.MSG
+
+
+def is_likely_doc(data: buf):
+    if get_microsoft_format(data) == Fmt.DOC:
+        return True
+    if get_office_xml_type(data) == Fmt.DOCX:
+        return True
+    return False

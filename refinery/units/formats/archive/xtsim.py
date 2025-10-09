@@ -264,7 +264,7 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         check_empty_reader(content, 'content')
 
     @classmethod
-    def get_offsets(cls, data: bytearray) -> SIMOffsets | None:
+    def get_offsets(cls, data: bytes | bytearray) -> SIMOffsets | None:
         if len(data) < 0x1000:
             return None
 
@@ -309,5 +309,6 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     return offsets.rebase(pos_zero)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
-        return cls.get_offsets(data) is not None
+    def handles(cls, data) -> bool | None:
+        if isinstance(data, (bytes, bytearray)):
+            return cls.get_offsets(data) is not None

@@ -248,6 +248,6 @@ class mscf(Unit):
             writer.replay(offset, length)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        if data.startswith(cls._SIGNATURE):
+    def handles(cls, data) -> bool | None:
+        if data[:len(cls._SIGNATURE)] == cls._SIGNATURE:
             return True

@@ -24,5 +24,5 @@ class zstd(Unit):
         return zc.compress(data) + zc.flush()
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
+    def handles(cls, data) -> bool:
         return data[:4] == B'\x28\xB5\x2F\xFD'

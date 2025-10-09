@@ -44,8 +44,8 @@ class xtxs(PathExtractorUnit):
                         yield UnpackResult(F'{name}/{k}/{header}', entry)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        if data.startswith(b'\0\01\0\0Standard ACE DB'):
+    def handles(cls, data) -> bool | None:
+        if data[:19] == b'\0\01\0\0Standard ACE DB':
             return True
-        if data.startswith(b'\0\01\0\0Standard Jet DB'):
+        if data[:19] == b'\0\01\0\0Standard Jet DB':
             return True

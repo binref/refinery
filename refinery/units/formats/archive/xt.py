@@ -10,7 +10,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     and use the corresponding specific extractor from among the ones implemented in refinery.
     """
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
+    def handles(cls, data) -> bool | None:
         out = False
         for engine in cls.handlers():
             engine_verdict = engine.handles(data)

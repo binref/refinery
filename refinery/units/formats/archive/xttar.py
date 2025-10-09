@@ -31,5 +31,5 @@ class xttar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             yield self._pack(info.name, date, lambda e=extractor: e.read())
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
+    def handles(cls, data) -> bool:
         return data[257:265] in (B'ustar\0\x30\x30', B'ustar\x20\x20\0')

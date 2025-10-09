@@ -221,5 +221,5 @@ class xtmail(PathExtractorUnit):
             yield from self._get_parts_regular(data)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
+    def handles(cls, data) -> bool:
         return is_likely_email(data)

@@ -23,7 +23,7 @@ class hex(Unit):
         return base64.b16decode(data, casefold=True)
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         from refinery.lib.patterns import formats
         if formats.spaced_hex.value.bin.fullmatch(data):
             return True

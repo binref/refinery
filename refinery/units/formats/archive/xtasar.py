@@ -63,5 +63,5 @@ class xtasar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         yield from _unpack(header.directory)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
+    def handles(cls, data) -> bool | None:
         return data[:4] == b'\04\0\0\0' and data[0x10:0x18] == B'{"files"'

@@ -165,5 +165,5 @@ class wshenc(Unit):
         return bytearray(self._decoded(self._unescape(data)))
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         return is_likely_vbe(data)

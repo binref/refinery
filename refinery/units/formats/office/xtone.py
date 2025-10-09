@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import UUID
+import re
 
 from refinery.lib.mime import get_cached_file_magic_info
 from refinery.lib.structures import MemoryFile
@@ -29,5 +29,7 @@ class xtone(PathExtractorUnit):
             yield UnpackResult(F'{guid}{extension}', chunk)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        return UUID('7b5c52e4-d88c-4da7-aeb1-5378d02996d3').bytes_le in data
+    def handles(cls, data) -> bool | None:
+        return re.search(
+            br'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3', data
+        ) is not None

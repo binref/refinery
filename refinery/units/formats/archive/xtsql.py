@@ -67,5 +67,5 @@ class xtsql(PathExtractorUnit):
                         yield UnpackResult(path, value)
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         return memoryview(data)[:15] == B'SQLite format 3'

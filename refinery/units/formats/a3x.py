@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import io
 import math
+import re
 import struct
 
 from enum import Enum
 from typing import Generator, Iterable, NamedTuple
 
+from refinery.lib.id import contained
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.lib.tools import date_from_timestamp
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -1029,5 +1031,5 @@ class a3x(PathExtractorUnit):
                 raise error
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        return A3xScript.MAGIC in data or A3xRecord.MAGIC in data
+    def handles(cls, data) -> bool | None:
+        return contained(A3xScript.MAGIC, data) or contained(A3xRecord.MAGIC, data)

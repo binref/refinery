@@ -277,6 +277,6 @@ class lzo(Unit):
             )
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        if data.startswith(LZO.SIGNATURE):
+    def handles(cls, data) -> bool | None:
+        if data[:len(LZO.SIGNATURE)] == LZO.SIGNATURE:
             return True

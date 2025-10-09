@@ -1271,7 +1271,7 @@ class UnitBase(metaclass=Executable, abstract=True):
 
     @classmethod
     @abc.abstractmethod
-    def handles(cls, data: bytearray | Chunk) -> bool | None:
+    def handles(cls, data: buf) -> bool | None:
         """
         This tri-state routine returns `True` if the unit is certain that it can process the
         given input data, and `False` if it is convinced of the opposite. `None` is returned
@@ -1565,7 +1565,7 @@ class Unit(UnitBase, abstract=True):
         return chunks
 
     @classmethod
-    def handles(cls, data: bytearray | Chunk) -> bool | None:
+    def handles(cls, data: buf) -> bool | None:
         return None
 
     def reset(self):

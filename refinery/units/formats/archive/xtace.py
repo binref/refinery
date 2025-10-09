@@ -22,5 +22,5 @@ class xtace(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             )
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
-        return b'**ACE**' in data[:0x100]
+    def handles(cls, data) -> bool:
+        return data[7:14] == b'**ACE**'

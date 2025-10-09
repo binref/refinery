@@ -61,5 +61,5 @@ class pdfcrypt(Unit):
             return out.getvalue()
 
     @classmethod
-    def handles(cls, data: bytearray):
-        return data.startswith(B'%PDF-')
+    def handles(cls, data):
+        return data[:5] == B'%PDF-'

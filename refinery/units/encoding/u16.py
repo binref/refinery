@@ -16,6 +16,6 @@ class u16(Unit):
         return data.decode('utf-16').encode(self.codec)
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         if encoding := guess_text_encoding(data):
             return encoding.step == 2

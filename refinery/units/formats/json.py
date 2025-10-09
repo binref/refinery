@@ -48,7 +48,7 @@ class xtjson(PathExtractorUnit):
             yield UnpackResult(path, extract, type=typename)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
+    def handles(cls, data) -> bool | None:
         return is_likely_json(data)
 
 

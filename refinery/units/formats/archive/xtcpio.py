@@ -47,5 +47,5 @@ class xtcpio(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             yield self._pack(entry.name, entry.mtime, entry.data)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
+    def handles(cls, data) -> bool:
         return data[:6] == B'070701'

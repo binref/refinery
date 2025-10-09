@@ -1246,8 +1246,8 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         super().__init__(*paths, index=index, **more)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        return cls._MAGIC in data
+    def handles(cls, data) -> bool | None:
+        return data[:len(cls._MAGIC)] == cls._MAGIC
 
     def unpack(self, data: bytearray):
         def mkdate(date) -> datetime:

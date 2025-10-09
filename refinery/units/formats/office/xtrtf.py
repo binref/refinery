@@ -53,6 +53,6 @@ class xtrtf(PathExtractorUnit):
             yield UnpackResult(path, data, **meta)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
+    def handles(cls, data) -> bool:
         import re
         return bool(re.search(bR'^\s{0,500}\{\\rtf', memoryview(data)[:505]))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from refinery.lib.id import contained
 from refinery.lib.tools import NoLogging
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
@@ -32,12 +33,12 @@ class xtvba(PathExtractorUnit):
             yield UnpackResult(stream_path, code.encode(self.codec))
 
     @classmethod
-    def handles(cls, data: bytearray):
-        if data.startswith(b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'):
+    def handles(cls, data):
+        if data[:8] == b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1':
             return True
         if data[:2] == B'PK':
-            return B'xl/vbaProject.bin' in data
-        return any(ns in data for ns in [
+            return contained(B'xl/vbaProject.bin', data)
+        return any(contained(ns, data) for ns in [
             b'http://schemas.microsoft.com/office/word/2003/wordml',
             b'http://schemas.microsoft.com/office/2006/xmlPackage',
         ])

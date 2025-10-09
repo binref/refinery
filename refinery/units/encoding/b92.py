@@ -101,6 +101,6 @@ class b92(Unit):
         return output.getvalue()
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         from refinery.lib.patterns import formats
         return formats.b92.value.bin.fullmatch(data) is not None

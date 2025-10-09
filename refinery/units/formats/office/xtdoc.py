@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.id import is_likely_doc
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.archive.xtzip import xtzip
@@ -50,12 +51,5 @@ class xtdoc(PathExtractorUnit):
                 yield UnpackResult(path, olestream.read())
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool | None:
-        if data.startswith(B'\xD0\xCF\x11\xE0'):
-            return True
-        if xtzip.handles(data):
-            return sum(1 for marker in [
-                B'[Content_Types].xml',
-                B'word/document.xml',
-                B'docProps/core.xml',
-            ] if marker in data) >= 2
+    def handles(cls, data) -> bool | None:
+        return is_likely_doc(data)

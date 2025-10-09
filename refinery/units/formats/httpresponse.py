@@ -40,5 +40,5 @@ class httpresponse(Unit):
             return payload
 
     @classmethod
-    def handles(cls, data: bytearray | Chunk) -> bool | None:
-        return data.startswith(B'HTTP/1')
+    def handles(cls, data) -> bool | None:
+        return data[:6] == B'HTTP/1'

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.dotnet.types import Byte, ParserEOF, StreamReader, StringPrimitive, UInt32, UInt64
+from refinery.lib.id import contained
 from refinery.lib.meta import SizeInt
 from refinery.units.compression.zl import zl
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -74,5 +75,5 @@ class dnsfx(PathExtractorUnit):
         return int.from_bytes(data[bundle_sig_offset - 8:bundle_sig_offset], 'little')
 
     @classmethod
-    def handles(cls, data: bytearray):
-        return cls._SIGNATURE in data
+    def handles(cls, data):
+        return contained(cls._SIGNATURE, data)

@@ -65,7 +65,7 @@ class xtmacho(ArchiveUnit):
             count -= 1
 
     @classmethod
-    def handles(cls, data: bytearray):
+    def handles(cls, data):
         return data[:4] in (
             cls._SIGNATURE_BE,
             cls._SIGNATURE_LE,

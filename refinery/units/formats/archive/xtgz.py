@@ -52,5 +52,5 @@ class xtgz(ArchiveUnit):
         yield self._pack(path, date, archive.data)
 
     @classmethod
-    def handles(cls, data: bytearray) -> bool:
-        return data.startswith(B'\x1F\x8B')
+    def handles(cls, data) -> bool:
+        return data[:2] == B'\x1F\x8B'
