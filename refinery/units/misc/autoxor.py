@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from refinery.lib.loader import get_entry_point
 from refinery.lib.mime import FileMagicInfo as magic
+from refinery.units.blockwise.sub import sub
+from refinery.units.blockwise.xor import xor
 from refinery.units.misc.xkey import xkey
 
 
@@ -21,16 +23,16 @@ class autoxor(xkey, docs='{0}{p}{1}'):
             pass
         else:
             key = result.key
-            names = []
+            units: list[type[xor] | type[sub]] = []
 
             if result.xor is not False:
-                names.append('xor')
+                units.append(xor)
             if result.xor is not True:
-                names.append('sub')
+                units.append(sub)
 
-            for name in names:
+            for unit in units:
 
-                unit = get_entry_point(name)
+                name = unit.name
                 bin = data | unit(key) | bytearray
                 space = B'\0' | unit(0x20) | bytes
 
@@ -62,11 +64,14 @@ class autoxor(xkey, docs='{0}{p}{1}'):
                     key = (b'\x20' * len(key)) | unit(key) | bytes
                     return self.labelled(as_text, key=key, method=name)
 
-        if fallback is None:
-            self.log_warn('No key was found; returning original data.')
-            return data
-        else:
-            name, key, bin, is_blob = fallback
-            if is_blob and result.how == self._rt.freq:
-                self.log_warn('unrecognized format and no confirmed crib; the output is likely junk')
-            return self.labelled(bin, key=key)
+            if fallback is None:
+                self.log_warn('No key was found; returning original data.')
+                return data
+            else:
+                name, key, bin, is_blob = fallback
+                if is_blob and result.how == self._rt.freq and result.score < 8:
+                    self.log_warn(
+                        F'unrecognized format, no confirmed crib, low score ({result.score:.2f}%); '
+                        'the output is likely junk'
+                    )
+                return self.labelled(bin, key=key)

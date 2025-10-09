@@ -93,7 +93,7 @@ class xkey(Unit):
             'DEX'           : (B'dex\n035\0'),
             'JPG'           : (B'\xFF\xD8\xFF', _S(B'\xE0\xE1\xEE'), (B'\x00\x10\x4A\x46\x49\x46\x00\x01', B'')),
             'OneNote'       : (B'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3'),
-            'A3xScript'     : (B'\xA3\x48\x4B\xBE\x98\x6C\x4A\xA9\x99\x4C\x53\x0A\x86\xD6\x48\x7D'),
+            'A3xScript'     : (B'\xA3\x48\x4B\xBE\x98\x6C\x4A\xA9\x99\x4C\x53\x0A\x86\xD6\x48\x7DAU3!EA0', _S(B'56')),
             'RTFDocument'   : (B'{\\rtf1', (B'\\adeflang', B'\\ansi', B'')),
             'CallToPop'     : (B'\xE8\0\0\0\0', (
                                B'\x41\x58', B'\x41\x59', B'\x41\x5A', B'\x41\x5B',
@@ -113,8 +113,8 @@ class xkey(Unit):
             'ASAR'          : (B'{"files":{"'),
         },
         range(0x10): {
-            'DocTypeLower'  : (B'<!doctype\x20'),
-            'DocTypeUpper'  : (B'<!DOCTYPE\x20'),
+            'DocTypeLower'  : (B'<!doctype\x20', (B'', B'html')),
+            'DocTypeUpper'  : (B'<!DOCTYPE\x20', (B'', B'HTML')),
             'HTMLLower'     : (B'<html>'),
             'HTMLUpper'     : (B'<HTML>'),
             'XML'           : (B'<?xml version="'),
@@ -161,6 +161,7 @@ class xkey(Unit):
         key: bytes
         how: xkey._rt
         xor: bool | None = None
+        score: float = 0.0
 
     def __init__(
         self,
@@ -349,13 +350,13 @@ class xkey(Unit):
             # conducted to derive it; there might be plenty of room for improvement here.
             _score = _score * ((n - keylen) / (n - 1)) ** keylen
 
-            logmsg = F'got score {_score * 100:05.2f}% for length {keylen}'
+            logmsg = F'[{{}}] score {_score * 100:05.2f}% for key length {keylen}'
             if _score > score:
-                self.log_info(logmsg)
+                self.log_info(logmsg.format('+'))
                 score = _score
                 guess = bytes(value for value, _ in _guess)
             else:
-                self.log_debug(logmsg)
+                self.log_debug(logmsg.format(' '))
 
         if guess is not None:
-            return self._result(guess, self._rt.freq)
+            return self._result(guess, self._rt.freq, score=score * 100)
