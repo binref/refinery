@@ -45,6 +45,10 @@ This is a refinery-focused write-up of how to solve FlareOn10.
 The tutorial goes through several layers of a multi-stage downloader.
 It illustrates the use of path extraction units and features some steganography.
 
+### [Volume A — FlareOn 11][0x0A]
+
+This is a refinery-focused write-up of how to solve FlareOn11.
+
 
 [0x01]: notebooks/tbr-files.v0x01.netwalker.dropper.ipynb
 [0x02]: notebooks/tbr-files.v0x02.amadey.loader.ipynb
@@ -55,3 +59,4 @@ It illustrates the use of path extraction units and features some steganography.
 [0x07]: notebooks/tbr-files.v0x07.dc.rat.ipynb
 [0x08]: notebooks/tbr-files.v0x08.flare.on.10.ipynb
 [0x09]: notebooks/tbr-files.v0x09.exploit.document.ipynb
+[0x0A]: notebooks/tbr-files.v0x0a.flare.on.11.ipynb
