@@ -10,7 +10,6 @@ from __future__ import annotations
 import enum
 import re
 
-from threading import RLock
 from typing import Callable, NamedTuple
 
 from refinery.lib.tools import entropy
