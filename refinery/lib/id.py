@@ -219,30 +219,7 @@ FormatDetails = {format.mnemonic: format for format in Fmt}
 StructuralChecks: list[Callable[[buf], Fmt | None]] = []
 
 
-class _id_cached:
-    __slots__ = 'argid', 'cache', 'rlock', 'function'
-
-    def __init__(self, function: Callable[[buf], Fmt | None]):
-        self.argid = None
-        self.cache = None
-        self.rlock = RLock()
-        self.function = function
-
-    def __call__(self, arg: buf):
-        argid = id(arg)
-        rlock = self.rlock
-        with rlock:
-            if self.argid == argid:
-                return self.cache
-        result = self.function(arg)
-        with rlock:
-            self.argid = argid
-            self.cache = result
-        return result
-
-
 def _structural_check(fn: Callable[[buf], Fmt | None]):
-    fn = _id_cached(fn)
     StructuralChecks.append(fn)
     return fn
 
