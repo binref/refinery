@@ -966,36 +966,36 @@ class DelayedArgument(LazyEvaluation):
             return result
         return _cut
 
-    @handler.register('pp')
-    def pp(self, input: bytes, region: slice | str = slice(1, None, 1), separator: bytes = B'/') -> bytes:
+    @handler.register('pd')
+    def pd(self, input: bytes, region: slice | str = slice(1, None, 1), separator: bytes = B'/') -> bytes:
         """
-        The handler `pp[region=1:,sep=/]:input` splits the input at the given string `sep`
+        The handler `pd[region=1:,sep=/]:input` splits the input at the given string `sep`
         and reverses the sequence. Parts are then selected according to the `region` parameter,
         which can be any expression in Python slice syntax. Afterwards, the resulting sequence
         is reversed again and joined at the `sep` parameter. For example, the expression
 
-            pp[:2]:/path/to/some/item/and/more
+            pd[2:]:/path/to/some/item/and/more
 
         will return the string `/path/to/some/item`.
         """
-        def _pp(data: Chunk | None = None):
+        def _pd(data: Chunk | None = None):
             b: slice = sliceobj(region, data=data, final=True)
-            pp = input.split(separator)
-            pp.reverse()
-            pp = pp[b]
-            pp.reverse()
-            return separator.join(pp)
+            pd = input.split(separator)
+            pd.reverse()
+            pd = pd[b]
+            pd.reverse()
+            return separator.join(pd)
         try:
-            return _pp()
+            return _pd()
         except TooLazy:
-            return _pp
+            return _pd
 
     @handler.register('pb')
     def pb(self, input: bytes, separator: bytes = B'/') -> bytes:
         """
-        The handler `pb:input` is equivalent to `pp[0:1]:input` and corresponds to "basename".
+        The handler `pb:input` is equivalent to `pd[:1]:input` and corresponds to "basename".
         """
-        return self.pp(input, slice(0, 1, 1), separator=separator)
+        return self.pd(input, slice(0, 1, 1), separator=separator)
 
     @handler.register('pn')
     def pn(self, path: str | bytes) -> bytes:
@@ -1011,8 +1011,8 @@ class DelayedArgument(LazyEvaluation):
     @handler.register('px')
     def px(self, path: str | bytes) -> bytes:
         """
-        The handler `px:/path/to/file.ext` returns `ext`, i.e. the extension
-        extension. The handler name is short for "path name".
+        The handler `px:/path/to/file.ext` returns `ext`, i.e. the extension extension. The
+        handler name is short for "path eXtension".
         """
         if not isinstance(path, str):
             path = path.decode('utf8')
