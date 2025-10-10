@@ -51,23 +51,31 @@ class SampleStore:
             remaining -= time.thread_time() - clock
         raise LookupError(F'Timeout exceeded while looking for {sha256hash}, backed off {backoff} times.')
 
+    def decode(self, data: bytes, key: Optional[str] = None):
+        if key is None:
+            key = 'REFINERYTESTDATA'
+        result = data | aes(mode='CBC', key=key.encode('latin1')) | bytearray
+        return result
+
+    def download(self, sha256hash: str, key: Optional[str] = None):
+        encoded = self._download(sha256hash.lower())
+        return self.decode(encoded, key)
+
     def get(self, sha256hash: str, key: Optional[str] = None):
         sha256hash = sha256hash.lower()
         path = self.root / F'{sha256hash}.enc'
-        key = key or 'REFINERYTESTDATA'
-        key = key.encode('latin1')
         with self.lock:
             try:
                 with path.open('rb') as fd:
-                    encoded_data = fd.read()
+                    encoded = fd.read()
             except FileNotFoundError:
-                encoded_data = self._download(sha256hash)
-            result = encoded_data | aes(mode='CBC', key=key) | bytearray
+                encoded = self._download(sha256hash)
+            result = self.decode(encoded, key)
             checksum = hashlib.sha256(result).hexdigest().lower()
             if not result or checksum != sha256hash:
                 raise ValueError(F'The sample {sha256hash} did not decode correctly with key {key}.')
             with path.open('wb') as fd:
-                fd.write(encoded_data)
+                fd.write(encoded)
             return result
 
     def __getitem__(self, sha256hash: str):

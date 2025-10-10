@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Optional, Union
+from __future__ import annotations
 
 import builtins
 import io
@@ -8,6 +8,7 @@ import os
 import stat
 import subprocess
 import sys
+import codecs
 
 import fnmatch
 import hashlib
@@ -27,19 +28,18 @@ from refinery.units import Executable, Unit
 
 from samples import SampleStore
 
+from IPython.core import magic
+
 logging.disable(logging.CRITICAL)
 Executable.Entry = '__DEMO__'
 
-try:
-    from IPython.core import magic
-except ImportError:
-    def register_line_magic(x): return x
-    def register_cell_magic(x): return x
-else:
-    def register_line_magic(f): # noqa
-        return magic.register_line_magic(magic.no_var_expand(f))
-    def register_cell_magic(f): # noqa
-        return magic.register_line_cell_magic(magic.no_var_expand(f))
+
+def register_line_magic(f): # noqa
+    return magic.register_line_magic(magic.no_var_expand(f))
+
+def register_cell_magic(f): # noqa
+    return magic.register_line_cell_magic(magic.no_var_expand(f))
+
 
 class FakeTTY:
     def __getattr__(self, k):
@@ -48,14 +48,13 @@ class FakeTTY:
     def isatty(self):
         return True
 
-    def write(self, b: Union[str, bytes]):
-        try:
-            b = b.decode('utf8')
-        except AttributeError:
-            pass
+    def write(self, b: str | bytes):
+        if not isinstance(b, str):
+            b = codecs.decode(b, 'utf8')
         sys.stdout.write(b)
 
 
+cache = {}
 store = SampleStore()
 _open = builtins.open
 _stat = os.stat
@@ -65,7 +64,7 @@ _popen = subprocess.Popen
 
 def _virtual_fs_stat(name, *args, **kwargs):
     try:
-        data = store.cache[name]
+        data = cache[name]
     except KeyError:
         return _stat(name, *args, **kwargs)
     M = stat.S_IMODE(0xFFFF) | stat.S_IFREG
@@ -84,7 +83,7 @@ def _virtual_fs_stat(name, *args, **kwargs):
     ))
 
 
-def _virtual_fs_open(name: Union[int, str], mode='r', *args, **kwargs):
+def _virtual_fs_open(name: int | str, mode='r', *args, **kwargs):
     if isinstance(name, int):
         return _open(name, mode, *args, **kwargs)
 
@@ -98,13 +97,13 @@ def _virtual_fs_open(name: Union[int, str], mode='r', *args, **kwargs):
 
     if 'r' in mode:
         try:
-            return io.BytesIO(store.cache[file_name])
+            return io.BytesIO(cache[file_name])
         except KeyError:
             return _open(name, mode)
 
     class VFS(io.BytesIO):
         def close(self) -> None:
-            store.cache[file_name] = self.getvalue()
+            cache[file_name] = self.getvalue()
             return super().close()
 
     return VFS()
@@ -115,7 +114,7 @@ def _virtual_fs_popen(*args, **kwargs):
     import pathlib
     with tempfile.TemporaryDirectory('.binref') as root:
         root = pathlib.Path(root)
-        for name, data in store.cache.items():
+        for name, data in cache.items():
             path = root / name
             os.makedirs(path.parent, exist_ok=True)
             with open(root / name, 'wb') as stream:
@@ -130,7 +129,7 @@ def _virtual_fs_popen(*args, **kwargs):
                     continue
                 with open(path, 'rb') as stream:
                     name = path.relative_to(root).as_posix()
-                    store.cache[name] = stream.read()
+                    cache[name] = stream.read()
             except Exception:
                 pass
 
@@ -161,10 +160,11 @@ def emit(line: str, cell=None):
 class _vef(Unit):
     def __init__(self, *mask):
         pass
+
     def process(self, data):
         for mask_ in self.args.mask:
             mask = mask_.decode(self.codec)
-            for name, data in store.cache.items():
+            for name, data in cache.items():
                 if not fnmatch.fnmatch(name, mask):
                     continue
                 yield self.labelled(data, path=name)
@@ -185,7 +185,7 @@ def ef(line: str, cell=None):
 @register_line_magic
 def ls(line: str = ''):
     patterns = shlex.split(line)
-    for name, data in store.cache.items():
+    for name, data in cache.items():
         if patterns and not any(fnmatch.fnmatch(name, p) for p in patterns):
             continue
         print(F'{SizeInt(len(data))!r}', hashlib.sha256(data).hexdigest().lower(), name)
@@ -194,9 +194,9 @@ def ls(line: str = ''):
 @register_line_magic
 def rm(line: str):
     patterns = shlex.split(line, posix=True)
-    for name in list(store.cache.keys()):
+    for name in list(cache.keys()):
         if any(fnmatch.fnmatch(name, pattern) for pattern in patterns):
-            store.cache.pop(name, None)
+            cache.pop(name, None)
 
 
 @register_line_magic
@@ -214,18 +214,17 @@ def cat(line: str, cell=None):
     cell = cell or ''
     cell, _, _ = cell.partition(eof)
     cell = cell.strip()
-    store.cache[out] = cell.encode('utf8')
+    cache[out] = cell.encode('utf8')
 
 
-def store_sample(hash: str, name: Optional[str] = None, key: Optional[str] = None):
-    store.download(hash, key=key)
+def store_sample(hash: str, name: str | None = None, key: str | None = None):
     if name is None:
         name = hash
-    store.cache[name] = store.cache.pop(hash)
+    cache[name] = store.download(hash, key=key)
 
 
 def store_clear():
-    store.cache.clear()
+    cache.clear()
 
 
 @register_line_magic
@@ -233,7 +232,7 @@ def flare(line: str):
     name, _, pattern = line.strip().partition(' ')
     url = F'https://www.awarenetwork.org/home/outlaw/ctfs/flareon/{name}'
     store_clear()
-    store.cache[name] = requests.get(url).content
+    cache[name] = requests.get(url).content
     emit(F'{name} | xt7z {pattern} [| dump {{path}} ]')
     rm(name)
     ls()
