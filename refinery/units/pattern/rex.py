@@ -67,7 +67,9 @@ class rex(SingleRegexUnit, PatternExtractor):
                 transformations.append(int(group))
             else:
                 def transformation(match: Match, s=spec):
-                    symb: dict = match.groupdict()
+                    symb: dict = {
+                        key: value for key, value in match.groupdict().items()
+                        if not key.startswith('__') and value is not None}
                     args: list = [match.group(0), *match.groups()]
                     used = set()
                     for key, value in symb.items():
