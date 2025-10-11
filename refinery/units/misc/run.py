@@ -65,8 +65,8 @@ class run(Unit):
             self.log_info(shlexjoin)
 
         posix = 'posix' in sys.builtin_module_names
-        process = Popen(commandline,
-            stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=False, close_fds=posix)
+        process = Popen(commandline, shell=True,
+            stdin=PIPE, stdout=PIPE, stderr=PIPE, close_fds=posix)
 
         if not self.args.stream and not self.args.timeout:
             out, err = process.communicate(data)
