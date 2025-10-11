@@ -131,13 +131,13 @@ class Marshal(StructReader[memoryview]):
     A specialization of the `refinery.lib.structures.StructReader` to read marshaled objects.
     """
 
-    def __init__(self, data, load_code=False, version=None):
+    def __init__(self, data, dumpcode=True, version=None):
         super().__init__(memoryview(data))
         self.refs = []
         self.version = version
         self._min_version = (1, 0)
         self._depth = 0
-        self._load_code = load_code
+        self._dumpcode = dumpcode
 
     @overload
     def object(self, typecheck: type[_T]) -> _T:
@@ -181,6 +181,7 @@ class Marshal(StructReader[memoryview]):
         code = self.read_integer(7)
         flag = self.read_integer(1)
         store_reference = bool(flag)
+        index = None
 
         try:
             code = _MC(code)
@@ -441,7 +442,7 @@ class Marshal(StructReader[memoryview]):
                     break
             else:
                 raise RuntimeError('Failed to parse code object.')
-            if not self._load_code:
+            if self._dumpcode:
                 rv = None
             else:
                 try:
@@ -453,6 +454,7 @@ class Marshal(StructReader[memoryview]):
                 self.seekset(start)
                 rv = B'%s%s' % (self._min_version.header(), self.read(size))
             if store_reference:
+                assert index is not None
                 self.refs[index] = rv
             return rv
         else:
@@ -468,7 +470,8 @@ _PV_CHOICE = []
 _PV_LOOKUP = {}
 
 for pv in PV:
-    pvc = '.'.join(pv.name.split('_')[1:])
+    major, minor = pv
+    pvc = F'{major}.{minor}'
     _PV_CHOICE.append(pvc)
     _PV_LOOKUP[pvc] = pv
 
@@ -483,12 +486,18 @@ class pym(Unit):
         self,
         version: Param[str | None, Arg.Choice('-V', choices=_PV_CHOICE, metavar='V',
             help='Optionally select the Python Version. Available options are: {choices}.')] = None,
-        replica: Param[bool, Arg.Switch('-r',
-            help='Never use the built-in marshal.loads, always use the replica parser.')] = False,
+        backport: Param[bool, Arg.Switch('-b',
+            help='Never use the built-in marshal.loads, always use the backport parser.')] = False,
+        dumpcode: Param[bool, Arg.Switch('-d',
+            help='Do not attempt to build marshaled code objects, dump the raw bytes instead')] = False,
     ):
         if version is not None:
             version = _PV_LOOKUP[version]
-        super().__init__(version=version, replica=replica)
+        super().__init__(
+            version=version,
+            backport=backport,
+            dumpcode=dumpcode,
+        )
 
     def reverse(self, data):
         return marshal.dumps(data)
@@ -519,7 +528,7 @@ class pym(Unit):
             raise NotImplementedError(
                 F'No serialization implemented for object of type {data.__class__.__name__}')
 
-        if (version := self.args.version) and version != PV.V_THIS or self.args.replica:
+        if (version := self.args.version) and version != PV.V_THIS or self.args.backport:
             out = None
         else:
             try:
@@ -532,7 +541,11 @@ class pym(Unit):
                 self.log_info(F'unmarshaled using the {v.major}.{v.minor}.{v.micro} built-in marshal.loads')
 
         if out is None:
-            out = Marshal(memoryview(data), version=version).object()
+            out = Marshal(
+                memoryview(data),
+                version=version,
+                dumpcode=self.args.dumpcode
+            ).object()
 
         if isinstance(out, (list, tuple, set, frozenset)):
             self.log_info('object is a collection, converting each item individually')
