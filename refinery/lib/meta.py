@@ -660,7 +660,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         spec    : str,
         codec   : str,
         args    : list | tuple,
-        symb    : dict,
+        symb    : dict | None,
         binary  : bool,
         fixup   : bool = True,
         used    : set | None = None,
