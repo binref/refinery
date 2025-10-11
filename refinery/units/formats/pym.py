@@ -16,6 +16,8 @@ from refinery.units import Arg, Unit
 
 _T = TypeVar('_T')
 _MAX_MARSHAL_STACK_DEPTH = 2000
+_SYS_PYTHON = sys.version_info
+_SYS_PYTHON = (_SYS_PYTHON.major, _SYS_PYTHON.minor)
 
 
 class _MC(enum.IntEnum):
@@ -77,6 +79,7 @@ class PV(tuple, enum.Enum):
     V_3_08 = (3,  8) # noqa
     V_3_10 = (3, 10) # noqa
     V_3_11 = (3, 11) # noqa
+    V_THIS = _SYS_PYTHON
 
     def header(self):
         def tobytes(m: int):
@@ -92,6 +95,7 @@ class PV(tuple, enum.Enum):
             PV.V_3_08: tobytes(3413),  # 3.8
             PV.V_3_10: tobytes(3438),  # 3.10
             PV.V_3_11: importlib.util.MAGIC_NUMBER,
+            PV.V_THIS: importlib.util.MAGIC_NUMBER,
         }[self] + nulls
         # Sadly, we cannot determine this exactly:
         # 1.0 - 3.2 [magic][timestamp]        4 bytes
@@ -476,12 +480,15 @@ class pym(Unit):
     for more recent versions a separate Python decompiler will be required.
     """
     def __init__(
-        self, version: Param[str, Arg.Choice('-V', choices=_PV_CHOICE, metavar='V',
-            help='Optionally select the Python Version. Available options are: {choices}.')] = None
+        self,
+        version: Param[str | None, Arg.Choice('-V', choices=_PV_CHOICE, metavar='V',
+            help='Optionally select the Python Version. Available options are: {choices}.')] = None,
+        replica: Param[bool, Arg.Switch('-r',
+            help='Never use the built-in marshal.loads, always use the replica parser.')] = False,
     ):
         if version is not None:
             version = _PV_LOOKUP[version]
-        super().__init__(version=version)
+        super().__init__(version=version, replica=replica)
 
     def reverse(self, data):
         return marshal.dumps(data)
@@ -512,7 +519,7 @@ class pym(Unit):
             raise NotImplementedError(
                 F'No serialization implemented for object of type {data.__class__.__name__}')
 
-        if version := self.args.version:
+        if (version := self.args.version) and version != PV.V_THIS or self.args.replica:
             out = None
         else:
             try:
@@ -520,6 +527,10 @@ class pym(Unit):
             except Exception as error:
                 self.log_info(F'falling back to refinery unmarshal after built-in method failed: {error!s}')
                 out = None
+            else:
+                v = sys.version_info
+                self.log_info(F'unmarshaled using the {v.major}.{v.minor}.{v.micro} built-in marshal.loads')
+
         if out is None:
             out = Marshal(memoryview(data), version=version).object()
 
