@@ -322,6 +322,7 @@ class Marshal(StructReader[memoryview]):
 
             arguments = {}
             start = self.tell()
+            nrefs = len(self.refs)
 
             versions = [v] if (v := self.version) else PV
 
@@ -329,6 +330,7 @@ class Marshal(StructReader[memoryview]):
                 if version < self._min_version:
                     continue
                 self.seekset(start)
+                self.refs[nrefs:] = ()
                 intval = self.u32 if version >= PV.V_2_03 else self.u16
                 arguments.clear()
                 arguments.update(
