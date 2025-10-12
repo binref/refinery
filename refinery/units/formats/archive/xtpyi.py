@@ -4,7 +4,6 @@ import codecs
 import contextlib
 import dataclasses
 import enum
-import io
 import marshal
 import os
 import os.path
@@ -12,23 +11,17 @@ import re
 import uuid
 import zlib
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import Callable, cast, TYPE_CHECKING
 
 from Cryptodome.Cipher import AES
 
-from refinery.lib.shared import decompyle3, uncompyle6, xdis
-from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
-from refinery.lib.tools import NoLogging, normalize_word_separators
+from refinery.lib.shared import xdis
+from refinery.lib.structures import StreamDetour, Struct, StructReader
+from refinery.lib.py import version2tuple, decompile_buffer
 from refinery.lib.types import Param, buf
 from refinery.units.formats.archive import ArchiveUnit, Arg
 from refinery.units.formats.pym import Marshal
 from refinery.units.pattern.carve import carve
-
-if TYPE_CHECKING:
-    from types import CodeType
-    from typing import Callable, Generator, Iterable, cast
-
-    from xdis import Instruction
 
 
 class Unmarshal(enum.IntEnum):
@@ -37,127 +30,11 @@ class Unmarshal(enum.IntEnum):
     YesAndDecompile = 2
 
 
-def version2tuple(version: str):
-    if m := re.fullmatch(R'^(\d+\.\d+(?:\.\d+)?)(.*)$', version):
-        return tuple(int(k, 10) for k in m.group(1).split('.'))
-    raise ValueError(version)
-
-
 def decompress_peek(buffer, size=512) -> bytes | None:
     try:
         return zlib.decompressobj().decompress(buffer[:size])
     except zlib.error:
         return None
-
-
-class Code(NamedTuple):
-    version: tuple[int]
-    timestamp: int
-    magic: int
-    container: CodeType
-    is_pypi: bool
-    code_objects: dict
-
-
-def extract_code_from_buffer(buffer: buf, file_name: str | None = None) -> Generator[Code]:
-    code_objects = {}
-    file_name = file_name or '<unknown>'
-    load = xdis.load.load_module_from_file_object
-    with NoLogging(NoLogging.Mode.STD_ERR):
-        version, timestamp, magic_int, codes, is_pypy, _, _ = load(MemoryFile(buffer), file_name, code_objects)
-    if not isinstance(codes, list):
-        codes = [codes]
-    for code in codes:
-        yield Code(version, timestamp, magic_int, code, is_pypy, code_objects)
-
-
-def disassemble_code(code: CodeType, version=None) -> Iterable[Instruction]:
-    opc = None
-    if version is not None:
-        if isinstance(version, float):
-            version = str(version)
-        if not isinstance(version, str):
-            version = xdis.version_info.version_tuple_to_str(version)
-        with contextlib.suppress(KeyError):
-            opc = xdis.op_imports.op_imports[version]
-    return xdis.std.Bytecode(code, opc=opc)
-
-
-def decompile_buffer(buffer: Code | buf, file_name: str | None = None) -> buf:
-    errors = ''
-    python = ''
-
-    if not isinstance(buffer, Code):
-        codes = list(extract_code_from_buffer(buffer, file_name))
-    else:
-        codes = [buffer]
-
-    def _engines():
-        nonlocal errors
-        try:
-            dc = decompyle3.main.decompile
-        except ImportError:
-            errors += '# The decompiler decompyle3 is not installed.\n'
-        else:
-            yield 'decompyle3', dc
-        try:
-            dc = uncompyle6.main.decompile
-        except ImportError:
-            errors += '# The decompiler decompyle3 is not installed.\n'
-        else:
-            yield 'uncompyle6', dc
-
-    engines = dict(_engines())
-
-    if not engines:
-        errors += '# (all missing, install one of the above to enable decompilation)'
-
-    for code in codes:
-        for name, decompile in engines.items():
-            with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
-                try:
-                    decompile(
-                        co=code.container,
-                        bytecode_version=code.version,
-                        out=output,
-                        timestamp=code.timestamp,
-                        code_objects=code.code_objects,
-                        is_pypy=code.is_pypi,
-                        magic_int=code.magic,
-                    )
-                except Exception as E:
-                    errors += '\n'.join(F'# {line}' for line in (
-                        F'Error while decompiling with {name}:', *str(E).splitlines(True)))
-                    errors += '\n'
-                else:
-                    python = output.getvalue()
-                    break
-    if python:
-        # removes leading comments
-        python = python.splitlines(True)
-        python.reverse()
-        while python[-1].strip().startswith('#'):
-            python.pop()
-        python.reverse()
-        python = ''.join(python)
-        return python.encode('utf8')
-    if not isinstance(buffer, Code):
-        embedded = bytes(buffer | carve('printable', single=True))
-        if len(buffer) - len(embedded) < 0x20:
-            return embedded
-    disassembly = MemoryFile()
-    with io.TextIOWrapper(disassembly, 'utf8', newline='\n') as output:
-        output.write(errors)
-        output.write('# Generating Disassembly:\n\n')
-        for code in codes:
-            instructions = list(disassemble_code(code.container, code.version))
-            width_offset = max(len(str(i.offset)) for i in instructions)
-            for i in instructions:
-                opname = normalize_word_separators(i.opname, '.').lower()
-                offset = F'{i.offset:0{width_offset}d}'
-                output.write(F'# {offset:>5} {opname:<25} {i.argrepr}\n')
-        output.write('\n')
-    return disassembly.getvalue()
 
 
 class PiType(bytes, enum.Enum):

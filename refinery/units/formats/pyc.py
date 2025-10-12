@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from refinery.lib.meta import metavars
+from refinery.lib.py import decompile_buffer, extract_code_from_buffer
 from refinery.units.formats.archive import ArchiveUnit
-from refinery.units.formats.archive.xtpyi import decompile_buffer, extract_code_from_buffer
 
 
 class pyc(ArchiveUnit):

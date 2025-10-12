@@ -128,7 +128,6 @@ class MemoryFileMethods(Generic[T, B]):
         self._cursor = 0
         self._closed = False
         self._fileno = fileno
-        self._quicksave = 0
         self._size_limit = size_limit
         self._data = data
 
