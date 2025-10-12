@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import enum
 import inspect
+import importlib.util
 import io
 import re
 import sys
@@ -21,30 +22,33 @@ _MAX_MARSHAL_STACK_DEPTH = 2000
 _SYS_PYTHON = (
     sys.version_info.major,
     sys.version_info.minor,
+    sys.version_info.micro,
 )
 
 
 class PyVer(NamedTuple):
     major: int
     minor: int
+    micro: int
 
     def __str__(self):
-        return F'{self.major}.{self.minor}'
+        return F'{self.major}.{self.minor}.{self.micro}'
 
 
 def version2tuple(v: str) -> PyVer:
     """
-    Convert a version string of the form `3.12` or `3.12.0-final` to the tuple `(3,12)`.
+    Convert a version string of the form `3.12` or `3.12.0-final` to the tuple `(3,12,0)`.
     """
-    try:
-        a, _, b = v.partition('.')
-        b, _, _ = b.partition('.')
-        return PyVer(int(a), int(b))
-    except Exception:
+    if m := re.match(r'^(\d)\.(\d+)(?:\.(\d+))?', v):
+        major = int(m[1])
+        minor = int(m[2])
+        micro = m[3] and int(m[3]) or 0
+        return PyVer(major, minor, micro)
+    else:
         raise ValueError(v)
 
 
-_PY_VERSIONS: list[tuple[int, int]] = []
+_PY_VERSIONS: list[PyVer] = []
 
 for v in xdis.magics.by_version:
     try:
@@ -215,34 +219,43 @@ class _CK(enum.IntFlag):
 
 
 class PV(PyVer, enum.Enum):
-    V_1_00 = (1,  0) # noqa
-    V_1_03 = (1,  3) # noqa
-    V_1_05 = (1,  5) # noqa
-    V_2_01 = (2,  1) # noqa
-    V_2_03 = (2,  3) # noqa switch to 32bit
-    V_3_00 = (3,  0) # noqa
-    V_3_08 = (3,  8) # noqa
-    V_3_10 = (3, 10) # noqa
-    V_3_11 = (3, 11) # noqa
+    V_1_00 = (1,  0, 0) # noqa
+    V_1_03 = (1,  3, 0) # noqa
+    V_1_05 = (1,  5, 0) # noqa
+    V_2_01 = (2,  1, 0) # noqa
+    V_2_03 = (2,  3, 0) # noqa switch to 32bit
+    V_3_00 = (3,  0, 0) # noqa
+    V_3_08 = (3,  8, 0) # noqa
+    V_3_10 = (3, 10, 0) # noqa
+    V_3_11 = (3, 11, 0) # noqa
     V_THIS = _SYS_PYTHON
 
 
-def code_header(version: tuple[int, int] | None = None) -> bytearray:
+def code_header(version: tuple[int, int, int] | str | None = None) -> bytearray:
     """
     Produce a code object header for the given version.
     """
     if version is None:
-        version = _SYS_PYTHON
-    major, minor = version
+        vt = _SYS_PYTHON
+        magic = bytearray(importlib.util.MAGIC_NUMBER)
+    else:
+        if isinstance(version, str):
+            vs = version
+            vt = version2tuple(version)
+        else:
+            major, minor, micro = version
+            vs = F'{major}.{minor}.{micro}'
+            vt = version
+        magic = bytearray(xdis.magics.by_version[vs])
+
     nulls = b'\0\0\0\0'
-    magic = bytearray(xdis.magics.by_version[F'{major}.{minor}'])
     magic.extend(nulls)
     # 1.0 - 3.2 [magic][timestamp]        4 bytes
     # 3.3 - 3.6 [magic][timestamp][size]  8 bytes
     # 3.7 - now [magic][flags][misc]     12 bytes
-    if version >= (3, 3):
+    if vt >= (3, 3):
         magic.extend(nulls)
-    if version >= (3, 7):
+    if vt >= (3, 7):
         magic.extend(nulls)
     return magic
 
@@ -271,9 +284,19 @@ class Marshal(StructReader[memoryview]):
         self,
         data,
         dumpcode: bool = False,
-        version: tuple[int, int] | None = None
+        version: tuple[int, int, int] | tuple[int, int] | int | str | None = None
     ):
         super().__init__(memoryview(data))
+
+        if version is not None:
+            if isinstance(version, str):
+                version = version2tuple(version)
+            if isinstance(version, int):
+                version = (version, 0, 0)
+            if len(version) == 2:
+                major, minor, *_ = version
+                version = (major, minor, 0)
+
         self.refs = []
         self.version = version
         self._min_version = _PY_VERSIONS[+0]
@@ -614,18 +637,21 @@ class Marshal(StructReader[memoryview]):
             except Exception:
                 code_object = None
             else:
-                mv = self._min_version
+                new_max = self._min_version
+                old_max = self._max_version
                 for v in _PY_VERSIONS:
-                    if v < mv:
+                    if v < new_max:
                         continue
+                    if v > old_max:
+                        break
                     try:
                         for _ in disassemble_code(code_object, str(v)):
                             pass
                     except Exception:
                         break
                     else:
-                        mv = v
-                self._max_version = mv
+                        new_max = v
+                self._max_version = new_max
 
             if not self._dumpcode:
                 rv = code_object or arguments
