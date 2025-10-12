@@ -60,6 +60,33 @@ class FormatCategory(enum.IntEnum):
 
 FC = FormatCategory
 
+PycMagicPattern = re.compile(br'''(?x)
+   [\x02\x03]\x99\x99\x00
+  |(?:
+  | \x89\x2e
+  | \x04\x17
+  | \x99\x4e
+  | \xfc\xc4
+  | \x87\xc6
+  | \x2a\xeb
+  | \x2d\xed
+  |[\x3b\x45\x59\x63\x6d\x77\x81\x8b\x8c\x95\x9f\xa9\xb3\xb7\xc7\xd1\xdb\xe5\xef\xf9]\xf2
+  |[\x03\x0a]\xf3
+  | \x61\x0a
+  |[\xb8\xc2\xcc\xd6\xe0\xea\xf4\xf5\xff]\x0b
+  |[\x09\x13\x1d\x1f\x27\x3b\x45\x4f\x58\x62\x6c\x73\x76\x80\x94\x8a\x9e\xb2\xbc\xc6\xd0\xda\xe4\xee\xf8]\x0c
+  |[\x02\x0c\x16\x17\x20\x21\x2a-\x2d\x2f-\x33\x3e-\x42\x48\x49\x52-\x55\x5c-\x61\x66-\x6b\x6e\x6f\x7a-\x7f\x81-\xa7\xac-\xcb\xde-\xf3]\x0d
+  |[\x30\x40\x70\xa0\xc0\xe0\xf0]\x00
+  |[\x00\x50\x80\xa0]\x01
+  | \x61\x32
+  | \x61\x31
+  | \x9e\x52
+  |[\x20\x2a]\x53
+  | \xf3\x03
+  | \x7a\x56
+  ) \x0D\x0A
+''')
+
 
 class Fmt(Format, enum.Enum):
 
@@ -88,6 +115,7 @@ class Fmt(Format, enum.Enum):
     DEX = (FC.Executable, 'dex', 'Dalvik')
     WASM = (FC.Executable, 'wasm', 'WASM', 'Web Assembly')
     LUAC = (FC.Executable, 'luac', 'LUAC', 'LUA Bytecode')
+    PYC = (FC.Executable, 'pyc', 'PYC', 'Python Bytecode')
 
     PDF = (FC.Document, 'pdf')
     CHM = (FC.Document, 'chm', 'CHM', 'Microsoft Windows HtmlHelp Data')
@@ -953,6 +981,10 @@ def get_misc_binary_formats(data: buf):
     """
     Checks for various other binary formats that are not covered by other methods in this module.
     """
+    if len(data) >= 0x30 and PycMagicPattern.fullmatch(data[:4]):
+        if any(data[offset] & 0x7F == 0x63 for offset in (8, 12, 16)):
+            return Fmt.PYC
+
     for format, signature in (
         (Fmt.PDF, B'%PDF-'),
         (Fmt.A3X, B'\xA3\x48\x4B\xBE\x98\x6C\x4A\xA9\x99\x4C\x53\x0A\x86\xD6\x48\x7D\x41\x55\x33\x21'),
