@@ -150,6 +150,8 @@ class BatchFileEmulator:
         if not new.endswith('\\'):
             new = F'{new}\\'
         if not ntpath.isabs(new):
+            new = ntpath.join(self.cwd, new)
+        if not ntpath.isabs(new):
             raise ValueError(F'Invalid absolute path: {new}')
         self._cwd = ntpath.normcase(ntpath.normpath(new))
 
