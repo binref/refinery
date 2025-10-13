@@ -228,7 +228,6 @@ class PV(PyVer, enum.Enum):
     V_3_08 = (3,  8, 0) # noqa
     V_3_10 = (3, 10, 0) # noqa
     V_3_11 = (3, 11, 0) # noqa
-    V_THIS = _SYS_PYTHON
 
 
 def code_header(version: tuple[int, int, int] | str | None = None) -> bytearray:

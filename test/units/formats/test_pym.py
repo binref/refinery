@@ -48,12 +48,14 @@ class TestPyMarshal(TestUnitBase):
 
     def test_code(self):
         import importlib.util
-        M = importlib.util.MAGIC_NUMBER
+        M = int.from_bytes(importlib.util.MAGIC_NUMBER[:2], 'little')
 
         def test_function():
             print('refine your binaries!')
 
         data = marshal.dumps(test_function.__code__)
         test = data | self.load() | bytes
+        m = int.from_bytes(test[:2], 'little')
         self.assertIn(b'refine your binaries!', test)
-        self.assertEqual(test[:len(M)], M)
+        self.assertEqual(test[20:], data[4:])
+        self.assertLessEqual(abs(m - M), 0x100)
