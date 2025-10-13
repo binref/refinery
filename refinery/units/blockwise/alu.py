@@ -156,7 +156,7 @@ class alu(ArithmeticUnit):
             M=mask_to_bits,
         )
         args = [
-            self._infinitize_argument(*self._argument_parse_hook(a))
+            self._infinitize_argument(len(data), *self._argument_parse_hook(a))
             for a in self.args.argument]
         if args:
             args = [next(iter(a)) for a in args]

@@ -312,15 +312,17 @@ def make_buffer_mutable(data: buf):
 
 
 def infinitize(it: _T | Iterable[_T]) -> Iterable[_T]:
-    if not isinstance(it, (
+    if isinstance(it, (
         itertools.cycle,
         itertools.repeat,
-        itertools.count
+        itertools.count,
     )):
-        if not hasattr(it, '__iter__') and not hasattr(it, '__next__'):
-            it = (it, )
-        return itertools.cycle(it)
-    return it
+        return it
+    try:
+        it = iter(it)           # type:ignore
+    except TypeError:
+        it = (it,)              # type:ignore
+    return itertools.cycle(it)  # type:ignore
 
 
 class NoLogging:

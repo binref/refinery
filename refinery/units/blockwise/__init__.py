@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from refinery.lib import chunks
 from refinery.lib.inline import iterspread
-from refinery.lib.tools import infinitize
+from refinery.lib.tools import asbuffer, infinitize
 from refinery.lib.types import INF, NoMask, Param, buf, isq
 from refinery.units import Arg, Unit
 
@@ -170,7 +170,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     def _argument_parse_hook(self, it: _I) -> tuple[_I, bool]:
         return it, False
 
-    def _infinitize_argument(self, it: _I, masked=False) -> Iterable[int]:
+    def _infinitize_argument(self, min_size: int, it: _I, masked=False) -> Iterable[int]:
         def _mask(it):
             warnings = 3
             for block in it:
@@ -181,6 +181,10 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                     if not warnings:
                         self.log_warn('additional warnings are suppressed')
                 yield out
+        if isinstance(it, (bytes, bytearray)) and (n := len(it)) > 0x400:
+            q, r = divmod(min_size, n)
+            it = it * (q + int(bool(r)))
+            return it
         if isinstance(it, int):
             it = (it,)
         if not masked:
@@ -227,9 +231,11 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         br_args = []
         np_args = []
 
+        self.log_debug('fastblock: parsing and extending arguments')
+
         for a in self.args.argument:
             it, masked = self._argument_parse_hook(a)
-            na = self._infinitize_argument(it, masked)
+            na = self._infinitize_argument(len(data), it, masked)
             br_args.append(na)
             if isinstance(it, int):
                 if not masked:
@@ -237,6 +243,8 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                 npa = int(it)
             elif self.precision is INF:
                 npa = numpy.array(list(itertools.islice(na, num_blocks)), dtype=dtype)
+            elif nb := asbuffer(na):
+                npa = numpy.frombuffer(nb, dtype, num_blocks)
             else:
                 npa = numpy.fromiter(na, dtype, num_blocks)
             np_args.append(npa)
@@ -306,7 +314,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             self.log_debug('fast block method successful')
             return result
         arguments = [
-            self._infinitize_argument(*self._argument_parse_hook(a))
+            self._infinitize_argument(len(data), *self._argument_parse_hook(a))
             for a in self.args.argument]
         try:
             mask = self.fmask

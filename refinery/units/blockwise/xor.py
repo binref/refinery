@@ -18,7 +18,7 @@ class xor(BinaryOperationWithAutoBlockAdjustment):
         from Cryptodome.Util import strxor
         size = len(data)
         it, masked = self._argument_parse_hook(self.args.argument[0])
-        arg0 = self._infinitize_argument(it, masked)
+        arg0 = self._infinitize_argument(len(data), it, masked)
         take = len(data) // self.blocksize + 1
         argb = self.unchunk(islice(arg0, take))
         del argb[size:]
