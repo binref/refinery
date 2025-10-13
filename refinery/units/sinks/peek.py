@@ -10,9 +10,16 @@ import textwrap
 from typing import Generator
 
 from refinery.lib.environment import environment
-from refinery.lib.meta import ByteStringWrapper, CustomStringRepresentation, SizeInt, metavars
+from refinery.lib.meta import (
+    ByteStringWrapper,
+    CustomStringRepresentation,
+    LazyMetaOracle,
+    SizeInt,
+    metavars,
+)
 from refinery.lib.tools import get_terminal_size, isbuffer
 from refinery.lib.types import INF, Param
+from refinery.units import Chunk
 from refinery.units.sinks import Arg, HexViewer
 
 
@@ -109,6 +116,8 @@ class peek(HexViewer):
             yield from separators
             yield peek
         for name in sorted(meta, key=lambda s: (len(s) <= 3, s)):
+            if not self.args.index and name == LazyMetaOracle.IndexKey:
+                continue
             value = meta[name]
             if value is None:
                 continue
@@ -196,7 +205,7 @@ class peek(HexViewer):
             result.extend(wrapped)
         return result[:abs(linecount)]
 
-    def _peeklines(self, data: bytearray, colorize: bool) -> Generator[str]:
+    def _peeklines(self, data: Chunk, colorize: bool) -> Generator[str]:
 
         meta = metavars(data)
 
@@ -206,7 +215,6 @@ class peek(HexViewer):
         empty = True
 
         if not self.args.index:
-            meta.discard('index')
             index = None
         else:
             index = meta.get('index', None)

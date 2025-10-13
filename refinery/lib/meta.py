@@ -420,6 +420,8 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     key `'sha256'`.
     """
 
+    IndexKey = _INDEX
+
     derivations: dict[str, _Derivation] = {}
     """
     A dictionary mapping the names of common properties to anonymous functions that compute their

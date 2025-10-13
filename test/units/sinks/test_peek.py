@@ -17,6 +17,20 @@ class TestPeek(TestUnitBase):
             output = stderr.getvalue()
         self.assertIn('u:This!Is-A-Un1c0d3-String', output)
 
+    def test_index_arg_01(self):
+        peek = self.load(index=False)
+        with errbuf() as stderr:
+            peek(B'REFINERY')
+            output = stderr.getvalue()
+        self.assertNotIn('index =', output)
+
+    def test_index_arg_02(self):
+        peek = self.load(index=True)
+        with errbuf() as stderr:
+            peek(B'REFINERY')
+            output = stderr.getvalue()
+        self.assertIn('index = 0', output)
+
     def test_hex_peek(self):
         peek = self.load(width=8, lines=15, gray=True)
         with errbuf() as stderr:
