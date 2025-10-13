@@ -11,13 +11,13 @@ import re
 import uuid
 import zlib
 
-from typing import Callable, cast, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, cast
 
 from Cryptodome.Cipher import AES
 
+from refinery.lib.py import decompile_buffer, version2tuple
 from refinery.lib.shared import xdis
 from refinery.lib.structures import StreamDetour, Struct, StructReader
-from refinery.lib.py import version2tuple, decompile_buffer
 from refinery.lib.types import Param, buf
 from refinery.units.formats.archive import ArchiveUnit, Arg
 from refinery.units.formats.pym import Marshal
