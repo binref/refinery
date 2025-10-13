@@ -6,9 +6,9 @@ import sys
 from types import CodeType
 
 from refinery.lib.json import BytesAsStringEncoder
+from refinery.lib.py import PV, Marshal, code_header, version2tuple
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
-from refinery.lib.py import PV, Marshal, code_header, version2tuple
 
 
 class pym(Unit):

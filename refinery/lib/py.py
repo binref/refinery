@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import enum
-import inspect
 import importlib.util
+import inspect
 import io
 import re
 import sys
 
 from types import CodeType
-from typing import Generator, TypeVar, get_args, get_origin, overload, NamedTuple
+from typing import Generator, NamedTuple, TypeVar, get_args, get_origin, overload
 
 from refinery.lib.shared import decompyle3, uncompyle6, xdis
 from refinery.lib.structures import MemoryFile, StructReader
