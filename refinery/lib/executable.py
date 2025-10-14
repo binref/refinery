@@ -817,6 +817,25 @@ class LIEF(Executable):
         ps = self.pointer_size_in_bytes
         ib = self.image_defined_base()
 
+        if isinstance((head := self._head), lief.PE.Binary):
+            for imp in head.imports:
+                dll = self.ascii(imp.name).lower()
+                dll, _, ext = dll.rpartition('.')
+                dll = dll or ext
+                for symbol in imp.entries:
+                    if symbol.is_ordinal:
+                        name = F'@{symbol.ordinal}'
+                    else:
+                        name = self.ascii(symbol.demangled_name) or self.ascii(symbol.name)
+                    yield Symbol(
+                        symbol.iat_address + ib,
+                        F'{dll}.{name}',
+                        ps,
+                        function=True,
+                        exported=False,
+                        imported=True,
+                    )
+
         for symbol in it:
             addr = symbol.value
             name = self.ascii(symbol.name)
@@ -837,15 +856,7 @@ class LIEF(Executable):
                     section=self._convert_section(s) if (s := symbol.section) else None,
                 )
             elif isinstance(symbol, lief.PE.ImportEntry):
-                name = self.ascii(symbol.demangled_name) or name
-                yield Symbol(
-                    addr + ib,
-                    name,
-                    ps,
-                    function=True,
-                    exported=False,
-                    imported=True,
-                )
+                continue
             elif isinstance(symbol, lief.PE.ExportEntry):
                 name = self.ascii(symbol.demangled_name) or name
                 yield Symbol(

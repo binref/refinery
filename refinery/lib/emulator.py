@@ -546,7 +546,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             pass
         return True
 
-    def hook_api_call(self, emu: _E, api_name: str, func: str, *args, **kwargs) -> Any:
+    def hook_api_call(self, emu: _E, api_name: str, cb=None, args=()) -> Any:
         return None
 
     def disassemble_instruction(self, address: int):
@@ -633,6 +633,36 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
                 continue
             self.mem_write(vm.lower, bytes(img[pm.slice()]))
 
+    def _init(self):
+        self.trampoline = None
+        self.imports = [symbol
+            for symbol in self.exe.symbols() if symbol.function and symbol.imported]
+
+    def _reset(self):
+        self.trampoline = None
+
+    def _install_api_trampoline(self):
+        if self.trampoline is None:
+            symbol_count = len(self.imports)
+            t = self.malloc(symbol_count)
+            self.mem_write(t, B'\xC3' * symbol_count)
+            for k, symbol in enumerate(self.imports):
+                self.mem_write_int(symbol.address, t + k)
+            self.trampoline = t
+
+    def _hook_api_call_check(self, emu: _E, address: int, size: int, state: _T | None = None) -> bool:
+        if (t := self.trampoline) is None:
+            return True
+        index = address - t
+        if not 0 <= index <= len(symbols := self.imports):
+            return True
+        symbol = symbols[index]
+        if name := symbol.name:
+            if name.endswith('IsDebuggerPresent'):
+                self.rv = 0
+            self.hook_api_call(emu, name, None, ())
+        return True
+
     def morestack(self):
         self.stack_base -= self.alloc_size
         self.stack_size += self.alloc_size
@@ -654,6 +684,8 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
     unicorn: Uc
 
     def _reset(self):
+        super()._reset()
+
         uc_arch, uc_mode = {
             Arch.X32     : (uc.UC_ARCH_X86,   uc.UC_MODE_32),     # noqa
             Arch.X64     : (uc.UC_ARCH_X86,   uc.UC_MODE_64),     # noqa
@@ -680,7 +712,8 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         self._map_stack_and_heap()
 
         if self.hooked(Hook.ApiCall):
-            raise NotImplementedError(F'{self.__class__.__name__} cannot hook API calls.')
+            self._install_api_trampoline()
+            self.unicorn.hook_add(uc.UC_HOOK_CODE, self._hook_api_call_check, user_data=self.state)
 
         for hook, flag, callback in [
             (uc.UC_HOOK_CODE,           Hook.CodeExecute, self.hook_code_execute ),  # noqa
@@ -714,6 +747,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
             self._single_step_hook = None
 
     def _init(self):
+        super()._init()
         self._reg_by_name: dict[str, Register[int]] = {}
         self._reg_by_code: dict[int, Register[int]] = {}
         for module in [
@@ -787,9 +821,11 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
     icicle: Ic
 
     def _init(self):
+        super()._init()
         self._single_step = False
 
     def _reset(self):
+        super()._reset()
         exe = self.exe
 
         try:
@@ -803,7 +839,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             raise NotImplementedError(F'Icicle cannot handle executables of arch {exe.arch().name}')
 
         if self.hooked(Hook.ApiCall):
-            raise NotImplementedError(F'{self.__class__.__name__} cannot hook API calls.')
+            self._install_api_trampoline()
 
         self.icicle = ice = ic.Icicle(arch)
         self.regmap = {reg.casefold(): val[1] for reg, val in ice.reg_list().items()}
@@ -823,6 +859,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         ice = self.icicle
 
         code_hooked = self.hooked(Hook.CodeExecute)
+        apis_hooked = self.hooked(Hook.ApiCall)
         mm_e_hooked = self.hooked(Hook.MemoryError)
         mm_w_hooked = self.hooked(Hook.MemoryWrite)
         mm_r_hooked = self.hooked(Hook.MemoryRead)
@@ -847,9 +884,13 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             insn = None
             self.ip = ip
 
-            if code_hooked and not retrying:
+            if (code_hooked or apis_hooked) and not retrying:
                 insn = next(dasm.disasm(self.mem_read(ip, 20), 1))
-                self.hook_code_execute(ice, ip, insn.size, self.state)
+                args = (ice, ip, insn.size, self.state)
+                if apis_hooked:
+                    self._hook_api_call_check(*args)
+                if code_hooked:
+                    self.hook_code_execute(*args)
             if mprotect:
                 ice.mem_protect(*mprotect[-1], MP.ExecuteReadWrite)
             if (status := step()) == RS.InstructionLimit:

@@ -137,7 +137,7 @@ def EmuFactory(base: Literal[SpeakeasyEmulator | IcicleEmulator | UnicornEmulato
             except Exception:
                 return None
 
-        def hook_api_call(self, _, name: str, function, args: tuple[int, ...], **ka):
+        def hook_api_call(self, _, name: str, cb=None, args: tuple[int, ...] = ()):
             def _repr(x):
                 if not isinstance(x, int):
                     return repr(x)
@@ -183,17 +183,20 @@ def EmuFactory(base: Literal[SpeakeasyEmulator | IcicleEmulator | UnicornEmulato
                         logged_args[k] = F'{FG.LIGHTRED_EX}{arg}{RS}'
                 vstack.log_always(
                     F'{FG.LIGHTCYAN_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
-            try:
-                retval = function(args)
-            except Exception as e:
-                if self.state.cfg.skip_calls > 1:
-                    retval = self.malloc(self.alloc_size)
-                    what = F'empty buffer at 0x{retval:X}'
-                else:
-                    retval = 0
-                    what = '0'
-                vstack.log_debug(F'exception of type {e.__class__.__name__} while emulating api routine, returning {what}')
-                self.ip = self.pop()
+            if cb is None:
+                retval = True
+            else:
+                try:
+                    retval = cb(args)
+                except Exception as e:
+                    if self.state.cfg.skip_calls > 1:
+                        retval = self.malloc(self.alloc_size)
+                        what = F'empty buffer at 0x{retval:X}'
+                    else:
+                        retval = 0
+                        what = '0'
+                    vstack.log_debug(F'exception of type {e.__class__.__name__} while emulating api routine, returning {what}')
+                    self.ip = self.pop()
             return retval
 
         @inject_state_argument
@@ -458,11 +461,8 @@ class vstack(Unit):
         args = self.args
 
         engine: _engine = args.engine
-        flags = Hook.Default
+        flags = Hook.Default | Hook.ApiCall
         self.log_debug(F'attempting to use {engine.name}')
-
-        if engine is _engine.speakeasy:
-            flags |= Hook.ApiCall
 
         Emu = EmuFactory(engine.value)
 
