@@ -182,8 +182,11 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                         self.log_warn('additional warnings are suppressed')
                 yield out
         if isinstance(it, (bytes, bytearray)) and (n := len(it)) > 0x400:
-            q, r = divmod(min_size, n)
-            it = it * (q + int(bool(r)))
+            quotient, remainder = divmod(min_size, n)
+            if remainder > 0:
+                quotient += 1
+            if quotient > 1:
+                it = it * quotient
             return it
         if isinstance(it, int):
             it = (it,)
