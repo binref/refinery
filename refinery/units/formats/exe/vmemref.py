@@ -141,6 +141,8 @@ class vmemref(Unit):
         for symbol in exe.symbols():
             if not symbol.function:
                 continue
+            if not symbol.exported:
+                continue
             avoid.add(exe.location_from_address(symbol.address).virtual.box)
 
         if addresses:
