@@ -21,6 +21,28 @@ def _is_path_obstruction(p: Path):
         return False
 
 
+def _format_fields(filename):
+    if not isinstance(filename, str):
+        return False
+    formatter = Formatter()
+    try:
+        for _, fields, *__ in formatter.parse(filename):
+            if fields:
+                yield from fields
+    except Exception:
+        return
+
+
+def _has_format(check):
+    if isinstance(check, str):
+        fields = _format_fields(check)
+    elif isinstance(check, (list, tuple, set)):
+        fields = check
+    else:
+        return False
+    return any(field.isalnum() for field in fields)
+
+
 class dump(Unit):
     """
     Dump incoming data to files on disk. It is possible to specify filenames with format fields.
@@ -59,18 +81,8 @@ class dump(Unit):
             raise ValueError('Can only use exactly one file in stream mode.')
         super().__init__(files=files, tee=tee, stream=stream, force=force)
         self.stream = None
-        self._formatted = not plain and any(self._has_format(f) for f in files)
+        self._formatted = not plain and any(_has_format(f) for f in files)
         self._reset()
-
-    @staticmethod
-    def _has_format(filename):
-        if not isinstance(filename, str):
-            return False
-        formatter = Formatter()
-        return any(
-            any(t.isalnum() for t in fields)
-            for _, fields, *__ in formatter.parse(filename) if fields
-        )
 
     def _reset(self):
         self.exhausted = False
@@ -216,12 +228,14 @@ class dump(Unit):
                 except StopIteration:
                     self.exhausted = True
                 else:
-                    if self._has_format(path):
+                    if _has_format(path):
                         meta = metavars(chunk)
                         meta.ghost = True
                         meta.index = index
-                        path = meta.format_str(path, self.codec, [chunk])
-                        if self._has_format(path) and self.leniency < 1:
+                        new_path = meta.format_str(path, self.codec, [chunk])
+                        if new_path != path:
+                            path = new_path
+                        elif self.leniency < 1:
                             raise ValueError(
                                 F'Could not resolve formatting in path "{path}"; '
                                 R'increase leniency to ignore this.')
