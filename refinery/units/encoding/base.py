@@ -83,7 +83,10 @@ class base(Unit):
         return result
 
     def process(self, data: bytearray):
+        if not data:
+            return data
         base, alphabet = self._args
+        self.log_debug(F'decoding data using base {base}; alphabet {alphabet!r}')
         be_lenient = not self.args.strict_digits
         if be_lenient and alphabet.upper() == alphabet:
             lcased = (c + 0x20 if 0x41 <= c <= 0x5a else c for c in data)

@@ -82,3 +82,9 @@ class TestBaseUnit(TestUnitBase):
         data = b'5114678'
         test = data | self.load(36) | -self.load(36, strip_padding=True) | bytes
         self.assertEqual(test, data)
+
+    def test_empty_decodes_as_empty(self):
+        for b in (2, 7, 12, 203):
+            data = B''
+            test = data | self.load(b) | bytes
+            self.assertEqual(data, test)
