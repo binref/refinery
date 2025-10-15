@@ -11,3 +11,7 @@ class TestIfRex(TestUnitBase):
     def test_negate(self):
         pl = self.load_pipeline('emit ab bc cb [| iffx -R .b ]')
         self.assertEqual(pl(), b'bc')
+
+    def test_regression_retain_argument_recognized(self):
+        pl = self.load_pipeline('emit w 9 9 t [| iffx -r [0-9] | sub 9 ]')
+        self.assertEqual(pl(), b'w00t')
