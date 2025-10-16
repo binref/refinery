@@ -5,11 +5,8 @@ from __future__ import annotations
 
 import functools
 
+from refinery.lib.id import get_structured_data_type
 from refinery.lib.magic import magic, magicparse
-
-
-class NoMagicAvailable(ModuleNotFoundError):
-    pass
 
 
 FileTypeMap = {
@@ -250,38 +247,53 @@ class FileMagicInfo:
     extension: str
     description: str
     mime: str
+    blob: bool
 
     _GZIP_PEEK_MAXIMUM = 1024
     _GZIP_PEEK_MINIMUM = 64
     _GZIP_DC_CHUNK_LEN = 16
 
-    @property
-    def blob(self):
-        return self.description.lower() == 'data' or self.extension == 'bin'
-
     def __init__(self, data, default='bin', decompress=True):
-        if not magic:
-            raise NoMagicAvailable
-        if not isinstance(data, bytes):
-            data = bytes(data)
-        mime = magicparse(data, mime=True)
-        self.mime = mime.split(';')[0].lower()
-        description = magicparse(data).strip()
-        self.description = description
-        try:
-            extension = FileTypeMap[self.mime]
-        except KeyError:
-            extension = default
-        if self.description == 'Microsoft OOXML':
-            extension = 'docx'
-        if extension == 'exe':
-            if '(DLL)' in self.description:
-                extension = 'dll'
-            elif '(native)' in self.description:
-                extension = 'sys'
+        extension = default
+        description = 'data'
+        mime = 'application/octet-stream'
+        blob = True
+
+        if magic:
+            if not isinstance(data, bytes):
+                data = bytes(data)
+            mime = magicparse(data, mime=True)
+            mime = mime.split(';')[0].lower()
+            description = magicparse(data).strip()
+            try:
+                extension = FileTypeMap[mime]
+            except KeyError:
+                extension = default
+            if description == 'Microsoft OOXML':
+                extension = 'docx'
+            if extension == 'exe':
+                if '(DLL)' in description:
+                    extension = 'dll'
+                elif '(native)' in description:
+                    extension = 'sys'
+                else:
+                    extension = 'exe'
+            blob = description.lower() == 'data'
+
+        if blob:
+            if check := get_structured_data_type(data):
+                import sys
+                print(check, file=sys.stderr)
+                extension = check.extension
+                description = check.details
+                mime = check.mime
+                blob = False
             else:
-                extension = 'exe'
-        elif extension in ('gz', 'gzip', 'bz2') and decompress:
+                extension = default
+                description = 'data'
+                mime = 'application/octet-stream'
+
+        if extension in ('gz', 'gzip', 'bz2') and decompress:
             if extension == 'bz2':
                 import bz2
                 dc = bz2.BZ2Decompressor()
@@ -308,7 +320,11 @@ class FileMagicInfo:
                     pass
                 else:
                     extension = F'{inner}.{extension}'
+
         self.extension = extension
+        self.description = description
+        self.mime = mime
+        self.blob = blob
 
 
 @functools.lru_cache(maxsize=None)

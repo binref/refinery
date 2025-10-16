@@ -74,6 +74,7 @@ class xkey(Unit):
             'ZZip'          : (B'7z\xBC\xAF\x27\x1C', (B'\x00\x02', B'\x00\x03', B'\x00\x04')),
             'APLib'         : (B'AP32\x18\0\0\0'),
             'BZip'          : (B'BZh'),
+            'LNK'           : (B'L\0\0\0\01\x14\02\0\0\0\0\0\xC0\0\0\0\0\0\0F', (B'', B'\x9B')),
             'DDS'           : (B'\x00\x00\x00\x01Bud1'),
             'ELF'           : (B'\x7FELF'),
             'JavaClass'     : (B'\xCA\xFE\xBA\xBE'),

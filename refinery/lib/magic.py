@@ -19,8 +19,9 @@ except ModuleNotFoundError:
 
 
 def magicparse(data, *args, **kwargs) -> str:
-    if magic:
-        data = bytes(data) if not isinstance(data, bytes) else data
+    if not magic:
+        if not isinstance(data, bytes):
+            data = bytes(data)
         try:
             return magic.Magic(*args, **kwargs).from_buffer(data)
         except magic.MagicException:

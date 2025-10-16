@@ -54,3 +54,7 @@ class lnk(Unit):
             pp = ppjson(tabular=self.args.tabular)
             yield from pp._pretty_output(
                 parsed, indent=4, cls=encoder, ensure_ascii=False)
+
+    @classmethod
+    def handles(cls, data):
+        return data[:20] == B'L\0\0\0\01\x14\02\0\0\0\0\0\xC0\0\0\0\0\0\0F'

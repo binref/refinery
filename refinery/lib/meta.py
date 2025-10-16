@@ -124,6 +124,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable
 from urllib.parse import unquote_to_bytes
 
 from refinery.lib.environment import environment
+from refinery.lib.mime import get_cached_file_magic_info
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import entropy, index_of_coincidence, isbuffer, typename
 from refinery.lib.types import buf
@@ -958,17 +959,14 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
     @_derivation('mime')
     def _derive_mime(self):
-        from refinery.lib.mime import get_cached_file_magic_info
         return get_cached_file_magic_info(self.chunk).mime
 
     @_derivation('ext')
     def _derive_ext(self):
-        from refinery.lib.mime import get_cached_file_magic_info
         return get_cached_file_magic_info(self.chunk).extension
 
     @_derivation('magic')
     def _derive_magic(self):
-        from refinery.lib.mime import get_cached_file_magic_info
         return get_cached_file_magic_info(self.chunk).description
 
     @_derivation('size', wrap=SizeInt)

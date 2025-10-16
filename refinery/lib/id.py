@@ -15,9 +15,66 @@ from typing import Callable, NamedTuple
 from refinery.lib.tools import entropy
 from refinery.lib.types import buf
 
+MimeByExtension = {
+    'bin'   : 'application/ocet-stream',
+    'exe'   : 'application/exe',
+    'sys'   : 'application/exe',
+    'dll'   : 'application/exe',
+    'elf'   : 'application/x-elf-executable',
+    'macho' : 'application/x-mach-binary',
+    'class' : 'application/java-byte-code',
+    'pdf'   : 'application/pdf',
+    'djvu'  : 'image/vnd.djvu',
+    'pcap'  : 'application/vnd.tcpdump.pcap',
+    'db'    : 'application/x-sqlite3',
+    'mdb'   : 'application/x-msaccess',
+    'doc'   : 'application/msword',
+    'xls'   : 'application/vnd.ms-excel',
+    'ppt'   : 'application/vnd.ms-powerpoint',
+    'msg'   : 'application/vnd.ms-outlook',
+    'msi'   : 'application/x-msi',
+    'docx'  : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'pptx'  : 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'xlsx'  : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'txt'   : 'text/plain',
+    'json'  : 'application/json',
+    'xml'   : 'application/xml',
+    'html'  : 'text/html',
+    'rtf'   : 'application/rtf',
+    'vbe'   : 'text/plain',
+    'eml'   : 'message/rfc822',
+    'ico'   : 'image/vnd.microsoft.icon',
+    'gif'   : 'image/gif',
+    'tif'   : 'image/tiff',
+    'jpg'   : 'image/jpeg',
+    'png'   : 'image/png',
+    'bmp'   : 'image/bmp',
+    'ogg'   : 'audio/ogg',
+    'wav'   : 'audio/wav',
+    'avi'   : 'video/x-msvideo',
+    'mp3'   : 'audio/mpeg',
+    'm3u'   : 'text/plain',
+    'mp4'   : 'video/mp4',
+    'mpg'   : 'video/mpeg',
+    'mid'   : 'audio/midi',
+    'mkv'   : 'video/x-matroska',
+    'swf'   : 'application/x-shockwave-flash',
+    'tar'   : 'application/x-tar',
+    '7z'    : 'application/x-7z-compressed',
+    'zip'   : 'application/zip',
+    'rar'   : 'application/vnd.rar',
+    'cab'   : 'application/vnd.ms-cab-compressed',
+    'bz'    : 'application/x-bzip',
+    'bz2'   : 'application/x-bzip2',
+    'gz'    : 'application/gzip',
+    'xz'    : 'application/x-xz',
+    'zstd'  : 'application/x-zstd',
+    'zlib'  : 'application/zlib',
+}
+
 
 class Format:
-    __slots__ = 'extension', 'mnemonic', 'category', 'details'
+    __slots__ = 'category', 'extension', 'mime', 'mnemonic', 'details'
 
     def __hash__(self):
         return hash(tuple(self))
@@ -28,22 +85,27 @@ class Format:
         return all(a == b for a, b in zip(self, other))
 
     def __iter__(self):
+        yield self.category
         yield self.extension
         yield self.mnemonic
-        yield self.category
         yield self.details
+        yield self.mime
 
     def __init__(
         self,
         category: FormatCategory,
         extension: str | None = None,
         mnemonic: str | None = None,
-        details: str | None = None
+        details: str | None = None,
+        mime: str | None = None,
     ) -> None:
+        self.category = category
         self.extension = extension or 'bin'
         self.mnemonic = mnemonic or self.extension.upper()
-        self.category = category
         self.details = details or self.mnemonic
+        if mime is None:
+            mime = MimeByExtension.get(self.extension, 'application/ocet-stream')
+        self.mime = mime
 
 
 class FormatCategory(enum.IntEnum):
@@ -108,8 +170,8 @@ class Fmt(Format, enum.Enum):
     ELF32BE = (FC.Executable, 'elf', 'ELF/32/BE')
     ELF64BE = (FC.Executable, 'elf', 'ELF/64/BE')
 
-    MACHOuLE = (FC.Executable, 'macho', 'MachO/Fat/LE')
-    MACHOuBE = (FC.Executable, 'macho', 'MachO/Fat/BE')
+    MACHOuvLE = (FC.Executable, 'macho', 'MachO/Fat/LE')
+    MACHOuvBE = (FC.Executable, 'macho', 'MachO/Fat/BE')
     MACHO32LE = (FC.Executable, 'macho', 'MachO/32/LE')
     MACHO64LE = (FC.Executable, 'macho', 'Macho/64/LE')
     MACHO32BE = (FC.Executable, 'macho', 'MachO/32/BE')
@@ -136,8 +198,9 @@ class Fmt(Format, enum.Enum):
     WIM = (FC.Binary, 'wim', 'WIM', 'Windows Imaging Format')
     EVT = (FC.Binary, 'evt', 'EVT', 'Windows Event Viewer')
     EVTX = (FC.Binary, 'evtx', 'EVTX', 'Windows Event Viewer XML')
+    LNK = (FC.Binary, 'lnk', 'LNK', 'Windows Shortcut')
 
-    REG_HIVE = (FC.Binary, 'reg', 'WinReg/Hive', 'Windows Registry Hive File')
+    REG_HIVE = (FC.Binary, 'reg', 'WinReg/Hive', 'Windows Registry Hive File', 'text/plain')
     REG_TEXT = (FC.Binary, 'reg', 'WinReg/Text', 'Windows Registry Script')
 
     MDB = (FC.Document, 'accdb', 'MDB', 'Microsoft Access Database')
@@ -192,7 +255,7 @@ class Fmt(Format, enum.Enum):
     MP4 = (FC.Media, 'mp4')
     MPG = (FC.Media, 'mpg')
     FLC = (FC.Media, 'flac')
-    MID = (FC.Media, 'midi')
+    MID = (FC.Media, 'mid')
     MKV = (FC.Media, 'mkv')
     SWF = (FC.Media, 'swf')
     SIL = (FC.Media, 'sil')
@@ -338,10 +401,10 @@ def get_macho_type(data: buf):
     elif magic == 0xFEEDFACF:
         mtype = Fmt.MACHO64BE
     elif magic == 0xCAFEBABE:
-        mtype = Fmt.MACHOuLE
+        mtype = Fmt.MACHOuvLE
         isfat = True
     elif magic == 0xBEBAFECA:
-        mtype = Fmt.MACHOuBE
+        mtype = Fmt.MACHOuvBE
         isfat = True
     else:
         return None
@@ -779,7 +842,7 @@ def get_compression_type(
     size = len(data)
     view = memoryview(data)
     T = True
-    F = False,
+    F = False
 
     if data[:4] == b'\04\0\0\0' and data[0x10:0x18] == B'{"files"':
         return Fmt.ASAR
@@ -959,6 +1022,9 @@ def get_media_format(data: buf):
     if data[4:12] in (B'ftypisom', B'ftypMSNV'):
         return Fmt.MPG
 
+    if data[4:10] == B'ftypM4':
+        return Fmt.MP4
+
     if len(data) < 0x1000:
         return None
 
@@ -1000,6 +1066,7 @@ def get_misc_binary_formats(data: buf):
         (Fmt.JAVA, B'\xCA\xFE\xBA\xBE'),
         (Fmt.WASM, B'\0asm'),
         (Fmt.LUAC, B'\x1BLua'),
+        (Fmt.LNK, B'L\0\0\0\01\x14\02\0\0\0\0\0\xC0\0\0\0\0\0\0F'),
         (Fmt.PCAP, B'\xD4\xC3\xB2\xA1'),
         (Fmt.PCAP, B'\xA1\xB2\xC3\xD4'),
         (Fmt.PCAP, B'\x4D\x3C\xB2\xA1'),
