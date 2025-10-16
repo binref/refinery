@@ -78,9 +78,9 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         R' ||  | __/  |/    \  /__|  / __ \   __/ ' '\n'
         R' ||  |   \  |   |  \_  _| \  ___/|  |   ' '\n'
         R' ||____  /__|___|__/  / |  \____]|__|   ' '\n'
-        R' ======\/=========\  /==|__|==({ver})===' '\n'.format(ver=refinery.__version__) +
+        R' ======\/=========\  /==|__|==({ver})===' '\n'
         R'   binary refinery \/ full text search  ' '\n'
-    )
+    ).format(ver=refinery.__version__)
 
     argp = argparse.ArgumentParser(
         formatter_class=RawDescriptionHelpFormatter, description=headline)
