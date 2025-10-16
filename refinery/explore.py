@@ -78,7 +78,7 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         R' ||  | __/  |/    \  /__|  / __ \   __/ ' '\n'
         R' ||  |   \  |   |  \_  _| \  ___/|  |   ' '\n'
         R' ||____  /__|___|__/  / |  \____]|__|   ' '\n'
-        R' ======\/=========\  /==|__|============' '\n'
+        R' ======\/=========\  /==|__|==({ver})===' '\n'.format(ver=refinery.__version__) +
         R'   binary refinery \/ full text search  ' '\n'
     )
 
@@ -89,7 +89,7 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         'keywords',
         metavar='keyword',
         type=lambda s: s.lower(),
-        nargs='+',
+        nargs='*',
         help='Provide keywords; if any of these keywords match the help description of '
              'a unit, it will be listed.'
     )
@@ -100,6 +100,11 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         const=any,
         default=all,
         help='Any keywords may match rather than requiring all of them to match.'
+    )
+    argp.add_argument(
+        '-V', '--version',
+        action='store_true',
+        help='Only show the currently installed version of binary refinery and exit.'
     )
     argp.add_argument(
         '-a', '--all',
@@ -127,7 +132,13 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         action='store_false',
         help='Do not allow wildcards in search string'
     )
+
     args = argp.parse_args()
+
+    if args.version:
+        print(refinery.__version__)
+        return
+
     width = get_terminal_size()
     separator = '-' * width
     result = False
