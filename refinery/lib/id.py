@@ -606,7 +606,7 @@ def guess_text_encoding(
 
 def xml_or_html(view: buf):
     """
-    Returns an `refinery.lib.Fmt` indicating either XML or HTML, or None if the data does not
+    Returns an `refinery.lib.id.Fmt` indicating either XML or HTML, or None if the data does not
     look like either of these formats at all.
     """
     if tag_match := re.search(BR'''(?x)
