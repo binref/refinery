@@ -155,6 +155,10 @@ PycMagicPattern = re.compile(br'''(?x)
 
 
 class Fmt(Format, enum.Enum):
+    """
+    An enumeration of all known file formats that can be returned by
+     `refinery.lib.id.get_structured_data_type`.
+    """
 
     PE32GUI = (FC.Executable, 'exe', 'PE/32/GUI')
     PE32CUI = (FC.Executable, 'exe', 'PE/32/CUI')
@@ -1088,7 +1092,7 @@ def get_text_format(data: buf):
 def get_structured_data_type(data: buf):
     """
     Attempts to determine whether the input data is just a meaningless blob or whether it has
-    structure, i.e. adheres to a known file format.
+    structure, i.e. adheres to a known file format. Returns an `refinery.lib.id.Fmt` or `None`.
     """
     for check in StructuralChecks:
         if t := check(data):
