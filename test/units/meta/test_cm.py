@@ -37,4 +37,4 @@ class TestCommonMeta(TestUnitBase):
             })
 
         magic = str(pdf | self.load(name) | self.ldu('pf', '{magic}'))
-        self.assertTrue(magic.startswith('PDF document'))
+        self.assertTrue(magic.startswith('PDF'))

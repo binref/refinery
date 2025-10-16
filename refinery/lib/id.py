@@ -183,7 +183,7 @@ class Fmt(Format, enum.Enum):
     LUAC = (FC.Executable, 'luac', 'LUAC', 'LUA Bytecode')
     PYC = (FC.Executable, 'pyc', 'PYC', 'Python Bytecode')
 
-    PDF = (FC.Document, 'pdf')
+    PDF = (FC.Document, 'pdf', 'PDF', 'PDF Document')
     CHM = (FC.Document, 'chm', 'CHM', 'Microsoft Windows HtmlHelp Data')
     DJV = (FC.Document, 'djvu')
 
@@ -719,37 +719,6 @@ def is_likely_json(data: buf):
 
 
 @_structural_check
-def get_text_format(data: buf):
-    """
-    Implements a heuristic check for whether the input is likely XML data.
-    """
-    encoding = guess_text_encoding(data)
-
-    if encoding is None:
-        return None
-
-    step = encoding.step
-    view = memoryview(data)[encoding.lsb:len(data):step]
-
-    if is_likely_vbe(view):
-        return Fmt.VBE
-    if re.search(BR'^\s{0,500}\{\\rtf', view) is not None:
-        return Fmt.RTF
-    if format := xml_or_html(view):
-        return format
-    if step == 1 and is_likely_eml(data):
-        return Fmt.EML
-    if is_likely_json(view):
-        return Fmt.JSON
-    if step == 1:
-        return Fmt.ASCII
-    if step == 2:
-        return Fmt.UTF16
-    if step == 4:
-        return Fmt.UTF32
-
-
-@_structural_check
 def get_microsoft_format(data: buf):
     """
     Checks for various Microsoft formats. This includes Access Database files and OneNote, but most
@@ -892,8 +861,8 @@ def get_compression_type(
         (Fmt.ISO         , F, 0x8801, B'CD001'),                                # noqa
         (Fmt.ISO         , F, 0x9001, B'CD001'),                                # noqa
         (Fmt.ISZ         , T, 0, B'IsZ!'),                                      # noqa
-        (Fmt.TAR         , F, 257, B'ustar\x00\x00\x30'),                       # noqa
-        (Fmt.TAR         , F, 257, B'ustar\x20\x20\x00'),                       # noqa
+        (Fmt.TAR         , F, 257, B'ustar'),                                   # noqa
+        (Fmt.TAR         , F, 257, B'ustar'),                                   # noqa
         (Fmt.OAR         , T, 0, B'OAR'),                                       # noqa
         (Fmt.ZPQ         , T, 0, B'7kSt\xA01\x83\xD3\x8C\xB2\x28\xB0\xD3zPQ'),  # noqa
         (Fmt.VMDK        , T, 0, B'KDM'),                                       # noqa
@@ -903,12 +872,14 @@ def get_compression_type(
         (Fmt.DMG         , T, size - 512, B'koly'),                             # noqa
     ):
         if view[offset:offset + len(signature)] == signature:
-            if not entropy_required:
+            if not entropy_required or len(data) < 0x100:
                 return format
             for start in (0x1000, 0x400, 0x200, 0x100, 0x80, 0x40, 0x20, 0x10):
                 if len(view) >= start + entropy_look_at:
                     view = view[start:]
                     break
+            else:
+                return format
             if entropy(view[:entropy_look_at]) >= entropy_minimum:
                 return format
 
@@ -1081,6 +1052,37 @@ def get_misc_binary_formats(data: buf):
     ):
         if data[:len(signature)] == signature:
             return format
+
+
+@_structural_check
+def get_text_format(data: buf):
+    """
+    Implements a heuristic check for whether the input is likely XML data.
+    """
+    encoding = guess_text_encoding(data)
+
+    if encoding is None:
+        return None
+
+    step = encoding.step
+    view = memoryview(data)[encoding.lsb:len(data):step]
+
+    if is_likely_vbe(view):
+        return Fmt.VBE
+    if re.search(BR'^\s{0,500}\{\\rtf', view) is not None:
+        return Fmt.RTF
+    if format := xml_or_html(view):
+        return format
+    if step == 1 and is_likely_eml(data):
+        return Fmt.EML
+    if is_likely_json(view):
+        return Fmt.JSON
+    if step == 1:
+        return Fmt.ASCII
+    if step == 2:
+        return Fmt.UTF16
+    if step == 4:
+        return Fmt.UTF32
 
 
 def get_structured_data_type(data: buf):

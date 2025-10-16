@@ -282,8 +282,6 @@ class FileMagicInfo:
 
         if blob:
             if check := get_structured_data_type(data):
-                import sys
-                print(check, file=sys.stderr)
                 extension = check.extension
                 description = check.details
                 mime = check.mime
