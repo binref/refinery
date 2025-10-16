@@ -103,8 +103,16 @@ class Format:
         self.extension = extension or 'bin'
         self.mnemonic = mnemonic or self.extension.upper()
         self.details = details or self.mnemonic
+
         if mime is None:
-            mime = MimeByExtension.get(self.extension, 'application/ocet-stream')
+            try:
+                mime = MimeByExtension[self.extension]
+            except KeyError:
+                if category == FormatCategory.Text:
+                    mime = 'text/plain'
+                else:
+                    mime = 'application/ocet-stream'
+
         self.mime = mime
 
 
