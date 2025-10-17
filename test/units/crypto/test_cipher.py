@@ -85,3 +85,10 @@ class TestCipherUnits(TestUnitBase):
             '831D2210E0AD5DA7F8523D304CA9BEB469DBAEA5D19D4C0329C5B438699C1B6BF7F3536B66BDD786'
             '8C098316D544C767A679CC47747D4A47'
         ))
+
+    def test_regression_stateful_cipher_object(self):
+        sk = bytes(16)
+        iv = bytes(16)
+        test1 = bytes(range(17)) | self.ldu('aes', lenient=1, iv=iv, key=sk) | bytes
+        test2 = bytes(range(16)) | self.ldu('aes', lenient=1, iv=iv, key=sk) | bytes
+        self.assertEqual(test1, test2)
