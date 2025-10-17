@@ -32,4 +32,4 @@ class xttar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data) -> bool:
-        return data[257:265] in (B'ustar\0\x30\x30', B'ustar\x20\x20\0')
+        return data[257:262] == B'ustar'
