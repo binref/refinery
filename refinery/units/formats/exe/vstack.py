@@ -513,7 +513,7 @@ class vstack(Unit):
                 symbols = list(emu.exe.symbols())
                 for filter in [
                     lambda s: s.get_name().casefold() == a.casefold(),
-                    lambda s: s.name == a,
+                    lambda s: s.get_name() == a,
                     lambda s: s.function,
                     lambda s: s.exported,
                 ]:
