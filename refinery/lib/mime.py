@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import functools
 
-from refinery.lib.id import get_structured_data_type
+from refinery.lib.id import get_structured_data_type, get_pe_type
 from refinery.lib.magic import magic, magicparse
 
 
@@ -259,37 +259,25 @@ class FileMagicInfo:
         mime = 'application/octet-stream'
         blob = True
 
-        if magic:
+        if magic is not None:
             if not isinstance(data, bytes):
                 data = bytes(data)
             mime = magicparse(data, mime=True)
             mime = mime.split(';')[0].lower()
+            extension = FileTypeMap.get(mime, default)
             description = magicparse(data).strip()
-            try:
-                extension = FileTypeMap[mime]
-            except KeyError:
-                extension = default
             if description == 'Microsoft OOXML':
                 extension = 'docx'
-            if extension == 'exe':
-                if '(DLL)' in description:
-                    extension = 'dll'
-                elif '(native)' in description:
-                    extension = 'sys'
-                else:
-                    extension = 'exe'
-            blob = description.lower() == 'data'
-
-        if blob:
-            if check := get_structured_data_type(data):
-                extension = check.extension
-                description = check.details
-                mime = check.mime
-                blob = False
+            elif extension == 'exe' and (t := get_pe_type(data)):
+                extension = t.extension
             else:
-                extension = default
-                description = 'data'
-                mime = 'application/octet-stream'
+                blob = description.lower() == 'data'
+
+        if blob and (check := get_structured_data_type(data)):
+            extension = check.extension
+            description = check.details
+            mime = check.mime
+            blob = False
 
         if extension in ('gz', 'gzip', 'bz2') and decompress:
             if extension == 'bz2':

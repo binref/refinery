@@ -19,7 +19,7 @@ except ModuleNotFoundError:
 
 
 def magicparse(data, *args, **kwargs) -> str:
-    if not magic:
+    if magic is not None:
         if not isinstance(data, bytes):
             data = bytes(data)
         try:
