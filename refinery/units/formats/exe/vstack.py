@@ -164,25 +164,26 @@ def EmuFactory(base: Literal[SpeakeasyEmulator | IcicleEmulator | UnicornEmulato
                 return F'0x{x:X}'
 
             self.state.last_api = self.ip
-            module, dot, symbol = name.partition('.')
-            if dot != '.':
-                return None
-            module, _, _ = module.lower().partition('.')
+            module, _, symbol = name.rpartition('.')
+            symbol = symbol.lstrip('_')
+            if module:
+                module, _, _ = module.lower().partition('.')
+                name = F'{module}::{symbol}'
             logged_args = [_repr(a) for a in args]
             if symbol == 'connect':
                 sockaddr = StructReader(self.mem_read(args[1], 8))
-                if sockaddr.u16() == 2:
+                if sockaddr.u16() in (0x02, 0x0200):
                     sockaddr.bigendian = True
                     port = sockaddr.u16()
                     host = '.'.join(map(str, sockaddr.read(4)))
-                    self.state.synthesized[F'{host}:{port}'.encode(vstack.codec)] = F'{module}::{symbol}'
+                    self.state.synthesized[F'{host}:{port}'.encode(vstack.codec)] = name
                     logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
             if self.state.cfg.log_api_calls:
                 for k, arg in enumerate(logged_args):
                     if arg.startswith('"') or arg.startswith("'"):
                         logged_args[k] = F'{FG.LIGHTRED_EX}{arg}{RS}'
                 vstack.log_always(
-                    F'{FG.LIGHTCYAN_EX}{symbol}{RS}({", ".join(logged_args)}){RS}')
+                    F'{FG.LIGHTCYAN_EX}{name}{RS}({", ".join(logged_args)}){RS}')
             if cb is None:
                 retval = True
             else:
