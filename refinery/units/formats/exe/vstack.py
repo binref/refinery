@@ -170,7 +170,7 @@ def EmuFactory(base: Literal[SpeakeasyEmulator | IcicleEmulator | UnicornEmulato
                 module, _, _ = module.lower().partition('.')
                 name = F'{module}::{symbol}'
             logged_args = [_repr(a) for a in args]
-            if symbol == 'connect':
+            if symbol == 'connect' and args:
                 sockaddr = StructReader(self.mem_read(args[1], 8))
                 if sockaddr.u16() in (0x02, 0x0200):
                     sockaddr.bigendian = True
