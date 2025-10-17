@@ -26,4 +26,7 @@ def magicparse(data, *args, **kwargs) -> str:
             return magic.Magic(*args, **kwargs).from_buffer(data)
         except magic.MagicException:
             pass
-    return 'application/octet-stream'
+    elif kwargs.get('mime', False) is True:
+        return 'application/octet-stream'
+    else:
+        return 'data'
