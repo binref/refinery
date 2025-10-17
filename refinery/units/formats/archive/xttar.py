@@ -21,14 +21,14 @@ class xttar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     raise
                 stream.seek(ustar - 257)
                 archive = tarfile.open(fileobj=stream)
-        for info in archive.getmembers():
-            if not info.isfile():
-                continue
-            extractor = archive.extractfile(info)
-            if extractor is None:
-                continue
-            date = datetime.datetime.fromtimestamp(info.mtime)
-            yield self._pack(info.name, date, lambda e=extractor: e.read())
+            for info in archive.getmembers():
+                if not info.isfile():
+                    continue
+                extractor = archive.extractfile(info)
+                if extractor is None:
+                    continue
+                date = datetime.datetime.fromtimestamp(info.mtime)
+                yield self._pack(info.name, date, lambda e=extractor: e.read())
 
     @classmethod
     def handles(cls, data) -> bool:
