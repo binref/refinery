@@ -389,8 +389,8 @@ class vstack(Unit):
     """
     def __init__(
         self,
-        *address: Param[str, Arg.Bounds(metavar='a[:end|::size]',
-            help='Specify the (virtual) addresses of what to emulate; optionally specify a stop address or a length.')],
+        *address: Param[str, Arg.String(metavar='a[:end|::size]',
+            help='Specify a symbol name or the (virtual) addresses of what to emulate; optionally specify a stop address or a length.')],
         base: Param[int | None, Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.')] = None,
         arch: Param[str | Arch, Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
         engine: Param[str | _engine, Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
