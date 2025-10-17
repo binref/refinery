@@ -95,6 +95,38 @@ class Hook(IntFlag):
     NoErrors     = 0b001_01101  # noqa
 
 
+_NOP_CODE = {
+    Arch.X32    : B'\x90',
+    Arch.X64    : B'\x90',
+    Arch.ARM32  : B'\x00\xF0\x20\xE3',
+    Arch.ARM64  : B'\x1F\x20\x03\xD5',
+    Arch.MIPS16 : B'\x65\x00',
+    Arch.MIPS32 : B'\x00\x00\x00\x00',
+    Arch.MIPS64 : B'\x00\x00\x00\x00',
+    Arch.PPC32  : B'\x60\x00\x00\x00',
+    Arch.PPC64  : B'\x60\x00\x00\x00',
+    Arch.SPARC32: B'\x01\x00\x00\x00',
+    Arch.SPARC64: B'\x01\x00\x00\x00',
+}
+
+_RET_CODE = {
+    Arch.X32    : B'\xC3',
+    Arch.X64    : B'\xC3',
+    Arch.ARM32  : B'\x1E\xFF\x2F\xE1',
+    Arch.ARM64  : B'\xC0\x03\x5F\xD6',
+    Arch.MIPS16 : B'\xE0\x7E',
+    Arch.MIPS32 : B'\x08\x00\xE0\x03',
+    Arch.MIPS64 : B'\x08\x00\xE0\x03',
+    Arch.PPC32  : B'\x4E\x80\x00\x20',
+    Arch.PPC64  : B'\x4E\x80\x00\x20',
+    Arch.SPARC32: B'\x81\xC3\xE0\x08',
+    Arch.SPARC64: B'\x81\xC3\xE0\x08',
+}
+
+_NOP_SIZE = max(len(c) for c in _NOP_CODE.values())
+_RET_SIZE = max(len(c) for c in _RET_CODE.values())
+
+
 class Emulator(ABC, Generic[_E, _R, _T]):
     """
     The emulator base class.
@@ -138,8 +170,8 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             Arch.PPC64   : ('1',   'pc',  '3'  ), # noqa
             Arch.X32     : ('esp', 'eip', 'eax'), # noqa
             Arch.X64     : ('rsp', 'rip', 'rax'), # noqa
-            Arch.ARM32   : ('sp',  'ip',  'r0' ), # noqa
-            Arch.ARM64   : ('sp',  'ip',  'r0' ), # noqa
+            Arch.ARM32   : ('sp',  'pc',  'r0' ), # noqa
+            Arch.ARM64   : ('sp',  'pc',  'x0' ), # noqa
             Arch.MIPS16  : ('sp',  'pc',  '0'  ), # noqa
             Arch.MIPS32  : ('sp',  'pc',  'v0' ), # noqa
             Arch.MIPS64  : ('sp',  'pc',  'v0' ), # noqa
@@ -645,15 +677,18 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
         if self.trampoline is None:
             symbol_count = len(self.imports)
             t = self.malloc(symbol_count)
-            self.mem_write(t, B'\xC3' * symbol_count)
+            c = _RET_CODE[self.exe.arch()]
+            self.mem_write(t, c * symbol_count)
             for k, symbol in enumerate(self.imports):
-                self.mem_write_int(symbol.address, t + k)
+                self.mem_write_int(symbol.address, t + (k * _RET_SIZE))
             self.trampoline = t
 
     def _hook_api_call_check(self, emu: _E, address: int, size: int, state: _T | None = None) -> bool:
         if (t := self.trampoline) is None:
             return True
-        index = address - t
+        index, misaligned = divmod(address - t, _RET_SIZE)
+        if misaligned:
+            return True
         if not 0 <= index <= len(symbols := self.imports):
             return True
         symbol = symbols[index]
@@ -690,7 +725,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
             Arch.X32     : (uc.UC_ARCH_X86,   uc.UC_MODE_32),     # noqa
             Arch.X64     : (uc.UC_ARCH_X86,   uc.UC_MODE_64),     # noqa
             Arch.ARM32   : (uc.UC_ARCH_ARM,   uc.UC_MODE_ARM),    # noqa
-            Arch.ARM64   : (uc.UC_ARCH_ARM,   uc.UC_MODE_THUMB),  # noqa
+            Arch.ARM64   : (uc.UC_ARCH_ARM64, uc.UC_MODE_ARM),  # noqa
             Arch.MIPS16  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_16),     # noqa
             Arch.MIPS32  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_32),     # noqa
             Arch.MIPS64  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_64),     # noqa
@@ -748,15 +783,18 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
 
     def _init(self):
         super()._init()
-        self._reg_by_name: dict[str, Register[int]] = {}
-        self._reg_by_code: dict[int, Register[int]] = {}
-        for module in [
-            uc.x86_const,
-            uc.arm_const,
-            uc.sparc_const,
-            uc.mips_const,
+        self._reg_by_name: dict[Arch, dict[str, Register[int]]] = {}
+        self._reg_by_code: dict[Arch, dict[int, Register[int]]] = {}
+        for archs, module in [
+            ((Arch.X32, Arch.X64), uc.x86_const),
+            ((Arch.ARM32,), uc.arm_const),
+            ((Arch.ARM64,), uc.arm64_const),
+            ((Arch.SPARC32, Arch.SPARC64), uc.sparc_const),
+            ((Arch.MIPS16, Arch.MIPS32, Arch.MIPS64), uc.mips_const),
         ]:
             md: dict[str, Any] = module.__dict__
+            reg_by_name: dict[str, Register[int]] = {}
+            reg_by_code: dict[int, Register[int]] = {}
             for name, code in md.items():
                 try:
                     u, *_, kind, name = name.split('_')
@@ -766,8 +804,11 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
                     continue
                 name = name.casefold()
                 reg = Register(name, code)
-                self._reg_by_name[name] = reg
-                self._reg_by_code[code] = reg
+                reg_by_name[name] = reg
+                reg_by_code[code] = reg
+            for arch in archs:
+                self._reg_by_code[arch] = reg_by_code
+                self._reg_by_name[arch] = reg_by_name
 
     def _emulate(self, start: int, end: int | None = None):
         if end is None:
@@ -782,10 +823,11 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
 
     def _lookup_register(self, var: str | int) -> Register[int]:
         reg = None
+        arch = self.exe.arch()
         if isinstance(var, str):
-            reg = self._reg_by_name[var.casefold()]
+            reg = self._reg_by_name[arch][var.casefold()]
         if isinstance(var, int):
-            reg = self._reg_by_code[var]
+            reg = self._reg_by_code[arch][var]
         if reg is None:
             raise TypeError(var)
         if reg.size is None:

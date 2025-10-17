@@ -618,7 +618,7 @@ class Executable(ABC):
             Arch.X32     : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
             Arch.X64     : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa
             Arch.ARM32   : (cs.CS_ARCH_ARM,   cs.CS_MODE_ARM),    # noqa
-            Arch.ARM64   : (cs.CS_ARCH_ARM,   cs.CS_MODE_THUMB),  # noqa
+            Arch.ARM64   : (cs.CS_ARCH_ARM64, cs.CS_MODE_ARM),    # noqa
             Arch.MIPS16  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_16),     # noqa
             Arch.MIPS32  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_32),     # noqa
             Arch.MIPS64  : (cs.CS_ARCH_MIPS,  cs.CS_MODE_64),     # noqa
@@ -670,7 +670,7 @@ class ExecutableCodeBlob(Executable):
     def _symbols(self) -> Generator[Symbol]:
         section, = self._sections()
         yield Symbol(
-            0,
+            self.base,
             None,
             None,
             function=True,
@@ -777,23 +777,27 @@ class LIEF(Executable):
                     base = symbol.value
                 else:
                     continue
-                yield Relocation(rel.address, base + rel.addend, ps)
+                addr = self.rebase_img_to_usr(rel.address)
+                yield Relocation(addr, base + rel.addend, ps)
         elif (delta := (base := self.base) - self.image_defined_base()) != 0:
             def relocation(addr: int, size: int):
-                return Relocation(addr, self.read_integer(addr, size) + delta & mask, size)
-            mask = (1 << self.pointer_size) - 1
+                addr = self.rebase_img_to_usr(addr)
+                mask = (1 << size) - 1
+                rval = self.read_integer(addr, size) + delta & mask
+                return Relocation(addr, rval, size // 8)
+
             for rel in it:
                 if isinstance(rel, lief.MachO.Relocation):
-                    yield relocation(rel.address, rel.size // 8)
+                    yield relocation(rel.address, rel.size)
                 elif isinstance(rel, lief.PE.Relocation):
                     rva = rel.virtual_address
                     if (delta := (base := self.base) - self.image_defined_base()) == 0:
                         continue
                     for entry in rel.entries:
                         if entry.type == lief.PE.RelocationEntry.BASE_TYPES.HIGHLOW:
-                            size = 4
+                            size = 32
                         elif entry.type == lief.PE.RelocationEntry.BASE_TYPES.DIR64:
-                            size = 8
+                            size = 64
                         else:
                             continue
                         if size != entry.size:
@@ -804,7 +808,7 @@ class LIEF(Executable):
 
     def _symbols(self) -> Generator[Symbol]:
         yield Symbol(
-            self._lh.entrypoint,
+            self.rebase_img_to_usr(self._lh.entrypoint),
             None,
             None,
             function=True,
@@ -815,9 +819,9 @@ class LIEF(Executable):
 
         it: Iterable[lief.Symbol] = self._lh.symbols
         ps = self.pointer_size_in_bytes
-        ib = self.image_defined_base()
+        imports_done: set[str] = set()
 
-        if isinstance((head := self._head), lief.PE.Binary):
+        if isinstance((head := self._first_header), lief.PE.Binary):
             for imp in head.imports:
                 dll = self.ascii(imp.name).lower()
                 dll, _, ext = dll.rpartition('.')
@@ -828,16 +832,30 @@ class LIEF(Executable):
                     else:
                         name = self.ascii(symbol.demangled_name) or self.ascii(symbol.name)
                     yield Symbol(
-                        symbol.iat_address + ib,
+                        symbol.iat_address + self.base,
                         F'{dll}.{name}',
                         ps,
                         function=True,
                         exported=False,
                         imported=True,
                     )
+        elif isinstance(head, lief.MachO.Binary):
+            for binding in head.dyld_chained_fixups.bindings:
+                name = binding.symbol.demangled_name or binding.symbol.name
+                name = self.ascii(name)
+                addr = self.rebase_img_to_usr(binding.address)
+                imports_done.add(name)
+                yield Symbol(
+                    addr,
+                    name,
+                    ps,
+                    function=True,
+                    exported=False,
+                    imported=True,
+                )
 
         for symbol in it:
-            addr = symbol.value
+            addr = self.rebase_img_to_usr(value := symbol.value)
             name = self.ascii(symbol.name)
             size = symbol.size
             if isinstance(symbol, lief.COFF.Symbol):
@@ -860,7 +878,7 @@ class LIEF(Executable):
             elif isinstance(symbol, lief.PE.ExportEntry):
                 name = self.ascii(symbol.demangled_name) or name
                 yield Symbol(
-                    addr + ib,
+                    value + self.base,
                     name,
                     ps,
                     function=True,
@@ -880,6 +898,8 @@ class LIEF(Executable):
                 )
             elif isinstance(symbol, lief.MachO.Symbol):
                 name = self.ascii(symbol.demangled_name) or name
+                if name in imports_done:
+                    continue
                 yield Symbol(
                     addr,
                     name,
@@ -966,7 +986,9 @@ class LIEF(Executable):
                 except AttributeError:
                     p_upper = p_lower + segment.physical_size
                 v_lower = segment.virtual_address
-                v_lower = self.rebase_usr_to_img(v_lower)
+                v_lower = self.rebase_img_to_usr(v_lower)
+                if v_lower < 0:
+                    continue # __PAGEZERO
                 v_upper = v_lower + segment.virtual_size
                 try:
                     name = segment.name

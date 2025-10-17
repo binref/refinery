@@ -95,6 +95,9 @@ def load_macho(data: buf) -> MachO.FatBinary | MachO.Binary:
     Load a MachO file using LIEF.
     """
     with io.BytesIO(data) as stream:
+        config = MachO.ParserConfig()
+        config.parse_dyld_bindings = True
+        config.parse_dyld_rebases = True
         if parsed := MachO.parse(stream):
             return parsed
         stream.seek(0)
