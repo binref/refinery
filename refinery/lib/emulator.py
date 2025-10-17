@@ -4,7 +4,7 @@ This module implements an emulator abstraction layer.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import IntFlag
+from enum import IntFlag, Enum
 from functools import cached_property, partial
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -37,6 +37,16 @@ class EmulationError(Exception):
     """
     Base class for any exceptions raised by emulators.
     """
+
+
+class CC(str, Enum):
+    """
+    A selection of x86 calling conventions.
+    """
+    CDecl = '__cdecl'
+    FastCall = '__fastcall'
+    StdCall = '__stdcall'
+    ThisCall = '__thiscall'
 
 
 class Register(Generic[_R]):
@@ -180,6 +190,35 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         }[exe.arch()]
 
         self._init()
+
+    def get_function_argument(self, k: int, cc: CC = CC.StdCall, size: int | None = None) -> int:
+        arch = self.exe.arch()
+        if k < 0:
+            raise ValueError(k)
+        if arch == Arch.X32:
+            if cc == CC.FastCall:
+                regs = ('ecx', 'edx')
+            elif cc == CC.ThisCall:
+                regs = ('ecx',)
+            else:
+                regs = ()
+        elif arch == Arch.X64:
+            regs = ('rcx', 'rdx', 'r8', 'r9')
+        elif arch == Arch.ARM32:
+            regs = ('r0', 'r1', 'r2', 'r3')
+        elif arch == Arch.ARM64:
+            regs = ('x0', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7')
+        else:
+            raise NotImplementedError(F'Calling convention {cc.value} is not implemented for {arch.name}')
+        try:
+            reg = regs[k]
+        except IndexError:
+            return self.mem_read_int(self.sp + (k - len(regs)) * self.exe.pointer_size_in_bytes)
+        else:
+            arg = self.get_register(reg)
+            if size is not None:
+                arg &= (1 << (size << 3)) - 1
+            return arg
 
     @cached_property
     def _reg_sp(self):
