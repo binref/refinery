@@ -5,6 +5,15 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.5
+- The `carve` unit now supports the `strarray` pattern for arrays of strings,
+  but no decoder for it is implemented yet because it is unclear what that should be.
+- The `vstack` unit has changed to allow for slice-style address arguments,
+  more easily allowing you to specify a stop address.
+- The unicorn and icicle-backed emulators in refinery (specifically `vstack`)
+  now also have rudimentary support for API hooking and logging.
+- The `binref` command now prints the current binary-refinery version.
+
 ## Version 0.9.4
 - The `xtmsi` unit now exposes several metadata streams that were discarded before,
   one important example being the digital signature.

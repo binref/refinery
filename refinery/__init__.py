@@ -34,7 +34,7 @@ various `refinery.units.Unit`s can be combined.
 """
 from __future__ import annotations
 
-__version__ = '0.9.4'
+__version__ = '0.9.5'
 __distribution__ = 'binary-refinery'
 
 import pickle
