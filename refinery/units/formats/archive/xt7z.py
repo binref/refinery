@@ -4,12 +4,16 @@ import re
 
 from typing import TYPE_CHECKING
 
-from refinery.lib.id import contained
 from refinery.lib.structures import MemoryFile
+from refinery.lib.id import contained, is_likely_pe
 from refinery.units.formats.archive import ArchiveUnit
+from refinery.units.formats.pe import get_pe_size
 
 if TYPE_CHECKING:
     from py7zr import SevenZipFile
+
+
+_SIGNATURE = B'7z\xBC\xAF\x27\x1C'
 
 
 class _IOFactory:
@@ -34,7 +38,7 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         return py7zr
 
     def unpack(self, data: bytearray):
-        for match in re.finditer(re.escape(B'7z\xBC\xAF\x27\x1C'), data):
+        for match in re.finditer(re.escape(_SIGNATURE), data):
             start = match.start()
             if start != 0:
                 self.log_info(F'found a header at offset 0x{start:X}, trying to extract from there.')
@@ -51,6 +55,7 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
         pwd = self.args.pwd
         mv = memoryview(data)
+        archive = None
 
         def test(archive: SevenZipFile):
             if self.args.list:
@@ -93,6 +98,7 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             else:
                 raise ValueError('a password is required and none of the default passwords worked.')
 
+        assert archive is not None
         has_read_method = hasattr(archive, 'read')
 
         for info in archive.list():
@@ -122,5 +128,13 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             )
 
     @classmethod
-    def handles(cls, data) -> bool:
-        return contained(B'7z\xBC\xAF\x27\x1C', data)
+    def handles(cls, data) -> bool | None:
+        if data[:6] == _SIGNATURE:
+            return True
+        if not is_likely_pe(data):
+            return None
+        offset = get_pe_size(data)
+        memory = memoryview(data)
+        memory = memory[offset:]
+        if memory[:10] == B';!@Install' and contained(_SIGNATURE, memory[:0x1000]):
+            return True
