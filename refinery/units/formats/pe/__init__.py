@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from refinery.lib import lief
 from refinery.lib.types import Param, buf
+from refinery.lib.tools import NoLoggingProxy
 from refinery.units import Arg, Unit
 
 
@@ -20,7 +21,7 @@ def get_pe_size(
     This fuction determines the size of a PE file, optionally taking into account the PE overlay
     computation, section information, data directory information, and certificate entries.
     """
-    if not isinstance(pe, lief.PE.Binary):
+    if not isinstance(pe, (NoLoggingProxy, lief.PE.Binary)):
         pe = lief.load_pe(pe)
 
     overlay_value = overlay and pe.overlay_offset or 0
