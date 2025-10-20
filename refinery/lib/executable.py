@@ -368,6 +368,8 @@ class Executable(ABC):
         if isinstance(key, Range):
             key = slice(key.lower, key.upper)
         elif isinstance(key, int):
+            if key < 0:
+                raise LookupError(F'Reading from negative address -0x{-key:X}.')
             key = slice(key, key + 1, 1)
         if key.start is None:
             raise LookupError(R'Slice indices with unspecified start are not supported.')
@@ -766,9 +768,8 @@ class LIEF(Executable):
         ps = self.pointer_size_in_bytes
         it: Iterable[lief.Relocation] = iter(self._lh.relocations)
 
-        if self.is_elf:
-            for rel in it:
-                assert isinstance(rel, lief.ELF.Relocation)
+        if isinstance((head := self._first_header), lief.ELF.Binary):
+            for rel in head.object_relocations:
                 if (symbol := rel.symbol) is None:
                     continue
                 if '_RELATIVE' in (tn := rel.type.name):
@@ -786,7 +787,7 @@ class LIEF(Executable):
                 rval = self.read_integer(addr, size) + delta & mask
                 return Relocation(addr, rval, size // 8)
 
-            for rel in it:
+            for rel in self._lh.relocations:
                 if isinstance(rel, lief.MachO.Relocation):
                     yield relocation(rel.address, rel.size)
                 elif isinstance(rel, lief.PE.Relocation):
@@ -853,6 +854,23 @@ class LIEF(Executable):
                     exported=False,
                     imported=True,
                 )
+        elif isinstance(head, lief.ELF.Binary):
+            for binding in itertools.chain(
+                head.pltgot_relocations,
+                head.dynamic_relocations,
+            ):
+                name = binding.symbol.demangled_name or binding.symbol.name
+                name = self.ascii(name)
+                addr = self.rebase_img_to_usr(binding.address)
+                imports_done.add(name)
+                yield Symbol(
+                    addr,
+                    name,
+                    ps,
+                    function=True,
+                    exported=False,
+                    imported=True,
+                )
 
         for symbol in it:
             addr = self.rebase_img_to_usr(value := symbol.value)
@@ -886,7 +904,11 @@ class LIEF(Executable):
                     imported=False,
                 )
             elif isinstance(symbol, lief.ELF.Symbol):
+                if symbol.imported and symbol.is_function:
+                    continue
                 name = self.ascii(symbol.demangled_name) or name
+                if name in imports_done:
+                    continue
                 yield Symbol(
                     addr,
                     name,

@@ -716,7 +716,7 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
         if self.trampoline is None:
             symbol_count = len(self.imports)
             t = self.malloc(symbol_count)
-            c = _RET_CODE[self.exe.arch()]
+            c = _RET_CODE[self.exe.arch()].ljust(_RET_SIZE, B'\0')
             self.mem_write(t, c * symbol_count)
             for k, symbol in enumerate(self.imports):
                 self.mem_write_int(symbol.address, t + (k * _RET_SIZE))
@@ -728,7 +728,7 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
         index, misaligned = divmod(address - t, _RET_SIZE)
         if misaligned:
             return True
-        if not 0 <= index <= len(symbols := self.imports):
+        if not 0 <= index < len(symbols := self.imports):
             return True
         symbol = symbols[index]
         if name := symbol.name:
