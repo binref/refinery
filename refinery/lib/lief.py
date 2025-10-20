@@ -65,7 +65,10 @@ def load_pe(
         if parsed := PE.parse(stream, cfg):
             return parsed
         stream.seek(0)
-        return lib.parse(stream)
+        pe = lib.parse(stream)
+        if not isinstance(pe, lib.PE.Binary):
+            raise ValueError
+        return pe
 
 
 def load_pe_fast(

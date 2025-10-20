@@ -20,7 +20,7 @@ def get_pe_size(
     This fuction determines the size of a PE file, optionally taking into account the PE overlay
     computation, section information, data directory information, and certificate entries.
     """
-    if not hasattr(pe, 'overlay_offset'):
+    if not isinstance(pe, lief.PE.Binary):
         pe = lief.load_pe(pe)
 
     overlay_value = overlay and pe.overlay_offset or 0
@@ -41,7 +41,7 @@ def get_pe_size(
         cert_entry = None
         certificate = False
 
-    if certificate:
+    if certificate and cert_entry:
         # The certificate overlay is given as a file offset
         # rather than a virtual address.
         cert_value = cert_entry.rva + cert_entry.size
