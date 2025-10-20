@@ -766,7 +766,6 @@ class LIEF(Executable):
 
     def _relocations(self):
         ps = self.pointer_size_in_bytes
-        it: Iterable[lief.Relocation] = iter(self._lh.relocations)
 
         if isinstance((head := self._first_header), lief.ELF.Binary):
             for rel in head.object_relocations:
