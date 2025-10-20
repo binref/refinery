@@ -22,7 +22,7 @@ def get_pe_size(
     computation, section information, data directory information, and certificate entries.
     """
     if not isinstance(pe, (NoLoggingProxy, lief.PE.Binary)):
-        pe = lief.load_pe(pe)
+        pe = lief.load_pe_fast(pe)
 
     overlay_value = overlay and pe.overlay_offset or 0
 
