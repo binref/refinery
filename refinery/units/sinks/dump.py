@@ -244,3 +244,17 @@ class dump(Unit):
 
         self._close(final=True)
         self.exhausted = True
+
+
+class d2p(dump):
+    """
+    Stands for "dump to path"; this is a shortcut for the `refinery.dump` unit which is equivalent
+    to running:
+
+        dump {path}
+
+    This will dump all chunk in the current frame to the path given by the `path` meta variable,
+    which is cmmonly set by units like `refinery.xt`.
+    """
+    def __init__(self, tee=False, stream=False, plain=False, force=False):
+        super().__init__('{path}', tee=tee, stream=stream, plain=plain, force=force)
