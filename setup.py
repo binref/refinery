@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
-
 import re
 import os
 import setuptools
@@ -79,17 +77,17 @@ def get_config():
     import refinery
     import refinery.lib.shared
 
-    with refinery.__unit_loader__:
-        refinery.__unit_loader__.reload()
+    with refinery.__unit_loader__ as ldr:
+        ldr.reload()
 
     def get_setup_extras(requirements: list[str] | None = None):
-        all_optional: Set[str] = set()
-        all_required: Set[str] = set()
-        extras: Dict[str, Set[str]] = {'all': all_optional}
-        with refinery.__unit_loader__:
+        all_optional: set[str] = set()
+        all_required: set[str] = set()
+        extras: dict[str, set[str]] = {'all': all_optional}
+        with refinery.__unit_loader__ as ldr:
             for executable in (
                 refinery.lib.shared.GlobalDependenciesDummy,
-                *refinery.__unit_loader__.cache.values()
+                *ldr.cache.values()
             ):
                 if executable.optional_dependencies:
                     for key, deps in executable.optional_dependencies.items():
@@ -133,10 +131,10 @@ def get_config():
     if __prefix__ == '!':
         console_scripts = []
     else:
-        with refinery.__unit_loader__:
+        with refinery.__unit_loader__ as ldr:
             console_scripts = [
                 F'{__prefix__}{normalize_name(name)}={path}:{name}.run'
-                for name, path in refinery.__unit_loader__.units.items()
+                for name, path in ldr.units.items()
             ]
     console_scripts.append('binref=refinery.explore:explorer')
     settings = get_setup_common()
@@ -145,7 +143,7 @@ def get_config():
         'Topic :: Utilities'
     ]
 
-    ppcfg: Dict[str, Dict[str, List[str]]] = toml.load('pyproject.toml')
+    ppcfg: dict[str, dict[str, list[str]]] = toml.load('pyproject.toml')
     requirements = ppcfg['build-system']['requires']
 
     magic = 'python-magic'
