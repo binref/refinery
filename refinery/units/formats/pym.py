@@ -6,7 +6,7 @@ import sys
 from types import CodeType
 
 from refinery.lib.json import BytesAsStringEncoder
-from refinery.lib.py import PV, Marshal, code_header, version2tuple
+from refinery.lib.py import SYS_PYTHON, Marshal, code_header, version2tuple
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -62,7 +62,7 @@ class pym(Unit):
         if version := self.args.version:
             version = version2tuple(version)
 
-        if version and version != PV.V_THIS or not self.args.system:
+        if version and version != SYS_PYTHON or not self.args.system:
             out = None
         else:
             try:

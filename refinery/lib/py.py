@@ -19,7 +19,7 @@ _T = TypeVar('_T')
 
 _MAX_MARSHAL_STACK_DEPTH = 2000
 
-_SYS_PYTHON = (
+SYS_PYTHON = (
     sys.version_info.major,
     sys.version_info.minor,
     sys.version_info.micro,
@@ -224,7 +224,7 @@ def code_header(version: tuple[int, int, int] | str | None = None) -> bytearray:
     Produce a code object header for the given version.
     """
     if version is None:
-        vt = _SYS_PYTHON
+        vt = SYS_PYTHON
         magic = bytearray(importlib.util.MAGIC_NUMBER)
     else:
         if isinstance(version, str):
