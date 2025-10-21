@@ -48,17 +48,6 @@ def version2tuple(v: str) -> PyVer:
         raise ValueError(v)
 
 
-_PY_VERSIONS: list[PyVer] = []
-
-for v in xdis.magics.by_version:
-    try:
-        _PY_VERSIONS.append(version2tuple(v))
-    except Exception:
-        continue
-
-_PY_VERSIONS = sorted(set(_PY_VERSIONS))
-
-
 class Code(NamedTuple):
     version: tuple[int]
     timestamp: int
@@ -298,8 +287,19 @@ class Marshal(StructReader[memoryview]):
 
         self.refs = []
         self.version = version
-        self._min_version = _PY_VERSIONS[+0]
-        self._max_version = _PY_VERSIONS[~0]
+
+        _py_versions: list[PyVer] = []
+
+        for v in xdis.magics.by_version:
+            try:
+                _py_versions.append(version2tuple(v))
+            except Exception:
+                continue
+
+        self._py_versions = _py_versions = sorted(set(_py_versions))
+
+        self._min_version = _py_versions[+0]
+        self._max_version = _py_versions[~0]
         self._depth = 0
         self._dumpcode = dumpcode
         self.strings: list[str] = []
@@ -638,7 +638,7 @@ class Marshal(StructReader[memoryview]):
             else:
                 new_max = self._min_version
                 old_max = self._max_version
-                for v in _PY_VERSIONS:
+                for v in self._py_versions:
                     if v < new_max:
                         continue
                     if v > old_max:
