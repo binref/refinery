@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.7
+- The `d2p` unit was added.
+
 ## Version 0.9.6 - bugfix release
 
 ## Version 0.9.5
