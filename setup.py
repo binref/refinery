@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 from typing import Dict, List, Optional, Set
 
 import re
@@ -80,7 +82,7 @@ def get_config():
     with refinery.__unit_loader__:
         refinery.__unit_loader__.reload()
 
-    def get_setup_extras(requirements: Optional[List] = None):
+    def get_setup_extras(requirements: list[str] | None = None):
         all_optional: Set[str] = set()
         all_required: Set[str] = set()
         extras: Dict[str, Set[str]] = {'all': all_optional}
@@ -100,7 +102,7 @@ def get_config():
             requirements.extend(all_required)
         return {k: list(v) for k, v in extras.items()}
 
-    def get_setup_readme(filename: Optional[str] = None):
+    def get_setup_readme(filename: str | pathlib.Path | None = None):
         if filename is None:
             filename = pathlib.Path(__file__).parent.joinpath('README.md')
         with open(filename, 'r', encoding='UTF8') as README:
@@ -161,7 +163,6 @@ def get_config():
         extras_require=extras,
         include_package_data=True,
         entry_points={'console_scripts': console_scripts},
-        package_data={'refinery': ['__init__.pkl']},
         cmdclass={'deploy': DeployCommand},
     )
 
