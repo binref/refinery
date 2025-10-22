@@ -400,7 +400,7 @@ class vstack(Unit):
         se: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy')] = False,
         ic: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=icicle')] = False,
         uc: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=unicorn')] = False,
-        meta_registers: Param[bool, Arg.Switch('-r', help=(
+        registers: Param[bool, Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
             'the data will be mapped.'))] = False,
         timeout: Param[int, Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.')] = 0,
@@ -440,7 +440,7 @@ class vstack(Unit):
             base=base,
             arch=Arg.AsOption(arch, Arch),
             engine=Arg.AsOption(engine, _engine),
-            meta_registers=meta_registers,
+            registers=registers,
             timeout=timeout,
             patch_range=patch_range,
             write_range=write_range,
@@ -497,7 +497,7 @@ class vstack(Unit):
         register_values: dict[Register, int] = {}
         emu.reset(None)
 
-        if args.meta_registers or args.stack_push:
+        if args.registers or args.stack_push:
             for var, value in list(meta.items()):
                 try:
                     register = emu.lookup_register(var)
