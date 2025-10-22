@@ -693,7 +693,7 @@ class StructReader(MemoryFile[T, T]):
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
 
-    def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray | T:
+    def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray:
         buf = self.getvalue()
         pos = self.tell()
         n = len(terminator)
@@ -724,7 +724,7 @@ class StructReader(MemoryFile[T, T]):
         else:
             data = self.read_exactly(end - pos)
             self.skip(n)
-            return data
+            return bytearray(data)
 
     def read_guid(self) -> UUID:
         return UUID(bytes_le=self.read_bytes(16))
