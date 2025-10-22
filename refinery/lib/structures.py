@@ -480,7 +480,7 @@ class StructReader(MemoryFile[T, T]):
         self._nbits = 0
         return super().seek(offset, whence)
 
-    def read_exactly(self, size: int | None = None, peek: bool = False) -> B:
+    def read_exactly(self, size: int | None = None, peek: bool = False) -> T:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
         byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
@@ -693,13 +693,13 @@ class StructReader(MemoryFile[T, T]):
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
 
-    def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray:
+    def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray | T:
         buf = self.getvalue()
         pos = self.tell()
+        n = len(terminator)
 
         if isinstance(buf, memoryview):
             def find(whence: int):
-                n = len(terminator)
                 for k in range(whence, len(buf)):
                     if buf[k:k + n] == terminator:
                         return k
@@ -716,15 +716,15 @@ class StructReader(MemoryFile[T, T]):
         except AttributeError:
             result = bytearray()
             while not self.eof:
-                result.extend(self.read_bytes(alignment))
+                result.extend(self.read_exactly(alignment))
                 if result.endswith(terminator):
-                    return result[:-len(terminator)]
+                    return result[:-n]
             self.seek(pos)
             raise EOF
         else:
             data = self.read_exactly(end - pos)
-            self.seekrel(len(terminator))
-            return bytearray(data)
+            self.skip(n)
+            return data
 
     def read_guid(self) -> UUID:
         return UUID(bytes_le=self.read_bytes(16))
