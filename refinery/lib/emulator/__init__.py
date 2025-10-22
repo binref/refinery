@@ -71,6 +71,9 @@ class Register(Generic[_R]):
     If not `None`, this property contains the size of the register in bytes.
     """
 
+    def __repr__(self):
+        return self.name
+
     def __init__(self, name: str, code: _R, size: int | None = 0):
         self.name = name
         self.code = code
@@ -919,14 +922,14 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         if arch not in ic.architectures():
             raise NotImplementedError(F'Icicle cannot handle executables of arch {exe.arch().name}')
 
-        if self.hooked(Hook.ApiCall):
-            self._install_api_trampoline()
-
         self.icicle = ice = ic.Icicle(arch)
         self.regmap = {reg.casefold(): val[1] for reg, val in ice.reg_list().items()}
 
         self._map_segments()
         self._map_stack_and_heap()
+
+        if self.hooked(Hook.ApiCall):
+            self._install_api_trampoline()
 
     def _enable_single_step(self):
         self._single_step = True

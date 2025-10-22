@@ -108,3 +108,29 @@ class TestVStack(TestUnitBase):
             'c7 44 24 fc 00 00 00 00'   # mov DWORD PTR [esp-4], 0
         )
         self.assertEqual(data | self.load() | str, 'refinery')
+
+    def test_registers(self):
+        code = (
+            b'\x55'                       # push   rbp
+            b'\x53'                       # push   rbx
+            b'\x48\x83\xec\x28'           # sub    rsp, 0x28
+            b'\x48\x8d\x6c\x24\x20'       # lea    rbp, [rsp + 0x20]
+            b'\x83\xfa\x01'               # cmp    edx, 1
+            b'\x0f\x85\x0e\x00\x00\x00'   # jne    +0xE
+            b'\x48\xb8\x52\x45\x46\x49'   # movabs rax, 0x5952454E49464552
+            b'\x4E\x45\x52\x59'
+            B'\x48\x89\x04\x24'           # mov    [rsp], rax
+            b'\x90'                       # nop
+        )
+
+        for engine in ('icicle', 'unicorn'):
+            pipe = self.load_pipeline(F'put edx 1 [| vstack -r --engine={engine} --arch=x64 ]')
+            test = code | pipe | bytes
+            self.assertEqual(test, B'REFINERY')
+            pipe = self.load_pipeline(F'put rdx 2 [| vstack -r --engine={engine} --arch=x64 ]')
+            test = code | pipe | bytes
+            self.assertEqual(test, B'')
+            pipe = self.load_pipeline(F'put rdx 1 [| vstack -r --engine={engine} --arch=x64 ]')
+            test = code | pipe | bytes
+            self.assertEqual(test, B'REFINERY')
+

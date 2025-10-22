@@ -108,3 +108,28 @@ class TestEmulator(TestBase):
             self.assertEqual(emulator.writes.pop(), 443)
             emulator.writes.pop()
             self.assertListEqual(emulator.writes, [2])
+
+    def test_registers(self):
+        code = (
+            b'\x55'                       # push   rbp
+            b'\x53'                       # push   rbx
+            b'\x48\x83\xec\x28'           # sub    rsp, 0x28
+            b'\x48\x8d\x6c\x24\x20'       # lea    rbp, [rsp + 0x20]
+            b'\x83\xfa\x01'               # cmp    edx, 1
+            b'\x0f\x85\x0e\x00\x00\x00'   # jne    +0xE
+            b'\x48\xb8\x52\x45\x46\x49'   # movabs rax, 0x5952454E49464552
+            b'\x4E\x45\x52\x59'
+            B'\x48\x89\x04\x24'           # mov    [rsp], rax
+            b'\x90'                       # nop
+        )
+
+        for BaseEmulator in (
+            IcicleEmulator,
+            UnicornEmulator,
+        ):
+            emulator = _makeEmulator(BaseEmulator)(code, arch=Arch.X64)
+            emulator.reset()
+            emulator.set_register('edx', 1)
+            emulator.emulate(0, len(code))
+            value = emulator.pop().to_bytes(8, 'little')
+            self.assertEqual(value, B'REFINERY')

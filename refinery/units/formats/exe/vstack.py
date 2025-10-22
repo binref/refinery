@@ -20,9 +20,11 @@ from refinery.lib.argformats import sliceobj
 from refinery.lib.emulator import (
     EmulationError,
     Hook,
+    Emulator,
     IcicleEmulator,
     SpeakeasyEmulator,
     UnicornEmulator,
+    Register,
 )
 from refinery.lib.executable import Arch, Range
 from refinery.lib.intervals import MemoryIntervalUnion
@@ -89,7 +91,7 @@ class EmuState:
     ticks: int | Literal[INF] = field(default_factory=lambda: INF)
     visits: dict[int, int] = field(default_factory=lambda: defaultdict(int))
     memory: MemoryIntervalUnion = field(default_factory=MemoryIntervalUnion)
-    init_registers: list[int] = field(default_factory=list)
+    init_registers: list[Register] = field(default_factory=list)
     last_read: int | None = None
     last_api: int | None = None
 
@@ -108,7 +110,7 @@ class EmuState:
         return F'0x{address:0{self.address_width}X}'
 
 
-def EmuFactory(base: Literal[SpeakeasyEmulator | IcicleEmulator | UnicornEmulator]):
+def EmuFactory(base: type[Emulator]):
 
     def inject_state_argument(pfn: FN) -> FN:
         @functools.wraps(pfn)
@@ -492,7 +494,7 @@ class vstack(Unit):
             args.log_api_calls,
         )
 
-        register_values = {}
+        register_values: dict[Register, int] = {}
         emu.reset(None)
 
         if args.meta_registers or args.stack_push:
@@ -502,7 +504,7 @@ class vstack(Unit):
                 except LookupError:
                     continue
                 meta.discard(var)
-                register_values[register] = var, value
+                register_values[register] = value
 
         def parse_address(a: str):
             try:
@@ -547,12 +549,19 @@ class vstack(Unit):
             emu.push((1 << emu.exe.pointer_size) - 1)
 
             for reg in emu.general_purpose_registers():
-                if reg not in register_values:
+                emu.set_register(reg, 0)
+
+            for reg in register_values:
+                # check if we are tainting a general purpose register
+                emu.set_register(reg, 1)
+
+            for reg in emu.general_purpose_registers():
+                if emu.get_register(reg) == 0:
                     state.init_registers.append(reg)
 
-            for reg, (var, value) in register_values.items():
+            for reg, value in register_values.items():
                 if isinstance(value, int):
-                    self.log_info(F'setting {var} to integer value 0x{value:X}')
+                    self.log_info(F'setting {reg.name} to integer value 0x{value:X}')
                     emu.set_register(reg, value)
                     continue
                 if isinstance(value, str):
@@ -561,10 +570,10 @@ class vstack(Unit):
                     start = emu.malloc(len(value))
                     emu.mem_write(start, bytes(value))
                     emu.set_register(reg, start)
-                    self.log_info(F'setting {var} to mapped buffer of size 0x{len(value):X}')
+                    self.log_info(F'setting {reg.name} to mapped buffer of size 0x{len(value):X}')
                     continue
                 _tn = value.__class__.__name__
-                self.log_warn(F'canot interpret value of type {_tn} for register {var}')
+                self.log_warn(F'canot interpret value of type {_tn} for register {reg.name}')
 
             if push := args.stack_push:
                 for reg in push:
