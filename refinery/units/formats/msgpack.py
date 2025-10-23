@@ -14,7 +14,14 @@ class msgpack(Unit):
     Converts a message-pack (msgpack) buffer to JSON and vice-versa.
     """
     def reverse(self, data):
-        return mp.dumps(json.loads(data))
+        try:
+            data = json.loads(data)
+        except Exception as E:
+            try:
+                data = json.loads(B'[%s]' % data)
+            except Exception:
+                raise E
+        return mp.dumps(data)
 
     def process(self, data):
         unpacker: mp.fallback.Unpacker = mp.Unpacker(MemoryFile(data, output=bytes))
