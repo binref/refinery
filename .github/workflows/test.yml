@@ -71,9 +71,9 @@ jobs:
       - name: Audit Dependencies
         uses: pypa/gh-action-pip-audit@v1.1.0
         with:
-          ignore-vulns:
-          - GHSA-4xh5-x5gv-qwph # pip; independent of refinery
-          - GHSA-cq46-m9x9-j8w2 # scapy bug that we cannot trigger
+          ignore-vulns: |
+            GHSA-4xh5-x5gv-qwph # pip; independent of refinery
+            GHSA-cq46-m9x9-j8w2 # scapy bug that we cannot trigger
 
   coverage:
     if: ${{ github.repository_owner == 'binref' }}
