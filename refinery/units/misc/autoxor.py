@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.id import get_structured_data_type
+from refinery.lib.id import get_structured_data_type, get_executable_type
 from refinery.units.blockwise.sub import sub
 from refinery.units.blockwise.xor import xor
 from refinery.units.misc.xkey import xkey
@@ -30,14 +30,20 @@ class autoxor(xkey, docs='{0}{p}{1}'):
                 units.append(sub)
 
             for unit in units:
+                self.log_debug(F'attempting {unit.name} for detected key')
 
                 name = unit.name
                 bin = data | unit(key) | bytearray
+                mem = memoryview(bin)
                 space = B'\0' | unit(0x20) | bytes
+                check = get_structured_data_type
 
-                if t := get_structured_data_type(bin):
-                    self.log_info(F'method {name} resulted in non-blob data ({t.mnemonic}); returning buffer')
-                    return self.labelled(bin, key=key, method=name)
+                for k in range(0x1000):
+                    if t := check(mem[k:]):
+                        self.log_info(F'method {name} resulted in non-blob data ({t.mnemonic}) at offset 0x{k:X}; returning buffer')
+                        return self.labelled(bin, key=key, method=name)
+                    if k == 0:
+                        check = get_executable_type
 
                 if not fallback:
                     fallback = name, key, bin
@@ -61,7 +67,7 @@ class autoxor(xkey, docs='{0}{p}{1}'):
                     return self.labelled(as_text, key=key, method=name)
 
         if fallback is None:
-            self.log_warn('No key was found; returning original data.')
+            self.log_warn('no key was found; returning original data')
             return data
         else:
             assert result is not None
