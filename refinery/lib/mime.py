@@ -5,9 +5,8 @@ from __future__ import annotations
 
 import functools
 
-from refinery.lib.id import get_structured_data_type, get_pe_type
+from refinery.lib.id import get_pe_type, get_structured_data_type
 from refinery.lib.magic import magic, magicparse
-
 
 FileTypeMap = {
     'application/x-setupscript': 'ini',

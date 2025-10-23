@@ -4,8 +4,8 @@ import re
 
 from typing import TYPE_CHECKING
 
-from refinery.lib.structures import MemoryFile
 from refinery.lib.id import buffer_offset, is_likely_pe
+from refinery.lib.structures import MemoryFile
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe import get_pe_size
 

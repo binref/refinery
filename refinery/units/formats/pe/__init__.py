@@ -4,8 +4,8 @@ A package containing Portable Executable (PE) file related units.
 from __future__ import annotations
 
 from refinery.lib import lief
-from refinery.lib.types import Param, buf
 from refinery.lib.tools import NoLoggingProxy
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 

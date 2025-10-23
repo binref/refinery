@@ -19,12 +19,12 @@ from typing import Callable, Literal, TypeVar, cast
 from refinery.lib.argformats import sliceobj
 from refinery.lib.emulator import (
     EmulationError,
-    Hook,
     Emulator,
+    Hook,
     IcicleEmulator,
+    Register,
     SpeakeasyEmulator,
     UnicornEmulator,
-    Register,
 )
 from refinery.lib.executable import Arch, Range
 from refinery.lib.intervals import MemoryIntervalUnion

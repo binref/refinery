@@ -4,7 +4,7 @@ This module implements an emulator abstraction layer.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import IntFlag, Enum
+from enum import Enum, IntFlag
 from functools import cached_property, partial
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
