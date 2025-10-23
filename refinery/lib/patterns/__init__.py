@@ -450,8 +450,17 @@ class formats(PatternEnum):
     uuencode = pattern(_pattern_uuencode)
     "UUEncoded data"
 
+    # shortcuts
+    url = urlquote
+    int = integer
+    str = string
+    num = number
+    mls = multiline_string
+
     @classmethod
-    def from_dashname(cls, key):
+    def from_dashname(cls, key: str):
+        if key.startswith('[') and key.endswith(']'):
+            key = key[1:-1] + 'array'
         return getattr(cls, normalize_to_identifier(key))
 
 

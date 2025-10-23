@@ -7,14 +7,16 @@ from refinery.lib.types import Param
 from refinery.units import Chunk
 from refinery.units.pattern import Arg, PatternExtractor
 
+_FORMATS = ', '.join(p.display for p in formats)
+
 
 class carve(PatternExtractor):
     """
     Extracts patches of data in particular formats from the input.
     """
     def __init__(
-        self, format: Param[str, Arg.Choice(choices=[p.display for p in formats], metavar='format',
-            help='Specify one of the following formats: {choices}')],
+        self, format: Param[str, Arg.String(metavar='format',
+            help=F'Specify one of the following formats: {_FORMATS}')],
         unique: Param[bool, Arg.Switch('-q', help='Yield every match only once.')] = False,
         decode: Param[bool, Arg.Switch('-d', help='Automatically decode known patterns.')] = False,
         single: Param[bool, Arg.Switch('-s', help='Only get the biggest match; equivalent to -qlt1')] = False,
@@ -25,6 +27,10 @@ class carve(PatternExtractor):
             take = 1
             longest = True
             unique = True
+        try:
+            format = formats.from_dashname(format)
+        except Exception:
+            raise ValueError(F'{format} is not a valid format')
         super().__init__(
             min=min,
             max=max,
@@ -35,7 +41,7 @@ class carve(PatternExtractor):
             take=take,
             ascii=ascii,
             utf16=utf16,
-            format=formats.from_dashname(format)
+            format=format
         )
         if not decode:
             decoder = NotImplemented
@@ -99,6 +105,7 @@ class carve(PatternExtractor):
         self.decoder = decoder
 
     def process(self, data):
+        self.log_info('using pattern:', self.args.format.str.pattern)
         it = iter(self.matches_filtered(memoryview(data), self.args.format.value.bin))
         if self.decoder is NotImplemented:
             yield from it
