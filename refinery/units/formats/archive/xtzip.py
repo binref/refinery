@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import codecs
+
 from datetime import datetime
 
+from refinery.lib import lief
+from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
-from refinery.units.pattern.carve_zip import carve_zip
+from refinery.units.formats.pe import get_pe_size
+from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
 
@@ -131,8 +136,27 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data):
-        return data[:4] in (
+        if data[:4] in (
             B'PK\x03\x04',
-            B'PK\x05\x06',
             B'PK\x07\x08',
-        )
+        ):
+            return True
+        if not is_likely_pe(data):
+            return False
+        memory = memoryview(data)
+        if 0 <= buffer_offset(memory[-0x400:], ZipEndOfCentralDirectory.SIGNATURE):
+            return True
+        pe = lief.load_pe_fast(data)
+        offset = get_pe_size(pe)
+        if 0 <= buffer_offset(memory[offset:], B'PK\x03\x04') < 0x1000:
+            return True
+        if not pe.has_debug:
+            return False
+        for entry in pe.debug:
+            if not isinstance(entry, lief.PE.CodeViewPDB):
+                continue
+            path = entry.filename
+            if not isinstance(path, str):
+                path = codecs.decode(path, 'latin1')
+            if 'sfxzip32' in path and 'WinRAR' in path:
+                return True
