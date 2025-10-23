@@ -270,8 +270,7 @@ class FileMagicInfo:
                 extension = 'docx'
             elif extension == 'exe' and (t := get_pe_type(data)):
                 extension = t.extension
-            else:
-                blob = description.lower() == 'data'
+            blob = description.lower() == 'data'
 
         if blob and (check := get_structured_data_type(data)):
             extension = check.extension
