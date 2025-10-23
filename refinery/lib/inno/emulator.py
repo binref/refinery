@@ -1663,7 +1663,7 @@ class IFPSEmulator:
             else:
                 suffix = ''
             if spec == 'dddddd' or spec == 'ddddd':
-                return now.date.isoformat()
+                return now.date().isoformat()
             if spec == 't':
                 return now.time().isoformat('minutes')
             if spec == 'tt':
