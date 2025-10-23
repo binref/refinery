@@ -34,4 +34,4 @@ class z85(Unit):
     @classmethod
     def handles(cls, data):
         from refinery.lib.patterns import formats
-        return formats.spaced_z85.value.bin.fullmatch(data) is not None
+        return formats.z85s.value.bin.fullmatch(data) is not None

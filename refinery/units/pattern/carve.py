@@ -45,7 +45,7 @@ class carve(PatternExtractor):
         elif self.args.format == formats.integer:
             from ..encoding.base import base
             decoder = base()
-        elif self.args.format in (formats.uppercase_hex, formats.spaced_hex, formats.hex):
+        elif self.args.format in (formats.b16, formats.b16s, formats.hex):
             from ..encoding.hex import hex
             decoder = hex()
         elif self.args.format == formats.hexdump:
@@ -60,10 +60,10 @@ class carve(PatternExtractor):
                 return msgpack.packb([
                     m[0] | esc | bytes for m in formats.string.value.bin.finditer(data)])
             decoder = _decoder
-        elif self.args.format in (formats.b64, formats.b64any, formats.spaced_b64):
+        elif self.args.format in (formats.b64, formats.b64s):
             from ..encoding.b64 import b64
             decoder = b64()
-        elif self.args.format in (formats.b85, formats.spaced_b85):
+        elif self.args.format in (formats.b85, formats.b85s):
             from ..encoding.b85 import b85
             decoder = b85()
         elif self.args.format == formats.b64url:

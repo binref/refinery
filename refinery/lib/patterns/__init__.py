@@ -418,23 +418,21 @@ class formats(PatternEnum):
     "Z85 encoded strings"
     b92 = pattern(_pattern_b92)
     "Base92 encoded strings"
-    b64any = alphabet(R'(?:[-\w\+/]{4})', postfix=R'(?:(?:[-\w\+/]{2,3})={0,3})?')
-    "Both URL-safe and normal Base64 alphabets."
     b64url = alphabet(R'[-\w]{4}', postfix=R'(?:[-\w]{2,3}={0,3})?')
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]{2}')
     "Hexadecimal strings"
-    uppercase_hex = alphabet(R'[0-9A-F]{2}')
+    b16 = alphabet(R'[0-9A-F]{2}')
     "Uppercase hexadecimal strings"
-    spaced_hex = tokenize(R'[0-9a-fA-F]+', R'\s*', bound='')
+    b16s = tokenize(R'[0-9a-fA-F]+', R'\s*', bound='')
     "Hexadecimal strings"
-    spaced_b64 = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
+    b64s = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
     "Base64 encoded strings, separated by whitespace"
-    spaced_b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]')
+    b85s = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]')
     "Base85 encoded string, separated by whitespace"
-    spaced_a85 = alphabet(R'[!-u\s]')
+    a85s = alphabet(R'[!-u\s]')
     "Ascii85 encoded string, separated by whitespace"
-    spaced_z85 = alphabet(R'[-\s0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]')
+    z85s = alphabet(R'[-\s0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]')
     "Z85 encoded string, separated by whitespace"
     utf8 = pattern(_pattern_utf8)
     "A sequence of bytes that can be decoded as UTF8."

@@ -25,5 +25,5 @@ class hex(Unit):
     @classmethod
     def handles(cls, data):
         from refinery.lib.patterns import formats
-        if formats.spaced_hex.value.bin.fullmatch(data):
+        if formats.b16s.value.bin.fullmatch(data):
             return True

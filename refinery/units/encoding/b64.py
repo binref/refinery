@@ -38,7 +38,7 @@ class b64(Unit):
     @classmethod
     def handles(cls, data) -> bool:
         from refinery.lib.patterns import formats
-        if not formats.spaced_b64.value.bin.fullmatch(data):
+        if not formats.b64s.value.bin.fullmatch(data):
             return False
         try:
             np = cls._numpy

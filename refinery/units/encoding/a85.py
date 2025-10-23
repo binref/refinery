@@ -21,4 +21,4 @@ class a85(Unit):
     @classmethod
     def handles(cls, data):
         from refinery.lib.patterns import formats
-        return formats.spaced_a85.value.bin.fullmatch(data) is not None
+        return formats.a85s.value.bin.fullmatch(data) is not None
