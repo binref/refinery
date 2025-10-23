@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import msgpack
+
 from refinery.lib.patterns import formats
 from refinery.lib.types import Param
+from refinery.units import Chunk
 from refinery.units.pattern import Arg, PatternExtractor
 
 
@@ -39,43 +42,49 @@ class carve(PatternExtractor):
         elif self.args.format in (formats.multiline_string, formats.string):
             from ..encoding.esc import esc
             decoder = esc(unicode=True, quoted=True)
-        elif self.args.format is formats.integer:
+        elif self.args.format == formats.integer:
             from ..encoding.base import base
             decoder = base()
         elif self.args.format in (formats.uppercase_hex, formats.spaced_hex, formats.hex):
             from ..encoding.hex import hex
             decoder = hex()
-        elif self.args.format is formats.hexdump:
+        elif self.args.format == formats.hexdump:
             from ..formats.hexload import hexload
             decoder = hexload()
-        elif self.args.format is formats.intarray:
+        elif self.args.format == formats.intarray:
             from ..blockwise.pack import pack
             decoder = pack()
+        elif self.args.format == formats.strarray:
+            from ..encoding.esc import esc
+            def _decoder(data: Chunk): # noqa
+                return msgpack.packb([
+                    m[0] | esc | bytes for m in formats.string.value.bin.finditer(data)])
+            decoder = _decoder
         elif self.args.format in (formats.b64, formats.b64any, formats.spaced_b64):
             from ..encoding.b64 import b64
             decoder = b64()
         elif self.args.format in (formats.b85, formats.spaced_b85):
             from ..encoding.b85 import b85
             decoder = b85()
-        elif self.args.format is formats.b64url:
+        elif self.args.format == formats.b64url:
             from ..encoding.b64 import b64
             decoder = b64(urlsafe=True)
-        elif self.args.format is formats.b32:
+        elif self.args.format == formats.b32:
             from ..encoding.b32 import b32
             decoder = b32()
-        elif self.args.format is formats.ps1str:
+        elif self.args.format == formats.ps1str:
             from ..encoding.escps import escps
             decoder = escps()
-        elif self.args.format is formats.vbastr:
+        elif self.args.format == formats.vbastr:
             from ..encoding.escps import escps
             decoder = escps()
-        elif self.args.format is formats.hexarray:
+        elif self.args.format == formats.hexarray:
             from ..blockwise.pack import pack
             decoder = pack(0x10)
-        elif self.args.format is formats.wshenc:
+        elif self.args.format == formats.wshenc:
             from ..encoding.wshenc import wshenc
             decoder = wshenc()
-        elif self.args.format is formats.uuencode:
+        elif self.args.format == formats.uuencode:
             from ..encoding.uuenc import uuenc
             decoder = uuenc()
         elif self.args.format in (
