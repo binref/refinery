@@ -7,7 +7,7 @@ import struct
 from enum import Enum
 from typing import Generator, Iterable, NamedTuple
 
-from refinery.lib.id import contained
+from refinery.lib.id import buffer_contains
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.lib.tools import date_from_timestamp
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -1031,4 +1031,4 @@ class a3x(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data) -> bool | None:
-        return contained(A3xScript.MAGIC, data) or contained(A3xRecord.MAGIC, data)
+        return buffer_contains(data, A3xScript.MAGIC) or buffer_contains(data, A3xRecord.MAGIC)

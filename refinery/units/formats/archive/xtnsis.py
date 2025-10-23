@@ -18,7 +18,7 @@ from typing import (
 )
 
 from refinery.lib.decompression import parse_lzma_properties
-from refinery.lib.id import contained
+from refinery.lib.id import buffer_contains
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.thirdparty.pyflate import BZip2File, GZipFile
 from refinery.lib.tools import exception_to_string
@@ -1361,4 +1361,4 @@ class xtnsis(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data) -> bool:
-        return any(contained(magic, data) for magic in NSArchive.MAGICS)
+        return any(buffer_contains(data, magic) for magic in NSArchive.MAGICS)

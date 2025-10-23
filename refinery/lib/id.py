@@ -469,15 +469,23 @@ def is_likely_pe(data: buf):
     return get_pe_type(data) is not None
 
 
-def contained(needle: bytes, haystack: buf):
+def buffer_offset(haystack: buf, needle: bytes, start: int = 0, end: int | None = None):
     """
     Performs a substring search of `needle` in `haystack`. If `haystack` is a `bytes`-like object,
-    it uses the standard operator. If it is a `memoryview`, it uses a regular expression search
-    because I have not found a better way to do it.
+    it uses the standard method. If it is a `memoryview`, it uses a regular expression search.
     """
     if isinstance(haystack, (bytes, bytearray)):
-        return needle in haystack
-    return re.search(re.escape(needle), haystack) is not None
+        return needle.find(haystack, start, end)
+    if m := re.search(re.escape(needle), haystack[start:end]):
+        return start + m.start()
+    return -1
+
+
+def buffer_contains(haystack: buf, needle: bytes):
+    """
+    Determines whether `haystack` contains `needle`.
+    """
+    return buffer_offset(haystack, needle) > 0
 
 
 def is_likely_pe_dotnet(data: buf):
@@ -487,11 +495,11 @@ def is_likely_pe_dotnet(data: buf):
     """
     if not is_likely_pe(data):
         return False
-    if not contained(b'BSJB', data):
+    if not buffer_contains(data, b'BSJB'):
         return False
-    if not contained(b'#Strings', data):
+    if not buffer_contains(data, b'#Strings'):
         return False
-    if not contained(b'#Blob', data):
+    if not buffer_contains(data, b'#Blob'):
         return False
     return True
 
@@ -745,7 +753,7 @@ def get_microsoft_format(data: buf):
         return None
     if data[4:8] != B'\xA1\xB1\x1A\xE1' and any(data[4:12]):
         return None
-    if contained(b'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3', data):
+    if buffer_contains(data, b'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3'):
         return Fmt.ONE
     for k in range(0x200, 0x10000, 0x200):
         mark = int.from_bytes(data[k:k + 4], 'little')
@@ -759,28 +767,28 @@ def get_microsoft_format(data: buf):
             return Fmt.PPT
         if mark == 0x03E8000F:
             return Fmt.PPT
-    if contained(b'W\0o\0r\0d\0D\0o\0c\0u\0m\0e\0n\0t\0', data):
+    if buffer_contains(data, b'W\0o\0r\0d\0D\0o\0c\0u\0m\0e\0n\0t\0'):
         # WordDocument
         return Fmt.DOC
-    if contained(b'P\0o\0w\0e\0r\0P\0o\0i\0n\0t\0', data):
+    if buffer_contains(data, b'P\0o\0w\0e\0r\0P\0o\0i\0n\0t\0'):
         # PowerPoint
         return Fmt.PPT
-    if contained(b'W\0o\0r\0k\0b\0o\0o\0k\0', data):
+    if buffer_contains(data, b'W\0o\0r\0k\0b\0o\0o\0k\0'):
         # Workbook
         return Fmt.XLS
-    if contained(b'_\0_\0s\0u\0b\0s\0t\0g\01\0.\00\0_\0', data):
+    if buffer_contains(data, b'_\0_\0s\0u\0b\0s\0t\0g\01\0.\00\0_\0'):
         # __substg1._
         return Fmt.MSG
-    if contained(b'_\0_\0n\0a\0m\0e\0i\0d\0_\0v\0e\0r\0s\0i\0o\0n\0', data):
+    if buffer_contains(data, b'_\0_\0n\0a\0m\0e\0i\0d\0_\0v\0e\0r\0s\0i\0o\0n\0'):
         # __nameid_version
         return Fmt.MSG
-    if contained(b'_\0_\0r\0e\0c\0i\0p\0_\0v\0e\0r\0s\0i\0o\0n\0', data):
+    if buffer_contains(data, b'_\0_\0r\0e\0c\0i\0p\0_\0v\0e\0r\0s\0i\0o\0n\0'):
         # __recip_version
         return Fmt.MSG
-    if contained(b'_\0_\0p\0r\0o\0p\0e\0r\0t\0i\0e\0s\0_\0v\0e\0r\0s\0i\0o\0n\0', data):
+    if buffer_contains(data, b'_\0_\0p\0r\0o\0p\0e\0r\0t\0i\0e\0s\0_\0v\0e\0r\0s\0i\0o\0n\0'):
         # __properties_version
         return Fmt.MSG
-    if contained(b'B\0o\0o\0k\0', data):
+    if buffer_contains(data, b'B\0o\0o\0k\0'):
         # Book
         return Fmt.XLS
     if re.search(b'Property|ProductCode|UpgradeCode|PackageCode|InstallExecuteSequence|Component|Feature|File|Media', data):
@@ -798,13 +806,15 @@ def get_office_xml_type(data: buf):
     """
     if data[:2] != B'PK':
         return None
-    if not contained(B'_rels/.rels', data) or not contained(B'[Content_Types].xml', data):
+    if not buffer_contains(data, B'_rels/.rels'):
         return None
-    if contained(B'word/document.xml', data):
+    if not buffer_contains(data, B'[Content_Types].xml'):
+        return None
+    if buffer_contains(data, B'word/document.xml'):
         return Fmt.DOCX
-    if contained(B'xl/document.xml', data):
+    if buffer_contains(data, B'xl/document.xml'):
         return Fmt.XLSX
-    if contained(B'ppt/presentation.xml', data):
+    if buffer_contains(data, B'ppt/presentation.xml'):
         return Fmt.PPTX
 
 

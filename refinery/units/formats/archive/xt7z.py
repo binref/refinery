@@ -5,7 +5,7 @@ import re
 from typing import TYPE_CHECKING
 
 from refinery.lib.structures import MemoryFile
-from refinery.lib.id import contained, is_likely_pe
+from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe import get_pe_size
 
@@ -136,5 +136,5 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         offset = get_pe_size(data)
         memory = memoryview(data)
         memory = memory[offset:]
-        if memory[:10] == B';!@Install' and contained(_SIGNATURE, memory[:0x1000]):
+        if memory[:10] == B';!@Install' and buffer_offset(memory, _SIGNATURE, 0, 0x1000) > 0:
             return True

@@ -4,7 +4,7 @@ import zlib
 
 from itertools import cycle, islice
 
-from refinery.lib.id import contained
+from refinery.lib.id import buffer_contains
 from refinery.lib.structures import StructReader
 from refinery.units.formats.archive import ArchiveUnit
 
@@ -91,4 +91,4 @@ class xtiss(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def handles(cls, data) -> bool | None:
         if data[:2] != B'MZ':
             return False
-        return any(contained(m, data) for m in ISSReader.MAGIC)
+        return any(buffer_contains(data, m) for m in ISSReader.MAGIC)

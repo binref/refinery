@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from refinery.lib.id import contained
+from refinery.lib.id import buffer_contains
 from refinery.lib.tools import NoLogging
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
@@ -37,8 +37,8 @@ class xtvba(PathExtractorUnit):
         if data[:8] == b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1':
             return True
         if data[:2] == B'PK':
-            return contained(B'xl/vbaProject.bin', data)
-        return any(contained(ns, data) for ns in [
+            return buffer_contains(data, B'xl/vbaProject.bin')
+        return any(buffer_contains(data, ns) for ns in [
             b'http://schemas.microsoft.com/office/word/2003/wordml',
             b'http://schemas.microsoft.com/office/2006/xmlPackage',
         ])

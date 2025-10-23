@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.dotnet.types import Byte, ParserEOF, StreamReader, StringPrimitive, UInt32, UInt64
-from refinery.lib.id import contained
+from refinery.lib.id import buffer_contains
 from refinery.lib.meta import SizeInt
 from refinery.units.compression.zl import zl
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -76,4 +76,4 @@ class dnsfx(PathExtractorUnit):
 
     @classmethod
     def handles(cls, data):
-        return contained(cls._SIGNATURE, data)
+        return buffer_contains(data, cls._SIGNATURE)
