@@ -710,8 +710,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         autoindex = 0
 
         if binary:
+            def putstr(s: str):
+                stream.write(s.encode(codec))
             stream = MemoryFile()
-            def putstr(s: str): stream.write(s.encode(codec))
         else:
             stream = StringIO()
             putstr = stream.write
