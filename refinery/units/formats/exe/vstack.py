@@ -58,7 +58,9 @@ class EmuConfig:
         'log_stack_addresses',
         'log_other_addresses',
         'log_zero_overwrites',
-        'log_api_calls',
+        'show_apis',
+        'show_code',
+        'show_memory',
     )
     wait_calls: bool
     skip_calls: bool
@@ -72,7 +74,9 @@ class EmuConfig:
     log_stack_addresses: bool
     log_other_addresses: bool
     log_zero_overwrites: bool
-    log_api_calls: bool
+    show_apis: bool
+    show_code: bool
+    show_memory: bool
 
 
 @dataclass
@@ -180,7 +184,7 @@ def EmuFactory(base: type[Emulator]):
                     host = '.'.join(map(str, sockaddr.read(4)))
                     self.state.synthesized[F'{host}:{port}'.encode(vstack.codec)] = name
                     logged_args[1] = F'sockaddr_in{{AF_INET, {host!r}, {port}}}'
-            if self.state.cfg.log_api_calls:
+            if self.state.cfg.show_apis:
                 for k, arg in enumerate(logged_args):
                     if arg.startswith('"') or arg.startswith("'"):
                         logged_args[k] = F'{FG.LIGHTRED_EX}{arg}{RS}'
@@ -262,7 +266,7 @@ def EmuFactory(base: type[Emulator]):
                 state.write(address, unsigned_value.to_bytes(size, 'little'))
                 state.waiting = 0
 
-            def info():
+            if state.cfg.show_memory:
                 data = unsigned_value.to_bytes(size, self.exe.byte_order().value)
                 ph = self.exe.pointer_size // 4
                 pt = self.exe.pointer_size // 8
@@ -271,9 +275,7 @@ def EmuFactory(base: type[Emulator]):
                 msg = state.log(F'{state.fmt(address)} <- {h:_<{ph}} {t:_<{pt}}')
                 if skipped:
                     msg = F'{msg} (ignored: {skipped})'
-                return msg
-
-            vstack.log_info(info)
+                vstack.log_always(msg)
 
         @inject_state_argument
         def hook_mem_error(self, _, access: int, address: int, size: int, value: int, state: EmuState) -> bool:
@@ -363,7 +365,8 @@ def EmuFactory(base: type[Emulator]):
             instruction = self.disassemble(address)
             if instruction:
                 state.invalid_instructions = 0
-                vstack.log_debug(state.log(F'{instruction.mnemonic} {instruction.op_str}'))
+                if state.cfg.show_code:
+                    vstack.log_always(state.log(F'{instruction.mnemonic} {instruction.op_str}'))
             else:
                 iv = state.invalid_instructions + 1
                 state.invalid_instructions += iv
@@ -417,7 +420,9 @@ class vstack(Unit):
         stack_size: Param[int, Arg.Number('-S', help='Optionally specify the stack size. The default is 0x{default:X}.')] = 0x10000,
         stack_push: Param[tuple[str] | None, Arg('-u', action='append', metavar='REG',
             help='Push the value of a register to the stack before beginning emulation; implies -r.')] = None,
-        log_api_calls: Param[bool, Arg.Switch('-A', help='Log API calls when using Speakeasy.')] = False,
+        show_apis: Param[bool, Arg.Switch('-A', help='Show API calls in the debug log.')] = False,
+        show_code: Param[bool, Arg.Switch('-I', help='Show all executed instructions in the debug log.')] = False,
+        show_memory: Param[bool, Arg.Switch('-M', help='Show all memory writes in the debug log.')] = False,
         block_size: Param[int, Arg.Number('-B', help='Standard memory block size for the emulator, 0x{default:X} by default.')] = 0x1000,
         max_visits: Param[int, Arg.Number('-V', help='Maximum number of times a code address is visited. Default is {default}.')] = 0x10000,
         log_writes_in_calls: Param[bool, Arg.Switch('-W', help='Log writes of values that occur in functions calls.')] = False,
@@ -451,7 +456,9 @@ class vstack(Unit):
             skip_calls=skip_calls,
             block_size=block_size,
             max_visits=max_visits,
-            log_api_calls=log_api_calls,
+            show_apis=show_apis,
+            show_code=show_code,
+            show_memory=show_memory,
             log_writes_in_calls=log_writes_in_calls,
             log_stack_addresses=log_stack_addresses,
             log_other_addresses=log_other_addresses,
@@ -491,7 +498,9 @@ class vstack(Unit):
             args.log_stack_addresses,
             args.log_other_addresses,
             args.log_zero_overwrites,
-            args.log_api_calls,
+            args.show_apis,
+            args.show_code,
+            args.show_memory,
         )
 
         register_values: dict[Register, int] = {}
