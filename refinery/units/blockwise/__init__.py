@@ -219,6 +219,16 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         except ImportError as IE:
             raise FastBlockError from IE
 
+        self.log_debug('fastblock: parsing and extending arguments')
+
+        def _execute_hooks():
+            for a in self.args.argument:
+                it, masked = self._argument_parse_hook(a)
+                na = self._infinitize_argument(len(data), it, masked)
+                yield it, masked, na
+
+        _hooks_executed = list(_execute_hooks())
+
         byte_order = self._byte_order_symbol
         num_blocks = len(data) // self.blocksize
 
@@ -234,11 +244,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         br_args = []
         np_args = []
 
-        self.log_debug('fastblock: parsing and extending arguments')
-
-        for a in self.args.argument:
-            it, masked = self._argument_parse_hook(a)
-            na = self._infinitize_argument(len(data), it, masked)
+        for it, masked, na in _hooks_executed:
             br_args.append(na)
             if isinstance(it, int):
                 if not masked:
@@ -270,6 +276,8 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
 
         if not isinstance(data, bytearray):
             data = bytearray(data)
+
+        self.log_debug(F'fastblock: loading {num_blocks} blocks of type {stype} from source data')
 
         dst = data
         src = numpy.frombuffer(dst, stype, num_blocks)
