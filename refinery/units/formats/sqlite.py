@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import tempfile
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -13,7 +11,7 @@ class sqlite(Unit):
     Extracts data from SQLite3 databases. Each row is returned as a single
     output chunk in JSON format.
 
-    If no query is provided, the unit will extract all tables.
+    If no query is provided, the unit will extract all table metadata from the database.
     """
 
     def __init__(
@@ -24,20 +22,16 @@ class sqlite(Unit):
     ):
         super().__init__(query=query)
 
-    @Unit.Requires("sqlite3", ["formats"])
-    def _sqlite3_connect():
-        import sqlite3
-
-        return sqlite3.connect
-
     def process(self, data):
-        with tempfile.NamedTemporaryFile(dir=os.getcwd(), delete=False) as temp_file:
-            temp_file.write(data)
-            temp_file.flush()
-            temp_path = temp_file.name
         try:
-            with self._sqlite3_connect(temp_path) as con:
-                cursor = con.cursor().execute(self.args.query)
+            with sqlite3.connect(":memory:") as database:
+                try:
+                    database.deserialize(data)
+                except AttributeError:
+                    raise NotImplementedError(
+                        f"python >= 3.11 is required to use {self.__class__.__name__}."
+                    )
+                cursor = database.cursor().execute(self.args.query)
                 fields = (
                     [i[0] for i in cursor.description] if cursor.description else []
                 )
@@ -54,8 +48,3 @@ class sqlite(Unit):
                         yield json.dumps(list(row)).encode(self.codec)
         except sqlite3.Error as e:
             raise ValueError(f"Failed to process SQLite database: {e}")
-        finally:
-            try:
-                os.unlink(temp_path)
-            except (PermissionError, FileNotFoundError):
-                pass

@@ -1,7 +1,5 @@
 import json
-import os
 import sqlite3
-import tempfile
 
 from .. import TestUnitBase
 
@@ -67,21 +65,6 @@ class TestSQLiteExtractor(TestUnitBase):
             )
             conn.commit()
 
-            with tempfile.NamedTemporaryFile(
-                dir=os.getcwd(), delete=False
-            ) as temp_file:
-                temp_path = temp_file.name
+            data = conn.serialize()
 
-            try:
-                backup_conn = sqlite3.connect(temp_path)
-                conn.backup(backup_conn)
-                backup_conn.close()
-
-                with open(temp_path, "rb") as f:
-                    data = f.read()
-            finally:
-                try:
-                    os.unlink(temp_path)
-                except (PermissionError, FileNotFoundError):
-                    pass
         return data
