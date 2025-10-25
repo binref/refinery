@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -17,7 +18,7 @@ class sqlite(Unit):
     def __init__(
         self,
         query: Param[
-            str, Arg.String("-q", help="The SQL query to execute.")
+            str, Arg.String("query", help="The SQL query to execute.")
         ] = "SELECT * FROM sqlite_master WHERE type='table';",
     ):
         super().__init__(query=query)

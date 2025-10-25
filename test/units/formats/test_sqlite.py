@@ -7,9 +7,17 @@ from .. import TestUnitBase
 class TestSQLiteExtractor(TestUnitBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.sample_data = self._create_sample_database()
+        try:
+            self.sample_data = self._create_sample_database()
+            self.python_supports_serialization = True
+        except NotImplementedError:
+            self.sample_data = None
+            self.python_supports_serialization = False
 
     def test_basic_query(self):
+        if not self.python_supports_serialization:
+            self.assertIsNone(self.sample_data)
+            return
         unit = self.load(query="SELECT * FROM users ORDER BY id")
         result = [json.loads(r.decode()) for r in self.sample_data | unit]
         self.assertEqual(len(result), 3)
@@ -20,6 +28,9 @@ class TestSQLiteExtractor(TestUnitBase):
         self.assertEqual(result[2]["name"], "Charlie")
 
     def test_filtered_query(self):
+        if not self.python_supports_serialization:
+            self.assertIsNone(self.sample_data)
+            return
         unit = self.load(query="SELECT name, email FROM users WHERE age > 25")
         result = [json.loads(t.decode()) for t in self.sample_data | unit]
 
@@ -28,6 +39,9 @@ class TestSQLiteExtractor(TestUnitBase):
         self.assertEqual(result[1]["name"], "Charlie")
 
     def test_table_listing(self):
+        if not self.python_supports_serialization:
+            self.assertIsNone(self.sample_data)
+            return
         unit = self.load()
         result = [json.loads(t.decode()) for t in self.sample_data | unit]
 
@@ -36,6 +50,9 @@ class TestSQLiteExtractor(TestUnitBase):
         self.assertIn("users", table_names)
 
     def test_empty_result(self):
+        if not self.python_supports_serialization:
+            self.assertIsNone(self.sample_data)
+            return
         unit = self.load(query="SELECT * FROM users WHERE age > 100")
         result = list(self.sample_data | unit)
 
@@ -65,6 +82,11 @@ class TestSQLiteExtractor(TestUnitBase):
             )
             conn.commit()
 
-            data = conn.serialize()
+            try:
+                data = conn.serialize()
+            except AttributeError:
+                raise NotImplementedError(
+                    "python >= 3.11 is required to use the sqlite unit."
+                )
 
         return data
