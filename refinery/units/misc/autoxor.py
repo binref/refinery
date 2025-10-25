@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.id import get_structured_data_type, get_executable_type
+from refinery.lib.id import get_executable_type, get_structured_data_type
 from refinery.units.blockwise.sub import sub
 from refinery.units.blockwise.xor import xor
 from refinery.units.misc.xkey import xkey
