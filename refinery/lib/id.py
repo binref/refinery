@@ -721,9 +721,8 @@ def is_likely_json(data: buf):
     integer and floating-point numbers, and control characters. To be explicit, note that this
     function cannot check for correct nesting, regular expressions are insufficient for this.
     """
-    return re.fullmatch(RB'''(?x)
-        \s*\{\s*                            # JSON dictionary starts
-        ((                                  # then a sequence of the following tokens:
+    _json = RB"""
+        \s*((                               # a sequence of the following tokens:
            "([^"\\\r\n]|\\[^\r\n])*"        # a quoted string literal
           | true                            # true
           | false                           # false
@@ -734,8 +733,9 @@ def is_likely_json(data: buf):
         # | //(.*?)\n                       # do not allow comments (line)
         # | /\*.*?\*/                       # do not allow comments (block)
         )\s*)*?
-        \}\s*                               # JSON dictionary ends
-    ''', data) is not None
+    """
+    _json = RB'(?x)\s*(\{%s\})|(\[%s\])\s*' % (_json, _json)
+    return re.fullmatch(_json, data) is not None
 
 
 @_structural_check
