@@ -5,6 +5,11 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.8
+- The `sqlite` unit was added, thanks to [@oxitocin][].
+- The `codebook` unit was added.
+- Several `carve` unit formats were renamed to shorter versions.
+
 ## Version 0.9.7
 - The `d2p` unit was added.
 
@@ -945,6 +950,7 @@ Updates build system.
 [@lukaskuzmiak]: https://github.com/lukaskuzmiak
 [@cxiao]: https://github.com/cxiao
 [@s3ven6]: https://github.com/s3ven6
+[@oxitocin]: https://github.com/oxitocin
 [@EricFaehrmann]: https://github.com/EricFaehrmann
 [@larsborn]: https://github.com/larsborn
 [XLMMacroDeobfuscator]: https://github.com/DissectMalware/XLMMacroDeobfuscator
