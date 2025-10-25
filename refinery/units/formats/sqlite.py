@@ -9,29 +9,24 @@ from refinery.units import Arg, Unit
 
 class sqlite(Unit):
     """
-    Extracts data from SQLite3 databases. Each row is returned as a single
-    output chunk in JSON format.
-
-    If no query is provided, the unit will extract all table metadata from the database.
+    Extracts data from SQLite3 databases. Each row is returned as a single output chunk in JSON
+    format. If no query is provided, the unit will extract all table metadata from the database.
     """
-
     def __init__(
         self,
         query: Param[
-            str, Arg.String("query", help="The SQL query to execute.")
+            str, Arg.String('query', help='The SQL query to execute.')
         ] = "SELECT * FROM sqlite_master WHERE type='table';",
     ):
         super().__init__(query=query)
 
     def process(self, data):
         try:
-            with sqlite3.connect(":memory:") as database:
+            with sqlite3.connect(':memory:') as database:
                 try:
                     database.deserialize(data)
                 except AttributeError:
-                    raise NotImplementedError(
-                        f"python >= 3.11 is required to use {self.__class__.__name__}."
-                    )
+                    raise NotImplementedError(F'Python >= 3.11 is required to use {self.name}.')
                 cursor = database.cursor().execute(self.args.query)
                 fields = (
                     [i[0] for i in cursor.description] if cursor.description else []
@@ -48,4 +43,4 @@ class sqlite(Unit):
                     else:
                         yield json.dumps(list(row)).encode(self.codec)
         except sqlite3.Error as e:
-            raise ValueError(f"Failed to process SQLite database: {e}")
+            raise ValueError(F'Failed to process SQLite database: {e}')
