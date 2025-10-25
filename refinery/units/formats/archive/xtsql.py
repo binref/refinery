@@ -21,26 +21,30 @@ class xtsql(PathExtractorUnit):
             raise NotImplementedError(F'python 3.11 is required to use {self.__class__.__name__}.')
 
         database = sqlite3.connect(':memory:')
+        database.text_factory = bytes
         database.deserialize(data)
         cursor = database.cursor()
         result: dict[str, list[dict[str, int | float | str | bytes]]] = {}
 
-        listing: list[tuple[str, str]] = cursor.execute(
+        listing: list[tuple[bytes, bytes]] = cursor.execute(
             "SELECT name, sql FROM sqlite_master WHERE type='table';").fetchall()
 
-        for table, spec in listing:
+        for tbl, spec in listing:
+            table = tbl.decode('utf8')
             result[table] = t = []
-            ct, _table, names = spec.partition(table)
+            ct, _tbl, names = spec.partition(tbl)
+            ct = ct.rstrip(B'"')
+            names = names.lstrip(B'"')
             names = names.strip()
+            names, _, _ = names.rpartition(B')')
             if (
-                table != _table
-                or ct.strip().upper().split() != ['CREATE', 'TABLE']
-                or not names.endswith(')')
-                or not names.startswith('(')
+                tbl != _tbl
+                or ct.strip().upper().split() != [B'CREATE', B'TABLE']
+                or not names.startswith(B'(')
             ):
-                raise ValueError(F'Unexpeted SQL statement in master table: {spec}')
+                raise ValueError(F'Unexpeted SQL statement for {table} in master table: {spec}')
             names = [next(iter(name.strip().split()))
-                for name in names[1:-1].split(',')]
+                for name in names[1:-1].decode().split(',')]
             for row in cursor.execute(F'SELECT * FROM {table}').fetchall():
                 t.append(dict(zip(names, row)))
 
