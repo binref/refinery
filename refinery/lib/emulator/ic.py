@@ -94,7 +94,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
 
         while True:
             insn = None
-            # self.ip = ip
+            self.ip = ip
 
             if (code_hooked or apis_hooked) and not retrying:
                 insn = next(dasm.disasm(self.mem_read(ip, 20), 1))
