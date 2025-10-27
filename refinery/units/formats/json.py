@@ -62,8 +62,8 @@ class xj0(Unit):
     def __init__(
         self,
         fmt: Param[str, Arg.String(help=(
-            'Format expression for the output chunk; may use previously extracted JSON items. '
-            'The default is {default}, which represents the input data.'))] = '',
+            'Format expression for the output chunk; may use previously extracted JSON items '
+            'as format expressions. By default, the input data is returned.'))] = '',
         all: Param[bool, Arg.Switch('-a', group='META',
             help='Extract all other fields as metadata regardless of length and type.')] = False,
         one: Param[bool, Arg.Switch('-x', group='META',
