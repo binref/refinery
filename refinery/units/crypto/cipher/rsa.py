@@ -93,7 +93,7 @@ class rsa(Unit):
         key: Param[buf, Arg(help='RSA key in PEM, DER, or Microsoft BLOB format.')],
         swapkeys: Param[bool, Arg.Switch('-s', help='Swap public and private exponent.')] = False,
         textbook: Param[bool, Arg.Switch('-t', group='PAD', help='Equivalent to --padding=NONE.')] = False,
-        padding: Param[str, Arg.Option('-p', group='PAD', choices=PAD,
+        padding: Param[str, Arg.Option('-p', group='PAD', metavar='P', choices=PAD,
             help='Choose one of the following padding modes: {choices}. The default is AUTO.')] = PAD.AUTO,
         rsautl: Param[bool, Arg.Switch('-r', group='PAD',
             help='Act as rsautl from OpenSSH; This is equivalent to --swapkeys --padding=PKCS10')] = False,
