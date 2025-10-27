@@ -158,6 +158,7 @@ class CustomStringRepresentation(abc.ABC):
 
 
 _INDEX = 'index'
+_BIGINT = '__bi__'
 
 _HIGH_ASCII = '¹²³«»¡¿¼½¾¢£¥§©®±µ·÷øÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöùúûüýþÿ'
 _8BIT_ASCII = string.printable + _HIGH_ASCII
@@ -438,7 +439,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     current: dict[str, Any]
     updated: dict[str, bool]
 
-    def __init__(self, chunk: buf, scope: int | None = 1, seed: dict[str, list[tuple[bool, Any]]] | None = None):
+    def __init__(self, chunk: buf, scope: int = 1, seed: dict[str, list[tuple[bool, Any]]] | None = None):
         self.ghost = False
         self.chunk = chunk
         self.cache = {}
@@ -459,6 +460,12 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                 for is_link, value in reversed(stack):
                     while is_link:
                         is_link, value = stack[value]
+                    try:
+                        bigint: bytes = value[_BIGINT]
+                    except Exception:
+                        pass
+                    else:
+                        value = int.from_bytes(bigint)
                     if value is not None:
                         self.current[key] = self.autowrap(key, value)
                         self.updated[key] = False
@@ -553,6 +560,10 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         for key, value in self.current.items():
             if value is None:
                 raise RuntimeError(F'Meta variable "{key}" was set to None.')
+            elif isinstance(value, int) and value > 0xFFFFFFFFFFFFFFFF:
+                q, r = divmod(value.bit_length(), 8)
+                q += int(bool(r))
+                value = {_BIGINT: value.to_bytes(q)}
             try:
                 item_scope = self.rescope[key]
             except KeyError:
