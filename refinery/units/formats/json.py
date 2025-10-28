@@ -61,9 +61,9 @@ class xj0(Unit):
     """
     def __init__(
         self,
-        fmt: Param[str, Arg.String(help=(
+        *fmt: Param[str, Arg.String(help=(
             'Format expression for the output chunk; may use previously extracted JSON items '
-            'as format expressions. By default, the input data is returned.'))] = '',
+            'as format expressions. By default, the input data is returned.'))],
         all: Param[bool, Arg.Switch('-a', group='META',
             help='Extract all other fields as metadata regardless of length and type.')] = False,
         one: Param[bool, Arg.Switch('-x', group='META',
@@ -94,7 +94,7 @@ class xj0(Unit):
                 self.log_info(F'rejecting item with invalid name {key}')
                 return None
             if isinstance(value, (float, int, bool)):
-                return value
+                return True
             if isinstance(value, dict):
                 if not self.args.all:
                     self.log_info(F'rejecting item {key} with dictionary value')
@@ -122,7 +122,7 @@ class xj0(Unit):
         meta = metavars(data)
         args = {k: convert(v) for k, v in jdoc.items() if acceptable(k, v)}
         used = set()
-        data[:] = meta.format_bin(self.args.fmt, self.codec, [data], args, used)
+        data[:] = meta.format_bin(' '.join(self.args.fmt), self.codec, [data], args, used)
         for u in used:
             args.pop(u, None)
         if not self.args.one:
