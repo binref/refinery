@@ -391,6 +391,11 @@ class Arg(Argument):
 
     @overload
     @staticmethod
+    def AsOption(value: _E, cls: type[_E]) -> _E:
+        ...
+
+    @overload
+    @staticmethod
     def AsOption(value: type[None], cls: type[_E]) -> None:
         ...
 
@@ -836,7 +841,7 @@ class Arg(Argument):
         return init
 
 
-class ArgumentSpecification(OrderedDict):
+class ArgumentSpecification(OrderedDict[str, Arg]):
     """
     A container object that stores `refinery.units.Arg` specifications.
     """
@@ -940,19 +945,20 @@ class Executable(ABCMeta):
             args.move_to_end(name)
 
         for known in args.values():
+            kwargs = known.kwargs
             if known.positional:
                 known.kwargs.pop('dest', None)
-                if 'default' in known.kwargs:
-                    known.kwargs.setdefault('nargs', OPTIONAL)
+                if 'default' in kwargs and kwargs.get('action', 'store') == 'store':
+                    kwargs.setdefault('nargs', OPTIONAL)
             elif not any(len(a) > 2 for a in known.args):
                 flagname = normalize_to_display(known.destination, False)
                 known.args.append(F'--{flagname}')
-            action: str = known.kwargs.get('action', 'store')
+            action: str = kwargs.get('action', 'store')
             if action.startswith('store_'):
-                known.kwargs.pop('default', None)
+                kwargs.pop('default', None)
                 continue
             if action == 'store':
-                known.kwargs.setdefault('type', multibin)
+                kwargs.setdefault('type', multibin)
         return args
 
     def __new__(mcs, name: str, bases: tuple[type, ...], nmspc: dict[str, Any], abstract=False, docs='{}'):

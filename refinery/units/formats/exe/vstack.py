@@ -8,7 +8,6 @@ if True:
     FG = colorama.Fore
     RS = colorama.Style.RESET_ALL
 
-import enum
 import functools
 import re
 
@@ -16,15 +15,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable, Literal, TypeVar, cast
 
-from refinery.lib.argformats import sliceobj
 from refinery.lib.emulator import (
     EmulationError,
     Emulator,
     Hook,
-    IcicleEmulator,
     Register,
-    SpeakeasyEmulator,
-    UnicornEmulator,
 )
 from refinery.lib.executable import Arch, Range
 from refinery.lib.intervals import MemoryIntervalUnion
@@ -32,15 +27,8 @@ from refinery.lib.meta import metavars
 from refinery.lib.structures import StructReader
 from refinery.lib.tools import bounds, exception_to_string, isbuffer
 from refinery.lib.types import INF
-from refinery.units import Arg, Chunk, Unit
-
-FN = TypeVar('FN', bound=Callable)
-
-
-class _engine(enum.Enum):
-    speakeasy = SpeakeasyEmulator
-    icicle = IcicleEmulator
-    unicorn = UnicornEmulator
+from refinery.units import Arg, Chunk
+from refinery.units.formats.exe import EmulatingUnit, Engine
 
 
 @dataclass
@@ -114,7 +102,11 @@ class EmuState:
         return F'0x{address:0{self.address_width}X}'
 
 
-def EmuFactory(base: type[Emulator]):
+FN = TypeVar('FN', bound=Callable)
+ET = TypeVar('ET', bound=type[Emulator])
+
+
+def EmuFactory(base: ET) -> ET:
 
     def inject_state_argument(pfn: FN) -> FN:
         @functools.wraps(pfn)
@@ -134,6 +126,8 @@ def EmuFactory(base: type[Emulator]):
 
     class VStackEmulator(base):
 
+        state: EmuState
+
         def stackrange(self):
             return Range(self.stack_base, self.stack_base + self.stack_size)
 
@@ -143,7 +137,7 @@ def EmuFactory(base: type[Emulator]):
             except Exception:
                 return None
 
-        def hook_api_call(self, _, name: str, cb=None, args: tuple[int, ...] = ()):
+        def hook_api_call(self, emu, name: str, cb=None, args: tuple[int, ...] = ()):
             def _repr(x):
                 if not isinstance(x, int):
                     return repr(x)
@@ -207,12 +201,12 @@ def EmuFactory(base: type[Emulator]):
             return retval
 
         @inject_state_argument
-        def hook_mem_read(self, _, access: int, address: int, size: int, value: int, state: EmuState):
+        def hook_mem_read(self, emu, access: int, address: int, size: int, value: int, state: EmuState):
             mask = (1 << (size * 8)) - 1
             state.last_read = value & mask
 
         @inject_state_argument
-        def hook_mem_write(self, _, access: int, address: int, size: int, value: int, state: EmuState):
+        def hook_mem_write(self, emu, access: int, address: int, size: int, value: int, state: EmuState):
             mask = (1 << (size * 8)) - 1
             unsigned_value = value & mask
 
@@ -297,13 +291,13 @@ def EmuFactory(base: type[Emulator]):
                     vstack.log_debug(self.state.log(F'{msg}; recovery, space mapped'))
             return True
 
-        def hook_code_error(self, _, state: EmuState):
+        def hook_code_error(self, emu, state: EmuState):
             vstack.log_debug('aborting emulation; instruction error')
             self.halt()
             return False
 
         @inject_state_argument
-        def hook_code_execute(self, _, address: int, size: int, state: EmuState):
+        def hook_code_execute(self, emu, address: int, size: int, state: EmuState):
 
             if _init := state.init_registers:
                 tos = self.sp
@@ -374,10 +368,10 @@ def EmuFactory(base: type[Emulator]):
                 if iv > 2:
                     self.halt()
 
-    return VStackEmulator
+    return cast(ET, VStackEmulator)
 
 
-class vstack(Unit):
+class vstack(EmulatingUnit):
     """
     The unit emulates instructions at a given address in the input executable (PE/ELF/MachO) and
     extracts data patches that are written to memory during emulation. The unit can also be used
@@ -396,13 +390,7 @@ class vstack(Unit):
         self,
         *address: Param[str, Arg.String(metavar='a[:end|::size]',
             help='Specify a symbol name or the (virtual) addresses of what to emulate; optionally specify a stop address or a length.')],
-        base: Param[int | None, Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.')] = None,
-        arch: Param[str | Arch, Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
-        engine: Param[str | _engine, Arg.Option('-e', group='EMU', choices=_engine, metavar='E',
-            help='The emulator engine. The default is {default}, options are: {choices}')] = _engine.unicorn,
-        se: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy')] = False,
-        ic: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=icicle')] = False,
-        uc: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=unicorn')] = False,
+        base=None, arch=Arch.X32, engine=Engine.unicorn, se=False, ic=False, uc=False,
         registers: Param[bool, Arg.Switch('-r', help=(
             'Consume register initialization values from the chunk\'s metadata. If the value is a byte string, '
             'the data will be mapped.'))] = False,
@@ -431,20 +419,14 @@ class vstack(Unit):
         log_zero_overwrites: Param[bool, Arg.Switch('-Z', help='Log writes of zeros to memory that contained nonzero values.')] = False,
         log_stack_cookies: Param[bool, Arg.Switch('-E', help='Log writes that look like stack cookies.')] = False,
     ):
-        if sum((se, uc, ic)) > 1:
-            raise ValueError('Too many emulators selected.')
-        elif se:
-            engine = _engine.speakeasy
-        elif ic:
-            engine = _engine.icicle
-        elif uc:
-            engine = _engine.unicorn
-
         super().__init__(
-            address=address,
             base=base,
-            arch=Arg.AsOption(arch, Arch),
-            engine=Arg.AsOption(engine, _engine),
+            arch=arch,
+            engine=engine,
+            se=se,
+            ic=ic,
+            uc=uc,
+            address=address,
             registers=registers,
             timeout=timeout,
             patch_range=patch_range,
@@ -470,7 +452,7 @@ class vstack(Unit):
         meta = metavars(data)
         args = self.args
 
-        engine: _engine = args.engine
+        engine = self._engine()
         flags = Hook.Default | Hook.ApiCall
         self.log_debug(F'attempting to use {engine.name}')
 
@@ -503,7 +485,7 @@ class vstack(Unit):
             args.show_memory,
         )
 
-        register_values: dict[Register, int] = {}
+        register_values: dict[Register, int | str | bytes] = {}
         emu.reset(None)
 
         if args.registers or args.stack_push:
@@ -515,38 +497,9 @@ class vstack(Unit):
                 meta.discard(var)
                 register_values[register] = value
 
-        def parse_address(a: str):
-            try:
-                sliced = sliceobj(a, data, intok=True)
-            except Exception:
-                if m := re.fullmatch('(?i)(?:sub_|fun_|0x)?([A-F0-9]+)H?', a):
-                    return slice(int(m[1], 16), None)
-                symbols = list(emu.exe.symbols())
-                for filter in [
-                    lambda s: s.get_name().casefold() == a.casefold(),
-                    lambda s: s.get_name() == a,
-                    lambda s: s.function,
-                    lambda s: s.exported,
-                ]:
-                    symbols = [s for s in symbols if filter(s)]
-                    if len(symbols) == 1:
-                        return slice(symbols[0].address, None)
-                if len(symbols) > 1:
-                    raise RuntimeError(F'there are {len(symbols)} exported function symbol named "{a}", please specify the address')
-                else:
-                    raise LookupError(F'no symbol with name "{a}" was found')
-            else:
-                if isinstance(sliced, int):
-                    sliced = slice(sliced, None)
-                elif sliced.step and sliced.step != 1:
-                    if sliced.stop is not None:
-                        raise RuntimeError(F'invalid emulation range: {a}')
-                    sliced = slice(sliced.start, sliced.start + sliced.step, None)
-                return sliced
-
-        addresses = [parse_address(a) for a in args.address]
-
-        if not addresses:
+        if not (addresses := [
+            self._parse_address(data, emu.exe, a) for a in args.address
+        ]):
             for symbol in emu.exe.symbols():
                 if symbol.name is None:
                     addresses.append(slice(symbol.address, None))
