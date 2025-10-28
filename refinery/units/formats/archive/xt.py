@@ -96,7 +96,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 else:
                     verdict = handler.handles(data)
                 if verdict is False:
-                    self.unit.log_info(F'rejected: {handler.name}')
+                    self.unit.log_debug(F'rejected: {handler.name}')
                 elif verdict is True:
                     if not self.fallback:
                         self.unit.log_info(F'accepted: {handler.name}')
