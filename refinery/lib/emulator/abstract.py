@@ -190,7 +190,12 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         cc: CC = CC.StdCall,
     ):
         if until is None:
-            until = (1 << self.exe.pointer_size) - 1
+            try:
+                until = self._return_trap
+            except AttributeError:
+                nopcode = NopCodeByArch[self.exe.arch()]
+                self._return_trap = until = self.malloc(len(nopcode))
+                self.mem_write(until, nopcode)
 
         self.set_return_address(until)
 

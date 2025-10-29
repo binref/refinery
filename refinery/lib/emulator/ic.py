@@ -93,9 +93,8 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         retrying = 0
 
         while True:
-            insn = None
-            self.ip = ip
-
+            if end is not None and self.ip == end:
+                break
             if (code_hooked or apis_hooked) and not retrying:
                 insn = next(dasm.disasm(self.mem_read(ip, 20), 1))
                 args = (ice, ip, insn.size, self.state)
@@ -103,8 +102,11 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                     self._hook_api_call_check(*args)
                 if code_hooked:
                     self.hook_code_execute(*args)
+            else:
+                insn = None
             if mprotect:
                 ice.mem_protect(*mprotect[-1], MP.ExecuteReadWrite)
+                self.ip = ip
             if (status := step()) == RS.InstructionLimit:
                 for p in mprotect:
                     ice.mem_protect(*p, MP.ExecuteOnly)
