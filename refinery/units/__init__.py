@@ -841,7 +841,13 @@ class Arg(Argument):
         return init
 
 
-class ArgumentSpecification(OrderedDict[str, Arg]):
+if TYPE_CHECKING:
+    _ArgumentSpecificationBase = OrderedDict[str, Arg]
+else:
+    _ArgumentSpecificationBase = OrderedDict
+
+
+class ArgumentSpecification(_ArgumentSpecificationBase):
     """
     A container object that stores `refinery.units.Arg` specifications.
     """
