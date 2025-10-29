@@ -64,4 +64,4 @@ This is a refinery-focused write-up of how to solve FlareOn12.
 [0x08]: notebooks/tbr-files.v0x08.flare.on.10.ipynb
 [0x09]: notebooks/tbr-files.v0x09.exploit.document.ipynb
 [0x0A]: notebooks/tbr-files.v0x0a.flare.on.11.ipynb
-[0x0B]: notebooks/tbr-files.v0x0a.flare.on.12.ipynb
+[0x0B]: notebooks/tbr-files.v0x0b.flare.on.12.ipynb
