@@ -21,7 +21,9 @@ class resub(SingleRegexUnit):
     """
     def __init__(
         self,
-        regex: Param[str, Arg(help='Regular expression to be searched and replaced. The default is "{default}".')] = '\\s+',
+        regex: Param[str, Arg(
+            help='Regular expression to be searched and replaced. The default is "{default}".')
+        ] = '\\s+',
         subst: Param[buf, Arg('subst', help=(
             'Substitution value: use {1} for group 1, {0} for entire match. Matches are removed '
             '(replaced by an empty string) by default.'
@@ -34,7 +36,9 @@ class resub(SingleRegexUnit):
 
     def process(self, data):
         def repl(match: Match):
-            return meta.format_bin(spec, self.codec, [match[0], *match.groups()], match.groupdict())
+            r = meta.format_bin(spec, self.codec, [match[0], *match.groups()], match.groupdict())
+            self.log_debug('substitution:', repr(r), clip=True)
+            return r
         self.log_info('pattern:', getattr(self.regex, 'pattern', self.regex))
         self.log_info('replace:', self.args.subst)
         meta = metavars(data)
