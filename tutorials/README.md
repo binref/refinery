@@ -51,7 +51,7 @@ This is a refinery-focused write-up of how to solve FlareOn11.
 
 ### [Volume B — FlareOn 12][0x0B]
 
-This is a refinery-focused write-up of how to solve FlareOn11.
+This is a refinery-focused write-up of how to solve FlareOn12.
 
 
 [0x01]: notebooks/tbr-files.v0x01.netwalker.dropper.ipynb
