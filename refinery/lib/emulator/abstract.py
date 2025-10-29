@@ -10,6 +10,8 @@ from typing import Any, Generic, TypeVar
 
 from refinery.lib.executable import Arch, Executable, ExecutableCodeBlob, align
 from refinery.lib.intervals import IntIntervalUnion
+from refinery.lib.tools import asbuffer
+from refinery.lib.types import buf
 
 _T = TypeVar('_T')
 _E = TypeVar('_E')
@@ -91,7 +93,7 @@ class Hook(IntFlag):
     NoErrors     = 0b001_01101  # noqa
 
 
-_NOP_CODE = {
+NopCodeByArch = {
     Arch.X32    : B'\x90',
     Arch.X64    : B'\x90',
     Arch.ARM32  : B'\x00\xF0\x20\xE3',
@@ -105,7 +107,7 @@ _NOP_CODE = {
     Arch.SPARC64: B'\x01\x00\x00\x00',
 }
 
-_RET_CODE = {
+RetCodeByArch = {
     Arch.X32    : B'\xC3',
     Arch.X64    : B'\xC3',
     Arch.ARM32  : B'\x1E\xFF\x2F\xE1',
@@ -119,20 +121,23 @@ _RET_CODE = {
     Arch.SPARC64: B'\x81\xC3\xE0\x08',
 }
 
-_NOP_SIZE = max(len(c) for c in _NOP_CODE.values())
-_RET_SIZE = max(len(c) for c in _RET_CODE.values())
+NopCodeMaxLen = max(len(c) for c in NopCodeByArch.values())
+RetCodeMaxLen = max(len(c) for c in RetCodeByArch.values())
 
 
 class Emulator(ABC, Generic[_E, _R, _T]):
     """
     The emulator base class.
     """
+    stack_base: int
+    stack_size: int
+    alloc_base: int
 
     state: _T | None
 
     def __init__(
         self,
-        data: Executable | bytes | bytearray | memoryview,
+        data: Executable | buf,
         base: int | None = None,
         arch: Arch | None = None,
         hooks: Hook = Hook.OnlyErrors,
@@ -177,10 +182,38 @@ class Emulator(ABC, Generic[_E, _R, _T]):
 
         self._init()
 
-    def get_function_argument(self, k: int, cc: CC = CC.StdCall, size: int | None = None) -> int:
+    def call(
+        self,
+        address: int,
+        until: int | None = None,
+        *args: buf | int,
+        cc: CC = CC.StdCall,
+    ):
+        if until is None:
+            until = (1 << self.exe.pointer_size) - 1
+
+        self.set_return_address(until)
+
+        for k, value in enumerate(args):
+            if b := asbuffer(value):
+                b = bytes(b)
+                value = self.malloc(len(b))
+                self.mem_write(value, b)
+            self.callarg(k, cc, value=value)
+
+        self.emulate(address, until)
+        return self.rv
+
+    def callarg(
+        self,
+        index: int,
+        cc: CC = CC.StdCall,
+        size: int | None = None,
+        value: int | None = None,
+    ) -> int:
         arch = self.exe.arch()
-        if k < 0:
-            raise ValueError(k)
+        if index < 0:
+            raise ValueError(index)
         if arch == Arch.X32:
             if cc == CC.FastCall:
                 regs = ('ecx', 'edx')
@@ -197,14 +230,23 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         else:
             raise NotImplementedError(F'Calling convention {cc.value} is not implemented for {arch.name}')
         try:
-            reg = regs[k]
+            reg = regs[index]
         except IndexError:
-            return self.mem_read_int(self.sp + (k - len(regs)) * self.exe.pointer_size_in_bytes)
+            address = self.sp + (index - len(regs)) * self.exe.pointer_size_in_bytes
+            if value is None:
+                return self.mem_read_int(address)
+            else:
+                self.mem_write_int(address, value)
+                return value
         else:
-            arg = self.get_register(reg)
-            if size is not None:
-                arg &= (1 << (size << 3)) - 1
-            return arg
+            if value is None:
+                arg = self.get_register(reg)
+                if size is not None:
+                    arg &= (1 << (size << 3)) - 1
+                return arg
+            else:
+                self.set_register(reg, value)
+                return value
 
     @cached_property
     def _reg_sp(self):
@@ -236,6 +278,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self._reset()
         for rd in self.exe.relocations():
             self.mem_write_int(rd.address, rd.value, rd.size)
+        return self
 
     def step(self, address: int, count: int = 1) -> int:
         """
@@ -279,19 +322,6 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         if not self._resetonce:
             self.reset()
         return self._emulate(start, end)
-
-    def call(self, function: int):
-        """
-        Call the function at the given address. When the function returns, emulation will halt.
-        """
-        try:
-            tp = self._trampoline
-        except AttributeError:
-            rs = self.exe.pointer_size // 8
-            tp = self._trampoline = self.malloc(rs)
-            self.mem_write(tp, B'\x90' * rs)
-        self.push(tp)
-        self.emulate(function, tp)
 
     def mem_read_int(self, address: int, size: int | None = None):
         """
@@ -508,6 +538,20 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self._set_register(reg, val)
         return q
 
+    def set_return_address(self, address: int):
+        if (arch := self.exe.arch()) in (Arch.X32, Arch.X64):
+            self.push(address)
+        elif arch == Arch.ARM64:
+            self.set_register('x30', address)
+        elif arch == Arch.ARM32:
+            self.set_register('r14', address)
+        elif arch in (Arch.PPC32, Arch.PPC64):
+            self.set_register('lr', address)
+        elif arch in (Arch.MIPS16, Arch.MIPS32, Arch.MIPS64):
+            self.set_register('re', address)
+        elif arch in (Arch.SPARC32, Arch.SPARC64):
+            self.set_register('i7', address)
+
     def push(self, val: int, size: int | None = None):
         """
         Push the given integer value to the stack. If the `size` parameter is missing, the function
@@ -603,7 +647,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             pass
         return True
 
-    def hook_api_call(self, emu: _E, api_name: str, cb=None, args=()) -> Any:
+    def hook_api_call(self, emu: _E, name: str, cb=None, args=()) -> Any:
         return None
 
     def disassemble_instruction(self, address: int):
@@ -639,10 +683,6 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
     CPU itself. This class implements helper functions to map the associated executable segments
     to memory, and implements the heap and stack.
     """
-
-    stack_base: int
-    stack_size: int
-    alloc_base: int
 
     def _map_stack_and_heap(self):
         alloc = self.alloc_size
@@ -702,16 +742,16 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
         if self.trampoline is None:
             symbol_count = len(self.imports)
             t = self.malloc(symbol_count)
-            c = _RET_CODE[self.exe.arch()].ljust(_RET_SIZE, B'\0')
+            c = RetCodeByArch[self.exe.arch()].ljust(RetCodeMaxLen, B'\0')
             self.mem_write(t, c * symbol_count)
             for k, symbol in enumerate(self.imports):
-                self.mem_write_int(symbol.address, t + (k * _RET_SIZE))
+                self.mem_write_int(symbol.address, t + (k * RetCodeMaxLen))
             self.trampoline = t
 
     def _hook_api_call_check(self, emu: _E, address: int, size: int, state: _T | None = None) -> bool:
         if (t := self.trampoline) is None:
             return True
-        index, misaligned = divmod(address - t, _RET_SIZE)
+        index, misaligned = divmod(address - t, RetCodeMaxLen)
         if misaligned:
             return True
         if not 0 <= index < len(symbols := self.imports):
