@@ -13,7 +13,7 @@ import re
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Callable, Literal, TypeVar, cast
+from typing import Type, Callable, Literal, TypeVar, cast
 
 from refinery.lib.emulator import (
     EmulationError,
@@ -103,7 +103,7 @@ class EmuState:
 
 
 FN = TypeVar('FN', bound=Callable)
-ET = TypeVar('ET', bound=type[Emulator])
+ET = TypeVar('ET', bound=Type[Emulator])
 
 
 def EmuFactory(base: ET) -> ET:
