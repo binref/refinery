@@ -1286,9 +1286,6 @@ class SetupLanguage(InnoStruct):
         if version >= (5, 2, 3):
             self.RightToLeft = reader.u8()
 
-    def get_data(self):
-        return self._data
-
 
 class SetupMessage(InnoStruct):
 
