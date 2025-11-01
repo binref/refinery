@@ -39,6 +39,9 @@ class RSRC(enum.IntEnum):
         return self.name
 
 
+_RSRC = set(RSRC)
+
+
 class GRPICONDIRENTRY(Struct):
     def __init__(self, reader: StructReader):
         self.width = reader.u8()
@@ -93,7 +96,7 @@ class perc(PathExtractorUnit):
         for entry in directory.childs:
             if entry.has_name:
                 identifier = str(entry.name)
-            elif directory.depth == 0 and entry.id in RSRC:
+            elif directory.depth == 0 and entry.id in _RSRC:
                 identifier = RSRC(entry.id)
             elif entry.id is not None:
                 identifier = entry.id
