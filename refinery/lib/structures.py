@@ -839,7 +839,7 @@ class StructMeta(type):
         setattr(cls, '__init__', wrapped__init__)
 
 
-class Struct(metaclass=StructMeta):
+class Struct(Generic[T], metaclass=StructMeta):
     """
     A class to parse structured data. A `refinery.lib.structures.Struct` class can be instantiated
     as follows:
@@ -853,6 +853,16 @@ class Struct(metaclass=StructMeta):
     """
     _data: memoryview | bytearray
 
+    @classmethod
+    def Parse(cls, reader: T | StructReader[T], *args, **kwargs):
+        if not isinstance(reader, StructReader):
+            reader = StructReader(reader)
+        start = reader.tell()
+        view = reader.getbuffer()
+        result = cls(reader, *args, **kwargs)
+        result._data = view[start:reader.tell()]
+        return result
+
     def __len__(self):
         return len(self._data)
 
@@ -864,7 +874,7 @@ class Struct(metaclass=StructMeta):
             self._data = bytearray(self._data)
         return self._data
 
-    def __init__(self, reader: StructReader, *args, **kwargs):
+    def __init__(self, reader: StructReader[T], *args, **kwargs):
         pass
 
 

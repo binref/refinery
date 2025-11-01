@@ -74,28 +74,30 @@ class perc(PathExtractorUnit):
         for manifest_entry in pe.resources.childs:
             if manifest_entry.id != RSRC.ICON_GROUP.value:
                 continue
-            child: lief.PE.ResourceData = manifest_entry.childs[0].childs[0]
-            return GRPICONDIR(bytearray(child.content))
+            child = manifest_entry.childs[0].childs[0]
+            if isinstance(child, lief.PE.ResourceData):
+                return GRPICONDIR.Parse(bytearray(child.content))
 
     def _search(self, pe: lief.PE.Binary, directory: lief.PE.ResourceDirectory, *parts):
         if directory.depth >= 3:
             self.log_warn(F'unexpected resource tree level {directory.depth + 1:d}')
         for entry in directory.childs:
-            entry: lief.PE.ResourceData
             if entry.has_name:
                 identifier = str(entry.name)
-            elif directory.depth == 0 and entry.id in iter(RSRC):
+            elif directory.depth == 0 and entry.id in RSRC:
                 identifier = RSRC(entry.id)
             elif entry.id is not None:
                 identifier = entry.id
             else:
                 self.log_warn(F'resource entry has name {entry.name} and id {entry.id} at level {directory.depth + 1:d}')
                 continue
-            if entry.is_directory:
+            if isinstance(entry, lief.PE.ResourceDirectory):
                 yield from self._search(pe, entry, *parts, identifier)
-            else:
-                def extract(_=pe, e=entry):
+                continue
+            if isinstance(entry, lief.PE.ResourceData):
+                def _extract_raw_data(_=pe, e=entry):
                     return bytearray(e.content)
+                extract: buf | Callable[[], buf] = _extract_raw_data
                 path = '/'.join(str(p) for p in (*parts, identifier))
                 if self.args.pretty:
                     if parts[0] is RSRC.BITMAP:
@@ -103,8 +105,8 @@ class perc(PathExtractorUnit):
                     elif parts[0] is RSRC.ICON:
                         extract = self._handle_icon(pe, extract, parts)
                     elif parts[0] is RSRC.ICON_GROUP:
-                        def extract(_=pe, e=entry):
-                            data = GRPICONDIR(e.content)
+                        def _extract_ico_grp(_=pe, e=entry):
+                            data = GRPICONDIR.Parse(e.content)
                             return json.dumps({
                                 entry.nid: {
                                     'width'         : entry.width,
@@ -118,6 +120,7 @@ class perc(PathExtractorUnit):
                                 } for entry in data.entries},
                                 indent=4
                             ).encode(self.codec)
+                        extract = _extract_ico_grp
 
                 yield UnpackResult(
                     path,
@@ -139,7 +142,7 @@ class perc(PathExtractorUnit):
         lcid = pid.get(sid, 0)
         return LCID.get(lcid)
 
-    def _handle_bitmap(self, extract_raw_data: Callable[[], buf]) -> buf:
+    def _handle_bitmap(self, extract_raw_data: Callable[[], buf]) -> Callable[[], buf]:
         def extract():
             bitmap = extract_raw_data()
             total = (len(bitmap) + 14).to_bytes(4, 'little')
@@ -151,9 +154,11 @@ class perc(PathExtractorUnit):
         pe: lief.PE.Binary,
         extract_raw_data: Callable[[], buf],
         parts: tuple[RSRC, int, int]
-    ) -> buf:
+    ) -> buf | Callable[[], buf]:
         try:
             icondir = self._get_icon_dir(pe)
+            if icondir is None:
+                raise RuntimeError
             index = int(parts[1]) - 1
             info = icondir.entries[index]
         except IndexError:
@@ -164,7 +169,7 @@ class perc(PathExtractorUnit):
 
         def extract(info=info):
             icon = extract_raw_data()
-            if icon.startswith(B'(\0\0\0'):
+            if icon[:4] == B'\x28\0\0\0':
                 header = struct.pack('<HHHBBBBHHII',
                     0,
                     1,
@@ -187,8 +192,11 @@ class perc(PathExtractorUnit):
         pe = lief.load_pe_fast(data, parse_rsrc=True)
         if not pe.has_resources:
             return
-        yield from self._search(pe, pe.resources)
+        if not isinstance(rsrc := pe.resources, lief.PE.ResourceDirectory):
+            raise TypeError('resource root entry was unexpectedly not a directory')
+        yield from self._search(pe, rsrc)
 
+    @staticmethod
     def _mktbl(ids: list[tuple[int, int, int]]) -> dict[int, dict[int, int]]:
         table = {}
         for pid, sid, lcid in ids:
