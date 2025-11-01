@@ -59,6 +59,15 @@ class GRPICONDIR(Struct):
         self.entries = [GRPICONDIRENTRY(reader) for _ in range(count)]
 
 
+def _mktbl(ids: list[tuple[int, int, int]]) -> dict[int, dict[int, int]]:
+    table = {}
+    for pid, sid, lcid in ids:
+        if pid not in table:
+            table[pid] = {0: lcid}
+        table[pid][sid] = lcid
+    return table
+
+
 class perc(PathExtractorUnit):
     """
     Extract PE file resources.
@@ -195,15 +204,6 @@ class perc(PathExtractorUnit):
         if not isinstance(rsrc := pe.resources, lief.PE.ResourceDirectory):
             raise TypeError('resource root entry was unexpectedly not a directory')
         yield from self._search(pe, rsrc)
-
-    @staticmethod
-    def _mktbl(ids: list[tuple[int, int, int]]) -> dict[int, dict[int, int]]:
-        table = {}
-        for pid, sid, lcid in ids:
-            if pid not in table:
-                table[pid] = {0: lcid}
-            table[pid][sid] = lcid
-        return table
 
     _LANG_ID_TO_LCID = _mktbl([
         (0x00, 0x03, 0x0C00),
