@@ -185,8 +185,8 @@ class Emulator(ABC, Generic[_E, _R, _T]):
     def call(
         self,
         address: int,
-        until: int | None = None,
         *args: buf | int,
+        until: int | None = None,
         cc: CC = CC.StdCall,
     ):
         if until is None:
