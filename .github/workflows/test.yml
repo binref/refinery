@@ -74,6 +74,7 @@ jobs:
           ignore-vulns: |
             GHSA-4xh5-x5gv-qwph # pip; independent of refinery
             GHSA-cq46-m9x9-j8w2 # scapy bug that we cannot trigger
+            GHSA-2qfp-q593-8484 # brotli DoS vulnerability; fixed in 1.2
 
   coverage:
     if: ${{ github.repository_owner == 'binref' }}
