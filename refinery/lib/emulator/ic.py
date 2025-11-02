@@ -147,7 +147,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                     retrying += 1
                     continue
                 else:
-                    raise EmulationError(ec.name)
+                    raise EmulationError(repr(ec))
             elif status != RS.Running:
                 raise EmulationError(status.name)
             if halt:
