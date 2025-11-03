@@ -290,7 +290,7 @@ class CompartmentNotFound(LookupError):
     find a `refinery.lib.executable.Segment` that contains the given location.
     """
     def __init__(self, lt: LT, location: int):
-        super().__init__(F'Unable to find a segment that contains the {lt.value} 0x{location:X}.')
+        super().__init__(F'Unable to find a segment that contains the {lt.value} {location:#x}.')
         self.location_type = lt
         self.location = location
 
@@ -779,32 +779,36 @@ class LIEF(Executable):
                     continue
                 addr = self.rebase_img_to_usr(rel.address)
                 yield Relocation(addr, base + rel.addend, ps)
-        elif (delta := (base := self.base) - self.image_defined_base()) != 0:
+        elif (delta := self.base - (base := self.image_defined_base())) != 0:
             def relocation(addr: int, size: int):
                 addr = self.rebase_img_to_usr(addr)
                 mask = (1 << size) - 1
                 rval = self.read_integer(addr, size) + delta & mask
                 return Relocation(addr, rval, size // 8)
 
+            def relocation_pe(entry: lief.PE.RelocationEntry):
+                if entry.type == lief.PE.RelocationEntry.BASE_TYPES.HIGHLOW:
+                    size = 32
+                elif entry.type == lief.PE.RelocationEntry.BASE_TYPES.DIR64:
+                    size = 64
+                else:
+                    return
+                if size != entry.size:
+                    raise RuntimeError(F'Unexpected relocation size: Guessed {size}, LIEF says {entry.size}.')
+                yield relocation(base + entry.address, size)
+
             for rel in self._lh.relocations:
                 if isinstance(rel, lief.MachO.Relocation):
                     yield relocation(rel.address, rel.size)
+                elif isinstance(rel, lief.PE.RelocationEntry):
+                    yield from relocation_pe(rel)
                 elif isinstance(rel, lief.PE.Relocation):
-                    rva = rel.virtual_address
-                    if (delta := (base := self.base) - self.image_defined_base()) == 0:
-                        continue
                     for entry in rel.entries:
-                        if entry.type == lief.PE.RelocationEntry.BASE_TYPES.HIGHLOW:
-                            size = 32
-                        elif entry.type == lief.PE.RelocationEntry.BASE_TYPES.DIR64:
-                            size = 64
-                        else:
-                            continue
-                        if size != entry.size:
-                            raise RuntimeError(F'Unexpected relocation size: Guessed {size}, LIEF says {entry.size}.')
-                        yield relocation(base + rva + entry.position, size)
+                        yield from relocation_pe(entry)
                 else:
-                    raise TypeError(F'Unexpected relocation type: {type(rel).__qualname__}')
+                    t = type(rel)
+                    raise TypeError(
+                        F'Unexpected relocation type: {t.__module__}.{t.__qualname__}')
 
     def _symbols(self) -> Generator[Symbol]:
         yield Symbol(
