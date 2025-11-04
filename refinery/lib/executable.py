@@ -844,36 +844,45 @@ class LIEF(Executable):
                         imported=True,
                     )
         elif isinstance(head, lief.MachO.Binary):
-            for binding in head.dyld_chained_fixups.bindings:
-                name = binding.symbol.demangled_name or binding.symbol.name
-                name = self.ascii(name)
-                addr = self.rebase_img_to_usr(binding.address)
-                imports_done.add(name)
-                yield Symbol(
-                    addr,
-                    name,
-                    ps,
-                    function=True,
-                    exported=False,
-                    imported=True,
-                )
+            for dlyd in (
+                head.dyld_chained_fixups,
+                head.dyld_info,
+            ):
+                if not dlyd:
+                    continue
+                for binding in dlyd.bindings:
+                    name = binding.symbol.demangled_name or binding.symbol.name
+                    name = self.ascii(name)
+                    addr = self.rebase_img_to_usr(binding.address)
+                    imports_done.add(name)
+                    yield Symbol(
+                        addr,
+                        name,
+                        ps,
+                        function=True,
+                        exported=False,
+                        imported=True,
+                    )
         elif isinstance(head, lief.ELF.Binary):
-            for binding in itertools.chain(
+            for bindings in (
                 head.pltgot_relocations,
                 head.dynamic_relocations,
             ):
-                name = binding.symbol.demangled_name or binding.symbol.name
-                name = self.ascii(name)
-                addr = self.rebase_img_to_usr(binding.address)
-                imports_done.add(name)
-                yield Symbol(
-                    addr,
-                    name,
-                    ps,
-                    function=True,
-                    exported=False,
-                    imported=True,
-                )
+                if not bindings:
+                    continue
+                for binding in bindings:
+                    name = binding.symbol.demangled_name or binding.symbol.name
+                    name = self.ascii(name)
+                    addr = self.rebase_img_to_usr(binding.address)
+                    imports_done.add(name)
+                    yield Symbol(
+                        addr,
+                        name,
+                        ps,
+                        function=True,
+                        exported=False,
+                        imported=True,
+                    )
 
         for symbol in it:
             addr = self.rebase_img_to_usr(value := symbol.value)
