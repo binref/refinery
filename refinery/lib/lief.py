@@ -64,11 +64,7 @@ def load_pe(
         cfg.parse_signature = bool(parse_signature)
         if parsed := PE.parse(stream, cfg):
             return parsed
-        stream.seek(0)
-        pe = lib.parse(stream)
-        if not isinstance(pe, lib.PE.Binary):
-            raise ValueError
-        return pe
+        raise ValueError
 
 
 def load_pe_fast(
@@ -101,13 +97,24 @@ def load_macho(data: buf) -> MachO.FatBinary | MachO.Binary:
         config = MachO.ParserConfig()
         config.parse_dyld_bindings = True
         config.parse_dyld_rebases = True
-        if parsed := MachO.parse(stream):
+        config.parse_dyld_exports = True
+        if parsed := MachO.parse(stream, config):
             return parsed
-        stream.seek(0)
-        exe = lib.parse(stream)
-        if not isinstance(exe, (MachO.FatBinary, MachO.Binary)):
-            raise TypeError
-        return exe
+        raise ValueError
+
+
+def load_elf(data: buf) -> ELF.Binary:
+    """
+    Load an ELF file using LIEF.
+    """
+    with io.BytesIO(data) as stream:
+        config = ELF.ParserConfig()
+        config.parse_dyn_symbols = True
+        config.parse_relocations = True
+        config.parse_symtab_symbols = True
+        if parsed := ELF.parse(stream):
+            return parsed
+        raise ValueError
 
 
 def load(data: buf):
@@ -116,19 +123,13 @@ def load(data: buf):
     based on its first 4 bytes using a specific LIEF parser and reverts to LIEF's general purpose
     loader if these fail.
     """
-    with io.BytesIO(data) as stream:
-        if data[:2] == B'MZ':
-            parsed = PE.parse(stream)
-        elif data[:4] == B'\x7FELF':
-            parsed = ELF.parse(stream)
-        elif set(data[:4]) <= {0xFE, 0xED, 0xFA, 0xCE, 0xCF}:
-            parsed = MachO.parse(stream)
-        else:
-            raise ValueError
-        if parsed:
-            return parsed
-        stream.seek(0)
-        return lib.parse(stream)
+    if data[:2] == B'MZ':
+        return load_pe(data)
+    if data[:4] == B'\x7FELF':
+        return load_elf(data)
+    if set(data[:4]) <= {0xFE, 0xED, 0xFA, 0xCE, 0xCF}:
+        return load_macho(data)
+    raise ValueError
 
 
 def string(value: str | buf) -> str:
