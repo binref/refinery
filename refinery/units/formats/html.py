@@ -159,6 +159,7 @@ class xthtml(XMLToPathExtractorUnit):
         exact=False,
         regex=False,
         path=b'path',
+        **keywords,
     ):
         super().__init__(
             *paths,
@@ -172,6 +173,7 @@ class xthtml(XMLToPathExtractorUnit):
             fuzzy=fuzzy,
             exact=exact,
             regex=regex,
+            **keywords
         )
 
     def unpack(self, data):
