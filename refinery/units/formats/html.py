@@ -161,11 +161,11 @@ class xthtml(XMLToPathExtractorUnit):
         path=b'path',
         **keywords,
     ):
+        keywords.update(format='{tag}')
         super().__init__(
             *paths,
             outer=outer,
             attributes=attributes,
-            format='{tag}',
             path=path,
             list=list,
             join_path=join_path,
