@@ -4,12 +4,15 @@ A commandline script to search for binary refinery units based on keywords.
 from __future__ import annotations
 
 import argparse
+import io
 import re
 
 import refinery
 import refinery.units
 
 from refinery.lib.argparser import RawDescriptionHelpFormatter
+from refinery.lib.environment import environment
+from refinery.lib.loader import get_all_entry_points
 from refinery.lib.tools import documentation, get_terminal_size, normalize_to_display, terminalfit
 from refinery.units import ArgparseError, Unit
 
@@ -39,9 +42,6 @@ def get_help_string(unit: type[Unit], brief: bool = False, width: int = 0, remov
     if brief:
         return terminalfit(documentation(unit), width=width)
     else:
-        from io import StringIO
-
-        from refinery.lib.environment import environment
         term_size = environment.term_size.value
         if width > 0:
             environment.term_size.value = width
@@ -50,7 +50,7 @@ def get_help_string(unit: type[Unit], brief: bool = False, width: int = 0, remov
         except ArgparseError as fail:
             argp = fail.parser
         else:
-            buffer = StringIO('w')
+            buffer = io.StringIO('w')
             argp.print_help(buffer)
             info = buffer.getvalue()
             if remove_generic:
@@ -158,8 +158,8 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
 
     keywords = [pattern(k) for k in args.keywords]
 
-    for name in refinery.__all__:
-        unit = getattr(refinery, name, None)
+    for unit in get_all_entry_points():
+        name = unit.name
 
         if not isinstance(unit, type):
             continue
