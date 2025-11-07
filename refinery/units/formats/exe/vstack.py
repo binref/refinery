@@ -13,7 +13,7 @@ import re
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Type, Callable, Literal, TypeVar, cast
+from typing import Callable, Literal, Type, TypeVar, cast
 
 from refinery.lib.emulator import (
     EmulationError,
