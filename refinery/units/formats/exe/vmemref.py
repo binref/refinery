@@ -4,6 +4,7 @@ from collections import deque
 from typing import TYPE_CHECKING, Container
 
 from refinery.lib.executable import CompartmentNotFound, Executable, Range
+from refinery.lib.shared import smda
 from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -19,16 +20,6 @@ class vmemref(Unit):
     section and file offset for the reference. It then returns all data from that section starting
     at the given offset.
     """
-
-    @Unit.Requires('smda<2.0', ['all'])
-    def _smda():
-        import datetime
-        datetime.UTC = datetime.timezone.utc
-        import smda
-        import smda.Disassembler
-        import smda.DisassemblyResult
-        return smda
-
     def _memory_references(
         self,
         exe: Executable,
@@ -116,7 +107,6 @@ class vmemref(Unit):
         )
 
     def process(self, data):
-        smda = self._smda
         take = self.args.take
         exe = Executable.Load(data, self.args.base)
         fmt = exe.pointer_size // 4

@@ -94,3 +94,13 @@ def decompyle3():
     import decompyle3
     import decompyle3.main
     return decompyle3
+
+
+@__global_dependency('smda<2.0', ['all'])
+def smda():
+    import datetime
+    datetime.UTC = datetime.timezone.utc
+    import smda
+    import smda.Disassembler
+    import smda.DisassemblyResult
+    return smda
