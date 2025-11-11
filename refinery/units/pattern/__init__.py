@@ -142,7 +142,12 @@ class PatternExtractorBase(Unit, abstract=True):
                     else:
                         transformed = transform
                     if expose_named_groups:
-                        kwargs.update(match.groupdict())
+                        for key, value in match.groupdict().items():
+                            if key.startswith('__'):
+                                continue
+                            if value is None:
+                                value = B''
+                            kwargs[key] = value
                 chunk = self.labelled(transformed, **kwargs)
                 chunk.set_next_batch(k)
                 yield chunk

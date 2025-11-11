@@ -77,14 +77,13 @@ class rex(SingleRegexUnit, PatternExtractor):
                             symb[key] = B''
                     symb[_FORWARD_VAR] = wrap
                     item = meta.format(s, self.codec, args, symb, True, True, used)
+                    assert not isinstance(item, str)
                     used.update(key for key, value in symb.items() if not value)
                     used.add(_FORWARD_VAR)
                     for variable in used:
                         symb.pop(variable, None)
                     symb.update(offset=match.start())
-                    chunk = Chunk(item)
-                    chunk.meta.update(meta)
-                    chunk.meta.update(symb)
+                    chunk = Chunk(item, meta=symb)
                     return chunk
                 transformations.append(transformation)
         yield from self.matches_filtered(
