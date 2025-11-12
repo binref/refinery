@@ -10,8 +10,9 @@ if TYPE_CHECKING:
 
 class rev(UnaryOperation):
     """
-    The blocks of the input data are output in reverse order. If the length of
-    the input data is not a multiple of the block size, the data is truncated.
+    By default, this reverses the input string. For different block sizes, the blocks of the
+    input data are output in reverse order. If the length of the input data is not a multiple
+    of the block size, the data is truncated.
     """
 
     def __init__(self, blocksize=1):
