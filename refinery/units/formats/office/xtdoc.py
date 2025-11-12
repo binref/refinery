@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from refinery.lib.id import is_likely_doc
 from refinery.lib.structures import MemoryFile
+from refinery.lib.types import buf
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.archive.xtzip import xtzip
 
@@ -29,7 +30,7 @@ class xtdoc(PathExtractorUnit):
         import olefile
         return olefile
 
-    def unpack(self, data):
+    def unpack(self, data: buf):
         with MemoryFile(data) as stream:
             try:
                 oledoc = self._olefile.OleFileIO(stream)

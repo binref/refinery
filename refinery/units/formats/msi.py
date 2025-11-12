@@ -12,9 +12,9 @@ from typing import NamedTuple
 
 from refinery.lib import chunks
 from refinery.lib.cab import Cabinet
-from refinery.lib.id import is_likely_msi
+from refinery.lib.id import buffer_offset, is_likely_msi, is_likely_pe
 from refinery.lib.structures import StructReader
-from refinery.lib.types import JSONDict, Param, buf
+from refinery.lib.types import Param, buf
 from refinery.units import Arg
 from refinery.units.formats.csv import csv
 from refinery.units.formats.office.xtdoc import UnpackResult, xtdoc
@@ -86,6 +86,9 @@ class MSITableColumnInfo(NamedTuple):
             return 'H'
 
 
+_NEGATED_MSI_SIGNATURE = B'\x2F\x30\xEE\x1F\x5E\x4E\xE5\x1E'
+
+
 class MSIStringData:
     def __init__(self, string_data: buf, string_pool: buf):
         data = StructReader(string_data)
@@ -96,7 +99,8 @@ class MSIStringData:
         self.codepage = pool.u16()
         self._unknown = pool.u16()
         while not pool.eof:
-            size, rc = pool.read_struct('<HH')
+            size = pool.u16()
+            rc = pool.u16()
             if size == 0 and rc != 0:
                 size = pool.u32()
             string = data.read_bytes(size)
@@ -121,14 +125,16 @@ class MSIStringData:
     def __contains__(self, index):
         return 0 < index <= len(self)
 
-    def ref(self, index: int, increment=True) -> str | bytes:
+    def ref(self, index: int, increment=True) -> str:
         assert index > 0
         index -= 1
         if increment:
             self.computed_ref_count[index] += 1
-        data = self.strings[index]
-        data = data.decode(self.codec)
-        return data
+        string = self.strings[index]
+        try:
+            return string.decode(self.codec)
+        except UnicodeDecodeError:
+            return string.decode('latin1')
 
 
 class xtmsi(xtdoc):
@@ -164,9 +170,10 @@ class xtmsi(xtdoc):
     }
 
     def __init__(
-            self, *paths,
-            list=False, path=b'path', join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-            nocab: Param[bool, Arg.Switch('-N', help='Do not list and extract embedded CAB archives.')] = False, **kw,
+        self, *paths,
+        list=False, path=b'path', join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
+        nocab: Param[bool, Arg.Switch('-N', help='Do not list and extract embedded CAB archives.')] = False,
+        **keywords,
     ):
         super().__init__(
             *paths,
@@ -178,11 +185,14 @@ class xtmsi(xtdoc):
             fuzzy=fuzzy,
             exact=exact,
             regex=regex,
-            **kw,
+            **keywords,
         )
 
-    def unpack(self, data):
-        streams = {result.path: result for result in super().unpack(data)}
+    def unpack(self, data: buf):
+        streams = {
+            result.path: result
+            for result in super().unpack(self.get_msi_from_overlay(data))
+        }
 
         def stream(name: str):
             return streams.pop(name).get_data()
@@ -196,7 +206,7 @@ class xtmsi(xtdoc):
             reader = StructReader(data)
             columns = [reader.read_struct(F'<{sc * row_count}') for sc in row_format]
             for i in range(row_count):
-                yield [c[i] for c in columns]
+                yield [int(c[i]) for c in columns]
 
         tables: dict[str, dict[str, MSITableColumnInfo]] = collections.defaultdict(collections.OrderedDict)
         strings = MSIStringData(stream('!_StringData'), stream('!_StringPool'))
@@ -227,7 +237,8 @@ class xtmsi(xtdoc):
         def format_string(string: str):
             # https://learn.microsoft.com/en-us/windows/win32/msi/formatted
             def _replace(match: re.Match[str]):
-                _replace.done = False
+                nonlocal _replace_done
+                _replace_done = False
                 prefix, name = match.groups()
                 if not prefix:
                     tbl = tbl_properties
@@ -242,14 +253,14 @@ class xtmsi(xtdoc):
                     raise ValueError
                 return tbl.get(name, '')
             while True:
-                _replace.done = True
+                _replace_done = True
                 string = re.sub(R'''(?x)
                     \[             # open square bracket
                       (?![~\\])    # not followed by escapes
                       ([%$!#]?)    # any of the valid prefix characters
                       ([^[\]{}]+)  # no brackets or braces
                     \]''', _replace, string)
-                if _replace.done:
+                if _replace_done:
                     break
             string = re.sub(r'\[\\(.)\]', r'\1', string)
             string = string.replace('[~]', '\0')
@@ -310,30 +321,30 @@ class xtmsi(xtdoc):
             if processed:
                 processed_table_data[table_name] = processed
 
-        ca = processed_table_data.get('CustomAction', None)
-        for item in postprocessing:
-            entry = ca[item.row_index]
-            try:
-                path: str = entry['Action']
-                data: str = entry['Target']
-            except KeyError:
-                continue
-            root = F'Action/{path}'
-            if item.extension:
-                path = F'{root}.{item.extension}'
-                streams[path] = UnpackResult(path, data.encode(self.codec))
-                continue
-            data = format_string(data)
-            parts = [part.partition('\x02') for part in data.split('\x01')]
-            if not all(part[1] == '\x02' for part in parts):
-                continue
-            for name, _, script in parts:
-                if not name.lower().startswith('script'):
+        if ca := processed_table_data.get('CustomAction'):
+            for item in postprocessing:
+                entry = ca[item.row_index]
+                try:
+                    action: str = entry['Action']
+                    target: str = entry['Target']
+                except KeyError:
                     continue
-                if not script:
+                root = F'Action/{action}'
+                if item.extension:
+                    action = F'{root}.{item.extension}'
+                    streams[action] = UnpackResult(action, target.encode(self.codec))
                     continue
-                path = F'{root}.{name}'
-                streams[path] = UnpackResult(path, script.encode(self.codec))
+                target = format_string(target)
+                parts = [part.partition('\x02') for part in target.split('\x01')]
+                if not all(part[1] == '\x02' for part in parts):
+                    continue
+                for name, _, script in parts:
+                    if not name.lower().startswith('script'):
+                        continue
+                    if not script:
+                        continue
+                    action = F'{root}.{name}'
+                    streams[action] = UnpackResult(action, script.encode(self.codec))
 
         for ignored_stream in [
             'SummaryInformation',
@@ -367,13 +378,13 @@ class xtmsi(xtdoc):
         else:
             def _iscab(path):
                 return media_info and any(item.get('Cabinet', '') == F'#{path}' for item in media_info)
-            media_info: list[JSONDict] = processed_table_data.get('Media', [])
+            media_info = processed_table_data.get('Media', [])
             cabs: dict[str, UnpackResult] = {
                 path: item for path, item in streams.items() if _iscab(path)}
             for cab in cabs:
                 self.log_info(F'found cab file: {cab}')
         if cabs:
-            file_names: dict[str, JSONDict] = {}
+            file_names: dict[str, str] = {}
 
             for file_info in processed_table_data.get('File', []):
                 try:
@@ -387,7 +398,7 @@ class xtmsi(xtdoc):
 
             for path, cab in cabs.items():
                 try:
-                    _cabinet = Cabinet(cab.get_data())
+                    _cabinet = Cabinet(memoryview(cab.get_data()))
                     unpacked = _cabinet.process().get_files()
                 except Exception as e:
                     self.log_info(F'unable to extract embedded cab file: {e!s}')
@@ -410,12 +421,12 @@ class xtmsi(xtdoc):
         streams[ds.path] = ds
 
         converter = csv()
-        for key, data in processed_table_data.items():
+        for key, jd in processed_table_data.items():
             sk = key.strip('_')
             if sk not in processed_table_data:
                 key = sk
             try:
-                tbl = UnpackResult(F'{self._SYNTHETIC_STREAMS_TOPLEVEL}/{key}.csv', converter.json_to_csv(data))
+                tbl = UnpackResult(F'{self._SYNTHETIC_STREAMS_TOPLEVEL}/{key}.csv', converter.json_to_csv(jd))
             except Exception:
                 continue
             streams[tbl.path] = tbl
@@ -425,8 +436,35 @@ class xtmsi(xtdoc):
             yield streams[path]
 
     @classmethod
+    def get_msi_from_overlay(cls, data: buf) -> buf:
+        if is_likely_pe(data):
+            from refinery.units.formats.pe import get_pe_size
+            view = memoryview(data)
+            overlay = view[get_pe_size(data):]
+            if is_likely_msi(overlay):
+                return overlay
+            if (start := buffer_offset(overlay, _NEGATED_MSI_SIGNATURE, 0, 0x1000)) >= 0:
+                if (nulls := buffer_offset(overlay, bytes(8), start, start + 0x1000)) >= 0:
+                    from refinery.units.blockwise.neg import neg
+                    decoded = overlay[start:nulls] | neg | bytearray
+                    decoded.extend(overlay[nulls:])
+                    if is_likely_msi(decoded):
+                        return decoded
+        return data
+
+    @classmethod
     def handles(cls, data):
-        return is_likely_msi(data)
+        if is_likely_msi(data):
+            return True
+        if is_likely_pe(data):
+            from refinery.units.formats.pe import get_pe_size
+            view = memoryview(data)
+            overlay = view[get_pe_size(data):]
+            if is_likely_msi(overlay):
+                return True
+            if overlay[:8] == _NEGATED_MSI_SIGNATURE:
+                return True
+        return False
 
 
 if _d := xtmsi.__doc__:

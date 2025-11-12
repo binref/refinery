@@ -7,6 +7,7 @@ from datetime import datetime
 from refinery.lib import lief
 from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.types import buf
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe import get_pe_size
@@ -52,7 +53,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def _carver(cls):
         return carve_zip
 
-    def unpack(self, data: bytearray):
+    def unpack(self, data: buf):
         from zipfile import BadZipFile, ZipFile, ZipInfo
 
         def password_invalid(password: bytes | None):
@@ -101,14 +102,14 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 break
 
         for info in archive.infolist():
-            def xt(archive: ZipFile = archive, info: ZipInfo = info, data=memoryview(data)):
+            def xt(archive: ZipFile = archive, info: ZipInfo = info, view=memoryview(data)):
                 try:
                     return archive.read(info.filename)
                 except RuntimeError as E:
                     if 'password' not in str(E):
                         raise
                     msg = 'invalid password; use -L to extract raw encrypted data'
-                    rec = _FileRecord(data[info.header_offset:])
+                    rec = _FileRecord.Parse(view[info.header_offset:])
                     raise RefineryPartialResult(msg, rec.data) from E
 
             if info.filename:

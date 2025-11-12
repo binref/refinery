@@ -23,7 +23,7 @@ class csv(Unit):
     ):
         super().__init__(quote=quote, delim=delim)
 
-    def json_to_csv(self, table: dict):
+    def json_to_csv(self, table: list):
         quote = self.args.quote.decode(self.codec)
         delim = self.args.delim.decode(self.codec)
 
