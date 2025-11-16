@@ -232,7 +232,7 @@ class pemeta(Unit):
                 raise LookupError
             return value[0]
 
-        def find_timestamps(entry) -> dict:
+        def find_timestamps(entry) -> dict | None:
             if isinstance(entry, dict):
                 try:
                     return {'Timestamp': _value(entry, 'signing_time')}
@@ -279,13 +279,17 @@ class pemeta(Unit):
                 if len(serial) % 2 != 0:
                     serial = F'0{serial}'
                 assert bytes.fromhex(serial) in data
-                subject = crt['subject']
+                subject: dict = crt['subject']
                 location = [subject.get(t, '') for t in (
                     'locality_name', 'state_or_province_name', 'country_name')]
                 cert_info = {}
                 cert_info.update(Subject=subject['common_name'])
+                with suppress(KeyError):
+                    cert_info.update(SubjectEmail=subject['email_address'])
                 if any(location):
                     cert_info.update(SubjectLocation=', '.join(filter(None, location)))
+                with suppress(KeyError):
+                    cert_info.update(SubjectOrg=subject['organization_name'])
                 for attr in signer['signed_attrs']:
                     if attr['type'] == 'authenticode_info':
                         auth = _value(attr)
@@ -298,8 +302,13 @@ class pemeta(Unit):
                     pass
                 else:
                     cert_info.update(ValidSince=valid_since, ValidUntil=valid_until)
-                cert_info.update(
-                    Issuer=crt['issuer']['common_name'], Fingerprint=certificate['fingerprint'], Serial=serial)
+                cert_info.update(Serial=serial)
+                with suppress(KeyError):
+                    cert_info.update(Issuer=crt['issuer']['common_name'])
+                with suppress(KeyError):
+                    cert_info.update(IssuerOrg=crt['issuer']['organization_name'])
+                with suppress(KeyError):
+                    cert_info.update(Fingerprint=certificate['fingerprint'])
                 signer_certificates.append(cert_info)
 
         if len(signer_certificates) == 1:
