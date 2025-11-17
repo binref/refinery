@@ -133,7 +133,7 @@ class jvdasm(PathExtractorUnit):
                 return repr(arg)
             return F'{color}{arg!r}{c_none}'
 
-        jc = JvClassFile(data)
+        jc = JvClassFile.Parse(data)
         tab = ' '
         namespace = '.'.join(str(jc.this).split('/'))
         opcw = self._OPC_STRLEN

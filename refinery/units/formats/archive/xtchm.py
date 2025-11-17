@@ -9,7 +9,7 @@ class xtchm(PathExtractorUnit, docs='{0}{p}{PathExtractorUnit}'):
     Extract files from CHM (Windows Help) files.
     """
     def unpack(self, data):
-        chm = CHM(memoryview(data))
+        chm = CHM.Parse(memoryview(data))
 
         self.log_info(F'language: {chm.header.language_name}')
         self.log_info(F'codepage: {chm.header.codepage}')

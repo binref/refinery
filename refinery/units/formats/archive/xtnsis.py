@@ -540,7 +540,7 @@ class NSHeader(Struct):
         if size < required:
             raise ValueError(F'Invalid size {size} was specified for NSIS main header, needs to be at least {required}.')
         self.unknown_value = reader.u32()
-        self.block_header_offsets = [NSBlockHeaderOffset(reader.read(bho_size), is64bit=self.is64bit) for _ in range(8)]
+        self.block_header_offsets = [NSBlockHeaderOffset.Parse(reader.read(bho_size), is64bit=self.is64bit) for _ in range(8)]
 
         self.bh_entries = self.block_header_offsets[2]
         self.bh_strings = self.block_header_offsets[3]
@@ -1149,7 +1149,7 @@ class NSArchive(Struct):
         xtnsis.log_debug(F'read header of length {len(header_data)}')
 
         self.header_data = header_data
-        self.header = NSHeader(header_data, size=header_size, extended=self.extended)
+        self.header = NSHeader.Parse(header_data, size=header_size, extended=self.extended)
         self.reader = reader
 
         if self.method is NSMethod.Deflate and self.header.nsis_deflate:
@@ -1336,7 +1336,7 @@ class xtnsis(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 _error = _error or ValueError('Unable to find an NSIS archive marker.')
                 raise _error
             try:
-                arc = NSArchive(memory[offset:])
+                arc = NSArchive.Parse(memory[offset:])
             except Exception as e:
                 _error = e
                 before = offset

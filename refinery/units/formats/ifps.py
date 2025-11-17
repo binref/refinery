@@ -32,7 +32,7 @@ class ifps(IFPSBase):
         super().__init__(codec=codec, bytes=bytes)
 
     def process(self, data):
-        return IFPSFile(data, self.args.codec).disassembly(self.args.bytes).encode(self.codec)
+        return IFPSFile.Parse(data, self.args.codec).disassembly(self.args.bytes).encode(self.codec)
 
     @classmethod
     def handles(cls, data) -> bool:

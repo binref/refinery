@@ -10,7 +10,7 @@ class ifpsstr(IFPSBase):
     These scripts can be found, for example, when unpacking InnoSetup installers using innounp.
     """
     def process(self, data):
-        ifps = IFPSFile(data, self.args.codec)
+        ifps = IFPSFile.Parse(data, self.args.codec)
         for string in ifps.strings:
             yield string.encode(self.codec)
 

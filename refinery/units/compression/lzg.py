@@ -13,9 +13,8 @@ class LZGMethod(enum.IntEnum):
 
 
 class LZGCheckSum:
-    def __init__(self, reader: bytearray | StructReader[bytearray], size: int = 0):
-        if not isinstance(reader, StructReader):
-            reader = StructReader(reader)
+    def __init__(self, data: bytearray | memoryview, size: int = 0):
+        reader = StructReader(data)
         self.reader = reader
         self._a = 1
         self._b = 0
@@ -84,7 +83,9 @@ class LZGStream(Struct):
         self._handle_invalid_checksum()
 
     def _checks(self):
-        checker = LZGCheckSum(StructReader(self._body.peek()))
+        if (body := self._body) is None:
+            raise RuntimeError
+        checker = LZGCheckSum(body.peek())
         checker.process(self.encoded_size)
         for tolerance in range(8):
             if int(checker) == self.checksum:
@@ -94,7 +95,7 @@ class LZGStream(Struct):
         else:
             return False
 
-    def _find_checksum(self, data: bytearray) -> int:
+    def _find_checksum(self, data: bytearray | memoryview) -> int:
         a = 1
         b = 0
         t = self.checksum
@@ -107,12 +108,14 @@ class LZGStream(Struct):
         return -1
 
     def _handle_invalid_checksum(self):
+        if (body := self._body) is None:
+            raise RuntimeError
         offsets = {}
         for k in range(16):
-            offset = self._find_checksum(self._body.peek())
+            offset = self._find_checksum(body.peek())
             if offset >= 0:
                 offsets[offset] = k + 1
-            self._body.seekrel(1)
+            body.seekrel(1)
         if not offsets:
             raise ValueError('Invalid checksum and no working offsets could be found.')
         else:
@@ -122,7 +125,7 @@ class LZGStream(Struct):
                 F'Checksum failed; a valid checksum can be obtained by skipping {skip} bytes and then reading {closest}. '
                 F'According to the header, the size of the encoded data is {self.encoded_size}.')
 
-    def decompress(self) -> bytearray:
+    def decompress(self) -> bytearray | memoryview:
         if self._body is None:
             raise RuntimeError('The decompress method can only be called once.')
         reader = self._body
@@ -179,7 +182,7 @@ class lzg(Unit):
     LZG decompression.
     """
     def process(self, data: bytearray):
-        stream = LZGStream(data)
+        stream = LZGStream.Parse(data)
         out = stream.decompress()
         if len(out) != stream.decoded_size:
             msg = F'LZG header announced {stream.decoded_size} bytes, but decompressed buffer had size {len(out)}.'

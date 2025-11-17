@@ -526,13 +526,13 @@ def a3x_number_representation(value: float | int) -> str:
     if isinstance(value, int):
         return str(value)
     elif math.isnan(value) or math.isinf(value):
-        value = struct.pack('>d', value).hex().upper()
-        return RF'Dec("{value}", 3)'
+        rep = struct.pack('>d', value).hex().upper()
+        return RF'Dec("{rep}", 3)'
     else:
         return RF'{value!s}'
 
 
-def a3x_decompile(bytecode: bytearray) -> Generator[tuple[int, str]]:
+def a3x_decompile(bytecode: bytes | bytearray) -> Generator[tuple[int, str]]:
     class _decompiler(dict):
         def __missing__(self, key):
             if key == 's':
@@ -559,7 +559,7 @@ def a3x_decompile(bytecode: bytearray) -> Generator[tuple[int, str]]:
             return a3x_number_representation(number)
 
     decompiler = _decompiler()
-    reader = A3xReader(bytecode)
+    reader = A3xReader(memoryview(bytecode))
     num_lines = reader.u32()
     tokens: list[str] = []
     expected_terminators: list[str] = []
@@ -825,7 +825,7 @@ class A3xReader(StructReader[memoryview]):
         return ''.join(chr((self.u16() ^ length) & 0xFFFF) for _ in range(length))
 
 
-class A3xRecord(Struct, parser=A3xReader):
+class A3xRecord(Struct):
     MAGIC = b'\x6B\x43\xCA\x52'
 
     def __init__(self, reader: A3xReader, encryption_type: A3xEncryptionType):
@@ -904,7 +904,7 @@ class A3xRecord(Struct, parser=A3xReader):
             return 'script.ahk'
 
 
-class A3xScript(Struct, parser=A3xReader):
+class A3xScript(Struct):
     MAGIC = b'\xA3\x48\x4B\xBE\x98\x6C\x4A\xA9\x99\x4C\x53\x0A\x86\xD6\x48\x7D'
     WIDTH = 0x28
 
@@ -978,7 +978,7 @@ class a3x(PathExtractorUnit):
                     break
                 cursor = rp
             try:
-                script = A3xScript(view[cursor:])
+                script = A3xScript.Parse(A3xReader(view[cursor:]))
             except Exception as E:
                 errors[cursor] = E
                 cursor += 1

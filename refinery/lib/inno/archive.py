@@ -623,21 +623,21 @@ class TSetupOffsets(Struct):
         return self
 
     @classmethod
-    def Try(Cls, view: memoryview):
+    def Try(cls, view: memoryview):
         try:
-            return Cls(view).Checked()
+            return cls.Parse(view).Checked()
         except ValueError:
             return None
 
     @classmethod
-    def FindInBinary(Cls, data):
+    def FindInBinary(cls, data):
         issd = B'Inno Setup Setup Data'
         view = memoryview(data)
         if len(view) < 0x1000:
             return None
         for magic in TSetupMagicToVersion:
             for match in re.finditer(re.escape(magic), view):
-                if self := Cls.Try(view[match.start():]):
+                if self := cls.Try(view[match.start():]):
                     ip = self.base + self.info_offset
                     if view[ip:][:len(issd)] == issd:
                         return self
@@ -2166,7 +2166,7 @@ class InnoArchive:
             except Exception as E:
                 raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
             else:
-                meta = TSetupOffsets(_meta)
+                meta = TSetupOffsets.Parse(_meta)
 
         self._password = None
         self._password_guessed = False
@@ -2337,7 +2337,7 @@ class InnoArchive:
         An `refinery.lib.inno.ifps.IFPSFile` representing the embedded IFPS script, if it exists.
         """
         if script := self.setup_info.Header.get_script():
-            return IFPSFile(script, self.script_codec, self.version.unicode)
+            return IFPSFile.Parse(script, self.script_codec, self.version.unicode)
 
     def guess_password(self, timeout: int) -> bool:
         """
@@ -2394,14 +2394,14 @@ class InnoArchive:
                 to_read -= len(block)
 
         self._log_verbose(F'{version!s} parsing stream 1 (TData)')
-        stream1 = TData(memoryview(self.read_stream(streams[1])), version)
+        stream1 = TData.Parse(memoryview(self.read_stream(streams[1])), version)
 
         for meta in stream1.DataEntries:
             file = InnoFile(blobs, version, meta)
             files.append(file)
 
         self._log_verbose(F'{version!s} parsing stream 0 (TSetup)')
-        stream0 = TSetup(memoryview(self.read_stream(streams[0])), version)
+        stream0 = TSetup.Parse(memoryview(self.read_stream(streams[0])), version)
         path_dedup: dict[str, list[SetupFile]] = {}
 
         for file in files:

@@ -262,7 +262,7 @@ class lzo(Unit):
 
     def process(self, data):
         try:
-            lzo = LZO(data)
+            lzo = LZO.Parse(data)
         except LZOError:
             self.log_info('Not an LZO archive, processing raw stream.')
             return self.decompress_stream(data)

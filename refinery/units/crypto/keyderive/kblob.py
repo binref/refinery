@@ -10,7 +10,7 @@ class kblob(Unit):
     """
 
     def process(self, data):
-        blob = CRYPTOKEY(data)
+        blob = CRYPTOKEY.Parse(data)
         try:
             return self.labelled(
                 bytes(blob.key),

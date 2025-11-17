@@ -51,7 +51,7 @@ def normalize_rsa_key(key: bytes, force_public=False):
                 components += data['P'], data['Q']
         return KF.XML, RSA.construct(components)
     try:
-        blob = CRYPTOKEY(key)
+        blob = CRYPTOKEY.Parse(key)
     except ValueError:
         pass
     else:
@@ -61,7 +61,7 @@ def normalize_rsa_key(key: bytes, force_public=False):
             blob = blob.pub
         return KF.MSB, blob.key.convert()
     try:
-        blob = BCRYPT_RSAKEY_BLOB(key)
+        blob = BCRYPT_RSAKEY_BLOB.Parse(key)
     except ValueError:
         fmt = KF.PEM if B'----' in key else KF.DER
         key = RSA.import_key(key)

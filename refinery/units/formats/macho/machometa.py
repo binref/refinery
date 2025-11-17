@@ -212,7 +212,7 @@ class machometa(Unit):
         for blob in super_blob.blobs:
 
             if blob.type == BlobType.CODEDIRECTORY:
-                codedirectory_blob = CodeDirectoryBlob(blob.data)
+                codedirectory_blob = CodeDirectoryBlob.Parse(blob.data)
                 if codedirectory_blob.flags & CS_ADHOC != 0:
                     info['AdHocSigned'] = True
                 else:

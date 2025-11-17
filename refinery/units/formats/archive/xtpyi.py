@@ -294,7 +294,7 @@ class PyInstallerArchiveEpilogue(Struct):
                 data = self.extract(entry.name).unpack()
             else:
                 data = reader
-            pyz_entries[name] = PYZ(data, self.py_version)
+            pyz_entries[name] = PYZ.Parse(data, self.py_version)
 
         magics = {pyz.magic for pyz in pyz_entries.values()}
 
@@ -420,7 +420,7 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             self.log_warn(F'found {len(positions) - 1} potential PyInstaller epilogue markers; using last one.')
         decompile = self.args.decompile
         uc_target = PiType.USERCODE if decompile else PiType.SOURCE
-        archive = PyInstallerArchiveEpilogue(view, positions[-1], mode, decompile)
+        archive = PyInstallerArchiveEpilogue.Parse(view, positions[-1], mode, decompile)
         for name, file in archive.files.items():
             if self.args.user_code:
                 if file.type != uc_target:

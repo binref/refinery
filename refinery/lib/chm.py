@@ -319,12 +319,12 @@ class CHM(Struct):
             for k in range(dh.total_chunks):
                 body = reader.read_exactly(m)
                 if body[:4] == IndexChunk.Magic:
-                    self.index.append(IndexChunk(body, d))
+                    self.index.append(IndexChunk.Parse(body, d))
                     continue
                 if body[:4] == ListingChunk.Magic:
                     if not (dh.listing1st <= k <= dh.listingLst):
                         raise ValueError(F'Chunk {k} has magic {ListingChunk.Magic.decode()} but is out of listing range.')
-                    chunk = ListingChunk(body, d)
+                    chunk = ListingChunk.Parse(body, d)
                     for entry in chunk.entries:
                         name = entry.name
                         if name.startswith('/#') or name.startswith('/$'):

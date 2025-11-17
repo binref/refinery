@@ -36,7 +36,7 @@ __all__ = (
 )
 
 
-class Index(PerInstanceAttribute):
+class Index(PerInstanceAttribute[AttrType]):
     def __init__(self, jtype: type[AttrType]):
         super().__init__()
         self.jtype = jtype
@@ -172,7 +172,7 @@ class JvAccessFlags(Struct):
         ) = reader.read_flags(16)
 
 
-ParserType = TypeVar('ParserType')
+ParserType = TypeVar('ParserType', bound=Struct)
 
 
 class JvAttribute(JvStructWithName, Generic[ParserType]):
@@ -182,7 +182,7 @@ class JvAttribute(JvStructWithName, Generic[ParserType]):
         self.data = reader.read(reader.u32())
 
     def parse(self, parser: type[ParserType]) -> ParserType:
-        return parser(self.data, pool=self.pool)
+        return parser.Parse(self.data, pool=self.pool)
 
 
 class JvClassMember(JvStructWithName):
@@ -573,7 +573,7 @@ class JvCode(Struct):
         with StructReader(reader.read(reader.u32())) as code:
             code.bigendian = True
             while not code.eof:
-                self.disassembly.append(JvOpCode(code, pool=pool))
+                self.disassembly.append(JvOpCode.Parse(code, pool=pool))
         self.exceptions = [JvException(reader      ) for _ in range(reader.u16())] # noqa
         self.attributes = [JvAttribute(reader, pool) for _ in range(reader.u16())] # noqa
 

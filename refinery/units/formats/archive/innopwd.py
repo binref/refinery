@@ -14,7 +14,7 @@ class innopwd(Unit):
     """
     def process(self, data: bytearray):
         if data.startswith(IFPSFile.Magic):
-            inno = IFPSFile(data)
+            inno = IFPSFile.Parse(data)
             self.log_info('running in script-only mode; cannot check passwords')
             file = None
         else:
@@ -32,7 +32,7 @@ class innopwd(Unit):
         for password in emulator.emulate_installation():
             if not isinstance(password, NewPassword):
                 continue
-            if file and not inno.check_password(file, password):
+            if isinstance(inno, InnoArchive) and file and not inno.check_password(file, password):
                 self.log_info('discarding password:', password)
                 continue
             yield password.encode(self.codec)

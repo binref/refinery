@@ -58,7 +58,7 @@ class xtasar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 offset=offset
             )
 
-        header = AsarHeader(data)
+        header = AsarHeader.Parse(data)
         self.log_debug(F'header read successfully, base offset is {header.base}.')
         yield from _unpack(header.directory)
 

@@ -31,7 +31,7 @@ class xtgz(ArchiveUnit):
     Extract a file from a GZip archive.
     """
     def unpack(self, data: bytearray):
-        archive = GzipHeader(data)
+        archive = GzipHeader.Parse(data)
         path = archive.name
         date = archive.mtime
         date = date and datetime.fromtimestamp(date) or None

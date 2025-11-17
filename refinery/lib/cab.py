@@ -328,7 +328,7 @@ class Cabinet:
 
     def extend(self, disks: Iterable[memoryview]):
         for d in disks:
-            disk = CabDisk(memoryview(d), self.compute_checksums, self.no_magic)
+            disk = CabDisk.Parse(memoryview(d), self.compute_checksums, self.no_magic)
             byid = self.disks.setdefault(disk.id, [])
             byid.append(disk)
         for byid in self.disks.values():

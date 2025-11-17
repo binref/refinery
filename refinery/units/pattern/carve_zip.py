@@ -60,7 +60,7 @@ class carve_zip(Unit):
             if end < 0:
                 break
             try:
-                end_marker = ZipEndOfCentralDirectory(mem[end:])
+                end_marker = ZipEndOfCentralDirectory.Parse(mem[end:])
             except ValueError as e:
                 self.log_info(F'error parsing end of central directory at 0x{end:X}: {e!s}')
                 continue
@@ -72,7 +72,7 @@ class carve_zip(Unit):
                 self.log_debug('end of central directory size is invalid')
                 continue
             try:
-                central_directory = ZipCentralDirectory(mem[start:])
+                central_directory = ZipCentralDirectory.Parse(mem[start:])
             except ValueError:
                 self.log_debug('computed location of central directory is invalid')
                 end = end - len(ZipEndOfCentralDirectory.SIGNATURE)

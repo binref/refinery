@@ -3,6 +3,7 @@ Interfaces and classes to read structured data.
 """
 from __future__ import annotations
 
+import abc
 import codecs
 import contextlib
 import enum
@@ -811,25 +812,16 @@ class StructReader(MemoryFile[T, T]):
                 raise OverflowError('Maximum bits were exceeded by encoded integer.')
 
 
-class StructMeta(type):
+class StructMeta(abc.ABCMeta):
     """
     A metaclass to facilitate the behavior outlined for `refinery.lib.structures.Struct`.
     """
-    def __new__(mcls, name, bases, nmspc, parser=StructReader):
-        return type.__new__(mcls, name, bases, nmspc)
-
-    def __init__(cls, name, bases, nmspc, parser=StructReader):
+    def __init__(cls, name, bases, nmspc):
         super().__init__(name, bases, nmspc)
         original__init__ = cls.__init__
 
         @functools.wraps(original__init__)
-        def wrapped__init__(self: Struct, reader, *args, **kwargs):
-            if not isinstance(reader, parser):
-                if issubclass(parser, reader.__class__):
-                    raise ValueError(
-                        F'A reader of type {reader.__class__.__name__} was passed to {cls.__name__}, '
-                        F'but a {parser.__name__} is required.')
-                reader = parser(reader)
+        def wrapped__init__(self: Struct, reader: StructReader, *args, **kwargs):
             start = reader.tell()
             view = reader.getbuffer()
             original__init__(self, reader, *args, **kwargs)
@@ -857,11 +849,7 @@ class Struct(Generic[T], metaclass=StructMeta):
     def Parse(cls, reader: T | StructReader[T], *args, **kwargs):
         if not isinstance(reader, StructReader):
             reader = StructReader(reader)
-        start = reader.tell()
-        view = reader.getbuffer()
-        result = cls(reader, *args, **kwargs)
-        result._data = view[start:reader.tell()]
-        return result
+        return cls(reader, *args, **kwargs)
 
     def __len__(self):
         return len(self._data)

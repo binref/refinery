@@ -51,7 +51,7 @@ class xtnuitka(PathExtractorUnit):
             arcs = [data]
 
         for arc in arcs:
-            archive = NuitkaData(arc)
+            archive = NuitkaData.Parse(arc)
             if archive.truncated:
                 self.log_warn('the archive is truncated')
             if archive.magic != self._MAGIC:
