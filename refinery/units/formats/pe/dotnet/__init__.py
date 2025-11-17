@@ -3,22 +3,11 @@ from __future__ import annotations
 from functools import lru_cache
 
 from refinery.lib.dotnet.header import DotNetHeader
-from refinery.lib.dotnet.types import Blob
 from refinery.units.formats import BytesAsStringEncoder, JSONEncoderUnit
 
 
-class DotNetEncoder(BytesAsStringEncoder):
-    def default(self, obj):
-        if isinstance(obj, Blob):
-            obj = bytes(obj)
-        try:
-            return super().default(obj)
-        except TypeError:
-            return str(obj)
-
-
 class DotNetJSONEncoderUnit(JSONEncoderUnit, abstract=True):
-    EncoderBase = DotNetEncoder
+    EncoderBase = BytesAsStringEncoder
 
 
 class CodePath:

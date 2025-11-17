@@ -6,38 +6,171 @@ References:
 """
 from __future__ import annotations
 
+import abc
+import codecs
+import datetime
+import enum
+import functools
+
+from typing import Dict, Generic, Optional, TypeVar, Union, cast, get_args
+
 from refinery.lib import lief
-from refinery.lib.dotnet.types import (
-    Box,
-    Byte,
-    NullTerminatedString,
-    ParserEOF,
-    ParserException,
-    RawBytes,
-    StreamReader,
-    StringGUID,
-    StringPrimitive,
+from refinery.lib.structures import (
+    FlagAccessMixin,
     Struct,
-    UInt16,
-    UInt32,
-    UInt64,
-    UnicodeString,
-    unpack,
+    StructMeta,
+    StructReader,
+    struct_to_json,
 )
+from refinery.lib.types import NamedTuple, buf
+
+T = TypeVar('T')
+N = TypeVar('N', str, bytes, Optional[str])
+R = TypeVar('R', bound=Struct)
+
+
+class ParserException(RuntimeError):
+    pass
+
+
+class RepresentedByNameOnly(type):
+    def __repr__(self):
+        return self.__name__
+
+    def __init__(cls, name, bases, nmspc):
+        def representation(self):
+            return repr(self.__class__)
+        setattr(cls, '__repr__', representation)
+
+
+class DotNetStructReader(StructReader[memoryview]):
+
+    def _dn_raise(self, msg):
+        raise ParserException(F'At offset {self.tell():#08x}: {msg}')
+
+    def read_dn_blob(self, size: int | None = None):
+        if size is None:
+            size = self.read_dn_length_prefix()
+        return self.read_exactly(size)
+
+    def read_dn_length_prefix(self):
+        size = self.u8fast()
+        if not size & 0x80:
+            return size
+        elif not size & 0x40:
+            size = size & 0x3f
+            size = size << 8 | self.u8fast()
+            return size
+        elif not size & 0x20:
+            size = size & 0x1f
+            size = size << 8 | self.u8fast()
+            size = size << 8 | self.u8fast()
+            size = size << 8 | self.u8fast()
+            return size
+        else:
+            self._dn_raise('Invalid length prefix.')
+
+    def _decode(self, data: memoryview, codec: str):
+        try:
+            return codecs.decode(data, codec).rstrip('\0')
+        except UnicodeDecodeError:
+            codec = 'latin1' if any(data[1::2]) else 'utf-16le'
+        try:
+            return codecs.decode(data, codec)
+        except UnicodeDecodeError:
+            return codecs.decode(data, 'UNICODE_ESCAPE')
+
+    def read_dn_string_primitive(self, size: int | None = None, align: int = 1, codec: str = 'latin1'):
+        if size is None:
+            size = self.read_7bit_encoded_int(35, bigendian=False)
+        data = self.read_exactly(size)
+        if align > 1:
+            self.byte_align(align)
+        return self._decode(data, codec)
+
+    def read_dn_unicode_string(self, align: int = 1):
+        data = self.read_dn_blob()
+        size = len(data)
+        if not size:
+            return ''
+        if size % 2 == 0:
+            raise ParserException('Unicode String without terminator.')
+        if align > 1:
+            self.byte_align(align)
+        return self._decode(data[:-1], 'utf-16le')
+
+    def read_dn_encoded_integer(self):
+        return self.read_7bit_encoded_int(35, bigendian=False)
+
+    def read_dn_length_prefixed_string(self, codec='utf8'):
+        return self.read_dn_string_primitive(codec=codec)
+
+    def read_dn_null_terminated_string(self, align: int = 1, codec='latin1'):
+        result = self.read_c_string(codec)
+        self.byte_align(align)
+        return result
+
+    def read_dn_decimal(self, size: int = 16):
+        return int.from_bytes(self.read_exactly(size), 'big')
+
+    def read_dn_time_span(self):
+        return datetime.timedelta(microseconds=0.1 * self.u64())
+
+    def read_dn_date_time(self):
+        x = self.u64()
+        hi_byte = x >> 56
+        lo_part = x & 0xFFFFFF_FFFFFFFF
+        kind = hi_byte & 0b11
+        time = (hi_byte >> 2) << 56 | lo_part
+        assert kind < 3, 'invalid date kind'
+        if kind == 0:
+            tz = None
+        elif kind == 1:
+            tz = datetime.timezone.utc
+        elif kind == 2:
+            tz = datetime.datetime.now().astimezone().tzinfo
+        else:
+            self._dn_raise(F'Invalid date kind {kind}.')
+        return datetime.datetime.fromtimestamp(time, tz)
+
+    def read_dn_null(self):
+        return None
+
+    def read_dn_guid(self):
+        return str(self.read_guid()).upper()
+
+
+class TypeRepresentedByName(StructMeta):
+    def __repr__(cls):
+        return cls.__name__
+
+
+class DotNetStruct(Struct[memoryview], metaclass=TypeRepresentedByName):
+    @classmethod
+    def Parse(cls, reader: memoryview | DotNetStructReader, *args, **kwargs):
+        if isinstance(reader, memoryview):
+            reader = DotNetStructReader(reader)
+        return super().Parse(reader, *args, **kwargs)
+
+    def __init__(self, reader: DotNetStructReader, *args, **kwargs):
+        super().__init__(reader, *args, **kwargs)
+
+    def __repr__(self):
+        return self.__class__.__name__
 
 
 class InvalidDotNetHeader(ValueError):
     def __init__(self, msg=None):
-        ValueError.__init__(self, msg or '.NET parsing failed: corrupt header.')
+        ValueError.__init__(self, msg or '.NET parsing failed: Corrupt header.')
 
 
 class InvalidSignature(InvalidDotNetHeader):
     def __init__(self):
-        ValueError.__init__(self, '.NET parsing failed: Invalid signature.')
+        super().__init__('.NET parsing failed: Invalid signature.')
 
 
 class BitMask:
-    def __init__(self, bitmask):
+    def __init__(self, bitmask: int):
         self._bitmask = bitmask
 
     def __contains__(self, pos):
@@ -55,667 +188,701 @@ class BitMask:
                 yield k
 
     def __repr__(self):
-        return f'{self._bitmask:b}'
+        return F'{self._bitmask:b}'
+
+    def __json__(self):
+        return repr(self)
 
 
-def bits_required(n):
+def bits_required(n: int):
     return 0 if not n else (n - 1).bit_length()
 
 
-class MultiTableIndex(Struct):
-    _name_to_id = {
-        'Assembly'               : 0x20,
-        'AssemblyOS'             : 0x22,
-        'AssemblyProcessor'      : 0x21,
-        'AssemblyRef'            : 0x23,
-        'AssemblyRefOS'          : 0x25,
-        'AssemblyRefProcessor'   : 0x24,
-        'ClassLayout'            : 0x0F,
-        'Constant'               : 0x0B,
-        'CustomAttribute'        : 0x0C,
-        'ENCLog'                 : 0x1E,
-        'ENCMap'                 : 0x1F,
-        'Event'                  : 0x14,
-        'EventMap'               : 0x12,
-        'EventPtr'               : 0x13,
-        'ExportedType'           : 0x27,
-        'Field'                  : 0x04,
-        'FieldLayout'            : 0x10,
-        'FieldMarshal'           : 0x0D,
-        'FieldPtr'               : 0x03,
-        'FieldRVA'               : 0x1D,
-        'File'                   : 0x26,
-        'GenericParam'           : 0x2A,
-        'GenericParamConstraint' : 0x2C,
-        'ImplMap'                : 0x1C,
-        'InterfaceImpl'          : 0x09,
-        'ManifestResource'       : 0x28,
-        'MemberRef'              : 0x0A,
-        'MethodDef'              : 0x06,
-        'MethodImpl'             : 0x19,
-        'MethodPtr'              : 0x05,
-        'MethodSemantics'        : 0x18,
-        'MethodSpec'             : 0x2B,
-        'Module'                 : 0x00,
-        'ModuleRef'              : 0x1A,
-        'NestedClass'            : 0x29,
-        'Param'                  : 0x08,
-        'ParamPtr'               : 0x07,
-        'Permission'             : 0x0E,
-        'Property'               : 0x17,
-        'PropertyMap'            : 0x15,
-        'PropertyPtr'            : 0x16,
-        'StandAloneSig'          : 0x11,
-        'TypeDef'                : 0x02,
-        'TypeRef'                : 0x01,
-        'TypeSpec'               : 0x1B,
-    }
-    refs = ()
-
-    def __init__(self, reader, rows):
-        if not self.refs:
-            raise NotImplementedError
-        row_max_len = max(
-            rows.get(self._name_to_id[n], 0)
-            for n in self.refs if n is not None
-        )
-        bits = self.bits + bits_required(row_max_len)
-        Type = UInt32 if bits > 16 else UInt16
-        Struct.__init__(self, reader, _type=Type)
-
-    def __len__(self):
-        return len(self.refs)
+class NetMetaData(DotNetStruct):
+    @property
+    def resources(self):
+        return self.Streams.Tables.ManifestResource
 
     @property
-    def bits(self):
-        return bits_required(len(self))
+    def RVAs(self):
+        return self.Streams.Tables.FieldRVA
 
-    @property
-    def mask(self):
-        return (1 << self.bits) - 1
-
-    def parse(self):
-        raw = self.expect(self._type)
+    def __init__(self, reader: DotNetStructReader):
         try:
-            self.RowName = self.refs[raw & self.mask]
+            self.Signature = reader.u32()
+        except EOFError:
+            raise InvalidSignature
+        if self.Signature != 0x424A5342:
+            raise InvalidSignature
+        self.MajorVersion = reader.u16()
+        self.MinorVersion = reader.u16()
+        self._Reserved = reader.u32()
+        size = reader.u32()
+        self.VersionString = reader.read_dn_string_primitive(size, align=4)
+        self.Flags = reader.u16()
+        self.StreamCount = reader.u16()
+        self.StreamInfo = [NetMetaDataStreamEntry(reader) for _ in range(self.StreamCount)]
+        self.Streams = NetMetaDataStreams(reader, meta=self)
+
+
+class NetMetaDataStreamEntry(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader):
+        self.VirtualAddress = reader.u32()
+        self.Size = reader.u32()
+        self.Name = reader.read_dn_null_terminated_string(align=4)
+
+
+class NetMetaDataStream(Dict[int, N], abc.ABC):
+    default: N
+
+    def __init__(self, reader: DotNetStructReader):
+        dict.__init__(self)
+        self._reader = reader
+        reader.seek(offset := 0)
+        while not reader.eof:
+            self[offset] = self.stream_next()
+            offset = reader.tell()
+        self[offset] = self.default
+
+    @abc.abstractmethod
+    def stream_next(self) -> N:
+        raise NotImplementedError
+
+    def __missing__(self, offset: int) -> N:
+        if offset < 0:
+            return self.default
+        try:
+            self._reader.seek(offset)
+            item = self.stream_next()
+        except (EOFError, ParserException):
+            pass
+        else:
+            self[offset] = item
+            return item
+        try:
+            closest = max(key for key in self if key < offset)
+        except ValueError:
+            return self.default
+        container = self[closest]
+        if not isinstance(container, (str, bytes, bytearray, memoryview)):
+            return self.default
+        return container[offset - closest:]
+
+
+class NetMetaDataStreamStrA(NetMetaDataStream[str]):
+    def stream_next(self):
+        return self._reader.read_dn_null_terminated_string()
+    default = ''
+
+
+class NetMetaDataStreamStrU(NetMetaDataStream[str]):
+    def stream_next(self):
+        return self._reader.read_dn_unicode_string()
+    default = ''
+
+
+class NetMetaDataStreamGUID(NetMetaDataStream[Optional[str]]):
+    def stream_next(self):
+        return self._reader.read_dn_guid()
+    default = None
+
+
+class NetMetaDataStreamBlob(NetMetaDataStream[bytes]):
+    def stream_next(self):
+        return self._reader.read_dn_blob()
+    default = B''
+
+
+class StreamNames(str, enum.Enum):
+    TablesTilde = '#~'
+    TablesDash = '#-'
+    Strings = '#Strings'
+    US = '#US'
+    GUID = '#GUID'
+    Blob = '#Blob'
+
+
+class NetMetaDataStreams(Struct[memoryview]):
+    Tables: NetMetaDataTables
+    StrA: NetMetaDataStreamStrA
+    StrU: NetMetaDataStreamStrU
+    GUID: NetMetaDataStreamGUID
+    Blob: NetMetaDataStreamBlob
+
+    Strings: NetMetaDataStreamStrA
+    US: NetMetaDataStreamStrU
+
+    def __init__(self, reader: DotNetStructReader, meta: NetMetaData):
+        with reader.detour():
+            TableName = StreamNames.TablesTilde
+            for se in meta.StreamInfo:
+                if se.Name == TableName:
+                    break
+                if se.Name == StreamNames.TablesDash:
+                    TableName = se.Name
+                    break
+            for name in (
+                StreamNames.Blob,
+                StreamNames.GUID,
+                StreamNames.US,
+                StreamNames.Strings,
+                TableName
+            ):
+                for entry in meta.StreamInfo:
+                    if entry.Name.upper() != name.upper():
+                        continue
+                    try:
+                        reader.seek(entry.VirtualAddress)
+                        stream = DotNetStructReader(reader.read(entry.Size))
+                    except EOFError:
+                        continue
+                    if name == TableName:
+                        self.Tables = NetMetaDataTables(stream, self)
+                    elif name == StreamNames.Strings:
+                        self.StrA = NetMetaDataStreamStrA(stream)
+                        self.Strings = self.StrA
+                    elif name == StreamNames.US:
+                        self.StrU = NetMetaDataStreamStrU(stream)
+                        self.US = self.StrU
+                    elif name == StreamNames.Blob:
+                        self.Blob = NetMetaDataStreamBlob(stream)
+                    elif name == StreamNames.GUID:
+                        self.GUID = NetMetaDataStreamGUID(stream)
+                    break
+
+
+class Module(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Generation = reader.u16()
+        self.Name = tables._read_strA()
+        self.MvId = tables._read_guid()
+        self.EncId = tables._read_guid()
+        self.EncBaseId = tables._read_guid()
+
+
+class TypeRef(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.ResolutionScope = tables._read_ResolutionScopeIndex()
+        self.TypeName = tables._read_strA()
+        self.TypeNamespace = tables._read_strA()
+
+
+class TypeDef(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Flags = reader.u32()
+        self.TypeName = tables._read_strA()
+        self.TypeNamespace = tables._read_strA()
+        self.Extends = tables._read_TypeDefOrRefIndex()
+        self.FieldList = tables._read_FieldIndex()
+        self.MethodList = tables._read_MethodDefIndex()
+
+
+class FieldPtr(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Ref = reader.u16()
+
+
+class FieldAccess(enum.IntEnum):
+    CompilerControlled = 0b000 # noqa
+    Private            = 0b001 # noqa
+    FamAndAssem        = 0b010 # noqa
+    Assembly           = 0b011 # noqa
+    Family             = 0b100 # noqa
+    FamOrAssem         = 0b101 # noqa
+    Public             = 0b110 # noqa
+
+
+class FieldFlags(FlagAccessMixin, enum.IntFlag):
+    Static          = 1 << 0   # noqa
+    InitOnly        = 1 << 1   # noqa
+    Literal         = 1 << 2   # noqa
+    NotSerialized   = 1 << 3   # noqa
+    HasFieldRVA     = 1 << 4   # noqa
+    SpecialName     = 1 << 5   # noqa
+    RTSpecialName   = 1 << 6   # noqa
+    HasFieldMarshal = 1 << 7   # noqa
+    PinvokeImpl     = 1 << 8   # noqa
+    HasDefault      = 1 << 9   # noqa
+
+
+class Field(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Access = FieldAccess(reader.read_integer(4) & 7)
+        self.Flags = FieldFlags(reader.read_integer(12))
+        self.Name = tables._read_strA()
+        self.Signature = tables._read_blob()
+
+
+class MethodPtr(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Ref = reader.u16()
+
+
+class MethodDef(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.RVA = reader.u32()
+        self.ImplFlags = reader.u16()
+        self.Flags = reader.u16()
+        self.Name = tables._read_strA()
+        self.Signature = tables._read_blob()
+        self.ParamList = tables._read_ParamIndex()
+
+
+class ParamPtr(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Ref = reader.u16()
+
+
+class Param(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Flags = reader.u16()
+        self.Sequence = reader.u16()
+        self.Name = tables._read_strA()
+
+
+class InterfaceImpl(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Class = tables._read_TypeDefIndex()
+        self.Interface = tables._read_TypeDefOrRefIndex()
+
+
+class MemberRef(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Class = tables._read_MemberRefParentIndex()
+        self.Name = tables._read_strA()
+        self.Signature = tables._read_blob()
+
+
+class Constant(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Type = reader.u16()
+        self.Parent = tables._read_HasConstantIndex()
+        self.Value = tables._read_blob()
+
+
+class CustomAttribute(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Parent = tables._read_HasCustomAttributeIndex()
+        self.Type = tables._read_CustomAttributeTypeIndex()
+        self.Value = tables._read_blob()
+
+
+class FieldMarshal(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Parent = tables._read_HasFieldMarshallIndex()
+        self.NativeType = tables._read_blob()
+
+
+class Permission(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Action = reader.u16()
+        self.Parent = tables._read_HasDeclSecurityIndex()
+        self.PermissionSet = tables._read_blob()
+
+
+class ClassLayout(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.PackingSize = reader.u16()
+        self.ClassSize = reader.u32()
+        self.Parent = tables._read_TypeDefIndex()
+
+
+class FieldLayout(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Offset = reader.u32()
+        self.Field = tables._read_FieldIndex()
+
+
+class StandAloneSig(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Signature = tables._read_blob()
+
+
+class EventMap(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Parent = tables._read_TypeDefIndex()
+        self.EventList = tables._read_EventIndex()
+
+
+class EventPtr(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Ref = reader.u16()
+
+
+class Event(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.EventFlags = reader.u16()
+        self.Name = tables._read_strA()
+        self.EventType = tables._read_TypeDefOrRefIndex()
+
+
+class PropertyMap(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Parent = tables._read_TypeDefIndex()
+        self.PropertyList = tables._read_PropertyIndex()
+
+
+class PropertyPtr(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Ref = reader.u16()
+
+
+class Property(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Flags = reader.u16()
+        self.Name = tables._read_strA()
+        self.Type = tables._read_blob()
+
+
+class MethodSemantics(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Semantics = reader.u16()
+        self.Method = tables._read_MethodDefIndex()
+        self.Association = tables._read_HasSemanticsIndex()
+
+
+class MethodImpl(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Class = tables._read_TypeDefIndex()
+        self.MethodBody = tables._read_MethodDefOrRefIndex()
+        self.MethodDeclaration = tables._read_MethodDefOrRefIndex()
+
+
+class ModuleRef(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Name = tables._read_strA()
+
+
+class TypeSpec(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Signature = tables._read_blob()
+
+
+class ImplMap(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.MappingFlags = reader.u16()
+        self.MemberForwarded = tables._read_MemberForwardedIndex()
+        self.ImportName = tables._read_strA()
+        self.ImportScope = tables._read_ModuleRefIndex()
+
+
+class FieldRVA(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.RVA = reader.u32()
+        self.Field = tables._read_FieldIndex()
+
+
+class Assembly(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.HashAlgId = reader.u32()
+        self.MajorVersion = reader.u16()
+        self.MinorVersion = reader.u16()
+        self.BuildNumber = reader.u16()
+        self.RevisionNumber = reader.u16()
+        self.Flags = reader.u32()
+        self.PublicKey = tables._read_blob()
+        self.Name = tables._read_strA()
+        self.Culture = tables._read_strA()
+
+
+class AssemblyProcessor(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Processor = reader.u32()
+
+
+class AssemblyOS(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.OsPlatformId = reader.u32()
+        self.OsMajorVersion = reader.u32()
+        self.OsMinorVersion = reader.u32()
+
+
+class AssemblyRef(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.MajorVersion = reader.u16()
+        self.MinorVersion = reader.u16()
+        self.BuildNumber = reader.u16()
+        self.RevisionNumber = reader.u16()
+        self.Flags = reader.u32()
+        self.PublicKeyOrToken = tables._read_blob()
+        self.Name = tables._read_strA()
+        self.Culture = tables._read_strA()
+        self.HashValue = tables._read_blob()
+
+
+class AssemblyRefProcessor(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Processor = reader.u32()
+        self.AssemblyRef = tables._read_AssemblyRefIndex()
+
+
+class AssemblyRefOS(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.OsPlatformId = reader.u32()
+        self.OsMajorVersion = reader.u32()
+        self.OsMinorVersion = reader.u32()
+        self.AssemblyRef = tables._read_AssemblyRefIndex()
+
+
+class File(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Flags = reader.u32()
+        self.Name = tables._read_strA()
+        self.HashValue = tables._read_blob()
+
+
+class ExportedType(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Flags = reader.u32()
+        self.TypeDefId = reader.u32()
+        self.TypeName = tables._read_strA()
+        self.TypeNamespace = tables._read_strA()
+        self.Implementation = tables._read_ImplementationIndex()
+
+
+class ManifestResource(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Offset = reader.u32()
+        self.Flags = reader.u32()
+        self.Name = tables._read_strA()
+        self.Implementation = tables._read_ImplementationIndex()
+
+
+class NestedClass(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.NestedClass = tables._read_TypeDefIndex()
+        self.EnclosingClass = tables._read_TypeDefIndex()
+
+
+class GenericParam(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Number = reader.u16()
+        self.Flags = reader.u16()
+        self.Owner = tables._read_TypeOrMethodDefIndex()
+        self.Name = tables._read_strA()
+
+
+class MethodSpec(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Method = tables._read_MethodDefOrRefIndex()
+        self.Instantiation = tables._read_blob()
+
+
+class GenericParamConstraint(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Owner = tables._read_GenericParamIndex()
+        self.Constraint = tables._read_TypeDefOrRefIndex()
+
+
+class ENCLog(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Token = reader.u32()
+        self.FuncCode = reader.u32()
+
+
+class ENCMap(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
+        self.Token = reader.u32()
+
+
+class ImageDataDirectory(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader):
+        self.VirtualAddress = reader.u32()
+        self.Size = reader.u32()
+
+
+class NetDirectoryFlags(FlagAccessMixin, enum.IntFlag):
+    IL_ONLY = 0b1
+    REQUIRE_32BIT = 0b10
+    IL_LIBRARY = 0b100
+    STRONG_NAME_SIGNED = 0b1000
+    NATIVE_ENTRYPOINT = 0b10000
+    TRACK_DEBUG_DATA = 0b10000000000000000
+
+
+class NetDirectory(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader):
+        self.Size = reader.u32()
+        self.MajorRuntimeVersion = reader.u16()
+        self.MinorRuntimeVersion = reader.u16()
+        self.MetaData = ImageDataDirectory(reader)
+        self.Flags = reader.u32()
+        self.EntryPointToken = reader.u32()
+        self.Resources = ImageDataDirectory(reader)
+        self.StringNameSignature = ImageDataDirectory(reader)
+        self.CodeManagerTable = ImageDataDirectory(reader)
+        self.VTableFixups = ImageDataDirectory(reader)
+        self.ExportAddressTableJumps = ImageDataDirectory(reader)
+        self.ManagedNativeHeader = ImageDataDirectory(reader)
+        self.KnownFlags = NetDirectoryFlags(self.Flags)
+
+
+class NetMetaFlags(FlagAccessMixin, enum.IntFlag):
+    LARGE_STRA = 0b1
+    LARGE_GUID = 0b10
+    LARGE_BLOB = 0b100
+    PADDING = 0b1000
+    DELTA_ONLY = 0b100000
+    EXTRA_DATA = 0b1000000
+    HAS_DELETE = 0b10000000
+
+
+class NetMetaDataTablesHeader(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader):
+        self._Reserved1 = reader.u32()
+        self.MajorVersion = reader.u8()
+        self.MinorVersion = reader.u8()
+        self.Flags = NetMetaFlags(reader.u8())
+        self._Reserved2 = reader.u8()
+        self.ExistingRows = BitMask(reader.u64())
+        self.SortedRows = BitMask(reader.u64())
+        self.RowCount = {k: reader.u32() for k in self.ExistingRows}
+
+
+class Index(Generic[R]):
+    RowName: str | None
+    RowType: int | None
+    Index: int
+
+    def __init__(
+        self,
+        reader: DotNetStructReader,
+        tables: NetMetaDataTables,
+        streams: NetMetaDataStreams,
+        th: type[R]
+    ):
+        self._s = streams
+        info = tables._read_index_info(th)
+        raw = reader.u32() if info.large else reader.u16()
+        masked = raw & info.mask
+        try:
+            self.RowName = info.names[masked]
+            self.RowType = info.types[masked]
         except IndexError:
-            self.Error = f'no ref at index {raw & self.mask}'
             self.RowName = None
-        if self.RowName is not None:
-            self.RowType = self._name_to_id[self.RowName]
-        self.Index = raw >> self.bits
-
-
-class TypeDefOrRefIndex(MultiTableIndex):
-    refs = (
-        'TypeDef',
-        'TypeRef',
-        'TypeSpec'
-    )
-
-
-class HasConstantIndex(MultiTableIndex):
-    refs = (
-        'Field',
-        'Param',
-        'Property'
-    )
-
-
-class HasCustomAttributeIndex(MultiTableIndex):
-    refs = (
-        'MethodDef',
-        'Field',
-        'TypeRef',
-        'TypeDef',
-        'Param',
-        'InterfaceImpl',
-        'MemberRef',
-        'Module',
-        'Permission',
-        'Property',
-        'Event',
-        'StandAloneSig',
-        'ModuleRef',
-        'TypeSpec',
-        'Assembly',
-        'AssemblyRef',
-        'File',
-        'ExportedType',
-        'ManifestResource',
-    )
-
-
-class HasFieldMarshallIndex(MultiTableIndex):
-    refs = (
-        'Field',
-        'Param',
-    )
-
-
-class HasDeclSecurityIndex(MultiTableIndex):
-    refs = (
-        'TypeDef',
-        'MethodDef',
-        'Assembly',
-    )
-
-
-class MemberRefParentIndex(MultiTableIndex):
-    refs = (
-        'TypeDef',
-        'TypeRef',
-        'ModuleRef',
-        'MethodDef',
-        'TypeSpec',
-    )
-
-
-class HasSemanticsIndex(MultiTableIndex):
-    refs = (
-        'Event',
-        'Property',
-    )
-
-
-class MethodDefOrRefIndex(MultiTableIndex):
-    refs = (
-        'MethodDef',
-        'MemberRef',
-    )
-
-
-class MemberForwardedIndex(MultiTableIndex):
-    refs = (
-        'Field',
-        'MethodDef',
-    )
-
-
-class ImplementationIndex(MultiTableIndex):
-    refs = (
-        'File',
-        'AssemblyRef',
-        'ExportedType',
-    )
-
-
-class CustomAttributeTypeIndex(MultiTableIndex):
-    refs = (
-        None,
-        None,
-        'MethodDef',
-        'MemberRef',
-        None
-    )
-
-
-class ResolutionScopeIndex(MultiTableIndex):
-    refs = (
-        'Module',
-        'ModuleRef',
-        'AssemblyRef',
-        'TypeRef'
-    )
-
-
-class TypeOrMethodDefIndex(MultiTableIndex):
-    refs = (
-        'TypeDef',
-        'MethodDef',
-    )
-
-
-class FieldIndex(MultiTableIndex):
-    refs = ('Field',)
-
-
-class MethodDefIndex(MultiTableIndex):
-    refs = ('MethodDef',)
-
-
-class ParamIndex(MultiTableIndex):
-    refs = ('Param',)
-
-
-class TypeDefIndex(MultiTableIndex):
-    refs = ('TypeDef',)
-
-
-class EventIndex(MultiTableIndex):
-    refs = ('Event',)
-
-
-class PropertyIndex(MultiTableIndex):
-    refs = ('Property',)
-
-
-class ModuleRefIndex(MultiTableIndex):
-    refs = ('ModuleRef',)
-
-
-class AssemblyRefIndex(MultiTableIndex):
-    refs = ('AssemblyRef',)
-
-
-class GenericParamIndex(MultiTableIndex):
-    refs = ('GenericParam',)
-
-
-class TableRow(Struct):
-    def __init__(self, reader, streams, header, **kw):
-        Struct.__init__(self, reader, _streams=streams, _header=header)
-
-    def expect_strA(self):
-        offset = self.expect(self._header.HeapOffsetTypes.String)
-        return self._streams.Strings[offset]
-
-    def expect_guid(self):
-        index = self.expect(self._header.HeapOffsetTypes.GUID)
-        offset = (index - 1) * 0x10
-        return self._streams.GUID[offset]
-
-    def expect_blob(self):
-        offset = self.expect(self._header.HeapOffsetTypes.Blob)
-        return self._streams.Blob[offset]
-
-    def index(self, IndexParser):
-        return self.expect(IndexParser, rows=self._header.RowCount)
-
-
-class Module(TableRow):
-    def parse(self):
-        self.Generation = self.expect(UInt16)
-        self.Name = self.expect_strA()
-        self.MvId = self.expect_guid()
-        self.EncId = self.expect_guid()
-        self.EncBaseId = self.expect_guid()
-
-
-class TypeRef(TableRow):
-    def parse(self):
-        self.ResolutionScope = self.index(ResolutionScopeIndex)
-        self.TypeName = self.expect_strA()
-        self.TypeNamespace = self.expect_strA()
-
-
-class TypeDef(TableRow):
-    def parse(self):
-        self.Flags = self.expect(UInt32)
-        self.TypeName = self.expect_strA()
-        self.TypeNamespace = self.expect_strA()
-        self.Extends = self.index(TypeDefOrRefIndex)
-        self.FieldList = self.index(FieldIndex)
-        self.MethodList = self.index(MethodDefIndex)
-
-
-class FieldPtr(TableRow):
-    def parse(self):
-        self.Ref = self.expect(UInt16)
-
-
-class Field(TableRow):
-    def parse(self):
-        class FieldFlags:
-            def __init__(self, mask):
-                self.Value = BitMask(mask)
-                self.Static = bool(self.Value[4])
-                self.InitOnly = bool(self.Value[5])
-                self.Literal = bool(self.Value[6])
-                self.NotSerialized = bool(self.Value[7])
-                self.HasFieldRVA = bool(self.Value[8])
-                self.SpecialName = bool(self.Value[9])
-                self.RTSpecialName = bool(self.Value[10])
-                self.HasFieldMarshal = bool(self.Value[11])
-                self.PinvokeImpl = bool(self.Value[12])
-                self.HasDefault = bool(self.Value[13])
-
-            def __str__(self):
-                return str(self.Value)
-
-        self.Flags = FieldFlags(self.expect(UInt16))
-        self.Name = self.expect_strA()
-        self.Signature = self.expect_blob()
-
-
-class MethodPtr(TableRow):
-    def parse(self):
-        self.Ref = self.expect(UInt16)
-
-
-class MethodDef(TableRow):
-    def parse(self):
-        self.RVA = self.expect(UInt32)
-        self.ImplFlags = self.expect(UInt16)
-        self.Flags = self.expect(UInt16)
-        self.Name = self.expect_strA()
-        self.Signature = self.expect_blob()
-        self.ParamList = self.index(ParamIndex)
-
-
-class ParamPtr(TableRow):
-    def parse(self):
-        self.Ref = self.expect(UInt16)
-
-
-class Param(TableRow):
-    def parse(self):
-        self.Flags = self.expect(UInt16)
-        self.Sequence = self.expect(UInt16)
-        self.Name = self.expect_strA()
-
-
-class InterfaceImpl(TableRow):
-    def parse(self):
-        self.Class = self.index(TypeDefIndex)
-        self.Interface = self.index(TypeDefOrRefIndex)
-
-
-class MemberRef(TableRow):
-    def parse(self):
-        self.Class = self.index(MemberRefParentIndex)
-        self.Name = self.expect_strA()
-        self.Signature = self.expect_blob()
-
-
-class Constant(TableRow):
-    def parse(self):
-        self.Type = self.expect(UInt16)
-        self.Parent = self.index(HasConstantIndex)
-        self.Value = self.expect_blob()
-
-
-class CustomAttribute(TableRow):
-    def parse(self):
-        self.Parent = self.index(HasCustomAttributeIndex)
-        self.Type = self.index(CustomAttributeTypeIndex)
-        self.Value = self.expect_blob()
-
-
-class FieldMarshal(TableRow):
-    def parse(self):
-        self.Parent = self.index(HasFieldMarshallIndex)
-        self.NativeType = self.expect_blob()
-
-
-class Permission(TableRow):
-    def parse(self):
-        self.Action = self.expect(UInt16)
-        self.Parent = self.index(HasDeclSecurityIndex)
-        self.PermissionSet = self.expect_blob()
-
-
-class ClassLayout(TableRow):
-    def parse(self):
-        self.PackingSize = self.expect(UInt16)
-        self.ClassSize = self.expect(UInt32)
-        self.Parent = self.index(TypeDefIndex)
-
-
-class FieldLayout(TableRow):
-    def parse(self):
-        self.Offset = self.expect(UInt32)
-        self.Field = self.index(FieldIndex)
-
-
-class StandAloneSig(TableRow):
-    def parse(self):
-        self.Signature = self.expect_blob()
-
-
-class EventMap(TableRow):
-    def parse(self):
-        self.Parent = self.index(TypeDefIndex)
-        self.EventList = self.index(EventIndex)
-
-
-class EventPtr(TableRow):
-    def parse(self):
-        self.Ref = self.expect(UInt16)
-
-
-class Event(TableRow):
-    def parse(self):
-        self.EventFlags = self.expect(UInt16)
-        self.Name = self.expect_strA()
-        self.EventType = self.index(TypeDefOrRefIndex)
-
-
-class PropertyMap(TableRow):
-    def parse(self):
-        self.Parent = self.index(TypeDefIndex)
-        self.PropertyList = self.index(PropertyIndex)
-
-
-class PropertyPtr(TableRow):
-    def parse(self):
-        self.Ref = self.expect(UInt16)
-
-
-class Property(TableRow):
-    def parse(self):
-        self.Flags = self.expect(UInt16)
-        self.Name = self.expect_strA()
-        self.Type = self.expect_blob()
-
-
-class MethodSemantics(TableRow):
-    def parse(self):
-        self.Semantics = self.expect(UInt16)
-        self.Method = self.index(MethodDefIndex)
-        self.Association = self.index(HasSemanticsIndex)
-
-
-class MethodImpl(TableRow):
-    def parse(self):
-        self.Class = self.index(TypeDefIndex)
-        self.MethodBody = self.index(MethodDefOrRefIndex)
-        self.MethodDeclaration = self.index(MethodDefOrRefIndex)
-
-
-class ModuleRef(TableRow):
-    def parse(self):
-        self.Name = self.expect_strA()
-
-
-class TypeSpec(TableRow):
-    def parse(self):
-        self.Signature = self.expect_blob()
-
-
-class ImplMap(TableRow):
-    def parse(self):
-        self.MappingFlags = self.expect(UInt16)
-        self.MemberForwarded = self.index(MemberForwardedIndex)
-        self.ImportName = self.expect_strA()
-        self.ImportScope = self.index(ModuleRefIndex)
-
-
-class FieldRVA(TableRow):
-    def parse(self):
-        self.RVA = self.expect(UInt32)
-        self.Field: MultiTableIndex = self.index(FieldIndex)
-
-
-class Assembly(TableRow):
-    def parse(self):
-        self.HashAlgId = self.expect(UInt32)
-        self.MajorVersion = self.expect(UInt16)
-        self.MinorVersion = self.expect(UInt16)
-        self.BuildNumber = self.expect(UInt16)
-        self.RevisionNumber = self.expect(UInt16)
-        self.Flags = self.expect(UInt32)
-        self.PublicKey = self.expect_blob()
-        self.Name = self.expect_strA()
-        self.Culture = self.expect_strA()
-
-
-class AssemblyProcessor(TableRow):
-    def parse(self):
-        self.Processor = self.expect(UInt32)
-
-
-class AssemblyOS(TableRow):
-    def parse(self):
-        self.OsPlatformId = self.expect(UInt32)
-        self.OsMajorVersion = self.expect(UInt32)
-        self.OsMinorVersion = self.expect(UInt32)
-
-
-class AssemblyRef(TableRow):
-    def parse(self):
-        self.MajorVersion = self.expect(UInt16)
-        self.MinorVersion = self.expect(UInt16)
-        self.BuildNumber = self.expect(UInt16)
-        self.RevisionNumber = self.expect(UInt16)
-        self.Flags = self.expect(UInt32)
-        self.PublicKeyOrToken = self.expect_blob()
-        self.Name = self.expect_strA()
-        self.Culture = self.expect_strA()
-        self.HashValue = self.expect_blob()
-
-
-class AssemblyRefProcessor(TableRow):
-    def parse(self):
-        self.Processor = self.expect(UInt32)
-        self.AssemblyRef = self.index(AssemblyRefIndex)
-
-
-class AssemblyRefOS(TableRow):
-    def parse(self):
-        self.OsPlatformId = self.expect(UInt32)
-        self.OsMajorVersion = self.expect(UInt32)
-        self.OsMinorVersion = self.expect(UInt32)
-        self.AssemblyRef = self.index(AssemblyRefIndex)
-
-
-class File(TableRow):
-    def parse(self):
-        self.Flags = self.expect(UInt32)
-        self.Name = self.expect_strA()
-        self.HashValue = self.expect_blob()
-
-
-class ExportedType(TableRow):
-    def parse(self):
-        self.Flags = self.expect(UInt32)
-        self.TypeDefId = self.expect(UInt32)
-        self.TypeName = self.expect_strA()
-        self.TypeNamespace = self.expect_strA()
-        self.Implementation = self.index(ImplementationIndex)
-
-
-class ManifestResource(TableRow):
-    def parse(self):
-        self.Offset = self.expect(UInt32)
-        self.Flags = self.expect(UInt32)
-        self.Name = self.expect_strA()
-        self.Implementation = self.index(ImplementationIndex)
-
-
-class NestedClass(TableRow):
-    def parse(self):
-        self.NestedClass = self.index(TypeDefIndex)
-        self.EnclosingClass = self.index(TypeDefIndex)
-
-
-class GenericParam(TableRow):
-    def parse(self):
-        self.Number = self.expect(UInt16)
-        self.Flags = self.expect(UInt16)
-        self.Owner = self.index(TypeOrMethodDefIndex)
-        self.Name = self.expect_strA()
-
-
-class MethodSpec(TableRow):
-    def parse(self):
-        self.Method = self.index(MethodDefOrRefIndex)
-        self.Instantiation = self.expect_blob()
-
-
-class GenericParamConstraint(TableRow):
-    def parse(self):
-        self.Owner = self.index(GenericParamIndex)
-        self.Constraint = self.index(TypeDefOrRefIndex)
-
-
-class ENCLog(TableRow):
-    def parse(self):
-        self.Token = self.expect(UInt32)
-        self.FuncCode = self.expect(UInt32)
-
-
-class ENCMap(TableRow):
-    def parse(self):
-        self.Token = self.expect(UInt32)
-
-
-class ImageDataDirectory(Struct):
-    def parse(self):
-        self.VirtualAddress = self.expect(UInt32)
-        self.Size = self.expect(UInt32)
-
-
-class NetDirectory(Struct):
-    def parse(self):
-        self.Size = self.expect(UInt32)
-        self.MajorRuntimeVersion = self.expect(UInt16)
-        self.MinorRuntimeVersion = self.expect(UInt16)
-        self.MetaData = self.expect(ImageDataDirectory)
-        self.Flags = self.expect(UInt32)
-        self.EntryPointToken = self.expect(UInt32)
-        self.Resources = self.expect(ImageDataDirectory)
-        self.StringNameSignature = self.expect(ImageDataDirectory)
-        self.CodeManagerTable = self.expect(ImageDataDirectory)
-        self.VTableFixups = self.expect(ImageDataDirectory)
-        self.ExportAddressTableJumps = self.expect(ImageDataDirectory)
-        self.ManagedNativeHeader = self.expect(ImageDataDirectory)
-        # Known Flags
-        self.KnownFlags = dict(
-            IL_ONLY=((self.Flags >> 0) & 1 == 1),
-            REQUIRE_32BIT=((self.Flags >> 1) & 1 == 1),
-            IL_LIBRARY=((self.Flags >> 2) & 1 == 1),
-            STRONG_NAME_SIGNED=((self.Flags >> 3) & 1 == 1),
-            NATIVE_ENTRYPOINT=((self.Flags >> 4) & 1 == 1),
-            TRACK_DEBUG_DATA=((self.Flags >> 16) & 1 == 1)
-        )
-
-
-class NetMetaDataStreamEntry(Struct):
-    def parse(self):
-        self.VirtualAddress = self.expect(UInt32)
-        self.Size = self.expect(UInt32)
-        self.Name = self.expect(NullTerminatedString, align=4)
-
-
-class NetMetaDataTablesHeader(Struct):
-    def parse(self):
-        Types = (UInt16, UInt32)
-        self._Reserved1 = self.expect(UInt32)
-        self.MajorVersion = self.expect(Byte)
-        self.MinorVersion = self.expect(Byte)
-        self.Flags = BitMask(self.expect(Byte))
-        self.KnownFlags = dict(
-            PADDING=bool(self.Flags[3]),
-            DELTA_ONLY=bool(self.Flags[5]),
-            LARGE_STRA=bool(self.Flags[0]),  # Strings require 4 byte offsets
-            LARGE_GUID=bool(self.Flags[1]),  # GUIDs require 4 byte offsets
-            LARGE_BLOB=bool(self.Flags[2]),  # Blobs require 4 byte offsets
-            EXTRA_DATA=bool(self.Flags[6]),  # Extra data follows the row counts
-            HAS_DELETE=bool(self.Flags[7])   # Certain tables can contain deleted rows.
-        )
-        self.HeapOffsetTypes = Box(
-            String=Types[self.Flags[0]],
-            GUID=Types[self.Flags[1]],
-            Blob=Types[self.Flags[2]])
-        self._Reserved2 = self.expect(Byte)
-        self.ExistingRows = BitMask(self.expect(UInt64))
-        self.SortedRows = BitMask(self.expect(UInt64))
-        self.RowCount = {k: self.expect(UInt32) for k in self.ExistingRows}
-
-
-class NetMetaDataTables(Struct):
-    lookup = {
+            self.RowType = None
+        self.Index = raw >> info.bits
+
+    def __json__(self):
+        return struct_to_json(self.Value)
+
+    @functools.cached_property
+    def Value(self) -> R | None:
+        try:
+            return cast(R, self._s.Tables[self.RowType][self.Index - 1])
+        except IndexError:
+            return None
+
+
+TypeDefOrRefIndex = Union[
+    TypeDef,
+    TypeRef,
+    TypeSpec,
+]
+HasConstantIndex = Union[
+    Field,
+    Param,
+    Property,
+]
+HasCustomAttributeIndex = Union[
+    MethodDef,
+    Field,
+    TypeRef,
+    TypeDef,
+    Param,
+    InterfaceImpl,
+    MemberRef,
+    Module,
+    Permission,
+    Property,
+    Event,
+    StandAloneSig,
+    ModuleRef,
+    TypeSpec,
+    Assembly,
+    AssemblyRef,
+    File,
+    ExportedType,
+    ManifestResource,
+]
+HasFieldMarshallIndex = Union[
+    Field,
+    Param,
+]
+HasDeclSecurityIndex = Union[
+    TypeDef,
+    MethodDef,
+    Assembly,
+]
+MemberRefParentIndex = Union[
+    TypeDef,
+    TypeRef,
+    ModuleRef,
+    MethodDef,
+    TypeSpec,
+]
+HasSemanticsIndex = Union[
+    Event,
+    Property,
+]
+MethodDefOrRefIndex = Union[
+    MethodDef,
+    MemberRef,
+]
+MemberForwardedIndex = Union[
+    Field,
+    MethodDef,
+]
+ImplementationIndex = Union[
+    File,
+    AssemblyRef,
+    ExportedType,
+]
+CustomAttributeTypeIndex = Union[
+    MethodDef,
+    MemberRef,
+]
+ResolutionScopeIndex = Union[
+    Module,
+    ModuleRef,
+    AssemblyRef,
+    TypeRef,
+]
+TypeOrMethodDefIndex = Union[
+    TypeDef,
+    MethodDef,
+]
+FieldIndex = Union[
+    Field,
+]
+MethodDefIndex = Union[
+    MethodDef,
+]
+ParamIndex = Union[
+    Param,
+]
+TypeDefIndex = Union[
+    TypeDef,
+]
+EventIndex = Union[
+    Event,
+]
+PropertyIndex = Union[
+    Property,
+]
+ModuleRefIndex = Union[
+    ModuleRef,
+]
+AssemblyRefIndex = Union[
+    AssemblyRef,
+]
+GenericParamIndex = Union[
+    GenericParam,
+]
+
+
+class NetMetaDataTables(DotNetStruct):
+    lookup: dict[int, type[DotNetStruct]] = {
         0x00: Module,
         0x01: TypeRef,
         0x02: TypeDef,
@@ -763,13 +930,110 @@ class NetMetaDataTables(Struct):
         0x2C: GenericParamConstraint,
     }
 
-    def __init__(self, reader, streams):
-        Struct.__init__(self, reader, _streams=streams)
+    def _read_TypeDefOrRefIndex(self) -> Index[TypeDefOrRefIndex]:
+        return self._read_index(TypeDefOrRefIndex)
 
-    def parse(self):
-        self.Header: NetMetaDataTablesHeader = self.expect(NetMetaDataTablesHeader)
-        if self.Header.Flags[6]:
-            self.ExtraData = self.expect(UInt32)
+    def _read_HasConstantIndex(self) -> Index[HasConstantIndex]:
+        return self._read_index(HasConstantIndex)
+
+    def _read_HasCustomAttributeIndex(self) -> Index[HasCustomAttributeIndex]:
+        return self._read_index(HasCustomAttributeIndex)
+
+    def _read_HasFieldMarshallIndex(self) -> Index[HasFieldMarshallIndex]:
+        return self._read_index(HasFieldMarshallIndex)
+
+    def _read_HasDeclSecurityIndex(self) -> Index[HasDeclSecurityIndex]:
+        return self._read_index(HasDeclSecurityIndex)
+
+    def _read_MemberRefParentIndex(self) -> Index[MemberRefParentIndex]:
+        return self._read_index(MemberRefParentIndex)
+
+    def _read_HasSemanticsIndex(self) -> Index[HasSemanticsIndex]:
+        return self._read_index(HasSemanticsIndex)
+
+    def _read_MethodDefOrRefIndex(self) -> Index[MethodDefOrRefIndex]:
+        return self._read_index(MethodDefOrRefIndex)
+
+    def _read_MemberForwardedIndex(self) -> Index[MemberForwardedIndex]:
+        return self._read_index(MemberForwardedIndex)
+
+    def _read_ImplementationIndex(self) -> Index[ImplementationIndex]:
+        return self._read_index(ImplementationIndex)
+
+    def _read_CustomAttributeTypeIndex(self) -> Index[CustomAttributeTypeIndex]:
+        return self._read_index(CustomAttributeTypeIndex)
+
+    def _read_ResolutionScopeIndex(self) -> Index[ResolutionScopeIndex]:
+        return self._read_index(ResolutionScopeIndex)
+
+    def _read_TypeOrMethodDefIndex(self) -> Index[TypeOrMethodDefIndex]:
+        return self._read_index(TypeOrMethodDefIndex)
+
+    def _read_FieldIndex(self) -> Index[FieldIndex]:
+        return self._read_index(FieldIndex)
+
+    def _read_MethodDefIndex(self) -> Index[MethodDefIndex]:
+        return self._read_index(MethodDefIndex)
+
+    def _read_ParamIndex(self) -> Index[ParamIndex]:
+        return self._read_index(ParamIndex)
+
+    def _read_TypeDefIndex(self) -> Index[TypeDefIndex]:
+        return self._read_index(TypeDefIndex)
+
+    def _read_EventIndex(self) -> Index[EventIndex]:
+        return self._read_index(EventIndex)
+
+    def _read_PropertyIndex(self) -> Index[PropertyIndex]:
+        return self._read_index(PropertyIndex)
+
+    def _read_ModuleRefIndex(self) -> Index[ModuleRefIndex]:
+        return self._read_index(ModuleRefIndex)
+
+    def _read_AssemblyRefIndex(self) -> Index[AssemblyRefIndex]:
+        return self._read_index(AssemblyRefIndex)
+
+    def _read_GenericParamIndex(self) -> Index[GenericParamIndex]:
+        return self._read_index(GenericParamIndex)
+
+    @functools.lru_cache(maxsize=None)
+    def _read_index_info(self, th: type):
+        class IndexInfo(NamedTuple):
+            names: tuple[str, ...]
+            types: tuple[NetTable, ...]
+            bits: int
+            mask: int
+            large: bool
+
+        if not (options := get_args(th)):
+            options = (th,)
+
+        names = tuple(t.__name__ for t in options)
+        types = tuple(NetTable[n] for n in names)
+        row_count = self.Header.RowCount
+        row_max_len = max(row_count.get(t, 0) for t in types)
+        bits_index = bits_required(len(names))
+        bits_total = bits_index + bits_required(row_max_len)
+        mask = (1 << bits_index) - 1
+        return IndexInfo(names, types, bits_index, mask, bits_total > 16)
+
+    def __init__(self, reader: DotNetStructReader, streams: NetMetaDataStreams):
+        self.Header: NetMetaDataTablesHeader = NetMetaDataTablesHeader(reader)
+        if NetMetaFlags.EXTRA_DATA in self.Header.Flags:
+            self.ExtraData = reader.u32()
+
+        _index_strA = reader.u32 if (NetMetaFlags.LARGE_STRA in self.Header.Flags) else reader.u16
+        _index_guid = reader.u32 if (NetMetaFlags.LARGE_GUID in self.Header.Flags) else reader.u16
+        _index_blob = reader.u32 if (NetMetaFlags.LARGE_BLOB in self.Header.Flags) else reader.u16
+
+        self._read_strA = lambda: streams.StrA[_index_strA()]
+        self._read_blob = lambda: streams.Blob[_index_blob()]
+        self._read_guid = lambda: streams.GUID[(_index_guid() - 1) << 4]
+
+        def _read_index(th) -> Index:
+            return Index(reader, self, streams, th)
+
+        self._read_index = _read_index
 
         self.Module: list[Module] = []
         self.TypeRef: list[TypeRef] = []
@@ -822,211 +1086,116 @@ class NetMetaDataTables(Struct):
             try:
                 Type = self.lookup[k]
             except KeyError:
-                raise RuntimeError('Cannot parse unknown table index 0x{:08X}; unable to continue parsing.')
-            TypeEntries = getattr(self, repr(Type))
+                raise RuntimeError(F'Cannot parse unknown table index {k:#02x}; unable to continue parsing.')
+            TypeEntries: list = getattr(self, repr(Type))
             for _ in range(count):
-                Entry = self.expect(Type, streams=self._streams, header=self.Header)
+                Entry = Type(reader, tables=self)
                 TypeEntries.append(Entry)
 
-    def __getitem__(self, k):
+    def __getitem__(self, k) -> list[DotNetStruct]:
         try:
             Type = self.lookup[k]
         except KeyError:
-            return super().__getitem__(k)
+            return getattr(self, k)
         else:
             return getattr(self, repr(Type))
 
 
-class ODict(dict):
-    def in_sequence(self, k, default=None):
-        for j, index in enumerate(sorted(self)):
-            if j == k:
-                return self[index]
-        else:
-            return default
+class NetResourceWithName(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader):
+        self.Name = reader.read_dn_string_primitive(codec='utf-16LE')
+        self.Offset = reader.u32()
+        with reader.detour(self.Offset):
+            self.Size = reader.u32()
+            self.Data = reader.read(self.Size)
 
 
-class NetMetaDataStreamDummy(dict):
-    def __init__(self, default=None):
-        self._default = default
-        dict.__init__(self)
-
-    def __getitem__(self, offset):
-        return self._default
-
-
-class NetMetaDataStream(dict):
-    def __init__(self, reader, type, default=None):
-        dict.__init__(self)
-        self._default = default
-        self._reader = reader
-        self._type = type
-        self._cached = False
-        self.read()
-
-    def _next(self):
-        return self._reader.expect(self._type)
-
-    def __getitem__(self, offset):
-        if offset < 0:
-            return self._default
-        try:
-            return dict.__getitem__(self, offset)
-        except KeyError:
-            try:
-                self._reader.seek(offset)
-                item = self._next()
-            except ParserException:
-                pass
-            else:
-                self[offset] = item
-                return item
-        try:
-            closest = max(key for key in self if key < offset)
-        except ValueError:
-            return None
-        container = unpack(self[closest])
-        return container[offset - closest:] or self._default
-
-    def read(self):
-        if self._cached:
-            return
-        self._reader.seek(0)
-        while True:
-            offset = self._reader.tell()
-            try:
-                self[offset] = self._next()
-            except ParserException:
-                break
-        self._cached = True
-
-    def __iter__(self):
-        self.read()
-        return dict.__iter__(self)
+class NetTable(enum.IntEnum):
+    Assembly               = 0x20  # noqa
+    AssemblyOS             = 0x22  # noqa
+    AssemblyProcessor      = 0x21  # noqa
+    AssemblyRef            = 0x23  # noqa
+    AssemblyRefOS          = 0x25  # noqa
+    AssemblyRefProcessor   = 0x24  # noqa
+    ClassLayout            = 0x0F  # noqa
+    Constant               = 0x0B  # noqa
+    CustomAttribute        = 0x0C  # noqa
+    ENCLog                 = 0x1E  # noqa
+    ENCMap                 = 0x1F  # noqa
+    Event                  = 0x14  # noqa
+    EventMap               = 0x12  # noqa
+    EventPtr               = 0x13  # noqa
+    ExportedType           = 0x27  # noqa
+    Field                  = 0x04  # noqa
+    FieldLayout            = 0x10  # noqa
+    FieldMarshal           = 0x0D  # noqa
+    FieldPtr               = 0x03  # noqa
+    FieldRVA               = 0x1D  # noqa
+    File                   = 0x26  # noqa
+    GenericParam           = 0x2A  # noqa
+    GenericParamConstraint = 0x2C  # noqa
+    ImplMap                = 0x1C  # noqa
+    InterfaceImpl          = 0x09  # noqa
+    ManifestResource       = 0x28  # noqa
+    MemberRef              = 0x0A  # noqa
+    MethodDef              = 0x06  # noqa
+    MethodImpl             = 0x19  # noqa
+    MethodPtr              = 0x05  # noqa
+    MethodSemantics        = 0x18  # noqa
+    MethodSpec             = 0x2B  # noqa
+    Module                 = 0x00  # noqa
+    ModuleRef              = 0x1A  # noqa
+    NestedClass            = 0x29  # noqa
+    Param                  = 0x08  # noqa
+    ParamPtr               = 0x07  # noqa
+    Permission             = 0x0E  # noqa
+    Property               = 0x17  # noqa
+    PropertyMap            = 0x15  # noqa
+    PropertyPtr            = 0x16  # noqa
+    StandAloneSig          = 0x11  # noqa
+    TypeDef                = 0x02  # noqa
+    TypeRef                = 0x01  # noqa
+    TypeSpec               = 0x1B  # noqa
 
 
-class NetMetaDataStreams(Struct):
-    def __init__(self, reader, meta):
-        Struct.__init__(self, reader, _meta=meta)
-
-    def _read_all(self, reader, Type):
-        while True:
-            offset = reader.tell()
-            try:
-                yield offset, reader.expect(Type)
-            except ParserException:
-                break
-
-    def parse(self):
-        self.Tables: NetMetaDataTables = None
-        self.Strings = NetMetaDataStreamDummy('')
-        self.US = NetMetaDataStreamDummy('')
-        self.GUID = NetMetaDataStreamDummy()
-        self.Blob = NetMetaDataStreamDummy(B'')
-        with self._reader.checkpoint():
-            TableName = '#~'
-            for se in self._meta.StreamInfo:
-                if se.Name == TableName:
-                    break
-                if se.Name == '#-':
-                    TableName = se.Name
-                    break
-            for k, name in reversed(tuple(enumerate((TableName, '#Strings', '#US', '#GUID', '#Blob')))):
-                for _, Entry in enumerate(self._meta.StreamInfo):
-                    if Entry.Name.upper() == name.upper():
-                        break
-                else:
-                    continue
-                self._reader.seek(Entry.VirtualAddress)
-                try:
-                    reader = StreamReader(self._reader.read(Entry.Size))
-                except ParserEOF:
-                    continue
-                if name != TableName:
-                    Default = ['', '', None, B''][k - 1]
-                    Type = [NullTerminatedString, UnicodeString, StringGUID, RawBytes][k - 1]
-                    Stream = NetMetaDataStream(reader, Type, Default)
-                    setattr(self, name[1:], Stream)
-                else:
-                    self.Tables = reader.expect(NetMetaDataTables, streams=self)
-
-
-class NetMetaData(Struct):
-    @property
-    def resources(self):
-        return self.Streams.Tables.ManifestResource
-
-    @property
-    def RVAs(self):
-        return self.Streams.Tables.FieldRVA
-
-    def parse(self):
-        try:
-            self.Signature = self.expect(UInt32)
-        except ParserEOF:
-            raise InvalidSignature
-        if self.Signature != 0x424A5342:
-            raise InvalidSignature
-        self.MajorVersion = self.expect(UInt16)
-        self.MinorVersion = self.expect(UInt16)
-        self._Reserved = self.expect(UInt32)
-        size = self.expect(UInt32)
-        self.VersionString = self.expect(StringPrimitive, size=size, align=4)
-        self.Flags = self.expect(UInt16)
-        self.StreamCount = self.expect(UInt16)
-        self.StreamInfo = [
-            self.expect(NetMetaDataStreamEntry)
-            for _ in range(self.StreamCount)
-        ]
-        self.Streams: NetMetaDataStreams = self.expect(NetMetaDataStreams, meta=self)
-
-
-class NetResourceWithName(Struct):
-    def parse(self):
-        self.Name = self.expect(StringPrimitive, codec='utf-16LE')
-        self.Offset = self.expect(UInt32)
-        with self._reader.checkpoint():
-            self._reader.seek(self.Offset)
-            self.Size = self.expect(UInt32)
-            self.Data = self._reader.read(self.Size)
+class DotNetResource(NamedTuple):
+    Name: str
+    Data: buf = B''
 
 
 class DotNetHeader:
     def __init__(self, data, pe=None, parse_resources=True):
         try:
+            view = memoryview(data)
             self.pe = pe = pe or lief.load_pe(data)
-            self.data = data
-            self.head = NetDirectory(self.reader(pe.data_directory(lief.PE.DataDirectory.TYPES.CLR_RUNTIME_HEADER)))
+            self.data = view
+            self.head = NetDirectory(self._reader_from_pe(pe.data_directory(lief.PE.DataDirectory.TYPES.CLR_RUNTIME_HEADER)))
         except Exception as E:
             raise InvalidDotNetHeader from E
         try:
-            self.meta = NetMetaData(self.reader(self.head.MetaData))
+            self.meta = NetMetaData(self._reader_from_dn(self.head.MetaData))
         except Exception as E:
             raise InvalidDotNetHeader from E
         self.resources = self.parse_resources() if parse_resources else []
 
     def parse_resources(self):
-        def parse(reader):
+        def parse(reader: DotNetStructReader):
             for entry in self.meta.resources:
                 try:
                     reader.seek(entry.Offset)
-                    size = reader.expect(UInt32)
-                    yield Box(
-                        Name=entry.Name,
-                        Data=reader.read(size)
-                    )
-                except ParserEOF:
-                    yield Box(
-                        Name=entry.Name,
-                        Data=B''
-                    )
-        return list(parse(self.reader(self.head.Resources)))
+                    size = reader.u32()
+                    yield DotNetResource(entry.Name, reader.read(size))
+                except EOFError:
+                    yield DotNetResource(entry.Name)
+        return list(parse(self._reader_from_dn(self.head.Resources)))
 
-    def reader(self, obj):
-        try:
-            rva, size = obj.rva, obj.size
-        except AttributeError:
-            rva, size = obj.VirtualAddress, obj.Size
+    def _reader_from_pe(self, dir: lief.PE.DataDirectory):
+        return self._reader(dir.rva, dir.size)
+
+    def _reader_from_dn(self, dir: ImageDataDirectory | NetMetaDataStreamEntry):
+        return self._reader(dir.VirtualAddress, dir.Size)
+
+    def _reader(self, rva: int, size: int):
         start = self.pe.rva_to_offset(rva)
         end = start + size
-        return StreamReader(self.data[start:end])
+        return DotNetStructReader(self.data[start:end])

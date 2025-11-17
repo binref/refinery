@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.dotnet.deserialize import BinaryFormatterParser
+from refinery.lib.structures import struct_to_json
 from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
@@ -32,6 +33,6 @@ class dnds(DotNetJSONEncoderUnit):
         return self.to_json([
             {
                 'Type': repr(record),
-                'Data': record
+                'Data': struct_to_json(record),
             } for record in bf
         ])

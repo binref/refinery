@@ -6,160 +6,140 @@ dnSpy source code.
 """
 from __future__ import annotations
 
+import datetime
+import enum
 import re
 
-from refinery.lib.dotnet.deserialize import BinaryFormatterParser
-from refinery.lib.dotnet.types import (
-    Blob,
-    Box,
-    Byte,
-    Char,
-    DateTime,
-    Double,
-    EncodedInteger,
-    Int16,
-    Int32,
-    Int64,
-    LengthPrefixedString,
-    Null,
-    SByte,
-    Single,
-    StreamReader,
-    StringPrimitive,
-    Struct,
-    TimeSpan,
-    UInt16,
-    UInt32,
-    UInt64,
-    unpack,
+from refinery.lib.dotnet.deserialize import (
+    BinaryFormatterParser,
+    DotNetRsrcReader,
+    DotNetStruct,
 )
+from refinery.lib.dotnet.header import DotNetStructReader
+from refinery.lib.id import buffer_contains
 
 
 class NoManagedResource(AssertionError):
     pass
 
 
-class String(LengthPrefixedString):
-    def __init__(self, reader):
-        LengthPrefixedString.__init__(self, reader, codec='UTF-8')
+def stream(reader: DotNetStructReader):
+    return BinaryFormatterParser(reader.read_length_prefixed())
 
 
-class Boolean(Byte):
-    @property
-    def Value(self):
-        return bool(super().Value)
+class RsrcPrimitive(enum.IntEnum):
+    Null      = 0x00 # noqa
+    String    = 0x01 # noqa
+    Boolean   = 0x02 # noqa
+    Char      = 0x03 # noqa
+    Byte      = 0x04 # noqa
+    SByte     = 0x05 # noqa
+    Int16     = 0x06 # noqa
+    UInt16    = 0x07 # noqa
+    Int32     = 0x08 # noqa
+    UInt32    = 0x09 # noqa
+    Int64     = 0x0A # noqa
+    UInt64    = 0x0B # noqa
+    Single    = 0x0C # noqa
+    Double    = 0x0D # noqa
+    Decimal   = 0x0E # noqa
+    DateTime  = 0x0F # noqa
+    TimeSpan  = 0x10 # noqa
+    ByteArray = 0x20 # noqa
+    Stream    = 0x21 # noqa
 
 
-class Decimal(Blob):
-    def __init__(self, reader):
-        Blob.__init__(self, reader, 16)
-
-    @property
-    def Value(self):
-        # TODO: Unknown whether this is correct
-        return int.from_bytes(self._data, 'big')
+RsrcUserTypeBase = 0x40
 
 
-class ByteArray(Struct):
-    def parse(self):
-        self.Size = self.expect(UInt32)
-        self.Value = self._reader.read(self.Size)
+RsrcPrimitiveDispatch = {
+    RsrcPrimitive.Null      : DotNetStructReader.read_dn_null,
+    RsrcPrimitive.Boolean   : DotNetStructReader.read_bool_byte,
+    RsrcPrimitive.Byte      : DotNetStructReader.read_byte,
+    RsrcPrimitive.Char      : DotNetStructReader.read_char,
+    RsrcPrimitive.Decimal   : DotNetStructReader.read_dn_decimal,
+    RsrcPrimitive.Single    : DotNetStructReader.f32,
+    RsrcPrimitive.Double    : DotNetStructReader.f64,
+    RsrcPrimitive.Int16     : DotNetStructReader.i16,
+    RsrcPrimitive.Int32     : DotNetStructReader.i32,
+    RsrcPrimitive.Int64     : DotNetStructReader.i64,
+    RsrcPrimitive.SByte     : DotNetStructReader.i8,
+    RsrcPrimitive.TimeSpan  : DotNetStructReader.read_dn_time_span,
+    RsrcPrimitive.DateTime  : DotNetStructReader.read_dn_date_time,
+    RsrcPrimitive.UInt16    : DotNetStructReader.u16,
+    RsrcPrimitive.UInt32    : DotNetStructReader.u32,
+    RsrcPrimitive.UInt64    : DotNetStructReader.u64,
+    RsrcPrimitive.String    : DotNetStructReader.read_dn_length_prefixed_string,
+    RsrcPrimitive.ByteArray : DotNetStructReader.read_length_prefixed,
+    RsrcPrimitive.Stream    : stream,
+}
 
-    def __bytes__(self):
-        return self.Value
+
+class NetResource(DotNetStruct):
+    Value: int | str | bool | list | memoryview | datetime.datetime | datetime.timedelta | None
+    Data: memoryview
+    TypeName: str
+    Error: str | None
+
+    def __init__(self, reader: DotNetStructReader, base: int):
+        self.Name = reader.read_dn_length_prefixed_string(codec='utf-16le')
+        self.Offset = reader.u32() + base
+        self.Size = 0
+        self.Error = None
 
 
-class NetManifestResource(Struct):
-    USERTYPES = 0x40
-    PRIMITIVE = {
-        0x00: Null,
-        0x01: String,
-        0x02: Boolean,
-        0x03: Char,
-        0x04: Byte,
-        0x05: SByte,
-        0x06: Int16,
-        0x07: UInt16,
-        0x08: Int32,
-        0x09: UInt32,
-        0x0A: Int64,
-        0x0B: UInt64,
-        0x0C: Single,
-        0x0D: Double,
-        0x0E: Decimal,
-        0x0F: DateTime,
-        0x10: TimeSpan,
-        0x20: ByteArray,
-        0x21: ByteArray,
-    }
+class NetManifestResource(DotNetStruct):
 
-    def parse(self):
-        self.Signature = self.expect(UInt32)
+    def __init__(self, reader: DotNetStructReader):
+        self.Signature = reader.u32()
         if self.Signature != 0xBEEFCACE:
             raise NoManagedResource
+        self.ReaderCount = reader.u32()
+        self.ReaderTypeLength = reader.u32()
+        tr = DotNetRsrcReader(reader.read_exactly(self.ReaderTypeLength))
+        self.ReaderType = rt = tr.read_dn_string_primitive()
+        self.ResourceSetType = tr.read_dn_string_primitive()
 
-        self.ReaderCount = self.expect(UInt32)
-        self.ReaderTypeLength = self.expect(UInt32)
-
-        tr = StreamReader(self._reader.read(self.ReaderTypeLength))
-        self.ReaderType = tr.expect(StringPrimitive)
-        self.ResourceSetType = tr.expect(StringPrimitive)
-
-        if not re.match(r"^System\.Resources\.ResourceReader,\s*mscorlib", self.ReaderType):
+        if not re.match(r"^System\.Resources\.ResourceReader,\s*mscorlib", rt):
             raise AssertionError('unknown resource reader')
 
-        self.Version = self.expect(UInt32)
-        ResourceCount = self.expect(UInt32)
-        RsrcTypeCount = self.expect(UInt32)
+        self.Version = reader.u32()
+        ResourceCount = reader.u32()
+        RsrcTypeCount = reader.u32()
 
-        ResourceTypes = [
-            self.expect(LengthPrefixedString)
-            for _ in range(RsrcTypeCount)
-        ]
+        ResourceTypes = [reader.read_dn_length_prefixed_string()
+            for _ in range(RsrcTypeCount)]
 
-        self._reader.align(8)
-        self._reader.skip(4 * ResourceCount)
-
-        # Since we do not require the resouce hashes, we skip over them.
-        # The following would be the code to read in the hashes:
-        #
-        # ResourceHashes = [
-        #     self.expect(UInt32)
-        #     for _ in range(ResourceCount)
-        # ]
-
-        ResourceNameOffsets = [
-            self.expect(UInt32)
-            for _ in range(ResourceCount)
-        ]
-
-        self.DataSectionOffset = self.expect(UInt32)
-
-        self.Resources = []
+        reader.byte_align(8)
+        self.ResourceHashes = [reader.u32() for _ in range(ResourceCount)]
+        ResourceNameOffsets = [reader.u32() for _ in range(ResourceCount)]
+        self.DataSectionOffset = base = reader.u32()
+        rsrc: list[NetResource] = []
+        self.Resources = rsrc
 
         for k in range(ResourceCount):
-            with self._reader.checkpoint():
-                self._reader.skip(ResourceNameOffsets[k])
-                Name = self.expect(LengthPrefixedString, codec='UTF-16LE')
-                Offset = self.expect(UInt32) + self.DataSectionOffset
-                self.Resources.append(Box(Offset=Offset, Name=Name))
+            with reader.detour():
+                reader.skip(ResourceNameOffsets[k])
+                rsrc.append(NetResource(reader, base))
 
-        self.Resources.sort(key=lambda r: r.Offset)
-        self.Resources.append(Box(Offset=len(self._reader)))
-        self.Resources = [
-            Box(Size=b.Offset - a.Offset - 1, **a)
-            for a, b in zip(self.Resources, self.Resources[1:])
-        ]
+        if rsrc:
+            rsrc.sort(key=lambda r: r.Offset)
+            it = iter(rsrc)
+            next(it)
+            ends = [r.Offset for r in it]
+            ends.append(len(reader))
+            for r, end in zip(rsrc, ends):
+                r.Size = end - r.Offset - 1
 
-        for Index, Entry in enumerate(self.Resources):
+        for Entry in rsrc:
 
-            self._reader.seek(Entry.Offset)
-            TypeCode = self.expect(EncodedInteger)
+            reader.seek(Entry.Offset)
+            TypeCode = reader.read_dn_encoded_integer()
             Entry.Error = None
-            Entry.Value = Entry.Data = self._reader.read(Entry.Size)
+            Entry.Value = Entry.Data = reader.read_exactly(Entry.Size)
 
-            if TypeCode >= self.USERTYPES:
-                Entry.TypeName = ResourceTypes[TypeCode - self.USERTYPES]
+            if TypeCode >= RsrcUserTypeBase:
+                Entry.TypeName = ResourceTypes[TypeCode - RsrcUserTypeBase]
                 try:
                     Deserialized = BinaryFormatterParser(
                         Entry.Data,
@@ -168,28 +148,28 @@ class NetManifestResource(Struct):
                         keep_meta=False
                     )
                 except Exception as error:
-                    Entry.Error = f'failed to deserialize entry data: {error}'
+                    Entry.Error = F'Failed to deserialize entry data: {error}'
                     continue
                 try:
                     _, _, _, Data = Deserialized
                 except ValueError:
-                    Entry.Error = f'deserialized entry has {len(Deserialized)} records, 4 were expected.'
+                    Entry.Error = F'Deserialized entry has {len(Deserialized)} records, 4 were expected.'
                     continue
-                if Data not in Entry.Data:
-                    Entry.Error = 'the computed entry value is not a substring of the entry data.'
+                if not buffer_contains(Entry.Data, Data):
+                    Entry.Error = 'The computed entry value is not a substring of the entry data.'
                     Entry.Value = Entry.Data
                 else:
                     Entry.Value = Data
-
-            elif TypeCode in self.PRIMITIVE:
-                Type = self.PRIMITIVE[TypeCode]
-                Entry.TypeName = repr(Type)
-                package = StreamReader(Entry.Data).expect_with_meta(Type)
-                Entry.Value = unpack(package)
             else:
-                Entry.TypeName = f'UNKNOWN TYPE 0x{TypeCode:X}'
+                try:
+                    Type = RsrcPrimitive(TypeCode)
+                except ValueError:
+                    Entry.TypeName = F'UnknownType[{TypeCode:#x}]'
+                else:
+                    Entry.TypeName = Type.name
+                    package = DotNetStructReader(Entry.Value)
+                    Entry.Value = RsrcPrimitiveDispatch[Type](package)
 
 
-class NetStructuredResources(list):
-    def __init__(self, data):
-        list.__init__(self, NetManifestResource(StreamReader(data)).Resources)
+def NetStructuredResources(data):
+    return NetManifestResource(DotNetStructReader(memoryview(data))).Resources

@@ -589,13 +589,13 @@ class pemeta(Unit):
         """
         header = DotNetHeader(data, pe)
         tables = header.meta.Streams.Tables
-        info = dict(
+        info: dict[str, str | int | list[str]] = dict(
             RuntimeVersion=F'{header.head.MajorRuntimeVersion}.{header.head.MinorRuntimeVersion}',
             Version=F'{header.meta.MajorVersion}.{header.meta.MinorVersion}',
             VersionString=header.meta.VersionString
         )
 
-        info['Flags'] = [name for name, check in header.head.KnownFlags.items() if check]
+        info['Flags'] = [repr(flag) for flag in header.head.KnownFlags]
 
         if len(tables.Assembly) == 1:
             assembly = tables.Assembly[0]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.dotnet.types import Byte, ParserEOF, StreamReader, StringPrimitive, UInt32, UInt64
+from refinery.lib.dotnet.header import DotNetStructReader
 from refinery.lib.id import buffer_contains
 from refinery.lib.meta import SizeInt
 from refinery.units.compression.zl import zl
@@ -20,33 +20,33 @@ class dnsfx(PathExtractorUnit):
     ])
 
     def unpack(self, data):
-        reader = StreamReader(data)
+        reader = DotNetStructReader(memoryview(data))
         reader.seek(self._find_bundle_manifest_offset(data))
 
-        major_version = reader.expect(UInt32)
-        minor_version = reader.expect(UInt32)
+        major_version = reader.u32()
+        minor_version = reader.u32()
         self.log_info(F'version {major_version}.{minor_version}')
 
-        count = reader.expect(UInt32)
-        bhash = reader.expect(StringPrimitive)
+        count = reader.u32()
+        bhash = reader.read_dn_string_primitive()
         self.log_info(F'bundle {bhash} contains {count} files')
 
         if major_version >= 2:
-            reader.expect(UInt64) # depsOffset
-            reader.expect(UInt64) # depsSize
-            reader.expect(UInt64) # runtimeConfigOffset
-            reader.expect(UInt64) # runtimeConfigSize
-            reader.expect(UInt64) # flags
+            reader.u64() # depsOffset
+            reader.u64() # depsSize
+            reader.u64() # runtimeConfigOffset
+            reader.u64() # runtimeConfigSize
+            reader.u64() # flags
 
         for _ in range(count):
             try:
-                offset = reader.expect(UInt64)
-                size = reader.expect(UInt64)
+                offset = reader.u64()
+                size = reader.u64()
                 compressed_size = 0
                 if major_version >= 6:
-                    compressed_size = reader.expect(UInt64)
-                type = reader.expect(Byte)
-                path = reader.expect(StringPrimitive)
+                    compressed_size = reader.u64()
+                type = reader.u8()
+                path = reader.read_dn_string_primitive()
 
                 def _logmsg():
                     _log = F'read item at offset 0x{offset:08X}, type 0x{type:02X}, size {SizeInt(size)!r}'
@@ -56,7 +56,7 @@ class dnsfx(PathExtractorUnit):
 
                 self.log_debug(_logmsg)
 
-                with reader.checkpoint():
+                with reader.detour():
                     reader.seek(offset)
                     if compressed_size:
                         item_data = reader.read(compressed_size) | zl | bytearray
@@ -64,7 +64,7 @@ class dnsfx(PathExtractorUnit):
                         item_data = reader.read(size)
 
                 yield UnpackResult(path, item_data)
-            except ParserEOF:
+            except EOFError:
                 self.log_warn('unexpected EOF while parsing bundle, terminating')
                 break
 

@@ -10,7 +10,7 @@ class TestDotNetHeaderParser(TestUnitBase):
     def test_sample_with_data_directory_issue(self):
         data = self.download_sample('b3b7376c5046be978b5558e91a515c1bf57c13a1151d225745c2bdc3183e0a8f')
         unit = self.load()
-        strings = data | unit
+        strings = data | unit | {bytes}
         self.assertIn(B'NoLm3cQQRvqHXtIBud.T6U9wFFbHKIsgklbGQ', strings)
         self.assertIn(B'{11111-22222-50001-00000}', strings)
 

@@ -10,81 +10,190 @@ References:
 """
 from __future__ import annotations
 
+import enum
+
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, TypeVar, overload
 
-from refinery.lib.dotnet.types import (
-    BinaryArrayTypeEnumeration,
-    Boolean,
-    Box,
-    Byte,
-    Char,
-    DateTime,
-    Double,
-    FixedSize,
-    Int16,
-    Int32,
-    Int64,
-    LengthPrefixedString,
-    Null,
-    ParserEOF,
-    SByte,
-    Single,
-    StreamReader,
-    Struct,
-    TimeSpan,
-    TypeCode,
-    UInt16,
-    UInt32,
-    UInt64,
-    unpack,
-)
+from refinery.lib.dotnet.header import DotNetStruct, DotNetStructReader
+from refinery.lib.structures import EOF
+
+R = TypeVar('R', bound='Record')
 
 
-class StringValueWithCode(LengthPrefixedString):
-    def __init__(self, reader):
-        if reader.expect(Byte) != 18:
-            self._raise('invalid type for StringValueWithCode')
-        LengthPrefixedString.__init__(self, reader)
+@dataclass
+class Context:
+    object_catalogue: dict[int, Record]
+    unresolved_references: defaultdict[int, list[tuple[Record, str]]]
 
 
-class Record(Struct):
-    def __setitem__(self, name, value):
-        if name == 'ObjectId':
-            self.RefCount = 0
-            self._context.object_catalogue[value] = self
-            self._subscribers.extend(self._context.unresolved_references.pop(value, []))
-        elif hasattr(value, 'IdRef'):
-            reference = self._context.object_catalogue.get(value.IdRef, None)
-            if reference:
+class BinaryTypeCode(enum.IntEnum):
+    Primitive = 0
+    String = 1
+    Object = 2
+    SystemClass = 3
+    Class = 4
+    ObjectArray = 5
+    StringArray = 6
+    PrimitiveArray = 7
+
+
+class PrimitiveTypeCode(enum.IntEnum):
+    Boolean = 0x01
+    Byte = 0x02
+    Char = 0x03
+    Decimal = 0x05
+    Double = 0x06
+    Int16 = 0x07
+    Int32 = 0x08
+    Int64 = 0x09
+    SByte = 0x0A
+    Single = 0x0B
+    TimeSpan = 0x0C
+    DateTime = 0x0D
+    UInt16 = 0x0E
+    UInt32 = 0x0F
+    UInt64 = 0x10
+    Null = 0x11
+    LengthPrefixedString = 0x12
+
+
+PrimitiveTypeCodeDispatch = {
+    PrimitiveTypeCode.Null                 : DotNetStructReader.read_dn_null,
+    PrimitiveTypeCode.Boolean              : DotNetStructReader.read_bool_byte,
+    PrimitiveTypeCode.Byte                 : DotNetStructReader.read_byte,
+    PrimitiveTypeCode.Char                 : DotNetStructReader.read_char,
+    PrimitiveTypeCode.Decimal              : DotNetStructReader.read_dn_length_prefixed_string,
+    PrimitiveTypeCode.Single               : DotNetStructReader.f32,
+    PrimitiveTypeCode.Double               : DotNetStructReader.f64,
+    PrimitiveTypeCode.Int16                : DotNetStructReader.i16,
+    PrimitiveTypeCode.Int32                : DotNetStructReader.i32,
+    PrimitiveTypeCode.Int64                : DotNetStructReader.i64,
+    PrimitiveTypeCode.SByte                : DotNetStructReader.i8,
+    PrimitiveTypeCode.TimeSpan             : DotNetStructReader.read_dn_time_span,
+    PrimitiveTypeCode.DateTime             : DotNetStructReader.read_dn_date_time,
+    PrimitiveTypeCode.UInt16               : DotNetStructReader.u16,
+    PrimitiveTypeCode.UInt32               : DotNetStructReader.u32,
+    PrimitiveTypeCode.UInt64               : DotNetStructReader.u64,
+    PrimitiveTypeCode.LengthPrefixedString : DotNetStructReader.read_dn_length_prefixed_string,
+}
+
+
+class DotNetRsrcReader(DotNetStructReader):
+
+    def read_dn_string_value_with_code(self):
+        if (t := self.u8fast()) != 18:
+            self._dn_raise(F'Invalid type {t} for string value with code.')
+        return self.read_dn_length_prefixed_string()
+
+    def read_dn_primitive_type(self, tc: PrimitiveTypeCode | None = None):
+        if tc is None:
+            tc = PrimitiveTypeCode(self.u8())
+        if handler := PrimitiveTypeCodeDispatch.get(tc):
+            return handler(self)
+
+
+class Record(DotNetStruct):
+
+    Value: Record | Any
+
+    def unpack(self):
+        try:
+            value = self.Value
+        except AttributeError:
+            return self
+        if isinstance(value, Record):
+            return value.unpack()
+        return value
+
+    def __init__(self, reader: DotNetRsrcReader, context: Context, *args, **kwargs):
+        self._context = context
+        self._subscribers = []
+        self._refcount = 0
+
+        self._parse(reader, *args, **kwargs)
+
+        for parent, member_name in self._subscribers:
+            self._refcount += 1
+            parent[member_name] = self.unpack()
+
+        del self._subscribers
+        del self._context
+
+    @overload
+    def _subrecord(self, reader: DotNetRsrcReader, record: type[R], *args, **kwargs) -> R:
+        pass
+
+    @overload
+    def _subrecord(self, reader: DotNetRsrcReader, record: None, *args, **kwargs) -> Record:
+        pass
+
+    @overload
+    def _subrecord(self, reader: DotNetRsrcReader, *args, **kwargs) -> Record:
+        pass
+
+    def _subrecord(self, reader: DotNetRsrcReader, record: type[Record] | None = None, *args, **kwargs):
+        if record is None:
+            record = RecordsByTypeCode[reader.u8()]
+        return record(reader, self._context, *args, **kwargs).unpack()
+
+    def _binary_type(self, reader: DotNetRsrcReader, tc: BinaryTypeCode):
+        if tc == BinaryTypeCode.Primitive:
+            return PrimitiveTypeCode(reader.u8())
+        if tc == BinaryTypeCode.SystemClass:
+            return reader.read_dn_length_prefixed_string()
+        if tc == BinaryTypeCode.Class:
+            return self._subrecord(reader, ClassTypeInfo)
+        if tc == BinaryTypeCode.PrimitiveArray:
+            return PrimitiveTypeCode(reader.u8())
+
+    @property
+    def ObjectId(self):
+        try:
+            return self._object_id
+        except AttributeError:
+            return None
+
+    @ObjectId.setter
+    def ObjectId(self, value: int):
+        ctx = self._context
+        self._object_id = value
+        ctx.object_catalogue[value] = self
+        try:
+            unresolved = ctx.unresolved_references.pop(value)
+        except KeyError:
+            pass
+        else:
+            self._subscribers.extend(unresolved)
+
+    def _deref(self, name: str, value):
+        if isinstance((ref := getattr(value, 'IdRef', None)), int):
+            if reference := self._context.object_catalogue.get(ref, None):
                 value = reference
             else:
-                self._context.unresolved_references[value.IdRef].append((self, name))
-        return Box.__setitem__(self, name, value)
+                self._context.unresolved_references[ref].append((self, name))
+        return value
 
-    def expect_with_meta(self, parser, **kw):
-        try:
-            if issubclass(parser, Record):
-                kw.setdefault('context', self._context)
-        except TypeError as e:
-            raise TypeError(f'{e}: {repr(type(parser))}')
-        return Struct.expect_with_meta(self, parser, **kw)
+    def __setitem__(self, name: str, value):
+        return super().__setattr__(name, value)
 
-    def decode(self):
-        Type = RecordTypeCode(self._reader).Value
-        return self.expect(Type)
+    def __setattr__(self, name: str, value):
+        if not name.startswith('_'):
+            value = self._deref(name, value)
+        return super().__setattr__(name, value)
+
+    def _parse(self, reader: DotNetRsrcReader, *args, **kwargs):
+        pass
 
     def lookup(self, id=None):
         id = id or self.ObjectId
-        return self._context.object_catalogue[id]
+        if id is not None:
+            return self._context.object_catalogue[id]
 
-    def parse(self):
-        for parent, member_name in self._subscribers:
-            self.RefCount += 1
-            parent[member_name] = unpack(self)
 
-    def __init__(self, reader, context=None, **kw):
-        assert context, 'record parser requires context'
-        Struct.__init__(self, reader, _context=context, _subscribers=[], **kw)
+class Null(Record):
+    pass
 
 
 class MethodReturn(Null):
@@ -96,361 +205,313 @@ class MessageEnd(Record):
 
 
 class ClassTypeInfo(Record):
-    def parse(self):
-        self.TypeName = self.expect(LengthPrefixedString)
-        self.LibraryId = self.expect(UInt32)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.TypeName = reader.read_dn_length_prefixed_string()
+        self.LibraryId = reader.u32()
 
 
 class ClassInfo(Record):
-    def parse(self):
-        self.ClassName = self.expect(LengthPrefixedString)
-        self.MemberCount = self.expect(UInt32)
-        self.MemberNames = [self.expect(
-            LengthPrefixedString) for _ in range(self.MemberCount)]
-        Record.parse(self)
-
-
-class MemberTypeInfo(Record):
-    def __init__(self, reader, count=0, **kw):
-        Record.__init__(self, reader, _count=count, **kw)
-
-    def parse(self):
-        self.BinaryTypeEnums = [
-            BinaryTypeCode(self._reader).Value
-            for _ in range(self._count)
-        ]
-        self.AdditionalInfos = [self.expect(b.Parser) for b in self.BinaryTypeEnums]
-        self.BinaryTypeEnums = [b.Name for b in self.BinaryTypeEnums]
-        Record.parse(self)
-
-
-class ClassMembers(Record):
-    def __init__(self, reader, Names, Types, Infos, **kw):
-        Record.__init__(self, reader, _info=[(n, m == 'Primitive', t) for n, m, t in zip(Names, Types, Infos)], **kw)
-
-    def parse(self):
-        for name, is_primitive, Type in self._info:
-            result = self.expect(Type) if is_primitive else self.decode()
-            self[name] = result
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ClassName = reader.read_dn_length_prefixed_string()
+        self.Members = [reader.read_dn_length_prefixed_string()
+            for _ in range(reader.u32())]
 
 
 class ClassRecord(Record):
     def member_count(self):
         try:
-            return self.lookup().ClassInfo.MemberCount
+            return len(self.lookup().ClassInfo.Members)
         except AttributeError:
             return 0
 
-    def parse_values(self):
+    def lookup(self, id=None):
+        result = super().lookup(id)
+        if not isinstance(result, (ClassWithMembersAndTypes, SystemClassWithMembersAndTypes)):
+            raise ValueError
+        return result
+
+    def _parse_values(self, reader: DotNetRsrcReader):
         MyClass = self.lookup()
-        self.Members = self.expect(
-            ClassMembers,
-            Names=MyClass.ClassInfo.MemberNames,
-            Types=MyClass.MemberTypeInfo.BinaryTypeEnums,
-            Infos=MyClass.MemberTypeInfo.AdditionalInfos
-        )
+        members = {}
+        typeinfo = MyClass.MemberTypeInfo
+        for name, tc, info in zip(
+            MyClass.ClassInfo.Members,
+            typeinfo.TypeCodes,
+            typeinfo.TypeInfos,
+        ):
+            if tc == BinaryTypeCode.Primitive:
+                assert isinstance(info, PrimitiveTypeCode)
+                value = reader.read_dn_primitive_type(info)
+            else:
+                value = self._deref(name, self._subrecord(reader))
+            members[name] = value
+        self.Members = members
+
+    def __setitem__(self, name: str, value):
+        self.Members[name] = value
+
+
+class MemberTypeInfo(Record):
+    def _parse(self, reader: DotNetRsrcReader, count: int):
+        self.TypeCodes = [BinaryTypeCode(reader.u8fast()) for _ in range(count)]
+        self.TypeInfos = [self._binary_type(reader, tc) for tc in self.TypeCodes]
 
 
 class ClassWithMembersAndTypes(ClassRecord):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.ClassInfo = self.expect(ClassInfo)
-        self.MemberTypeInfo = self.expect(MemberTypeInfo, count=self.member_count())
-        self.LibraryId = self.expect(UInt32)
-        self.parse_values()
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.ClassInfo = self._subrecord(reader, ClassInfo)
+        self.MemberTypeInfo = self._subrecord(reader, MemberTypeInfo, self.member_count())
+        self.LibraryId = reader.u32()
+        self._parse_values(reader)
 
 
 class SystemClassWithMembersAndTypes(ClassRecord):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.ClassInfo = self.expect(ClassInfo)
-        self.MemberTypeInfo = self.expect(MemberTypeInfo, count=self.member_count())
-        self.parse_values()
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.ClassInfo = self._subrecord(reader, ClassInfo)
+        self.MemberTypeInfo = self._subrecord(reader, MemberTypeInfo, self.member_count())
+        self._parse_values(reader)
 
 
 class ClassWithMembers(ClassRecord):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.ClassInfo = self.expect(ClassInfo)
-        self.LibraryId = self.expect(UInt32)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.ClassInfo = self._subrecord(reader, ClassInfo)
+        self.LibraryId = reader.u32()
 
 
 class SystemClassWithMembers(ClassRecord):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.ClassInfo = self.expect(ClassInfo)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.ClassInfo = self._subrecord(reader, ClassInfo)
 
 
 class ClassWithId(ClassRecord):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.MetadataId = self.expect(UInt32)
-        self.parse_values()
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.MetadataId = reader.u32()
+        self._parse_values(reader)
 
-    def lookup(self):
-        return ClassRecord.lookup(self, self.MetadataId)
+    def lookup(self, id=None):
+        return ClassRecord.lookup(self, id or self.MetadataId)
 
 
 class SerializedStreamHeader(Record):
-    def parse(self):
-        self.RootId = self.expect(UInt32)
-        self.HeadId = self.expect(UInt32)
-        self.MajorVersion = self.expect(UInt32)
-        self.MinorVersion = self.expect(UInt32)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.RootId = reader.u32()
+        self.HeadId = reader.u32()
+        self.MajorVersion = reader.u32()
+        self.MinorVersion = reader.u32()
 
 
 class BinaryLibrary(Record):
-    def parse(self):
-        self.LibraryId = self.expect(UInt32)
-        self.LibraryName = self.expect(LengthPrefixedString)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.LibraryId = reader.u32()
+        self.LibraryName = reader.read_dn_length_prefixed_string()
 
 
 class BinaryObjectString(Record):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.Value = self.expect(LengthPrefixedString)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.Value = reader.read_dn_length_prefixed_string()
 
 
 class MemberReference(Record):
-    def parse(self):
-        self.IdRef = self.expect(UInt32)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.IdRef = reader.u32()
+
+
+class BinaryArrayType(enum.IntEnum):
+    Single = 0
+    Jagged = 1
+    Rectangular = 2
+    SingleOffset = 3
+    JaggedOffset = 4
+    RectangularOffset = 5
 
 
 class BinaryArray(Record):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.BinaryArrayTypeEnum = self.expect(BinaryArrayTypeEnumeration)
-        self.Rank = self.expect(UInt32)
-        self.Lengths = [self.expect(UInt32) for _ in range(self.Rank)]
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.BinaryArrayTypeEnum = BinaryArrayType(reader.u8())
+        self.Rank = reader.u32()
+        self.Lengths = [reader.u32() for _ in range(self.Rank)]
         self.LowerBounds = []
-        if 'Offset' in self.BinaryArrayTypeEnum:
+
+        if self.BinaryArrayTypeEnum.name.endswith('Offset'):
             for _ in range(self.Rank):
-                self.LowerBounds.append(self.expect(UInt32))
-        self.TypeEnum = self.expect(BinaryTypeCode)
-        self.AdditionalTypeInfo = self.expect(self.TypeEnum.Parser)
-        self.TypeEnum = repr(self.TypeEnum)
-        Record.parse(self)
+                self.LowerBounds.append(reader.u32())
+
+        self.TypeEnum = tc = BinaryTypeCode(reader.u8())
+
+        if tc == BinaryTypeCode.Primitive:
+            value = reader.read_dn_primitive_type()
+        elif tc == BinaryTypeCode.SystemClass:
+            value = reader.read_dn_length_prefixed_string()
+        elif tc == BinaryTypeCode.Class:
+            value = self._subrecord(reader, ClassTypeInfo)
+        elif tc == BinaryTypeCode.PrimitiveArray:
+            value = reader.read_dn_primitive_type()
+        else:
+            value = None
+
+        self.AdditionalTypeInfo = value
 
 
 class ObjectNullMultiple256(Record):
-    def parse(self):
-        self.NullCount = self.expect(Byte)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.NullCount = reader.u8()
 
 
 class ObjectNullMultiple(Record):
-    def parse(self):
-        self.NullCount = self.expect(UInt32)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.NullCount = reader.u32()
 
 
 class MemberPrimitiveTyped(Record):
-    def parse(self):
-        PrimitiveType = self.expect(PrimitiveTypeCode)
-        self.PrimitiveTypeEnum = repr(PrimitiveType)
-        self.Value = self.expect(PrimitiveType)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.Type = tc = PrimitiveTypeCode(reader.u8())
+        self.Value = reader.read_dn_primitive_type(tc)
 
 
 class ArraySingleObject(Record):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.Length = self.expect(UInt32)
-        self.Value = [self.decode() for _ in range(self.Length)]
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.Length = reader.u32()
+        self.Value = [self._subrecord(reader) for _ in range(self.Length)]
 
 
 class ArraySinglePrimitive(Record):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.Length = self.expect(UInt32)
-        PrimitiveType = self.expect(PrimitiveTypeCode)
-        self.PrimitiveTypeEnum = repr(PrimitiveType)
-        if self.PrimitiveTypeEnum == 'Byte':
-            self.Value = self._reader.read(self.Length)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.Length = reader.u32()
+        self.PrimitiveType = tc = PrimitiveTypeCode(reader.u8())
+        if tc == PrimitiveTypeCode.Byte:
+            self.Value = reader.read(self.Length)
         else:
             self.Value = [
-                self.expect(PrimitiveType)
+                reader.read_dn_primitive_type(tc)
                 for _ in range(self.Length)
             ]
-        Record.parse(self)
 
 
 class ArraySingleString(Record):
-    def parse(self):
-        self.ObjectId = self.expect(UInt32)
-        self.Length = self.expect(UInt32)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.ObjectId = reader.u32()
+        self.Length = reader.u32()
         # TODO is this correct?
-        self.Value = [self.decode() for _ in range(self.Length)]
-        Record.parse(self)
+        self.Value = [self._subrecord(reader) for _ in range(self.Length)]
 
 
-class MessageEnum(FixedSize):
-    format = 'I'
-
-    def parser(self, x):
-        self.NoArgs = bool(x & 0x00000001)
-        self.ArgsInline = bool(x & 0x00000002)
-        self.ArgsIsArray = bool(x & 0x00000004)
-        self.ArgsInArray = bool(x & 0x00000008)
-        self.NoContext = bool(x & 0x00000010)
-        self.ContextInline = bool(x & 0x00000020)
-        self.ContextInArray = bool(x & 0x00000040)
-        self.MethodSignatureInArray = bool(x & 0x00000080)
-        self.PropertiesInArray = bool(x & 0x00000100)
-        self.NoReturnValue = bool(x & 0x00000200)
-        self.ReturnValueVoid = bool(x & 0x00000400)
-        self.ReturnValueInline = bool(x & 0x00000800)
-        self.ReturnValueInArray = bool(x & 0x00001000)
-        self.ExceptionInArray = bool(x & 0x00002000)
-        self.GenericMethod = bool(x & 0x00008000)
+class MsgFlags(enum.IntFlag):
+    NoArgs                 = 0x00000001 # noqa
+    ArgsInline             = 0x00000002 # noqa
+    ArgsIsArray            = 0x00000004 # noqa
+    ArgsInArray            = 0x00000008 # noqa
+    NoContext              = 0x00000010 # noqa
+    ContextInline          = 0x00000020 # noqa
+    ContextInArray         = 0x00000040 # noqa
+    MethodSignatureInArray = 0x00000080 # noqa
+    PropertiesInArray      = 0x00000100 # noqa
+    NoReturnValue          = 0x00000200 # noqa
+    ReturnValueVoid        = 0x00000400 # noqa
+    ReturnValueInline      = 0x00000800 # noqa
+    ReturnValueInArray     = 0x00001000 # noqa
+    ExceptionInArray       = 0x00002000 # noqa
+    GenericMethod          = 0x00008000 # noqa
 
 
 class MethodCall(Record):
-    def parse(self):
-        self.MessageEnum = self.expect(MessageEnum)
-        self.MethodName = self.expect(StringValueWithCode)
-        self.TypeName = self.expect(StringValueWithCode)
-        if not self.MessageEnum.NoContext:
-            self.CallContext = self.expect(StringValueWithCode)
-        if not self.MessageEnum.NoArgs:
-            self.Args = self.expect(ArrayOfValueWithCode)
-        Record.parse(self)
+    def _parse(self, reader: DotNetRsrcReader):
+        self.MessageEnum = MsgFlags(reader.u32())
+        self.MethodName = reader.read_dn_string_value_with_code()
+        self.TypeName = reader.read_dn_string_value_with_code()
+        self.CallContext = None if (
+            self.MessageEnum & MsgFlags.NoContext
+        ) else (
+            reader.read_dn_string_value_with_code()
+        )
+        self.Args = None if (
+            self.MessageEnum & MsgFlags.NoArgs
+        ) else self._subrecord(reader, ArrayOfValueWithCode)
 
 
 class ArrayOfValueWithCode(Record):
-    def parse(self):
-        self.Length = self.expect(UInt32)
-        self.ListOfValueWithCode = []
+    def _parse(self, reader: DotNetRsrcReader):
+        self.Length = reader.u32()
+        self.ListOfValues = av = []
+        self.ListOfTypes = at = []
         for _ in range(self.Length):
-            PrimitiveType = self.expect(PrimitiveTypeCode)
-            self.PrimitiveTypeEnum = repr(PrimitiveType)
-            self.ListOfValueWithCode.append(self.expect(PrimitiveType))
-        Record.parse(self)
+            at.append(tc := PrimitiveTypeCode(reader.u8()))
+            av.append(reader.read_dn_primitive_type(tc))
 
 
-class PrimitiveTypeCode(TypeCode):
-    lookup = {
-        0x01: Boolean,
-        0x02: Byte,
-        0x03: Char,
-        0x05: LengthPrefixedString,  # Decimal
-        0x06: Double,
-        0x07: Int16,
-        0x08: Int32,
-        0x09: Int64,
-        0x0A: SByte,
-        0x0B: Single,
-        0x0C: TimeSpan,
-        0x0D: DateTime,
-        0x0E: UInt16,
-        0x0F: UInt32,
-        0x10: UInt64,
-        0x11: Null,
-        0x12: LengthPrefixedString
-    }
-
-
-class BinaryTypeInfo(Box):
-    def __init__(self, Name, Parser=Null, **kw):
-        Box.__init__(self, Name=Name, Parser=Parser, **kw)
-
-    def __call__(self, reader):
-        if self.Parser:
-            return self.Parser(reader)
-
-
-class BinaryTypeCode(TypeCode):
-    lookup = {
-        0: BinaryTypeInfo('Primitive', PrimitiveTypeCode),
-        1: BinaryTypeInfo('String'),
-        2: BinaryTypeInfo('Object'),
-        3: BinaryTypeInfo('SystemClass', LengthPrefixedString),
-        4: BinaryTypeInfo('Class', ClassTypeInfo),
-        5: BinaryTypeInfo('ObjectArray'),
-        6: BinaryTypeInfo('StringArray'),
-        # TODO: How does PrimitiveArray really work?
-        7: BinaryTypeInfo('PrimitiveArray', PrimitiveTypeCode),
-    }
-
-
-class RecordTypeCode(TypeCode):
-    lookup = {
-        0x00: SerializedStreamHeader,
-        0x01: ClassWithId,
-        0x02: SystemClassWithMembers,
-        0x03: ClassWithMembers,
-        0x04: SystemClassWithMembersAndTypes,
-        0x05: ClassWithMembersAndTypes,
-        0x06: BinaryObjectString,
-        0x07: BinaryArray,
-        0x08: MemberPrimitiveTyped,
-        0x09: MemberReference,
-        0x0A: Null,
-        0x0B: MessageEnd,
-        0x0C: BinaryLibrary,
-        0x0D: ObjectNullMultiple256,
-        0x0E: ObjectNullMultiple,
-        0x0F: ArraySinglePrimitive,
-        0x10: ArraySingleObject,
-        0x11: ArraySingleString,
-        0x14: ArraySingleString,
-        0x15: MethodCall,
-        0x16: MethodReturn
-    }
+class Overflow(DotNetStruct):
+    def __init__(self, reader: DotNetStructReader, eof: EOF):
+        self.Info = 'The following remaining data could not be processed.'
+        self.Data = eof.rest
 
 
 class BinaryFormatterParser(list):
     def __init__(self, data, keep_meta=False, dereference=True, ignore_errors=False):
-        context = Box(
-            object_catalogue={},
-            unresolved_references=defaultdict(list)
-        )
+        context = Context({}, defaultdict(list))
 
-        def refcount(obj):
+        def refcount(obj: Record):
             try:
-                return obj.RefCount
+                return obj._refcount
             except AttributeError:
                 return 0
 
-        reader = StreamReader(data)
+        reader = DotNetRsrcReader(memoryview(data))
         header_found = False
 
         while True:
             try:
-                handler = RecordTypeCode(reader).Value
-                if handler is MessageEnd:
+                RecordType = RecordsByTypeCode[reader.u8()]
+                if RecordType is MessageEnd:
                     break
                 if not header_found and not ignore_errors:
-                    assert handler is SerializedStreamHeader, 'stream did not begin with a header'
+                    if RecordType is not SerializedStreamHeader:
+                        raise ValueError('The stream did not begin with a header.')
                     header_found = True
-                record = handler(reader, context)
-            except ParserEOF as remaining:
-                if remaining.data:
-                    self.append(Box(
-                        Info='The following remaining data could not be processed.',
-                        Data=remaining.data
-                    ))
+                record = RecordType.Parse(reader, context)
+            except EOF as eof:
+                raise
+                if eof.rest:
+                    self.append(Overflow(reader, eof))
                 break
             except Exception:
                 if ignore_errors:
                     continue
                 raise
-
-            if not keep_meta:
-                record = unpack(record)
             if dereference and refcount(record):
                 continue
-
+            if not keep_meta:
+                record = record.unpack()
             self.append(record)
+
+
+RecordsByTypeCode: dict[int, type[Record]] = {
+    0x00: SerializedStreamHeader,
+    0x01: ClassWithId,
+    0x02: SystemClassWithMembers,
+    0x03: ClassWithMembers,
+    0x04: SystemClassWithMembersAndTypes,
+    0x05: ClassWithMembersAndTypes,
+    0x06: BinaryObjectString,
+    0x07: BinaryArray,
+    0x08: MemberPrimitiveTyped,
+    0x09: MemberReference,
+    0x0A: Null,
+    0x0B: MessageEnd,
+    0x0C: BinaryLibrary,
+    0x0D: ObjectNullMultiple256,
+    0x0E: ObjectNullMultiple,
+    0x0F: ArraySinglePrimitive,
+    0x10: ArraySingleObject,
+    0x11: ArraySingleString,
+    0x14: ArraySingleString,
+    0x15: MethodCall,
+    0x16: MethodReturn,
+}

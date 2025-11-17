@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.dotnet.header import DotNetHeader
+from refinery.lib.structures import struct_to_json
 from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
@@ -20,15 +21,13 @@ class dnhdr(DotNetJSONEncoderUnit):
 
     def process(self, data):
         dn = DotNetHeader(data, parse_resources=self.args.resources)
-        dn = {
-            'Head': dn.head,
-            'Meta': dn.meta
+        result = {
+            'Head': struct_to_json(dn.head),
+            'Meta': struct_to_json(dn.meta),
         }
-
         if self.args.resources:
-            dn['RSRC'] = dn.resources
-
-        return self.to_json(dn)
+            result['RSRC'] = struct_to_json(dn.resources)
+        return self.to_json(result)
 
     @classmethod
     def handles(cls, data):

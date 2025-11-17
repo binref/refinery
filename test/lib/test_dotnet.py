@@ -1,6 +1,5 @@
-from refinery.lib.dotnet.deserialize import BinaryFormatterParser, unpack
-from refinery.lib.dotnet.resources import NetManifestResource, StreamReader
-from refinery.lib.dotnet.types import StringGUID
+from refinery.lib.dotnet.deserialize import BinaryFormatterParser, ClassWithMembersAndTypes
+from refinery.lib.dotnet.resources import NetManifestResource, DotNetStructReader
 
 from .. import TestBase
 
@@ -32,9 +31,11 @@ class TestDotNetParser(TestBase):
             '3C7CCF485C23447C6D4C64D8A1A377F01BFF3EC056945AB32C3FD852B4ACA4B90113CFD8CD3B'  # <|.H\#D|mLd...w...>.V.Z.,?.R.........;
             '406FF80F32EC2745AA42D6480BEBEE0000000049454E44AE4260820B'                      # @o..2.'E.B.H.......IEND.B`..
         )
-        header, library, container, blob = BinaryFormatterParser(resource)
-        value = unpack(container.Members.Data)
-        self.assertIn(value, blob)
+        header, library, container, blob = BinaryFormatterParser(resource, dereference=False)
+        assert isinstance(container, ClassWithMembersAndTypes)
+        value = container.Members['Data']
+        blob = bytes(blob)
+        self.assertIn(bytes(value), blob)
         self.assertLessEqual(len(blob.replace(value, B'')), 0x100)
 
     def test_unpack_resource_single_entry(self):
@@ -67,7 +68,7 @@ class TestDotNetParser(TestBase):
             'A4804EA79BD468341CC268B55AE10C4A810A4A57C80D72260FFC1D0A9FB590AA7EEAB5651300'  # ..N...h4..h.Z..J..JW..r&........~..e..
             '00000049454E44AE4260820B'                                                      # ...IEND.B`..
         )
-        parsed = NetManifestResource(StreamReader(manifest))
+        parsed = NetManifestResource(DotNetStructReader(memoryview(manifest)))
         self.assertEqual(len(parsed.Resources), 1)
 
     def test_unpack_resource_multiple_entries(self):
@@ -334,10 +335,10 @@ class TestDotNetParser(TestBase):
             '6AB5EAB2582C12D7DABDA4610EE6D1C0F345EC0E5F6D13DFD7F80D2E0000000049454E44AE42'  # j...X,.....a.....E.._m..........IEND.B
             '60820B'                                                                        # `..
         )
-        parsed = NetManifestResource(StreamReader(manifest))
+        parsed = NetManifestResource(DotNetStructReader(memoryview(manifest)))
         self.assertEqual(len(parsed.Resources), 11)
 
     def test_guid_formatter(self):
         guid_text = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
-        guid = StringGUID(StreamReader(b'\xAA\xAA\xAA\xAA\xBB\xBB\xCC\xCC\xDD\xDD\xEE\xEE\xEE\xEE\xEE\xEE'))
+        guid = DotNetStructReader(memoryview(b'\xAA\xAA\xAA\xAA\xBB\xBB\xCC\xCC\xDD\xDD\xEE\xEE\xEE\xEE\xEE\xEE')).read_dn_guid()
         self.assertEqual(str(guid), guid_text)

@@ -22,10 +22,10 @@ class dnstr(Unit):
     def process(self, data):
         header = DotNetHeader(data, parse_resources=False)
         if self.args.meta:
-            for string in header.meta.Streams.Strings.values():
+            for string in header.meta.Streams.StrA.values():
                 yield string.encode(self.codec)
         if self.args.user:
-            for string in header.meta.Streams.US.values():
+            for string in header.meta.Streams.StrU.values():
                 yield string.encode(self.codec)
 
     @classmethod

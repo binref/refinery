@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import codecs
+
 from refinery.lib.dotnet.resources import NetStructuredResources, NoManagedResource
-from refinery.lib.tools import isbuffer
+from refinery.lib.tools import asbuffer
 from refinery.lib.types import Param
 from refinery.units import RefineryPartialResult
 from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
@@ -39,10 +41,10 @@ class dnmr(PathExtractorUnit):
                 self.log_warn(F'entry {entry.Name} carried error message: {entry.Error}')
             data = entry.Data
             if not self.args.raw:
-                if isinstance(entry.Value, str):
-                    data = entry.Value.encode('utf-16le')
-                elif isbuffer(entry.Value):
-                    data = entry.Value
+                if b := asbuffer(v := entry.Value):
+                    data = b
+                elif isinstance(v, str):
+                    data = codecs.encode(v, self.codec)
             yield UnpackResult(entry.Name, data)
 
     @classmethod
