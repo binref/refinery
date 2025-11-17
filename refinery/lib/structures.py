@@ -690,6 +690,12 @@ class StructReader(MemoryFile[T, T]):
         """
         return self.read_integer(4, peek)
 
+    def read_bool_byte(self, strict=False):
+        value = self.u8()
+        if strict and value not in (0, 1):
+            raise ValueError(F'Invalid boolean byte value {value:#02x}.')
+        return bool(value)
+
     def u8(self, peek: bool = False) -> int: return self.read_integer(8, peek)
     def i8(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
 
