@@ -4,7 +4,7 @@ from itertools import count
 from typing import ClassVar, overload
 from zlib import crc32
 
-from refinery.lib.structures import EOF, MemoryFile, Struct, StructReader
+from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.units import Unit
 
 
@@ -339,7 +339,7 @@ class lzip(Unit):
                     ID, VN, DS = reader.read_struct('4sBB')
                     if ID != B'LZIP':
                         if k > 1:
-                            raise EOF
+                            raise EOFError
                         else:
                             self.log_warn(F'ignoring invalid LZIP signature: {ID.hex()}')
                     if VN != 1:
