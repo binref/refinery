@@ -5,6 +5,11 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.9
+- The `hl` unit was added for highlighting source code on the terminal.
+- The `xtmsi` unit now supports Advanced Installer binaries which include the MSI with obfuscated header.
+- The .NET parsing library was completely refactored, so there will certainly be bugs.
+
 ## Version 0.9.8
 - The `sqlite` unit was added, thanks to [@oxitocin][].
 - The `codebook` unit was added.
