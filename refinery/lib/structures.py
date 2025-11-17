@@ -29,7 +29,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from collections.abc import Buffer
-    from typing import Protocol
+    from typing import Generator, Protocol, Self
 
     from refinery.lib.types import JSON, buf
 
@@ -947,3 +947,54 @@ def struct_to_json(v: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSO
         return v.__json__()
     except AttributeError:
         return cast('JSON', v)
+
+
+class FlagAccessMixin:
+    """
+    This class can be mixed into an `enum.IntFlag` for some quality of life improvements. Firstly,
+    you can now access flags as follows:
+
+        class Flags(FlagAccessMixin, enum.IntFlag):
+            IsBinary = 1
+            IsCompressed = 2
+
+        flag = Flags(3)
+
+        if flag.IsCompressed:
+            decompress()
+
+    Furthermore, flag values can be enumerated:
+
+        >>> list(flag)
+        [IsBinary, IsCompressed]
+        >>> flag
+        IsBinary|IsCompressed
+
+    And finally, as visible from the above output, flag values are represented by their name by
+    default.
+    """
+    def __getattribute__(self, name: str):
+        if not isinstance(self, enum.IntFlag):
+            raise RuntimeError
+        if not name.startswith('_'):
+            try:
+                flag = self.__class__[name]
+            except KeyError:
+                pass
+            else:
+                return flag in self
+        return super().__getattribute__(name)
+
+    def __iter__(self) -> Generator[Self]:
+        if not isinstance(self, enum.IntFlag):
+            raise RuntimeError
+        for flag in self.__class__:
+            if flag in self:
+                yield flag
+
+    def __repr__(self):
+        if not isinstance(self, enum.IntFlag):
+            raise RuntimeError
+        if name := self.name:
+            return name
+        return super().__repr__()
