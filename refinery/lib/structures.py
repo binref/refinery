@@ -68,8 +68,21 @@ class EOF(EOFError):
     While reading from a `refinery.lib.structures.MemoryFile`, less bytes were available than
     requested. The exception contains the data from the incomplete read.
     """
+    def __init__(self, size: int, rest: buf = B''):
+        super().__init__(F'Unexpected end of buffer; attempted to read {size} bytes, but got only {len(rest)}.')
+        self.rest = rest
+        self.size = size
+
+    def __bytes__(self):
+        return bytes(self.rest)
+
+
+class LimitExceeded(EOFError):
+    """
+    While writing to a `refinery.lib.structures.MemoryFile`, the buffer limit was exceeded.
+    """
     def __init__(self, rest: buf = B''):
-        super().__init__('Unexpected end of buffer.')
+        super().__init__(F'Unable to write {len(rest)} data to stream due to limit.')
         self.rest = rest
 
     def __bytes__(self):
@@ -346,7 +359,7 @@ class MemoryFileMethods(Generic[T, B]):
         cc = self._cursor
         nc = cc + 1
         if limit and nc > limit:
-            raise EOF(bytes((byte,)))
+            raise LimitExceeded(bytes((byte,)))
         try:
             if cc < len(self._data):
                 self._data[cc] = byte
@@ -407,10 +420,10 @@ class MemoryFileMethods(Generic[T, B]):
                 else:
                     rest = bytearray((b,))
                     rest[1:] = it
-                    raise EOF(rest)
+                    raise LimitExceeded(rest)
         else:
             if limit and size + beginning > limit:
-                raise EOF(bytes(data))
+                raise LimitExceeded(bytes(data))
             self._cursor += size
             try:
                 out[beginning:self._cursor] = data
@@ -502,7 +515,7 @@ class StructReader(MemoryFile[T, T]):
             raise StructReader.Unaligned('buffer is not byte-aligned')
         data = self.read1(size, peek)
         if size and len(data) < size:
-            raise EOF(data)
+            raise EOF(size, data)
         return data
 
     @property
@@ -561,7 +574,7 @@ class StructReader(MemoryFile[T, T]):
             rest = 8 - rest
         bb = self.read1(bytecount, True)
         if len(bb) != bytecount:
-            raise EOFError
+            raise EOF(bytecount, bb)
         if not peek:
             self.seekrel(bytecount)
         if bytecount == 1:
@@ -694,7 +707,7 @@ class StructReader(MemoryFile[T, T]):
         try:
             b = self._data[self._cursor]
         except IndexError:
-            raise EOFError
+            raise EOF(1)
         else:
             self._cursor += 1
             return b
