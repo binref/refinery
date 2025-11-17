@@ -22,6 +22,26 @@ from refinery.lib.types import INF, buf
 _T = TypeVar('_T')
 
 
+try:
+    import ctypes
+except ImportError:
+    def _meminfo_d(v: memoryview) -> slice | None:
+        return None
+    meminfo = _meminfo_d
+else:
+    def _meminfo_c(v: memoryview):
+        if not (n := len(v)):
+            return None
+        if v.readonly or not v.contiguous:
+            return None
+        base = memoryview(v.obj)
+        offset, base_addr = (
+            ctypes.addressof(ctypes.c_char.from_buffer(t)) for t in (v, base))
+        start = offset - base_addr
+        return slice(start, min(start + n, len(base)), 1)
+    meminfo = _meminfo_c
+
+
 def lookahead(iterator: Iterable[_T]) -> Generator[tuple[bool, _T]]:
     """
     Implements a new iterator from a given one which returns elements `(last, item)` where each
@@ -536,7 +556,7 @@ def isodate(iso: str) -> datetime.datetime | None:
         return None
 
 
-def date_from_timestamp(ts: int):
+def date_from_timestamp(ts: int | float):
     """
     Convert a UTC timestamp to a datetime object.
     """

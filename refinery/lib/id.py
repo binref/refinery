@@ -12,7 +12,7 @@ import re
 
 from typing import Callable, NamedTuple
 
-from refinery.lib.tools import entropy
+from refinery.lib.tools import entropy, meminfo
 from refinery.lib.types import buf
 
 MimeByExtension = {
@@ -469,19 +469,92 @@ def is_likely_pe(data: buf):
     return get_pe_type(data) is not None
 
 
-def buffer_offset(haystack: buf, needle: bytes, start: int = 0, end: int | None = None):
+def slice_offset(haystack: slice, needle: slice):
+    """
+    Assuming that haystack and needle are used to slice the same buffer, this method determines the
+    offset of that needle in the haystack, or `-1` if the haystack would not contain the needle.
+    """
+    h_start = 0 if haystack.start is None else haystack.start
+    h_stop = haystack.stop
+    h_step = haystack.step or 1
+    n_start = 0 if needle.start is None else needle.start
+    n_stop = needle.stop
+    n_step = needle.step or 1
+    offset = n_start - h_start
+    offset, remainder = divmod(offset, h_step)
+    single_byte = False
+    if h_stop is not None:
+        if n_stop is None:
+            return -1
+        h_length, hr = divmod(h_stop - h_start, h_step)
+        n_length, nr = divmod(n_stop - n_start, n_step)
+        h_length += bool(hr)
+        n_length += bool(nr)
+        if n_length == 0:
+            return 0
+        if n_length + offset > h_length:
+            return -1
+        if n_length == 1:
+            single_byte = True
+    if n_step != h_step and not single_byte:
+        return -1
+    if offset < 0:
+        return -1
+    if remainder != 0:
+        return -1
+    return offset
+
+
+def buffer_offset(haystack: buf, needle: buf, start: int = 0, end: int | None = None, memory_allowance: int = 0x100):
     """
     Performs a substring search of `needle` in `haystack`. If `haystack` is a `bytes`-like object,
     it uses the standard method. If it is a `memoryview`, it uses a regular expression search.
     """
-    if isinstance(haystack, (bytes, bytearray)):
-        return needle.find(haystack, start, end)
-    if m := re.search(re.escape(needle), haystack[start:end]):
-        return start + m.start()
-    return -1
+    if (nc := len(needle)) == 0:
+        return 0
+    if len(haystack) == 0:
+        return -1
+    if isinstance(haystack, memoryview):
+        hs = haystack[start:end]
+        if isinstance(needle, memoryview):
+            if haystack.obj is needle.obj and (n := meminfo(needle)) and (h := meminfo(hs)):
+                if (offset := slice_offset(h, n)) >= 0:
+                    return offset
+        if not hs.contiguous:
+            haystack = bytearray(haystack)
+        else:
+            prefix = needle[:memory_allowance]
+            if isinstance(prefix, memoryview):
+                prefix = bytes(prefix)
+            match_sufficient = True
+            suffix = B''
+            pattern = re.escape(prefix)
+            if rest := nc - len(prefix):
+                if rest > memory_allowance:
+                    suffix = needle[-memory_allowance:]
+                    match_sufficient = False
+                    rest -= memory_allowance
+                else:
+                    suffix = needle[-rest:]
+                if isinstance(suffix, memoryview):
+                    suffix = bytes(suffix)
+            if suffix:
+                suffix = re.escape(suffix)
+                if rest > 0:
+                    suffix = B'.{%d}%s' % (rest, suffix)
+                pattern += suffix
+            for m in re.finditer(pattern, hs):
+                offset = start + m.start()
+                if match_sufficient or haystack[offset:offset + nc] == needle:
+                    return offset
+            else:
+                return -1
+    if isinstance(needle, memoryview) and not needle.contiguous:
+        needle = bytearray(needle)
+    return haystack.find(needle, start, end)
 
 
-def buffer_contains(haystack: buf, needle: bytes):
+def buffer_contains(haystack: buf, needle: buf):
     """
     Determines whether `haystack` contains `needle`.
     """
