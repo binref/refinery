@@ -8,6 +8,7 @@ from refinery.lib.inno.archive import (
 )
 from refinery.lib.json import BytesAsArrayEncoder
 from refinery.lib.mime import FileMagicInfo as magic
+from refinery.lib.structures import struct_to_json
 from refinery.units.formats.archive import ArchiveUnit
 
 
@@ -53,14 +54,14 @@ class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
 
         with BytesAsArrayEncoder as encoder:
             yield self._pack('meta/setup.bin', None, inno.streams.TSetup.data)
-            doc = inno.setup_info.json()
+            doc = struct_to_json(inno.setup_info)
             yield self._pack('meta/setup.template', None, encoder.dumps(doc).encode(self.codec))
             doc = post_process_json(doc)
             yield self._pack('meta/setup.json', None, encoder.dumps(doc).encode(self.codec))
 
         with BytesAsArrayEncoder as encoder:
             yield self._pack('meta/files.bin', None, inno.streams.TData.data)
-            doc = inno.setup_data.json()
+            doc = struct_to_json(inno.setup_data)
             yield self._pack('meta/files.template', None, encoder.dumps(doc).encode(self.codec))
             doc = post_process_json(doc)
             yield self._pack('meta/files.json', None, encoder.dumps(doc).encode(self.codec))

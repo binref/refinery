@@ -29,18 +29,26 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from collections.abc import Buffer
+    from typing import Protocol
 
-    from refinery.lib.types import buf
+    from refinery.lib.types import JSON, buf
 
     T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
     B = TypeVar('B', bound=Union[bytearray, bytes, memoryview], default=T)
     C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
     R = TypeVar('R', bound=io.IOBase)
 else:
+    Protocol = abc.ABC
     T = TypeVar('T')
     B = TypeVar('B')
     C = TypeVar('C')
     R = TypeVar('R')
+
+
+class ToJSON(Protocol):
+    @abc.abstractmethod
+    def __json__(self) -> JSON:
+        raise NotImplementedError
 
 
 UnpackType = Union[int, bool, float, bytes]
@@ -895,3 +903,28 @@ class PerInstanceAttribute(Generic[AttrType]):
                 raise AttributeError from K
             self.__get[pid] = self.resolve(parent, seed)
         return self.__get[pid]
+
+
+def struct_to_json(v: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSON | None, codec: str | None = None) -> JSON:
+    """
+    Attempt to convert a `refinery.lib.structures.Struct` to a JSON representation.
+    """
+    if v is None:
+        return v
+    if isinstance(v, Struct):
+        v = {k: v for k, v in v.__dict__.items() if not k.startswith('_')}
+    if isinstance(v, list):
+        return [struct_to_json(x, codec) for x in v]
+    if isinstance(v, dict):
+        return {x: struct_to_json(y, codec) for x, y in v.items()}
+    if isinstance(v, enum.IntFlag):
+        return [option.name for option in v.__class__ if v & option == option]
+    if isinstance(v, enum.IntEnum):
+        return v.name
+    if codec is not None:
+        if isinstance(v, (memoryview, bytes, bytearray)):
+            return codecs.decode(v, codec)
+    try:
+        return v.__json__()
+    except AttributeError:
+        return cast('JSON', v)

@@ -294,29 +294,7 @@ _IS_AMBIGUOUS = {
 _VERSIONS = sorted(_IS_AMBIGUOUS)
 
 
-class JsonStruct(Struct):
-    def json(self):
-        def _json(v):
-            if isinstance(v, list):
-                return [_json(x) for x in v]
-            if isinstance(v, dict):
-                return {x: _json(y) for x, y in v.items()}
-            if isinstance(v, JsonStruct):
-                return v.json()
-            if isinstance(v, enum.IntFlag):
-                return [option.name for option in v.__class__ if v & option == option]
-            if isinstance(v, enum.IntEnum):
-                return v.name
-            if isinstance(v, memoryview):
-                return codecs.decode(v, 'latin1')
-            return v
-        return {
-            k: _json(v) for k, v in self.__dict__.items()
-            if not k.startswith('_')
-        }
-
-
-class InnoStruct(JsonStruct):
+class InnoStruct(Struct):
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, codec: str = 'latin1'):
         if version.unicode:
             self._read_string = functools.partial(
@@ -553,7 +531,7 @@ class StreamHeader(InnoStruct):
             self.StoredSize += 4 * block_count
 
 
-class CrcCompressedBlock(JsonStruct):
+class CrcCompressedBlock(Struct):
     def __init__(self, reader: StructReader[memoryview], size: int):
         self.BlockCrc = reader.u32()
         self.BlockData = reader.read(size)
@@ -1207,7 +1185,7 @@ class Version(InnoStruct):
         self.Minor = reader.u8()
         self.Major = reader.u8()
 
-    def json(self):
+    def __json__(self):
         return F'{self.Major:d}.{self.Minor:d}.{self.Build:04d}'
 
 
@@ -1231,7 +1209,7 @@ class WinVerRange(InnoStruct):
         self.Max = WindowsVersion(reader, version)
 
 
-class LanguageId(JsonStruct):
+class LanguageId(Struct):
     def __init__(self, reader: StructReader[memoryview]):
         self.Value = reader.i32()
         self.Name = LCID.get(self.Value, None)
