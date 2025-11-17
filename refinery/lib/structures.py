@@ -719,7 +719,7 @@ class StructReader(MemoryFile[T, T]):
             return b
 
     def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
-    def read_char(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
+    def read_char(self, peek: bool = False) -> str: return chr(self.read_integer(8, peek))
 
     def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray:
         buf = self.getvalue()
