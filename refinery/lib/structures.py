@@ -638,7 +638,7 @@ class StructReader(MemoryFile[T, T]):
             pattern = re.compile(pattern.pattern, flags=re.DOTALL)
         data = self._data
         if isinstance(data, memoryview) and not data.contiguous:
-            raise NotImplementedError('Cannot perform regex-based read on non-contiguous buffer.')       
+            raise NotImplementedError('Cannot perform regex-based read on non-contiguous buffer.')
         if result := pattern.match(data, self._cursor):
             self._cursor = result.end()
             return result
