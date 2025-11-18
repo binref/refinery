@@ -407,8 +407,9 @@ class FieldFlags(FlagAccessMixin, enum.IntFlag):
 
 class Field(DotNetStruct):
     def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Access = FieldAccess(reader.read_integer(4) & 7)
-        self.Flags = FieldFlags(reader.read_integer(12))
+        access, _, flags = reader.read_bit_field(3, 1, 12)
+        self.Access = FieldAccess(access)
+        self.Flags = FieldFlags(flags)
         self.Name = tables._read_strA()
         self.Signature = tables._read_blob()
 

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import io
 
-from refinery.lib.structures import StreamDetour, StructReader
+from refinery.lib.structures import StreamDetour, StructReaderBits
 from refinery.units import RefineryPartialResult, Unit
 from refinery.units.crypto.hash.xxhash import xxhash
 
 
-class LZ4Reader(StructReader):
+class LZ4Reader(StructReaderBits):
     def read_size(self, size):
         if size < 0xF:
             return size
@@ -23,7 +23,7 @@ class lz4(Unit):
     LZ4 block decompression. See also:
     https://github.com/lz4/lz4/blob/master/doc/lz4_Block_format.md#compressed-block-format
     """
-    def _read_block(self, reader: StructReader, output: io.BytesIO, ubound=None):
+    def _read_block(self, reader: LZ4Reader, output: io.BytesIO, ubound=None):
         entry = reader.tell()
         lastend = 0
 

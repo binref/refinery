@@ -5,7 +5,7 @@ import itertools
 from array import array
 from enum import IntEnum
 
-from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.structures import MemoryFile, StructReaderBits
 from refinery.units import RefineryPartialResult, Unit
 
 
@@ -27,7 +27,7 @@ class lzw(Unit):
 
     def process(self, data: bytearray):
         out = MemoryFile()
-        inf = StructReader(memoryview(data))
+        inf = StructReaderBits(memoryview(data))
 
         if inf.peek(2) != self._MAGIC:
             self.log_info('No LZW signature found, assuming raw stream.')

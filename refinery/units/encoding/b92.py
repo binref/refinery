@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.structures import MemoryFile, StructReaderBits
 from refinery.units import RefineryPartialResult, Unit
 
 _B92_ALPHABET = (
@@ -19,7 +19,7 @@ class b92(Unit):
         if not data:
             return B'~'
 
-        reader = StructReader(data, bigendian=True)
+        reader = StructReaderBits(data, bigendian=True)
         output = MemoryFile()
         while reader.remaining_bits > 0:
             try:

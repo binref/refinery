@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from refinery.lib.structures import StructReader
 from refinery.units import Unit
 
@@ -22,11 +24,12 @@ class lzjb(Unit):
         lempel = [0] * _LEMPEL_SIZE
         copymask = 0x80
         position = 0
+        copy_map = None
         while position < len(src):
             copymask <<= 1
             if copymask >= 0x100:
                 copymask = 1
-                copymap = len(output)
+                copy_map = len(output)
                 output.append(0)
             if position > len(src) - _MATCH_MAX:
                 output.append(src[position])
@@ -40,8 +43,11 @@ class lzjb(Unit):
             lempel[hsh] = position
             cpy = position - offset
             if cpy >= 0 and cpy != position and src[position:position + 3] == src[cpy:cpy + 3]:
-                output[copymap] |= copymask
-                for mlen in range(_MATCH_MIN, min(len(src) - position, _MATCH_MAX)):
+                if copy_map is None:
+                    raise ValueError
+                output[copy_map] |= copymask
+                mlen = min(len(src) - position, _MATCH_MAX)
+                for mlen in range(_MATCH_MIN, mlen):
                     if src[position + mlen] != src[cpy + mlen]:
                         break
                 output.append(((mlen - _MATCH_MIN) << (8 - _MATCH_LEN)) | (offset >> 8))
@@ -57,6 +63,9 @@ class lzjb(Unit):
         src = StructReader(data)
         while not src.eof:
             copy = src.read_byte()
+            if not copy:
+                dst.extend(src.read(8))
+                continue
             for mask in (0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80):
                 if src.eof:
                     break
@@ -66,8 +75,8 @@ class lzjb(Unit):
                 elif not dst:
                     raise ValueError('copy requested against empty buffer')
                 with src.be:
-                    match_len = src.read_integer(6) + _MATCH_MIN
-                    match_pos = src.read_integer(10)
+                    match_len, match_pos = src.read_bit_field(6, 10)
+                    match_len += _MATCH_MIN
                 if not match_pos or match_pos > len(dst):
                     raise RuntimeError(F'invalid match offset at position {src.tell()}')
                 match_pos = len(dst) - match_pos

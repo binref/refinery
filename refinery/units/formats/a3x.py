@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Generator, Iterable, NamedTuple
 
 from refinery.lib.id import buffer_contains
-from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.structures import MemoryFile, Struct, StructReader, StructReaderBits
 from refinery.lib.tools import date_from_timestamp
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
@@ -631,7 +631,7 @@ def a3x_decompress(data: bytearray, is_current: bool) -> bytearray:
     cursor = 0
     view = memoryview(data)
     size = int.from_bytes(view[4:8], 'big')
-    bit_reader = StructReader(view[8:], bigendian=True)
+    bit_reader = StructReaderBits(view[8:], bigendian=True)
     bits = bit_reader.read_integer
     while cursor < size:
         check = bits(1)
@@ -978,7 +978,7 @@ class a3x(PathExtractorUnit):
                     break
                 cursor = rp
             try:
-                script = A3xScript.Parse(A3xReader(view[cursor:]))
+                script = A3xScript.Parse(view[cursor:])
             except Exception as E:
                 errors[cursor] = E
                 cursor += 1

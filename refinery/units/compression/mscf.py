@@ -10,7 +10,7 @@ from refinery.lib.decompression import (
     make_huffman_decode_table,
     read_huffman_symbol,
 )
-from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.structures import MemoryFile, StructReader, StructReaderBits
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -164,6 +164,7 @@ class mscf(Unit):
         max_chunk_size: int = 0x10000
     ) -> None:
         limit = writer.tell()
+        reader = StructReaderBits(reader)
         if target is not None:
             target += limit
 
@@ -214,7 +215,7 @@ class mscf(Unit):
                 length += XPRESS_MIN_MATCH_LEN
                 writer.replay(offset, length)
 
-    def _decompress_xpress(self, reader: StructReader, writer: MemoryFile, target: int | None = None) -> bytearray:
+    def _decompress_xpress(self, reader: StructReader, writer: MemoryFile, target: int | None = None) -> None:
         if target is not None:
             target += writer.tell()
         flags = BitBufferedReader(reader)

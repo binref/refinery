@@ -13,11 +13,11 @@ import zlib
 from typing import Generator
 
 from refinery.lib.java import JvClassFile
-from refinery.lib.structures import StreamDetour, Struct, StructReader
+from refinery.lib.structures import StreamDetour, Struct, StructReaderBits
 
 
 class DexFile(Struct):
-    def __init__(self, reader: StructReader, calculate_checks=False):
+    def __init__(self, reader: StructReaderBits, calculate_checks=False):
         if reader.read(4) != b'dex\n':
             raise ValueError('Invalid Signature')
         with StreamDetour(reader, 0x28):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.structures import MemoryFile, StructReaderBits
 from refinery.units import RefineryPartialResult, Unit
 
 
@@ -26,9 +26,9 @@ class pkw(Unit):
             raise ValueError(
                 'Failed to decode a symbol in the compressed data stream.')
 
-        reader = StructReader(data)
-        codelit = reader.u8()  # First byte is 0 if literals are uncoded, otherwise 1
-        maxdict = reader.u8()  # Second byte is 4, 5, or 6 (max size of dictionary)
+        reader = StructReaderBits(data)
+        codelit = reader.u8fast()  # First byte is 0 if literals are uncoded, otherwise 1
+        maxdict = reader.u8fast()  # Second byte is 4, 5, or 6 (max size of dictionary)
 
         if not 0 <= codelit <= 1:
             raise ValueError(F'Invalid literal encoding value {codelit}.')

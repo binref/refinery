@@ -8,10 +8,12 @@ import codecs
 import contextlib
 import enum
 import functools
+import inspect
 import io
 import itertools
 import re
 import struct
+import sys
 import weakref
 
 from typing import (
@@ -23,6 +25,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    get_origin,
     overload,
 )
 from uuid import UUID
@@ -129,29 +132,37 @@ class MemoryFileMethods(Generic[T, B]):
 
     def __init__(
         self,
-        data: T | None = None,
+        data: T | MemoryFileMethods[T, B] | None = None,
         output: type[B] | None = None,
         fileno: int | None = None,
         size_limit: int | None = None,
     ) -> None:
-        if data is None:
-            if TYPE_CHECKING:
-                data = cast(T, bytearray())
-            else:
-                data = bytearray()
-        if output is None:
-            if TYPE_CHECKING:
-                output = cast(type[B], type(data))
-            else:
-                output = type(data)
-        if size_limit is not None and len(data) > size_limit:
-            raise ValueError('Initial data exceeds size limit')
-        self._output = output
-        self._cursor = 0
-        self._closed = False
-        self._fileno = fileno
-        self._size_limit = size_limit
-        self._data = data
+        if data is not self and isinstance(data, MemoryFileMethods):
+            self._output = output or data._output
+            self._cursor = data._cursor
+            self._closed = data._closed
+            self._fileno = fileno or data._fileno
+            self._size_limit = size_limit or data._size_limit
+            self._data = data._data
+        else:
+            if data is None:
+                if TYPE_CHECKING:
+                    data = cast(T, bytearray())
+                else:
+                    data = bytearray()
+            if output is None:
+                if TYPE_CHECKING:
+                    output = cast(type[B], type(data))
+                else:
+                    output = type(data)
+            if size_limit is not None and len(data) > size_limit:
+                raise ValueError('Initial data exceeds size limit')
+            self._output = output
+            self._cursor = 0
+            self._closed = False
+            self._fileno = fileno
+            self._size_limit = size_limit
+            self._data = data
 
     def close(self) -> None:
         self._closed = True
@@ -471,10 +482,13 @@ class StructReader(MemoryFile[T, T]):
     class Unaligned(RuntimeError):
         pass
 
-    def __init__(self, data: T, bigendian: bool = False):
+    def __init__(self, data: T | StructReader[T], bigendian: bool | None = None):
         super().__init__(data)
-        self._bbits = 0
-        self._nbits = 0
+        if bigendian is None:
+            if isinstance(data, StructReader):
+                bigendian = data.bigendian
+            else:
+                bigendian = False
         self.bigendian = bigendian
 
     def __enter__(self) -> StructReader:
@@ -497,11 +511,6 @@ class StructReader(MemoryFile[T, T]):
     def byteorder_name(self):
         return 'big' if self.bigendian else 'little'
 
-    def seek(self, offset, whence=io.SEEK_SET) -> int:
-        self._bbits = 0
-        self._nbits = 0
-        return super().seek(offset, whence)
-
     def read_exactly(self, size: int | None = None, peek: bool = False) -> T:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
@@ -511,134 +520,61 @@ class StructReader(MemoryFile[T, T]):
         Use `refinery.lib.structures.StructReader.read_bytes` to read bytes from the stream when it is
         not byte-aligned.
         """
-        if not self.byte_aligned:
-            raise StructReader.Unaligned('buffer is not byte-aligned')
-        data = self.read1(size, peek)
+        data = self.read(size, peek)
         if size and len(data) < size:
             raise EOF(size, data)
         return data
 
-    @property
-    def byte_aligned(self) -> bool:
+    def read_bit_field(self, *sizes: int, peek: bool = False):
         """
-        This property is `True` if and only if there are currently no bits still waiting in the internal
-        bit buffer.
+        Read multiple integers that form a bit field. This method can be used to read bit fields without
+        having to use a `refinery.lib.structures.StructReaderBits` when the bit count sums to a multiple
+        of 8.
         """
-        return not self._nbits
+        data = self.read_integer(sum(sizes))
+        if self.bigendian:
+            sizes = sizes[::-1]
+        fields = []
+        for size in sizes:
+            fields.append(data & ~(-1 << size))
+            data >>= size
+        if self.bigendian:
+            fields.reverse()
+        return fields
 
-    def byte_align(self, blocksize: int = 1) -> tuple[int, int]:
+    def read_integer(
+        self,
+        size: int,
+        peek: bool = False,
+        signed: bool = False
+    ) -> int:
         """
-        This method clears the internal bit buffer and moves the cursor to the next byte. It returns a
-        tuple containing the size and contents of the bit buffer.
+        Read an integer of the given size (in bytes) from the stream.
         """
-        nbits = self._nbits
-        bbits = self._bbits
-        self._nbits = 0
-        self._bbits = 0
-        mod = self._cursor % blocksize
-        if mod:
-            self.seekrel(blocksize - mod)
-        return nbits, bbits
+        nbytes, rest = divmod(size, 8)
+        if rest > 0:
+            raise ValueError(
+                F'A {self.__class__.__name__} cannot read {size} bit{"s" * (size > 1)}, only multiples of 8 are possible.')
+        data = self.read(nbytes, peek)
+        if len(data) < nbytes:
+            raise EOF(nbytes, data)
+        return int.from_bytes(data, self.byteorder_name, signed=signed)
 
-    @property
-    def remaining_bits(self) -> int:
-        return 8 * self.remaining_bytes + self._nbits
-
-    def read_integer(self, length: int | None = None, peek: bool = False, bigendian: bool | None = None) -> int:
+    def byte_align(self, blocksize: int = 1):
         """
-        Read `length` many bits from the underlying stream as an integer.
+        Align the cursor at the given block size boundary.
         """
-        if length is None:
-            length = self.remaining_bits
-        if bigendian is None:
-            bigendian = self.bigendian
-        if length < self._nbits:
-            new_count = self._nbits - length
-            if bigendian:
-                result = self._bbits >> new_count
-                if not peek:
-                    self._bbits ^= result << new_count
-            else:
-                result = self._bbits & 2 ** length - 1
-                if not peek:
-                    self._bbits >>= length
-            if not peek:
-                self._nbits = new_count
-            return result
-
-        nbits, bbits = self._nbits, self._bbits
-        number_of_missing_bits = length - nbits
-        bytecount, rest = divmod(number_of_missing_bits, 8)
-        if rest:
-            bytecount += 1
-            rest = 8 - rest
-        bb = self.read1(bytecount, True)
-        if len(bb) != bytecount:
-            raise EOF(bytecount, bb)
-        if not peek:
-            self.seekrel(bytecount)
-        if bytecount == 1:
-            result, = bb
-        else:
-            result = int.from_bytes(bb, self.byteorder_name)
-        if not nbits and not rest:
-            return result
-        if bigendian:
-            rbmask   = 2 ** rest - 1       # noqa
-            excess   = result & rbmask     # noqa
-            result >>= rest                # noqa
-            result  ^= bbits << number_of_missing_bits   # noqa
-        else:
-            excess   = result >> number_of_missing_bits  # noqa
-            result  ^= excess << number_of_missing_bits  # noqa
-            result <<= nbits               # noqa
-            result  |= bbits               # noqa
-        assert excess.bit_length() <= rest
-        if not peek:
-            self._nbits = rest
-            self._bbits = excess
-        return result
+        if mod := -self._cursor % blocksize:
+            self.seekrel(mod)
 
     def read_bytes(self, size: int, peek: bool = False) -> bytes:
         """
         The method reads `size` many bytes from the underlying stream starting at the current bit.
         """
-        if self.byte_aligned:
-            data = self.read_exactly(size, peek)
-            if not isinstance(data, bytes):
-                data = bytes(data)
-            return data
-        else:
-            return self.read_integer(size * 8, peek).to_bytes(size, self.byteorder_name)
-
-    def read_bit(self) -> int:
-        """
-        This function is a shortcut for calling `refinery.lib.structures.StructReader.read_integer` with
-        an argument of `1`, i.e. this reads the next bit from the stream. The bits of any byte in the stream
-        are read from least significant to most significant.
-        """
-        return self.read_integer(1)
-
-    def read_bits(self, nbits: int, bigendian: bool | None = None) -> Iterable[int]:
-        """
-        This method returns the bits of `refinery.lib.structures.StructReader.read_integer` one by one.
-        """
-        if bigendian is None:
-            bigendian = self.bigendian
-        chunk = self.read_integer(nbits, bigendian=bigendian)
-        it = range(nbits - 1, -1, -1) if bigendian else range(nbits)
-        for k in it:
-            yield chunk >> k & 1
-
-    def read_flags(self, nbits: int, reverse=False) -> Iterable[bool]:
-        """
-        Identical to `refinery.lib.structures.StructReader.read_bits` with every bit value cast to a boolean.
-        """
-        bits = list(self.read_bits(nbits))
-        if reverse:
-            bits.reverse()
-        for bit in bits:
-            yield bool(bit)
+        data = self.read_exactly(size, peek)
+        if not isinstance(data, bytes):
+            data = bytes(data)
+        return data
 
     def read_one_struct(self, spec: str, peek=False) -> UnpackType:
         item, = self.read_struct(spec, peek=peek)
@@ -684,42 +620,75 @@ class StructReader(MemoryFile[T, T]):
             self.seekset(current_cursor)
         return data
 
-    def read_nibble(self, peek: bool = False) -> int:
-        """
-        Calls `refinery.lib.structures.StructReader.read_integer` with an argument of `4`.
-        """
-        return self.read_integer(4, peek)
-
     def read_bool_byte(self, strict=False):
         value = self.u8()
         if strict and value not in (0, 1):
             raise ValueError(F'Invalid boolean byte value {value:#02x}.')
         return bool(value)
 
-    def u8(self, peek: bool = False) -> int: return self.read_integer(8, peek)
-    def i8(self, peek: bool = False) -> int: return signed(self.read_integer(8, peek), 8)
+    def read_regex(
+        self,
+        pattern: bytes | bytearray | memoryview | re.Pattern[bytes],
+        dotall: bool = True
+    ):
+        if isinstance(pattern, (bytes, bytearray, memoryview)):
+            flags = re.DOTALL if dotall else re.NOFLAG
+            pattern = re.compile(bytes(pattern), flags=flags)
+        elif dotall and not re.DOTALL | pattern.flags:
+            pattern = re.compile(pattern.pattern, flags=re.DOTALL)
+        data = self._data
+        if isinstance(data, memoryview) and not data.contiguous:
+            raise NotImplementedError('Cannot perform regex-based read on non-contiguous buffer.')       
+        if result := pattern.match(data, self._cursor):
+            self._cursor = result.end()
+            return result
 
-    def u16(self, peek: bool = False) -> int: return self.read_integer(16, peek)
-    def u32(self, peek: bool = False) -> int: return self.read_integer(32, peek)
-    def u64(self, peek: bool = False) -> int: return self.read_integer(64, peek)
-    def i16(self, peek: bool = False) -> int: return signed(self.read_integer(16, peek), 16)
-    def i32(self, peek: bool = False) -> int: return signed(self.read_integer(32, peek), 32)
-    def i64(self, peek: bool = False) -> int: return signed(self.read_integer(64, peek), 64)
-
-    def f32(self, peek: bool = False) -> float: return cast(float, self.read_one_struct('f', peek=peek))
-    def f64(self, peek: bool = False) -> float: return cast(float, self.read_one_struct('d', peek=peek))
-
-    def u8fast(self):
+    def read_byte(self, peek: bool = False) -> int:
         try:
             b = self._data[self._cursor]
         except IndexError:
             raise EOF(1)
-        else:
+        if not peek:
             self._cursor += 1
-            return b
+        return b
 
-    def read_byte(self, peek: bool = False) -> int: return self.read_integer(8, peek)
-    def read_char(self, peek: bool = False) -> str: return chr(self.read_integer(8, peek))
+    def read_char(self, peek: bool = False) -> str:
+        try:
+            b = self._data[self._cursor]
+        except IndexError:
+            raise EOF(1)
+        if not peek:
+            self._cursor += 1
+        return chr(b)
+
+    u8fast = u8 = read_byte
+
+    def i8(self, peek: bool = False) -> int:
+        return signed(self.u8(peek), 8)
+
+    def u16(self, peek: bool = False) -> int:
+        return self.read_integer(16, peek, signed=False)
+
+    def u32(self, peek: bool = False) -> int:
+        return self.read_integer(32, peek, signed=False)
+
+    def u64(self, peek: bool = False) -> int:
+        return self.read_integer(64, peek, signed=False)
+
+    def i16(self, peek: bool = False) -> int:
+        return self.read_integer(16, peek, signed=True)
+
+    def i32(self, peek: bool = False) -> int:
+        return self.read_integer(32, peek, signed=True)
+
+    def i64(self, peek: bool = False) -> int:
+        return self.read_integer(64, peek, signed=True)
+
+    def f32(self, peek: bool = False) -> float:
+        return cast(float, self.read_one_struct('f', peek=peek))
+
+    def f64(self, peek: bool = False) -> float:
+        return cast(float, self.read_one_struct('d', peek=peek))
 
     def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray:
         buf = self.getvalue()
@@ -748,7 +717,7 @@ class StructReader(MemoryFile[T, T]):
                 if result.endswith(terminator):
                     return result[:-n]
             self.seek(pos)
-            raise EOF
+            raise EOF(len(result) + alignment, result)
         else:
             data = self.read_exactly(end - pos)
             self.skip(n)
@@ -827,7 +796,7 @@ class StructReader(MemoryFile[T, T]):
         if bigendian is None:
             bigendian = self.bigendian
         while True:
-            b = self.u8fast()
+            b = self.u8()
             if bigendian:
                 value <<= 7
                 value |= (b & 0x7F)
@@ -838,12 +807,189 @@ class StructReader(MemoryFile[T, T]):
             if (shift := shift + 7) > max_bits > 0:
                 raise OverflowError('Maximum bits were exceeded by encoded integer.')
 
+    def read_bits(self, nbits: int) -> Iterable[int]:
+        """
+        This method returns the bits of `refinery.lib.structures.StructReader.read_integer` one by one.
+        """
+        chunk = self.read_integer(nbits)
+        it = range(nbits - 1, -1, -1) if self.bigendian else range(nbits)
+        for k in it:
+            yield chunk >> k & 1
+
+    def read_flags(self, nbits: int, reverse=False) -> Iterable[bool]:
+        """
+        Identical to `refinery.lib.structures.StructReader.read_bits` with every bit value cast to a boolean.
+        """
+        bits = self.read_bits(nbits)
+        if reverse:
+            bits = list(bits)
+            bits.reverse()
+        for bit in bits:
+            yield bool(bit)
+
+
+class StructReaderBits(StructReader[T]):
+
+    def __init__(self, data: T | StructReader[T], bigendian: bool | None = None):
+        super().__init__(data, bigendian)
+        if isinstance(data, StructReaderBits):
+            self._bbits = data._bbits
+            self._nbits = data._nbits
+        else:
+            self._bbits = 0
+            self._nbits = 0
+
+    @property
+    def remaining_bits(self) -> int:
+        return 8 * self.remaining_bytes + self._nbits
+
+    @property
+    def byte_aligned(self) -> bool:
+        """
+        This property is `True` if and only if there are currently no bits still waiting in the internal
+        bit buffer.
+        """
+        return not self._nbits
+
+    def read_bytes(self, size: int, peek: bool = False) -> bytes:
+        """
+        The method reads `size` many bytes from the underlying stream starting at the current bit.
+        """
+        if not self.byte_aligned:
+            return self.read_integer(size * 8, peek).to_bytes(size, self.byteorder_name)
+        return super().read_bytes(size, peek)
+
+    def byte_align(self, blocksize: int = 1):
+        """
+        This method clears the internal bit buffer and moves the cursor to the next byte. It returns a
+        tuple containing the size and contents of the bit buffer.
+        """
+        self._nbits = 0
+        self._bbits = 0
+        super().byte_align(blocksize)
+
+    def read_exactly(self, size: int | None = None, peek: bool = False) -> T:
+        if not self.byte_aligned:
+            raise StructReader.Unaligned('buffer is not byte-aligned')
+        return super().read_exactly(size, peek)
+
+    def seek(self, offset, whence=io.SEEK_SET) -> int:
+        self._bbits = 0
+        self._nbits = 0
+        return super().seek(offset, whence)
+
+    def read_integer(
+        self,
+        size: int | None = None,
+        peek: bool = False,
+        signed: bool = False,
+    ) -> int:
+        """
+        Read `size` many bits from the underlying stream as an integer.
+        """
+        if size is None:
+            size = self.remaining_bits
+        if size < self._nbits:
+            new_count = self._nbits - size
+            if self.bigendian:
+                result = self._bbits >> new_count
+                if not peek:
+                    self._bbits ^= result << new_count
+            else:
+                result = self._bbits & 2 ** size - 1
+                if not peek:
+                    self._bbits >>= size
+            if not peek:
+                self._nbits = new_count
+        else:
+            nbits, bbits = self._nbits, self._bbits
+            number_of_missing_bits = size - nbits
+            bytecount, rest = divmod(number_of_missing_bits, 8)
+            if rest:
+                bytecount += 1
+                rest = 8 - rest
+            bb = self.read(bytecount, True)
+            if len(bb) != bytecount:
+                raise EOF(bytecount, bb)
+            if not peek:
+                self.seekrel(bytecount)
+            if bytecount == 1:
+                result, = bb
+            else:
+                result = int.from_bytes(bb, self.byteorder_name)
+            if nbits or rest:
+                if self.bigendian:
+                    rbmask   = 2 ** rest - 1       # noqa
+                    excess   = result & rbmask     # noqa
+                    result >>= rest                # noqa
+                    result  ^= bbits << number_of_missing_bits   # noqa
+                else:
+                    excess   = result >> number_of_missing_bits  # noqa
+                    result  ^= excess << number_of_missing_bits  # noqa
+                    result <<= nbits               # noqa
+                    result  |= bbits               # noqa
+                assert excess.bit_length() <= rest
+                if not peek:
+                    self._nbits = rest
+                    self._bbits = excess
+        if signed and (result & (msb := 1 << (size - 1))):
+            result &= msb - 1
+            result -= msb
+        return result
+
+    def read_bit(self) -> int:
+        """
+        This function is a shortcut for calling `refinery.lib.structures.StructReader.read_integer` with
+        an argument of `1`, i.e. this reads the next bit from the stream. The bits of any byte in the stream
+        are read from least significant to most significant.
+        """
+        return self.read_integer(1)
+
+    def read_nibble(self, peek: bool = False) -> int:
+        """
+        Calls `refinery.lib.structures.StructReader.read_integer` with an argument of `4`.
+        """
+        return self.read_integer(4, peek)
+
+    def read_byte(self, peek: bool = False) -> int:
+        return self.read_integer(8, peek)
+
+    def read_char(self, peek: bool = False) -> str:
+        return chr(self.read_integer(8, peek))
+
 
 class StructMeta(abc.ABCMeta):
     """
     A metaclass to facilitate the behavior outlined for `refinery.lib.structures.Struct`.
     """
-    def __init__(cls, name, bases, nmspc):
+    def __new__(mcls, name, bases, namespace: dict, interface: type[StructReader] | None = None):
+        if interface is None:
+            if init := namespace.get('__init__'):
+                args = iter(inspect.signature(init).parameters.values())
+                next(args)
+                interface = next(args).annotation
+                if isinstance(interface, str):
+                    try:
+                        module = sys.modules[namespace['__module__']]
+                        interface = eval(interface, module.__dict__)
+                    except Exception:
+                        interface = None
+                if not isinstance(interface, type):
+                    interface = get_origin(interface)
+                if not isinstance(interface, type) or not issubclass(interface, StructReader):
+                    raise RuntimeError
+            else:
+                interface = StructReader
+
+        def parse(cls, reader: T | StructReader[T], *args, **kwargs):
+            if not isinstance(reader, interface):
+                reader = interface(reader)
+            return cls(reader, *args, **kwargs)
+
+        namespace.update(Parse=classmethod(parse))
+        return super().__new__(mcls, name, bases, namespace)
+
+    def __init__(cls, name, bases, nmspc, **_):
         super().__init__(name, bases, nmspc)
         original__init__ = cls.__init__
 
@@ -873,10 +1019,8 @@ class Struct(Generic[T], metaclass=StructMeta):
     _data: memoryview | bytearray
 
     @classmethod
-    def Parse(cls, reader: T | StructReader[T], *args, **kwargs):
-        if not isinstance(reader, StructReader):
-            reader = StructReader(reader)
-        return cls(reader, *args, **kwargs)
+    def Parse(cls, reader: T | StructReader[T], *args, **kwargs) -> Self:
+        ...
 
     def __len__(self):
         return len(self._data)

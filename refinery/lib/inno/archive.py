@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.inno.ifps import IFPSFile
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
-from refinery.lib.structures import Struct, StructReader
+from refinery.lib.structures import Struct, StructReader, StructReaderBits
 from refinery.lib.tools import exception_to_string, one
 from refinery.lib.types import buf
 from refinery.units import Unit
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
         ClassVar,
         TypeVar,
     )
-    _T = TypeVar('_T')
+    _T = TypeVar('_T', bound=Struct)
     _E = TypeVar('_E', bound=enum.IntEnum)
 
 
@@ -132,7 +132,8 @@ class InnoVersion(NamedTuple):
                 vf |= IVF.UTF_16
             if any(isx in match[0] for isx in (B'My Inno Setup Extensions', B'with ISX')):
                 vf |= IVF.InnoSX
-            versions.append(InnoVersion(*sv, vf))
+            minor, major, patch, build = sv
+            versions.append(InnoVersion(minor, major, patch, build, vf))
         if len(versions) == 1:
             return versions[0]
         if len(versions) == 2:
@@ -397,7 +398,7 @@ class AutoBool(enum.IntEnum):
     Yes = 2
 
     @classmethod
-    def From(cls, b: bool):
+    def From(cls, b):
         return AutoBool.Yes if b else AutoBool.No
 
 
@@ -570,7 +571,7 @@ class TSetupOffsets(Struct):
             self.exe_checksum_type = CheckSumType.CRC32
         else:
             self.exe_checksum_type = CheckSumType.Adler32
-        self.exe_checksum = reader.u32()
+        self.exe_checksum = bytes(reader.read(4))
 
         self.messages = reader.u32() if iv < (4, 0, 0) else None
         self.info_abs_offset = reader.u32()
@@ -692,9 +693,9 @@ class InnoFile:
         if t == CheckSumType.Missing:
             return None
         if t == CheckSumType.Adler32:
-            return zlib.adler32(data) & 0xFFFFFFFF
+            return (zlib.adler32(data) & 0xFFFFFFFF).to_bytes(4, 'little')
         if t == CheckSumType.CRC32:
-            return zlib.crc32(data) & 0xFFFFFFFF
+            return (zlib.crc32(data) & 0xFFFFFFFF).to_bytes(4, 'little')
         if t == CheckSumType.MD5:
             return md5(data).digest()
         if t == CheckSumType.SHA1:
@@ -723,7 +724,7 @@ class InstallMode(enum.IntEnum):
 
 class SetupHeader(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion):
         super().__init__(reader, version)
 
         def read_string():
@@ -858,6 +859,10 @@ class SetupHeader(InnoStruct):
             _license_len = reader.u32()
             _infhead_len = reader.u32()
             _inftail_len = reader.u32()
+        else:
+            _license_len = 0
+            _infhead_len = 0
+            _inftail_len = 0
 
         self.WindowsVersion = WinVerRange(reader, version)
 
@@ -884,23 +889,23 @@ class SetupHeader(InnoStruct):
 
         if version >= (6, 4, 0):
             self.PasswordType = PasswordType.XChaCha20
-            self.PasswordHash = reader.read(4)
+            self.PasswordHash = bytes(reader.read(4))
         elif version >= (5, 3, 9):
             self.PasswordType = PasswordType.SHA1
-            self.PasswordHash = reader.read(20)
+            self.PasswordHash = bytes(reader.read(20))
         elif version >= (4, 2, 0):
             self.PasswordType = PasswordType.MD5
-            self.PasswordHash = reader.read(16)
+            self.PasswordHash = bytes(reader.read(16))
         else:
             self.PasswordType = PasswordType.CRC32
-            self.PasswordHash = reader.u32()
+            self.PasswordHash = bytes(reader.read(4))
 
         if version >= (6, 4, 0):
-            self.PasswordSalt = reader.read(44)
+            self.PasswordSalt = bytes(reader.read(44))
         elif version >= (4, 2, 2):
-            self.PasswordSalt = reader.read(8)
+            self.PasswordSalt = bytes(reader.read(8))
         else:
-            self.PasswordSalt = None
+            self.PasswordSalt = B''
 
         if version >= (4, 0, 0):
             self.ExtraDiskSpace = reader.i64()
@@ -1360,7 +1365,7 @@ class SetupTaskFlags(enum.IntFlag):
 
 class SetupTask(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
 
@@ -1433,7 +1438,7 @@ class SetupDirectoryFlags(enum.IntFlag):
 
 class SetupDirectory(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
 
@@ -1524,7 +1529,7 @@ class SetupFileCopyMode(enum.IntEnum):
 
 class SetupFile(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
 
@@ -1648,7 +1653,7 @@ class SetupIconFlags(enum.IntFlag):
 
 class SetupIcon(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
 
         if version < (1, 3, 0):
@@ -1763,7 +1768,7 @@ class SetupRegistryFlags(enum.IntFlag):
 
 class SetupRegistryEntry(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
 
         if version < (1, 3, 0):
@@ -1854,7 +1859,7 @@ class SetupRunFlags(enum.IntFlag):
 
 class SetupRunEntry(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
         if version < (1, 3, 0):
             reader.u8()
@@ -1907,12 +1912,12 @@ class SetupRunEntry(InnoStruct):
 
 class TSetup(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion):
         super().__init__(reader, version)
         self.Header = h = SetupHeader(reader, version)
 
         def _array(count: int, parser: type[_T]) -> list[_T]:
-            return [parser(reader, version, self) for _ in range(count)]
+            return [parser.Parse(reader, version, self) for _ in range(count)]
 
         self.Languages = _array(h.LanguageCount, SetupLanguage)
         _default_codec = 'cp1252'
@@ -2018,7 +2023,7 @@ class SetupSignMode(enum.IntEnum):
 
 class SetupDataEntry(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion):
         super().__init__(reader, version)
         self.FirstSlice = reader.u32()
         self.LastSlice = reader.u32()
@@ -2039,10 +2044,10 @@ class SetupDataEntry(InnoStruct):
             self.Checksum = bytes(reader.read(16))
         elif version >= (4, 0, 1):
             self.ChecksumType = CheckSumType.CRC32
-            self.Checksum = reader.u32()
+            self.Checksum = bytes(reader.read(4))
         else:
             self.ChecksumType = CheckSumType.Adler32
-            self.Checksum = reader.u32()
+            self.Checksum = bytes(reader.read(4))
 
         ft = reader.u64()
         ts = datetime.fromtimestamp(
@@ -2099,7 +2104,7 @@ class SetupDataEntry(InnoStruct):
 
 class TData(InnoStruct):
 
-    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion):
         super().__init__(reader, version)
         self.DataEntries: list[SetupDataEntry] = []
         while not reader.eof:
@@ -2112,8 +2117,8 @@ class InnoParseResult(NamedTuple):
     files: list[InnoFile]
     warnings: int
     failures: list[str]
-    setup_info: TSetup
-    setup_data: TData
+    setup_info: None | TSetup
+    setup_data: None | TData
 
     def ok(self):
         return self.warnings == 0 and not self.failures
@@ -2160,7 +2165,7 @@ class InnoArchive:
         base = meta.base
         inno = StructReader(view[base:base + meta.total_size])
 
-        self._decompressed = {}
+        self._decompressed: dict[tuple[int, int], buf] = {}
 
         blobsize = meta.info_offset - meta.data_offset
         inno.seek(meta.data_offset)
@@ -2198,13 +2203,6 @@ class InnoArchive:
 
         self._log_comment(F'inno {version!s} via {method} header: {header}')
 
-        class _notok:
-            def __init__(self, e: Exception):
-                self.failures = [str(e)]
-
-            def ok(self):
-                return False
-
         def _parse(v: InnoVersion):
             inno.seekset(inno_start)
             if inno.eof:
@@ -2217,7 +2215,7 @@ class InnoArchive:
                 nonlocal best_error
                 best_error = best_error or e
                 self._log_comment(F'exception while parsing as {v!s}: {exception_to_string(e)}')
-                return _notok(e)
+                return InnoParseResult(v, [], [], 1, [str(e)], None, None)
             else:
                 results[v] = r
                 return r
@@ -2228,6 +2226,7 @@ class InnoArchive:
         best_error = None
         success = False
         results: dict[InnoVersion, InnoParseResult] = {}
+        result = None
 
         VER = _VERSIONS
         AMB = _IS_AMBIGUOUS
@@ -2269,6 +2268,11 @@ class InnoArchive:
                 self._log_warning(F'using parse result for {result.version!s} with {len(result.failures)} failures')
                 for k, failure in enumerate(result.failures, 1):
                     self._log_comment(F'failure {k}: {failure}')
+
+        if TYPE_CHECKING:
+            assert result
+            assert result.setup_data
+            assert result.setup_info
 
         self.version = version = result.version
         self.codec = codec = result.setup_info.Codec
@@ -2340,15 +2344,16 @@ class InnoArchive:
                     return False
             except Exception as error:
                 self._log_comment('emuluation failed:', error)
+                return False
         else:
             self._password = ''
             return True
 
-    def get_encrypted_sample(inno) -> InnoFile | None:
+    def get_encrypted_sample(self) -> InnoFile | None:
         """
         If the archive has a password, this function returns the smallest encrypted file record.
         """
-        file = min(inno.files, key=lambda f: (not f.encrypted, f.size))
+        file = min(self.files, key=lambda f: (not f.encrypted, f.size))
         return file if file.encrypted else None
 
     def _try_parse_as(
@@ -2398,7 +2403,7 @@ class InnoArchive:
                 self._log_verbose(msg)
                 continue
             if location >= len(files):
-                self._log_warning(F'parsed {len(file)} entries, ignoring invalid setup reference to entry {location + 1}')
+                self._log_warning(F'parsed {len(files)} entries, ignoring invalid setup reference to entry {location + 1}')
                 continue
             path = sf.Destination.replace('\\', '/')
             path_dedup.setdefault(path, []).append(sf)
@@ -2420,6 +2425,7 @@ class InnoArchive:
                 files[infos[0].Location].path = path
                 continue
             bycheck = {}
+            onefile = None
             for info in infos:
                 file = files[info.Location]
                 if not file.checksum_type.strong():
@@ -2431,9 +2437,11 @@ class InnoArchive:
                     file.dupe = True
                     continue
                 bycheck[dkey] = info
+                onefile = file
             if bycheck:
                 if len(bycheck) == 1:
-                    file.path = path
+                    assert onefile
+                    onefile.path = path
                     continue
                 infos = list(bycheck.values())
             for k, info in enumerate(infos):
@@ -2504,6 +2512,8 @@ class InnoArchive:
         elif stream.compression == StreamCompressionMethod.Flate:
             import zlib
             dec = zlib.decompressobj()
+        else:
+            raise ValueError(F'Invalid compression value {stream.compression}')
         for block in it:
             result.extend(dec.decompress(block.BlockData))
         stream.data = result
@@ -2573,17 +2583,20 @@ class InnoArchive:
                 hash = algorithm(reader.read(8))
                 hash.update(password_bytes)
                 decryptor = rc4(hash.digest(), discard=1000)
+        else:
+            decryptor = None
 
         if check_only:
-            return
+            return B''
 
         data = reader.read_exactly(length)
 
         if file.encrypted:
+            assert decryptor
             data = data | decryptor | bytearray
 
         if method is None:
-            return chunk
+            return data
 
         try:
             if method == CompressionMethod.Store:
@@ -2600,6 +2613,8 @@ class InnoArchive:
                 chunk = bz2.decompress(data)
             elif method == CompressionMethod.Flate:
                 chunk = zlib.decompress(data)
+            else:
+                chunk = data
         except Exception as E:
             if not file.encrypted:
                 raise

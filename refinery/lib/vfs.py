@@ -31,8 +31,6 @@ class VirtualFile:
     extension to deduce a mode of operation.
     """
     name: str
-    path: str
-    node: int
     data: buf | None
 
     def __init__(self, fs: VirtualFileSystem, data: buf | None = None, extension: str | None = None):
@@ -49,11 +47,13 @@ class VirtualFile:
     def node(self) -> int:
         return self.uuid.fields[1]
 
-    def mmap(self, length: int = 0, offset: int = 0) -> MemoryFile:
+    def mmap(self, length: int = 0, offset: int = 0) -> MemoryFileMethods:
         """
         Emulate the result of an `mmap` call to the virtual file.
         """
-        view = memoryview(self.data)
+        if (data := self.data) is None:
+            raise ValueError('Attempt to map a virtual file with no associated data.')
+        view = memoryview(data)
         node = self.node
         if length:
             view = view[offset:offset + length]
@@ -64,7 +64,6 @@ class VirtualFile:
 
         mapped = _MappedView()
         mapped[:] = view
-
         return mapped
 
     def open(self, mode: str) -> MemoryFile:

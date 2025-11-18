@@ -3,14 +3,15 @@ import io
 import math
 import itertools
 
-from refinery.lib.structures import StructReader, MemoryFile, EOF
+from refinery.lib.structures import StructReader, StructReaderBits, MemoryFile
+
 from .. import TestBase
 
 
 class TestStructures(TestBase):
 
     def test_memoryfile_bytes(self):
-        buffers = [
+        buffers: list[bytes | memoryview] = [
             B'Binary Refinery'
         ]
         buffers.append(memoryview(buffers[0]))
@@ -88,7 +89,7 @@ class TestStructures(TestBase):
         size, remainder = divmod(data.bit_length(), 8)
         self.assertEqual(remainder, 7)
         data = memoryview(data.to_bytes(size + 1, 'big'))
-        sr = StructReader(data)
+        sr = StructReaderBits(data)
         with sr.be:
             self.assertEqual(sr.read_bit(), 0)
             self.assertEqual(sr.read_bit(), 1)
@@ -101,12 +102,26 @@ class TestStructures(TestBase):
             self.assertEqual(sr.read_integer(82), 0b0111101010000101010101010010010111100000101001010101100000001110010111110100111000)
             self.assertRaises(EOFError, sr.u16)
 
+    def test_bitreader_be_fields(self):
+        data = 0b0_1110100_11101010_0100001111_101111_11111111_010101010100100101111000001010010101011000000011100101111101001101011101
+        size, remainder = divmod(data.bit_length(), 8)
+        self.assertEqual(remainder, 7)
+        data = memoryview(data.to_bytes(size + 1, 'big'))
+        sr = StructReader(data)
+        with sr.be:
+            self.assertEqual(tuple(sr.read_bits(8)), (0, 1, 1, 1, 0, 1, 0, 0))
+            self.assertEqual(sr.read_byte(), 0b11101010)
+            self.assertListEqual(sr.read_bit_field(10, 6), [0b0100001111, 0b101111])
+            self.assertTrue(all(sr.read_flags(8)))
+            self.assertEqual(sr.read_integer(72), 0b010101010100100101111000001010010101011000000011100101111101001101011101)
+            self.assertRaises(EOFError, sr.u16)
+
     def test_bitreader_le(self):
         data = 0b10010100111010100100001111101_11_00000000_0101010101010010010111100000101001010101100000001110010111110100_111_000_100
         size, remainder = divmod(data.bit_length(), 8)
         self.assertEqual(remainder, 0)
         data = memoryview(data.to_bytes(size, 'little'))
-        sr = StructReader(data)
+        sr = StructReaderBits(data)
         self.assertEqual(sr.read_integer(3), 0b100)
         self.assertEqual(sr.read_integer(3), 0b000)
         self.assertEqual(sr.read_integer(3), 0b111)
@@ -116,6 +131,18 @@ class TestStructures(TestBase):
         self.assertRaises(ValueError, lambda: sr.read_struct(''))
         self.assertEqual(sr.read_bit(), 1)
         self.assertEqual(sr.read_integer(29), 0b10010100111010100100001111101)
+        self.assertTrue(sr.eof)
+
+    def test_bitreader_le_fields(self):
+        data = 0b1001010011101010_00000000_0100001111100000101010101010010010111100000101001010101100000001_110010_111110_100_111_000_100
+        size, remainder = divmod(data.bit_length(), 8)
+        self.assertEqual(remainder, 0)
+        data = memoryview(data.to_bytes(size, 'little'))
+        sr = StructReader(data)
+        self.assertEqual(sr.read_bit_field(3, 3, 3, 3, 6, 6), [0b100, 0, 0b111, 0b100, 0b111110, 0b110010])
+        self.assertEqual(sr.u64(), 0b0100001111100000101010101010010010111100000101001010101100000001)
+        self.assertFalse(any(sr.read_flags(8, reverse=True)))
+        self.assertEqual(sr.i16(), -27414)
         self.assertTrue(sr.eof)
 
     def test_bitreader_structured(self):
@@ -129,7 +156,7 @@ class TestStructures(TestBase):
              math.pi      # noqa
         )
         data = struct.pack('<bhiLqfd', *items)
-        sr = StructReader(data)
+        sr = StructReaderBits(data)
         self.assertEqual(sr.read_nibble(), 0b101)
         self.assertRaises(sr.Unaligned, lambda: sr.read_exactly(2))
         sr.seek(0)
@@ -138,8 +165,8 @@ class TestStructures(TestBase):
         self.assertEqual(sr.i32(), 0xDEFACED)
         self.assertEqual(sr.u32(), 0xC0CAC01A)
         self.assertEqual(sr.i64(), -0o1337)
-        self.assertAlmostEqual(sr.read_one_struct('f'), 2076.171875)
-        self.assertAlmostEqual(sr.read_one_struct('d'), math.pi)
+        self.assertAlmostEqual(sr.f32(), 2076.171875)
+        self.assertAlmostEqual(sr.f64(), math.pi)
         self.assertTrue(sr.eof)
 
     def test_string_builder(self):
@@ -165,7 +192,7 @@ class TestStructures(TestBase):
     def test_peeking_bits(self):
         seed = 0b_1011_0101_1100_0000_0111_1111
         data = seed.to_bytes(3, 'big')
-        reader = StructReader(data, bigendian=True)
+        reader = StructReaderBits(data, bigendian=True)
         self.assertEqual(reader.peek(2), bytes((0b10110101, 0b11000000)))
         T = True
         F = False
