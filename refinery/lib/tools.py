@@ -661,7 +661,9 @@ class BoundsType:
     def __getitem__(self, k: slice):
         return BoundsType(k)
 
-    def __init__(self, bounds: slice[int, int | None, int | None]):
+    def __init__(self, bounds: int | slice[int, int | None, int | None]):
+        if isinstance(bounds, int):
+            bounds = slice(bounds, bounds, 1)
         start, stop, step = bounds.start, bounds.stop, bounds.step
         for field in (start, stop, step):
             if field is not None and not isinstance(field, int):

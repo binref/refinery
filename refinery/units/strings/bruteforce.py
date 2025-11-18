@@ -18,7 +18,7 @@ class bruteforce(Unit):
     def __init__(
         self,
         name: Param[str, Arg.String(help='Name of the meta variable to be populated.')],
-        length: Param[slice, Arg.Bounds(metavar='length', help=(
+        length: Param[int | slice, Arg.Bounds(metavar='length', intok=True, help=(
             'Specifies the interval of characters to brute force, default is {default}.'
         ))] = slice(1, None),
         format: Param[str | None, Arg.String(help=(

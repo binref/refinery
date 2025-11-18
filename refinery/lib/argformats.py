@@ -321,7 +321,7 @@ def sliceobj(
     data: Chunk,
     intok: bool = False,
     final: bool = False,
-) -> slice:
+) -> slice | int:
     ...
 
 
@@ -331,7 +331,7 @@ def sliceobj(
     data: Chunk | None = None,
     intok: bool = False,
     final: bool = False,
-) -> slice | SliceAgain:
+) -> slice | int | SliceAgain:
     ...
 
 
@@ -340,7 +340,7 @@ def sliceobj(
     data: Chunk | None = None,
     intok: bool = False,
     final: bool = False,
-) -> slice | SliceAgain:
+) -> slice | int | SliceAgain:
     """
     Uses `refinery.lib.argformats.PythonExpression` to parse slice expressions
     where the bounds can be given as arithmetic expressions. For example, this
@@ -350,6 +350,8 @@ def sliceobj(
     if isinstance(expression, (slice, SliceAgain)):
         return expression
     if isinstance(expression, int):
+        if intok:
+            return expression
         return slice(expression, expression + 1, 1)
     if isinstance(expression, (bytes, bytearray)):
         expression = expression.decode('utf8')
