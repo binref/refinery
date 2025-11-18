@@ -280,8 +280,7 @@ class NetMetaDataStream(Dict[int, N], abc.ABC):
         try:
             offsets = self._offsets
             closest = bisect.bisect_left(offsets, offset)
-            offsets.insert(closest, offset)
-            closest = offsets[closest]
+            closest = offsets[closest - 1]
         except ValueError:
             return self.default
         container = self[closest]
