@@ -14,7 +14,7 @@ import enum
 import functools
 
 from uuid import UUID
-from typing import NewType, Dict, Generic, Optional, TypeVar, Union, overload, get_args, get_type_hints
+from typing import NewType, Dict, Generic, Optional, TypeVar, Union, overload, get_args, get_origin, get_type_hints
 
 from refinery.lib import lief
 from refinery.lib.structures import (
@@ -804,7 +804,7 @@ TypeOrMethodDef = Union[
 
 
 class NetMetaDataTables(DotNetStruct):
-    lookup: dict[int, type] = {
+    TypesByID: dict[int, type] = {
         0x00: Module,
         0x01: TypeRef,
         0x02: TypeDef,
@@ -931,16 +931,26 @@ class NetMetaDataTables(DotNetStruct):
         for r in sorted(self.Header.RowCount):
             count = self.Header.RowCount[r]
             try:
-                Type = self.lookup[r]
+                Type = self.TypesByID[r]
             except KeyError:
                 raise RuntimeError(F'Cannot parse unknown table index {r:#02x}; unable to continue parsing.')
 
-            TypeName = Type.__name__
-            TypeEntries: list = getattr(self, TypeName)
+            type_name = Type.__name__
+            row: list = getattr(self, type_name)
+            spec = []
 
-            for i in range(count):
+            for hint in get_type_hints(Type).values():
+                if get_origin(hint) is Index:
+                    hint, = get_args(hint)
+                    if not (options := get_args(hint)):
+                        options = (hint,)
+                    spec.append(options)
+                else:
+                    spec.append(hint)
+
+            for _ in range(count):
                 args = []
-                for hint in get_type_hints(Type).values():
+                for hint in spec:
                     if hint is str:
                         args.append(_strA[_index_strA()])
                     elif hint is bytes:
@@ -952,10 +962,7 @@ class NetMetaDataTables(DotNetStruct):
                     elif hint is UInt16:
                         args.append(reader.u16())
                     else:
-                        hint, = get_args(hint)
-                        if not (options := get_args(hint)):
-                            options = (hint,)
-                        info = self._read_index_info(*options)
+                        info = self._read_index_info(*hint)
                         raw = reader.u32() if info.large else reader.u16()
                         masked = raw & info.mask
                         index = raw >> info.bits
@@ -967,8 +974,8 @@ class NetMetaDataTables(DotNetStruct):
                             row_type = None
                         args.append(Index(index, row_name, row_type))
 
-                Entry = Type(*args)
-                TypeEntries.append(Entry)
+                entry = Type(*args)
+                row.append(entry)
 
     @overload
     def __getitem__(self, k: int | str) -> list[NamedTuple]:
@@ -984,7 +991,7 @@ class NetMetaDataTables(DotNetStruct):
                 return self[name][k.Index - 1]
             raise KeyError
         if isinstance(k, int):
-            k = self.lookup[k].__name__
+            k = self.TypesByID[k].__name__
         return getattr(self, k)
 
 
