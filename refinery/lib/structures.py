@@ -21,6 +21,7 @@ from typing import (
     Any,
     Generic,
     Iterable,
+    NamedTuple,
     Sized,
     TypeVar,
     Union,
@@ -1068,7 +1069,7 @@ class PerInstanceAttribute(Generic[AttrType]):
         return self.__get[pid]
 
 
-def struct_to_json(v: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSON | None, codec: str | None = None) -> JSON:
+def struct_to_json(v: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSON | NamedTuple | None, codec: str | None = None) -> JSON:
     """
     Attempt to convert a `refinery.lib.structures.Struct` to a JSON representation.
     """
@@ -1078,6 +1079,8 @@ def struct_to_json(v: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSO
         v = {k: v for k, v in v.__dict__.items() if not k.startswith('_')}
     if isinstance(v, list):
         return [struct_to_json(x, codec) for x in v]
+    if isinstance(v, tuple):
+        v = v._asdict()
     if isinstance(v, dict):
         return {x: struct_to_json(y, codec) for x, y in v.items()}
     if isinstance(v, enum.IntFlag):

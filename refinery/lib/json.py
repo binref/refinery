@@ -76,6 +76,8 @@ class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
     def default(self, obj):
         if isinstance(obj, datetime.datetime):
             return obj.isoformat(' ', 'seconds')
+        if isinstance(obj, uuid.UUID):
+            return str(obj).upper()
         return super().default(obj)
 
     def __init__(self, *args, **kwargs):

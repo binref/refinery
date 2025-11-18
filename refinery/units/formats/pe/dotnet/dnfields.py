@@ -105,7 +105,7 @@ class dnfields(PathExtractorUnit):
         remaining_field_indices = set(range(len(tables.Field)))
 
         unpack = []
-        name_count = Counter(tables.Field[rv.Field.Index - 1].Name for rv in fields)
+        name_count = Counter(tables[rv.Field].Name for rv in fields)
         name_width = len(str(len(fields)))
 
         for k, rv in enumerate(fields):

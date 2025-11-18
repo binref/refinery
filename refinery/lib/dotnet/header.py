@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import abc
 import codecs
+import dataclasses
 import datetime
 import enum
 import functools
 
-from typing import Dict, Generic, Optional, TypeVar, Union, cast, get_args
+from uuid import UUID
+from typing import NewType, Dict, Generic, Optional, TypeVar, Union, overload, get_args, get_type_hints
 
 from refinery.lib import lief
 from refinery.lib.structures import (
@@ -20,13 +22,15 @@ from refinery.lib.structures import (
     Struct,
     StructMeta,
     StructReader,
-    struct_to_json,
 )
 from refinery.lib.types import NamedTuple, buf
 
 T = TypeVar('T')
-N = TypeVar('N', str, bytes, Optional[str])
-R = TypeVar('R', bound=Struct)
+N = TypeVar('N', str, bytes, Optional[UUID])
+R = TypeVar('R')
+
+UInt32 = NewType('UInt32', int)
+UInt16 = NewType('UInt16', int)
 
 
 class ParserException(RuntimeError):
@@ -281,9 +285,9 @@ class NetMetaDataStreamStrU(NetMetaDataStream[str]):
     default = ''
 
 
-class NetMetaDataStreamGUID(NetMetaDataStream[Optional[str]]):
+class NetMetaDataStreamGUID(NetMetaDataStream[Optional[UUID]]):
     def stream_next(self):
-        return self._reader.read_dn_guid()
+        return self._reader.read_guid()
     default = None
 
 
@@ -351,35 +355,31 @@ class NetMetaDataStreams(Struct[memoryview]):
                     break
 
 
-class Module(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Generation = reader.u16()
-        self.Name = tables._read_strA()
-        self.MvId = tables._read_guid()
-        self.EncId = tables._read_guid()
-        self.EncBaseId = tables._read_guid()
+class Module(NamedTuple):
+    Generation: UInt16
+    Name: str
+    MvId: UUID
+    EncId: UUID
+    EncBaseId: UUID
 
 
-class TypeRef(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.ResolutionScope = tables._read_ResolutionScopeIndex()
-        self.TypeName = tables._read_strA()
-        self.TypeNamespace = tables._read_strA()
+class TypeRef(NamedTuple):
+    ResolutionScope: Index[ResolutionScope]
+    TypeName: str
+    TypeNamespace: str
 
 
-class TypeDef(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Flags = reader.u32()
-        self.TypeName = tables._read_strA()
-        self.TypeNamespace = tables._read_strA()
-        self.Extends = tables._read_TypeDefOrRefIndex()
-        self.FieldList = tables._read_FieldIndex()
-        self.MethodList = tables._read_MethodDefIndex()
+class TypeDef(NamedTuple):
+    Flags: UInt32
+    TypeName: str
+    TypeNamespace: str
+    Extends: Index[TypeDefOrRef]
+    FieldList: Index[Field]
+    MethodList: Index[MethodDef]
 
 
-class FieldPtr(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Ref = reader.u16()
+class FieldPtr(NamedTuple):
+    Ref: UInt16
 
 
 class FieldAccess(enum.IntEnum):
@@ -405,285 +405,254 @@ class FieldFlags(FlagAccessMixin, enum.IntFlag):
     HasDefault      = 1 << 9   # noqa
 
 
-class Field(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        access, _, flags = reader.read_bit_field(3, 1, 12)
-        self.Access = FieldAccess(access)
-        self.Flags = FieldFlags(flags)
-        self.Name = tables._read_strA()
-        self.Signature = tables._read_blob()
+@dataclasses.dataclass(frozen=True)
+class Field:
+    AccessAndFlags: UInt16
+    Name: str
+    Signature: bytes
 
+    def __json__(self):
+        return self.__dict__
 
-class MethodPtr(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Ref = reader.u16()
+    @functools.cached_property
+    def Flags(self):
+        return FieldFlags(self.AccessAndFlags >> 4)
 
+    @functools.cached_property
+    def Access(self):
+        return FieldAccess(self.AccessAndFlags & 7)
 
-class MethodDef(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.RVA = reader.u32()
-        self.ImplFlags = reader.u16()
-        self.Flags = reader.u16()
-        self.Name = tables._read_strA()
-        self.Signature = tables._read_blob()
-        self.ParamList = tables._read_ParamIndex()
 
+class MethodPtr(NamedTuple):
+    Ref: UInt16
 
-class ParamPtr(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Ref = reader.u16()
 
+class MethodDef(NamedTuple):
+    RVA: UInt32
+    ImplFlags: UInt16
+    Flags: UInt16
+    Name: str
+    Signature: bytes
+    ParamList: Index[Param]
 
-class Param(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Flags = reader.u16()
-        self.Sequence = reader.u16()
-        self.Name = tables._read_strA()
 
+class ParamPtr(NamedTuple):
+    Ref: UInt16
 
-class InterfaceImpl(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Class = tables._read_TypeDefIndex()
-        self.Interface = tables._read_TypeDefOrRefIndex()
 
+class Param(NamedTuple):
+    Flags: UInt16
+    Sequence: UInt16
+    Name: str
 
-class MemberRef(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Class = tables._read_MemberRefParentIndex()
-        self.Name = tables._read_strA()
-        self.Signature = tables._read_blob()
 
+class InterfaceImpl(NamedTuple):
+    Class: Index[TypeDef]
+    Interface: Index[TypeDefOrRef]
 
-class Constant(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Type = reader.u16()
-        self.Parent = tables._read_HasConstantIndex()
-        self.Value = tables._read_blob()
 
+class MemberRef(NamedTuple):
+    Class: Index[MemberRefParent]
+    Name: str
+    Signature: bytes
 
-class CustomAttribute(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Parent = tables._read_HasCustomAttributeIndex()
-        self.Type = tables._read_CustomAttributeTypeIndex()
-        self.Value = tables._read_blob()
 
+class Constant(NamedTuple):
+    Type: UInt16
+    Parent: Index[HasConstant]
+    Value: bytes
 
-class FieldMarshal(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Parent = tables._read_HasFieldMarshallIndex()
-        self.NativeType = tables._read_blob()
 
+class CustomAttribute(NamedTuple):
+    Parent: Index[HasCustomAttribute]
+    Type: Index[CustomAttributeType]
+    Value: bytes
 
-class Permission(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Action = reader.u16()
-        self.Parent = tables._read_HasDeclSecurityIndex()
-        self.PermissionSet = tables._read_blob()
 
+class FieldMarshal(NamedTuple):
+    Parent: Index[HasFieldMarshall]
+    NativeType: bytes
 
-class ClassLayout(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.PackingSize = reader.u16()
-        self.ClassSize = reader.u32()
-        self.Parent = tables._read_TypeDefIndex()
 
+class Permission(NamedTuple):
+    Action: UInt16
+    Parent: Index[HasDeclSecurity]
+    PermissionSet: bytes
 
-class FieldLayout(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Offset = reader.u32()
-        self.Field = tables._read_FieldIndex()
 
+class ClassLayout(NamedTuple):
+    PackingSize: UInt16
+    ClassSize: UInt32
+    Parent: Index[TypeDef]
 
-class StandAloneSig(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Signature = tables._read_blob()
 
+class FieldLayout(NamedTuple):
+    Offset: UInt32
+    Field: Index[Field]
 
-class EventMap(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Parent = tables._read_TypeDefIndex()
-        self.EventList = tables._read_EventIndex()
 
+class StandAloneSig(NamedTuple):
+    Signature: bytes
 
-class EventPtr(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Ref = reader.u16()
 
+class EventMap(NamedTuple):
+    Parent: Index[TypeDef]
+    EventList: Index[Event]
 
-class Event(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.EventFlags = reader.u16()
-        self.Name = tables._read_strA()
-        self.EventType = tables._read_TypeDefOrRefIndex()
 
+class EventPtr(NamedTuple):
+    Ref: UInt16
 
-class PropertyMap(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Parent = tables._read_TypeDefIndex()
-        self.PropertyList = tables._read_PropertyIndex()
 
+class Event(NamedTuple):
+    EventFlags: UInt16
+    Name: str
+    EventType: Index[TypeDefOrRef]
 
-class PropertyPtr(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Ref = reader.u16()
 
+class PropertyMap(NamedTuple):
+    Parent: Index[TypeDef]
+    PropertyList: Index[Property]
 
-class Property(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Flags = reader.u16()
-        self.Name = tables._read_strA()
-        self.Type = tables._read_blob()
 
+class PropertyPtr(NamedTuple):
+    Ref: UInt16
 
-class MethodSemantics(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Semantics = reader.u16()
-        self.Method = tables._read_MethodDefIndex()
-        self.Association = tables._read_HasSemanticsIndex()
 
+class Property(NamedTuple):
+    Flags: UInt16
+    Name: str
+    Type: bytes
 
-class MethodImpl(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Class = tables._read_TypeDefIndex()
-        self.MethodBody = tables._read_MethodDefOrRefIndex()
-        self.MethodDeclaration = tables._read_MethodDefOrRefIndex()
 
+class MethodSemantics(NamedTuple):
+    Semantics: UInt16
+    Method: Index[MethodDef]
+    Association: Index[HasSemantics]
 
-class ModuleRef(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Name = tables._read_strA()
 
+class MethodImpl(NamedTuple):
+    Class: Index[TypeDef]
+    MethodBody: Index[MethodDefOrRef]
+    MethodDeclaration: Index[MethodDefOrRef]
 
-class TypeSpec(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Signature = tables._read_blob()
 
+class ModuleRef(NamedTuple):
+    Name: str
 
-class ImplMap(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.MappingFlags = reader.u16()
-        self.MemberForwarded = tables._read_MemberForwardedIndex()
-        self.ImportName = tables._read_strA()
-        self.ImportScope = tables._read_ModuleRefIndex()
 
+class TypeSpec(NamedTuple):
+    Signature: bytes
 
-class FieldRVA(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.RVA = reader.u32()
-        self.Field = tables._read_FieldIndex()
 
+class ImplMap(NamedTuple):
+    MappingFlags: UInt16
+    MemberForwarded: Index[MemberForwarded]
+    ImportName: str
+    ImportScope: Index[ModuleRef]
 
-class Assembly(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.HashAlgId = reader.u32()
-        self.MajorVersion = reader.u16()
-        self.MinorVersion = reader.u16()
-        self.BuildNumber = reader.u16()
-        self.RevisionNumber = reader.u16()
-        self.Flags = reader.u32()
-        self.PublicKey = tables._read_blob()
-        self.Name = tables._read_strA()
-        self.Culture = tables._read_strA()
 
+class FieldRVA(NamedTuple):
+    RVA: UInt32
+    Field: Index[Field]
 
-class AssemblyProcessor(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Processor = reader.u32()
 
+class Assembly(NamedTuple):
+    HashAlgId: UInt32
+    MajorVersion: UInt16
+    MinorVersion: UInt16
+    BuildNumber: UInt16
+    RevisionNumber: UInt16
+    Flags: UInt32
+    PublicKey: bytes
+    Name: str
+    Culture: str
 
-class AssemblyOS(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.OsPlatformId = reader.u32()
-        self.OsMajorVersion = reader.u32()
-        self.OsMinorVersion = reader.u32()
 
+class AssemblyProcessor(NamedTuple):
+    Processor: UInt32
 
-class AssemblyRef(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.MajorVersion = reader.u16()
-        self.MinorVersion = reader.u16()
-        self.BuildNumber = reader.u16()
-        self.RevisionNumber = reader.u16()
-        self.Flags = reader.u32()
-        self.PublicKeyOrToken = tables._read_blob()
-        self.Name = tables._read_strA()
-        self.Culture = tables._read_strA()
-        self.HashValue = tables._read_blob()
 
+class AssemblyOS(NamedTuple):
+    OsPlatformId: UInt32
+    OsMajorVersion: UInt32
+    OsMinorVersion: UInt32
 
-class AssemblyRefProcessor(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Processor = reader.u32()
-        self.AssemblyRef = tables._read_AssemblyRefIndex()
 
+class AssemblyRef(NamedTuple):
+    MajorVersion: UInt16
+    MinorVersion: UInt16
+    BuildNumber: UInt16
+    RevisionNumber: UInt16
+    Flags: UInt32
+    PublicKeyOrToken: bytes
+    Name: str
+    Culture: str
+    HashValue: bytes
 
-class AssemblyRefOS(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.OsPlatformId = reader.u32()
-        self.OsMajorVersion = reader.u32()
-        self.OsMinorVersion = reader.u32()
-        self.AssemblyRef = tables._read_AssemblyRefIndex()
 
+class AssemblyRefProcessor(NamedTuple):
+    Processor: UInt32
+    AssemblyRef: Index[AssemblyRef]
 
-class File(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Flags = reader.u32()
-        self.Name = tables._read_strA()
-        self.HashValue = tables._read_blob()
 
+class AssemblyRefOS(NamedTuple):
+    OsPlatformId: UInt32
+    OsMajorVersion: UInt32
+    OsMinorVersion: UInt32
+    AssemblyRef: Index[AssemblyRef]
 
-class ExportedType(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Flags = reader.u32()
-        self.TypeDefId = reader.u32()
-        self.TypeName = tables._read_strA()
-        self.TypeNamespace = tables._read_strA()
-        self.Implementation = tables._read_ImplementationIndex()
 
+class File(NamedTuple):
+    Flags: UInt32
+    Name: str
+    HashValue: bytes
 
-class ManifestResource(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Offset = reader.u32()
-        self.Flags = reader.u32()
-        self.Name = tables._read_strA()
-        self.Implementation = tables._read_ImplementationIndex()
 
+class ExportedType(NamedTuple):
+    Flags: UInt32
+    TypeDefId: UInt32
+    TypeName: str
+    TypeNamespace: str
+    Implementation: Index[Implementation]
 
-class NestedClass(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.NestedClass = tables._read_TypeDefIndex()
-        self.EnclosingClass = tables._read_TypeDefIndex()
 
+class ManifestResource(NamedTuple):
+    Offset: UInt32
+    Flags: UInt32
+    Name: str
+    Implementation: Index[Implementation]
 
-class GenericParam(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Number = reader.u16()
-        self.Flags = reader.u16()
-        self.Owner = tables._read_TypeOrMethodDefIndex()
-        self.Name = tables._read_strA()
 
+class NestedClass(NamedTuple):
+    NestedClass: Index[TypeDef]
+    EnclosingClass: Index[TypeDef]
 
-class MethodSpec(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Method = tables._read_MethodDefOrRefIndex()
-        self.Instantiation = tables._read_blob()
 
+class GenericParam(NamedTuple):
+    Number: UInt16
+    Flags: UInt16
+    Owner: Index[TypeOrMethodDef]
+    Name: str
 
-class GenericParamConstraint(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Owner = tables._read_GenericParamIndex()
-        self.Constraint = tables._read_TypeDefOrRefIndex()
 
+class MethodSpec(NamedTuple):
+    Method: Index[MethodDefOrRef]
+    Instantiation: bytes
 
-class ENCLog(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Token = reader.u32()
-        self.FuncCode = reader.u32()
 
+class GenericParamConstraint(NamedTuple):
+    Owner: Index[GenericParam]
+    Constraint: Index[TypeDefOrRef]
 
-class ENCMap(DotNetStruct):
-    def __init__(self, reader: DotNetStructReader, tables: NetMetaDataTables):
-        self.Token = reader.u32()
+
+class ENCLog(NamedTuple):
+    Token: UInt32
+    FuncCode: UInt32
+
+
+class ENCMap(NamedTuple):
+    Token: UInt32
 
 
 class ImageDataDirectory(DotNetStruct):
@@ -741,51 +710,30 @@ class NetMetaDataTablesHeader(DotNetStruct):
 
 
 class Index(Generic[R]):
-    RowName: str | None
-    RowType: int | None
-    Index: int
+    __slots__ = 'Index', 'RowName', 'RowType'
 
     def __init__(
         self,
-        reader: DotNetStructReader,
-        tables: NetMetaDataTables,
-        streams: NetMetaDataStreams,
-        th: type[R]
+        index: int,
+        row_name: None | str = None,
+        row_type: None | NetTable = None,
     ):
-        self._s = streams
-        info = tables._read_index_info(th)
-        raw = reader.u32() if info.large else reader.u16()
-        masked = raw & info.mask
-        try:
-            self.RowName = info.names[masked]
-            self.RowType = info.types[masked]
-        except IndexError:
-            self.RowName = None
-            self.RowType = None
-        self.Index = raw >> info.bits
-
-    def __json__(self):
-        return struct_to_json(self.Value)
-
-    @functools.cached_property
-    def Value(self) -> R | None:
-        try:
-            return cast(R, self._s.Tables[self.RowType][self.Index - 1])
-        except IndexError:
-            return None
+        self.Index = index
+        self.RowName = row_name
+        self.RowType = row_type
 
 
-TypeDefOrRefIndex = Union[
+TypeDefOrRef = Union[
     TypeDef,
     TypeRef,
     TypeSpec,
 ]
-HasConstantIndex = Union[
+HasConstant = Union[
     Field,
     Param,
     Property,
 ]
-HasCustomAttributeIndex = Union[
+HasCustomAttribute = Union[
     MethodDef,
     Field,
     TypeRef,
@@ -806,84 +754,57 @@ HasCustomAttributeIndex = Union[
     ExportedType,
     ManifestResource,
 ]
-HasFieldMarshallIndex = Union[
+HasFieldMarshall = Union[
     Field,
     Param,
 ]
-HasDeclSecurityIndex = Union[
+HasDeclSecurity = Union[
     TypeDef,
     MethodDef,
     Assembly,
 ]
-MemberRefParentIndex = Union[
+MemberRefParent = Union[
     TypeDef,
     TypeRef,
     ModuleRef,
     MethodDef,
     TypeSpec,
 ]
-HasSemanticsIndex = Union[
+HasSemantics = Union[
     Event,
     Property,
 ]
-MethodDefOrRefIndex = Union[
+MethodDefOrRef = Union[
     MethodDef,
     MemberRef,
 ]
-MemberForwardedIndex = Union[
+MemberForwarded = Union[
     Field,
     MethodDef,
 ]
-ImplementationIndex = Union[
+Implementation = Union[
     File,
     AssemblyRef,
     ExportedType,
 ]
-CustomAttributeTypeIndex = Union[
+CustomAttributeType = Union[
     MethodDef,
     MemberRef,
 ]
-ResolutionScopeIndex = Union[
+ResolutionScope = Union[
     Module,
     ModuleRef,
     AssemblyRef,
     TypeRef,
 ]
-TypeOrMethodDefIndex = Union[
+TypeOrMethodDef = Union[
     TypeDef,
     MethodDef,
-]
-FieldIndex = Union[
-    Field,
-]
-MethodDefIndex = Union[
-    MethodDef,
-]
-ParamIndex = Union[
-    Param,
-]
-TypeDefIndex = Union[
-    TypeDef,
-]
-EventIndex = Union[
-    Event,
-]
-PropertyIndex = Union[
-    Property,
-]
-ModuleRefIndex = Union[
-    ModuleRef,
-]
-AssemblyRefIndex = Union[
-    AssemblyRef,
-]
-GenericParamIndex = Union[
-    GenericParam,
 ]
 
 
 class NetMetaDataTables(DotNetStruct):
-    lookup: dict[int, type[DotNetStruct]] = {
+    lookup: dict[int, type] = {
         0x00: Module,
         0x01: TypeRef,
         0x02: TypeDef,
@@ -931,84 +852,14 @@ class NetMetaDataTables(DotNetStruct):
         0x2C: GenericParamConstraint,
     }
 
-    def _read_TypeDefOrRefIndex(self) -> Index[TypeDefOrRefIndex]:
-        return self._read_index(TypeDefOrRefIndex)
-
-    def _read_HasConstantIndex(self) -> Index[HasConstantIndex]:
-        return self._read_index(HasConstantIndex)
-
-    def _read_HasCustomAttributeIndex(self) -> Index[HasCustomAttributeIndex]:
-        return self._read_index(HasCustomAttributeIndex)
-
-    def _read_HasFieldMarshallIndex(self) -> Index[HasFieldMarshallIndex]:
-        return self._read_index(HasFieldMarshallIndex)
-
-    def _read_HasDeclSecurityIndex(self) -> Index[HasDeclSecurityIndex]:
-        return self._read_index(HasDeclSecurityIndex)
-
-    def _read_MemberRefParentIndex(self) -> Index[MemberRefParentIndex]:
-        return self._read_index(MemberRefParentIndex)
-
-    def _read_HasSemanticsIndex(self) -> Index[HasSemanticsIndex]:
-        return self._read_index(HasSemanticsIndex)
-
-    def _read_MethodDefOrRefIndex(self) -> Index[MethodDefOrRefIndex]:
-        return self._read_index(MethodDefOrRefIndex)
-
-    def _read_MemberForwardedIndex(self) -> Index[MemberForwardedIndex]:
-        return self._read_index(MemberForwardedIndex)
-
-    def _read_ImplementationIndex(self) -> Index[ImplementationIndex]:
-        return self._read_index(ImplementationIndex)
-
-    def _read_CustomAttributeTypeIndex(self) -> Index[CustomAttributeTypeIndex]:
-        return self._read_index(CustomAttributeTypeIndex)
-
-    def _read_ResolutionScopeIndex(self) -> Index[ResolutionScopeIndex]:
-        return self._read_index(ResolutionScopeIndex)
-
-    def _read_TypeOrMethodDefIndex(self) -> Index[TypeOrMethodDefIndex]:
-        return self._read_index(TypeOrMethodDefIndex)
-
-    def _read_FieldIndex(self) -> Index[FieldIndex]:
-        return self._read_index(FieldIndex)
-
-    def _read_MethodDefIndex(self) -> Index[MethodDefIndex]:
-        return self._read_index(MethodDefIndex)
-
-    def _read_ParamIndex(self) -> Index[ParamIndex]:
-        return self._read_index(ParamIndex)
-
-    def _read_TypeDefIndex(self) -> Index[TypeDefIndex]:
-        return self._read_index(TypeDefIndex)
-
-    def _read_EventIndex(self) -> Index[EventIndex]:
-        return self._read_index(EventIndex)
-
-    def _read_PropertyIndex(self) -> Index[PropertyIndex]:
-        return self._read_index(PropertyIndex)
-
-    def _read_ModuleRefIndex(self) -> Index[ModuleRefIndex]:
-        return self._read_index(ModuleRefIndex)
-
-    def _read_AssemblyRefIndex(self) -> Index[AssemblyRefIndex]:
-        return self._read_index(AssemblyRefIndex)
-
-    def _read_GenericParamIndex(self) -> Index[GenericParamIndex]:
-        return self._read_index(GenericParamIndex)
-
     @functools.lru_cache(maxsize=None)
-    def _read_index_info(self, th: type):
+    def _read_index_info(self, *options: type):
         class IndexInfo(NamedTuple):
             names: tuple[str, ...]
             types: tuple[NetTable, ...]
             bits: int
             mask: int
             large: bool
-
-        if not (options := get_args(th)):
-            options = (th,)
-
         names = tuple(t.__name__ for t in options)
         types = tuple(NetTable[n] for n in names)
         row_count = self.Header.RowCount
@@ -1027,14 +878,9 @@ class NetMetaDataTables(DotNetStruct):
         _index_guid = reader.u32 if (NetMetaFlags.LARGE_GUID in self.Header.Flags) else reader.u16
         _index_blob = reader.u32 if (NetMetaFlags.LARGE_BLOB in self.Header.Flags) else reader.u16
 
-        self._read_strA = lambda: streams.StrA[_index_strA()]
-        self._read_blob = lambda: streams.Blob[_index_blob()]
-        self._read_guid = lambda: streams.GUID[(_index_guid() - 1) << 4]
-
-        def _read_index(th) -> Index:
-            return Index(reader, self, streams, th)
-
-        self._read_index = _read_index
+        _strA = streams.StrA
+        _blob = streams.Blob
+        _guid = streams.GUID
 
         self.Module: list[Module] = []
         self.TypeRef: list[TypeRef] = []
@@ -1082,24 +928,64 @@ class NetMetaDataTables(DotNetStruct):
         self.MethodSpec: list[MethodSpec] = []
         self.GenericParamConstraint: list[GenericParamConstraint] = []
 
-        for k in sorted(self.Header.RowCount):
-            count = self.Header.RowCount[k]
+        for r in sorted(self.Header.RowCount):
+            count = self.Header.RowCount[r]
             try:
-                Type = self.lookup[k]
+                Type = self.lookup[r]
             except KeyError:
-                raise RuntimeError(F'Cannot parse unknown table index {k:#02x}; unable to continue parsing.')
-            TypeEntries: list = getattr(self, repr(Type))
-            for _ in range(count):
-                Entry = Type(reader, tables=self)
+                raise RuntimeError(F'Cannot parse unknown table index {r:#02x}; unable to continue parsing.')
+
+            TypeName = Type.__name__
+            TypeEntries: list = getattr(self, TypeName)
+
+            for i in range(count):
+                args = []
+                for hint in get_type_hints(Type).values():
+                    if hint is str:
+                        args.append(_strA[_index_strA()])
+                    elif hint is bytes:
+                        args.append(_blob[_index_blob()])
+                    elif hint is UUID:
+                        args.append(_guid[(_index_guid() - 1) << 4])
+                    elif hint is UInt32:
+                        args.append(reader.u32())
+                    elif hint is UInt16:
+                        args.append(reader.u16())
+                    else:
+                        hint, = get_args(hint)
+                        if not (options := get_args(hint)):
+                            options = (hint,)
+                        info = self._read_index_info(*options)
+                        raw = reader.u32() if info.large else reader.u16()
+                        masked = raw & info.mask
+                        index = raw >> info.bits
+                        try:
+                            row_name = info.names[masked]
+                            row_type = info.types[masked]
+                        except IndexError:
+                            row_name = None
+                            row_type = None
+                        args.append(Index(index, row_name, row_type))
+
+                Entry = Type(*args)
                 TypeEntries.append(Entry)
 
-    def __getitem__(self, k) -> list[DotNetStruct]:
-        try:
-            Type = self.lookup[k]
-        except KeyError:
-            return getattr(self, k)
-        else:
-            return getattr(self, repr(Type))
+    @overload
+    def __getitem__(self, k: int | str) -> list[NamedTuple]:
+        ...
+
+    @overload
+    def __getitem__(self, k: Index[R]) -> R:
+        ...
+
+    def __getitem__(self, k):
+        if isinstance(k, Index):
+            if name := k.RowName:
+                return self[name][k.Index - 1]
+            raise KeyError
+        if isinstance(k, int):
+            k = self.lookup[k].__name__
+        return getattr(self, k)
 
 
 class NetResourceWithName(DotNetStruct):
