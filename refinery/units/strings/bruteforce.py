@@ -4,7 +4,7 @@ import itertools
 import re
 
 from refinery.lib.meta import metavars
-from refinery.lib.tools import integers_of_slice
+from refinery.lib.tools import bounds
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
@@ -19,16 +19,16 @@ class bruteforce(Unit):
         self,
         name: Param[str, Arg.String(help='Name of the meta variable to be populated.')],
         length: Param[slice, Arg.Bounds(metavar='length', help=(
-            'Specifies the range of characters to brute force, default is {default}.'
+            'Specifies the interval of characters to brute force, default is {default}.'
         ))] = slice(1, None),
-        format: Param[str, Arg.String(help=(
+        format: Param[str | None, Arg.String(help=(
             'Optional format expression for the output string. The format sequence "{0}" is the '
             'current brute force string, the sequence "{1}" represents the input data.'
         ))] = None,
-        alphabet: Param[buf, Arg.Binary('-a', group='ALPH', help=(
+        alphabet: Param[buf | None, Arg.Binary('-a', group='ALPH', help=(
             'The alphabet from which to choose the letters. Entire byte range by default.'
         ))] = None,
-        pattern: Param[str, Arg.RegExp('-r', group='ALPH',
+        pattern: Param[str | None, Arg.RegExp('-r', group='ALPH',
             help='Provide a regular expression pattern to define the alphabet.')] = None,
         printable: Param[bool, Arg.Switch('-p', group='ALPH',
             help='Equivalent to --pattern=[\\s\\x20-\\x7E]')] = False,
@@ -45,13 +45,13 @@ class bruteforce(Unit):
             raise ValueError('Invalid selection.')
 
         if printable:
-            pattern = b'[\\s\\x20-\\x7E]'
+            pattern = '[\\s\\x20-\\x7E]'
         if digits:
-            pattern = b'\\d'
+            pattern = '\\d'
         if identifier:
-            pattern = b'\\w'
+            pattern = '\\w'
         if letters:
-            pattern = b'[a-zA-Z]'
+            pattern = '[a-zA-Z]'
 
         super().__init__(
             name=name,
@@ -77,9 +77,9 @@ class bruteforce(Unit):
         format_spec: str = self.args.format
         meta = metavars(data)
         name = self.args.name
-        kwargs = {name: None}
+        kwargs: dict[str, buf | None] = {name: None}
 
-        for length in integers_of_slice(self.args.length):
+        for length in bounds[self.args.length]:
             self.log_info(F'generating {length} digits')
             if not isinstance(length, int) or length < 0:
                 raise ValueError(F'Unable to brute force {length} characters.')
