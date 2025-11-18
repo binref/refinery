@@ -7,14 +7,26 @@ References:
 from __future__ import annotations
 
 import abc
+import bisect
 import codecs
 import dataclasses
 import datetime
 import enum
 import functools
 
+from typing import (
+    Dict,
+    Generic,
+    NewType,
+    Optional,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    overload,
+)
 from uuid import UUID
-from typing import NewType, Dict, Generic, Optional, TypeVar, Union, overload, get_args, get_origin, get_type_hints
 
 from refinery.lib import lief
 from refinery.lib.structures import (
@@ -243,7 +255,9 @@ class NetMetaDataStream(Dict[int, N], abc.ABC):
         dict.__init__(self)
         self._reader = reader
         reader.seek(offset := 0)
+        self._offsets = offsets = []
         while not reader.eof:
+            offsets.append(offset)
             self[offset] = self.stream_next()
             offset = reader.tell()
         self[offset] = self.default
@@ -264,7 +278,10 @@ class NetMetaDataStream(Dict[int, N], abc.ABC):
             self[offset] = item
             return item
         try:
-            closest = max(key for key in self if key < offset)
+            offsets = self._offsets
+            closest = bisect.bisect_left(offsets, offset)
+            offsets.insert(closest, offset)
+            closest = offsets[closest]
         except ValueError:
             return self.default
         container = self[closest]
@@ -275,7 +292,7 @@ class NetMetaDataStream(Dict[int, N], abc.ABC):
 
 class NetMetaDataStreamStrA(NetMetaDataStream[str]):
     def stream_next(self):
-        return self._reader.read_dn_null_terminated_string()
+        return codecs.decode(self._reader.read_terminated_array(B'\0'), 'latin1')
     default = ''
 
 
@@ -722,6 +739,12 @@ class Index(Generic[R]):
         self.RowName = row_name
         self.RowType = row_type
 
+    def __json__(self):
+        return {
+            'Index': self.Index,
+            'Table': self.RowName,
+        }
+
 
 TypeDefOrRef = Union[
     TypeDef,
@@ -803,6 +826,14 @@ TypeOrMethodDef = Union[
 ]
 
 
+class _IndexInfo(NamedTuple):
+    names: tuple[str, ...]
+    types: tuple[NetTable, ...]
+    bits: int
+    mask: int
+    large: bool
+
+
 class NetMetaDataTables(DotNetStruct):
     TypesByID: dict[int, type] = {
         0x00: Module,
@@ -854,12 +885,6 @@ class NetMetaDataTables(DotNetStruct):
 
     @functools.lru_cache(maxsize=None)
     def _read_index_info(self, *options: type):
-        class IndexInfo(NamedTuple):
-            names: tuple[str, ...]
-            types: tuple[NetTable, ...]
-            bits: int
-            mask: int
-            large: bool
         names = tuple(t.__name__ for t in options)
         types = tuple(NetTable[n] for n in names)
         row_count = self.Header.RowCount
@@ -867,7 +892,7 @@ class NetMetaDataTables(DotNetStruct):
         bits_index = bits_required(len(names))
         bits_total = bits_index + bits_required(row_max_len)
         mask = (1 << bits_index) - 1
-        return IndexInfo(names, types, bits_index, mask, bits_total > 16)
+        return _IndexInfo(names, types, bits_index, mask, bits_total > 16)
 
     def __init__(self, reader: DotNetStructReader, streams: NetMetaDataStreams):
         self.Header: NetMetaDataTablesHeader = NetMetaDataTablesHeader(reader)
@@ -944,38 +969,38 @@ class NetMetaDataTables(DotNetStruct):
                     hint, = get_args(hint)
                     if not (options := get_args(hint)):
                         options = (hint,)
-                    spec.append(options)
+                    info = self._read_index_info(*options)
+                    spec.append(info)
+                elif hint is UInt32:
+                    spec.append(reader.u32)
+                elif hint is UInt16:
+                    spec.append(reader.u16)
                 else:
                     spec.append(hint)
 
             for _ in range(count):
-                args = []
-                for hint in spec:
-                    if hint is str:
-                        args.append(_strA[_index_strA()])
-                    elif hint is bytes:
-                        args.append(_blob[_index_blob()])
-                    elif hint is UUID:
-                        args.append(_guid[(_index_guid() - 1) << 4])
-                    elif hint is UInt32:
-                        args.append(reader.u32())
-                    elif hint is UInt16:
-                        args.append(reader.u16())
-                    else:
-                        info = self._read_index_info(*hint)
-                        raw = reader.u32() if info.large else reader.u16()
-                        masked = raw & info.mask
-                        index = raw >> info.bits
-                        try:
-                            row_name = info.names[masked]
-                            row_type = info.types[masked]
-                        except IndexError:
-                            row_name = None
-                            row_type = None
-                        args.append(Index(index, row_name, row_type))
-
-                entry = Type(*args)
-                row.append(entry)
+                def args():
+                    for hint in spec:
+                        if hint is str:
+                            yield _strA[_index_strA()]
+                        elif hint is bytes:
+                            yield _blob[_index_blob()]
+                        elif hint is UUID:
+                            yield _guid[(_index_guid() - 1) << 4]
+                        elif isinstance(hint, _IndexInfo):
+                            raw = reader.u32() if hint.large else reader.u16()
+                            masked = raw & hint.mask
+                            index = raw >> hint.bits
+                            try:
+                                row_name = hint.names[masked]
+                                row_type = hint.types[masked]
+                            except IndexError:
+                                row_name = None
+                                row_type = None
+                            yield Index(index, row_name, row_type)
+                        else:
+                            yield hint()
+                row.append(Type(*args()))
 
     @overload
     def __getitem__(self, k: int | str) -> list[NamedTuple]:
