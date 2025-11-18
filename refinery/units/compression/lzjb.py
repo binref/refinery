@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from refinery.lib.structures import StructReader
 from refinery.units import Unit
 
