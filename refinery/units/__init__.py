@@ -1308,6 +1308,11 @@ class UnitBase(metaclass=Executable, abstract=True):
         """
 
 
+_SECRET_DEBUG_TIMING_FLAG = '--debug-timing'
+_SECRET_DEBUG_TRACES_FLAG = '--debug-traces'
+_SECRET_YAPPI_TIMING_FLAG = '--yappi-timing'
+
+
 class Unit(UnitBase, abstract=True):
     """
     The base class for all refinery units. It implements a small set of globally
@@ -2247,10 +2252,6 @@ class Unit(UnitBase, abstract=True):
         self.args = DelayedArgumentProxy(Namespace(**keywords), list(keywords))
         self.log_detach()
 
-    _SECRET_DEBUG_TIMING_FLAG = '--debug-timing'
-    _SECRET_DEBUG_TRACES_FLAG = '--debug-traces'
-    _SECRET_YAPPI_TIMING_FLAG = '--yappi-timing'
-
     @classmethod
     def run(cls, argv=None, stream=None) -> None:
         """
@@ -2274,21 +2275,21 @@ class Unit(UnitBase, abstract=True):
         yappi = None
         trace = False
 
-        if cls._SECRET_DEBUG_TRACES_FLAG in argv:
+        if _SECRET_DEBUG_TRACES_FLAG in argv:
             trace = True
-            argv.remove(cls._SECRET_DEBUG_TRACES_FLAG)
+            argv.remove(_SECRET_DEBUG_TRACES_FLAG)
 
-        if cls._SECRET_DEBUG_TIMING_FLAG in argv:
+        if _SECRET_DEBUG_TIMING_FLAG in argv:
             from time import process_time
-            argv.remove(cls._SECRET_DEBUG_TIMING_FLAG)
+            argv.remove(_SECRET_DEBUG_TIMING_FLAG)
             clock = process_time()
             cls.logger.log(LogLevel.PROFILE, f'starting clock: {clock:.4f}')
         else:
             def process_time():
                 return 0.0
 
-        if cls._SECRET_YAPPI_TIMING_FLAG in argv:
-            argv.remove(cls._SECRET_YAPPI_TIMING_FLAG)
+        if _SECRET_YAPPI_TIMING_FLAG in argv:
+            argv.remove(_SECRET_YAPPI_TIMING_FLAG)
             try:
                 import yappi as _yappi
             except ImportError:
