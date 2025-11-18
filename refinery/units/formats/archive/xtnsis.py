@@ -667,7 +667,7 @@ class NSHeader(Struct):
             return None
         return self._read_current_string()
 
-    def _read_string_raw(self, position: int) -> str | None:
+    def _read_string_raw(self, position: int) -> bytearray | None:
         if not self._seek_to_string(position):
             return None
         if self.unicode:

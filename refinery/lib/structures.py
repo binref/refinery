@@ -31,6 +31,8 @@ from typing import (
 )
 from uuid import UUID
 
+from refinery.lib.id import buffer_offset
+
 if TYPE_CHECKING:
     from collections.abc import Buffer
     from typing import Generator, Protocol, Self
@@ -271,18 +273,11 @@ class MemoryFileMethods(Generic[T, B]):
     def read1(self, size: int | None = None, peek: bool = False) -> B:
         return self.read(size, peek)
 
-    def _find_linebreak(self, beginning: int, end: int) -> int:
-        if not isinstance(self._data, memoryview):
-            return self._data.find(B'\n', beginning, end)
-        for k in range(beginning, end):
-            if self._data[k] == 0xA: return k
-        return -1
-
     def readline(self, size: int | None = None) -> B:
         beginning, end = self._cursor, len(self._data)
         if size is not None and size >= 0:
             end = beginning + size
-        p = self._find_linebreak(beginning, end)
+        p = buffer_offset(self._data, B'\n', beginning, end)
         self._cursor = end if p < 0 else p + 1
         result = self._data[beginning:self._cursor]
         if not isinstance(result, t := self._output):
@@ -691,38 +686,20 @@ class StructReader(MemoryFile[T, T]):
     def f64(self, peek: bool = False) -> float:
         return cast(float, self.read_one_struct('d', peek=peek))
 
-    def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> bytearray:
+    def read_terminated_array(self, terminator: bytes, alignment: int = 1) -> T:
         buf = self.getvalue()
         pos = self.tell()
+        end = pos - 1
         n = len(terminator)
-
-        if isinstance(buf, memoryview):
-            def find(whence: int):
-                for k in range(whence, len(buf)):
-                    if buf[k:k + n] == terminator:
-                        return k
-                return -1
-        else:
-            def find(whence: int):
-                return buf.find(terminator, whence)
-        try:
-            end = pos - 1
-            while True:
-                end = find(end + 1)
-                if end < 0 or not (end - pos) % alignment:
-                    break
-        except AttributeError:
-            result = bytearray()
-            while not self.eof:
-                result.extend(self.read_exactly(alignment))
-                if result.endswith(terminator):
-                    return result[:-n]
-            self.seek(pos)
-            raise EOF(len(result) + alignment, result)
-        else:
-            data = self.read_exactly(end - pos)
+        while True:
+            end = buffer_offset(buf, terminator, end + 1)
+            if end < 0 or not (end - pos) % alignment:
+                break
+        if end >= pos:
+            result = self.read_exactly(end - pos)
             self.skip(n)
-            return bytearray(data)
+            return result
+        raise EOF(len(buf) - pos + n)
 
     def read_guid(self) -> UUID:
         return UUID(bytes_le=self.read_bytes(16))
@@ -731,28 +708,28 @@ class StructReader(MemoryFile[T, T]):
         return UUID(bytes=self.read_bytes(16))
 
     @overload
-    def read_c_string(self) -> bytearray:
+    def read_c_string(self) -> T:
         ...
 
     @overload
     def read_c_string(self, encoding: str) -> str:
         ...
 
-    def read_c_string(self, encoding=None) -> str | bytearray:
+    def read_c_string(self, encoding=None) -> str | T:
         data = self.read_terminated_array(B'\0')
         if encoding is not None:
             data = codecs.decode(data, encoding)
         return data
 
     @overload
-    def read_w_string(self) -> bytearray:
+    def read_w_string(self) -> T:
         ...
 
     @overload
     def read_w_string(self, encoding: str) -> str:
         ...
 
-    def read_w_string(self, encoding=None) -> str | bytearray:
+    def read_w_string(self, encoding=None) -> str | T:
         data = self.read_terminated_array(B'\0\0', 2)
         if encoding is not None:
             data = codecs.decode(data, encoding)

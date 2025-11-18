@@ -16,13 +16,16 @@ class GzipHeader(Struct):
         unpacker = GzipFile(fileobj=reader)
         with StreamDetour(reader, 0):
             self.magic = reader.read(2)
-            self.method, self.flags, self.mtime = reader.read_struct('BBIxx')
+            self.method = reader.u8()
+            self.flags = reader.u8()
+            self.mtime = reader.u32()
+            reader.skip(2)
             self.extra = None
             self.name = None
             if self.flags & FEXTRA:
                 self.extra = reader.read(reader.u16())
             if self.flags & FNAME:
-                self.name = reader.read_c_string().decode('latin1')
+                self.name = reader.read_c_string('latin1')
         self.data = unpacker.read()
 
 

@@ -26,11 +26,11 @@ class SIMOffsets(NamedTuple):
 
     def rebase(self, strings_offset: int):
         delta = strings_offset - self.strings_offset
-        a, s, n, r, c, *p = self
+        a, s, n, r, c, p1, p2, p3, p4 = self
         s += delta
         r += delta
         c += delta
-        return SIMOffsets(a, s, n, r, c, *p)
+        return SIMOffsets(a, s, n, r, c, p1, p2, p3, p4)
 
 
 def tojson(cls):
@@ -116,9 +116,12 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         runtime = StructReader(mem[sim.runtime_offset:sim.content_offset])
         content = StructReader(mem[sim.content_offset:sim.archive_end])
 
-        header = [strings.read_c_string() for _ in range(sim.nr_of_strings)]
-        tables: dict[str, list[list[str | int]]] = {}
-        unknown_tables: dict[str, list[list[str | int]]] = {}
+        def read_str():
+            return bytes(strings.read_c_string())
+
+        header: list = [read_str() for _ in range(sim.nr_of_strings)]
+        tables: dict[str, list[list]] = {}
+        unknown_tables: dict[str, list[list]] = {}
 
         def sc(k: int):
             return int(header[k])
@@ -142,18 +145,18 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             if not count:
                 continue
             table = [[
-                strings.read_c_string() for _ in range(size)
+                read_str() for _ in range(size)
             ] for _ in range(count)]
             if name is None:
                 unknown_tables[F'T{index}'] = table
             else:
                 tables[name] = table
 
-        unknown_marker = strings.read_c_string()
+        unknown_marker = read_str()
 
         language_count = sc(26)
         message_matrix = [[
-            strings.read_c_string() for _ in range(sc(57))
+            read_str() for _ in range(sc(57))
         ] for _ in range(language_count)]
 
         len_chunks = sc(117)
@@ -167,20 +170,21 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         check_empty_reader(strings, 'strings')
 
         lngid = tables['languages'][0]
-        if not lngid[2].isdigit():
-            lname: bytes = lngid[1]
-            lname = lname.decode('latin1')
+        lid: bytes = lngid[2]
+        if not lid.isdigit():
+            _lname: bytes = lngid[1]
+            lname = _lname.decode('latin1')
             lngid = max(LCID, key=lambda k: longest_common_substring(LCID[k], lname))
         else:
             lngid = int(lngid[2])
 
         codec = DEFAULT_CODEPAGE.get(lngid, 'latin1')
 
-        def decode(cell: bytes, codec: str):
+        def decode(_cell: bytes, codec: str):
             try:
-                cell = cell.decode(codec)
+                cell = _cell.decode(codec)
             except UnicodeDecodeError:
-                cell = cell.decode('latin1')
+                cell = _cell.decode('latin1')
                 self.log_debug('failed to decode string:', cell, clip=True)
             if cell.isdigit():
                 return int(cell)
@@ -227,6 +231,7 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         else:
             for _ in range(sim.nr_of_runtime):
                 name = decode(runtime.read_c_string(), codec)
+                assert isinstance(name, str)
                 path = runtime_path(name)
                 size = int(runtime.read_c_string())
                 yield self._pack(path, None, runtime.read(size))
