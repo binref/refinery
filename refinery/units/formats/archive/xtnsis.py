@@ -425,7 +425,9 @@ class NSItem:
         return path
 
     def __str__(self):
-        return self.name
+        if (name := self.name) is not None:
+            return name
+        return '<UNKNOWN>'
 
 
 class NSHeader(Struct):
@@ -558,7 +560,7 @@ class NSHeader(Struct):
 
         reader.seekset(self.bh_entries.offset)
         InsnParser = NSScriptExtendedInstruction if extended else NSScriptInstruction
-        self.instructions: list[NSScriptInstruction] = [
+        self.instructions: list[NSScriptInstruction | NSScriptExtendedInstruction] = [
             InsnParser(reader) for _ in range(self.bh_entries.count)]
 
         if self.bh_entries.offset > size:
@@ -594,7 +596,7 @@ class NSHeader(Struct):
 
         self._guess_nsis_version()
 
-        items: dict[(str, int), NSItem] = {}
+        items: dict[tuple[str | None, int], NSItem] = {}
         for item in self._read_items():
             items.setdefault((item.path, item.offset), item)
         self.items = [items[t] for t in sorted(items.keys())]
