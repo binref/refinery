@@ -216,7 +216,7 @@ def read_huffman_symbol(reader: BitBufferedReader, decode_table: list[int], tabl
     return symbol
 
 
-def parse_lzma_properties(data: memoryview, version: int, min_dict: int = 0, max_dict: int = 0xFFFFFFFF):
+def parse_lzma_properties(data: memoryview | bytes | bytearray, version: int, min_dict: int = 0, max_dict: int = 0xFFFFFFFF):
     pv = data[0]
     if version == 1:
         ds = int.from_bytes(data[1:5], 'little')
