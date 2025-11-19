@@ -41,6 +41,11 @@ T = TypeVar('T')
 N = TypeVar('N', str, bytes, Optional[UUID])
 R = TypeVar('R')
 
+
+class Unused(Generic[T]):
+    ...
+
+
 UInt32 = NewType('UInt32', int)
 UInt16 = NewType('UInt16', int)
 
@@ -428,7 +433,12 @@ class Field:
     Signature: bytes
 
     def __json__(self):
-        return self.__dict__
+        return {
+            'Name': self.Name,
+            'Signature': self.Signature,
+            'Flags': self.Flags,
+            'Access': self.Access,
+        }
 
     @functools.cached_property
     def Flags(self):
@@ -704,13 +714,13 @@ class NetDirectory(DotNetStruct):
 
 
 class NetMetaFlags(FlagAccessMixin, enum.IntFlag):
-    LARGE_STRA = 0b1
-    LARGE_GUID = 0b10
-    LARGE_BLOB = 0b100
-    PADDING = 0b1000
-    DELTA_ONLY = 0b100000
-    EXTRA_DATA = 0b1000000
-    HAS_DELETE = 0b10000000
+    LargeStrA = 0b1
+    LargeGUID = 0b10
+    LargeBlob = 0b100
+    Padding = 0b1000
+    DeltaOnly = 0b100000
+    ExtraData = 0b1000000
+    HasDelete = 0b10000000
 
 
 class NetMetaDataTablesHeader(DotNetStruct):
@@ -726,22 +736,20 @@ class NetMetaDataTablesHeader(DotNetStruct):
 
 
 class Index(Generic[R]):
-    __slots__ = 'Index', 'RowName', 'RowType'
+    __slots__ = 'Table', 'Index'
 
     def __init__(
         self,
-        index: int,
-        row_name: None | str = None,
-        row_type: None | NetTable = None,
+        row: NetTable | None,
+        col: int,
     ):
-        self.Index = index
-        self.RowName = row_name
-        self.RowType = row_type
+        self.Table = row
+        self.Index = col
 
     def __json__(self):
         return {
+            'Table': repr(self.Table),
             'Index': self.Index,
-            'Table': self.RowName,
         }
 
 
@@ -810,8 +818,11 @@ Implementation = Union[
     ExportedType,
 ]
 CustomAttributeType = Union[
+    Unused[1],
+    Unused[2],
     MethodDef,
     MemberRef,
+    Unused[3],
 ]
 ResolutionScope = Union[
     Module,
@@ -826,8 +837,7 @@ TypeOrMethodDef = Union[
 
 
 class _IndexInfo(NamedTuple):
-    names: tuple[str, ...]
-    types: tuple[NetTable, ...]
+    rows: tuple[NetTable, ...]
     bits: int
     mask: int
     large: bool
@@ -884,23 +894,22 @@ class NetMetaDataTables(DotNetStruct):
 
     @functools.lru_cache(maxsize=None)
     def _read_index_info(self, *options: type):
-        names = tuple(t.__name__ for t in options)
-        types = tuple(NetTable[n] for n in names)
+        rows = tuple(NetTable[t.__name__] for t in options)
         row_count = self.Header.RowCount
-        row_max_len = max(row_count.get(t, 0) for t in types)
-        bits_index = bits_required(len(names))
+        row_max_len = max(row_count.get(t, 0) for t in rows)
+        bits_index = bits_required(len(rows))
         bits_total = bits_index + bits_required(row_max_len)
         mask = (1 << bits_index) - 1
-        return _IndexInfo(names, types, bits_index, mask, bits_total > 16)
+        return _IndexInfo(rows, bits_index, mask, bits_total > 16)
 
     def __init__(self, reader: DotNetStructReader, streams: NetMetaDataStreams):
         self.Header: NetMetaDataTablesHeader = NetMetaDataTablesHeader(reader)
-        if NetMetaFlags.EXTRA_DATA in self.Header.Flags:
+        if self.Header.Flags.ExtraData:
             self.ExtraData = reader.u32()
 
-        _index_strA = reader.u32 if (NetMetaFlags.LARGE_STRA in self.Header.Flags) else reader.u16
-        _index_guid = reader.u32 if (NetMetaFlags.LARGE_GUID in self.Header.Flags) else reader.u16
-        _index_blob = reader.u32 if (NetMetaFlags.LARGE_BLOB in self.Header.Flags) else reader.u16
+        _index_strA = reader.u32 if self.Header.Flags.LargeStrA else reader.u16
+        _index_guid = reader.u32 if self.Header.Flags.LargeGUID else reader.u16
+        _index_blob = reader.u32 if self.Header.Flags.LargeBlob else reader.u16
 
         _strA = streams.StrA
         _blob = streams.Blob
@@ -988,15 +997,13 @@ class NetMetaDataTables(DotNetStruct):
                             yield _guid[(_index_guid() - 1) << 4]
                         elif isinstance(hint, _IndexInfo):
                             raw = reader.u32() if hint.large else reader.u16()
-                            masked = raw & hint.mask
-                            index = raw >> hint.bits
+                            col = raw >> hint.bits
+                            row = raw & hint.mask
                             try:
-                                row_name = hint.names[masked]
-                                row_type = hint.types[masked]
+                                row = hint.rows[row]
                             except IndexError:
-                                row_name = None
-                                row_type = None
-                            yield Index(index, row_name, row_type)
+                                row = None
+                            yield Index(row, col)
                         else:
                             yield hint()
                 row.append(Type(*args()))
@@ -1011,8 +1018,10 @@ class NetMetaDataTables(DotNetStruct):
 
     def __getitem__(self, k):
         if isinstance(k, Index):
-            if name := k.RowName:
-                return self[name][k.Index - 1]
+            if row := k.Table:
+                if row is NetTable.Unused:
+                    raise KeyError
+                return self[row.name][k.Index - 1]
             raise KeyError
         if isinstance(k, int):
             k = self.TypesByID[k].__name__
@@ -1029,6 +1038,7 @@ class NetResourceWithName(DotNetStruct):
 
 
 class NetTable(enum.IntEnum):
+    Unused                 = 0xFF  # noqa
     Assembly               = 0x20  # noqa
     AssemblyOS             = 0x22  # noqa
     AssemblyProcessor      = 0x21  # noqa
@@ -1074,6 +1084,9 @@ class NetTable(enum.IntEnum):
     TypeDef                = 0x02  # noqa
     TypeRef                = 0x01  # noqa
     TypeSpec               = 0x1B  # noqa
+
+    def __repr__(self):
+        return self.name
 
 
 class DotNetResource(NamedTuple):
