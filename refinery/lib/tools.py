@@ -661,7 +661,9 @@ class BoundsType:
     def __getitem__(self, k: slice):
         return BoundsType(k)
 
-    def __init__(self, bounds: int | slice[int, int | None, int | None]):
+    def __init__(self, bounds: int | slice[int, int | None, int | None] | None):
+        if bounds is None:
+            bounds = slice(None, None, None)
         if isinstance(bounds, int):
             bounds = slice(bounds, bounds, 1)
         start, stop, step = bounds.start, bounds.stop, bounds.step
