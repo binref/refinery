@@ -39,7 +39,7 @@ def unicorn():
         return unicorn
 
 
-@__global_dependency('speakeasy-emulator-refined', ['extended'])
+@__global_dependency('speakeasy-emulator-refined==1.6.1b0.post3', ['extended'])
 def speakeasy():
     import speakeasy
     import speakeasy.profiler
