@@ -11,14 +11,7 @@ class dnrc(PathExtractorUnit):
     extract subfiles from managed .NET resources.
     """
     def unpack(self, data):
-        header = DotNetHeader(data)
-
-        if not header.resources:
-            if self.args.list:
-                return
-            raise ValueError('This file contains no resources.')
-
-        for resource in header.resources:
+        for resource in DotNetHeader(data).resources:
             yield UnpackResult(resource.Name, resource.Data)
 
     @classmethod
