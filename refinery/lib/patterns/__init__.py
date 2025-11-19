@@ -11,6 +11,21 @@ from refinery.lib.patterns.tlds import tlds
 from refinery.lib.tools import normalize_to_display, normalize_to_identifier
 
 
+def _sized_suffix(lower: int, upper: int):
+    if lower <= 0:
+        if upper <= 0:
+            return '*'
+        else:
+            return F'{{1,{upper}}}'
+    elif upper <= 0:
+        if lower == 1:
+            return '+'
+        else:
+            return F'{{{lower},}}'
+    else:
+        return F'{{{lower},{upper}}}'
+
+
 class pattern:
     """
     A wrapper for regular expression pattern objects created from re.compile,
@@ -35,6 +50,16 @@ class pattern:
     @functools.cached_property
     def str(self):
         return re.compile(self.str_pattern, flags=self.regex_flags)
+
+    def __hash__(self):
+        return hash((self.str_pattern, self.regex_flags))
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self.str_pattern == other and self.regex_flags == 0
+        if isinstance(other, pattern):
+            return self.str_pattern == other.str_pattern and self.regex_flags == other.regex_flags
+        return False
 
     def __str__(self):
         return self.str_pattern
@@ -61,20 +86,37 @@ class pattern:
 class alphabet(pattern):
     """
     A pattern object representing strings of letters from a given alphabet, with
-    an optional prefix and postfix.
+    an optional prefix and suffix.
     """
-    def __init__(self, repeat, prefix='', postfix='', at_least=1, at_most=None, **kwargs):
-        if not at_most:
-            count = '+' if at_least <= 1 else f'{{{at_least},}}'
-        else:
-            count = f'{{{at_least},{at_most}}}(?!{repeat})'
-
+    def __init__(
+        self,
+        repeat,
+        prefix='',
+        suffix='',
+        lower=1,
+        upper=0,
+        prefix_min=0,
+        prefix_max=0,
+        suffix_min=0,
+        suffix_max=0,
+        **kwargs
+    ):
+        self.repeat = repeat
+        self.prefix = prefix
+        self.suffix = suffix
+        self.suffix_min = suffix_min
+        self.suffix_max = suffix_max
+        self.prefix_min = prefix_min
+        self.prefix_max = prefix_max
+        self.lower = lower - suffix_max - prefix_max
+        self.upper = upper - suffix_min - prefix_min
+        count = _sized_suffix(lower, upper)
         pattern.__init__(self,
             R'{b}(?:{r}){c}{a}'.format(
                 r=repeat,
                 b=prefix,
                 c=count,
-                a=postfix
+                a=suffix
             ),
             **kwargs
         )
@@ -189,7 +231,17 @@ _pattern_serrated_hostname = _pattern_serrated_socket + '?'
 _pattern_defanged_hostname = _pattern_defanged_socket + '?'
 
 
-_pattern_integer = '[-+]?(?:0[bB][01]+|0[xX][0-9a-fA-F]+|0[1-7][0-7]*|[1-9][0-9]*|0)(?=[uU]?[iI]\\d{1,2}|[LlHh]|[^a-zA-Z0-9]|$)'
+def _sized_pattern_integer(lower: int = 0, upper: int = 0):
+    x = _sized_suffix(max(1, lower - 3), upper - 2)
+    o = _sized_suffix(max(0, lower - 3), upper - 2)
+    d = _sized_suffix(max(0, lower - 2), upper - 1)
+    return (
+        F'[-+]?(?:0[bB][01]{x}|0[xX][0-9a-fA-F]{x}|0[1-7][0-7]{o}|[1-9][0-9]{d}|0)'
+        R'(?=[uU]?[iI]\d{1,2}|[LlHh]|[^a-zA-Z0-9]|$)'
+    )
+
+
+_pattern_integer = _sized_pattern_integer()
 _pattern_float = R'[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?'
 _pattern_number = F'(?:(?:{_pattern_integer})|(?:{_pattern_float}))'
 _pattern_number = (
@@ -251,11 +303,22 @@ _pattern_date_list = [
 _pattern_date = '|'.join(
     _p.format_map(_pattern_date_elements) for _p in _pattern_date_list)
 
-_pattern_cmdstr = R'''(?:"(?:""|[^"])*"|'(?:''|[^'])*')'''
+
+def _sized_pattern_string(lower: int = 0, upper: int = 0):
+    n = _sized_suffix((lower - 2) // 2, upper - 2)
+    return FR'''(?:"(?:[^"\\\r\n]|\\[^\r\n]){n}"|'(?:[^'\\\r\n]|\\[^\r\n]){n}')'''
+
+
+def _sized_pattern_cmdstr(lower: int = 0, upper: int = 0):
+    n = _sized_suffix((lower - 2) // 2, upper - 2)
+    return FR'''(?:"(?:""|[^"]){n}"|'(?:''|[^']){n}')'''
+
+
+_pattern_cmdstr = _sized_pattern_cmdstr()
 _pattern_ps1str = R'''(?:(?:@"\s*?[\r\n].*?[\r\n]"@)|(?:@'\s*?[\r\n].*?[\r\n]'@)|(?:"(?:`.|""|[^"\n])*")|(?:'(?:''|[^'\n])*'))'''
 _pattern_vbastr = R'''"(?:""|[^"])*"'''
 _pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]*|[-+]?(?:[1-9][0-9]*|0))(?=\b|$)'
-_pattern_string = R'''(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*')'''
+_pattern_string = _sized_pattern_string()
 _pattern_string_multiline = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)'''
 _pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
 _pattern_urlenc = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
@@ -408,7 +471,7 @@ class formats(PatternEnum):
     "Base58 encoded strings"
     b62 = alphabet(R'(?:[0-9A-Za-z]')
     "Base62 encoded strings"
-    b64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', postfix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?')
+    b64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', suffix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?', suffix_max=6)
     "Base64 encoded strings"
     b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]')
     "Base85 encoded strings"
@@ -418,7 +481,7 @@ class formats(PatternEnum):
     "Z85 encoded strings"
     b92 = pattern(_pattern_b92)
     "Base92 encoded strings"
-    b64url = alphabet(R'[-\w]{4}', postfix=R'(?:[-\w]{2,3}={0,3})?')
+    b64url = alphabet(R'[-\w]{4}', suffix=R'(?:[-\w]{2,3}={0,3})?', suffix_max=6)
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]{2}')
     "Hexadecimal strings"
@@ -426,7 +489,7 @@ class formats(PatternEnum):
     "Uppercase hexadecimal strings"
     b16s = tokenize(R'[0-9a-fA-F]+', R'\s*', bound='')
     "Hexadecimal strings"
-    b64s = alphabet(R'[-\s\w\+/]', postfix=R'(?:={0,3})?')
+    b64s = alphabet(R'[-\s\w\+/]', suffix=R'(?:={0,3})?', suffix_max=3)
     "Base64 encoded strings, separated by whitespace"
     b85s = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]')
     "Base85 encoded string, separated by whitespace"
@@ -505,11 +568,11 @@ class indicators(PatternEnum):
     "String representations of IPv4 addresses"
     ipv6 = pattern(_pattern_ipv6)
     "String representations of IPv6 addresses"
-    md5 = alphabet('[0-9A-Fa-f]', at_least=32, at_most=32)
+    md5 = alphabet('[0-9A-Fa-f]', lower=32, upper=32)
     "Hexadecimal strings of length 32"
-    sha1 = alphabet('[0-9A-Fa-f]', at_least=40, at_most=40)
+    sha1 = alphabet('[0-9A-Fa-f]', lower=40, upper=40)
     "Hexadecimal strings of length 40"
-    sha256 = alphabet('[0-9A-Fa-f]', at_least=64, at_most=64)
+    sha256 = alphabet('[0-9A-Fa-f]', lower=64, upper=64)
     "Hexadecimal strings of length 64"
     hostname = pattern(_pattern_serrated_hostname)
     "Any domain name or IPv4 address, optionally followed by a colon and a port number."
@@ -550,3 +613,32 @@ class defanged(PatternEnum):
     "A defanged `refinery.lib.patterns.indicators.hostname`."
     url = pattern(_pattern_defanged_url)
     "A defanged `refinery.lib.patterns.indicators.url`."
+
+
+def pattern_with_size_limits(p: pattern, lower: int | None, upper: int | None) -> pattern:
+    """
+    This attempts to construct a pattern from a given format that includes the given lower and
+    upper bounds on total match size. This is not always possible.
+    """
+    lower = max(0, lower or 0)
+    upper = max(0, upper or 0)
+    handlers = {
+        formats.int.value     : _sized_pattern_integer,
+        formats.cmdstr.value  : _sized_pattern_cmdstr,
+        formats.string.value  : _sized_pattern_string,
+    }
+    if isinstance(p, alphabet):
+        return alphabet(
+            p.repeat,
+            p.prefix,
+            p.suffix,
+            lower,
+            upper,
+            p.prefix_min,
+            p.prefix_max,
+            p.suffix_min,
+            p.suffix_max,
+        )
+    elif h := handlers.get(p):
+        return pattern(h(lower, upper), formats.int.value.regex_flags)
+    return p
