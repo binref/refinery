@@ -10,7 +10,7 @@ from refinery.lib.executable import BO, Arch
 from refinery.lib.shared import unicorn as uc
 
 if TYPE_CHECKING:
-    from unicorn import Uc
+    from unicorn.unicorn import Uc
 else:
     class Uc:
         pass
@@ -29,17 +29,17 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         super()._reset()
 
         uc_arch, uc_mode = {
-            Arch.X32     : (uc.UC_ARCH_X86,   uc.UC_MODE_32),     # noqa
-            Arch.X64     : (uc.UC_ARCH_X86,   uc.UC_MODE_64),     # noqa
-            Arch.ARM32   : (uc.UC_ARCH_ARM,   uc.UC_MODE_ARM),    # noqa
-            Arch.ARM64   : (uc.UC_ARCH_ARM64, uc.UC_MODE_ARM),  # noqa
-            Arch.MIPS16  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_16),     # noqa
-            Arch.MIPS32  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_32),     # noqa
-            Arch.MIPS64  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_64),     # noqa
-            Arch.PPC32   : (uc.UC_ARCH_PPC,   uc.UC_MODE_32),     # noqa
-            Arch.PPC64   : (uc.UC_ARCH_PPC,   uc.UC_MODE_64),     # noqa
-            Arch.SPARC32 : (uc.UC_ARCH_SPARC, uc.UC_MODE_32),     # noqa
-            Arch.SPARC64 : (uc.UC_ARCH_SPARC, uc.UC_MODE_V9),     # noqa
+            Arch.X32     : (uc.UC_ARCH_X86,   uc.UC_MODE_32),  # noqa
+            Arch.X64     : (uc.UC_ARCH_X86,   uc.UC_MODE_64),  # noqa
+            Arch.ARM32   : (uc.UC_ARCH_ARM,   uc.UC_MODE_ARM), # noqa
+            Arch.ARM64   : (uc.UC_ARCH_ARM64, uc.UC_MODE_ARM), # noqa
+            Arch.MIPS16  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_16),  # noqa
+            Arch.MIPS32  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_32),  # noqa
+            Arch.MIPS64  : (uc.UC_ARCH_MIPS,  uc.UC_MODE_64),  # noqa
+            Arch.PPC32   : (uc.UC_ARCH_PPC,   uc.UC_MODE_32),  # noqa
+            Arch.PPC64   : (uc.UC_ARCH_PPC,   uc.UC_MODE_64),  # noqa
+            Arch.SPARC32 : (uc.UC_ARCH_SPARC, uc.UC_MODE_32),  # noqa
+            Arch.SPARC64 : (uc.UC_ARCH_SPARC, uc.UC_MODE_V9),  # noqa
         }[self.exe.arch()]
 
         uc_mode |= {
@@ -47,7 +47,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
             BO.LE: uc.UC_MODE_LITTLE_ENDIAN,
         }[self.exe.byte_order()]
 
-        self.unicorn = uc.Uc(uc_arch, uc_mode)
+        self.unicorn = uc.unicorn.Uc(uc_arch, uc_mode)
         self._single_step_hook = None
 
         self._map_segments()
@@ -60,7 +60,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         for hook, flag, callback in [
             (uc.UC_HOOK_CODE,           Hook.CodeExecute, self.hook_code_execute ),  # noqa
             (uc.UC_HOOK_INSN_INVALID,   Hook.CodeError,   self.hook_code_error   ),  # noqa
-            (uc.UC_HOOK_MEM_READ_AFTER, Hook.MemoryRead,  self.hook_mem_read     ),  # noqa
+            (uc.UC_HOOK_MEM_READ,       Hook.MemoryRead,  self.hook_mem_read     ),  # noqa
             (uc.UC_HOOK_MEM_WRITE,      Hook.MemoryWrite, self.hook_mem_write    ),  # noqa
             (uc.UC_HOOK_MEM_INVALID,    Hook.MemoryError, self.hook_mem_error    ),  # noqa
         ]:

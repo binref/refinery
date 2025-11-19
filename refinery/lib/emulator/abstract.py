@@ -691,7 +691,9 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
 
     def _map_stack_and_heap(self):
         alloc = self.alloc_size
-        limit = 1 << self.exe.pointer_size
+        limit = 1 << (self.exe.pointer_size - 1)
+        # unknown and not fully understood bug in unicorn
+        limit = min(0x10000000000000, limit)
         limit = limit - alloc
         image = self.exe.image_defined_address_space()
         upper = self.align(image.upper)

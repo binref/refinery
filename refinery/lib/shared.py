@@ -36,6 +36,7 @@ def unicorn():
     importlib.import_module('setuptools')
     with NoLogging():
         import unicorn
+        import unicorn.unicorn
         return unicorn
 
 
