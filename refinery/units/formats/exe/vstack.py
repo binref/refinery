@@ -508,7 +508,6 @@ class vstack(EmulatingUnit):
         for cursor in addresses:
             state = EmuState(cfg, cursor.start, emu.exe.pointer_size // 4, stop=cursor.stop)
             emu.reset(state)
-            emu.push((1 << emu.exe.pointer_size) - 1)
 
             for reg in emu.general_purpose_registers():
                 emu.set_register(reg, 0)

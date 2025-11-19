@@ -12,7 +12,6 @@ from refinery.lib.vfs import VirtualFileSystem
 
 if TYPE_CHECKING:
     from speakeasy import Speakeasy as Se
-    from speakeasy.common import CodeHook
     from speakeasy.common import Hook as SeHook
     from speakeasy.memmgr import MemMap
 else:
@@ -51,20 +50,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 self.stepped = True
             return True
 
-    class _stackfix:
-        hook: CodeHook | None
-
-        def __init__(self, parent: SpeakeasyEmulator):
-            self.hook = None
-            self.parent = parent
-
-        def __call__(self, base_emu: Se, address: int, size: int, ctx: list):
-            if hook := self.hook:
-                emu = self.parent
-                stack = emu.stack_region
-                emu.sp = stack.base + stack.size // 3
-                hook.disable()
-
     def _reset(self):
         exe = self.exe
         if exe.type not in (ET.PE, ET.BLOB):
@@ -96,9 +81,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         self._single_step_hook_s = emu.add_code_hook(self._singlestep())
         self._single_step_hook_d = emu.add_dyn_code_hook(self._singlestep())
         self._disable_single_step()
-
-        stackfix = self._stackfix(self)
-        stackfix.hook = emu.add_code_hook(stackfix)
 
         emu.emu.timeout = 0
 
@@ -151,22 +133,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             raise EmulationError('Ambiguous memory, unable to locate the stack.')
         return sm
 
-    @property
-    def stack_base(self):
-        return self.stack_region.base
-
-    @stack_base.setter
-    def stack_base(self, value):
-        raise AttributeError
-
-    @property
-    def stack_size(self):
-        return self.stack_region.size
-
-    @stack_size.setter
-    def stack_size(self, value):
-        raise AttributeError
-
     def _map_update(self):
         self._memorymap.clear()
         if (e := self.speakeasy.emu) and (eng := e.emu_eng) and (emu := eng.emu):
@@ -178,15 +144,19 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     def malloc(self, size: int) -> int:
         return self.speakeasy.mem_alloc(size)
 
+    def push(self, val: int, size: int | None = None):
+        if size is None:
+            size = self.exe.pointer_size_in_bytes
+        easy = self.speakeasy
+        easy.push_stack
+        sp = easy.get_stack_ptr()
+        bv = val.to_bytes(size, self.exe.byte_order().value)
+        sp -= size
+        easy.mem_write(sp, bv)
+        easy.set_stack_ptr(sp)
+
     def morestack(self):
-        spksy = self.speakeasy
-        stack = self.stack_region
-        base = stack.base - self.alloc_size
-        if (emu := spksy.emu) is None:
-            raise SpeakeasyNotInitialized
-        emu.mem_map(self.alloc_size, base)
-        stack.base = base
-        stack.size = stack.size + self.alloc_size
+        raise NotImplementedError
 
     class _stop:
         hook: SeHook | None
