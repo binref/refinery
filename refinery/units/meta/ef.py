@@ -40,7 +40,7 @@ class ef(Unit):
         meta: Param[bool, Arg.Switch('-m', help=(
             'Adds the atime, mtime, ctime, and size metadata variables.'
         ))] = False,
-        size: Param[slice, Arg.Bounds('-s', help=(
+        size: Param[slice | None, Arg.Bounds('-s', help=(
             'If specified, only files are read whose size is in the given range.'))] = None,
         read: Param[int, Arg.Number('-r', help=(
             'If specified, files will be read in chunks of size N and each '
@@ -229,7 +229,7 @@ class ef(Unit):
             skip_errors = SkipErrors()
             for path in paths(mask):
                 skip_errors.reset(path)
-                filesize = None
+                filesize = -1
                 with skip_errors:
                     path = path.relative_to(root)
                 with skip_errors:
@@ -239,13 +239,19 @@ class ef(Unit):
                     if do_stat:
                         stat = path.stat()
                         filesize = stat.st_size
-                    if do_meta:
-                        kwargs.update(
-                            fsize=filesize,
-                            atime=datetime.fromtimestamp(stat.st_atime).isoformat(' ', 'seconds'),
-                            ctime=datetime.fromtimestamp(stat.st_ctime).isoformat(' ', 'seconds'),
-                            mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(' ', 'seconds')
-                        )
+                        if do_meta:
+                            atime = stat.st_atime
+                            mtime = stat.st_mtime
+                            try:
+                                ctime = stat.st_birthtime
+                            except AttributeError:
+                                ctime = stat.st_ctime
+                            kwargs.update(
+                                fsize=filesize,
+                                atime=datetime.fromtimestamp(atime).isoformat(' ', 'seconds'),
+                                ctime=datetime.fromtimestamp(ctime).isoformat(' ', 'seconds'),
+                                mtime=datetime.fromtimestamp(mtime).isoformat(' ', 'seconds')
+                            )
                 if size is not None and filesize not in size:
                     continue
                 with skip_errors:
