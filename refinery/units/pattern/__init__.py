@@ -76,7 +76,7 @@ class PatternExtractorBase(Unit, abstract=True):
             utf16 = pattern_with_size_limits(utf16, max(1, sizes.min), abs(sizes.max))
             for zm in utf16.bin.finditer(data):
                 a, b = zm.span(0)
-                if zm[2] and data[a := a + 1]:
+                if zm[2] and data[(a := a + 1)]:
                     b += 1
                 for match in pattern.finditer(bytes(data[a:b:2])):
                     start = a + match.start() * 2
