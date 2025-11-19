@@ -7,7 +7,6 @@ from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.crypto.hash import HashUnit
 
-
 _FNV_SPEC = {
     0x0020: (
         0x01000193,
