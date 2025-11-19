@@ -309,18 +309,18 @@ class Arg(Argument):
 
     def __init__(
         self, *args: str,
-            action   : type[omit] | str                     = omit, # noqa
-            choices  : type[omit] | Iterable[Any]           = omit, # noqa
-            const    : type[omit] | Any                     = omit, # noqa
-            default  : type[omit] | Any                     = omit, # noqa
-            dest     : type[omit] | str                     = omit, # noqa
-            help     : type[omit] | str                     = omit, # noqa
-            metavar  : type[omit] | str                     = omit, # noqa
-            nargs    : type[omit] | type[delete] | int | str  = omit, # noqa
-            required : type[omit] | bool                    = omit, # noqa
-            type     : type[omit] | type | Callable          = omit, # noqa
-            group    : str | None                              = None, # noqa
-            guessed  : set[str] | None                         = None, # noqa
+        action   : type[omit] | str                       = omit,  # noqa
+        choices  : type[omit] | Iterable[Any]             = omit,  # noqa
+        const    : type[omit] | Any                       = omit,  # noqa
+        default  : type[omit] | Any                       = omit,  # noqa
+        dest     : type[omit] | str                       = omit,  # noqa
+        help     : type[omit] | str                       = omit,  # noqa
+        metavar  : type[omit] | str                       = omit,  # noqa
+        nargs    : type[omit] | type[delete] | int | str  = omit,  # noqa
+        required : type[omit] | bool                      = omit,  # noqa
+        type     : type[omit] | type | Callable           = omit,  # noqa
+        group    : str | None                             = None,  # noqa
+        guessed  : set[str] | None                        = None,  # noqa
     ) -> None:
         kwargs = dict(action=action, choices=choices, const=const, default=default, dest=dest,
             help=help, metavar=metavar, nargs=nargs, required=required, type=type)
