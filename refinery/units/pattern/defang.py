@@ -40,10 +40,10 @@ class defang(Unit):
     def _quote(self, word):
         return word if not self.args.quote_md else B'`%s`' % word
 
-    def reverse(self, data: bytearray):
-        def refang(hostname):
+    def reverse(self, data: bytes | bytearray):
+        def refang(hostname: re.Match[bytes]):
             return hostname[0].replace(B'[.]', B'.')
-        data = defanged.hostname.sub(refang, data)
+        data = defanged.hostname.value.bin.sub(refang, data)
         data = data.replace(B'[:]//', B'://')
         data = data.replace(B'[://]', B'://')
         data = re.sub(B'h.{3}?(s?)://', B'http\\1://', data)
@@ -51,9 +51,10 @@ class defang(Unit):
         return data
 
     def process(self, data):
-        def replace_hostname(hostname: bytes, match=True):
-            if match:
-                return self._quote(replace_hostname(hostname[0], False))
+        def replace_hostname(hostname: bytes | re.Match[bytes]):
+            if isinstance(hostname, re.Match):
+                return self._quote(replace_hostname(hostname[0]))
+            assert isinstance(hostname, (bytes, bytearray))
             self.log_info('replace:', hostname)
             host = hostname
             user, atsgn, host = host.rpartition(B'@')
@@ -98,10 +99,10 @@ class defang(Unit):
                 for name in ('path', 'params', 'query', 'fragment')
             }
             if self.args.url_protocol and parsed.scheme:
-                operations.update(scheme=self._PROTOCOL_ESCAPES.get(parsed.scheme.lower(), scheme))
+                operations.update(scheme=self._PROTOCOL_ESCAPES.get(parsed.scheme.lower(), parsed.scheme))
             if scheme < 2:
                 operations.update(scheme=B'')
-            operations.update(netloc=replace_hostname(parsed.netloc, False))
+            operations.update(netloc=replace_hostname(parsed.netloc))
             url = urlunparse(parsed._replace(**operations))
             if scheme == 0:
                 url = B':' + url
@@ -109,13 +110,13 @@ class defang(Unit):
                 url = url.replace(B'://', B'[:]//')
             return self._quote(url)
 
-        urlsplit = defanged.url.split(data)
-        step = defanged.url.value.groups + 1
+        urlsplit = defanged.url.value.bin.split(data)
+        step = defanged.url.value.bin.groups + 1
         urlsplit[1::step] = [replace_url(t) for t in itertools.islice(iter(urlsplit), 1, None, step)]
 
         if not self.args.url_only:
             urlsplit[0::step] = [
-                indicators.hostname.sub(replace_hostname, t)
+                indicators.hostname.value.bin.sub(replace_hostname, t)
                 for t in itertools.islice(iter(urlsplit), 0, None, step)
             ]
 

@@ -38,27 +38,27 @@ class pattern:
     def __init__(self, pattern: str, flags: int = 0):
         self.str_pattern = pattern
         self.bin_pattern = pattern.encode('ascii')
-        self.regex_flags = flags
+        self.flags = flags
 
     def __bytes__(self):
         return self.bin_pattern
 
     @functools.cached_property
     def bin(self):
-        return re.compile(B'(%s)' % self.bin_pattern, flags=self.regex_flags)
+        return re.compile(B'(%s)' % self.bin_pattern, flags=self.flags)
 
     @functools.cached_property
     def str(self):
-        return re.compile(self.str_pattern, flags=self.regex_flags)
+        return re.compile(self.str_pattern, flags=self.flags)
 
     def __hash__(self):
-        return hash((self.str_pattern, self.regex_flags))
+        return hash((self.str_pattern, self.flags))
 
     def __eq__(self, other):
         if isinstance(other, str):
-            return self.str_pattern == other and self.regex_flags == 0
+            return self.str_pattern == other and self.flags == 0
         if isinstance(other, pattern):
-            return self.str_pattern == other.str_pattern and self.regex_flags == other.regex_flags
+            return self.str_pattern == other.str_pattern and self.flags == other.flags
         return False
 
     def __str__(self):
@@ -90,16 +90,17 @@ class alphabet(pattern):
     """
     def __init__(
         self,
-        repeat,
-        prefix='',
-        suffix='',
-        lower=1,
-        upper=0,
-        prefix_min=0,
-        prefix_max=0,
-        suffix_min=0,
-        suffix_max=0,
-        token_size=1,
+        repeat: str,
+        prefix: str = '',
+        suffix: str = '',
+        lower: int = 1,
+        upper: int = 0,
+        prefix_min: int = 0,
+        prefix_max: int = 0,
+        suffix_min: int = 0,
+        suffix_max: int = 0,
+        token_size: int = 1,
+        flags: int = 0,
         **kwargs
     ):
         self.repeat = repeat
@@ -114,8 +115,11 @@ class alphabet(pattern):
         upper = upper - suffix_min - prefix_min
         if token_size > 1:
             lower, _r = divmod(lower, token_size)
+            if _r and lower == 0:
+                lower = _r
             upper, _r = divmod(upper, token_size)
-            upper += int(bool(_r))
+            if _r and upper >= 0:
+                upper += 1
         self.lower = lower
         self.upper = upper
         count = _sized_suffix(lower, upper)
@@ -126,6 +130,7 @@ class alphabet(pattern):
                 c=count,
                 a=suffix
             ),
+            flags,
             **kwargs
         )
 
@@ -647,7 +652,8 @@ def pattern_with_size_limits(p: pattern, lower: int | None, upper: int | None) -
             p.suffix_min,
             p.suffix_max,
             p.token_size,
+            flags=p.flags,
         )
     elif h := handlers.get(p):
-        return pattern(h(lower, upper), formats.int.value.regex_flags)
+        return pattern(h(lower, upper), formats.int.value.flags)
     return p

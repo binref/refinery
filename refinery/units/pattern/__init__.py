@@ -70,10 +70,14 @@ class PatternExtractorBase(Unit, abstract=True):
             for match in pattern.finditer(data):
                 yield match.start(), match
         if self.args.utf16:
-            for zm in re.finditer(BR'(.?)((?:.\0)+)', data, flags=re.DOTALL):
-                a, b = zm.span(2)
-                # Look one character further if there is evidence that this is UTF16-BE
-                b += bool(zm[1] and data[a])
+            from refinery.lib.patterns import alphabet, pattern_with_size_limits
+            sizes = self._getbounds()
+            utf16 = alphabet('.\\0', prefix='(.?)', token_size=2, flags=re.DOTALL)
+            utf16 = pattern_with_size_limits(utf16, max(1, sizes.min), abs(sizes.max))
+            for zm in utf16.bin.finditer(data):
+                a, b = zm.span(0)
+                if zm[2] and data[a := a + 1]:
+                    b += 1
                 for match in pattern.finditer(bytes(data[a:b:2])):
                     start = a + match.start() * 2
                     yield start, match
