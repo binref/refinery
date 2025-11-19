@@ -658,25 +658,30 @@ class BoundsType:
     """
     __name__ = 'bounds'
 
+    min: int
+    max: int | INF
+    inc: int
+
     def __getitem__(self, k: slice):
         return BoundsType(k)
 
-    def __init__(self, bounds: int | slice[int, int | None, int | None] | None):
+    def __init__(self, bounds: int | slice[int, int | None | INF, int | None] | None):
         if bounds is None:
-            bounds = slice(None, None, None)
-        if isinstance(bounds, int):
-            bounds = slice(bounds, bounds, 1)
-        start, stop, step = bounds.start, bounds.stop, bounds.step
-        for field in (start, stop, step):
-            if field is not None and not isinstance(field, int):
-                raise TypeError(field)
-        self.min = start or 0
-        self.max = stop or INF
-        self.inc = step or 1
-        if stop and stop < self.min:
-            raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')
-        if self.inc < 0:
-            raise ValueError('Negative step size not supported for range expressions.')
+            self.min = 0
+            self.max = INF
+            self.inc = 1
+        elif isinstance(bounds, int):
+            self.min = self.max = bounds
+            self.inc = 1
+        else:
+            _min, _max, _inc = bounds.start, bounds.stop, bounds.step
+            self.min = _min or 0
+            self.max = _max or INF
+            self.inc = _inc or 1
+            if _max and _max < self.min:
+                raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')
+            if self.inc < 0:
+                raise ValueError('Negative step size not supported for range expressions.')
 
     def __iter__(self):
         k = self.min
@@ -687,6 +692,9 @@ class BoundsType:
             while k <= m:
                 yield k
                 k += i
+
+    def __repr__(self):
+        return F'[{self.min}:{self.max}:{self.inc}]'
 
     def __contains__(self, value: int):
         if value < self.min:

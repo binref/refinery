@@ -13,7 +13,7 @@ class xtw(PatternExtractor):
     This works similar to the `refinery.xtp` unit.
     """
 
-    def __init__(self, stripspace=False, duplicates=False, longest=False, take=None):
+    def __init__(self, stripspace=False, duplicates=False, longest=False, take=0):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
 
     def process(self, data):

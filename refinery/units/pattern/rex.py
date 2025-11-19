@@ -33,8 +33,8 @@ class rex(SingleRegexUnit, PatternExtractor):
         ))],
         unicode: Param[bool, Arg.Switch('-u', help='Also find unicode strings.')] = False,
         unique: Param[bool, Arg.Switch('-q', help='Yield every (transformed) match only once.')] = False,
-        multiline=False, ignorecase=False, min=1, max=None, len=None, stripspace=False,
-        longest=False, take=None
+        multiline=False, ignorecase=False, min=1, max=0, len=0, stripspace=False,
+        longest=False, take=0
     ):
         super().__init__(
             regex=regex,

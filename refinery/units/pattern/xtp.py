@@ -80,7 +80,7 @@ class xtp(PatternExtractor):
             'of false positives by certain crude heuristics. Specify multiple times to '
             'make the filtering more aggressive.')
         )] = 0,
-        min=1, max=None, len=None, stripspace=False, duplicates=False, longest=False, take=None
+        min=1, max=0, len=0, stripspace=False, duplicates=False, longest=False, take=0
     ):
         self.superinit(super(), **vars(), ascii=True, utf16=True)
 

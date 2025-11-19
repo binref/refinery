@@ -9,7 +9,8 @@ from hashlib import blake2b
 from itertools import islice
 from typing import TYPE_CHECKING
 
-from refinery.lib.types import AST, INF, Callable, Iterable, Param, buf
+from refinery.lib.tools import bounds
+from refinery.lib.types import INF, Callable, Iterable, Param, buf
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -24,15 +25,23 @@ class PatternExtractorBase(Unit, abstract=True):
         self,
         min: Param[int, Arg.Number('-n', help='Matches must have length at least N.')] = 1,
         max: Param[int, Arg.Number('-m', help='Matches must have length at most N.')] = 0,
-        len: Param[int, Arg.Number('-e', help='Matches must be of length N.')] = 0,
-        stripspace: Param[bool, Arg.Switch('-x', help='Strip all whitespace from input data.')] = False,
-        duplicates: Param[bool, Arg.Switch('-r', help='Yield every (transformed) Match, even when it was found before.')] = False,
+        len: Param[int, Arg.Number('-e', help='Matches must be of length exactly N.')] = 0,
+        stripspace: Param[bool, Arg.Switch('-x', help=(
+            'Strip all whitespace from input before data is extracted.'
+        ))] = False,
+        duplicates: Param[bool, Arg.Switch('-r', help=(
+            'Yield every (transformed) Match, even when it was found before.'
+        ))] = False,
         longest: Param[bool, Arg.Switch('-l', help=(
-            'Pick longer results first. The output will be sorted by length unless the --take option is specified, '
-            'in which case the longest K results will be returned in order of appearance.'))] = False,
+            'Pick longer results first. The output will be sorted by length unless the --take '
+            'option is specified, in which case the longest K results will be returned in order '
+            'of appearance.'
+        ))] = False,
         take: Param[int, Arg.Number('-t', metavar='K', help=(
-            'Return only the first K occurrences in order of appearance. If --longest is specified, the K longest '
-            'results will be returned in order of appearance within the input.'))] = 0,
+            'Return only the first K occurrences in order of appearance. If --longest is '
+            'specified, the K longest results will be returned in order of appearance within '
+            'the input.'
+        ))] = 0,
         **keywords
     ):
         keywords.setdefault('ascii', True)
@@ -40,7 +49,7 @@ class PatternExtractorBase(Unit, abstract=True):
         super().__init__(
             min=min,
             max=max or INF,
-            len=len or AST,
+            len=len,
             stripspace=stripspace,
             duplicates=duplicates,
             longest=longest,
@@ -69,21 +78,33 @@ class PatternExtractorBase(Unit, abstract=True):
                     start = a + match.start() * 2
                     yield start, match
 
+    def _getbounds(self):
+        if (n := self.args.len) > 0:
+            return bounds[n]
+        else:
+            n = self.args.min
+            m = self.args.max
+            return bounds[n:m]
+
     def _prefilter(self, matches: Iterable[MT]) -> Iterable[MT]:
         barrier = set()
         taken = 0
+        sizes = self._getbounds()
+        dedup = not self.args.duplicates
+        maxtake = self.args.take
+        longest = self.args.longest
         for offset, match in matches:
             hit = memoryview(match[0])
-            if not hit or len(hit) != self.args.len or len(hit) < self.args.min or len(hit) > self.args.max:
+            if not hit or sizes and len(hit) not in sizes:
                 continue
-            if not self.args.duplicates:
-                uid = int.from_bytes(blake2b(hit, digest_size=8).digest(), 'big')
+            if dedup:
+                uid = blake2b(hit, digest_size=8).digest()
                 if uid in barrier:
                     continue
                 barrier.add(uid)
             yield offset, match
             taken += 1
-            if not self.args.longest and taken >= self.args.take:
+            if not longest and taken >= maxtake:
                 break
 
     def _postfilter(self, matches: Iterable[MT]) -> Iterable[MT]:
@@ -155,7 +176,7 @@ class PatternExtractorBase(Unit, abstract=True):
 
 class PatternExtractor(PatternExtractorBase, abstract=True):
     def __init__(
-        self, min=1, max=None, len=None, stripspace=False, duplicates=False, longest=False, take=None,
+        self, min=1, max=0, len=0, stripspace=False, duplicates=False, longest=False, take=0,
         ascii: Param[bool, Arg.Switch('-u', '--no-ascii', group='AvsU', help='Search for UTF16 encoded patterns only.')] = True,
         utf16: Param[bool, Arg.Switch('-a', '--no-utf16', group='AvsU', help='Search for ASCII encoded patterns only.')] = True,
         **keywords

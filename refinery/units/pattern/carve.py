@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import msgpack
 
-from refinery.lib.patterns import formats
+from refinery.lib.patterns import formats, pattern_with_size_limits
 from refinery.lib.types import Param
 from refinery.units import Chunk
 from refinery.units.pattern import Arg, PatternExtractor
@@ -20,8 +20,8 @@ class carve(PatternExtractor):
         unique: Param[bool, Arg.Switch('-q', help='Yield every match only once.')] = False,
         decode: Param[bool, Arg.Switch('-d', help='Automatically decode known patterns.')] = False,
         single: Param[bool, Arg.Switch('-s', help='Only get the biggest match; equivalent to -qlt1')] = False,
-        min=1, max=None, len=None,
-        stripspace=False, longest=False, take=None, utf16=True, ascii=True
+        min=1, max=0, len=0,
+        stripspace=False, longest=False, take=0, utf16=True, ascii=True
     ):
         if single:
             take = 1
@@ -44,7 +44,7 @@ class carve(PatternExtractor):
             format=format
         )
         if not decode:
-            decoder = NotImplemented
+            decoder = None
         elif self.args.format in (formats.multiline_string, formats.string):
             from ..encoding.esc import esc
             decoder = esc(unicode=True, quoted=True)
@@ -62,9 +62,9 @@ class carve(PatternExtractor):
             decoder = pack()
         elif self.args.format == formats.strarray:
             from ..encoding.esc import esc
-            def _decoder(data: Chunk): # noqa
+            def _decoder(data: Chunk) -> bytes: # noqa
                 return msgpack.packb([
-                    m[0] | esc | bytes for m in formats.string.value.bin.finditer(data)])
+                    m[0] | esc | bytes for m in formats.string.value.bin.finditer(data)]) or B''
             decoder = _decoder
         elif self.args.format in (formats.b64, formats.b64s):
             from ..encoding.b64 import b64
@@ -101,19 +101,23 @@ class carve(PatternExtractor):
             from ..encoding.url import url
             decoder = url()
         else:
-            decoder = NotImplemented
+            decoder = None
         self.decoder = decoder
 
     def process(self, data):
-        self.log_info('using pattern:', self.args.format.str.pattern)
-        it = iter(self.matches_filtered(memoryview(data), self.args.format.value.bin))
-        if self.decoder is NotImplemented:
+        sizes = self._getbounds()
+        pattern = pattern_with_size_limits(
+            self.args.format.value, max(1, sizes.min), abs(sizes.max))
+        self.log_info('using pattern:', pattern.str.pattern)
+        it = iter(self.matches_filtered(memoryview(data), pattern.bin))
+        if (decoder := self.decoder) is None:
             yield from it
-        for chunk in it:
-            try:
-                yield self.decoder(chunk)
-            except Exception as E:
-                self.log_info(F'decoder failure: {E!s}')
+        else:
+            for chunk in it:
+                try:
+                    yield decoder(chunk)
+                except Exception as E:
+                    self.log_info(F'decoder failure: {E!s}')
 
 
 class csd(carve):

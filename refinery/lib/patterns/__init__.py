@@ -99,6 +99,7 @@ class alphabet(pattern):
         prefix_max=0,
         suffix_min=0,
         suffix_max=0,
+        token_size=1,
         **kwargs
     ):
         self.repeat = repeat
@@ -108,8 +109,15 @@ class alphabet(pattern):
         self.suffix_max = suffix_max
         self.prefix_min = prefix_min
         self.prefix_max = prefix_max
-        self.lower = lower - suffix_max - prefix_max
-        self.upper = upper - suffix_min - prefix_min
+        self.token_size = token_size
+        lower = lower - suffix_max - prefix_max
+        upper = upper - suffix_min - prefix_min
+        if token_size > 1:
+            lower, _r = divmod(lower, token_size)
+            upper, _r = divmod(upper, token_size)
+            upper += int(bool(_r))
+        self.lower = lower
+        self.upper = upper
         count = _sized_suffix(lower, upper)
         pattern.__init__(self,
             R'{b}(?:{r}){c}{a}'.format(
@@ -471,7 +479,7 @@ class formats(PatternEnum):
     "Base58 encoded strings"
     b62 = alphabet(R'(?:[0-9A-Za-z]')
     "Base62 encoded strings"
-    b64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', suffix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?', suffix_max=6)
+    b64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', suffix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?', suffix_max=6, token_size=4)
     "Base64 encoded strings"
     b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]')
     "Base85 encoded strings"
@@ -483,9 +491,9 @@ class formats(PatternEnum):
     "Base92 encoded strings"
     b64url = alphabet(R'[-\w]{4}', suffix=R'(?:[-\w]{2,3}={0,3})?', suffix_max=6)
     "Base64 encoded strings using URL-safe alphabet"
-    hex = alphabet(R'[0-9a-fA-F]{2}')
+    hex = alphabet(R'[0-9a-fA-F]{2}', token_size=2)
     "Hexadecimal strings"
-    b16 = alphabet(R'[0-9A-F]{2}')
+    b16 = alphabet(R'[0-9A-F]{2}', token_size=2)
     "Uppercase hexadecimal strings"
     b16s = tokenize(R'[0-9a-fA-F]+', R'\s*', bound='')
     "Hexadecimal strings"
@@ -638,6 +646,7 @@ def pattern_with_size_limits(p: pattern, lower: int | None, upper: int | None) -
             p.prefix_max,
             p.suffix_min,
             p.suffix_max,
+            p.token_size,
         )
     elif h := handlers.get(p):
         return pattern(h(lower, upper), formats.int.value.regex_flags)
