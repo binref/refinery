@@ -5,6 +5,12 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.10
+- The `hlg`, `hls`, and `hlb` units were added for easier access to different style flavors of syntax highlighting.
+- The `bruteforce` unit now accepts integer intervals as argument rather than Python slices. This means that `1:4` includes `4`.
+- Various units for FNV hashing were added, i.e. `fnv0`, `fnv1`, `fnv1a`, and shortcuts for various bit sizes.
+- This release also includes significant performance improvements to the .NET parser.
+
 ## Version 0.9.9
 - The `hl` unit was added for highlighting source code on the terminal.
 - The `xtmsi` unit now supports Advanced Installer binaries which include the MSI with obfuscated header.
