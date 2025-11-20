@@ -12,6 +12,7 @@ import lief.MachO as MachO
 import lief.PE as PE
 
 if True:
+    lib.disable_leak_warning()
     lib.logging.disable()
 
 from refinery.lib.types import buf
