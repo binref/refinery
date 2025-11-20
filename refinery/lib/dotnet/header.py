@@ -266,7 +266,6 @@ class NetMetaDataStream(Dict[int, N], abc.ABC):
             offsets.append(offset)
             self[offset] = self.stream_next()
             offset = reader.tell()
-        self[offset] = self.default
 
     @abc.abstractmethod
     def stream_next(self) -> N:
