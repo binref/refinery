@@ -15,7 +15,7 @@ from zlib import adler32
 from refinery.lib import json as libjson
 from refinery.lib.loader import load
 from refinery.lib.meta import ByteStringWrapper, LazyMetaOracle, metavars
-from refinery.lib.tools import exception_to_string
+from refinery.lib.tools import exception_to_string, isbuffer
 from refinery.lib.types import Callable, Iterable, Param, buf
 from refinery.lib.xml import XMLNodeBase
 from refinery.units import Arg, Chunk, RefineryPartialResult, RefineryPotentialUserError, Unit
@@ -439,7 +439,7 @@ class JSONEncoderUnit(Unit, abstract=True):
             _byte_converter = _str_encode
 
         def default(o: buf):
-            if isinstance(o, (bytes, bytearray, memoryview)):
+            if isbuffer(o):
                 return _byte_converter(o)
             return libjson.standard_conversions(o)
 
