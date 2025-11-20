@@ -30,7 +30,7 @@ def capstone():
     return capstone
 
 
-@__global_dependency('unicorn==2.0.1.post1', ['default', 'extended'])
+@__global_dependency('unicorn>=2.0.1.post1', ['default', 'extended'])
 def unicorn():
     import importlib
     importlib.import_module('setuptools')
