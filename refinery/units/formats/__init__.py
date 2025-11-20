@@ -441,6 +441,6 @@ class JSONEncoderUnit(Unit, abstract=True):
         def default(o: buf):
             if isinstance(o, (bytes, bytearray, memoryview)):
                 return _byte_converter(o)
-            raise TypeError
+            return libjson.standard_conversions(o)
 
         return libjson.dumps(obj, tojson=default)
