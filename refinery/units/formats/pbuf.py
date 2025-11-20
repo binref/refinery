@@ -175,12 +175,12 @@ class ProtoBufReader(StructReader[memoryview]):
 class pbuf(JSONEncoderUnit):
     """
     Converts a ProtoBuf message to JSON. Deserialization is ambiguous without the definition file,
-    so the output is partly based on heuristics. Some fields like fixed integers are never recovered, fixed 32-bit
-    and 64-bit data types are always recovered as floating point numbers. For variable length data,
-    the unit first attempts to decode the data as a printable UTF-8 string. If this fails, it will
-    attempt to deserialize it as ProtoBuf. If this also fails and the corresponding option is set,
-    it will try to reconstruct a sequence of repeated variable-length integers. The final fallback
-    is to return the body as a byte string.
+    so the output is partly based on heuristics. Some fields like fixed integers are never
+    recovered, fixed 32-bit and 64-bit data types are always recovered as floating point numbers.
+    For variable length data,the unit first attempts to decode the data as a printable UTF-8
+    string. If this fails, it will attempt to deserialize it as ProtoBuf. If this also fails and
+    the corresponding option is set, it will try to reconstruct a sequence of repeated variable
+    length integers. The final fallback is to return the body as a byte string.
     """
     def __init__(
         self,
