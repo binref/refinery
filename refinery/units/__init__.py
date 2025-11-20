@@ -1335,6 +1335,8 @@ class Unit(UnitBase, abstract=True):
         return 'rb'
 
     def close(self) -> None:
+        if src := self.source:
+            src.close()
         self._chunks = None
 
     @property
@@ -1646,8 +1648,7 @@ class Unit(UnitBase, abstract=True):
 
     def __del__(self):
         try:
-            if src := self.nozzle.source:
-                src.close()
+            self.close()
         except Exception:
             pass
 
@@ -1805,7 +1806,8 @@ class Unit(UnitBase, abstract=True):
                 stream = open(os.devnull, 'wb')
             else:
                 stream = os.fdopen(stream, 'wb')
-            _ = self | stream
+            with stream:
+                _ = self | stream
             return
         if isinstance(stream, type) and issubclass(stream, Entry):
             stream = cast(Type[Unit], stream)()
@@ -2332,7 +2334,8 @@ class Unit(UnitBase, abstract=True):
             unit.console = True
 
             try:
-                with open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer as output:
+                stream = open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer
+                with stream as output:
                     _ = source | unit | output
             except ParserVariableMissing as E:
                 unit.logger.error(F'the variable "{E!s}" was missing while trying to parse an expression')
