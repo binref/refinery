@@ -25,7 +25,7 @@ class TestDotNetHeaderParser(TestUnitBase):
         header = json.loads(unit(data))
         streams = header['Meta']['Streams']
 
-        self.assertIn('75AE5928-D641-49B7-A7D0-768DBD3A3D80', streams['GUID'].values())
+        self.assertIn('75ae5928-d641-49b7-a7d0-768dbd3a3d80', streams['GUID'].values())
 
         for sentinel in {
             '_FakeMessageShow',

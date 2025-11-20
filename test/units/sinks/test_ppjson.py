@@ -23,7 +23,7 @@ class TestJSON(TestUnitBase):
         self.assertIn('{"foo": 7, "bar":6,}', test)
 
     def test_minify_json(self):
-        unit = self.load(indent=0)
+        unit = self.load(minimal=True)
         data = {"A": [1, 2, 3], "B": {"C": "Yes", "D": "No"}}
         test = unit(json.dumps(data, indent=4).encode(unit.codec))
         self.assertEqual(len(test), 38)

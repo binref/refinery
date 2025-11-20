@@ -3,13 +3,12 @@ from __future__ import annotations
 import base64
 import enum
 import itertools
-import json
 import textwrap
 
 from Cryptodome.Util import number
 from Cryptodome.Util.asn1 import DerSequence
 
-from refinery.lib.json import flattened
+from refinery.lib import json
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 from refinery.units.crypto.cipher.rsa import normalize_rsa_key
@@ -108,10 +107,10 @@ class rsakey(Unit):
             if value.bit_length() > 32:
                 components[tag] = F'{value:X}'
         if out is RSAFormat.JSON:
-            yield json.dumps(components, indent=4).encode(self.codec)
+            yield json.dumps(components)
             return
         if out is RSAFormat.TEXT:
-            table = list(flattened(components))
+            table = list(json.flattened(components))
             for key, value in table:
                 value = F'0x{value}' if isinstance(value, str) else str(value)
                 value = '\n'.join(F'{L}' for L in textwrap.wrap(value, 80))

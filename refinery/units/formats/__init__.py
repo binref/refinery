@@ -4,6 +4,7 @@ A package containing several sub-packages for various data formats.
 from __future__ import annotations
 
 import abc
+import codecs
 import collections
 import fnmatch
 import re
@@ -11,7 +12,7 @@ import re
 from collections import Counter
 from zlib import adler32
 
-from refinery.lib.json import BytesAsArrayEncoder, BytesAsStringEncoder
+from refinery.lib import json as libjson
 from refinery.lib.loader import load
 from refinery.lib.meta import ByteStringWrapper, LazyMetaOracle, metavars
 from refinery.lib.tools import exception_to_string
@@ -403,9 +404,6 @@ class JSONEncoderUnit(Unit, abstract=True):
     An abstract unit that provides the interface for displaying parsed data as JSON. By default,
     binary data is converted to latin1 strings.
     """
-
-    EncoderBase = BytesAsStringEncoder
-
     def __init__(
         self,
         encode: Param[str | None, Arg.String('-e', group='BIN', metavar='U', help=(
@@ -425,19 +423,24 @@ class JSONEncoderUnit(Unit, abstract=True):
         super().__init__(encode=encode, digest=digest, arrays=arrays, **keywords)
 
     def to_json(self, obj) -> bytes:
-        def UnitEncoderFactory(unit: Unit):
-            class Encoder(self.EncoderBase):
-                def encode_bytes(self, obj):
-                    return obj | unit | str
-            return Encoder
         if self.args.arrays:
-            encoder = BytesAsArrayEncoder
+            _byte_converter = list
         elif u := self.args.encode:
-            encoder = UnitEncoderFactory(load(u, reverse=True))
+            unit = load(u, reverse=True)
+            def _encode(o: buf): return o | unit | str
+            _byte_converter = _encode
         elif u := self.args.digest:
-            encoder = UnitEncoderFactory(load(u, text=True))
+            unit = load(u, test=True)
+            def _digest(o: buf): return o | unit | str
+            _byte_converter = _digest
         else:
-            encoder = self.EncoderBase
+            def _str_encode(o: buf):
+                return codecs.decode(o, encoding='latin1')
+            _byte_converter = _str_encode
 
-        with encoder as enc:
-            return enc.dumps(obj).encode(self.codec)
+        def default(o: buf):
+            if isinstance(o, (bytes, bytearray, memoryview)):
+                return _byte_converter(o)
+            raise TypeError
+
+        return libjson.dumps(obj, tojson=default)

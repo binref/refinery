@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 
+from refinery.lib import json
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -32,15 +32,16 @@ class sqlite(Unit):
                     [i[0] for i in cursor.description] if cursor.description else []
                 )
                 for row in cursor:
-                    if fields:
+                    if not fields:
+                        cleaned_row = list(row)
+                    else:
                         cleaned_row = {}
                         for i in range(len(fields)):
                             if isinstance(row[i], bytes):
                                 cleaned_row[i] = row[i].decode(self.codec)
                             else:
                                 cleaned_row[fields[i]] = row[i]
-                        yield json.dumps(cleaned_row).encode(self.codec)
-                    else:
-                        yield json.dumps(list(row)).encode(self.codec)
+                    yield json.dumps(
+                        cleaned_row, pretty=False)
         except sqlite3.Error as e:
             raise ValueError(F'Failed to process SQLite database: {e}')

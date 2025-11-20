@@ -4,10 +4,10 @@ from refinery.lib.dotnet.deserialize import BinaryFormatterParser
 from refinery.lib.structures import struct_to_json
 from refinery.lib.types import Param
 from refinery.units import Arg
-from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
+from refinery.units.formats import JSONEncoderUnit
 
 
-class dnds(DotNetJSONEncoderUnit):
+class dnds(JSONEncoderUnit):
     """
     Stands for "DotNet DeSerialize": Expects data that has been serialized using the .NET class
     "BinaryFormatter". The output is a representation of the deserialized data in JSON format.

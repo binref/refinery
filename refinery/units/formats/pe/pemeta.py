@@ -274,11 +274,22 @@ class pemeta(Unit):
                 crt = certificate['tbs_certificate']
                 serial = crt['serial_number']
                 signer = signer_serials[serial]
-                if isinstance(serial, int):
-                    serial = F'{serial:x}'
-                if len(serial) % 2 != 0:
-                    serial = F'0{serial}'
-                assert bytes.fromhex(serial) in data
+
+                if not isinstance(serial, int):
+                    try:
+                        serial = int(serial, 16)
+                    except ValueError:
+                        serial = int(serial, 0)
+
+                length, rest = divmod(serial.bit_length(), 8)
+                if rest > 0:
+                    length += 1
+                serial_bytes = serial.to_bytes(length, 'big', signed=(serial < 0))
+                if serial_bytes not in data:
+                    continue
+
+                serial = serial_bytes.hex().lower()
+
                 subject: dict = crt['subject']
                 location = [subject.get(t, '') for t in (
                     'locality_name', 'state_or_province_name', 'country_name')]
@@ -711,7 +722,7 @@ class pemeta(Unit):
             result['Signature'] = signature
 
         if result:
-            yield from ppjson(tabular=self.args.tabular)._pretty_output(result, indent=4, ensure_ascii=False)
+            yield from ppjson(tabular=self.args.tabular)._pretty_output(result)
 
     _CHARSET = {
         0x0000: '7-bit ASCII',

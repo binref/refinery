@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from refinery.lib import json
 from refinery.lib.inno.archive import (
     InnoArchive,
     InvalidPassword,
     SetupFileFlags,
     is_inno_setup,
 )
-from refinery.lib.json import BytesAsArrayEncoder
 from refinery.lib.mime import FileMagicInfo as magic
 from refinery.lib.structures import struct_to_json
 from refinery.units.formats.archive import ArchiveUnit
@@ -52,19 +52,19 @@ class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
         if any(file.encrypted for file in inno.files) and password is None:
             self.log_info('some files are password-protected and no password was given')
 
-        with BytesAsArrayEncoder as encoder:
-            yield self._pack('meta/setup.bin', None, inno.streams.TSetup.data)
+        if t_setup := inno.streams.TSetup.data:
+            yield self._pack('meta/setup.bin', None, t_setup)
             doc = struct_to_json(inno.setup_info)
-            yield self._pack('meta/setup.template', None, encoder.dumps(doc).encode(self.codec))
+            yield self._pack('meta/setup.template', None, json.dumps(doc, tojson=json.bytes_as_array))
             doc = post_process_json(doc)
-            yield self._pack('meta/setup.json', None, encoder.dumps(doc).encode(self.codec))
+            yield self._pack('meta/setup.json', None, json.dumps(doc, tojson=json.bytes_as_array))
 
-        with BytesAsArrayEncoder as encoder:
-            yield self._pack('meta/files.bin', None, inno.streams.TData.data)
+        if t_data := inno.streams.TData.data:
+            yield self._pack('meta/files.bin', None, t_data)
             doc = struct_to_json(inno.setup_data)
-            yield self._pack('meta/files.template', None, encoder.dumps(doc).encode(self.codec))
+            yield self._pack('meta/files.template', None, json.dumps(doc, tojson=json.bytes_as_array))
             doc = post_process_json(doc)
-            yield self._pack('meta/files.json', None, encoder.dumps(doc).encode(self.codec))
+            yield self._pack('meta/files.json', None, json.dumps(doc, tojson=json.bytes_as_array))
 
         def _uninstaller(i=inno):
             return i.read_stream(i.streams.Uninstaller)

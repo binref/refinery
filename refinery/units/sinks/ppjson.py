@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import re
 import textwrap
 import unicodedata
 
-from refinery.lib.json import flattened
+from refinery.lib import json
 from refinery.lib.tools import get_terminal_size
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -24,15 +23,17 @@ class ppjson(Unit):
 
     def __init__(
         self,
-        tabular: Param[bool, Arg.Switch('-t', group='OUT', help='Convert JSON input into a flattened table.')] = False,
-        indent: Param[int, Arg.Number('-i', group='OUT', help='Number of spaces used for indentation. Default is {default}.')] = 4
+        tabular: Param[bool, Arg.Switch('-t', group='OUT',
+            help='Convert JSON input into a flattened table.')] = False,
+        minimal: Param[bool, Arg.Switch('-m', group='OUT',
+            help='Minify the JSON output instead of pretty-printing.')] = False,
     ):
-        return super().__init__(indent=indent, tabular=tabular)
+        return super().__init__(tabular=tabular, minimal=minimal)
 
-    def _pretty_output(self, parsed, **kwargs):
-        encoded = json.dumps(parsed, **kwargs)
+    def _pretty_output(self, parsed, pretty=True):
+        encoded = json.dumps(parsed, pretty=pretty)
         if self.args.tabular:
-            table = list(flattened(json.loads(encoded)))
+            table = list(json.flattened(json.loads(encoded)))
             width = max(len(key) for key, _ in table)
             tsize = get_terminal_size(80) - width - 4
             for key, value in table:
@@ -51,7 +52,7 @@ class ppjson(Unit):
                 for wrap in it:
                     yield F'{"":<{width + 3}}{wrap}'.encode(self.codec)
         else:
-            yield encoded.encode(self.codec)
+            yield encoded
 
     def process(self, data):
         if self._TRAILING_COMMA.search(data):
@@ -61,5 +62,5 @@ class ppjson(Unit):
             from refinery.lib.patterns import formats
             strings = {range(*m.span()) for m in formats.string.finditer(data)}
             data = self._TRAILING_COMMA.sub(smartfix, data)
-        kwargs = {'indent': self.args.indent} if self.args.indent else {'separators': (',', ':')}
-        yield from self._pretty_output(json.loads(data), **kwargs)
+        pretty = not self.args.minimal
+        yield from self._pretty_output(json.loads(data), pretty=pretty)

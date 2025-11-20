@@ -1,143 +1,30 @@
 """
-In order to represent arbitrary data as JSON, these classes help extend the built-in
-json module in order to support custom encoding of already serializable types.
+This module provides JSON encoding and decoding. All refinery units should use this interface
+rather than the standard library JSON module. It first attempts to use the orJSON external library
+as backend, which is much faster, and then falls back to the standard library if orJSON is not
+available.
 """
 from __future__ import annotations
 
-import datetime
-import json
-import re
+import codecs
+import json as pyjson
 import uuid
 
-from refinery.lib.types import buf
+from datetime import datetime
+
+from refinery.lib.shared import orjson
+from refinery.lib.tools import isbuffer
+from refinery.lib.types import Any, Callable, Generator
 
 
-class JSONEncoderExMeta(type):
+def flattened(data: dict, prefix: str = '', separator: str = '.'):
     """
-    This metaclass is the type of `refinery.lib.json.JSONEncoderEx` and exists in
-    order to facilitate a context manager at the type level.
+    Yield the rows of a flattened view for the input JSON dictionary. This is used by several
+    refinery units to display a tabular view of what would otherwise be output as JSON.
     """
-
-    def __enter__(cls):
-        def _custom_isinstance(obj, tp):
-            if cls.handled(obj):
-                return False
-            return isinstance(obj, tp)
-
-        def mkiter(*args, **kwargs):
-            kwargs.update(isinstance=_custom_isinstance)
-            return cls._make_iterencode_old(*args, **kwargs)
-
-        cls._make_iterencode_old = json.encoder._make_iterencode
-        json.encoder._make_iterencode = mkiter
-        return cls
-
-    def __exit__(cls, etype, eval, tb):
-        json.encoder._make_iterencode = cls._make_iterencode_old
-        return False
-
-    def dumps(cls, data, indent=4, **kwargs):
-        kwargs.setdefault('cls', cls)
-        return json.dumps(data, indent=indent, **kwargs)
-
-
-class JSONEncoderEx(json.JSONEncoder, metaclass=JSONEncoderExMeta):
-    """
-    Base class for JSON encoders used in refinery. Any such encoder can
-    be used as a context which temporarily performs a monkey-patch of the
-    built-in json module to allow custom encoding of already serializable
-    types such as `list` or `dict`. This is done as follows:
-
-        class MyEncoder(JSONEncoderEx):
-            pass
-
-        with MyEncoder as encoder:
-            return encoder.dumps(data)
-    """
-    def encode(self, obj):
-        if isinstance(obj, dict) and not all(isinstance(k, str) for k in obj.keys()):
-            def _encode(k):
-                if isinstance(k, (bytes, bytearray, memoryview)):
-                    try: return k.encode('ascii')
-                    except Exception: pass
-                return str(k)
-            obj = {_encode(key): value for key, value in obj.items()}
-        data = super().encode(obj)
-        if self.substitute:
-            uids = R'''(['"])({})\1'''.format('|'.join(re.escape(u) for u in self.substitute))
-            return re.sub(uids, lambda m: self.substitute[m[2]], data)
-        return data
-
-    def encode_raw(self, representation):
-        uid = str(uuid.uuid4())
-        self.substitute[uid] = representation
-        return uid
-
-    def default(self, obj):
-        if isinstance(obj, datetime.datetime):
-            return obj.isoformat(' ', 'seconds')
-        if isinstance(obj, uuid.UUID):
-            return str(obj).upper()
-        return super().default(obj)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.substitute = {}
-
-    @classmethod
-    def handled(cls, obj) -> bool:
-        """
-        Returns whether the given object can be handled by the decoder. When a `refinery.lib.json.JSONEncoderEx` is used as
-        a context manager, then it is possible to return `True` for basic types such as `list` to provide custom encodings of
-        these types.
-        """
-        return False
-
-
-class BytesEncoder(JSONEncoderEx):
-    """
-    A base class for JSON encoders that can encode byte arrays.
-    """
-
-    @classmethod
-    def _is_byte_array(cls, obj) -> bool:
-        return isinstance(obj, (bytes, bytearray, memoryview))
-
-    @classmethod
-    def handled(cls, obj) -> bool:
-        return cls._is_byte_array(obj) or super().handled(obj)
-
-    def encode_bytes(self, obj: buf):
-        raise NotImplementedError
-
-    def default(self, obj):
-        if self._is_byte_array(obj):
-            return self.encode_bytes(obj)
-        return super().default(obj)
-
-
-class BytesAsArrayEncoder(BytesEncoder):
-    """
-    This JSON Encoder encodes byte strings as arrays of integers.
-    """
-    def encode_bytes(self, obj: buf):
-        return self.encode_raw('[{}]'.format(','.join(str(b & 0xFF) for b in obj)))
-
-
-class BytesAsStringEncoder(BytesEncoder):
-    """
-    This JSON Encoder encodes byte strings as escaped strings.
-    """
-    def encode_bytes(self, obj: buf):
-        if not isinstance(obj, (bytes, bytearray)):
-            if not isinstance(obj, memoryview):
-                obj = (b & 0xFF for b in obj)
-            obj = bytes(obj)
-        return obj.decode('latin1')
-
-
-def flattened(data: dict, prefix='', separator='.') -> list[tuple[str, int | float | str]]:
-    def flatten(cursor, prefix):
+    def flatten(
+        cursor: dict | list | str | int | float | bool, prefix: str
+    ) -> Generator[tuple[str, int | float | bool | str]]:
         if isinstance(cursor, dict):
             for key, value in cursor.items():
                 new_prefix = key if not prefix else F'{prefix}{separator}{key}'
@@ -149,3 +36,132 @@ def flattened(data: dict, prefix='', separator='.') -> list[tuple[str, int | flo
         else:
             yield (prefix, cursor)
     yield from flatten(data, prefix)
+
+
+def _py_standard_conversions(o):
+    if isinstance(o, datetime):
+        return o.isoformat(' ', 'seconds')
+    if isinstance(o, uuid.UUID):
+        return str(o).upper()
+    if isinstance(o, (set, tuple)):
+        return list(o)
+    raise TypeError
+
+
+def _py_json_dumps(
+    object,
+    pretty: bool = True,
+    tojson: Callable[[Any], Any] | None = None,
+) -> bytes:
+    if tojson is not None:
+        class encoder(pyjson.JSONEncoder):
+            default = staticmethod(tojson) # type:ignore
+        enc = encoder
+    else:
+        enc = None
+    if pretty:
+        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=2)
+    else:
+        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=0, separators=(',', ':'))
+    return out.encode('utf8')
+
+
+def serialize_bigints(o):
+    """
+    This method ensures that no integers requiring more than 64 bits are stored within nested
+    dictionaries and lists of the input object. Integers that exceed this limit are converted
+    to hexadecimal string representations with prefix.
+    """
+    if isinstance(o, dict):
+        for k, v in o.items():
+            o[k] = serialize_bigints(v)
+    elif isinstance(o, list):
+        for k, v in enumerate(o):
+            o[k] = serialize_bigints(v)
+    elif isinstance(o, int) and o.bit_length() > 64:
+        return hex(o)
+    return o
+
+
+try:
+    _or_json_loads = orjson.loads
+    _or_json_dumps = orjson.dumps
+except ImportError:
+    dumps = _py_json_dumps
+    loads = pyjson.loads
+    standard_conversions = _py_standard_conversions
+else:
+    def _or_standard_conversions(o):
+        if isinstance(o, datetime):
+            return o.isoformat(' ', 'seconds')
+        if isinstance(o, (set, tuple)):
+            return list(o)
+        raise TypeError
+
+    standard_conversions = _or_standard_conversions
+
+    def __loads(data):
+        # orjson does not like subclasses of bytearray, and we do that a lot
+        return _or_json_loads(memoryview(data))
+
+    def __dumps(
+        object,
+        pretty: bool = True,
+        tojson: Callable[[Any], Any] | None = None,
+    ):
+        default = tojson or _or_standard_conversions
+        options = (
+            0
+            | orjson.OPT_PASSTHROUGH_DATETIME
+            | orjson.OPT_NON_STR_KEYS
+            | orjson.OPT_OMIT_MICROSECONDS
+            | orjson.OPT_SERIALIZE_DATACLASS
+            | orjson.OPT_SERIALIZE_UUID
+        )
+        if pretty:
+            options |= orjson.OPT_INDENT_2
+        try:
+            return _or_json_dumps(
+                serialize_bigints(object),
+                option=options,
+                default=default,
+            )
+        except Exception:
+            raise
+            return _py_json_dumps(object, pretty=pretty, tojson=tojson)
+
+    loads = __loads
+    dumps = __dumps
+
+
+def bytes_as_array(o):
+    """
+    A default handler that will convert byte strings to lists of integers.
+    """
+    if isbuffer(o):
+        return [int(b & 0xFF) for b in o]
+    return standard_conversions(o)
+
+
+def bytes_as_string(o):
+    """
+    A default handler that will convert byte strings to 8-bit ASCII encoded strings.
+    """
+    if isbuffer(o):
+        return codecs.decode(o, 'latin1')
+    return standard_conversions(o)
+
+
+__pdoc__ = {
+    'dumps': (
+        'A unified proxy method for dumping input data to JSON, using either the orJSON or the '
+        'standard library as backend, depending on what is available. The interface more closely '
+        'resembles orJSON: The `pretty` option controls whether the output is indented or '
+        'minified, and an optional conversion handler can be passed as the `default` parameter '
+        'to serialize Python objects that are not handled natively by the backend.'
+    ),
+    'loads': (
+        'A unified proxy method for loading JSON data as a Python object, using either orJSON '
+        'or the standard library backend.'
+    ),
+}

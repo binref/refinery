@@ -5,7 +5,7 @@ import sys
 
 from types import CodeType
 
-from refinery.lib.json import BytesAsStringEncoder
+from refinery.lib import json
 from refinery.lib.py import SYS_PYTHON, Marshal, code_header, version2tuple
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -54,8 +54,7 @@ class pym(Unit):
                 q += int(bool(r))
                 return data.to_bytes(q, 'big')
             if isinstance(data, dict):
-                with BytesAsStringEncoder as encoder:
-                    return encoder.dumps(data).encode(self.codec)
+                return json.dumps(data, pretty=False, tojson=json.bytes_as_string)
             raise NotImplementedError(
                 F'No serialization implemented for object of type {data.__class__.__name__}')
 

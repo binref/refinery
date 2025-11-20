@@ -4,7 +4,7 @@ import functools
 import sqlite3
 import sys
 
-from refinery.lib.json import BytesAsStringEncoder
+from refinery.lib import json
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
@@ -14,8 +14,7 @@ class xtsql(PathExtractorUnit):
     """
     def unpack(self, data: bytearray):
         def _json(object):
-            with BytesAsStringEncoder as encoder:
-                return encoder.dumps(object).encode(self.codec)
+            return json.dumps(object, tojson=json.bytes_as_string)
 
         if sys.version_info[:2] < (3, 11):
             raise NotImplementedError(F'python 3.11 is required to use {self.__class__.__name__}.')

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import difflib
-import json
 import re
 import struct
 
 from typing import NamedTuple
 
+from refinery.lib import json
 from refinery.lib.cab import Cabinet
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
 from refinery.lib.structures import StructReader
@@ -215,8 +215,7 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         if unknown_marker:
             tables['unknown_marker'] = decode(unknown_marker, codec)
 
-        yield self._pack('setup.json', None,
-            json.dumps(tables, indent=4).encode(self.codec))
+        yield self._pack('setup.json', None, json.dumps(tables))
 
         def runtime_path(name: str):
             root, backslash, temp = name.rpartition('\\')

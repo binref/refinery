@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import enum
-import json
 import struct
 
 from typing import Callable
 
-from refinery.lib import lief
+from refinery.lib import json, lief
 from refinery.lib.lcid import LCID
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.types import Param, buf
@@ -130,8 +129,7 @@ class perc(PathExtractorUnit):
                                         'bits'      : entry.bit_count,
                                     },
                                 } for entry in data.entries},
-                                indent=4
-                            ).encode(self.codec)
+                            )
                         extract = _extract_ico_grp
 
                 yield UnpackResult(

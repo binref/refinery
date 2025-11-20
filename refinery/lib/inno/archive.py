@@ -811,7 +811,7 @@ class SetupHeader(InnoStruct):
             raise ValueError('Invalid signature in compiled code.')
 
         if version >= (2, 0, 6) and version.ascii:
-            self.Charset = reader.read_integer(0x100)
+            self.Charset = bytes(reader.read(0x20))
         else:
             self.Charset = 0
 

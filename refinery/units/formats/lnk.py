@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from refinery.lib.json import JSONEncoderEx
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
@@ -50,10 +49,8 @@ class lnk(Unit):
                 noise = [key for key in section if key not in scope]
                 for key in noise:
                     del section[key]
-        with JSONEncoderEx as encoder:
-            pp = ppjson(tabular=self.args.tabular)
-            yield from pp._pretty_output(
-                parsed, indent=4, cls=encoder, ensure_ascii=False)
+        pp = ppjson(tabular=self.args.tabular)
+        yield from pp._pretty_output(parsed)
 
     @classmethod
     def handles(cls, data):

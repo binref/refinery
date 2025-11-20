@@ -88,11 +88,11 @@ class XMLNodeBase:
     content: str
     _parent: weakref.ReferenceType[Self] | None
     empty: bool
-    tag: str | None
+    tag: str
 
     def __init__(
         self,
-        tag: str | None,
+        tag: str,
         index: int | None = None,
         parent: Self | None = None,
         content: str | None = None,

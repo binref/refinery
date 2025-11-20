@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
-
 from contextlib import suppress
-from datetime import datetime
 
-from refinery.lib.json import BytesAsStringEncoder
+from refinery.lib import json
 from refinery.lib.tools import convert
 from refinery.units import Unit
 
@@ -25,6 +22,7 @@ class pkcs7(Unit):
     def process(self, data):
         asn1 = self._asn1crypto.core
         cms = self._asn1crypto.cms
+        x509 = self._asn1crypto.x509
         signature = cms.ContentInfo.load(convert(data, bytes))
 
         def unsign(data):
@@ -38,7 +36,8 @@ class pkcs7(Unit):
                     data = data.to_bytes(size, 'big').hex()
                 return data
             elif isinstance(data, dict):
-                return {key: unsign(value) for key, value in data.items()}
+                for key in list(data):
+                    data[key] = unsign(data[key])
             elif isinstance(data, list):
                 return [unsign(x) for x in data]
             else:
@@ -77,72 +76,54 @@ class pkcs7(Unit):
         cms.CMSAttributeType._map['1.3.6.1.4.1.311.2.1.12'] = 'authenticode_info'
         cms.CMSAttribute._oid_specs['authenticode_info'] = SetOfInfos
 
-        class ParsedASN1ToJSON(BytesAsStringEncoder):
-            unit = self
+        def max64(v):
+            if isinstance(v, int) and v.bit_length() > 64:
+                return hex(v)
+            return v
 
-            @classmethod
-            def _is_keyval(cls, obj):
-                return (
-                    isinstance(obj, dict)
-                    and set(obj.keys()) == {'type', 'values'}
-                    and len(obj['values']) == 1
-                )
+        def tojson(obj):
+            if isinstance(obj, dict) and set(obj.keys()) == {'type', 'values'} and len(obj['values']) == 1:
+                obj['value'] = obj.pop('values')[0]
+                return obj
 
-            @classmethod
-            def handled(cls, obj) -> bool:
-                return BytesAsStringEncoder.handled(obj) or cls._is_keyval(obj)
+            dict_result = {}
+            list_result = None
 
-            def encode_bytes(self, obj: bytes):
-                with suppress(Exception):
-                    string = obj.decode('latin1')
-                    if string.isprintable():
-                        return string
-                return super().encode_bytes(obj)
+            if isinstance(obj, x509.Certificate):
+                dict_result.update(fingerprint=obj.sha1.hex())
+            if isinstance(obj, asn1.BitString):
+                return {'bit_string': obj.native}
+            with suppress(Exception):
+                list_result = list(obj)
+                if all(isinstance(k, str) for k in list_result):
+                    dict_result.update((key, obj[key]) for key in list_result)
+            if dict_result:
+                return json.serialize_bigints(dict_result)
+            if list_result is not None:
+                return json.serialize_bigints(list_result)
 
-            def default(self, obj):
-                if self._is_keyval(obj):
-                    return dict(type=obj['type'], value=obj['values'][0])
-                with suppress(TypeError):
-                    return super().default(obj)
-                if isinstance(obj, (set, tuple)):
-                    return list(obj)
-                if isinstance(obj, datetime):
-                    return str(obj)
-                dict_result = {}
-                list_result = None
-                if isinstance(obj, self.unit._asn1crypto.x509.Certificate):
-                    dict_result.update(fingerprint=obj.sha1.hex())
-                if isinstance(obj, asn1.BitString):
-                    return {'bit_string': obj.native}
-                with suppress(Exception):
-                    list_result = list(obj)
-                    if all(isinstance(k, str) for k in list_result):
-                        dict_result.update((key, obj[key]) for key in list_result)
-                if dict_result:
-                    return dict_result
-                if list_result is not None:
-                    return list_result
-                if isinstance(obj, self.unit._asn1crypto.cms.CertificateChoices):
-                    return obj.chosen
-                if isinstance(obj, asn1.Sequence):
-                    children = obj.children
-                    if children:
-                        return children
-                    return obj.dump()
-                with suppress(Exception):
-                    return obj.native
-                if isinstance(obj, asn1.Any):
-                    parsed = None
-                    with suppress(Exception):
-                        parsed = obj.parse()
-                    if parsed:
-                        return parsed
-                    return obj.dump()
-                if isinstance(obj, asn1.Asn1Value):
-                    return obj.dump()
-                raise ValueError(F'Unable to determine JSON encoding of {obj.__class__.__name__} object.')
+            if isinstance(obj, cms.CertificateChoices):
+                out = obj.chosen
+            elif isinstance(obj, asn1.Sequence):
+                if children := obj.children:
+                    return children
+                out = obj.dump()
+            else:
+                try:
+                    out = getattr(obj, 'native')
+                except Exception:
+                    if isinstance(obj, asn1.Any):
+                        parsed = None
+                        with suppress(Exception):
+                            parsed = obj.parse()
+                        out = parsed or obj.dump()
+                    elif isinstance(obj, asn1.Asn1Value):
+                        out = obj.dump()
+                    else:
+                        return json.bytes_as_array(obj)
+                else:
+                    out = json.serialize_bigints(out)
 
-        with ParsedASN1ToJSON as encoder:
-            encoded = encoder.dumps(signature)
-            converted = unsign(json.loads(encoded))
-            return json.dumps(converted, indent=4).encode(self.codec)
+            return out
+
+        return json.dumps(unsign(signature), tojson=tojson, pretty=False)

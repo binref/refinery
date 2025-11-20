@@ -20,4 +20,4 @@ class pkcs7sig(Unit):
 
     def process(self, data):
         json = pemeta.parse_signature(data)
-        yield from ppjson(tabular=self.args.tabular)._pretty_output(json, indent=4, ensure_ascii=False)
+        yield from ppjson(tabular=self.args.tabular)._pretty_output(json)

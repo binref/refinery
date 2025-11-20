@@ -105,3 +105,9 @@ def smda():
     import smda.Disassembler
     import smda.DisassemblyResult
     return smda
+
+
+@__global_dependency('orjson', ['speed', 'default', 'extended'])
+def orjson():
+    import orjson
+    return orjson

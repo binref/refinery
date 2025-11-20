@@ -3,11 +3,6 @@ from __future__ import annotations
 from functools import lru_cache
 
 from refinery.lib.dotnet.header import DotNetHeader
-from refinery.units.formats import BytesAsStringEncoder, JSONEncoderUnit
-
-
-class DotNetJSONEncoderUnit(JSONEncoderUnit, abstract=True):
-    EncoderBase = BytesAsStringEncoder
 
 
 class CodePath:

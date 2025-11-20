@@ -9,10 +9,10 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Random import get_random_bytes
 from Cryptodome.Util import number
 
-from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, TYPES
+from refinery.lib import xml
+from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, PRIVATEKEYBLOB, RSAPUBKEY
 from refinery.lib.tools import splitchunks
 from refinery.lib.types import Param, buf
-from refinery.lib.xml import ForgivingParse
 from refinery.units import Arg, RefineryPartialResult, Unit
 
 
@@ -38,36 +38,44 @@ def normalize_rsa_key(key: bytes, force_public=False):
     except Exception:
         pass
     try:
-        dom = ForgivingParse(key)
+        dom = xml.parse(key)
     except ValueError:
-        pass
-    else:
-        data = {child.tag.upper(): number.bytes_to_long(b64decode(child.text)) for child in dom.getroot()}
-        components = (data['MODULUS'], data['EXPONENT'])
-        if not force_public:
-            if 'D' in data:
-                components += data['D'],
-            if 'P' in data and 'Q' in data:
-                components += data['P'], data['Q']
-        return KF.XML, RSA.construct(components)
+        dom = None
+    if dom is not None:
+        try:
+            data = {
+                child.tag.upper(): number.bytes_to_long(b64decode(child.content))
+                for child in dom
+            }
+            components = mod, exp = data['MODULUS'], data['EXPONENT']
+            if not force_public:
+                if d := data.get('D'):
+                    if (p := data.get('P')) and (q := data.get('Q')):
+                        components = (mod, exp, d, p, q)
+                    else:
+                        components = (mod, exp, d)
+        except Exception:
+            pass
+        else:
+            return KF.XML, RSA.construct(components)
     try:
         blob = CRYPTOKEY.Parse(key)
     except ValueError:
         pass
     else:
-        if blob.header.type not in {TYPES.PUBLICKEYBLOB, TYPES.PRIVATEKEYBLOB}:
+        if not isinstance((ms_rsa_key := blob.key), (RSAPUBKEY, PRIVATEKEYBLOB)):
             raise ValueError(F'The provided key is of invalid type {blob.header.type!s}, the algorithm is {blob.header.algorithm!s}.')
-        if force_public and blob.header.type is TYPES.PRIVATEKEYBLOB:
-            blob = blob.pub
-        return KF.MSB, blob.key.convert()
+        if force_public and isinstance(ms_rsa_key, PRIVATEKEYBLOB):
+            ms_rsa_key = ms_rsa_key.pub
+        return KF.MSB, ms_rsa_key.convert()
     try:
         blob = BCRYPT_RSAKEY_BLOB.Parse(key)
     except ValueError:
         fmt = KF.PEM if B'----' in key else KF.DER
-        key = RSA.import_key(key)
+        pem_key = RSA.import_key(key)
         if force_public:
-            key = key.public_key()
-        return fmt, key
+            pem_key = pem_key.public_key()
+        return fmt, pem_key
     else:
         return KF.MSB, blob.convert(force_public=force_public)
 
@@ -93,7 +101,7 @@ class rsa(Unit):
         key: Param[buf, Arg(help='RSA key in PEM, DER, or Microsoft BLOB format.')],
         swapkeys: Param[bool, Arg.Switch('-s', help='Swap public and private exponent.')] = False,
         textbook: Param[bool, Arg.Switch('-t', group='PAD', help='Equivalent to --padding=NONE.')] = False,
-        padding: Param[str, Arg.Option('-p', group='PAD', metavar='P', choices=PAD,
+        padding: Param[str | PAD, Arg.Option('-p', group='PAD', metavar='P', choices=PAD,
             help='Choose one of the following padding modes: {choices}. The default is AUTO.')] = PAD.AUTO,
         rsautl: Param[bool, Arg.Switch('-r', group='PAD',
             help='Act as rsautl from OpenSSH; This is equivalent to --swapkeys --padding=PKCS10')] = False,
@@ -102,7 +110,7 @@ class rsa(Unit):
         if textbook:
             if padding != PAD.AUTO:
                 raise ValueError('Conflicting padding options!')
-            padding = padding.NONE
+            padding = PAD.NONE
         if rsautl:
             if padding and padding != PAD.PKCS10:
                 raise ValueError('Conflicting padding options!')
@@ -255,7 +263,11 @@ class rsa(Unit):
             self.log_info(F'successfully parsed RSA key as {fmt.value}')
             self._key_hash = key_hash
             self._key_data = key_data
-        return self._key_data
+            return key_data
+        elif kd := self._key_data:
+            return kd
+        else:
+            raise AttributeError('Cannot return key before unit is assembled with arguments.')
 
     def process(self, data):
         self._oaep = True

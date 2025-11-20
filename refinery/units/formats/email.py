@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import email.utils
-import json
 import re
 
 from email.parser import Parser
 from typing import TYPE_CHECKING, Iterable
 
+from refinery.lib import json
 from refinery.lib.id import is_likely_email
 from refinery.lib.mime import file_extension
 from refinery.lib.tools import NoLogging, asbuffer, isbuffer
@@ -56,8 +56,7 @@ class xtmail(PathExtractorUnit):
             received.reverse()
             headers['ReceivedTrace'] = received
 
-        yield UnpackResult('headers.json',
-            lambda jsn=headers: json.dumps(jsn, indent=4).encode(self.codec))
+        yield UnpackResult('headers.json', lambda jsn=headers: json.dumps(jsn))
 
     @PathExtractorUnit.Requires('extract-msg', ['formats', 'office', 'default', 'extended'])
     def _extract_msg():

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 
 from itertools import islice
@@ -11,6 +10,7 @@ if TYPE_CHECKING:
     from pymupdf import Page
     from pypdf.generic import EncodedStreamObject
 
+from refinery.lib import json
 from refinery.lib.mime import get_cached_file_magic_info
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
@@ -217,8 +217,7 @@ class xtpdf(ArchiveUnit):
             return
 
         if (md := mu.metadata) and (md := {k: v for k, v in md.items() if v}):
-            md = json.dumps(md, indent=4)
-            yield UnpackResult('parsed/meta.json', md.encode(self.codec))
+            yield UnpackResult('parsed/meta.json', lambda m=md: json.dumps(m))
 
         for k in range(len(mu)):
             with NoLogging(NoLogging.Mode.ALL):

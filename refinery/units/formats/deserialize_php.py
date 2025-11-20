@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-
+from refinery.lib import json
 from refinery.units import Unit
 
 
@@ -20,16 +19,11 @@ class dsphp(Unit):
     def process(self, data):
         phpobject = self._php.phpobject
 
-        class encoder(json.JSONEncoder):
-            def default(self, obj):
-                try:
-                    return super().default(obj)
-                except TypeError:
-                    pass
-                if isinstance(obj, bytes) or isinstance(obj, bytearray):
-                    return obj.decode('utf8')
-                if isinstance(obj, phpobject):
-                    return obj._asdict()
+        def tojson(obj):
+            if isinstance(obj, bytes) or isinstance(obj, bytearray):
+                return obj.decode('utf8')
+            if isinstance(obj, phpobject):
+                return obj._asdict()
 
         return json.dumps(
             self._php.loads(
@@ -37,6 +31,5 @@ class dsphp(Unit):
                 object_hook=phpobject,
                 decode_strings=True
             ),
-            indent=4,
-            cls=encoder
-        ).encode(self.codec)
+            tojson=tojson
+        )

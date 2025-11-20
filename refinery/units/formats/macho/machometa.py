@@ -351,4 +351,4 @@ class machometa(Unit):
             result['Slices'] = slices
             yield from ppjson(
                 tabular=self.args.tabular
-            )._pretty_output(result, indent=4, ensure_ascii=False)
+            )._pretty_output(result)

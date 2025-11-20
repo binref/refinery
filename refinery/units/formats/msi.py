@@ -3,14 +3,13 @@ from __future__ import annotations
 import codecs
 import collections
 import enum
-import json
 import re
 import struct
 
 from functools import cached_property
 from typing import NamedTuple
 
-from refinery.lib import chunks
+from refinery.lib import chunks, json
 from refinery.lib.cab import Cabinet
 from refinery.lib.id import buffer_offset, is_likely_msi, is_likely_pe
 from refinery.lib.structures import StructReader
@@ -416,8 +415,7 @@ class xtmsi(xtdoc):
                     streams[sub_path] = UnpackResult(sub_path, lambda r=result: r.decompress())
 
         streams = {fix_msi_path(path): item for path, item in streams.items()}
-        ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME,
-                json.dumps(processed_table_data, indent=4).encode(self.codec))
+        ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME, json.dumps(processed_table_data))
         streams[ds.path] = ds
 
         converter = csv()

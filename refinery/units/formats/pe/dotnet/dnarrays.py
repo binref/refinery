@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import collections
 import itertools
-import json
 import re
 
+from refinery.lib import json
 from refinery.lib.dotnet.header import DotNetHeader, NetMetaDataTables
 from refinery.lib.structures import StructReader
 from refinery.lib.types import buf
@@ -125,7 +125,7 @@ class dnarrays(Unit):
             result[cp.method_spec(offset)].append(arrays[offset])
 
         result = {m: {F'v{k}': v for k, v in enumerate(t, 1)} for m, t in result.items()}
-        return json.dumps(result, indent=4).encode(self.codec)
+        return json.dumps(result)
 
     @classmethod
     def handles(cls, data):

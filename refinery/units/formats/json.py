@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
-
 from typing import Iterable
 
+from refinery.lib import json as libjson
 from refinery.lib.id import is_likely_json
 from refinery.lib.meta import is_valid_variable_name, metavars
 from refinery.lib.types import Param
@@ -32,14 +31,13 @@ class xtjson(PathExtractorUnit):
                 yield path, cursor, cursor.__class__.__name__
 
         if not isinstance(data, (dict, list)):
-            data = json.loads(data)
+            data = libjson.loads(data)
 
         for path, item, typename in crawl('', data):
             def extract(item=item):
                 if isinstance(item, (list, dict)):
-                    dumped = json.dumps(item, indent=4)
-                else:
-                    dumped = str(item)
+                    return libjson.dumps(item)
+                dumped = str(item)
                 try:
                     return dumped.encode('latin1')
                 except UnicodeEncodeError:
@@ -116,7 +114,7 @@ class xj0(Unit):
                 return True
             return False
 
-        jdoc: dict = json.loads(data)
+        jdoc: dict = libjson.loads(data)
         if not isinstance(jdoc, dict):
             raise ValueError('The input must be a JSON dictionary.')
         meta = metavars(data)
@@ -138,19 +136,19 @@ class xjl(Unit):
 
     def process(self, data):
         try:
-            doc: list | dict = json.loads(data)
+            doc: list | dict = libjson.loads(data)
         except Exception:
             from refinery.units.pattern.carve_json import carve_json
-            doc = data | carve_json | json.loads
-        try:
+            doc = data | carve_json | libjson.loads
+        if isinstance(doc, dict):
             it = doc.values()
-        except AttributeError:
+        else:
             it = doc
         for item in it:
-            yield json.dumps(item, indent=4).encode(self.codec)
+            yield libjson.dumps(item)
 
     def reverse(self, data):
-        return json.dumps(data.temp).encode(self.codec)
+        return libjson.dumps(data.temp, pretty=False)
 
     def filter(self, chunks: Iterable[Chunk]):
         if not self.args.reverse:

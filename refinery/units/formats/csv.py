@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import csv as _csv
 import io
-import json
 
 from typing import Any
 
+from refinery.lib import json
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import isodate
 from refinery.lib.types import Param, buf
@@ -88,4 +88,4 @@ class csv(Unit):
             keys = next(rows)
             for row in rows:
                 out = {key: convert(value) for key, value in zip(keys, row)}
-                yield json.dumps(out, indent=4).encode(self.codec)
+                yield json.dumps(out)

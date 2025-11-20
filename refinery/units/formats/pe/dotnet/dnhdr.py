@@ -4,10 +4,10 @@ from refinery.lib.dotnet.header import DotNetHeader
 from refinery.lib.structures import struct_to_json
 from refinery.lib.types import Param
 from refinery.units import Arg
-from refinery.units.formats.pe.dotnet import DotNetJSONEncoderUnit
+from refinery.units.formats import JSONEncoderUnit
 
 
-class dnhdr(DotNetJSONEncoderUnit):
+class dnhdr(JSONEncoderUnit):
     """
     Expects data that has been formatted with the `BinaryFormatter` class. The
     output is a representation of the deserialized data in JSON format.
