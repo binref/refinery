@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.11 - bugfix release
+
 ## Version 0.9.10
 - The `hlg`, `hls`, and `hlb` units were added for easier access to different style flavors of syntax highlighting.
 - The `bruteforce` unit now accepts integer intervals as argument rather than Python slices. This means that `1:4` includes `4`.
