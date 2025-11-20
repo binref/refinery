@@ -42,8 +42,9 @@ N = TypeVar('N', str, bytes, Optional[UUID])
 R = TypeVar('R')
 
 
-class Unused(Generic[T]):
-    ...
+class Unused:
+    def __class_getitem__(cls, _):
+        return type('Unused', (), {})
 
 
 UInt32 = NewType('UInt32', int)
