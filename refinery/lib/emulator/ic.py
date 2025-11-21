@@ -96,7 +96,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             if end is not None and self.ip == end:
                 break
             if (code_hooked or apis_hooked) and not retrying:
-                insn = next(dasm.disasm(self.mem_read(ip, 20), 1))
+                insn = next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
                 args = (ice, ip, insn.size, self.state)
                 if apis_hooked:
                     self._hook_api_call_check(*args)
@@ -126,7 +126,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             ):
                 break
             elif status == RS.UnhandledException:
-                insn = insn or next(dasm.disasm(self.mem_read(ip, 20), 1))
+                insn = insn or next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
                 size = max((op.size for op in insn.operands), default=insn.addr_size)
                 EC = ic.ExceptionCode
                 ea = ice.exception_value
