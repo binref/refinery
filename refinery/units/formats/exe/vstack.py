@@ -248,13 +248,9 @@ def EmuFactory(base: ET) -> ET:
                 not skipped
                 and unsigned_value == 0
                 and state.cfg.log_zero_overwrites is False
-                and state.contains(address)
+                and state.memory.overlaps(address, size)
             ):
-                try:
-                    if any(self.mem_read(address, size)):
-                        skipped = 'no -Z and zero overwrite detected'
-                except Exception:
-                    pass
+                skipped = 'no -Z and zero overwrite detected'
 
             if not skipped:
                 state.write(address, unsigned_value.to_bytes(size, 'little'))
