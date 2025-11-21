@@ -269,7 +269,9 @@ def EmuFactory(base: ET) -> ET:
                 msg = state.log(F'{state.fmt(address)} <- {h:_<{ph}} {t:_<{pt}}')
                 if skipped:
                     msg = F'{msg} (ignored: {skipped})'
-                vstack.log_always(msg)
+                    vstack.log_debug(msg)
+                else:
+                    vstack.log_always(msg)
 
         @inject_state_argument
         def hook_mem_error(self, _, access: int, address: int, size: int, value: int, state: EmuState) -> bool:
