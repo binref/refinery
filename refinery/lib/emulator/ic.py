@@ -175,8 +175,8 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
     def _get_register(self, register: str) -> int:
         return self.icicle.reg_read(register)
 
-    def mem_write(self, address: int, data: bytes):
+    def _mem_write(self, address: int, data: bytes):
         return self.icicle.mem_write(address, data)
 
-    def mem_read(self, address: int, size: int):
+    def _mem_read(self, address: int, size: int):
         return self.icicle.mem_read(address, size)

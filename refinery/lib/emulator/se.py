@@ -300,8 +300,8 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 raise LookupError(F'Unable to allocate {size} bytes at address 0x{address:X} because Speakeasy has reserved this region.')
             return alloc
 
-    def mem_write(self, address: int, data: bytes):
+    def _mem_write(self, address: int, data: bytes):
         return self.speakeasy.mem_write(address, data)
 
-    def mem_read(self, address: int, size: int):
+    def _mem_read(self, address: int, size: int):
         return self.speakeasy.mem_read(address, size)

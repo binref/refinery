@@ -10,6 +10,7 @@ from typing import Any, Generic, TypeVar
 
 from refinery.lib.executable import Arch, Executable, ExecutableCodeBlob, align
 from refinery.lib.intervals import IntIntervalUnion
+from refinery.lib.structures import FlagAccessMixin
 from refinery.lib.tools import asbuffer
 from refinery.lib.types import buf
 
@@ -22,6 +23,24 @@ class EmulationError(Exception):
     """
     Base class for any exceptions raised by emulators.
     """
+
+
+class FailedRead(EmulationError):
+    """
+    The emulator failed to read memory from a given address.
+    """
+    def __init__(self, addr: int, size: int) -> None:
+        self.addr = addr
+        self.size = size
+
+
+class FailedWrite(EmulationError):
+    """
+    The emulator failed to write to a given address.
+    """
+    def __init__(self, addr: int, data: buf) -> None:
+        self.addr = addr
+        self.data = data
 
 
 class CC(str, Enum):
@@ -73,7 +92,7 @@ class Register(Generic[_R]):
         return hash((self.code, self.size))
 
 
-class Hook(IntFlag):
+class Hook(FlagAccessMixin, IntFlag):
     """
     A bit mask flag for the types of hooks that are requested from an emulator.
     """
@@ -84,7 +103,7 @@ class Hook(IntFlag):
     MemoryError  = 0b000_10000  # noqa
     ApiCall      = 0b001_00000  # noqa
 
-    OnlyErrors   = 0b000_10010  # noqa
+    Errors       = 0b000_10010  # noqa
     Default      = 0b000_11111  # noqa
     Everything   = 0b111_11111  # noqa
     Nothing      = 0b000_00000  # noqa
@@ -140,7 +159,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         data: Executable | buf,
         base: int | None = None,
         arch: Arch | None = None,
-        hooks: Hook = Hook.OnlyErrors,
+        hooks: Hook = Hook.Errors,
         align_size: int = 0x1000,
         alloc_size: int = 0x1000,
     ):
@@ -351,7 +370,6 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         Called as part of `refinery.lib.emulator.Emulator.reset`.
         """
-        ...
 
     def _init(self):
         """
@@ -364,55 +382,43 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         This is the tail call of `refinery.lib.emulator.Emulator.emulate`.
         """
-        ...
 
     @abstractmethod
     def halt(self):
         """
         Causes the emulation to halt, usually when called from a hook.
         """
-        ...
 
     @abstractmethod
     def _set_register(self, register: _R, v: int):
         """
         Called as part of `refinery.lib.emulator.Emulator.set_register`.
         """
-        ...
 
     @abstractmethod
     def _get_register(self, register: _R) -> int:
         """
         Called as part of `refinery.lib.emulator.Emulator.get_register`.
         """
-        ...
 
     @abstractmethod
     def _lookup_register(self, var: str | _R) -> Register[_R]:
         """
         Called as part of `refinery.lib.emulator.Emulator.lookup_register`.
         """
-        ...
 
     @abstractmethod
     def _map(self, address: int, size: int):
         """
         Called as part of `refinery.lib.emulator.Emulator.map`.
         """
+
+    @abstractmethod
+    def _mem_write(self, address: int, data: bytes):
         ...
 
     @abstractmethod
-    def mem_write(self, address: int, data: bytes):
-        """
-        Write data to already mapped memory.
-        """
-        ...
-
-    @abstractmethod
-    def mem_read(self, address: int, size: int) -> bytes:
-        """
-        Read data from the emulator's mapped memory.
-        """
+    def _mem_read(self, address: int, size: int) -> bytes:
         ...
 
     @abstractmethod
@@ -420,28 +426,52 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         Allocate (i.e. map) the given amount of memory in the emulator's memory space.
         """
-        ...
 
     @abstractmethod
     def _enable_single_step(self):
         """
         Enable single stepping.
         """
-        ...
 
     @abstractmethod
     def _disable_single_step(self):
         """
-        Enable single stepping.
+        Disable single stepping.
         """
-        ...
 
     @abstractmethod
     def morestack(self):
         """
         Allocate more memory for the stack to grow into.
         """
-        ...
+
+    def mem_write(self, address: int, data: bytes):
+        """
+        Write data to already mapped memory.
+        """
+        for retry in (False, True):
+            try:
+                return self._mem_write(address, data)
+            except Exception as E:
+                size = len(data)
+                if retry or not self.hooks.MemoryError or not self.hook_mem_error(
+                    None, 0, address, size, 0, self.state
+                ):
+                    raise FailedWrite(address, data) from E
+
+    def mem_read(self, address: int, size: int) -> bytes:
+        """
+        Read data from the emulator's mapped memory.
+        """
+        for retry in (False, True):
+            try:
+                return self._mem_read(address, size)
+            except Exception as E:
+                if retry or not self.hooks.MemoryError or not self.hook_mem_error(
+                    None, 0, address, size, 0, self.state
+                ):
+                    raise FailedRead(address, size) from E
+        assert False
 
     def lookup_register(self, var: str | _R | Register[_R]):
         """
@@ -642,7 +672,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         return True
 
-    def hook_mem_error(self, emu: _E, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+    def hook_mem_error(self, emu: _E | None, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
         """
         Called when memory errors are hooked.
         """

@@ -158,8 +158,8 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
                 combined |= v
             return combined
 
-    def mem_write(self, address: int, data: bytes):
+    def _mem_write(self, address: int, data: bytes):
         return self.unicorn.mem_write(address, data)
 
-    def mem_read(self, address: int, size: int):
+    def _mem_read(self, address: int, size: int):
         return self.unicorn.mem_read(address, size)

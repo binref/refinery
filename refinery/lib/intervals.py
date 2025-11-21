@@ -35,7 +35,7 @@ class IntervalUnion(ABC, Generic[Value]):
         self._values: dict[int, Value] = {}
 
     @abstractmethod
-    def sizeof(self, d: Value) -> int:
+    def sizeof(self, d: int | Value) -> int:
         """
         Compute the length of the interval from the stored `refinery.lib.intervals.Value` value.
         """
@@ -68,7 +68,7 @@ class IntervalUnion(ABC, Generic[Value]):
         method `refinery.lib.intervals.IntervalUnion.endof` for the interval `(start;value)`.
         """
 
-    def endof(self, start: int, value: Value | None = None):
+    def endof(self, start: int, value: int | Value | None = None):
         """
         Compute the end of an interval. A `refinery.lib.intervals.Value` can be provided; if none
         is given, the interval is assumed to exist in the union and its value is recovered from the
@@ -126,7 +126,7 @@ class IntervalUnion(ABC, Generic[Value]):
             start, value is not None)
         index_of_next = index_of_start + int(cursor_start is not None)
 
-        if cursor_value is None:
+        if cursor_value is None or cursor_start is None:
             cursor_start = start
             cursor_value = values[cursor_start] = self.value_type()
             index_of_start = index_of_next
@@ -143,8 +143,9 @@ class IntervalUnion(ABC, Generic[Value]):
 
         insert_value = None
         insert_start = 0
+        index_after_merge = len(starts)
 
-        for index_after_merge in range(index_of_next, len(starts)):
+        for index_after_merge in range(index_of_next, index_after_merge):
             temp = starts[index_after_merge]
             if temp > end:
                 break
@@ -166,7 +167,7 @@ class IntervalUnion(ABC, Generic[Value]):
 
         return cursor_start
 
-    def overlap(self, start: int, value: Value) -> Iterator[tuple[int, Value]]:
+    def overlap(self, start: int, value: int | Value) -> Iterator[tuple[int, Value]]:
         """
         Generate all intervals in the union that overlap with the given interval.
         """
@@ -179,7 +180,7 @@ class IntervalUnion(ABC, Generic[Value]):
             value = values[start]
             yield (start, value)
 
-    def overlaps(self, start: int, value: Value | None = None) -> bool:
+    def overlaps(self, start: int, value: int | Value | None = None) -> bool:
         """
         Return whether the given interval or point overlaps with any interval in the union.
         """
@@ -217,7 +218,9 @@ class MemoryIntervalUnion(IntervalUnion[bytearray]):
 
     value_type = bytearray
 
-    def sizeof(self, d: bytearray) -> int:
+    def sizeof(self, d: int | bytearray) -> int:
+        if isinstance(d, int):
+            return d
         return len(d)
 
     def insert(self, start: int, value: bytearray, new_start: int, new_value: bytearray) -> bytearray:
