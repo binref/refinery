@@ -1,1 +1,1 @@
-@pytest -n auto -m "not cosmetics" --dist=loadgroup --disable-warnings test
+@pytest -n auto -m "not cosmetics" --dist=loadgroup --disable-warnings --durations=80 test 2>%~n0.errors
