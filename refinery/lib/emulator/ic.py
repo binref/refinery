@@ -6,7 +6,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, Hook, RawMetalEmulator, Register
+from refinery.lib.emulator.abstract import EmulationError, RawMetalEmulator, Register
 from refinery.lib.executable import Arch
 from refinery.lib.shared import icicle as ic
 
@@ -56,7 +56,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         self._map_segments()
         self._map_stack_and_heap()
 
-        if self.hooked(Hook.ApiCall):
+        if self.hooks.ApiCall:
             self._install_api_trampoline()
 
     def _enable_single_step(self):
@@ -161,7 +161,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
 
     def _map(self, address: int, size: int):
         MP = ic.MemoryProtection
-        if self.hooks & Hook.MemoryAccess:
+        if self.hooks.MemoryAccess:
             perm = MP.ExecuteOnly
         else:
             perm = MP.ExecuteReadWrite

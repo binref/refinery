@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, Emulator, Hook, Register
+from refinery.lib.emulator.abstract import EmulationError, Emulator, Register
 from refinery.lib.executable import ET, Arch
 from refinery.lib.shared import speakeasy as se
 from refinery.lib.vfs import VirtualFileSystem
@@ -88,20 +88,20 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         emu.emu.add_interrupt_hook(cb=emu.emu._hook_interrupt)
         emu.emu.builtin_hooks_set = True
 
-        if self.hooked(Hook.CodeExecute):
+        if self.hooks.CodeExecute:
             emu.add_code_hook(self.hook_code_execute, ctx=self.state)
             emu.add_dyn_code_hook(self.hook_code_execute, ctx=self.state)
 
-        if self.hooked(Hook.MemoryRead):
+        if self.hooks.MemoryRead:
             emu.add_mem_read_hook(self.hook_mem_read)
 
-        if self.hooked(Hook.MemoryWrite):
+        if self.hooks.MemoryWrite:
             emu.add_mem_write_hook(self.hook_mem_write)
 
-        if self.hooked(Hook.MemoryError):
+        if self.hooks.MemoryError:
             emu.add_mem_invalid_hook(self.hook_mem_error)
 
-        if self.hooked(Hook.ApiCall):
+        if self.hooks.ApiCall:
             emu.add_api_hook(self.hook_api_call, '*', '*')
 
     def _enable_single_step(self):

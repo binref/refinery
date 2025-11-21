@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, Hook, RawMetalEmulator, Register
+from refinery.lib.emulator.abstract import EmulationError, RawMetalEmulator, Register
 from refinery.lib.executable import BO, Arch
 from refinery.lib.shared import unicorn as uc
 
@@ -53,18 +53,18 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         self._map_segments()
         self._map_stack_and_heap()
 
-        if self.hooked(Hook.ApiCall):
+        if self.hooks.ApiCall:
             self._install_api_trampoline()
             self.unicorn.hook_add(uc.UC_HOOK_CODE, self._hook_api_call_check, user_data=self.state)
 
-        for hook, flag, callback in [
-            (uc.UC_HOOK_CODE,           Hook.CodeExecute, self.hook_code_execute ),  # noqa
-            (uc.UC_HOOK_INSN_INVALID,   Hook.CodeError,   self.hook_code_error   ),  # noqa
-            (uc.UC_HOOK_MEM_READ,       Hook.MemoryRead,  self.hook_mem_read     ),  # noqa
-            (uc.UC_HOOK_MEM_WRITE,      Hook.MemoryWrite, self.hook_mem_write    ),  # noqa
-            (uc.UC_HOOK_MEM_INVALID,    Hook.MemoryError, self.hook_mem_error    ),  # noqa
+        for hook, hooked, callback in [
+            (uc.UC_HOOK_CODE,           self.hooks.CodeExecute, self.hook_code_execute ),  # noqa
+            (uc.UC_HOOK_INSN_INVALID,   self.hooks.CodeError,   self.hook_code_error   ),  # noqa
+            (uc.UC_HOOK_MEM_READ,       self.hooks.MemoryRead,  self.hook_mem_read     ),  # noqa
+            (uc.UC_HOOK_MEM_WRITE,      self.hooks.MemoryWrite, self.hook_mem_write    ),  # noqa
+            (uc.UC_HOOK_MEM_INVALID,    self.hooks.MemoryError, self.hook_mem_error    ),  # noqa
         ]:
-            if self.hooked(flag):
+            if hooked:
                 self.unicorn.hook_add(hook, callback, user_data=self.state)
 
     class _singlestep:

@@ -284,12 +284,6 @@ class Emulator(ABC, Generic[_E, _R, _T]):
     def _reg_rv(self):
         return self._lookup_register(self._rv).code
 
-    def hooked(self, hook: Hook) -> bool:
-        """
-        Return whether the given hook is (supposed to be) set.
-        """
-        return self.hooks & hook == hook
-
     def reset(self, state: _T | None = None):
         """
         This function resets the emulator to an initial state. This will create a new instance of
