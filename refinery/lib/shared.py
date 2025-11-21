@@ -48,7 +48,7 @@ def speakeasy():
     return speakeasy
 
 
-@__global_dependency('icicle-emu', ['extended', 'all'])
+@__global_dependency('icicle-emu>=0.0.11', ['extended', 'all'])
 def icicle():
     import icicle
     return icicle
