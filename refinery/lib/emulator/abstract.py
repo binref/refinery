@@ -758,8 +758,11 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
             size = max(size, len(segment.physical))
             mem.addi(base, size)
         it = iter(mem)
-        for interval in it:
-            self.map(*interval)
+        nc = NopCodeByArch[exe.arch()]
+        for addr, size in it:
+            sled = nc * (size // len(nc))
+            self.map(addr, size)
+            self.mem_write(addr, sled)
         for segment in exe.segments():
             pm = segment.physical
             vm = segment.virtual
