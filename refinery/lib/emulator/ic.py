@@ -70,11 +70,12 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         MP = ic.MemoryProtection
         ice = self.icicle
 
-        code_hooked = self.hooked(Hook.CodeExecute)
-        apis_hooked = self.hooked(Hook.ApiCall)
-        mm_e_hooked = self.hooked(Hook.MemoryError)
-        mm_w_hooked = self.hooked(Hook.MemoryWrite)
-        mm_r_hooked = self.hooked(Hook.MemoryRead)
+        code_hooked = self.hooks.CodeExecute
+        apis_hooked = self.hooks.ApiCall
+        mm_e_hooked = self.hooks.MemoryError
+        mm_w_hooked = self.hooks.MemoryWrite
+        mm_r_hooked = self.hooks.MemoryRead
+        mm_x_hooked = mm_r_hooked or mm_r_hooked
 
         halt = self._single_step
         dasm = self.exe.disassembler()
@@ -88,12 +89,11 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             step = ice.run
 
         self.ip = ip = start
-        mprotect: list[tuple[int, int]] = []
-        cb_write = None
+        mprotect: list[tuple[int, int, MP]] = []
         retrying = 0
 
         while True:
-            if end is not None and self.ip == end:
+            if end is not None and ip == end:
                 break
             if (code_hooked or apis_hooked) and not retrying:
                 insn = next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
@@ -105,17 +105,15 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             else:
                 insn = None
             if mprotect:
-                ice.mem_protect(*mprotect[-1], MP.ExecuteReadWrite)
-                self.ip = ip
+                ice.mem_protect(*mprotect[-1])
             if (status := step()) == RS.InstructionLimit:
                 for p in mprotect:
-                    ice.mem_protect(*p, MP.ExecuteOnly)
-                if cb_write:
-                    addr, size = cb_write
-                    value = self.mem_read_int(addr, size)
-                    if self.hook_mem_write(ice, 0, addr, size, value, self.state) is False:
-                        break
-                    cb_write = None
+                    addr, size, prot = p
+                    ice.mem_protect(addr, size, MP.ExecuteOnly)
+                    if mm_w_hooked and prot == MP.ExecuteReadWrite:
+                        value = self.mem_read_int(addr, size)
+                        if self.hook_mem_write(ice, 0, addr, size, value, self.state) is False:
+                            break
                 mprotect.clear()
                 retrying = 0
                 ip = self.ip
@@ -135,15 +133,15 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                     if self.hook_mem_error(ice, 0, ea, size, 0, self.state) is not False:
                         retrying += 1
                         continue
-                elif ec == EC.ReadPerm and mm_r_hooked:
+                elif ec == EC.ReadPerm and mm_x_hooked:
                     value = self.mem_read_int(ea, size)
                     if self.hook_mem_read(ice, 0, ea, size, value, self.state) is not False:
-                        mprotect.append((ea, size))
+                        prot = MP.ExecuteRead if mm_w_hooked else MP.ExecuteReadWrite
+                        mprotect.append((ea, size, prot))
                         retrying += 1
                         continue
-                elif ec == EC.WritePerm and mm_w_hooked:
-                    cb_write = (ea, size)
-                    mprotect.append(cb_write)
+                elif ec == EC.WritePerm and mm_x_hooked:
+                    mprotect.append((ea, size, MP.ExecuteReadWrite))
                     retrying += 1
                     continue
                 else:
