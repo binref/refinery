@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import codecs
 import json as pyjson
-import uuid
 
-from datetime import datetime
+from enum import Enum, IntFlag
+from datetime import datetime, date, time
+from uuid import UUID
 
 from refinery.lib.shared import orjson
 from refinery.lib.tools import isbuffer
@@ -38,68 +39,101 @@ def flattened(data: dict, prefix: str = '', separator: str = '.'):
     yield from flatten(data, prefix)
 
 
-def _py_standard_conversions(o):
+def _common_conversions(o):
+    if isinstance(o, Enum):
+        return o.name
     if isinstance(o, datetime):
         return o.isoformat(' ', 'seconds')
-    if isinstance(o, uuid.UUID):
-        return str(o).upper()
-    if isinstance(o, (set, tuple)):
+    if isinstance(o, time):
+        return o.isoformat('seconds')
+    if isinstance(o, date):
+        return o.isoformat()
+
+
+def convert_key(k: Enum | datetime | date | time | int | float | bool | str) -> str:
+    """
+    Conversions of several non-string types for dictionary keys to enable JSON serialization.
+    """
+    return str(k) if (t := _common_conversions(k)) is None else t
+
+
+def standard_conversions(o):
+    """
+    Converts `datetime` and `UUID` objects to their canonical string representations, and also
+    converts `set`. `tuple`. and `frozenset` objects to `list`s for JSON serialization. Other
+    serialization of standard object types should be added here.
+    """
+    if (t := _common_conversions(o)) is not None:
+        return t
+    if isinstance(o, IntFlag):
+        return [flag.name for flag in o.__class__ if o & flag == flag]
+    if isinstance(o, UUID):
+        return str(o)
+    if isinstance(o, (set, tuple, frozenset)):
         return list(o)
     raise TypeError
 
 
-def _py_json_dumps(
-    object,
-    pretty: bool = True,
-    tojson: Callable[[Any], Any] | None = None,
-) -> bytes:
-    if tojson is not None:
-        class encoder(pyjson.JSONEncoder):
-            default = staticmethod(tojson) # type:ignore
-        enc = encoder
-    else:
-        enc = None
-    if pretty:
-        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=2)
-    else:
-        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=0, separators=(',', ':'))
-    return out.encode('utf8')
-
-
-def serialize_bigints(o):
+def preprocess(o, keys: bool = False):
     """
     This method ensures that no integers requiring more than 64 bits are stored within nested
     dictionaries and lists of the input object. Integers that exceed this limit are converted
     to hexadecimal string representations with prefix.
+
+    When the `keys` option is set, the method also uses `refinery.lib.json.convert_key` to turn
+    all non-string keys in dictionaries into strings.
     """
     if isinstance(o, dict):
-        for k, v in o.items():
-            o[k] = serialize_bigints(v)
+        if not keys:
+            for k, v in o.items():
+                o[k] = preprocess(v, keys=False)
+        else:
+            invalid_keys = []
+            for k, v in o.items():
+                if not isinstance(k, str):
+                    invalid_keys.append(k)
+                else:
+                    o[k] = preprocess(v, keys=True)
+            for k in invalid_keys:
+                o[convert_key(k)] = preprocess(o.pop(k))
     elif isinstance(o, list):
         for k, v in enumerate(o):
-            o[k] = serialize_bigints(v)
+            o[k] = preprocess(v, keys=keys)
     elif isinstance(o, int) and o.bit_length() > 64:
         return hex(o)
     return o
+
+
+def py_json_dumps(
+    object,
+    pretty: bool = True,
+    checks: bool = True,
+    tojson: Callable[[Any], Any] | None = None,
+) -> bytes:
+    """
+    This is the JSON dump method wrapper which is based on the standard library backend. It is
+    exposed separately to allow testing.
+    """
+    if (enc := tojson) is not None:
+        class encoder(pyjson.JSONEncoder):
+            default = staticmethod(tojson) # type:ignore
+        enc = encoder
+    if checks:
+        object = preprocess(object, keys=True)
+    if pretty:
+        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=2)
+    else:
+        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=None, separators=(',', ':'))
+    return out.encode('utf8')
 
 
 try:
     _or_json_loads = orjson.loads
     _or_json_dumps = orjson.dumps
 except ImportError:
-    dumps = _py_json_dumps
+    dumps = py_json_dumps
     loads = pyjson.loads
-    standard_conversions = _py_standard_conversions
 else:
-    def _or_standard_conversions(o):
-        if isinstance(o, datetime):
-            return o.isoformat(' ', 'seconds')
-        if isinstance(o, (set, tuple)):
-            return list(o)
-        raise TypeError
-
-    standard_conversions = _or_standard_conversions
-
     def __loads(data):
         # orjson does not like subclasses of bytearray, and we do that a lot
         return _or_json_loads(memoryview(data))
@@ -107,9 +141,10 @@ else:
     def __dumps(
         object,
         pretty: bool = True,
+        checks: bool = True,
         tojson: Callable[[Any], Any] | None = None,
     ):
-        default = tojson or _or_standard_conversions
+        default = tojson or standard_conversions
         options = (
             0
             | orjson.OPT_PASSTHROUGH_DATETIME
@@ -120,15 +155,13 @@ else:
         )
         if pretty:
             options |= orjson.OPT_INDENT_2
-        try:
-            return _or_json_dumps(
-                serialize_bigints(object),
-                option=options,
-                default=default,
-            )
-        except Exception:
-            raise
-            return _py_json_dumps(object, pretty=pretty, tojson=tojson)
+        if checks:
+            object = preprocess(object)
+        return _or_json_dumps(
+            object,
+            option=options,
+            default=default,
+        )
 
     loads = __loads
     dumps = __dumps
@@ -158,7 +191,10 @@ __pdoc__ = {
         'standard library as backend, depending on what is available. The interface more closely '
         'resembles orJSON: The `pretty` option controls whether the output is indented or '
         'minified, and an optional conversion handler can be passed as the `default` parameter '
-        'to serialize Python objects that are not handled natively by the backend.'
+        'to serialize Python objects that are not handled natively by the backend. Finally, the '
+        'option `checks` can be set to false to prevent all preprocessing of the input data. Use '
+        'it when you are absolutely certain that the input is JSON-serializable and requires no '
+        'normalization of any kind.'
     ),
     'loads': (
         'A unified proxy method for loading JSON data as a Python object, using either orJSON '

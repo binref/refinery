@@ -277,9 +277,9 @@ class pemeta(Unit):
 
                 if not isinstance(serial, int):
                     try:
-                        serial = int(serial, 16)
-                    except ValueError:
                         serial = int(serial, 0)
+                    except ValueError:
+                        serial = int(serial, 16)
 
                 length, rest = divmod(serial.bit_length(), 8)
                 if rest > 0:

@@ -1046,31 +1046,36 @@ class PerInstanceAttribute(Generic[AttrType]):
         return self.__get[pid]
 
 
-def struct_to_json(v: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSON | NamedTuple | None, codec: str | None = None) -> JSON:
+def struct_to_json(o: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSON | NamedTuple | None, codec: str | None = None) -> JSON:
     """
     Attempt to convert a `refinery.lib.structures.Struct` to a JSON representation.
     """
-    if v is None:
-        return v
-    if isinstance(v, Struct):
-        v = {k: v for k, v in v.__dict__.items() if not k.startswith('_')}
-    if isinstance(v, list):
-        return [struct_to_json(x, codec) for x in v]
-    if isinstance(v, tuple):
-        v = v._asdict()
-    if isinstance(v, dict):
-        return {x: struct_to_json(y, codec) for x, y in v.items()}
-    if isinstance(v, enum.IntFlag):
-        return [option.name for option in v.__class__ if v & option == option]
-    if isinstance(v, enum.IntEnum):
-        return v.name
-    if codec is not None:
-        if isinstance(v, (memoryview, bytes, bytearray)):
-            return codecs.decode(v, codec)
-    try:
-        return v.__json__()
-    except AttributeError:
-        return cast('JSON', v)
+    if o is None:
+        return o
+    if isinstance(o, Struct):
+        return {k: struct_to_json(v) for k, v in o.__dict__.items() if not k.startswith('_')}
+    if isinstance(o, tuple):
+        o = o._asdict()
+    if isinstance(o, dict):
+        for k, v in o.items():
+            o[k] = struct_to_json(v, codec)
+    elif isinstance(o, list):
+        for k, v in enumerate(o):
+            o[k] = struct_to_json(v, codec)
+    elif isinstance(o, enum.IntFlag):
+        return [option.name for option in o.__class__ if o & option == option]
+    elif isinstance(o, enum.IntEnum):
+        return o.name
+    elif isinstance(o, int) and o.bit_length() > 64:
+        return hex(o)
+    elif codec is not None and isinstance(o, (memoryview, bytes, bytearray)):
+        return codecs.decode(o, codec)
+    else:
+        try:
+            return o.__json__()
+        except AttributeError:
+            pass
+    return cast('JSON', o)
 
 
 class FlagAccessMixin:

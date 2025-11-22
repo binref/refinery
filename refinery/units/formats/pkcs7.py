@@ -98,9 +98,9 @@ class pkcs7(Unit):
                 if all(isinstance(k, str) for k in list_result):
                     dict_result.update((key, obj[key]) for key in list_result)
             if dict_result:
-                return json.serialize_bigints(dict_result)
+                return json.preprocess(dict_result)
             if list_result is not None:
-                return json.serialize_bigints(list_result)
+                return json.preprocess(list_result)
 
             if isinstance(obj, cms.CertificateChoices):
                 out = obj.chosen
@@ -122,7 +122,7 @@ class pkcs7(Unit):
                     else:
                         return json.bytes_as_array(obj)
                 else:
-                    out = json.serialize_bigints(out)
+                    out = json.preprocess(out)
 
             return out
 

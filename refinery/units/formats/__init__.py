@@ -422,7 +422,7 @@ class JSONEncoderUnit(Unit, abstract=True):
             raise ValueError('Can only set one option for byte string encoding.')
         super().__init__(encode=encode, digest=digest, arrays=arrays, **keywords)
 
-    def to_json(self, obj) -> bytes:
+    def to_json(self, obj, checks: bool = True) -> bytes:
         if self.args.arrays:
             _byte_converter = list
         elif u := self.args.encode:
@@ -443,4 +443,4 @@ class JSONEncoderUnit(Unit, abstract=True):
                 return _byte_converter(o)
             return libjson.standard_conversions(o)
 
-        return libjson.dumps(obj, tojson=default)
+        return libjson.dumps(obj, tojson=default, checks=checks)
