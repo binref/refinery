@@ -2695,8 +2695,7 @@ class InnoArchive:
         for k in range(0, len(mem), 0x10000):
             for match in re.finditer(B'(?s)[\xE8\xE9]....', mem[k:k + 0x10000], flags=re.DOTALL):
                 a = match.start() + k
-                top = mem[a + 4]
-                if top != 0x00 and top != 0xFF:
+                if 0 < (top := mem[a + 4]) < 0xFF:
                     continue
                 ab0.append(mem[a + 1])
                 ab1.append(mem[a + 2])
