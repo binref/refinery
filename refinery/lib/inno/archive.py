@@ -624,7 +624,7 @@ class TSetupOffsets(Struct):
 
 @dataclasses.dataclass
 class InnoFile:
-    reader: StructReader[buf]
+    reader: StructReader[memoryview]
     version: InnoVersion
     meta: SetupDataEntry
     path: str = ""
@@ -2358,8 +2358,8 @@ class InnoArchive:
 
     def _try_parse_as(
         self,
-        inno: StructReader,
-        blobs: StructReader,
+        inno: StructReader[memoryview],
+        blobs: StructReader[memoryview],
         version: InnoVersion,
         max_failures: int = 5
     ):
@@ -2541,6 +2541,8 @@ class InnoArchive:
         length = file.chunk_length
         method = file.compression
 
+        self._log_verbose(F'decompressing chunk at {file.chunk_offset:#010x} using {method.name}')
+
         if password is None:
             password = self._password
 
@@ -2720,9 +2722,10 @@ class InnoArchive:
             msb *= flips
             msb += keeps
         low += (msb.astype(u32) << 24)
-        addresses = low.tobytes()
+        ab = low.tobytes()
+        am = memoryview(ab)
         for k, offset in enumerate(positions):
-            out[offset - 4:offset] = addresses[k * 4:(k + 1) * 4]
+            out[offset - 4:offset] = am[k * 4:(k + 1) * 4]
         return out
 
     def _filter_new_fallback(self, data: buf, flip_high_byte=False):
