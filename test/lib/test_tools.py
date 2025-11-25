@@ -1,7 +1,9 @@
 import inspect
 import random
 
-import refinery.lib.tools as tools
+from refinery.lib import tools, colors
+
+
 from .. import TestBase
 
 
@@ -29,6 +31,26 @@ class TestEntropy(TestBase):
 
 
 class TestTools(TestBase):
+
+    def test_coloring(self):
+        @inspect.getdoc
+        class code:
+            """
+            async function test() {
+                try {
+                    const saqotesana = Uint8Array.from(atob(zobefacebi.duvusuvusa), c => c.charCodeAt(0));
+                    const iv = Uint8Array.from(atob(zobefacebi.iv), c => c.charCodeAt(0));
+                    const keyData = Uint8Array.from(atob(zobefacebi.key), c => c.charCodeAt(0));
+                } catch (error) { }
+            }
+            """
+        assert code is not None
+
+        highlighted = code | self.ldu('hlg') | str
+        for line1, line2 in zip(
+            code.splitlines(), highlighted.splitlines()
+        ):
+            self.assertEqual(len(line1), colors.colored_text_length(line2))
 
     def test_terminalfit(self):
         @inspect.getdoc
