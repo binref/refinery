@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Generator, Iterable
 from refinery.lib.executable import Executable
 from refinery.lib.meta import SizeInt
 from refinery.lib.meta import TerseSizeInt as TI
+from refinery.lib.shared import pefile
 from refinery.lib.types import Param
 from refinery.units.formats.pe import Arg, OverlayUnit
 from refinery.units.formats.pe.perc import RSRC
@@ -77,11 +78,6 @@ class pedebloat(OverlayUnit):
             trim_code=trim_code,
             names=names,
         )
-
-    @OverlayUnit.Requires('pefile', ['default', 'extended'])
-    def _pefile():
-        import pefile
-        return pefile
 
     def _right_strip_data(self, data: memoryview, alignment=1, block_size=_MB) -> int:
         if not data:
@@ -174,7 +170,7 @@ class pedebloat(OverlayUnit):
                 setattr(structure, attribute, new_value)
 
         it: Iterable[Structure] = iter(pe.__structures__)
-        structure_class = self._pefile.SectionStructure
+        structure_class = pefile.SectionStructure
         remove = []
 
         for index, structure in enumerate(it):
@@ -296,7 +292,7 @@ class pedebloat(OverlayUnit):
                     continue
                 yield name, struct
 
-        RSRC_INDEX = self._pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
+        RSRC_INDEX = pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
         pe.parse_data_directories(directories=[RSRC_INDEX])
 
         try:
@@ -335,7 +331,7 @@ class pedebloat(OverlayUnit):
                 data = data[:body_size]
         if not self.args.resources and not self.args.sections:
             return data
-        pe = self._pefile.PE(data=data, fast_load=True)
+        pe = pefile.PE(data=data, fast_load=True)
         total = len(data)
         trimmed = 0
         view = pe.__data__

@@ -111,3 +111,9 @@ def smda():
 def orjson():
     import orjson
     return orjson
+
+
+@__global_dependency('pefile', ['default', 'extended'])
+def pefile():
+    import pefile
+    return pefile

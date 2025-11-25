@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import Enum
 
 from refinery.lib.executable import align
+from refinery.lib.shared import pefile
 from refinery.lib.structures import StructReader
 from refinery.units import Unit
 
@@ -58,11 +59,6 @@ class pefix(Unit):
     relevant parts of the header have been stripped. The unit attempts to repair the damage
     and return something that can be parsed.
     """
-    @Unit.Requires('pefile', ['default', 'extended'])
-    def _pefile():
-        import pefile
-        return pefile
-
     def process(self, data):
         sr = StructReader(data)
         sr.write(B'MZ')
@@ -108,7 +104,7 @@ class pefix(Unit):
                 sr.seekset(nt + 4)
                 sr.write(mt.value.to_bytes(2, 'little'))
 
-        pe = self._pefile.PE(data=data, fast_load=True)
+        pe = pefile.PE(data=data, fast_load=True)
 
         if (alignment := pe.OPTIONAL_HEADER.FileAlignment) not in {1 << k for k in range(9, 16)}:
             for k in range(9, 16):
