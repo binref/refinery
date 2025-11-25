@@ -9,6 +9,7 @@ import textwrap
 
 from typing import Generator
 
+from refinery.lib.colors import colored_text_bleach, colored_text_length, colored_text_truncate
 from refinery.lib.environment import environment
 from refinery.lib.meta import (
     ByteStringWrapper,
@@ -17,7 +18,7 @@ from refinery.lib.meta import (
     SizeInt,
     metavars,
 )
-from refinery.lib.tools import get_terminal_size, isbuffer
+from refinery.lib.tools import asbuffer, get_terminal_size
 from refinery.lib.types import INF, Param
 from refinery.units import Chunk
 from refinery.units.sinks import Arg, HexViewer
@@ -32,18 +33,26 @@ class peek(HexViewer):
 
     def __init__(
         self,
-        lines: Param[int, Arg.Number('-l', group='SIZE', help='Specify number N of lines in the preview, default is 10.')] = 10,
-        all: Param[bool, Arg.Switch('-a', group='SIZE', help='Output all possible preview lines without restriction')] = False,
-        brief: Param[bool, Arg.Switch('-b', group='SIZE', help='One line peek, implies --lines=1.')] = False,
+        lines: Param[int | INF, Arg.Number('-l', group='SIZE',
+            help='Specify number N of lines in the preview, default is 10.')] = 10,
+        all: Param[bool, Arg.Switch('-a', group='SIZE',
+            help='Output all possible preview lines without restriction')] = False,
+        brief: Param[bool, Arg.Switch('-b', group='SIZE',
+            help='One line peek, implies --lines=1.')] = False,
         decode: Param[int, Arg.Counts('-d', group='MODE', help=(
             'Attempt to decode and display printable data. Specify twice to enable line wrapping.'))] = 0,
-        escape: Param[bool, Arg.Switch('-e', group='MODE', help='Always peek data as string, escape characters if necessary.')] = False,
-        bare: Param[bool, Arg.Switch('-r', group='META', help='Only peek the data itself, do not show a metadata preview.')] = False,
+        escape: Param[bool, Arg.Switch('-e', group='MODE',
+            help='Always peek data as string, escape characters if necessary.')] = False,
+        bare: Param[bool, Arg.Switch('-r', group='META',
+            help='Only peek the data itself, do not show a metadata preview.')] = False,
         meta: Param[int, Arg.Counts('-m', group='META', help=(
             'Show more auto-derivable metadata. Specify multiple times to populate more variables.'))] = 0,
-        gray: Param[bool, Arg.Switch('-g', help='Do not colorize the output.')] = False,
-        index: Param[bool, Arg.Switch('-i', help='Display the index of each chunk within the current frame.')] = False,
-        stdout: Param[bool, Arg.Switch('-2', help='Print the peek to STDOUT rather than STDERR; the input data is lost.')] = False,
+        gray: Param[bool, Arg.Switch('-g',
+            help='Do not colorize the output.')] = False,
+        index: Param[bool, Arg.Switch('-i',
+            help='Display the index of each chunk within the current frame.')] = False,
+        stdout: Param[bool, Arg.Switch('-2',
+            help='Print the peek to STDOUT rather than STDERR; the input data is lost.')] = False,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if decode and escape:
@@ -105,7 +114,7 @@ class peek(HexViewer):
             self.log_info('forwarding input to next unit')
             yield data
 
-    def _peekmeta(self, linewidth, sep, meta: dict, peek=None) -> Generator[str]:
+    def _peekmeta(self, linewidth, sep, meta: LazyMetaOracle, peek=None) -> Generator[str]:
         if not meta and not peek:
             return
         width = max((len(name) for name in meta), default=0)
@@ -123,8 +132,8 @@ class peek(HexViewer):
                 continue
             if isinstance(value, CustomStringRepresentation):
                 value = repr(value).strip()
-            elif isbuffer(value):
-                value = repr(ByteStringWrapper(value))
+            elif (b := asbuffer(value)):
+                value = repr(ByteStringWrapper(b))
             elif isinstance(value, int):
                 if value in range(-999, 1000):
                     value = str(value)
@@ -140,7 +149,7 @@ class peek(HexViewer):
             yield from separators
             yield metavar
 
-    def _trydecode(self, data, codec: str | None, width: int, linecount: int) -> str:
+    def _trydecode(self, data, codec: str | None, width: int, linecount: int) -> list[str] | None:
         remaining = linecount
         result = []
         wrap = self.args.decode > 1
@@ -172,9 +181,9 @@ class peek(HexViewer):
         if not wrap:
             for k, line in enumerate(decoded):
                 line = line.replace('\t', '\x20' * 4)
-                if len(line) <= width:
+                if colored_text_length(line) <= width:
                     continue
-                clipped = line[:width - 3]
+                clipped = colored_text_truncate(line, width - 3)
                 if self.args.gray:
                     color = ''
                     reset = ''
@@ -189,7 +198,7 @@ class peek(HexViewer):
                 break
             wrapped = [
                 line for chunk in textwrap.wrap(
-                    paragraph,
+                    colored_text_bleach(paragraph),
                     width,
                     break_long_words=True,
                     break_on_hyphens=False,

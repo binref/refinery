@@ -7,8 +7,72 @@ import enum
 import functools
 import re
 
+from typing import TYPE_CHECKING, Callable, Iterator, overload
+
 from refinery.lib.patterns.tlds import tlds
 from refinery.lib.tools import normalize_to_display, normalize_to_identifier
+from refinery.lib.types import buf
+
+if TYPE_CHECKING:
+    from re import Match
+
+    class PatternMethods:
+        @overload
+        def split(self, string: buf, maxsplit: int = 0) -> list[bytes]:
+            ...
+
+        @overload
+        def split(self, string: str, maxsplit: int = 0) -> list[str]:
+            ...
+
+        def split(self, string, maxsplit=0) -> list:
+            ...
+
+        @overload
+        def fullmatch(self, string: buf, pos: int = 0, endpos: int | None = None) -> Match[bytes]:
+            ...
+
+        @overload
+        def fullmatch(self, string: str, pos: int = 0, endpos: int | None = None) -> Match[str]:
+            ...
+
+        def fullmatch(self, string, pos=0, endpos=None) -> Match:
+            ...
+
+        @overload
+        def search(self, string: buf, pos: int = 0, endpos: int | None = None) -> Match[bytes]:
+            ...
+
+        @overload
+        def search(self, string: str, pos: int = 0, endpos: int | None = None) -> Match[str]:
+            ...
+
+        def search(self, string, pos=0, endpos=None) -> Match:
+            ...
+
+        @overload
+        def sub(self, repl: buf | Callable[[Match[bytes]], buf], string: buf, count: int = 0) -> bytes:
+            ...
+
+        @overload
+        def sub(self, repl: str | Callable[[Match[str]], str], string: str, count: int = 0) -> str:
+            ...
+
+        def sub(self, repl, string, count=0) -> str | bytes:
+            ...
+
+        @overload
+        def finditer(self, string: buf, pos: int = 0, endpos: int | None = None) -> Iterator[Match[bytes]]:
+            ...
+
+        @overload
+        def finditer(self, string: str, pos: int = 0, endpos: int | None = None) -> Iterator[Match[str]]:
+            ...
+
+        def finditer(self, string, pos=0, endpos=None) -> Iterator[Match]:
+            ...
+else:
+    PatternMethods = object
 
 
 def _sized_suffix(lower: int, upper: int):
@@ -26,7 +90,7 @@ def _sized_suffix(lower: int, upper: int):
         return F'{{{lower},{upper}}}'
 
 
-class pattern:
+class pattern(PatternMethods):
     """
     A wrapper for regular expression pattern objects created from re.compile,
     allowing combination of several patterns into one via overloaded
@@ -156,7 +220,7 @@ class tokenize(pattern):
         pattern.__init__(self, p.format(s=sep, b=bound, t=token), **kwargs)
 
 
-class PatternEnum(enum.Enum):
+class _PatternEnum(enum.Enum):
     @classmethod
     def get(cls, name, default):
         try:
@@ -418,23 +482,16 @@ _pattern_pem = (
     R'-----END(?:\s[A-Z0-9]+)+-----'
 ).format(n=R'(?:\r\n|\n\r|\n)', b=R'[0-9a-zA-Z\+\/]')
 
-__all__ = [
-    'pattern',
-    'alphabet',
-    'tokenize',
-    'formats',
-    'indicators',
-    'wallets',
-    'defanged'
-]
+
+AnsiColor = pattern(R'\x1b\[(?:22|[34]\d|(?:9|10)[0-8]|[0-2])(?:;\d+)*m')
 
 
-class checks(PatternEnum):
+class checks(_PatternEnum):
     json = pattern(_pattern_json)
     "Data that consists of JSON-like tokens; cannot detect actual JSON data."
 
 
-class formats(PatternEnum):
+class formats(_PatternEnum):
     """
     An enumeration of patterns for certain formats.
     """
@@ -540,7 +597,7 @@ class formats(PatternEnum):
         return getattr(cls, normalize_to_identifier(key))
 
 
-class wallets(PatternEnum):
+class wallets(_PatternEnum):
     # https://gist.github.com/etherx-dev/76559d9e6d916917a960e33ceea91481
     ADA = pattern("addr1[a-z0-9]+")
     ATOM = pattern("cosmos[-\\w\\.]{10,}")
@@ -565,7 +622,7 @@ class wallets(PatternEnum):
     XRP = pattern("r[0-9a-zA-Z]{24,34}")
 
 
-class indicators(PatternEnum):
+class indicators(_PatternEnum):
     """
     An enumeration of patterns for indicators.
     """
@@ -617,7 +674,7 @@ class indicators(PatternEnum):
         return getattr(cls, normalize_to_identifier(key))
 
 
-class defanged(PatternEnum):
+class defanged(_PatternEnum):
     """
     An enumeration of patterns for defanged indicators. Used only by the reverse
     operation of `refinery.defang`.
