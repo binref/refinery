@@ -19,7 +19,23 @@ if TYPE_CHECKING:
     )
 
     Param = Annotated
-    JSON = Union[str, int, float, bool, None, dict[str, 'JSON'], list['JSON']]
+    JSON = Union[
+        None,
+        str,
+        int,
+        float,
+        bool,
+        dict[str, 'JSON'],
+        list['JSON'],
+        # These are superfluous but help the type checker:
+        list[int],
+        list[str],
+        list[float],
+        list[bool],
+        dict[str, int],
+        dict[str, str],
+        dict[str, int | str],
+    ]
     JSONDict = dict[str, JSON]
 
     buf = Union[bytes, bytearray, memoryview]
