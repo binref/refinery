@@ -86,25 +86,9 @@ class Singleton(type):
     A metaclass that can be used to define singleton classes.
     """
 
-    def __new__(cls, name: str, bases: tuple[type, ...], namespace: dict[str, Any]):
-        import sys
-
-        def __repr__(self):
-            return self.__class__.__name__
-
+    def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any]):
         def __new__(cls):
-            import gc
-            all = (s for s in gc.get_referrers(cls) if isinstance(s, cls))
-            try:
-                singleton = next(all)
-            except StopIteration:
-                return super(type, cls).__new__(cls)
-            try:
-                next(all)
-            except StopIteration:
-                return singleton
-            else:
-                raise RuntimeError(F'More than one object of type {name} exist.')
+            return cls
 
         def __getstate__(self):
             return None
@@ -115,21 +99,31 @@ class Singleton(type):
         def __call__(self, *_):
             return self
 
-        qualname = F'__singleton_{name}'
-
-        namespace.setdefault('__repr__', __repr__)
         namespace.setdefault('__call__', __call__)
+        operator_overloads = {}
+
+        for op, method in namespace.items():
+            if op[:2] == op[-2:] == '__' and callable(method):
+                operator_overloads[op] = method
+
+        if operator_overloads:
+            custom_meta_dict = {}
+            for method_name, method in operator_overloads.items():
+                def make_method(orig_method):
+                    def meta_method(cls, *args, **kwargs):
+                        return orig_method(cls, *args, **kwargs)
+                    return meta_method
+                custom_meta_dict[method_name] = make_method(method)
+            mcs = type(f'{name}Meta', (mcs,), custom_meta_dict)
 
         namespace.update(
             __new__=__new__,
             __slots__=(),
             __getstate__=__getstate__,
             __setstate__=__setstate__,
-            __qualname__=qualname
         )
-        singleton = type.__new__(cls, name, bases, namespace)
-        setattr(sys.modules[singleton.__module__], qualname, singleton)
-        return singleton()
+
+        return type.__new__(mcs, name, bases, namespace)
 
 
 class _INF(metaclass=Singleton):
