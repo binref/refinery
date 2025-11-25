@@ -5,7 +5,8 @@ from enum import Enum
 from refinery.lib.executable import align
 from refinery.lib.shared import pefile
 from refinery.lib.structures import StructReader
-from refinery.units import Unit
+from refinery.lib.types import Param
+from refinery.units import Unit, Arg
 
 
 class ImgState(bytes, Enum):
@@ -59,6 +60,11 @@ class pefix(Unit):
     relevant parts of the header have been stripped. The unit attempts to repair the damage
     and return something that can be parsed.
     """
+    def __init__(self, unmap: Param[bool, Arg.Switch('-u', help=(
+        'Overwrite all section file start offsets with the virtual offset.'
+    ))]):
+        super().__init__(unmap=unmap)
+
     def process(self, data):
         sr = StructReader(data)
         sr.write(B'MZ')
@@ -121,5 +127,13 @@ class pefix(Unit):
 
         pe.OPTIONAL_HEADER.FileAlignment = alignment
         pe.OPTIONAL_HEADER.SectionAlignment = max(pe.OPTIONAL_HEADER.SectionAlignment, alignment)
+
+        if self.args.unmap:
+            last = pe.OPTIONAL_HEADER.SizeOfImage
+            for section in pe.sections:
+                section.PointerToRawData = section.VirtualAddress
+                section.SizeOfRawData = section.Misc_VirtualSize
+                last = section.VirtualAddress + section.Misc_VirtualSize
+            pe.OPTIONAL_HEADER.SizeOfImage = last
 
         return pe.write()
