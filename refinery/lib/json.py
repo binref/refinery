@@ -9,8 +9,8 @@ from __future__ import annotations
 import codecs
 import json as pyjson
 
+from datetime import date, datetime, time
 from enum import Enum, IntFlag
-from datetime import datetime, date, time
 from uuid import UUID
 
 from refinery.lib.shared import orjson
