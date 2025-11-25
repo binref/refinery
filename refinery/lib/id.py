@@ -211,6 +211,7 @@ class Fmt(Format, enum.Enum):
     EVT = (FC.Binary, 'evt', 'EVT', 'Windows Event Viewer')
     EVTX = (FC.Binary, 'evtx', 'EVTX', 'Windows Event Viewer XML')
     LNK = (FC.Binary, 'lnk', 'LNK', 'Windows Shortcut')
+    DMP = (FC.Binary, 'dmp', 'MDMP', 'Mini DuMP Crash Report')
 
     REG_HIVE = (FC.Binary, 'reg', 'WinReg/Hive', 'Windows Registry Hive File', 'text/plain')
     REG_TEXT = (FC.Binary, 'reg', 'WinReg/Text', 'Windows Registry Script')
@@ -1133,6 +1134,7 @@ def get_misc_binary_formats(data: buf):
         (Fmt.WASM, B'\0asm'),
         (Fmt.LUAC, B'\x1BLua'),
         (Fmt.LNK, B'L\0\0\0\01\x14\02\0\0\0\0\0\xC0\0\0\0\0\0\0F'),
+        (Fmt.DMP, B'MDMP'),
         (Fmt.PCAP, B'\xD4\xC3\xB2\xA1'),
         (Fmt.PCAP, B'\xA1\xB2\xC3\xD4'),
         (Fmt.PCAP, B'\x4D\x3C\xB2\xA1'),
