@@ -83,7 +83,7 @@ def xdis():
     return xdis
 
 
-@__global_dependency('uncompyle6', ['arc', 'python', 'extended'])
+@__global_dependency('uncompyle6>=3.9.3', ['arc', 'python', 'extended'])
 def uncompyle6():
     import uncompyle6
     import uncompyle6.main
