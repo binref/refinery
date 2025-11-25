@@ -27,6 +27,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         """
         # units that check fixed offsets
         from refinery.units.formats.archive.xtsql import xtsql        ; yield xtsql     # noqa
+        from refinery.units.formats.archive.xtdmp import xtdmp        ; yield xtdmp     # noqa
         from refinery.units.formats.archive.xttar import xttar        ; yield xttar     # noqa
         from refinery.units.formats.archive.xtiso import xtiso        ; yield xtiso     # noqa
         from refinery.units.formats.archive.xtchm import xtchm        ; yield xtchm     # noqa
