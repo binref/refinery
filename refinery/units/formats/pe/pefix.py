@@ -6,7 +6,7 @@ from refinery.lib.executable import align
 from refinery.lib.shared import pefile
 from refinery.lib.structures import StructReader
 from refinery.lib.types import Param
-from refinery.units import Unit, Arg
+from refinery.units import Arg, Unit
 
 
 class ImgState(bytes, Enum):
