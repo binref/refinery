@@ -8,7 +8,7 @@ import itertools
 import re
 
 from functools import WRAPPER_ASSIGNMENTS, wraps
-from typing import TYPE_CHECKING, Any, Callable, Iterable, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
 
 if TYPE_CHECKING:
     from refinery.units import Chunk, Unit
@@ -63,23 +63,4 @@ def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk],
                 if p is None:
                     partial[k] = ''
         return codecs.encode(''.join(partial), self.codec, errors='surrogateescape')
-    return method_wrapper
-
-
-def linewise(method: Callable[[Any, str], str]) -> Callable[[Any, Chunk], Iterable[bytes]]:
-    """
-    Can be used to decorate a `refinery.units.Unit.process` routine that takes a
-    string argument and also returns one. The resulting routine expects a default
-    encoded string input buffer and calls the decorated routine once for each
-    line in the corresponding decoded string.
-    """
-    @wraps_without_annotations(method)
-    def method_wrapper(self: Unit, data: Chunk) -> Iterable[bytes]:
-        lines = data.decode(self.codec).splitlines()
-        width = len(str(len(lines)))
-        for k, line in enumerate(lines):
-            try:
-                yield method(self, line).encode(self.codec)
-            except Exception as E:
-                self.log_info(F'error in line {k:0{width}d}: {E}')
     return method_wrapper

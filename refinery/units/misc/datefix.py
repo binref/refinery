@@ -4,7 +4,7 @@ import re
 
 from datetime import datetime, timedelta
 
-from refinery.lib.decorators import linewise
+from refinery.lib.decorators import unicoded
 from refinery.lib.tools import date_from_timestamp
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -47,13 +47,30 @@ _TIMEZONE_PATTERN = R'''(?x)(?:
 
 class datefix(Unit):
     """
-    Parses all kinds of date formats and unifies them into the same format.
+    Parses all kinds of date formats and unifies them into the same format. The unit expects the
+    input to be a numeric timestamp or a string that specifies a date & time. It then outputs a
+    unified representation of that timestamp, using ISO format by default. If you want to use this
+    to normalize date strings in a piece of text, use the following pattern:
+
+        emit ... | resub (??date) {0:datefix}
+
+    This will use the `refinery.resub` unit to search for date-like strings in the input and use
+    the `refinery.datefix` unit to convert them. You can also specify a format like so:
+
+        emit ... | resub (??date) {0:datefix[%H:%M:%S]}
+
+    The above pipeline will convert all date-like strings in the input to their time value in ISO
+    format only.
     """
 
     def __init__(
         self,
-        format: Param[str, Arg(help='Specify the output format as a strftime-like string, using ISO by default.')] = '%Y-%m-%d %H:%M:%S',
-        dos: Param[bool, Arg('-d', help='Parse timestamps in DOS rather than Unix format.')] = False
+        format: Param[str, Arg(help=(
+            'Specify the output format as a strftime-like string, using ISO by default.'
+        ))] = '%Y-%m-%d %H:%M:%S',
+        dos: Param[bool, Arg('-d', help=(
+            'Parse numeric timestamps as DOS rather than Unix format.'
+        ))] = False,
     ):
         super().__init__(format=format, dos=dos)
 
@@ -93,7 +110,7 @@ class datefix(Unit):
         data = re.sub('\\s{2,}', ' ', data).strip()
         return data, zone
 
-    @linewise
+    @unicoded
     def process(self, data: str) -> str:
         data = data.strip()
 
