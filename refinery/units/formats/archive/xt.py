@@ -136,6 +136,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
         for handler in self.handlers():
             self.CustomPathSeparator = handler.CustomPathSeparator
+            self.CustomJoinBehaviour = handler.CustomJoinBehaviour
             it = unpacker(handler, fallback=False)
             yield from it
             if it.success:

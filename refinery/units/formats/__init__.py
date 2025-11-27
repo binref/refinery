@@ -102,6 +102,11 @@ class PathExtractorUnit(Unit, abstract=True):
         emit something | <this> [| dump {path} ]
     """
 
+    CustomJoinBehaviour = '{root}{sep}{path}'
+    """
+    This class variable can be overwritten to change how paths are joined.
+    """
+
     CustomPathSeparator = None
     """
     This class variable can be overwritten by child classes to change the path separator from the
@@ -211,13 +216,13 @@ class PathExtractorUnit(Unit, abstract=True):
             return F'_{crc}.{uid:04X}'
 
         def normalize(_path: str) -> str:
-            pathsep = self.CustomPathSeparator
-            pattern = '[\\\\/]'
-            if pathsep is None:
-                pathsep = '/'
-            else:
+            if (pathsep := self.CustomPathSeparator):
                 pattern = re.escape(pathsep)
-            parts = re.split(pattern, F'{root}{pathsep}{_path}')
+            else:
+                pattern = '[\\\\/]'
+                pathsep = '/'
+            parts = re.split(pattern, self.CustomJoinBehaviour.format(
+                root=root, sep=pathsep, path=_path))
             while True:
                 for k, part in enumerate(parts):
                     if not part.strip('.'):

@@ -33,6 +33,8 @@ class xtgz(ArchiveUnit):
     """
     Extract a file from a GZip archive.
     """
+    CustomJoinBehaviour = '{path}'
+
     def unpack(self, data: bytearray):
         archive = GzipHeader.Parse(data)
         path = archive.name
@@ -41,17 +43,17 @@ class xtgz(ArchiveUnit):
         if path is None:
             try:
                 meta = metavars(data)
-                path = Path(meta['path'])
+                path = Path(meta[self.args.path.decode(self.codec)])
             except KeyError:
-                path = 'ungz'
+                path = ''
             else:
-                self.log_warn(path)
-                suffix = path.suffix
-                if suffix.lower() == '.gz':
+                suffix = path.suffix.lower()
+                if suffix == '.tgz':
+                    path = path.with_suffix('.tar')
+                elif suffix == '.gz':
                     path = path.with_suffix('')
-                else:
-                    path = path.with_suffix(F'{suffix}.ungz')
                 path = path.as_posix()
+
         yield self._pack(path, date, archive.data)
 
     @classmethod
