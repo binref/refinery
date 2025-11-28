@@ -1547,10 +1547,14 @@ class DelayedRegexpArgument(DelayedArgument):
 
             def replace_known_pattern(match: re.Match[str]):
                 nonlocal tick
+                name = match[1]
+                if (pattern := formats.get(name)) is None:
+                    if (pattern := indicators.get(name)) is None:
+                        return match[0]
                 tick += 1
-                pattern = str(formats.get(match[1], indicators.get(match[1], match[0])))
-                pattern = re.sub(r'(?<=\(\?P[<=])__(\w+)__', F'__\\1_{tick}__', pattern)
-                return f'(?:{pattern})'
+                pattern = re.sub(
+                    R'(?<=\(\?P[<=])__(\w+)__', F'__\\1_{tick}__', str(pattern))
+                return F'(?:{pattern})'
 
             def replace_variable_assignment(match):
                 return F'(?P<{match[1]}>'
@@ -1558,10 +1562,7 @@ class DelayedRegexpArgument(DelayedArgument):
             expression = re.sub(R'\(\?/(\w+)=',
                 replace_variable_assignment, expression)
             expression = re.sub(
-                R'\(\?\?({}|{})\)'.format(
-                    '|'.join(re.escape(p.name) for p in formats),
-                    '|'.join(re.escape(p.name) for p in indicators)
-                ),
+                R'\(\?\?([-\w]+)\)',
                 replace_known_pattern,
                 expression
             )

@@ -5,36 +5,36 @@ from typing import Match
 from refinery.lib.meta import ByteStringWrapper, metavars
 from refinery.lib.types import Param
 from refinery.units import Chunk
-from refinery.units.pattern import Arg, PatternExtractor, SingleRegexUnit
+from refinery.units.pattern import Arg, PatternExtractor, SingleRegexTransformUnit
 
 _FORWARD_VAR = '.'
 
 
-class rex(SingleRegexUnit, PatternExtractor):
+class rex(SingleRegexTransformUnit, PatternExtractor, docs=(
+    '{0}\n\nTransformations are interpreted as format strings: {SingleRegexTransformUnit}'
+    F' The unit also supports the format `{{{{{_FORWARD_VAR}}}}}` to represent the input data.'
+)):
     """
     Short for Regular Expression eXtractor: A binary grep which can apply a transformation to each
-    match. Each match is an individual output. Besides the syntax `{k}` to insert the `k`-th match
-    group, the unit supports processing the contents of match groups with arbitrary refinery units.
-    To do so, use the following F-string-like syntax:
-
-        {match-group:pipeline}
-
-    where `:pipeline` is an optional pipeline of refinery commands as it would be specified on
-    the command line. The value of the corresponding match is post-processed with this command. The
-    unit also supports the special output format `{%s}` which represents the input data.
+    match. Each match is an individual output.
     """
     def __init__(
         self, regex,
         /,
         *transformation: Param[str, Arg.String(help=(
-            'An optional sequence of transformations to be applied to each match. '
-            'Each transformation produces one output in the order in which they '
-            'are given. The default transformation is {0}, i.e. the entire match.'
+            'An optional sequence of transformations to be applied to each match. Each '
+            'transformation produces one output in the order in which they are given. The default '
+            'transformation is {0}, which represents the entire match.'
         ))],
-        unicode: Param[bool, Arg.Switch('-u', help='Also find unicode strings.')] = False,
-        unique: Param[bool, Arg.Switch('-q', help='Yield every (transformed) match only once.')] = False,
-        multiline=False, ignorecase=False, min=1, max=0, len=0, stripspace=False,
-        longest=False, take=0
+        unicode: Param[bool, Arg.Switch('-u', help=(
+            'Also find unicode strings, i.e. occurrences of pattern where all characters are '
+            'separated by null bytes.'
+        ))] = False,
+        unique: Param[bool, Arg.Switch('-q', help=(
+            'Yield every (transformed) match only once and discard duplicates.'
+        ))] = False,
+        min=1, max=0, len=0,
+        multiline=False, ignorecase=False, stripspace=False, longest=False, take=0
     ):
         super().__init__(
             regex=regex,
@@ -69,12 +69,10 @@ class rex(SingleRegexUnit, PatternExtractor):
                 def transformation(match: Match, s=spec):
                     symb: dict = {
                         key: (value or b'') for key, value in match.groupdict().items()
-                        if not key.startswith('__')}
+                        if not (key[:2] == key[-2:] == '__')
+                    }
                     args: list = [match.group(0), *match.groups()]
                     used = set()
-                    for key, value in symb.items():
-                        if value is None:
-                            symb[key] = B''
                     symb[_FORWARD_VAR] = wrap
                     item = meta.format(s, self.codec, args, symb, True, True, used)
                     assert not isinstance(item, str)
@@ -92,7 +90,3 @@ class rex(SingleRegexUnit, PatternExtractor):
             *transformations,
             expose_named_groups=True
         )
-
-
-if __doc := rex.__doc__:
-    rex.__doc__ = __doc % _FORWARD_VAR

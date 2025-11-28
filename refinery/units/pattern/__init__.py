@@ -9,6 +9,7 @@ from hashlib import blake2b
 from itertools import islice
 from typing import TYPE_CHECKING
 
+from refinery.lib.patterns import formats, indicators
 from refinery.lib.tools import bounds
 from refinery.lib.types import INF, Callable, Iterable, Param, buf
 from refinery.units import Arg, Unit
@@ -227,13 +228,26 @@ class RegexUnit(Unit, abstract=True):
             return regex.search
 
 
-class SingleRegexUnit(RegexUnit, abstract=True):
+_FMT = ',\x20'.join(p.name for p in formats)
+_IOC = ',\x20'.join(p.name for p in indicators)
 
+
+class SingleRegexUnit(RegexUnit, abstract=True):
     def __init__(
         self,
-        regex: Param[str, Arg.RegExp(help='Regular expression to match.')],
-        count: Param[int, Arg.Number('-c', help='Specify the maximum number of operations to perform.')] = 0,
-        fullmatch=False, multiline=False, ignorecase=False, **keywords
+        regex: Param[str, Arg.RegExp(help=(
+            'A regular expression to match. Besides standard Python syntax, this also supports the '
+            'extension (??P) where P is any named pattern known to refinery. For example, (??date) '
+            'will match on any string that looks like a date. The following are all currently '
+            'available pattern names: {}, {}.'
+        ).format(_IOC, _FMT))],
+        count: Param[int, Arg.Number('-c', help=(
+            'Specify the maximum number of operations to perform.'
+        ))] = 0,
+        fullmatch=False,
+        multiline=False,
+        ignorecase=False,
+        **keywords
     ):
         super().__init__(
             regex=regex,
@@ -247,3 +261,17 @@ class SingleRegexUnit(RegexUnit, abstract=True):
     @property
     def regex(self):
         return Arg.AsRegExp(self.codec, self.args.regex, self.args.flags)
+
+
+class SingleRegexTransformUnit(SingleRegexUnit, abstract=True):
+    """
+    Besides the syntax `{k}` to insert the `k`-th match group, the unit supports processing the
+    contents of match groups with arbitrary refinery units and other multibin handlers. To do so,
+    use the following syntax:
+
+        {match-group:handlers}
+
+    where `handlers` is an optional reverse multibin expression that is used to post-process the
+    binary data from the match. For example, `{2:hex:b64}` represents the base64-decoding of the
+    hex-decoding of the second match group.
+    """

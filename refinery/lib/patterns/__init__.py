@@ -222,7 +222,7 @@ class tokenize(pattern):
 
 class _PatternEnum(enum.Enum):
     @classmethod
-    def get(cls, name, default):
+    def get(cls, name, default=None):
         try:
             return cls[name]
         except KeyError:
@@ -382,8 +382,20 @@ _pattern_date = '|'.join(
 
 
 def _sized_pattern_string(lower: int = 0, upper: int = 0):
-    n = _sized_suffix((lower - 2) // 2, upper - 2)
-    return FR'''(?:"(?:[^"\\\r\n]|\\[^\r\n]){n}"|'(?:[^'\\\r\n]|\\[^\r\n]){n}')'''
+    ml = _sized_suffix((lower - 6) // 1, (upper - 6))
+    sl = _sized_suffix((lower - 2) // 2, (upper - 2))
+    str_dq = FR'"(?:[^"\\\r\n]|\\[^\r\n]){sl}"'
+    str_sq = FR"'(?:[^'\\\r\n]|\\[^\r\n]){sl}'"
+    str_js = FR'`(?:[^`\\]|\\.){sl}`'
+    str_mul_dq = FR'"""(?:.(?!""")){ml}"""'
+    str_mul_sq = FR"'''(?:.(?!''')){ml}'''"
+    return '(?:{})'.format('|'.join((
+        str_dq,
+        str_sq,
+        str_js,
+        str_mul_dq,
+        str_mul_sq,
+    )))
 
 
 def _sized_pattern_cmdstr(lower: int = 0, upper: int = 0):
@@ -396,10 +408,9 @@ _pattern_ps1str = R'''(?:(?:@"\s*?[\r\n].*?[\r\n]"@)|(?:@'\s*?[\r\n].*?[\r\n]'@)
 _pattern_vbastr = R'''"(?:""|[^"])*"'''
 _pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]*|[-+]?(?:[1-9][0-9]*|0))(?=\b|$)'
 _pattern_string = _sized_pattern_string()
-_pattern_string_multiline = R'''(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)'''
-_pattern_urlenc_coarse = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=:\/#\[\]@'\(\)\*\+,;])+'''
+
 _pattern_urlenc = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
-_pattern_urlenc_narrow = R'''(?:%[0-9a-fA-F]{2})+'''
+_pattern_urlhex = R'''(?:%[0-9a-fA-F]{2})+'''
 
 _pattern_json = (
     R'''\s{0,20}[\[\{](?:"(?:[^"\\\r\n]|\\[^\r\n])*'''
@@ -495,16 +506,14 @@ class formats(_PatternEnum):
     """
     An enumeration of patterns for certain formats.
     """
-    integer = pattern(_pattern_integer)
+    int = pattern(_pattern_integer)
     "Integer expressions"
-    float = pattern(_pattern_float)
+    flt = pattern(_pattern_float)
     "Floating point number expressions"
-    number = pattern(_pattern_number)
+    num = pattern(_pattern_number)
     "Either an integer or a float"
-    string = pattern(_pattern_string)
+    str = pattern(_pattern_string)
     "C syntax string literal"
-    multiline_string = pattern(_pattern_string_multiline)
-    "C syntax string literal that also allows line breaks"
     cmdstr = pattern(_pattern_cmdstr)
     "Windows command line escaped string literal"
     ps1str = pattern(_pattern_ps1str, flags=re.DOTALL)
@@ -517,9 +526,7 @@ class formats(_PatternEnum):
     "Any sequence of printable characters"
     urlquote = pattern(_pattern_urlenc)
     "Any sequence of url-encoded characters, default char set"
-    urlquote_coarse = pattern(_pattern_urlenc_coarse)
-    "Any sequence of url-encoded characters, coarser variant with more characters allowed"
-    urlquote_narrow = pattern(_pattern_urlenc_narrow)
+    urlhex = pattern(_pattern_urlhex)
     "A hex-encoded buffer using URL escape sequences"
     intarray = tokenize(_pattern_integer, sep=R'[;,]', bound='', unique_sep=True)
     "Sequences of integers, separated by commas or semicolons"
@@ -527,13 +534,15 @@ class formats(_PatternEnum):
     "Sequences of strings, separated by commas or semicolons"
     numarray = tokenize(_pattern_number, sep=R'[;,]', bound='', unique_sep=True)
     "Sequences of numbers, separated by commas or semicolons"
+    hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'[;,]', bound='', unique_sep=True)
+    "Arrays of hexadecimal strings, separated by commas or semicolons"
     word = alphabet(R'\\w')
     "Sequences of word characters"
     letters = alphabet(R'[a-zA-Z]')
     "Sequences of alphabetic characters"
     wshenc = pattern(_pattern_wshenc)
     "Encoded Windows Scripting Host Scripts (JS/VBS)"
-    alphanumeric = alphabet(R'[a-zA-Z0-9]')
+    alnum = alphabet(R'[a-zA-Z0-9]')
     "Sequences of alpha-numeric characters"
     b32 = pattern('[A-Z2-7]+|[a-z2-7+]')
     "Base32 encoded strings"
@@ -551,7 +560,7 @@ class formats(_PatternEnum):
     "Z85 encoded strings"
     b92 = pattern(_pattern_b92)
     "Base92 encoded strings"
-    b64url = alphabet(R'[-\w]{4}', suffix=R'(?:[-\w]{2,3}={0,3})?', suffix_max=6)
+    b64u = alphabet(R'[-\w]{4}', suffix=R'(?:[-\w]{2,3}={0,3})?', suffix_max=6)
     "Base64 encoded strings using URL-safe alphabet"
     hex = alphabet(R'[0-9a-fA-F]{2}', token_size=2)
     "Hexadecimal strings"
@@ -578,17 +587,14 @@ class formats(_PatternEnum):
         46 4F 4F 0A 42 41 52 0A  FOO.BAR.
         F0 0B AA BA F0 0B        ......
     """
-    hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'[;,]', bound='', unique_sep=True)
-    "Arrays of hexadecimal strings, separated by commas or semicolons"
-    uuencode = pattern(_pattern_uuencode)
+    uuenc = pattern(_pattern_uuencode)
     "UUEncoded data"
 
     # shortcuts
-    url = urlquote
-    int = integer
-    str = string
-    num = number
-    mls = multiline_string
+    float = flt
+    integer = int
+    number = num
+    string = str
 
     @classmethod
     def from_dashname(cls, key: str):
@@ -652,21 +658,15 @@ class indicators(_PatternEnum):
     "A domain which contains at least three parts, including the top level"
     url = pattern(_pattern_serrated_url)
     "Uniform resource locator addresses"
-    btc = wallets.BTC.value
-    "Bitcoin addresses"
     pem = pattern(_pattern_pem)
     "A pattern matching PEM encoded cryptographic parameters"
-    xmr = wallets.XMR.value
-    "Monero addresses"
-    path_terse = pattern(_pattern_any_path_terse)
-    "Windows and Linux path names without spaces"
     path = pattern(_pattern_any_path)
     "Windows and Linux path names"
     winpath = pattern(_pattern_win_path)
     "Windows path names"
     nixpath = pattern(_pattern_nix_path)
     "Posix path names"
-    environment_variable = pattern(_pattern_win_env_variable)
+    evar = pattern(_pattern_win_env_variable)
     "Windows environment variables, i.e. something like `%APPDATA%`"
 
     @classmethod

@@ -45,10 +45,10 @@ class carve(PatternExtractor):
         )
         if not decode:
             decoder = None
-        elif self.args.format in (formats.multiline_string, formats.string):
+        elif self.args.format == formats.str:
             from ..encoding.esc import esc
             decoder = esc(unicode=True, quoted=True)
-        elif self.args.format == formats.integer:
+        elif self.args.format == formats.int:
             from ..encoding.base import base
             decoder = base()
         elif self.args.format in (formats.b16, formats.b16s, formats.hex):
@@ -64,7 +64,7 @@ class carve(PatternExtractor):
             from ..encoding.esc import esc
             def _decoder(data: Chunk) -> bytes: # noqa
                 return msgpack.packb([
-                    m[0] | esc | bytes for m in formats.string.value.bin.finditer(data)]) or B''
+                    m[0] | esc | bytes for m in formats.str.value.finditer(data)]) or B''
             decoder = _decoder
         elif self.args.format in (formats.b64, formats.b64s):
             from ..encoding.b64 import b64
@@ -72,7 +72,7 @@ class carve(PatternExtractor):
         elif self.args.format in (formats.b85, formats.b85s):
             from ..encoding.b85 import b85
             decoder = b85()
-        elif self.args.format == formats.b64url:
+        elif self.args.format == formats.b64u:
             from ..encoding.b64 import b64
             decoder = b64(urlsafe=True)
         elif self.args.format == formats.b32:
@@ -90,13 +90,12 @@ class carve(PatternExtractor):
         elif self.args.format == formats.wshenc:
             from ..encoding.wshenc import wshenc
             decoder = wshenc()
-        elif self.args.format == formats.uuencode:
+        elif self.args.format == formats.uuenc:
             from ..encoding.uuenc import uuenc
             decoder = uuenc()
         elif self.args.format in (
             formats.urlquote,
-            formats.urlquote_coarse,
-            formats.urlquote_narrow,
+            formats.urlhex,
         ):
             from ..encoding.url import url
             decoder = url()

@@ -6,7 +6,7 @@ from .. import TestUnitBase
 class TestPatternExtractor(TestUnitBase):
 
     def test_extraction_environment_variable(self):
-        unit = self.load('environment-variable')
+        unit = self.load('evar')
         self.assertEqual(b'%TEST%', unit(B'This is a %TEST% with environment variable.'))
 
     def test_extraction_domain_01(self):
@@ -80,11 +80,6 @@ class TestPatternExtractor(TestUnitBase):
     def test_url_with_tilde(self):
         url = B'http://www.htz.klmp.cv.gov.edu/~drjay/obbx/grades.txt'
         self.assertEqual(self.load('url')(url), url)
-
-    def test_monero_address(self):
-        addr = B'4BrL51JCc9NGQ71kWhnYoDRffsDZy7m1HUU7MRU4nUMXAHNFBEJhkTZV9HdaL4gfuNBxLPc3BeMkLGaPbF5vWtANQni58KYZqH43YSDeqY'
-        data = B'payment is made to the wallet %s.' % addr
-        self.assertEqual(addr, self.load('xmr')(data))
 
     def test_weird(self):
         data = (
