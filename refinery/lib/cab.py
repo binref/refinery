@@ -22,9 +22,22 @@ class CabVolumeMissing(LookupError):
     def __str__(self):
         if self.ref is not None:
             name = str(self.ref)
-        elif self.idx >= 0:
+        else:
             name = F'Disk {self.idx}'
         return F'Missing CAB volume: {name}'
+
+
+class CabSequenceMismatch(ValueError):
+    def __init__(self, index: int, prev: CabRef | None, next: CabRef | None):
+        self.index = index
+        self.prev = prev
+        self.next = next
+
+    def __str__(self):
+        k = self.index
+        return (
+            F'CAB disk sequence mismatch at {k}. Disk {k - 1} expected {self.next!s} as the next '
+            F'one, but disk {k + 1} expected {self.prev!s} as its predecessor.')
 
 
 class CabVolumeCorrupt(ValueError):
@@ -64,7 +77,7 @@ class CabAttr(IntFlag):
 class NFolderIndex(IntFlag):
     HasPrev = 0xFFFD
     HasNext = 0xFFFE
-    HasPrevAndNext = 0xFFFF
+    HasBoth = 0xFFFF
 
 
 class CabFolder(Struct):
@@ -84,25 +97,40 @@ class CabFolder(Struct):
     def __repr__(self):
         return F'<fldr:{self.compression.name}({self.method[1]}):{len(self.blocks)}>'
 
+    def iter_block_data(self):
+        it = iter(self.blocks)
+        for block in it:
+            if size := block.decompressed_size:
+                yield size, block.data
+                continue
+            merged = bytearray(block.data)
+            while not size:
+                try:
+                    tail = next(it)
+                except StopIteration as E:
+                    raise EOFError from E
+                merged.extend(tail.data)
+                size = tail.decompressed_size
+            yield size, memoryview(merged)
+
     def decompress(self):
         if self.decompressed is not None:
             return memoryview(self.decompressed)
 
         dst = bytearray()
         cm = self.compression
-        it = iter(self.blocks)
 
         if cm == CabMethod.Nothing:
-            for block in it:
+            for block in self.blocks:
                 dst.extend(block.data)
         elif cm == CabMethod.Deflate:
             zdict = B''
-            for block in it:
-                if block.data[:2] != B'CK':
+            for _, data in self.iter_block_data():
+                if data[:2] != B'CK':
                     raise ValueError('Corrupted MSZip block with invalid header.')
                 try:
                     inflate = zlib.decompressobj(-zlib.MAX_WBITS, zdict)
-                    zdict = inflate.decompress(block.data[2:]) + inflate.flush()
+                    zdict = inflate.decompress(data[2:]) + inflate.flush()
                 except zlib.error:
                     raise RuntimeError('Failed to inflate CAB data block.')
                 else:
@@ -110,16 +138,7 @@ class CabFolder(Struct):
         elif cm == CabMethod.LZX:
             lzx = LzxDecoder(False)
             lzx.set_params_and_alloc(self.method[1])
-            for block in it:
-                if size := block.decompressed_size:
-                    data = block.data
-                else:
-                    data = bytearray(block.data)
-                    tail = next(it)
-                    data.extend(tail.data)
-                    size = tail.decompressed_size
-                if not size:
-                    raise RuntimeError('Zero size in continued block.')
+            for size, data in self.iter_block_data():
                 dst.extend(lzx.decompress(data, size))
                 lzx.keep_history = True
         elif cm == CabMethod.Quantum:
@@ -168,9 +187,9 @@ class CabFile(Struct):
 
     def __repr__(self):
         index = {
-            NFolderIndex.HasPrev: 'PP',
-            NFolderIndex.HasNext: 'NN',
-            NFolderIndex.HasPrevAndNext: 'PN',
+            NFolderIndex.HasPrev.value: 'PP',
+            NFolderIndex.HasNext.value: 'NN',
+            NFolderIndex.HasBoth.value: 'PN',
         }.get(self._index, F'{self._index:02d}')
         d = d.isoformat() if (d := self.date) else '????-??-??'
         t = t.isoformat('seconds') if (t := self.time) else '??:??:??'
@@ -180,7 +199,7 @@ class CabFile(Struct):
         folder = self.folder
         if folder is None:
             raise RuntimeError(F'CAB file entry is missing a link to its folder: {self!r}')
-        folder_data = self.folder.decompress()
+        folder_data = folder.decompress()
         data = folder_data[self.offset:self.end]
         if len(data) != self.size:
             raise RuntimeError(F'The extracted file does not have the correct size: {self!r}')
@@ -191,10 +210,10 @@ class CabFile(Struct):
         return 'utf8' if self.attributes & CabAttr.NameUTF8 else 'latin1'
 
     def has_prev(self):
-        return self._index in (NFolderIndex.HasPrev, NFolderIndex.HasPrevAndNext)
+        return self._index in (NFolderIndex.HasPrev, NFolderIndex.HasBoth)
 
     def has_next(self):
-        return self._index in (NFolderIndex.HasNext, NFolderIndex.HasPrevAndNext)
+        return self._index in (NFolderIndex.HasNext, NFolderIndex.HasBoth)
 
     @property
     def index(self):
@@ -264,7 +283,7 @@ class CabDisk(Struct):
             self.skip_per_disk,
             self.skip_per_fldr,
             self.skip_per_data,
-        ) = reader.read_struct('HBB') if (
+        ) = (reader.u16(), reader.u8(), reader.u8()) if (
             self.flags & CabFlags.Reserve
         ) else (0, 0, 0)
 
@@ -384,9 +403,9 @@ class Cabinet:
                 raise CabVolumeMissing(ref=prev)
             if next := next_list[~0]:
                 raise CabVolumeMissing(ref=next)
-            for prev, next in zip(prev_list[2:], next_list[:-2]):
+            for k, (prev, next) in enumerate(zip(prev_list[2:], next_list[:-2]), 2):
                 if prev != next:
-                    raise ValueError(F'CAB disk sequence mismatch: {prev!s} != {next!s}.')
+                    raise CabSequenceMismatch(k, prev, next)
             if not checksums:
                 continue
             for disk in disks:
