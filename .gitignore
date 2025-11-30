@@ -12,3 +12,4 @@ __pycache__
 *.egg-info
 *.eggs
 *.pyc
+mptest.errors
