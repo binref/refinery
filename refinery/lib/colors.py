@@ -42,10 +42,11 @@ def colored_text_truncate(string: str | buf, end: int):
     """
     length = 0
     cursor = 0
+    clipat = end
     for match in ac.finditer(string):
         length = length - cursor + match.start()
         cursor = match.end()
         if length >= end:
             break
-        end += match.end() - match.start()
-    return string[:end]
+        clipat += match.end() - match.start()
+    return string[:clipat]
