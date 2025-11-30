@@ -532,7 +532,7 @@ def a3x_number_representation(value: float | int) -> str:
         return RF'{value!s}'
 
 
-def a3x_decompile(bytecode: bytes | bytearray) -> Generator[tuple[int, str]]:
+def a3x_decompile(bytecode: bytearray | memoryview) -> Generator[tuple[int, str]]:
     class _decompiler(dict):
         def __missing__(self, key):
             if key == 's':
@@ -602,7 +602,9 @@ def a3x_decompile(bytecode: bytes | bytearray) -> Generator[tuple[int, str]]:
                 except IndexError:
                     expected = None
                 if lt[0] != expected:
-                    raise ValueError(F'Unexpected {tokens[0]} in line {line}, expected {_PRETTY[expected]}.')
+                    expected = expected and F', expected {_PRETTY[expected]}' or ''
+                    raise ValueError(
+                        F'Unexpected {tokens[0]} in line {line}{expected}.')
                 indent -= 1
             if not indent and len(expected_terminators) > 0:
                 yield (0, '')
@@ -621,12 +623,15 @@ def a3x_decompile(bytecode: bytes | bytearray) -> Generator[tuple[int, str]]:
             line += 1
             tokens.clear()
         else:
-            tokens.append(A3X_OPCODES.get(opc).format_map(decompiler))
+            opt = A3X_OPCODES[opc]
+            if opc < 0x40:
+                opt = opt.format_map(decompiler)
+            tokens.append(opt)
     if expected_terminators:
         raise ValueError('Script truncated.')
 
 
-def a3x_decompress(data: bytearray, is_current: bool) -> bytearray:
+def a3x_decompress(data: bytearray | memoryview, is_current: bool) -> bytearray:
     output = MemoryFile()
     cursor = 0
     view = memoryview(data)
@@ -664,7 +669,7 @@ def a3x_decompress(data: bytearray, is_current: bool) -> bytearray:
     return output.getvalue()
 
 
-def a3x_decrypt_current(data: memoryview, key: int) -> bytearray:
+def a3x_decrypt_current(data: memoryview | bytearray, key: int) -> bytearray:
     a, b, t = 16, 6, []
 
     for _ in range(17):
@@ -698,7 +703,7 @@ def a3x_decrypt_current(data: memoryview, key: int) -> bytearray:
     return bytearray(_decrypted())
 
 
-def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
+def a3x_decrypt_legacy(data: bytearray | memoryview, key: int) -> bytearray:
     a, b, t = 1, 0, []
 
     t.append(key)
@@ -765,7 +770,7 @@ def a3x_decrypt_legacy(data: memoryview, key: int) -> bytearray:
     return bytearray(_decrypted())
 
 
-def a3x_decrypt(data: memoryview, key: int, is_current: bool = True) -> bytearray:
+def a3x_decrypt(data: memoryview | bytearray, key: int, is_current: bool = True) -> bytearray:
     if is_current:
         return a3x_decrypt_current(data, key)
     return a3x_decrypt_legacy(data, key)
@@ -848,20 +853,22 @@ class A3xRecord(Struct):
         self.checksum = reader.u32() ^ encryption_type.checksum
         self.created = reader.read_time()
         self.written = reader.read_time()
-        self.data = bytes(reader.read_exactly(self.size))
+        self.data = reader.read_exactly(self.size)
 
     def __hash__(self):
         return hash((self.path, self.type))
 
-    def __eq__(self, other: A3xRecord):
+    def __eq__(self, other):
+        if not isinstance(other, A3xRecord):
+            return False
         return self.path == other.path and self.type == other.type
 
     def extract(self) -> bytearray:
-        output = io.BytesIO()
+        output = MemoryFile()
         it = self.extract_linewise()
         output.write(next(it))
         for line in it:
-            output.write(B'\n')
+            output.write_byte(10)
             output.write(line)
         return output.getvalue()
 
