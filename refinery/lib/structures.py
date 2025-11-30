@@ -890,7 +890,7 @@ class StructReaderBits(StructReader[T]):
             if len(bb) != bytecount:
                 raise EOF(bytecount, bb)
             if not peek:
-                self.seekrel(bytecount)
+                self._cursor += bytecount
             if bytecount == 1:
                 result, = bb
             else:
