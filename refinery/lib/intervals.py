@@ -208,6 +208,22 @@ class IntIntervalUnion(IntervalUnion[int]):
         self._values[start] = value = value + new_value - new_delta
         return value
 
+    def gaps(self, lower: int = 0, upper: int | None = None):
+        """
+        Generate the sequence of gaps between all intervals in this interval union as (start,end)
+        tuples. This is notably different from how intervals are stored in the union, namely as
+        (start,length) tuples.
+        """
+        for interval in self:
+            start, size = interval
+            if upper is not None and start > upper:
+                break
+            if start > lower:
+                yield (lower, start)
+            lower = start + size
+        if upper is not None and lower < upper:
+            yield (lower, upper)
+
 
 class MemoryIntervalUnion(IntervalUnion[bytearray]):
     """
