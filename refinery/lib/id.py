@@ -506,35 +506,58 @@ def slice_offset(haystack: slice, needle: slice):
     return offset
 
 
-def buffer_offset(haystack: buf, needle: buf, start: int = 0, end: int | None = None, memory_allowance: int = 0x100):
+def buffer_offset(
+    haystack: buf,
+    needle: buf,
+    start: int = 0,
+    end: int | None = None,
+    ncopy: int = 0x100,
+    back2front: bool = False,
+):
     """
     Performs a substring search of `needle` in `haystack`. If `haystack` is a `bytes`-like object,
-    it uses the standard method. If it is a `memoryview`, it uses a regular expression search.
+    it uses the standard method. If it is a `memoryview`, the function first checks whether it is
+    a view onto a bytes or bytearray object at offset 0: In this case, it can reduce to using the
+    underlying object's standard method. Otherwise, it uses a regular expression search. This fails
+    when the memoryview is not contiguous: In this case, a bytearray is constructed from the view
+    and searched instead.
     """
     if (nc := len(needle)) == 0:
         return 0
-    if len(haystack) == 0:
+    if (hc := len(haystack)) == 0:
         return -1
     if isinstance(haystack, memoryview):
-        hs = haystack[start:end]
+        hs: memoryview = haystack[start:end] # type:ignore
+        hi = meminfo(hs)
+        if hi and hi.start == 0 and isinstance((obj := hs.obj), (bytes, bytearray)):
+            end = len(hs) if end is None else min(len(hs), end)
+            return buffer_offset(obj, needle, start, end, ncopy=ncopy, back2front=back2front)
+        elif back2front:
+            nv = memoryview(needle)
+            _s = 0 if end is None else hc - end
+            _e = hc - start if start else None
+            pos = buffer_offset(haystack[::-1], nv[::-1], _s, _e, ncopy)
+            if pos < 0:
+                return -1
+            return hc - pos - len(nv)
         if isinstance(needle, memoryview):
-            if haystack.obj is needle.obj and (n := meminfo(needle)) and (h := meminfo(hs)):
-                if (offset := slice_offset(h, n)) >= 0:
+            if hi and haystack.obj is needle.obj and (ni := meminfo(needle)):
+                if (offset := slice_offset(hi, ni)) >= 0:
                     return offset
         if not hs.contiguous:
             haystack = bytearray(haystack)
         else:
-            prefix = needle[:memory_allowance]
+            prefix = needle[:ncopy]
             if isinstance(prefix, memoryview):
                 prefix = bytes(prefix)
             match_sufficient = True
             suffix = B''
             pattern = re.escape(prefix)
             if rest := nc - len(prefix):
-                if rest > memory_allowance:
-                    suffix = needle[-memory_allowance:]
+                if rest > ncopy:
+                    suffix = needle[-ncopy:]
                     match_sufficient = False
-                    rest -= memory_allowance
+                    rest -= ncopy
                 else:
                     suffix = needle[-rest:]
                 if isinstance(suffix, memoryview):
@@ -552,7 +575,8 @@ def buffer_offset(haystack: buf, needle: buf, start: int = 0, end: int | None = 
                 return -1
     if isinstance(needle, memoryview) and not needle.contiguous:
         needle = bytearray(needle)
-    return haystack.find(needle, start, end)
+    find = haystack.rfind if back2front else haystack.find
+    return find(needle, start, end)
 
 
 def buffer_contains(haystack: buf, needle: buf):
