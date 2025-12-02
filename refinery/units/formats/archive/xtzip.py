@@ -3,36 +3,19 @@ from __future__ import annotations
 import codecs
 
 from datetime import datetime
+from zipfile import BadZipFile, ZipFile, ZipInfo
 
 from refinery.lib import lief
 from refinery.lib.id import buffer_offset, is_likely_pe
-from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.structures import MemoryFile
 from refinery.lib.types import buf
+from refinery.lib.zip import ZipFileRecord
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe import get_pe_size
 from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
 
 ZIP_FILENAME_UTF8_FLAG = 0x800
-
-
-class _FileRecord(Struct):
-    def __init__(self, reader: StructReader[memoryview]):
-        if reader.u32() != 0x04034B50:
-            raise ValueError
-        self.version = reader.u16()
-        self.flags = reader.u16()
-        self.method = reader.u16()
-        self.mtime = reader.u16()
-        self.mdate = reader.u16()
-        self.crc32 = reader.u32()
-        self.csize = reader.u32()
-        self.usize = reader.u32()
-        nl = reader.u16()
-        xl = reader.u16()
-        self.name = reader.read_exactly(nl)
-        self.xtra = reader.read_exactly(xl)
-        self.data = reader.read_exactly(self.csize)
 
 
 class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
@@ -54,8 +37,6 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         return carve_zip
 
     def unpack(self, data: buf):
-        from zipfile import BadZipFile, ZipFile, ZipInfo
-
         def password_invalid(password: bytes | None):
             nonlocal archive, fallback
             if password:
@@ -109,7 +90,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     if 'password' not in str(E):
                         raise
                     msg = 'invalid password; use -L to extract raw encrypted data'
-                    rec = _FileRecord.Parse(view[info.header_offset:])
+                    rec = ZipFileRecord.Parse(view[info.header_offset:])
                     raise RefineryPartialResult(msg, rec.data) from E
 
             if info.filename:
@@ -145,7 +126,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         if not is_likely_pe(data):
             return False
         memory = memoryview(data)
-        if 0 <= buffer_offset(memory[-0x400:], ZipEndOfCentralDirectory.SIGNATURE):
+        if 0 <= buffer_offset(memory[-0x400:], ZipEndOfCentralDirectory.Signature):
             return True
         pe = lief.load_pe_fast(data)
         offset = get_pe_size(pe)

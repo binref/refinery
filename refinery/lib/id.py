@@ -513,7 +513,7 @@ def buffer_offset(
     end: int | None = None,
     ncopy: int = 0x100,
     back2front: bool = False,
-):
+) -> int:
     """
     Performs a substring search of `needle` in `haystack`. If `haystack` is a `bytes`-like object,
     it uses the standard method. If it is a `memoryview`, the function first checks whether it is
