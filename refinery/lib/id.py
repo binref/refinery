@@ -758,7 +758,7 @@ def is_likely_eml(
     hits = 0
     view = memoryview(data)[:window_size]
     for marker in (
-        b'\nReceived:\x20from'
+        b'\nReceived:\x20from',
         b'\nSubject:\x20',
         b'\nTo:\x20',
         b'\nFrom:\x20',
