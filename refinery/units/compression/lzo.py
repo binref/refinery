@@ -57,12 +57,12 @@ class LZOChunk(Struct):
 
 
 class LZO(Struct):
-    SIGNATURE = B'\x89\x4c\x5a\x4f\x00\x0d\x0a\x1a\x0a'
+    Signature = B'\x89\x4c\x5a\x4f\x00\x0d\x0a\x1a\x0a'
 
     def __init__(self, reader: StructReader[memoryview]):
         signature = reader.read(9)
 
-        if signature != self.SIGNATURE:
+        if signature != self.Signature:
             raise LZOError(F'Invalid Signature: {signature.hex()}')
 
         reader.bigendian = True
@@ -278,5 +278,5 @@ class lzo(Unit):
 
     @classmethod
     def handles(cls, data) -> bool | None:
-        if data[:len(LZO.SIGNATURE)] == LZO.SIGNATURE:
+        if data[:len(LZO.Signature)] == LZO.Signature:
             return True
