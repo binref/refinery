@@ -3,7 +3,9 @@ Structures for parsing ZIP archives.
 """
 from __future__ import annotations
 
+import bisect
 import enum
+import re
 import zlib
 
 from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
@@ -228,7 +230,7 @@ class ZipFileRecord(Struct):
         reader: StructReader[memoryview],
         is64bit: bool = False,
         read_data: bool = True,
-        streamed: bool = True,
+        ddirs: list[int] | None = None,
         password: str | None = None,
     ):
         if reader.read(4) != self.Signature:
@@ -274,10 +276,10 @@ class ZipFileRecord(Struct):
         else:
             self.data = reader.read_exactly(self.csize)
 
-        if streamed:
-            while not self.csize:
-                if (ddpos := buffer_offset(reader.getbuffer(), ZipDataDescriptor.Signature, start)) < 0:
-                    break
+        if ddirs and not self.csize:
+            k = bisect.bisect_left(ddirs, start)
+            for k in range(k, len(ddirs)):
+                ddpos = ddirs[k]
                 csize = ddpos - self.data_offset
                 self.data = reader.read_exactly(csize)
                 info = ZipDataDescriptor(reader, is64bit)
@@ -285,9 +287,14 @@ class ZipFileRecord(Struct):
                     self.crc32 = info.crc32
                     self.csize = info.csize
                     self.usize = info.usize
-                else:
-                    reader.seekset(self.data_offset)
-                    start += len(ZipDataDescriptor.Signature)
+                    break
+                reader.seekset(self.data_offset)
+                start += 4
+        elif self.flags.DataDescriptor or reader.peek(4) == ZipDataDescriptor.Signature:
+            info = ZipDataDescriptor(reader, is64bit)
+            self.crc32 = info.crc32
+            self.csize = info.csize
+            self.usize = info.usize
 
         if self.encryption and password and (ct := self.data):
             self.data = self.encryption.decrypt(password, ct)
@@ -542,30 +549,31 @@ class Zip:
         else:
             self.digital_signature = None
 
-        streamed = buffer_offset(view, ZipDataDescriptor.Signature) > 0
+        def record(**kwargs):
+            return ZipFileRecord(reader, is64bit=self.is64bit, ddirs=ddirs, password=password, **kwargs)
 
-        if self.directory:
-            for entry in self.directory:
-                start = entry.header_offset + shift
-                reader.seekset(start)
-                records[start] = r = ZipFileRecord(
-                    reader, streamed=streamed, is64bit=self.is64bit, password=password)
-                coverage.addi(start, len(r))
+        ddirs = [match.start()
+            for match in re.finditer(re.escape(ZipDataDescriptor.Signature), view)]
+
+        for entry in self.directory:
+            start = entry.header_offset + shift
+            reader.seekset(start)
+            records[start] = r = record()
+            coverage.addi(start, len(r))
 
         for start, end in list(coverage.gaps(0, len(view))):
             gap = view[start:end]
             while gap[:4] == ZipFileRecord.Signature:
                 reader.seekset(start)
                 try:
-                    r = ZipFileRecord(reader, read_data=False)
+                    r = record(read_data=False)
                     n = len(r)
                 except Exception:
                     break
                 if gap[n:n + 4] != ZipFileRecord.Signature and len(gap) >= n + r.csize:
                     reader.seekset(start)
                     try:
-                        r = ZipFileRecord(
-                            reader, streamed=streamed, is64bit=self.is64bit, password=password)
+                        r = record()
                     except Exception:
                         pass
                     else:
