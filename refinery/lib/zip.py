@@ -88,6 +88,46 @@ class ZipInternalFileAttributes(FlagAccessMixin, enum.IntFlag):
     RecordLengthControl = 0x0002
 
 
+class ApkSigningBlock42Entry(Struct):
+    def __init__(self, reader: StructReader[memoryview]):
+        length = reader.u64()
+        self.id = reader.u32()
+        self.value = reader.read_exactly(length - 4)
+
+
+class ApkSigningBlock42(Struct):
+    Signature = B'APK Sig Block 42'
+
+    @classmethod
+    def FromCentralDir(cls, reader: StructReader[memoryview]) -> ApkSigningBlock42 | None:
+        if (seek := reader.tell() - 0x10 - 8) >= 0:
+            reader.seekset(seek)
+            size = reader.u64()
+            if reader.read(0x10) != cls.Signature:
+                return None
+            if (seek := reader.tell() - size - 8) >= 0:
+                reader.seekset(seek)
+                apksig = cls(reader)
+                if (m := len(apksig)) != (n := size + 8):
+                    raise ValueError(F'Size mismatch: {m} != {n}.')
+                return apksig
+
+    def __init__(self, reader: StructReader[memoryview]):
+        self.offset = reader.tell()
+        n = reader.u64()
+        if n < 0x18:
+            raise ValueError(F'Invalid length {n} for {self.__class__.__name__}.')
+        body = StructReader(reader.read_exactly(n - 0x18))
+        if (m := reader.u64()) != n:
+            raise ValueError(F'Size mismatch: {m} != {n}.')
+        if reader.read(0x10) != self.Signature:
+            raise ValueError('Invalid signature.')
+        fields: list[ApkSigningBlock42Entry] = []
+        while not body.eof:
+            fields.append(ApkSigningBlock42Entry(body))
+        self.fields = fields
+
+
 class ZipEncryptionHeader(Struct):
     def __init__(self, reader: StructReader[memoryview]):
         self.iv = bytes(reader.read_exactly(reader.u16()))
@@ -505,6 +545,10 @@ class Zip:
         self.offset_directory = start
         reader.seekset(start)
 
+        self.apksig = ApkSigningBlock42.FromCentralDir(reader)
+        if (apksig := self.apksig):
+            coverage.addi(apksig.offset, len(apksig))
+
         if reader.peek(4) == ZipArchiveExtraDataRecord.Signature:
             self.archive_extra_data = ZipArchiveExtraDataRecord(reader)
             coverage.addi(start, len(self.archive_extra_data))
@@ -563,6 +607,10 @@ class Zip:
 
         for start, end in list(coverage.gaps(0, len(view))):
             gap = view[start:end]
+            if apksig and end == apksig.offset and not any(gap):
+                # Signature Padding
+                coverage.addi(start, len(gap))
+                continue
             while gap[:4] == ZipFileRecord.Signature:
                 reader.seekset(start)
                 try:
