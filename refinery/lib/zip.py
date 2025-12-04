@@ -9,6 +9,8 @@ import enum
 import re
 import zlib
 
+from datetime import datetime
+
 from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
 from Cryptodome.Hash import HMAC, SHA1
 from Cryptodome.Protocol.KDF import PBKDF2
@@ -324,6 +326,10 @@ class ZipFileRecord(Struct):
         self.version = reader.u16()
         self.flags = ZipGeneralPurposeFlags(reader.u16())
         self.method = ZipCompressionMethod(reader.u16())
+        try:
+            self.date = datefix.dostime(reader.u32(peek=True))
+        except Exception:
+            self.date = None
         self.mtime = reader.u16()
         self.mdate = reader.u16()
         self.crc32 = reader.u32()
@@ -336,6 +342,7 @@ class ZipFileRecord(Struct):
 
         self.ae = None
         self.ux = None
+        self.up = None
         self.ts = None
 
         codec = 'utf8' if self.flags.LanguageEncoding else 'latin1'
@@ -352,6 +359,7 @@ class ZipFileRecord(Struct):
                 self.ae = ae
                 self.method = ae.method
             elif up := ZipExtUnicodePath.TryParse(x):
+                self.up = up
                 if up.crc == zlib.crc32(self.name_bytes) & 0xFFFFFFFF:
                     self.name = up.name
             elif ux := ZipExtUnixIDs.TryParse(x):
@@ -364,7 +372,7 @@ class ZipFileRecord(Struct):
         elif self.flags.StrongEncryption:
             self.encryption = ZipEncryptionHeader(reader)
         elif self.ae:
-            self.encryption = self.ae
+            self.encryption = (dir.ae if dir else None) or self.ae
         else:
             self.encryption = ZipCrypto()
 
@@ -395,6 +403,39 @@ class ZipFileRecord(Struct):
             self.crc32 = info.crc32
             self.csize = info.csize
             self.usize = info.usize
+
+    def get_mtime(self):
+        ts = None
+        if dir := self.dir:
+            if (ts := dir.ts) is None and (dt := dir.date):
+                return dt
+        if ts := ts or self.ts:
+            return datetime.fromtimestamp(ts.mtime)
+        return self.date
+
+    def get_ctime(self):
+        if ts := (d.ts if (d := self.dir) else None) or self.ts:
+            return datetime.fromtimestamp(ts.ctime)
+
+    def get_atime(self):
+        if ts := (d.ts if (d := self.dir) else None) or self.ts:
+            return datetime.fromtimestamp(ts.atime)
+
+    def get_name(self):
+        if (dir := self.dir) and (name := dir.name):
+            return name
+        return self.name
+
+    def get_gid(self):
+        if ux := (d.ux if (d := self.dir) else None) or self.ux:
+            return ux.gid
+
+    def get_uid(self):
+        if ux := (d.ux if (d := self.dir) else None) or self.ux:
+            return ux.uid
+
+    def is_dir(self):
+        return self.get_name().endswith(('/', '\\'))
 
     def unpack(self, password: str | None = None):
         if (d := self.data) is None:
@@ -604,8 +645,8 @@ class ZipExtUnixIDs(ZipExt):
     HeaderID = 0x7875
 
     def __init__(self, reader: StructReader[memoryview]):
-        self.uid = reader.read_exactly(reader.u8())
-        self.gid = reader.read_exactly(reader.u8())
+        self.uid = bytes(reader.read_exactly(reader.u8()))
+        self.gid = bytes(reader.read_exactly(reader.u8()))
 
 
 class ZipExtTimestampFlags(FlagAccessMixin, enum.IntFlag):
@@ -652,32 +693,42 @@ class ZipDirEntry(Struct):
         self.crc32 = reader.u32()
         self.csize = reader.u32()
         self.usize = reader.u32()
-        len_filename = reader.u16()
-        len_extra = reader.u16()
-        len_comment = reader.u16()
+        nl = reader.u16()
+        xl = reader.u16()
+        cl = reader.u16()
         self.disk_nr_start = reader.u16()
         self.internal_attributes = ZipInternalFileAttributes(reader.u16())
         self.external_attributes = reader.u32()
         self.header_offset = reader.u32()
-        self.filename = len_filename and reader.read(len_filename) or None
-        extras = len_extra and reader.read(len_extra) or None
-        self.comment = len_comment and reader.read(len_comment) or None
-        self.extras = ZipExtraField.ParseBuffer(extras)
+        self.name_bytes = reader.read_exactly(nl)
+        extras = reader.read_exactly(xl)
+        self.comment = reader.read_exactly(cl)
+        self.xtra = ZipExtraField.ParseBuffer(extras)
 
-        for extra in self.extras:
-            if extra.header_id == ZipExtInfo64.HeaderID:
-                z64 = ZipExtInfo64.Parse(
-                    extra.data,
-                    self.usize,
-                    self.csize,
-                    self.header_offset,
-                    self.disk_nr_start,
-                )
+        codec = 'utf8' if self.flags.LanguageEncoding else 'latin1'
+        self.name = codecs.decode(self.name_bytes, codec)
+
+        self.ae = None
+        self.up = None
+        self.ux = None
+        self.ts = None
+
+        for x in self.xtra:
+            if z64 := ZipExtInfo64.TryParse(x, self.usize, self.csize, self.header_offset, self.disk_nr_start):
                 self.usize = z64.usize
                 self.csize = z64.csize
                 self.header_offset = z64.header_offset
                 self.disk_nr_start = z64.disk_nr_start
-                break
+            elif ae := ZipExtAES.TryParse(x):
+                self.ae = ae
+            elif up := ZipExtUnicodePath.TryParse(x):
+                self.up = up
+                if up.crc == zlib.crc32(self.name_bytes) & 0xFFFFFFFF:
+                    self.name = up.name
+            elif ux := ZipExtUnixIDs.TryParse(x):
+                self.ux = ux
+            elif ts := ZipExtTimestamp.TryParse(x):
+                self.ts = ts
 
 
 class Zip:
