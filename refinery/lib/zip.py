@@ -4,6 +4,7 @@ Structures for parsing ZIP archives.
 from __future__ import annotations
 
 import bisect
+import codecs
 import enum
 import re
 import zlib
@@ -93,6 +94,34 @@ class ZipCompressionMethod(enum.IntEnum):
     RESERVED13 = 13
     RESERVED15 = 15
     RESERVED17 = 17
+
+
+class ZipCrypto:
+    def decrypt(self, password: str, data: buf):
+        key0 = 305419896
+        key1 = 591751049
+        key2 = 878082192
+
+        def update_keys(c: int):
+            nonlocal key0, key1, key2
+            key0 = zlib.crc32(bytes((c,)), key0)
+            key1 = (key1 + (key0 & 0xFF)) & 0xFFFFFFFF
+            key1 = (key1 * 134775813 + 1) & 0xFFFFFFFF
+            key2 = zlib.crc32(bytes((key1 >> 24,)), key2)
+
+        for c in password.encode('latin1'):
+            update_keys(c)
+
+        result = bytearray()
+        append = result.append
+
+        for c in data:
+            k = key2 | 2
+            c ^= ((k * (k ^ 1)) >> 8) & 0xFF
+            update_keys(c)
+            append(c)
+
+        return result
 
 
 class ZipInternalFileAttributes(FlagAccessMixin, enum.IntFlag):
@@ -281,10 +310,13 @@ class ZipFileRecord(Struct):
         self,
         reader: StructReader[memoryview],
         is64bit: bool = False,
-        read_data: bool = True,
         ddirs: list[int] | None = None,
-        password: str | None = None,
+        read_data: bool = True,
     ):
+
+        self._unpacked = None
+        self.offset = reader.tell()
+
         if reader.read(4) != self.Signature:
             raise ValueError
         self.version = reader.u16()
@@ -297,28 +329,42 @@ class ZipFileRecord(Struct):
         self.usize = reader.u32()
         nl = reader.u16()
         xl = reader.u16()
-        self.name = reader.read_exactly(nl)
+        self.name_bytes = reader.read_exactly(nl)
         self.xtra = ZipExtraField.ParseBuffer(reader.read_exactly(xl))
-        self.aesx = None
+
+        self.ae = None
+        self.ux = None
+        self.ts = None
+
+        codec = 'utf8' if self.flags.LanguageEncoding else 'latin1'
+        self.name = codecs.decode(self.name_bytes, codec)
 
         for x in self.xtra:
-            if x.header_id == ZipExtInfo64.HeaderID:
-                z64 = ZipExtInfo64.Parse(x.data, self.usize, self.csize)
+            if z64 := ZipExtInfo64.TryParse(x, self.usize, self.csize):
                 self.usize = z64.usize
                 self.csize = z64.csize
                 is64bit = True
-            elif x.header_id == ZipExtAES.HeaderID:
+            elif ae := ZipExtAES.TryParse(x):
                 if self.method != ZipCompressionMethod.AExENCRYPTION:
                     raise ValueError(F'AES extension found, but compression method was {self.method.name}.')
-                self.aesx = ZipExtAES.Parse(x.data)
-                self.method = self.aesx.method
+                self.ae = ae
+                self.method = ae.method
+            elif up := ZipExtUnicodePath.TryParse(x):
+                if up.crc == zlib.crc32(self.name_bytes) & 0xFFFFFFFF:
+                    self.name = up.name
+            elif ux := ZipExtUnixIDs.TryParse(x):
+                self.ux = ux
+            elif ts := ZipExtTimestamp.TryParse(x):
+                self.ts = ts
 
         if not self.flags.Encrypted:
             self.encryption = None
         elif self.flags.StrongEncryption:
             self.encryption = ZipEncryptionHeader(reader)
+        elif self.ae:
+            self.encryption = self.ae
         else:
-            self.encryption = self.aesx
+            self.encryption = ZipCrypto()
 
         self.data_offset = start = reader.tell()
 
@@ -348,8 +394,43 @@ class ZipFileRecord(Struct):
             self.csize = info.csize
             self.usize = info.usize
 
-        if self.encryption and password and (ct := self.data):
-            self.data = self.encryption.decrypt(password, ct)
+    def unpack(self, password: str | None = None):
+        if (d := self.data) is None:
+            raise ValueError(F'The data for this {self.__class__.__name__} was not read.')
+        if (u := self._unpacked) is not None:
+            return u
+
+        if e := self.encryption:
+            if not password:
+                raise PasswordRequired
+            compressed = e.decrypt(password, d)
+        else:
+            compressed = d
+
+        if (m := self.method) == ZipCompressionMethod.STORE:
+            u = compressed
+        elif m == ZipCompressionMethod.DEFLATE:
+            u = zlib.decompress(compressed, -15)
+        elif m == ZipCompressionMethod.BZIP2:
+            import bz2
+            u = bz2.decompress(compressed)
+        elif m == ZipCompressionMethod.LZMA:
+            import lzma
+            u = lzma.decompress(compressed)
+        elif m == ZipCompressionMethod.ZSTD:
+            try:
+                import pyzstd as zstd
+            except ImportError:
+                raise NotImplementedError('ZSTD decompression requires the pyzstd package')
+            dctx = zstd.ZstdDecompressor()
+            u = dctx.decompress(compressed)
+        elif m == ZipCompressionMethod.XZ:
+            import lzma
+            u = lzma.decompress(compressed, format=lzma.FORMAT_XZ)
+        else:
+            raise NotImplementedError(F'Compression method {m.name} is not implemented.')
+        self._unpacked = u
+        return u
 
 
 class ZipEndOfCentralDirectory(Struct):
@@ -491,7 +572,7 @@ class ZipExtAES(ZipExt):
         return result
 
 
-class ZipExtInfo64(Struct):
+class ZipExtInfo64(ZipExt):
     HeaderID = 0x0001
 
     def __init__(
@@ -515,6 +596,39 @@ class ZipExtInfo64(Struct):
             self.header_offset = reader.u64()
         if disk_nr_start == 0xFFFF:
             self.disk_nr_start = reader.u32()
+
+
+class ZipExtUnixIDs(ZipExt):
+    HeaderID = 0x7875
+
+    def __init__(self, reader: StructReader[memoryview]):
+        self.uid = reader.read_exactly(reader.u8())
+        self.gid = reader.read_exactly(reader.u8())
+
+
+class ZipExtTimestampFlags(FlagAccessMixin, enum.IntFlag):
+    Modification = 0
+    Access = 1
+    Creation = 2
+
+
+class ZipExtTimestamp(ZipExt):
+    HeaderID = 0x5455
+
+    def __init__(self, reader: StructReader[memoryview]):
+        self.flags = ZipExtTimestampFlags(reader.u8())
+        self.mtime = reader.u32()
+        self.atime = reader.u32()
+        self.ctime = reader.u32()
+
+
+class ZipExtUnicodePath(ZipExt):
+    HeaderID = 0x7075
+
+    def __init__(self, reader: StructReader[memoryview]):
+        self.version = reader.u8()
+        self.crc = reader.u32()
+        self.name = codecs.decode(reader.read(), 'utf8')
 
 
 class ZipCentralDirectoryEntry(Struct):
@@ -565,10 +679,22 @@ class ZipCentralDirectoryEntry(Struct):
 
 
 class Zip:
+
+    def parse_record(self, offset: int | None = None, read_data: bool = True):
+        if offset is not None:
+            self.reader.seekset(offset)
+        return ZipFileRecord(
+            self.reader,
+            is64bit=self.is64bit,
+            ddirs=self.ddirs,
+            read_data=read_data,
+        )
+
     def __init__(self, data: buf, password: str | None = None):
-        reader = StructReader(view := memoryview(data))
+        self.reader = reader = StructReader(view := memoryview(data))
         self.is64bit = True
         self.coverage = coverage = IntIntervalUnion()
+        self.password = password
 
         for EOCD in (
             ZipEndOfCentralDirectory64,
@@ -643,16 +769,13 @@ class Zip:
         else:
             self.digital_signature = None
 
-        def record(**kwargs):
-            return ZipFileRecord(reader, is64bit=self.is64bit, ddirs=ddirs, password=password, **kwargs)
-
-        ddirs = [match.start()
+        self.ddirs = [match.start()
             for match in re.finditer(re.escape(ZipDataDescriptor.Signature), view)]
 
         for entry in self.directory:
             start = entry.header_offset + shift
             reader.seekset(start)
-            records[start] = r = record()
+            records[start] = r = self.parse_record()
             coverage.addi(start, len(r))
 
         for start, end in list(coverage.gaps(0, len(view))):
@@ -664,14 +787,14 @@ class Zip:
             while gap[:4] == ZipFileRecord.Signature:
                 reader.seekset(start)
                 try:
-                    r = record(read_data=False)
+                    r = self.parse_record(read_data=False)
                     n = len(r)
                 except Exception:
                     break
                 if gap[n:n + 4] != ZipFileRecord.Signature and len(gap) >= n + r.csize:
                     reader.seekset(start)
                     try:
-                        r = record()
+                        r = self.parse_record()
                     except Exception:
                         pass
                     else:
