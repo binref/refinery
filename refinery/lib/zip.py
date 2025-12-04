@@ -20,6 +20,18 @@ from refinery.lib.types import buf
 from refinery.units.misc.datefix import datefix
 
 
+class PasswordRequired(Exception):
+    pass
+
+
+class InvalidPassword(ValueError):
+    pass
+
+
+class DataIntegrityError(ValueError):
+    pass
+
+
 class ZipGeneralPurposeFlags(FlagAccessMixin, enum.IntFlag):
     Encrypted           = 0x0001 # noqa
     Implode8kDict       = 0x0002 # noqa
@@ -214,7 +226,7 @@ class ZipEncryptionHeader(Struct):
         password_verify = key_material[key_size * 2:key_size * 2 + 2]
 
         if password_verify != self.validation[:2]:
-            raise ValueError('Incorrect password')
+            raise InvalidPassword
 
         decrypted = _cipher(encryption_key).decrypt(data)
 
@@ -222,7 +234,7 @@ class ZipEncryptionHeader(Struct):
             computed_hmac = HMAC.new(hmac_key, data, SHA1).digest()
             expected_hmac = self.validation[2:12] if len(self.validation) >= 12 else self.validation[2:]
             if computed_hmac[:len(expected_hmac)] != expected_hmac:
-                raise ValueError('HMAC verification failed.')
+                raise InvalidPassword
 
         return decrypted
 
@@ -402,7 +414,31 @@ class ZipExtraField(Struct):
         return extras
 
 
-class ZipExtAES(Struct):
+class ZipExt(Struct):
+    HeaderID: int
+
+    @classmethod
+    def TryParse(cls, extra: ZipExtraField, *args, **kwargs):
+        if extra.header_id != cls.HeaderID:
+            return None
+        return cls.Parse(extra.data, *args, **kwargs)
+
+
+class AExMsg(Struct):
+    def __init__(self, cr: StructReader[memoryview], version: int, strength: int):
+        self.salt = cr.read((strength + 1) << 2)
+        self.pvv = cr.read(2)
+        if version == 3:
+            self.nonce = cr.read(12)
+            taglen = 16
+        else:
+            self.nonce = None
+            taglen = 10
+        self.ciphertext = cr.read(cr.remaining_bytes - taglen)
+        self.auth = cr.read()
+
+
+class ZipExtAES(ZipExt):
     HeaderID = 0x9901
 
     def __init__(self, reader: StructReader[memoryview]):
@@ -413,32 +449,46 @@ class ZipExtAES(Struct):
             raise ValueError(F'Invalid AES strength {self.strength}.')
         self.method = ZipCompressionMethod(reader.u16())
 
-    def decrypt(self, password: str, data: buf):
-        ks = (self.strength + 1) << 3
-        cr = StructReader(memoryview(data))
-        salt = cr.read((self.strength + 1) << 2)
-        pvv = cr.read(2)
-        ciphertext = cr.read(cr.remaining_bytes - 10)
-        mac = cr.read()
-        derived = PBKDF2(
-            password,
-            salt,
-            dkLen=(ks << 1) + 2,
-            count=1000,
-            hmac_hash_module=SHA1
-        )
+    @property
+    def keylen(self):
+        return (self.strength + 1) << 3
+
+    @property
+    def saltlen(self):
+        return (self.strength + 1) << 2
+
+    def _derive(self, password: str, salt: buf):
+        ks = self.keylen
+        dk = ks + 2
+        if self.version < 3:
+            dk += ks
+        derived = PBKDF2(password, salt, dkLen=dk, count=1000, hmac_hash_module=SHA1)
         cr = StructReader(derived)
-        derived_key = cr.read(ks)
-        derived_mac = cr.read(ks)
-        derived_pvv = cr.read(2)
-        if derived_pvv != pvv:
-            raise ValueError("Incorrect password.")
-        computed_hmac = HMAC.new(derived_mac, ciphertext, SHA1).digest()
-        if computed_hmac[:10] != mac:
-            raise ValueError('HMAC verification failed.')
-        ctr = Counter.new(128, initial_value=1, little_endian=True)
-        cipher = AES.new(derived_key, AES.MODE_CTR, counter=ctr)
-        return cipher.decrypt(ciphertext)
+        key = cr.read(ks)
+        mac = cr.read(ks) if self.version < 3 else B''
+        pvv = cr.read()
+        return key, mac, pvv
+
+    def decrypt(self, password: str, data: buf):
+        msg = AExMsg.Parse(data, self.version, self.strength)
+        dk, dm, dp = self._derive(password, msg.salt)
+        if dp != msg.pvv:
+            raise InvalidPassword
+        if self.version < 3:
+            computed_hmac = HMAC.new(dm, msg.ciphertext, SHA1).digest()
+            if computed_hmac[:10] != msg.auth:
+                raise DataIntegrityError
+            ctr = Counter.new(128, initial_value=1, little_endian=True)
+            cipher = AES.new(dk, AES.MODE_CTR, counter=ctr)
+            result = cipher.decrypt(msg.ciphertext)
+        else:
+            cipher = AES.new(dk, AES.MODE_GCM, nonce=msg.nonce)
+            result = cipher.decrypt(msg.ciphertext)
+            try:
+                cipher.verify(msg.auth)
+            except ValueError as V:
+                raise DataIntegrityError from V
+        return result
 
 
 class ZipExtInfo64(Struct):
