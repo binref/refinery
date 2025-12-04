@@ -175,7 +175,7 @@ class ZipEncryptionHeader(Struct):
         elif algorithm == ZipEncryptionAlgorithm.Blowfish:
             block_cipher = Blowfish
         elif algorithm == ZipEncryptionAlgorithm.BuggyRC2:
-            raise ValueError(
+            raise NotImplementedError(
                 F'This ZIP uses a buggy and unsupported RC2 implementation, indicated by the legacy identifier {algorithm:#x}.')
         elif algorithm == ZipEncryptionAlgorithm.Twofish:
             raise NotImplementedError(
