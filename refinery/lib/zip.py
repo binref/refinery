@@ -740,14 +740,12 @@ class Zip:
             self.encrypted_directory = reader.read_exactly(size)
             coverage.addi(start, size)
             if password is None:
-                raise ValueError('Cannot parse encrypted archive without password.')
-                self.directory = []
-            else:
-                decrypted_cd = self.encryption.decrypt(password, self.encrypted_directory)
-                cd = StructReader(memoryview(decrypted_cd))
-                self.directory = [
-                    ZipCentralDirectoryEntry(cd) for _ in range(eocd.entries_in_directory)
-                ]
+                raise PasswordRequired
+            decrypted_cd = self.encryption.decrypt(password, self.encrypted_directory)
+            cd = StructReader(memoryview(decrypted_cd))
+            self.directory = [
+                ZipCentralDirectoryEntry(cd) for _ in range(eocd.entries_in_directory)
+            ]
         else:
             self.encryption = None
             self.encrypted_directory = None
