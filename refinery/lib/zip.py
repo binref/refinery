@@ -312,10 +312,12 @@ class ZipFileRecord(Struct):
         is64bit: bool = False,
         ddirs: list[int] | None = None,
         read_data: bool = True,
+        dir: ZipDirEntry | None = None,
     ):
 
         self._unpacked = None
         self.offset = reader.tell()
+        self.dir = dir
 
         if reader.read(4) != self.Signature:
             raise ValueError
@@ -631,7 +633,7 @@ class ZipExtUnicodePath(ZipExt):
         self.name = codecs.decode(reader.read(), 'utf8')
 
 
-class ZipCentralDirectoryEntry(Struct):
+class ZipDirEntry(Struct):
     Signature = B'PK\x01\x02'
 
     def __init__(self, reader: StructReader[memoryview]):
@@ -680,7 +682,7 @@ class ZipCentralDirectoryEntry(Struct):
 
 class Zip:
 
-    def parse_record(self, offset: int | None = None, read_data: bool = True):
+    def parse_record(self, offset: int | None = None, read_data: bool = True, dir: ZipDirEntry | None = None):
         if offset is not None:
             self.reader.seekset(offset)
         return ZipFileRecord(
@@ -688,6 +690,7 @@ class Zip:
             is64bit=self.is64bit,
             ddirs=self.ddirs,
             read_data=read_data,
+            dir=dir,
         )
 
     def __init__(self, data: buf, password: str | None = None):
@@ -732,7 +735,7 @@ class Zip:
         else:
             self.archive_extra_data = None
 
-        if reader.peek(4) != ZipCentralDirectoryEntry.Signature:
+        if reader.peek(4) != ZipDirEntry.Signature:
             self.encryption = ZipEncryptionHeader(reader)
             coverage.addi(start, len(self.encryption))
             start = reader.tell()
@@ -744,13 +747,13 @@ class Zip:
             decrypted_cd = self.encryption.decrypt(password, self.encrypted_directory)
             cd = StructReader(memoryview(decrypted_cd))
             self.directory = [
-                ZipCentralDirectoryEntry(cd) for _ in range(eocd.entries_in_directory)
+                ZipDirEntry(cd) for _ in range(eocd.entries_in_directory)
             ]
         else:
             self.encryption = None
             self.encrypted_directory = None
             self.directory = [
-                ZipCentralDirectoryEntry(reader) for _ in range(eocd.entries_in_directory)
+                ZipDirEntry(reader) for _ in range(eocd.entries_in_directory)
             ]
             coverage.addi(start, sum(len(d) for d in self.directory))
 
@@ -773,7 +776,7 @@ class Zip:
         for entry in self.directory:
             start = entry.header_offset + shift
             reader.seekset(start)
-            records[start] = r = self.parse_record()
+            records[start] = r = self.parse_record(dir=entry)
             coverage.addi(start, len(r))
 
         for start, end in list(coverage.gaps(0, len(view))):
