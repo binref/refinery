@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from refinery.lib.shared import pyzstd
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.types import buf
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -13,11 +14,6 @@ class xtnuitka(PathExtractorUnit):
     """
     _MAGIC = B'KA'
 
-    @PathExtractorUnit.Requires('pyzstd', ['arc'])
-    def _pyzstd():
-        import pyzstd
-        return pyzstd
-
     def unpack(self, data: buf) -> Iterable[UnpackResult]:
         class NuitkaData(Struct):
             unit = self
@@ -26,7 +22,7 @@ class xtnuitka(PathExtractorUnit):
                 self.magic = reader.read_exactly(2)
                 self.compression_flag = reader.read_exactly(1)
                 if self.compressed:
-                    zd = self.unit._pyzstd.ZstdDecompressor()
+                    zd = pyzstd.ZstdDecompressor()
                     reader = StructReader(zd.decompress(reader.read()))
                 self.files = {}
                 self.truncated = False

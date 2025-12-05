@@ -117,3 +117,15 @@ def orjson():
 def pefile():
     import pefile
     return pefile
+
+
+@__global_dependency('pyppmd', ['arc', 'extended'])
+def pyppmd():
+    import pyppmd
+    return pyppmd
+
+
+@__global_dependency('pyzstd', ['arc', 'extended'])
+def pyzstd():
+    import pyzstd
+    return pyzstd
