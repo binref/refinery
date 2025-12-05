@@ -643,12 +643,10 @@ class AExCrypto(Struct):
         self.pvv = cr.read(2)
         if ae.version == 3:
             self.nonce = cr.read(12)
-            taglen = 16
+            self.auth_size = 16
         else:
             self.nonce = None
-            taglen = 10
-        self.ciphertext = cr.read(cr.remaining_bytes - taglen)
-        self.auth = cr.read()
+            self.auth_size = 10
         self.keylen = (ae.strength + 1) << 3
 
     def _derive(self, password: str, salt: buf):
@@ -673,18 +671,21 @@ class AExCrypto(Struct):
         dk, dm, dp = self._derive(password, self.salt)
         if dp != self.pvv:
             raise InvalidPassword
+        view = memoryview(data)
+        ciphertext = view[:-self.auth_size]
+        auth = view[-self.auth_size:]
         if self.version < 3:
-            hmac = HMAC.new(dm, self.ciphertext, SHA1).digest()
-            if hmac[:10] != self.auth:
+            hmac = HMAC.new(dm, ciphertext, SHA1).digest()
+            if hmac[:10] != auth:
                 raise DataIntegrityError
             ctr = Counter.new(128, initial_value=1, little_endian=True)
             cipher = AES.new(dk, AES.MODE_CTR, counter=ctr)
-            result = cipher.decrypt(self.ciphertext)
+            result = cipher.decrypt(ciphertext)
         else:
             cipher = AES.new(dk, AES.MODE_GCM, nonce=self.nonce)
-            result = cipher.decrypt(self.ciphertext)
+            result = cipher.decrypt(ciphertext)
             try:
-                cipher.verify(self.auth)
+                cipher.verify(auth)
             except ValueError as V:
                 raise DataIntegrityError from V
         return result

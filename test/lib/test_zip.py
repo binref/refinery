@@ -9,6 +9,33 @@ from test.units.compression import KADATH1, KADATH2
 
 class TestZIP(TestBase):
 
+    def test_ae_crypto_bzip2(self):
+        data = base64.b85decode(
+            'P)h>@GXMbqV*q5Gg<Ajs002w?001xm000623jlO60htE?0suip0{{TfTx`?=Av?BcA;urlLQDcZ7!zolb}kvPoU*L;nb|ex`py1u'
+            'dtdD{b9fXv>*bdI?6cjkV}Iv|(1)>-KVeQ_cbjl0Lq%#1E3ey7O9KQm0097F0K=YzTL1t60B!;R0Otb$00ICD0CX||nFjy@06|3q'
+            '3;<ZBOmN)OnAJ70Rx87zsr4WwyLJ*N@*u5onN$ljPl<C}p^2E<{wv3%b<~~E+AqPU=J_~mYtP}X^NC16b+<k*y-_@gv(AgW=iMdQ'
+            'Vsr1j8HeLoFO~sBVQ5DKW^67!2e;YgjN*uAVnztta+FDPwh88e`)&JzDD*q&#(dI|Aej02CsRRDwPst?m17KfLX=&(h8az~>z-?!'
+            '(L9zKq+fF{u|MGVK_6~xR*l<cQZ&SL$HwdJ{4;e^?1y2N<8)iUMSd8=5DUWpk!Cx41@MA{TyogAc|l^DKR*h>b*M>i>GpH48Ye~)'
+            '$GC{nnI8BlQ(7^dx_)h37arUj#XgLs%S~Npuv`5~-M1XFKlHcEYgt+Smxir?u$)tiEKqc);a%Cdh^AUy@#&ct5-eLO%_VelH#1UW'
+            '@?r3-tls@j%}l8eMitirZ|(t4&k37(jc;^<1PD*j8?%%5A=-ldiM03zTIa29Q#v~P00Ysr2`j@#XIH;UC|G%_{N8Gi=1Yuc+Z7|*'
+            '6>XOD;g`0D6=twwj!;R*?zZ+Mu1(>s7*+_by%aqk;+1Dvt2<&t#!m6f;}*Z`<yy7iYY<(5-}2mqEkZh(a8SOSz+&#b$@Xyi?^-2+'
+            '#bUa0=xA&k<H7{FUH_^TW1a#7tJK`Idq9HOSgdZLn+JU2Fh6+Yowa&LVlvY}aT*M<k+@YkG)v#e8OJh?eM+OMB-}$L>f$uJF)37#'
+            'maR|t5e!a(X)}a~<t{u)*;^sd3C@1!chPGYf4hzHd3)pEl(|umlp-^iu2CIj7}6P)sj;BiDR-qa5=DaQP)h*<KL9fT0RUqFWSxau'
+            '00000OaK4?FaQ7m0st=n00000001BW000000049`3IHGg000000RR{PJ$;e?7G~T5000000000000000000000htE?0suip0{{R}'
+            'O928u05bpq0Am2do`qWg0001P0ssK#0{{R5051Rl0000003ZMW0CxZY0CX}603ZMW0000102lyG&BTWoX50Y)000000000000000'
+            '00001nFjy@06|3q3;<9|1qJ{B000620sy`M000mJ00000'
+        )
+        zipf = Zip(data)
+        self.assertEqual(len(zipf.records), 2)
+        test = set()
+        for record in zipf.records.values():
+            if record.is_dir():
+                continue
+            self.assertFalse(record.is_password_ok(None))
+            test.add(codecs.decode(record.unpack('FOUNDATION'), 'latin1'))
+        self.assertIn('The binary refinery refines the finest binaries.', test)
+        self.assertIn(KADATH1, test)
+
     def test_pkzip_crypto_01(self):
         data = base64.b85decode(
             'P)h>@6aWAK007ipg<Ajs0000000000000F50047!VlppKO9KQH009610MuTETNz4LqE!F@07(D<01E&B0CRO>GB0#9E_8Twrp-_='
