@@ -189,6 +189,33 @@ class IntervalUnion(ABC, Generic[Value]):
             return base is not None
         return any(self.overlap(start, value))
 
+    def boundary(self) -> tuple[int, int] | None:
+        """
+        Determine the lowest and highest point of this interval union. If no intervals are in the
+        union, the return value is None.
+        """
+        if not self._starts:
+            return None
+        lower = self._starts[0]
+        upper = self._starts[-1] + self.sizeof(self._values[self._starts[-1]])
+        return lower, upper
+
+    def gaps(self, lower: int = 0, upper: int | None = None):
+        """
+        Generate the sequence of gaps between all intervals in this interval union as (start,end)
+        tuples. This is notably different from how intervals are stored in the union, namely as
+        (start,length) tuples.
+        """
+        for interval in self:
+            start, val = interval
+            if upper is not None and start > upper:
+                break
+            if start > lower:
+                yield (lower, start)
+            lower = start + self.sizeof(val)
+        if upper is not None and lower < upper:
+            yield (lower, upper)
+
 
 class IntIntervalUnion(IntervalUnion[int]):
     """
@@ -207,22 +234,6 @@ class IntIntervalUnion(IntervalUnion[int]):
     def extend(self, start: int, value: int, new_delta: int, new_value: int) -> int:
         self._values[start] = value = value + new_value - new_delta
         return value
-
-    def gaps(self, lower: int = 0, upper: int | None = None):
-        """
-        Generate the sequence of gaps between all intervals in this interval union as (start,end)
-        tuples. This is notably different from how intervals are stored in the union, namely as
-        (start,length) tuples.
-        """
-        for interval in self:
-            start, size = interval
-            if upper is not None and start > upper:
-                break
-            if start > lower:
-                yield (lower, start)
-            lower = start + size
-        if upper is not None and lower < upper:
-            yield (lower, upper)
 
 
 class MemoryIntervalUnion(IntervalUnion[bytearray]):
