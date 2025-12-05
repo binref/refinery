@@ -1,5 +1,6 @@
 """
-Structures for parsing ZIP archives.
+Structures for unpacking ZIP archives. This can cover a lot more than the built-in zipfile module,
+but it is incapable of creating ZIP archives.
 """
 from __future__ import annotations
 
@@ -10,15 +11,17 @@ import re
 import zlib
 
 from datetime import datetime
+from typing import Iterable
 
 from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
 from Cryptodome.Hash import HMAC, SHA1
 from Cryptodome.Protocol.KDF import PBKDF2
 from Cryptodome.Util import Counter
 
+from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.id import buffer_offset
 from refinery.lib.intervals import IntIntervalUnion
-from refinery.lib.structures import FlagAccessMixin, Struct, StructReader
+from refinery.lib.structures import FlagAccessMixin, Struct, StructReader, StructReaderBits
 from refinery.lib.types import buf
 from refinery.units.misc.datefix import datefix
 
@@ -35,16 +38,16 @@ class DataIntegrityError(ValueError):
     pass
 
 
-class ZipGeneralPurposeFlags(FlagAccessMixin, enum.IntFlag):
+class ZipFlags(FlagAccessMixin, enum.IntFlag):
     Encrypted           = 0x0001 # noqa
-    Implode8kDict       = 0x0002 # noqa
-    Implode3Trees       = 0x0004 # noqa
+    CompressOption1     = 0x0002 # noqa
+    CompressOption2     = 0x0004 # noqa
     DataDescriptor      = 0x0008 # noqa
     EnhancedDeflate     = 0x0010 # noqa
     CompressedPatched   = 0x0020 # noqa
     StrongEncryption    = 0x0040 # noqa
-    LanguageEncoding    = 0x0800 # noqa
-    EncryptedCentralDir = 0x2000 # noqa
+    UseUTF8             = 0x0800 # noqa
+    EncryptedCD         = 0x2000 # noqa
 
 
 class ZipEncryptionAlgorithm(enum.IntEnum):
@@ -68,62 +71,87 @@ class ZipEncryptionFlags(FlagAccessMixin, enum.IntFlag):
 
 
 class ZipCompressionMethod(enum.IntEnum):
-    STORE = 0
-    SHRINK = 1
-    REDUCED1 = 2
-    REDUCED2 = 3
-    REDUCED3 = 4
-    REDUCED4 = 5
-    IMPLODE = 6
-    TOKENIZE = 7
-    DEFLATE = 8
-    DEFLATE64 = 9
-    PKWARE_IMPLODE = 10
-    BZIP2 = 12
-    LZMA = 14
-    IBM_CMPSC = 16
-    IBM_TERSE = 18
-    IBM_LZ77 = 19
-    ZSTD_DEPRECATED = 20
-    ZSTD = 93
-    MP3 = 94
-    XZ = 95
-    JPEG = 96
-    WAVPACK = 97
-    PPMD = 98
-    AExENCRYPTION = 99
-    RESERVED11 = 11
-    RESERVED13 = 13
-    RESERVED15 = 15
-    RESERVED17 = 17
+    STORE           = 0x00 # noqa
+    SHRINK          = 0x01 # noqa
+    REDUCED1        = 0x02 # noqa
+    REDUCED2        = 0x03 # noqa
+    REDUCED3        = 0x04 # noqa
+    REDUCED4        = 0x05 # noqa
+    IMPLODE         = 0x06 # noqa
+    TOKENIZE        = 0x07 # noqa
+    DEFLATE         = 0x08 # noqa
+    DEFLATE64       = 0x09 # noqa
+    PKWARE_IMPLODE  = 0x0A # noqa
+    BZIP2           = 0x0C # noqa
+    LZMA            = 0x0E # noqa
+    IBM_CMPSC       = 0x10 # noqa
+    IBM_TERSE       = 0x12 # noqa
+    IBM_LZ77        = 0x13 # noqa
+    ZSTD_DEPRECATED = 0x14 # noqa
+    ZSTD            = 0x5D # noqa
+    MP3             = 0x5E # noqa
+    XZ              = 0x5F # noqa
+    JPEG            = 0x60 # noqa
+    WAVPACK         = 0x61 # noqa
+    PPMD            = 0x62 # noqa
+    AExENCRYPTION   = 0x63 # noqa
+    RESERVED11      = 0x0B # noqa
+    RESERVED13      = 0x0D # noqa
+    RESERVED15      = 0x0F # noqa
+    RESERVED17      = 0x11 # noqa
 
 
-class ZipCrypto:
-    def decrypt(self, password: str, data: buf):
-        key0 = 305419896
-        key1 = 591751049
-        key2 = 878082192
+class ZipCrypto(Struct):
+    CRC32Table: list[int] = []
 
-        def update_keys(c: int):
+    def __init__(self, reader: StructReader, crc: int):
+        if not (ct := self.CRC32Table):
+            for c in range(256):
+                for _ in range(8):
+                    c, x = divmod(c, 2)
+                    c ^= x * 0xEDB88320
+                ct.append(c)
+        self.header = reader.read(12)
+        self.crc = crc
+        self._restart()
+
+    def _restart(self):
+        self.state = (0x12345678, 0x23456789, 0x34567890)
+
+    def _decrypt(self, password: Iterable[int], data: buf):
+        key0, key1, key2 = self.state
+        crc32table = self.CRC32Table
+
+        def update_keys(char: int):
             nonlocal key0, key1, key2
-            key0 = zlib.crc32(bytes((c,)), key0)
+            key0 = (key0 >> 8) ^ crc32table[(key0 ^ char) & 0xFF]
             key1 = (key1 + (key0 & 0xFF)) & 0xFFFFFFFF
             key1 = (key1 * 134775813 + 1) & 0xFFFFFFFF
-            key2 = zlib.crc32(bytes((key1 >> 24,)), key2)
+            char = (key1 >> 24)
+            key2 = (key2 >> 8) ^ crc32table[(key2 ^ char) & 0xFF]
 
-        for c in password.encode('latin1'):
+        for c in password:
             update_keys(c)
-
-        result = bytearray()
-        append = result.append
 
         for c in data:
             k = key2 | 2
             c ^= ((k * (k ^ 1)) >> 8) & 0xFF
             update_keys(c)
-            append(c)
+            yield c
 
-        return result
+        self.state = key0, key1, key2
+
+    def checkpwd(self, password: str | None):
+        if password is None:
+            return False
+        self._restart()
+        head = bytes(self._decrypt(password.encode('latin1'), self.header))
+        return head[11] == (self.crc >> 24) & 0xFF
+
+    def decrypt(self, password: str, data: buf):
+        if not self.checkpwd(password):
+            raise DataIntegrityError
+        return bytearray(self._decrypt((), data))
 
 
 class ZipInternalFileAttributes(FlagAccessMixin, enum.IntFlag):
@@ -181,93 +209,115 @@ class ZipEncryptionHeader(Struct):
         self.algorithm = ZipEncryptionAlgorithm(reader.u16())
         self.bitlen = reader.u16()
         self.flags = ZipEncryptionFlags(reader.u16())
-        self.erd_size = reader.u16()
-        self.erd_data = reader.read_exactly(self.erd_size)
+        self.erd = reader.read_exactly(reader.u16())
         self.reserved1 = r1 = reader.u32()
         self.reserved2 = reader.read_exactly(reader.u16()) if r1 else None
         if (vn := reader.u16()) <= 4:
             raise ValueError(F'Invalid size {vn} for validation data in {self.__class__.__name__}.')
         self.validation = reader.read_exactly(vn - 4)
-        self.vcrc32_expected = reader.u32()
-        self.vcrc32_computed = zlib.crc32(self.validation) & 0xFFFFFFFF
+        self.crc32 = reader.u32()
+        self._derivations = {}
 
-    def decrypt(self, password: str, data: bytes):
-        algorithm = self.algorithm
-        key_size = 16
-
-        if algorithm == ZipEncryptionAlgorithm.AES128:
-            block_cipher = AES
-        elif algorithm == ZipEncryptionAlgorithm.AES192:
-            key_size = 24
-            block_cipher = AES
-        elif algorithm == ZipEncryptionAlgorithm.AES256:
-            key_size = 32
-            block_cipher = AES
-        elif algorithm == ZipEncryptionAlgorithm.DES:
-            key_size = 8
-            block_cipher = DES
-        elif algorithm == ZipEncryptionAlgorithm.TrippleDES168:
-            key_size = 24
-            block_cipher = DES3
-        elif algorithm == ZipEncryptionAlgorithm.TrippleDES112:
-            block_cipher = DES3
-        elif algorithm == ZipEncryptionAlgorithm.RC2:
-            block_cipher = ARC2
-        elif algorithm == ZipEncryptionAlgorithm.RC4:
-            block_cipher = None
-        elif algorithm == ZipEncryptionAlgorithm.Blowfish:
-            block_cipher = Blowfish
-        elif algorithm == ZipEncryptionAlgorithm.BuggyRC2:
-            raise NotImplementedError(
-                F'This ZIP uses a buggy and unsupported RC2 implementation, indicated by the legacy identifier {algorithm:#x}.')
-        elif algorithm == ZipEncryptionAlgorithm.Twofish:
-            raise NotImplementedError(
-                'This ZIP uses the unsupported Twofish encryption mode.')
-        else:
-            raise ValueError(
-                F'Unsupported encryption algorithm {algorithm:#x}.')
-
-        password_hash = SHA1.new(password.encode('utf-8')).digest()
-        master_key_material = PBKDF2(
-            password_hash.decode('latin1'),
-            password_hash,
-            dkLen=key_size * 2 + 2,
-            count=1000,
-            hmac_hash_module=SHA1
-        )
-        master_key = master_key_material[:key_size]
-
+    def derive_key(self, password: str):
         def _cipher(key):
             if block_cipher is None:
                 return ARC4.new(key)
-            return block_cipher.new(key, block_cipher.MODE_CBC, iv=self.iv)
+            iv = self.iv[:block_cipher.block_size]
+            return block_cipher.new(key, getattr(block_cipher, 'MODE_CBC'), iv=iv)
+        try:
+            derived = self._derivations[password]
+        except KeyError:
+            algorithm = self.algorithm
+            key_size = 16
 
-        rd = _cipher(master_key).decrypt(self.erd_data)
-        iv = SHA1.new(self.iv + rd).digest()
-        key_material = PBKDF2(
-            iv.decode('latin1'),
-            iv,
-            dkLen=key_size * 2 + 2,
-            count=1000,
-            hmac_hash_module=SHA1
-        )
+            if algorithm == ZipEncryptionAlgorithm.AES128:
+                block_cipher = AES
+            elif algorithm == ZipEncryptionAlgorithm.AES192:
+                key_size = 24
+                block_cipher = AES
+            elif algorithm == ZipEncryptionAlgorithm.AES256:
+                key_size = 32
+                block_cipher = AES
+            elif algorithm == ZipEncryptionAlgorithm.DES:
+                key_size = 8
+                block_cipher = DES
+            elif algorithm == ZipEncryptionAlgorithm.TrippleDES168:
+                key_size = 24
+                block_cipher = DES3
+            elif algorithm == ZipEncryptionAlgorithm.TrippleDES112:
+                block_cipher = DES3
+            elif algorithm == ZipEncryptionAlgorithm.RC2:
+                block_cipher = ARC2
+            elif algorithm == ZipEncryptionAlgorithm.RC4:
+                block_cipher = None
+            elif algorithm == ZipEncryptionAlgorithm.Blowfish:
+                block_cipher = Blowfish
+            elif algorithm == ZipEncryptionAlgorithm.BuggyRC2:
+                raise NotImplementedError(
+                    F'This ZIP uses a buggy and unsupported RC2 implementation, indicated by the legacy identifier {algorithm:#x}.')
+            elif algorithm == ZipEncryptionAlgorithm.Twofish:
+                raise NotImplementedError(
+                    'This ZIP uses the unsupported Twofish encryption mode.')
+            else:
+                raise ValueError(
+                    F'Unsupported encryption algorithm {algorithm:#x}.')
 
-        encryption_key = key_material[:key_size]
-        hmac_key = key_material[key_size:key_size * 2]
-        password_verify = key_material[key_size * 2:key_size * 2 + 2]
+            password_hash = SHA1.new(password.encode('utf-8')).digest()
+            master_key_material = PBKDF2(
+                password_hash.decode('latin1'),
+                password_hash,
+                dkLen=key_size * 2 + 2,
+                count=1000,
+                hmac_hash_module=SHA1
+            )
+            master_key = master_key_material[:key_size]
 
-        if password_verify != self.validation[:2]:
-            raise InvalidPassword
+            rd = _cipher(master_key).decrypt(self.erd)
+            iv = SHA1.new(self.iv + rd).digest()
+            key_material = PBKDF2(
+                iv.decode('latin1'),
+                iv,
+                dkLen=key_size * 2 + 2,
+                count=1000,
+                hmac_hash_module=SHA1
+            )
 
-        decrypted = _cipher(encryption_key).decrypt(data)
+            data_key = key_material[:key_size]
+            auth_key = key_material[key_size:key_size * 2]
+            password_verify = key_material[key_size * 2:key_size * 2 + 2]
+
+            if password_verify != self.validation[:2]:
+                self._derivations[password] = None
+                raise InvalidPassword
+            else:
+                self._derivations[password] = block_cipher, data_key, auth_key
+        else:
+            if derived is None:
+                raise InvalidPassword
+            block_cipher, data_key, auth_key = derived
+
+        return _cipher(data_key), auth_key
+
+    def checkpwd(self, password: str | None):
+        if password is None:
+            return False
+        try:
+            self.derive_key(password)
+        except InvalidPassword:
+            return False
+        else:
+            return True
+
+    def decrypt(self, password: str, data: bytes):
+        cipher, hmk = self.derive_key(password)
 
         if len(self.validation) > 2:
-            computed_hmac = HMAC.new(hmac_key, data, SHA1).digest()
+            computed_hmac = HMAC.new(hmk, data, SHA1).digest()
             expected_hmac = self.validation[2:12] if len(self.validation) >= 12 else self.validation[2:]
             if computed_hmac[:len(expected_hmac)] != expected_hmac:
-                raise InvalidPassword
+                raise DataIntegrityError
 
-        return decrypted
+        return cipher.decrypt(data)
 
 
 class ZipArchiveExtraDataRecord(Struct):
@@ -316,15 +366,15 @@ class ZipFileRecord(Struct):
         read_data: bool = True,
         dir: ZipDirEntry | None = None,
     ):
-
         self._unpacked = None
+        self._decrypted = None
         self.offset = reader.tell()
         self.dir = dir
 
         if reader.read(4) != self.Signature:
             raise ValueError
         self.version = reader.u16()
-        self.flags = ZipGeneralPurposeFlags(reader.u16())
+        self.flags = ZipFlags(reader.u16())
         self.method = ZipCompressionMethod(reader.u16())
         try:
             self.date = datefix.dostime(reader.u32(peek=True))
@@ -345,7 +395,7 @@ class ZipFileRecord(Struct):
         self.up = None
         self.ts = None
 
-        codec = 'utf8' if self.flags.LanguageEncoding else 'latin1'
+        codec = 'utf8' if self.flags.UseUTF8 else 'latin1'
         self.name = codecs.decode(self.name_bytes, codec)
 
         for x in self.xtra:
@@ -367,29 +417,32 @@ class ZipFileRecord(Struct):
             elif ts := ZipExtTimestamp.TryParse(x):
                 self.ts = ts
 
+        self.data_offset = start = reader.tell()
+
         if not self.flags.Encrypted:
-            self.encryption = None
+            self.encryption = NoCrypto()
         elif self.flags.StrongEncryption:
             self.encryption = ZipEncryptionHeader(reader)
-        elif self.ae:
-            self.encryption = (dir.ae if dir else None) or self.ae
         else:
-            self.encryption = ZipCrypto()
+            if ae := (dir.ae if dir else None) or self.ae:
+                self.encryption = AExCrypto(reader, ae)
+            else:
+                self.encryption = ZipCrypto(reader, self.crc32)
 
-        self.data_offset = start = reader.tell()
+        skipped = len(self.encryption)
 
         if not read_data:
             self.data = None
             return
         else:
-            self.data = reader.read_exactly(self.csize)
+            self.data = reader.read_exactly(self.csize - skipped)
 
         if ddirs and not self.csize:
             k = bisect.bisect_left(ddirs, start)
             for k in range(k, len(ddirs)):
                 ddpos = ddirs[k]
                 csize = ddpos - self.data_offset
-                self.data = reader.read_exactly(csize)
+                self.data = reader.read_exactly(csize - skipped)
                 info = ZipDataDescriptor(reader, is64bit)
                 if info.csize == csize:
                     self.crc32 = info.crc32
@@ -437,6 +490,9 @@ class ZipFileRecord(Struct):
     def is_dir(self):
         return self.get_name().endswith(('/', '\\'))
 
+    def is_password_ok(self, password: str | None = None):
+        return self.encryption.checkpwd(password)
+
     def unpack(self, password: str | None = None):
         if (d := self.data) is None:
             raise ValueError(F'The data for this {self.__class__.__name__} was not read.')
@@ -459,7 +515,29 @@ class ZipFileRecord(Struct):
             u = bz2.decompress(compressed)
         elif m == ZipCompressionMethod.LZMA:
             import lzma
-            u = lzma.decompress(compressed)
+            if len(compressed) < 4:
+                raise DataIntegrityError
+            cv = memoryview(compressed)
+            cr = StructReader(cv)
+            _ = cr.u8() # major version
+            _ = cr.u8() # minor version
+            n = cr.u16()
+            if len(compressed) < 4 + n:
+                raise DataIntegrityError
+            properties_data = cr.read(n)
+            compressed_data = cr.read()
+            decompressor = lzma.LZMADecompressor(
+                lzma.FORMAT_RAW, filters=[parse_lzma_properties(properties_data, 1)])
+            u = decompressor.decompress(compressed_data)
+        elif m == ZipCompressionMethod.PPMD:
+            import pyppmd
+            cv = memoryview(compressed)
+            cr = StructReaderBits(cv)
+            order = 1 + cr.read_nibble()
+            msize = 1 + cr.read_byte() << 20
+            rm = cr.read_nibble()
+            ppmd = pyppmd.PpmdDecompressor(order, msize, restore_method=rm)
+            u = ppmd.decompress(bytes(cr.read()))
         elif m == ZipCompressionMethod.ZSTD:
             try:
                 import pyzstd as zstd
@@ -548,11 +626,25 @@ class ZipExt(Struct):
         return cls.Parse(extra.data, *args, **kwargs)
 
 
-class AExMsg(Struct):
-    def __init__(self, cr: StructReader[memoryview], version: int, strength: int):
-        self.salt = cr.read((strength + 1) << 2)
+class NoCrypto:
+    def __len__(self):
+        return 0
+
+    def decrypt(self, password: str, data: buf):
+        return data
+
+    def checkpwd(self, password: str | None):
+        return not password
+
+
+class AExCrypto(Struct):
+    def __init__(self, cr: StructReader[memoryview], ae: ZipExtAES):
+        self.version = ae.version
+        self.strength = ae.strength
+
+        self.salt = cr.read((ae.strength + 1) << 2)
         self.pvv = cr.read(2)
-        if version == 3:
+        if ae.version == 3:
             self.nonce = cr.read(12)
             taglen = 16
         else:
@@ -560,26 +652,7 @@ class AExMsg(Struct):
             taglen = 10
         self.ciphertext = cr.read(cr.remaining_bytes - taglen)
         self.auth = cr.read()
-
-
-class ZipExtAES(ZipExt):
-    HeaderID = 0x9901
-
-    def __init__(self, reader: StructReader[memoryview]):
-        self.version = reader.u16()
-        self.vendor = reader.u16()
-        self.strength = reader.u8()
-        if not 1 <= self.strength <= 3:
-            raise ValueError(F'Invalid AES strength {self.strength}.')
-        self.method = ZipCompressionMethod(reader.u16())
-
-    @property
-    def keylen(self):
-        return (self.strength + 1) << 3
-
-    @property
-    def saltlen(self):
-        return (self.strength + 1) << 2
+        self.keylen = (ae.strength + 1) << 3
 
     def _derive(self, password: str, salt: buf):
         ks = self.keylen
@@ -593,26 +666,43 @@ class ZipExtAES(ZipExt):
         pvv = cr.read()
         return key, mac, pvv
 
+    def checkpwd(self, password: str | None):
+        if password is None:
+            return False
+        _, _, dp = self._derive(password, self.salt)
+        return dp == self.pvv
+
     def decrypt(self, password: str, data: buf):
-        msg = AExMsg.Parse(data, self.version, self.strength)
-        dk, dm, dp = self._derive(password, msg.salt)
-        if dp != msg.pvv:
+        dk, dm, dp = self._derive(password, self.salt)
+        if dp != self.pvv:
             raise InvalidPassword
         if self.version < 3:
-            computed_hmac = HMAC.new(dm, msg.ciphertext, SHA1).digest()
-            if computed_hmac[:10] != msg.auth:
+            hmac = HMAC.new(dm, self.ciphertext, SHA1).digest()
+            if hmac[:10] != self.auth:
                 raise DataIntegrityError
             ctr = Counter.new(128, initial_value=1, little_endian=True)
             cipher = AES.new(dk, AES.MODE_CTR, counter=ctr)
-            result = cipher.decrypt(msg.ciphertext)
+            result = cipher.decrypt(self.ciphertext)
         else:
-            cipher = AES.new(dk, AES.MODE_GCM, nonce=msg.nonce)
-            result = cipher.decrypt(msg.ciphertext)
+            cipher = AES.new(dk, AES.MODE_GCM, nonce=self.nonce)
+            result = cipher.decrypt(self.ciphertext)
             try:
-                cipher.verify(msg.auth)
+                cipher.verify(self.auth)
             except ValueError as V:
                 raise DataIntegrityError from V
         return result
+
+
+class ZipExtAES(ZipExt):
+    HeaderID = 0x9901
+
+    def __init__(self, reader: StructReader[memoryview]):
+        self.version = reader.u16()
+        self.vendor = reader.u16()
+        self.strength = reader.u8()
+        if not 1 <= self.strength <= 3:
+            raise ValueError(F'Invalid AES strength {self.strength}.')
+        self.method = ZipCompressionMethod(reader.u16())
 
 
 class ZipExtInfo64(ZipExt):
@@ -682,7 +772,7 @@ class ZipDirEntry(Struct):
             raise ValueError
         self.version_made_by = reader.u16()
         self.version_to_extract = reader.u16()
-        self.flags = ZipGeneralPurposeFlags(reader.u16())
+        self.flags = ZipFlags(reader.u16())
         self.compression = ZipCompressionMethod(reader.u16())
         try:
             self.date = datefix.dostime(reader.u32(peek=True))
@@ -705,7 +795,7 @@ class ZipDirEntry(Struct):
         self.comment = reader.read_exactly(cl)
         self.xtra = ZipExtraField.ParseBuffer(extras)
 
-        codec = 'utf8' if self.flags.LanguageEncoding else 'latin1'
+        codec = 'utf8' if self.flags.UseUTF8 else 'latin1'
         self.name = codecs.decode(self.name_bytes, codec)
 
         self.ae = None
