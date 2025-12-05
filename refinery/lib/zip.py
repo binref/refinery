@@ -19,9 +19,9 @@ from Cryptodome.Protocol.KDF import PBKDF2
 from Cryptodome.Util import Counter
 
 from refinery.lib.decompression import parse_lzma_properties
-from refinery.lib.shared import pyppmd, pyzstd
 from refinery.lib.id import buffer_offset
 from refinery.lib.intervals import IntIntervalUnion
+from refinery.lib.shared import pyppmd, pyzstd
 from refinery.lib.structures import FlagAccessMixin, Struct, StructReader, StructReaderBits
 from refinery.lib.types import buf
 from refinery.units.misc.datefix import datefix
