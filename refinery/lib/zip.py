@@ -516,16 +516,12 @@ class ZipFileRecord(Struct):
             u = bz2.decompress(compressed)
         elif m == ZipCompressionMethod.LZMA:
             import lzma
-            if len(compressed) < 4:
-                raise EOFError
             cv = memoryview(compressed)
             cr = StructReader(cv)
             _ = cr.u8() # major version
             _ = cr.u8() # minor version
             n = cr.u16()
-            if len(compressed) < 4 + n:
-                raise EOFError
-            properties_data = cr.read(n)
+            properties_data = cr.read_exactly(n)
             compressed_data = cr.read()
             decompressor = lzma.LZMADecompressor(
                 lzma.FORMAT_RAW, filters=[parse_lzma_properties(properties_data, 1)])
