@@ -151,7 +151,7 @@ class ZipCrypto(Struct):
 
     def decrypt(self, password: str, data: buf):
         if not self.checkpwd(password):
-            raise DataIntegrityError
+            raise InvalidPassword
         return bytearray(self._decrypt((), data))
 
 
@@ -517,14 +517,14 @@ class ZipFileRecord(Struct):
         elif m == ZipCompressionMethod.LZMA:
             import lzma
             if len(compressed) < 4:
-                raise DataIntegrityError
+                raise EOFError
             cv = memoryview(compressed)
             cr = StructReader(cv)
             _ = cr.u8() # major version
             _ = cr.u8() # minor version
             n = cr.u16()
             if len(compressed) < 4 + n:
-                raise DataIntegrityError
+                raise EOFError
             properties_data = cr.read(n)
             compressed_data = cr.read()
             decompressor = lzma.LZMADecompressor(
