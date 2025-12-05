@@ -435,8 +435,13 @@ class ZipFileRecord(Struct):
         if not read_data:
             self.data = None
             return
+        if 0 < self.csize:
+            rest = self.csize - skipped
+            if rest < 0:
+                raise DataIntegrityError
+            self.data = reader.read_exactly(rest)
         else:
-            self.data = reader.read_exactly(self.csize - skipped)
+            self.data = B''
 
         if ddirs and not self.csize:
             k = bisect.bisect_left(ddirs, start)
@@ -759,6 +764,9 @@ class ZipExtUnicodePath(ZipExt):
 class ZipDirEntry(Struct):
     Signature = B'PK\x01\x02'
 
+    def is_dir(self):
+        return self.name.endswith(('/', '\\'))
+
     def __init__(self, reader: StructReader[memoryview]):
         if reader.read(4) != self.Signature:
             raise ValueError
@@ -826,7 +834,29 @@ class Zip:
             dir=dir,
         )
 
-    def __init__(self, data: buf, password: str | None = None):
+    def read(self, entry: ZipDirEntry):
+        start = entry.header_offset + self.shift
+        if start < 0:
+            raise EOFError(F'Record referenced at {-start} bytes before start of file.')
+        if (x := start - len(self.reader)) >= 0:
+            raise EOFError(F'Record referenced at offset {x} from EOF.')
+        try:
+            return self.records[start]
+        except KeyError:
+            pass
+        self.reader.seekset(start)
+        self.records[start] = r = self.parse_record(dir=entry)
+        self.coverage.addi(start, len(r))
+        self.unreferenced_records.pop(start, None)
+        return r
+
+    def __init__(
+        self,
+        data: buf,
+        password: str | None = None,
+        read_records: bool = True,
+        read_unreferenced_records: bool = True,
+    ):
         self.reader = reader = StructReader(view := memoryview(data))
         self.is64bit = True
         self.coverage = coverage = IntIntervalUnion()
@@ -848,9 +878,8 @@ class Zip:
             raise ValueError('No EOCD.')
 
         start = eocd.directory_offset
-        shift = 0 if self.is64bit else (
-            end - eocd.directory_size - eocd.directory_offset)
-        if shift:
+        self.shift = end - eocd.directory_size - start
+        if self.shift:
             start = end - eocd.directory_size
         if start < 0:
             raise ValueError('Invalid end of central directory size')
@@ -906,11 +935,17 @@ class Zip:
         self.ddirs = [match.start()
             for match in re.finditer(re.escape(ZipDataDescriptor.Signature), view)]
 
+        if not read_records:
+            return
+
         for entry in self.directory:
-            start = entry.header_offset + shift
-            reader.seekset(start)
-            records[start] = r = self.parse_record(dir=entry)
-            coverage.addi(start, len(r))
+            try:
+                self.read(entry)
+            except Exception:
+                pass
+
+        if not read_unreferenced_records:
+            return
 
         for start, end in list(coverage.gaps(0, len(view))):
             gap = view[start:end]
