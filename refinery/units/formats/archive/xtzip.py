@@ -2,119 +2,73 @@ from __future__ import annotations
 
 import codecs
 
-from datetime import datetime
-from zipfile import BadZipFile, ZipFile, ZipInfo
-
 from refinery.lib import lief
 from refinery.lib.id import buffer_offset, is_likely_pe
-from refinery.lib.structures import MemoryFile
 from refinery.lib.types import buf
-from refinery.lib.zip import ZipFileRecord
+from refinery.lib.zip import InvalidPassword, PasswordRequired, Zip, ZipDirEntry
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe import get_pe_size
-from refinery.units.pattern.carve_zip import ZipEndOfCentralDirectory, carve_zip
-
-ZIP_FILENAME_UTF8_FLAG = 0x800
+from refinery.units.pattern.carve_zip import carve_zip
 
 
 class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a Zip archive.
     """
-    @ArchiveUnit.Requires('chardet', ['default', 'extended'])
-    def _chardet():
-        import chardet
-        return chardet
-
-    @ArchiveUnit.Requires('pyzipper', ['arc', 'default', 'extended'])
-    def _pyzipper():
-        import pyzipper
-        return pyzipper
-
     @classmethod
     def _carver(cls):
         return carve_zip
 
     def unpack(self, data: buf):
-        def password_invalid(password: bytes | None):
-            nonlocal archive, fallback
-            if password:
-                archive.setpassword(password)
+        def trypwd(password: str | None):
             try:
-                archive.testzip()
-                files = (t for t in archive.infolist() if t.filename and not t.is_dir())
-                files = sorted(files, key=lambda info: info.file_size)
-                for info in files:
-                    self.log_debug('testing password against:', info.filename)
-                    try:
-                        with archive.open(info.filename, "r") as test:
-                            while test.read(1024):
-                                pass
-                    except BadZipFile:
-                        continue
-                    else:
-                        break
-            except NotImplementedError:
-                if fallback:
-                    raise
-                self.log_debug('compression method unsupported, switching to pyzipper')
-                archive = self._pyzipper.AESZipFile(MemoryFile(data))
-                fallback = True
-                return password_invalid(password)
-            except RuntimeError as E:
-                if 'password' not in str(E):
-                    raise
-                return True
-            else:
-                if password:
-                    self.log_debug('using password:', password)
+                zipf = Zip(data, password)
+            except (PasswordRequired, InvalidPassword):
+                return None
+            for file in zipf.records.values():
+                if file.is_dir():
+                    continue
+                if file.is_password_ok(password):
+                    break
                 return False
+            return zipf
 
-        password = bytes(self.args.pwd)
-        fallback = False
-        archive = ZipFile(MemoryFile(data))
-        passwords = [password]
-
+        password = self.args.pwd
         if not password:
-            passwords.extend(p.encode(self.codec) for p in self._COMMON_PASSWORDS)
+            password = None
+        elif not isinstance(password, str):
+            password = codecs.decode(password, self.codec)
+        passwords = [password]
+        if not password:
+            passwords.extend(self._COMMON_PASSWORDS)
         for p in passwords:
-            if not password_invalid(p):
+            if zipf := trypwd(p):
                 break
+        else:
+            zipf = Zip(data, password)
 
-        for info in archive.infolist():
-            def xt(archive: ZipFile = archive, info: ZipInfo = info, view=memoryview(data)):
+        if zipf.password:
+            self.log_debug('Using password:', zipf.password)
+
+        if boundary := zipf.coverage.boundary():
+            w = len(hex(boundary[1]))
+            for start, end in zipf.coverage.gaps():
+                self.log_warn(F'data cave detected at range {start:#0{w}x}:{end:#0{w}x}')
+
+        for entry in zipf.directory:
+            def xt(entry=entry):
+                record = zipf.read(entry)
                 try:
-                    return archive.read(info.filename)
-                except RuntimeError as E:
-                    if 'password' not in str(E):
+                    return record.unpack(zipf.password)
+                except InvalidPassword:
+                    if not record.data:
                         raise
                     msg = 'invalid password; use -L to extract raw encrypted data'
-                    rec = ZipFileRecord.Parse(view[info.header_offset:])
-                    raise RefineryPartialResult(msg, rec.data) from E
-
-            if info.filename:
-                if info.is_dir():
-                    continue
-
-            # courtesy of https://stackoverflow.com/a/37773438/9130824
-            filename = info.filename
-            if info.flag_bits & ZIP_FILENAME_UTF8_FLAG == 0:
-                filename_bytes = filename.encode('437')
-                try:
-                    guessed_encoding = self._chardet.detect(filename_bytes)['encoding']
-                except ImportError:
-                    guessed_encoding = None
-                guessed_encoding = guessed_encoding or 'cp1252'
-                filename = filename_bytes.decode(guessed_encoding, 'replace')
-
-            try:
-                date = datetime(*info.date_time)
-            except Exception as e:
-                self.log_info(F'{e!s} - unable to determine date from tuple {info.date_time} for: {filename}')
-                date = None
-
-            yield self._pack(filename, date, xt)
+                    raise RefineryPartialResult(msg, record.data)
+            if entry.is_dir():
+                continue
+            yield self._pack(entry.name, entry.date, xt)
 
     @classmethod
     def handles(cls, data):
@@ -126,7 +80,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         if not is_likely_pe(data):
             return False
         memory = memoryview(data)
-        if 0 <= buffer_offset(memory[-0x400:], ZipEndOfCentralDirectory.Signature):
+        if 0 <= buffer_offset(memory[-0x400:], ZipDirEntry.Signature):
             return True
         pe = lief.load_pe_fast(data)
         offset = get_pe_size(pe)
