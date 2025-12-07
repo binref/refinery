@@ -645,12 +645,14 @@ class Framed:
         nesting: int = 0,
         squeeze: bool = False,
         serialized: bool = True,
+        filter_all: bool = False,
     ):
         self.unpack = FrameUnpacker(stream)
         self.action = action
         self.filter = filter
         self.finish = finish
         self.serialized = serialized
+        self.filter_all = filter_all
         self.nesting = nesting
         self.squeeze = squeeze
 
@@ -671,7 +673,7 @@ class Framed:
         else:
             header[0].meta.index = 0
             chunks = iter(header)
-        if header[0].scopable:
+        if header[0].scopable or self.filter_all:
             chunks = self.filter(chunks)
         yield from chunks
 

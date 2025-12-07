@@ -68,9 +68,9 @@ class _popcount:
 class pop(Unit):
     """
     In processing order, remove visible chunks from the current frame and store their contents in
-    the given meta variables on all chunks that remain. All chunks in the input stream are
-    consequently made visible again. If pop is used at the end of a frame, then variables will be
-    local to the parent frame. A pop instruction has the following format:
+    the given meta variables on all chunks that remain. The first invisible chunk in the input
+    stream is consequently made visible again. If pop is used at the end of a frame, variables are
+    made local to the parent frame. A pop instruction has the following format:
 
         count | {_MERGE_META} | name[{_CHERRYPICK}source][{_CONVERSION}conversion]
 
@@ -86,6 +86,8 @@ class pop(Unit):
     visual aid is that the content is passed from right to left through all conversions, into the
     variable `k`. Similarly, the argument k=size will store the current chunk's size in `k`.
     """
+    FilterEverything = True
+
     def __init__(
         self,
         *names: Param[str, Arg.String(metavar='instruction', help='A sequence of instructions, see above.')]
@@ -93,51 +95,80 @@ class pop(Unit):
         if not names:
             names = _MERGE_META,
         super().__init__(names=[_popcount(n) for n in names])
+        self._invisible = None
+        self._remaining = False
 
     def process(self, data):
         return data
 
+    def finish(self) -> Iterable[Chunk]:
+        if self._remaining:
+            msg = 'Not all variables could be assigned.'
+            if not self.leniency:
+                raise ValueError(F'{msg} Increase leniency to downgrade this failure to a warning.')
+            self.log_warn(msg)
+        self._invisible = None
+        self._remaining = False
+        yield from ()
+
     def filter(self, chunks: Iterable[Chunk]):
-        invisible = None
+        invisible = self._invisible
         variables = {}
         remaining: Iterator[_popcount] = iter(self.args.names)
 
+        all_invisible = True
         it = iter(chunks)
         pop = next(remaining).reset()
-        done = False
+        all_variables_assigned = False
+        path = None
+        view = None
 
         for chunk in it:
+            if (path is None):
+                path = tuple(chunk.path)
             if not chunk.visible:
                 self.log_debug('buffering invisible chunk')
                 if invisible is not None:
                     yield invisible
                 invisible = chunk
                 continue
+            else:
+                all_invisible = False
+            if (view is None):
+                view = tuple(chunk.view)
             try:
                 while not pop.into(variables, chunk):
                     pop = next(remaining).reset()
             except StopIteration:
-                done = True
+                all_variables_assigned = True
                 if invisible is not None:
                     yield invisible
                 invisible = chunk
                 break
 
-        if not done and pop.done:
+        if not all_variables_assigned and pop.done:
             try:
                 next(remaining)
             except StopIteration:
-                done = True
+                all_variables_assigned = True
 
-        if not done:
-            msg = 'Not all variables could be assigned.'
-            if not self.leniency:
-                raise ValueError(F'{msg} Increase leniency to downgrade this failure to a warning.')
-            self.log_warn(msg)
+        if not all_variables_assigned:
+            if all_invisible and path and not any(path):
+                self._invisible = invisible
+            self._remaining = True
+            return
+        else:
+            self._remaining = False
 
         nesting = self.args.nesting
+
         if invisible is not None:
+            if path and view and invisible.path != path:
+                invisible = invisible.copy()
+                invisible.path[:] = path
+                invisible.view[:] = view
             it = chain([invisible], it)
+
         for chunk in it:
             meta = chunk.meta
             meta.update(variables)

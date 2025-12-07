@@ -16,3 +16,7 @@ class TestPop(TestUnitBase):
     def test_push_push_pop_pop(self):
         pl = L('emit FOO [| push | push | snip 0 | pop a | cca v:a | pop b | pf {}/{a}/{b} ]')
         self.assertEqual(pl(), B'FOO/{a}/FOOF')
+
+    def test_push_pop_in_nested_tree(self):
+        pl = L('emit REFINE [| push | rex (.)(..) {1} {2} [[| pop one two ]| repl v:one v:two | sep ]]')
+        self.assertEqual(pl(), B'EFEFINE\nREFNENE')

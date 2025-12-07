@@ -158,6 +158,7 @@ from typing import (
     Any,
     BinaryIO,
     Callable,
+    ClassVar,
     Collection,
     Generator,
     Iterable,
@@ -1260,51 +1261,54 @@ class DelayedArgumentProxy:
 
 class UnitBase(metaclass=Executable, abstract=True):
     """
-    This base class is an abstract interface specifying the abstract methods that have
-    to be present on any unit. All actual units should inherit from its only child class
-    `refinery.units.Unit`.
+    This base class is an abstract interface specifying the abstract methods that have to be
+    present on any unit. Units should inherit from its only child class `refinery.units.Unit`.
+    """
+    FilterEverything: ClassVar[bool] = False
+    """
+    This class variable can be enabled by a unit to register for filtering all chunks of the
+    frame tree via `refinery.units.Unit.filter`.
     """
 
     @abc.abstractmethod
     def process(self, data: Chunk, /) -> None | buf | Iterable[buf]:
         """
-        This routine is overridden by children of `refinery.units.Unit` to define how
-        the unit processes a given chunk of binary data.
+        This routine is overridden by children of `refinery.units.Unit` to define how the unit
+        processes a given chunk of binary data.
         """
 
     @MissingFunction.Wrap
     def reverse(self, data: Chunk, /) -> buf | None | Iterable[buf]:
         """
-        If this routine is overridden by children of `refinery.units.Unit`, then it must
-        implement an operation that reverses the `refinery.units.Unit.process` operation.
-        The absence of an overload for this function is ignored for non-abstract children of
-        `refinery.units.UnitBase`.
+        If this routine is overridden by children of `refinery.units.Unit`, then it must implement
+        an operation that reverses the `refinery.units.Unit.process` operation. The absence of an
+        overload is ignored for non-abstract children of `refinery.units.UnitBase`.
         """
 
     @classmethod
     @abc.abstractmethod
     def handles(cls, data: buf) -> bool | None:
         """
-        This tri-state routine returns `True` if the unit is certain that it can process the
-        given input data, and `False` if it is convinced of the opposite. `None` is returned
-        when no clear verdict is available.
+        This tri-state routine returns `True` if the unit is certain that it can process the given
+        input data, and `False` if it is convinced of the opposite. `None` is returned when no
+        clear verdict is available.
         """
 
     @abc.abstractmethod
     def filter(self, chunks: Iterable[Chunk]) -> Iterable[Chunk]:
         """
-        Receives an iterable of `refinery.lib.frame.Chunk`s and yields only those that
-        should be processed. The default implementation returns the iterator without
-        change; this member function is designed to be overloaded by child classes of
-        `refinery.units.Unit` to allow inspection of an entire frame layer and altering
-        it before `refinery.units.Unit.process` is called on the individual chunks.
+        Receives an iterable of `refinery.lib.frame.Chunk`s and yields only those that should be
+        processed. The default implementation returns the iterator without change; this member
+        function is designed to be overloaded by child classes of `refinery.units.Unit` to allow
+        inspection of an entire frame layer and altering it before `refinery.units.Unit.process`
+        is called on the individual chunks.
         """
 
     @abc.abstractmethod
     def finish(self) -> Iterable[Chunk]:
         """
-        Child classes of `refinery.units.Unit` can overwrite this method to generate a
-        stream of chunks to be processed after the last frame has been processed.
+        Child classes of `refinery.units.Unit` can overwrite this method to generate a stream of
+        chunks to be processed after the last frame has been processed.
         """
 
 
@@ -1573,7 +1577,8 @@ class Unit(UnitBase, abstract=True):
             self.finish,
             self.args.nesting,
             self.args.squeeze,
-            self.console
+            self.console,
+            self.FilterEverything,
         )
         return self._framed
 
