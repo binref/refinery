@@ -98,7 +98,7 @@ class pop(Unit):
         return data
 
     def filter(self, chunks: Iterable[Chunk]):
-        invisible = []
+        invisible = None
         variables = {}
         remaining: Iterator[_popcount] = iter(self.args.names)
 
@@ -109,14 +109,18 @@ class pop(Unit):
         for chunk in it:
             if not chunk.visible:
                 self.log_debug('buffering invisible chunk')
-                invisible.append(chunk)
+                if invisible is not None:
+                    yield invisible
+                invisible = chunk
                 continue
             try:
                 while not pop.into(variables, chunk):
                     pop = next(remaining).reset()
             except StopIteration:
                 done = True
-                invisible.append(chunk)
+                if invisible is not None:
+                    yield invisible
+                invisible = chunk
                 break
 
         if not done and pop.done:
@@ -132,8 +136,9 @@ class pop(Unit):
             self.log_warn(msg)
 
         nesting = self.args.nesting
-
-        for chunk in chain(invisible, it):
+        if invisible is not None:
+            it = chain([invisible], it)
+        for chunk in it:
             meta = chunk.meta
             meta.update(variables)
             if nesting < 0:
@@ -143,10 +148,10 @@ class pop(Unit):
             yield chunk
 
 
-pop.__doc__ = pop.__doc__.format(
-    _MERGE_META=_MERGE_META,
-    _CONVERSION=_CONVERSION,
-    _CHERRYPICK=_CHERRYPICK,
-)
-
-__pdoc__ = dict(pop=pop.__doc__)
+if _d := pop.__doc__:
+    pop.__doc__ = _d = _d.format(
+        _MERGE_META=_MERGE_META,
+        _CONVERSION=_CONVERSION,
+        _CHERRYPICK=_CHERRYPICK,
+    )
+    __pdoc__ = dict(pop=_d)
