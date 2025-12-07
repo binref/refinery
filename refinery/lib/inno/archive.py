@@ -2089,10 +2089,9 @@ class SetupDataEntry(InnoStruct):
 
         reader.byte_align()
 
-        if (reader.tell() - flag_start) % 2:
-            reader.u8()
-
         if (6, 3, 0) <= version < (6, 4, 3):
+            if (reader.tell() - flag_start) % 2:
+                reader.u8()
             self.SignMode = SetupSignMode(reader.u8())
         elif self.Flags & SetupDataEntryFlags.SignOnce:
             self.SignMode = SetupSignMode.Once
