@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.14 - bugfix release
+
 ## Version 0.9.13
 - The `xtdmp` unit was added for extracting files from Minidumps.
 - Refinery was extended by a custom ZIP archive parser which can detect data caves and should support all archives (and probably more) than what was previously supported.
