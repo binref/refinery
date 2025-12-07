@@ -23,27 +23,17 @@ class pdfcrypt(Unit):
 
     def __init__(
         self,
-        owner: Param[str, Arg.String('-w', metavar='PWD', help='Optionally specify an owner password.')] = '',
-        user: Param[str, Arg.String('-u', metavar='PWD', help='Optionally specify a user password.')] = '',
+        password: Param[str, Arg.String(help='The password to be set.')] = '',
+        user: Param[bool, Arg.Switch('-u', help='For encryption: Only set a user password.')] = False,
     ):
-        super().__init__(user=user, owner=owner)
+        super().__init__(password=password, user=user)
 
     def _ingest(self, data):
         pdf = self._mupdf.open(stream=data, filetype='pdf')
-        given = 0
-        if pdf.is_encrypted and (pwd := self.args.user):
-            given += 1
-            pdf.authenticate(pwd)
-        if pdf.is_encrypted and (pwd := self.args.owner):
-            given += 1
+        if pdf.is_encrypted and (pwd := self.args.password):
             pdf.authenticate(pwd)
         if pdf.is_encrypted:
-            msg = {
-                0: 'no password was specified',
-                1: 'the given password was incorrect',
-                2: 'neither of the given passwords worked'
-            }[given]
-            raise ValueError(F'The input data is encrypted and {msg}.')
+            raise ValueError('The given password was incorrect.')
         return pdf
 
     def process(self, data):
@@ -52,12 +42,10 @@ class pdfcrypt(Unit):
             return out.getvalue()
 
     def reverse(self, data):
-        u = self.args.user
-        w = self.args.owner
-        if not u and not w:
-            raise ValueError('Cannot encrypt document without a password.')
         with self._ingest(data) as pdf, MemoryFile() as out:
-            pdf.save(out, encryption=self._mupdf.mupdf.PDF_ENCRYPT_AES_256, user_pw=u, owner_pw=w)
+            upwd = self.args.password
+            opwd = upwd if not self.args.user else None
+            pdf.save(out, encryption=self._mupdf.mupdf.PDF_ENCRYPT_AES_256, user_pw=upwd, owner_pw=opwd)
             return out.getvalue()
 
     @classmethod
