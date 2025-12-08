@@ -89,8 +89,10 @@ class run(Unit):
         def adapter(stream, queue: Queue, event: Event):
             while not event.is_set():
                 out = stream.read1()
-                if out: queue.put(out)
-                else: break
+                if out:
+                    queue.put(out)
+                else:
+                    break
             stream.close()
 
         recvout = Thread(target=adapter, args=(process.stdout, qout, done), daemon=True)
@@ -108,8 +110,10 @@ class run(Unit):
             result = MemoryFile()
 
         def queue_read(q: Queue):
-            try: return q.get_nowait()
-            except Empty: return None
+            try:
+                return q.get_nowait()
+            except Empty:
+                return None
 
         errbuf = MemoryFile()
 
@@ -132,8 +136,8 @@ class run(Unit):
                     if not (done.is_set() or lines[~0].endswith(B'\n')):
                         errbuf.write(lines.pop())
                     for line in lines:
-                        msg = line.rstrip(B'\n')
-                        if msg: self.log_info(msg)
+                        if line := line.rstrip(B'\n'):
+                            self.log_info(line)
             if out:
                 if not self.args.stream or self.args.timeout:
                     result.write(out)

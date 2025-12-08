@@ -16,6 +16,8 @@ class deob_ps1_uncurly(Deobfuscator):
 
     def deobfuscate(self, data):
         strlit = Ps1StringLiterals(data)
+
         @strlit.outside
-        def strip(m): return F'${m[1]}'
+        def strip(m):
+            return F'${m[1]}'
         return self._SENTINEL.sub(strip, data)

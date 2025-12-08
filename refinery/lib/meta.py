@@ -151,10 +151,12 @@ class CustomStringRepresentation(abc.ABC):
     """
 
     @abc.abstractmethod
-    def __str__(self): ...
+    def __str__(self) -> str:
+        ...
 
     @abc.abstractmethod
-    def __repr__(self): ...
+    def __repr__(self) -> str:
+        ...
 
 
 _INDEX = 'index'
@@ -698,7 +700,8 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
         if used is None:
             class dummy:
-                def add(self, _): pass
+                def add(self, _):
+                    pass
             used = dummy()
 
         if args is None:

@@ -40,7 +40,8 @@ class carve_pe(PathExtractorUnit):
 
         while True:
             offset = data.find(B'MZ', cursor)
-            if offset < cursor: break
+            if offset < cursor:
+                break
             cursor = offset + 2
             ntoffset = mv[offset + 0x3C:offset + 0x3E]
             if len(ntoffset) < 2:

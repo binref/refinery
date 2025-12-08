@@ -10,9 +10,12 @@ class xor(BinaryOperationWithAutoBlockAdjustment):
     Form the exclusive or of the input data with the given argument.
     """
     @staticmethod
-    def operate(a, b): return a ^ b
+    def operate(a, b):
+        return a ^ b
+
     @staticmethod
-    def inplace(a, b): a ^= b
+    def inplace(a, b):
+        a ^= b
 
     def _fastblock_fallback(self, data):
         from Cryptodome.Util import strxor

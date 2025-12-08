@@ -819,7 +819,7 @@ class Arg(Argument):
         self.merge_args(them)
         self.group = them.group or self.group
 
-    def __copy__(self) -> Argument:
+    def __copy__(self):
         cls = self.__class__
         clone = cls.__new__(cls)
         clone.kwargs = dict(self.kwargs)
@@ -1733,46 +1733,60 @@ class Unit(UnitBase, abstract=True):
         return self | bytes
 
     @overload
-    def __or__(self, stream: int | None) -> None: ...
+    def __or__(self, stream: int | None) -> None:
+        ...
 
     @overload
-    def __or__(self, stream: type[bytearray]) -> bytearray: ...
+    def __or__(self, stream: type[bytearray]) -> bytearray:
+        ...
 
     @overload
-    def __or__(self, stream: type[str]) -> str: ...
+    def __or__(self, stream: type[str]) -> str:
+        ...
 
     @overload
-    def __or__(self, stream: type[Unit]) -> Unit: ...
+    def __or__(self, stream: type[Unit]) -> Unit:
+        ...
 
     @overload
-    def __or__(self, stream: Unit) -> Unit: ...
+    def __or__(self, stream: Unit) -> Unit:
+        ...
 
     @overload
-    def __or__(self, stream: Callable[[buf], _T]) -> _T: ...
+    def __or__(self, stream: Callable[[buf], _T]) -> _T:
+        ...
 
     @overload
-    def __or__(self, stream: dict[str, type[Ellipsis]]) -> dict[str, bytearray]: ...
+    def __or__(self, stream: dict[str, type[Ellipsis]]) -> dict[str, bytearray]:
+        ...
 
     @overload
-    def __or__(self, stream: dict[str, type[_T]]) -> dict[str, _T]: ...
+    def __or__(self, stream: dict[str, type[_T]]) -> dict[str, _T]:
+        ...
 
     @overload
-    def __or__(self, stream: dict) -> dict: ...
+    def __or__(self, stream: dict) -> dict:
+        ...
 
     @overload
-    def __or__(self, stream: list[type[_T]]) -> list[_T]: ...
+    def __or__(self, stream: list[type[_T]]) -> list[_T]:
+        ...
 
     @overload
-    def __or__(self, stream: set[type[_T]]) -> set[_T]: ...
+    def __or__(self, stream: set[type[_T]]) -> set[_T]:
+        ...
 
     @overload
-    def __or__(self, stream: bytearray) -> bytearray: ...
+    def __or__(self, stream: bytearray) -> bytearray:
+        ...
 
     @overload
-    def __or__(self, stream: memoryview) -> memoryview: ...
+    def __or__(self, stream: memoryview) -> memoryview:
+        ...
 
     @overload
-    def __or__(self, stream: _B) -> _B: ...
+    def __or__(self, stream: _B) -> _B:
+        ...
 
     def __or__(self, stream: (
         Unit
@@ -1817,7 +1831,8 @@ class Unit(UnitBase, abstract=True):
         if isinstance(stream, type) and issubclass(stream, Entry):
             stream = cast(Type[Unit], stream)()
         if isinstance(stream, type(...)):
-            def _id(c): return c
+            def _id(c):
+                return c
             stream = _id
         if isinstance(stream, Entry):
             assert isinstance(stream, Unit)
@@ -2177,8 +2192,10 @@ class Unit(UnitBase, abstract=True):
             if a.kind is a.VAR_KEYWORD:
                 junk = [j for j in junk if j.startswith('_')]
                 break
-            try: junk.remove(a.name)
-            except ValueError: pass
+            try:
+                junk.remove(a.name)
+            except ValueError:
+                pass
         for j in junk:
             del keywords[j]
         try:

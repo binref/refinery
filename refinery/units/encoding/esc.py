@@ -37,7 +37,8 @@ class esc(Unit):
         BR'"': B'\x22'
     }
 
-    def __init__(self,
+    def __init__(
+        self,
         hex: Param[bool, Arg.Switch('-x',
             help='Hex encode everything, do not use C escape sequences.')] = False,
         unicode: Param[bool, Arg.Switch('-u',
@@ -50,7 +51,8 @@ class esc(Unit):
             help='Remove enclosing quotes while decoding and add them for encoding.')] = False,
         bare: Param[bool, Arg.Switch('-b',
             help='Do not escape quote characters.')] = False,
-    ): pass # noqa
+    ):
+        pass
 
     def process(self, data):
         data = memoryview(data)

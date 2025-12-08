@@ -48,8 +48,10 @@ class recode(Unit):
 
     def _detect(self, data):
         mv = memoryview(data)
-        if not any(mv[1::2]): return 'utf-16le'
-        if not any(mv[0::2]): return 'utf-16be'
+        if not any(mv[1::2]):
+            return 'utf-16le'
+        if not any(mv[0::2]):
+            return 'utf-16be'
         detection = self._chardet.detect(data)
         codec = detection['encoding']
         self.log_info(lambda: F'Using input encoding: {codec}, detected with {int(detection["confidence"] * 100)}% confidence.')

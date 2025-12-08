@@ -431,12 +431,14 @@ class JSONEncoderUnit(Unit, abstract=True):
         if self.args.arrays:
             _byte_converter = list
         elif u := self.args.encode:
+            def _encode(o: buf):
+                return o | unit | str
             unit = load(u, reverse=True)
-            def _encode(o: buf): return o | unit | str
             _byte_converter = _encode
         elif u := self.args.digest:
+            def _digest(o: buf):
+                return o | unit | str
             unit = load(u, test=True)
-            def _digest(o: buf): return o | unit | str
             _byte_converter = _digest
         else:
             def _str_encode(o: buf):

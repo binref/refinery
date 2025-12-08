@@ -17,10 +17,11 @@ from refinery.lib.types import INF, NoMask, Param, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Generator, Iterable, Literal, Union
+    from typing import Generator, Iterable, Literal, Union, TypeVar
 
     from numpy import ndarray
-    _I = Union[Iterable[int], int]
+    _I = Union[Iterable[int], list[int], int]
+    _T = TypeVar('_T', ndarray, int)
 
 
 class FastBlockError(Exception):
@@ -195,12 +196,12 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         return infinitize(it)
 
     @abc.abstractmethod
-    def operate(self, block, *args) -> int:
+    def operate(self, block: _T, *args) -> _T:
         raise NotImplementedError
 
     @abc.abstractmethod
     def inplace(self, block: ndarray, *args) -> ndarray | None:
-        tmp: ndarray = self.operate(block, *args)
+        tmp = self.operate(block, *args)
         if tmp.dtype != block.dtype:
             tmp = tmp.astype(block.dtype)
         block[:] = tmp
@@ -210,7 +211,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         import numpy
         return numpy
 
-    def _fastblock(self, data) -> bytes | bytearray:
+    def _fastblock(self, data) -> bytearray:
         """
         Attempts to perform the operation more quickly by using numpy arrays.
         """

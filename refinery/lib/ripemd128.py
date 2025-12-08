@@ -49,10 +49,17 @@ def ripemd128(message):
         0xF, 0x5, 0x8, 0xB, 0xE, 0xE, 0x6, 0xE, 0x6, 0x9, 0xC, 0x9, 0xC, 0x5, 0xF, 0x8,
     ]
 
-    def F0(x, y, z): return (x ^ y ^ z)
-    def F1(x, y, z): return (x & y) | (z & ~x)
-    def F2(x, y, z): return (x | (0xffffffff & ~y)) ^ z
-    def F3(x, y, z): return (x & z) | (y & ~z)
+    def F0(x, y, z):
+        return (x ^ y ^ z)
+
+    def F1(x, y, z):
+        return (x & y) | (z & ~x)
+
+    def F2(x, y, z):
+        return (x | (0xffffffff & ~y)) ^ z
+
+    def F3(x, y, z):
+        return (x & z) | (y & ~z)
 
     F = [F0, F1, F2, F3]
 

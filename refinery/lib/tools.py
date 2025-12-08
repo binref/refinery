@@ -96,9 +96,14 @@ def terminalfit(text: str, delta: int = 0, width: int = 0, parsep: str = '\n\n',
     width = width or get_terminal_size()
     width = width - delta
 
-    def isol(t): return re.match(R'^\(\d+\)|\d+[.:;]', t)
-    def isul(t): return t.startswith('-') or t.startswith('*')
-    def issp(t): return t.startswith('  ')
+    def isol(t):
+        return re.match(R'^\(\d+\)|\d+[.:;]', t)
+
+    def isul(t):
+        return t.startswith('-') or t.startswith('*')
+
+    def issp(t):
+        return t.startswith('  ')
 
     text = text.replace('\r', '')
 

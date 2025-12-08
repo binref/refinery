@@ -88,8 +88,11 @@ class winreg(PathExtractorUnit):
             return F'0x{value:X}'.encode(self.codec)
 
         class Missing:
-            def __init__(self, name: str): self.name = name
-            def __str__(self): return self.name
+            def __init__(self, name: str):
+                self.name = name
+
+            def __str__(self):
+                return self.name
 
         REG_NONE = REG_EXPAND_SZ
         REG_DWORD_BIG_ENDIAN = Missing('REG_DWORD_BIG_ENDIAN')

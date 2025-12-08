@@ -36,7 +36,8 @@ class asm(opc):
         no_address = self.args.no_address
         no_hexdump = self.args.no_hexdump
 
-        def _hl(x): return len(hex(x))
+        def _hl(x):
+            return len(hex(x))
 
         args_width = max(len(insn['_args']) for insn in insns)
         memo_width = max(len(insn['_name']) for insn in insns)

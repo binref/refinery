@@ -446,10 +446,13 @@ class DelayedArgumentDispatch:
     register additional handlers.
     """
     class Wrapper:
-        def can_handle(self, *a): return self.ego.can_handle(*a)
-        def terminates(self, *a): return self.ego.terminates(*a)
+        def can_handle(self, *a):
+            return self.ego.can_handle(*a)
 
-        def __init__(self, ego, arg):
+        def terminates(self, *a):
+            return self.ego.terminates(*a)
+
+        def __init__(self, ego: DelayedArgumentDispatch, arg):
             self.ego = ego
             self.arg = arg
 
@@ -1137,7 +1140,7 @@ class DelayedArgument(LazyEvaluation):
         if not size:
             def byte_length(n: int):
                 width, overflow = divmod(n.bit_length(), 8)
-                if overflow: width += 1
+                width += bool(overflow)
                 return width
             if not isinstance(integers, list):
                 integers = list(integers)

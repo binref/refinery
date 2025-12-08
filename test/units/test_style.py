@@ -70,11 +70,7 @@ class TestStyleGuides(TestUnitBase):
             ignore=[
                 'E128',  # A continuation line is under-indented for a visual indentation.
                 'E203',  # Colons should not have any space before them.
-                'E701',  # Multiple statements on one line (colon)
-                'E704',  # Multiple statements on one line (def)
                 'W503',  # Line break occurred before a binary operator
-                'F722',  # syntax error in forward annotation
-                'F821',  # undefined name
                 'E261',  # at least two spaces before inline comment
             ],
             max_line_length=140,

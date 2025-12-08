@@ -11,7 +11,8 @@ class deob_ps1_invoke(Deobfuscator):
         strlit = Ps1StringLiterals(data)
 
         @strlit.outside
-        def invrepl1(m): return m[1] + m[3]
+        def invrepl1(m):
+            return m[1] + m[3]
 
         data = re.sub(
             R'''(\.|::)'''                    # preceeded by dot or namespace delimiter
@@ -21,7 +22,8 @@ class deob_ps1_invoke(Deobfuscator):
         )
 
         @strlit.outside
-        def invrepl2(m): return m[1] + '('
+        def invrepl2(m):
+            return m[1] + '('
 
         data = re.sub(
             '\\s{0,5}'.join([

@@ -38,13 +38,13 @@ class XMLCarver:
 
         for codec in ('UTF8', 'CP1252', 'LATIN-1'):
             with suppress(UnicodeDecodeError):
-                decoded = data.decode(codec)
-                if printable(decoded): return decoded
+                if printable(decoded := data.decode(codec)):
+                    return decoded
         if len(data) % 2 == 1:
             data = data + B'\0'
         with suppress(UnicodeDecodeError):
-            decoded = data.decode('UTF-16LE')
-            if printable(decoded): return decoded
+            if printable(decoded := data.decode('UTF-16LE')):
+                return decoded
 
     def _seek_tag(self, start: int):
         quote = None

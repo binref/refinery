@@ -8,6 +8,9 @@ class add(BinaryOperationWithAutoBlockAdjustment):
     Add the given argument to each block.
     """
     @staticmethod
-    def operate(a, b): return a + b
+    def operate(a, b):
+        return a + b
+
     @staticmethod
-    def inplace(a, b): a += b
+    def inplace(a, b):
+        a += b

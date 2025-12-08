@@ -38,7 +38,8 @@ class escps(Unit):
         '\"': '""',
     }
 
-    def __init__(self): pass
+    def __init__(self):
+        pass
 
     @unicoded
     def process(self, data):

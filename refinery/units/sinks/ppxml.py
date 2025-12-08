@@ -4,7 +4,7 @@ import io
 
 from refinery.lib.id import is_likely_xml
 from refinery.lib.types import Param
-from refinery.lib.xml import ForgivingParse
+from refinery.lib.xml import Element, ForgivingParse
 from refinery.units import Arg, Unit
 
 
@@ -36,7 +36,7 @@ class ppxml(Unit):
             self.log_warn(msg)
             return data
 
-        def indent(element, level=0, more_sibs=False):
+        def indent(element: Element, level=0, more_sibs=False):
             """
             The credit for this one goes to:
             https://stackoverflow.com/a/12940014
@@ -58,9 +58,11 @@ class ppxml(Unit):
                         element.tail += pad
             elif level and (not element.tail or element.tail.isspace()):
                 element.tail = indentation
-                if more_sibs: element.tail += pad
+                if more_sibs:
+                    element.tail += pad
 
-        indent(dom.getroot())
+        if root := dom.getroot():
+            indent(root)
 
         with io.BytesIO() as output:
             dom.write(output, encoding=self.codec, xml_declaration=self.args.header)

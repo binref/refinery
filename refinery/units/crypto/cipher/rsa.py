@@ -243,7 +243,8 @@ class rsa(Unit):
             try:
                 return self._encrypt_block_OAEP(data)
             except ValueError:
-                if self._pads: raise
+                if self._pads:
+                    raise
                 self.log_debug('PyCrypto primitives for OAEP failed, falling back to PKCS1.5.')
                 self._pads = PAD.PKCS15
 

@@ -22,19 +22,18 @@ _ERROR_IGNORES = {
 
 class ef(Unit):
     """
-    Short for "emit file". The unit reads files from disk and outputs them individually. Has the ability to
-    read large files in chunks.
+    Short for "emit file". The unit reads files from disk and outputs them individually. Has the
+    ability to read large files in chunks.
     """
 
     def __init__(self,
         *filenames: Param[str, Arg.String(metavar='FILEMASK', nargs='+', help=(
-            'A list of file masks. Each matching file will be read from disk and '
-            'emitted. The file masks can include format string expressions which '
-            'will be substituted from the current meta variables. The masks can '
-            'use wild-card expressions, but this feature is disabled by default on '
-            'Posix platforms, where it has to be enabled explicitly using the -w '
-            'switch. On Windows, the feature is enabled by default and can be '
-            'disabled using the -t switch.'
+            'A list of file masks. Each matching file will be read from disk and emitted. The file '
+            'masks can include format string expressions which will be substituted from the current'
+            ' meta variables. The masks can use wild-card expressions, but this feature is disabled'
+            ' by default on Posix platforms, where it has to be enabled explicitly using the -w '
+            'switch. On Windows, the feature is enabled by default and can be disabled using the -t'
+            ' switch.'
         ))],
         list: Param[bool, Arg.Switch('-l', help='Only lists files with metadata.')] = False,
         meta: Param[bool, Arg.Switch('-m', help=(
@@ -43,16 +42,18 @@ class ef(Unit):
         size: Param[slice | None, Arg.Bounds('-s', help=(
             'If specified, only files are read whose size is in the given range.'))] = None,
         read: Param[int, Arg.Number('-r', help=(
-            'If specified, files will be read in chunks of size N and each '
-            'chunk is emitted as one element in the output list.'
+            'If specified, files will be read in chunks of size N and each chunk is emitted as one '
+            'element in the output list.'
         ))] = 0,
-        wild: Param[bool, Arg.Switch('-w', group='W', help='Force use of wildcard patterns in file masks.')] = False,
-        tame: Param[bool, Arg.Switch('-t', group='W', help='Disable wildcard patterns in file masks.')] = False,
-        symlinks: Param[bool, Arg.Switch('-y', help='Follow symbolic links and junctions, these are ignored by default.')] = False,
+        wild: Param[bool, Arg.Switch('-w', group='W',
+            help='Force use of wildcard patterns in file masks.')] = False,
+        tame: Param[bool, Arg.Switch('-t', group='W',
+            help='Disable wildcard patterns in file masks.')] = False,
+        symlinks: Param[bool, Arg.Switch('-y',
+            help='Follow symbolic links and junctions, these are ignored by default.')] = False,
         linewise: Param[bool, Arg.Switch('-i', help=(
-            'Read the file linewise. By default, one line is read at a time. '
-            'In line mode, the --read argument can be used to read the given '
-            'number of lines in each chunk.'
+            'Read the file linewise. By default, one line is read at a time. In line mode, the '
+            '--read argument can be used to read the given number of lines in each chunk.'
         ))] = False
     ):
         if wild and tame:
@@ -126,10 +127,17 @@ class ef(Unit):
         scandir = os.scandir
 
         class EmptyIterator:
-            def __enter__(self): return self
-            def __exit__(self, *_, **__): pass
-            def __next__(self): raise StopIteration
-            def __iter__(self): return self
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_, **__):
+                pass
+
+            def __next__(self):
+                raise StopIteration
+
+            def __iter__(self):
+                return self
 
         if sys.version_info >= (3, 12):
             def islink(path):

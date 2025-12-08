@@ -68,7 +68,7 @@ class Node(metaclass=NodeMeta):
 
     def __repr__(self) -> str:
         label = bytes(self.label).decode('utf8', errors='backslashreplace')
-        if label: label = F': {label}'
+        label = label and F': {label}'
         return F'<{self.__class__.__name__}{label}>'
 
     def __iter__(self) -> Iterable[Node]:

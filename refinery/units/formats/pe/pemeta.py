@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import itertools
 import json
 
@@ -435,7 +436,7 @@ class pemeta(Unit):
 
         return version_info or None
 
-    def parse_exports(self, pe: lief.PE.Binary, data=None, include_addresses=False) -> list:
+    def parse_exports(self, pe: lief.PE.Binary, data=None, include_addresses=False) -> list | None:
         base = pe.optional_header.imagebase
         info = []
         if not pe.has_exports:
@@ -447,7 +448,7 @@ class pemeta(Unit):
             if not name:
                 name = F'@{k}'
             if not isinstance(name, str):
-                name = name.decode('latin1')
+                name = codecs.decode(name, 'latin1')
             item = {
                 'Name': name, 'Address': self._vint(pe, exp.address + base)
             } if include_addresses else name
@@ -477,7 +478,7 @@ class pemeta(Unit):
             MinimumOS = version[minor]
         except LookupError:
             MinimumOS = version[0]
-        header_information = {
+        header_information: dict[str, int | str | list] = {
             'Machine': pe.header.machine.name,
             'Subsystem': pe.optional_header.subsystem.name,
             'MinimumOS': MinimumOS,
@@ -533,8 +534,7 @@ class pemeta(Unit):
         exports, debug, and resource directory. The resource time stamp is also parsed as
         a DOS time stamp and returned as the "Delphi" time stamp.
         """
-        def _id(x): return x
-        dt = _id if raw_time_stamps else date_from_timestamp
+        dt = (lambda x: x) if raw_time_stamps else date_from_timestamp
         info = {}
 
         with suppress(AttributeError):

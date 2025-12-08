@@ -129,7 +129,8 @@ class wshenc(Unit):
             yield from self._MARKER_STOP
 
     def _unescape(self, data):
-        def unescaper(m): return self._UNESCAPE[m[0]]
+        def unescaper(m):
+            return self._UNESCAPE[m[0]]
         return re.sub(RB'@[$!*#&]', unescaper, data)
 
     @classmethod

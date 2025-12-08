@@ -34,7 +34,8 @@ class stretch(Unit):
                 try:
                     take = islice(it, next(factor))
                     yield next(take)
-                    for _ in take: pass
+                    for _ in take:
+                        pass
                 except StopIteration:
                     break
         return bytearray(clinched(iter(data)))

@@ -96,7 +96,8 @@ def string_quote(parts, quote=True):
             chunks[k] = F'${{{chunks[k][1:]}}}'
 
     result = ''.join(chunks)
-    if quote: result = f'"{result}"'
+    if quote:
+        result = f'"{result}"'
     return result
 
 

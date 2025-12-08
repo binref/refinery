@@ -11,9 +11,11 @@ class deob_js_comments(Deobfuscator):
     JavaScript deobfuscator that removes comments from the script.
     """
     def deobfuscate(self, data):
-        strings = StringLiterals(formats.string, data)
+        strings = StringLiterals(str(formats.string), data)
+
         @strings.outside
-        def remove(_): return ''
+        def remove(_):
+            return ''
 
         data = re.sub(R'/\*.*?\*/', remove, data, flags=re.DOTALL)
         data = re.sub(R'(?m)//.*$', remove, data)

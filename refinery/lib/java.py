@@ -97,7 +97,9 @@ class _HasPoolAndTag(Struct):
 
 class JvStructWithName(_HasPoolAndTag):
     name: str = Index(str)
-    def __repr__(self): return self.name
+
+    def __repr__(self):
+        return self.name
 
 
 class JvNameAndType(JvStructWithName):
@@ -403,7 +405,8 @@ class opc(IntEnum):
     impdep1         = 0xfe  # noqa
     impdep2         = 0xff  # noqa
 
-    def __repr__(self) -> str: return self.name
+    def __repr__(self) -> str:
+        return self.name
 
 
 class JvBaseType(IntEnum):
@@ -416,7 +419,8 @@ class JvBaseType(IntEnum):
     INT     = 0xA  # noqa
     LONG    = 0xB  # noqa
 
-    def __repr__(self) -> str: return self.name
+    def __repr__(self) -> str:
+        return self.name
 
 
 class JvTypePath:
@@ -580,7 +584,7 @@ class JvCode(Struct):
 
 class JvClassFile(Struct):
 
-    TYPEHANDLER: dict[JvConstType, Struct] = {
+    TYPEHANDLER: dict[JvConstType, type[Struct]] = {
         JvConstType.Class            : JvString,
         JvConstType.String           : JvString,
         JvConstType.Field            : JvClassProperty,

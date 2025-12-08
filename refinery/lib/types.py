@@ -127,29 +127,74 @@ class Singleton(type):
 
 
 class _INF(metaclass=Singleton):
-    def __lt__(self, _: Any): return False
-    def __le__(self, _: Any): return False
-    def __gt__(self, _: Any): return True
-    def __ge__(self, _: Any): return True
-    def __eq__(self, other: Any): return other is INF
-    def __rmul__(self, _: Any): return self
-    def __radd__(self, _: Any): return self
-    def __mul__(self, _: Any): return self
-    def __add__(self, _: Any): return self
-    def __sub__(self, _: Any): return self
-    def __div__(self, _: Any): return self
-    def __mod__(self, _: Any): return self
-    def __pow__(self, _: Any): return self
-    def __iadd__(self, _: Any): return self
-    def __isub__(self, _: Any): return self
-    def __imul__(self, _: Any): return self
-    def __imod__(self, _: Any): return self
-    def __abs__(self): return None
-    def __repr__(self): return '∞'
-    def __truediv__(self, _: Any): return self
-    def __floordiv__(self, _: Any): return self
-    def __rrshift__(self, _: Any): return 0
-    def __format__(self, *_): return str(self)
+    def __lt__(self, _: Any):
+        return False
+
+    def __le__(self, _: Any):
+        return False
+
+    def __gt__(self, _: Any):
+        return True
+
+    def __ge__(self, _: Any):
+        return True
+
+    def __eq__(self, other: Any):
+        return other is INF
+
+    def __rmul__(self, _: Any):
+        return self
+
+    def __radd__(self, _: Any):
+        return self
+
+    def __mul__(self, _: Any):
+        return self
+
+    def __add__(self, _: Any):
+        return self
+
+    def __sub__(self, _: Any):
+        return self
+
+    def __div__(self, _: Any):
+        return self
+
+    def __mod__(self, _: Any):
+        return self
+
+    def __pow__(self, _: Any):
+        return self
+
+    def __iadd__(self, _: Any):
+        return self
+
+    def __isub__(self, _: Any):
+        return self
+
+    def __imul__(self, _: Any):
+        return self
+
+    def __imod__(self, _: Any):
+        return self
+
+    def __abs__(self):
+        return None
+
+    def __repr__(self):
+        return '∞'
+
+    def __truediv__(self, _: Any):
+        return self
+
+    def __floordiv__(self, _: Any):
+        return self
+
+    def __rrshift__(self, _: Any):
+        return 0
+
+    def __format__(self, *_):
+        return str(self)
 
 
 INF = _INF()
@@ -160,11 +205,20 @@ is compared to, and only equal to itself.
 
 
 class _AST(metaclass=Singleton):
-    def __eq__(self, _: Any): return True
-    def __ne__(self, _: Any): return False
-    def __or__(self, x: Any): return x
-    def __contains__(self, _: Any): return True
-    def __repr__(self): return '*'
+    def __eq__(self, _: Any):
+        return True
+
+    def __ne__(self, _: Any):
+        return False
+
+    def __or__(self, x: Any):
+        return x
+
+    def __contains__(self, _: Any):
+        return True
+
+    def __repr__(self):
+        return '*'
 
 
 AST = _AST()
@@ -181,7 +235,7 @@ class _NoMask(metaclass=Singleton):
         return other
 
 
-NoMask = _NoMask
+NoMask = _NoMask()
 """
 The value of `NoMask & X` and `X & NoMask` is always equal to `X`. This singleton serves as a
 mock bitmask when the value `X` should not be masked at all.
@@ -193,5 +247,8 @@ class RepeatedInteger(int):
     This class serves as a dual-purpose result for `refinery.lib.argformats.numseq` types. It
     is an integer, but can be infinitely iterated.
     """
-    def __iter__(self): return self
-    def __next__(self): return self
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self

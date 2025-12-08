@@ -12,8 +12,11 @@ from refinery.lib.structures import Struct, StructReader
 
 
 class _ENUM(enum.IntEnum):
-    def __str__(self): return self.name
-    def __repr__(self): return self.name
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return self.name
 
 
 class TYPES(_ENUM):
@@ -93,7 +96,8 @@ class BLOBHEADER(Struct):
 
 
 class PLAINTEXTKEYBLOB(Struct):
-    def __bytes__(self): return bytes(self.data)
+    def __bytes__(self):
+        return bytes(self.data)
 
     def __init__(self, reader: StructReader):
         self.size = reader.u32()
@@ -101,7 +105,8 @@ class PLAINTEXTKEYBLOB(Struct):
 
 
 class SIMPLEBLOB(Struct):
-    def __bytes__(self): return bytes(self.data)
+    def __bytes__(self):
+        return bytes(self.data)
 
     def __init__(self, reader: StructReader):
         self.magic = reader.read(4)

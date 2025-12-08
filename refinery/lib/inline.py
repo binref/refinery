@@ -112,9 +112,14 @@ def iterspread(
 
     function_name = None
 
-    def as_arg(name: str): return F'_arg_{name}'
-    def as_var(name: str): return F'_var_{name}'
-    def as_tmp(name: str): return F'_tmp_{name}'
+    def as_arg(name: str):
+        return F'_arg_{name}'
+
+    def as_var(name: str):
+        return F'_var_{name}'
+
+    def as_tmp(name: str):
+        return F'_tmp_{name}'
 
     def apply_node_transformation(cls: type[NodeTransformer]):
         nonlocal code

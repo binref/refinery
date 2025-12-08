@@ -365,7 +365,8 @@ class PyInstallerArchiveEpilogue(Struct):
         with StreamDetour(self.reader, self.offset + entry.offset):
             data = self.reader.read(entry.size_of_compressed_data)
         if entry.is_compressed:
-            def extracted(d=data): return zlib.decompress(d)
+            def extracted(d=data):
+                return zlib.decompress(d)
         else:
             extracted = data
         result = PiMeta(entry.type, name, extracted)

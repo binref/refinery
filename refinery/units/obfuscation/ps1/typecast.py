@@ -18,7 +18,8 @@ class deob_ps1_typecast(Deobfuscator):
         strlit = Ps1StringLiterals(data)
 
         @strlit.outside
-        def strip_typecast(m): return m[1]
+        def strip_typecast(m):
+            return m[1]
 
         data = re.sub(
             FR'\[(?:string|char\[\])\]\s*({formats.ps1str!s})',

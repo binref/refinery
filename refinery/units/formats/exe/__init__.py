@@ -18,8 +18,10 @@ class EmulatingUnit(Unit, abstract=True):
     """
     def __init__(
         self,
-        base: Param[int | None, Arg.Number('-b', metavar='Addr', help='Optionally specify a custom base address B.')] = None,
-        arch: Param[str | Arch, Arg.Option('-a', metavar='Arch', help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
+        base: Param[int | None, Arg.Number('-b', metavar='Addr',
+            help='Optionally specify a custom base address B.')] = None,
+        arch: Param[str | Arch, Arg.Option('-a', metavar='Arch',
+            help='Specify for blob inputs: {choices}', choices=Arch)] = Arch.X32,
         engine: Param[str | Engine, Arg.Option('-e', group='EMU', choices=Engine, metavar='E',
             help='The emulator engine. The default is {default}, options are: {choices}')] = Engine.unicorn,
         se: Param[bool, Arg.Switch(group='EMU', help='Equivalent to --engine=speakeasy')] = False,
@@ -50,17 +52,28 @@ class EmulatingUnit(Unit, abstract=True):
         try:
             sliced = sliceobj(a, chunk, intok=True)
         except Exception:
-            def c1(s: Symbol): return s.get_name().casefold() == a.casefold()
-            def c2(s: Symbol): return s.get_name() == a
-            def c3(s: Symbol): return s.function
-            def c4(s: Symbol): return s.exported
+            def c1(s: Symbol):
+                return s.get_name().casefold() == a.casefold()
+
+            def c2(s: Symbol):
+                return s.get_name() == a
+
+            def c3(s: Symbol):
+                return s.function
+
+            def c4(s: Symbol):
+                return s.exported
+
             if m := re.fullmatch('(?i)(?:sub_|fun_|0x)?([A-F0-9]+)H?', a):
                 return slice(int(m[1], 16), None)
+
             symbols = list(exe.symbols())
+
             for filter in [c1, c2, c3, c4]:
                 symbols = [s for s in symbols if filter(s)]
                 if len(symbols) == 1:
                     return slice(symbols[0].address, None)
+
             if len(symbols) > 1:
                 raise RuntimeError(
                     F'there are {len(symbols)} exported function symbol named "{a}", please specify the address')

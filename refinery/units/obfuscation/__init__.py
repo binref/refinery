@@ -50,7 +50,8 @@ def outside(*exceptions):
 
 class Deobfuscator(Unit, abstract=True):
 
-    def __init__(self): super().__init__()
+    def __init__(self):
+        super().__init__()
 
     @unicoded
     def process(self, data: str) -> str:
@@ -109,7 +110,8 @@ class StringLiterals:
                 self.update(match.string)
             a, b = match.span()
             for x, y in self.ranges:
-                if x > b: break
+                if x > b:
+                    break
                 if (a in range(x, y) or x in range(a, b)) and (x < a or y > b):
                     return match[0]
             result = function(match)
