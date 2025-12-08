@@ -95,42 +95,44 @@ class pop(Unit):
         if not names:
             names = _MERGE_META,
         super().__init__(names=[_popcount(n) for n in names])
-        self._invisible = None
-        self._remaining = False
+        self._tos = None
+        self._eof = True
 
     def process(self, data):
         return data
 
     def finish(self) -> Iterable[Chunk]:
-        if self._remaining:
+        eof = self._eof
+        self._tos = None
+        self._eof = True
+        if not eof:
             msg = 'Not all variables could be assigned.'
             if not self.leniency:
                 raise ValueError(F'{msg} Increase leniency to downgrade this failure to a warning.')
             self.log_warn(msg)
-        self._invisible = None
-        self._remaining = False
         yield from ()
 
     def filter(self, chunks: Iterable[Chunk]):
-        invisible = self._invisible
         variables = {}
         remaining: Iterator[_popcount] = iter(self.args.names)
 
-        all_invisible = True
-        it = iter(chunks)
         pop = next(remaining).reset()
+        tos = self._tos
+        all_invisible = True
         all_variables_assigned = False
         path = None
         view = None
+
+        it = iter(chunks)
 
         for chunk in it:
             if (path is None):
                 path = tuple(chunk.path)
             if not chunk.visible:
                 self.log_debug('buffering invisible chunk')
-                if invisible is not None:
-                    yield invisible
-                invisible = chunk
+                if tos is not None:
+                    yield tos
+                tos = chunk
                 continue
             else:
                 all_invisible = False
@@ -141,9 +143,9 @@ class pop(Unit):
                     pop = next(remaining).reset()
             except StopIteration:
                 all_variables_assigned = True
-                if invisible is not None:
-                    yield invisible
-                invisible = chunk
+                if tos is not None:
+                    yield tos
+                tos = chunk
                 break
 
         if not all_variables_assigned and pop.done:
@@ -154,20 +156,20 @@ class pop(Unit):
 
         if not all_variables_assigned:
             if all_invisible and path and not any(path):
-                self._invisible = invisible
-            self._remaining = True
+                self._tos = tos
+            self._eof = False
             return
         else:
-            self._remaining = False
+            self._eof = True
 
         nesting = self.args.nesting
 
-        if invisible is not None:
-            if path and view and invisible.path != path:
-                invisible = invisible.copy()
-                invisible.path[:] = path
-                invisible.view[:] = view
-            it = chain([invisible], it)
+        if tos is not None:
+            if path and view and tos.path != path:
+                tos = tos.copy()
+                tos.path[:] = path
+                tos.view[:] = view
+            it = chain([tos], it)
 
         for chunk in it:
             meta = chunk.meta
