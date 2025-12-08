@@ -4,8 +4,6 @@ import pytest
 
 from glob import glob
 
-from refinery.lib.loader import get_all_entry_points
-
 from . import TestUnitBase
 
 
