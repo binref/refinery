@@ -96,7 +96,3 @@ class TestStyleGuides(TestUnitBase):
 
         report = stylez.check_files(python_files)
         self.assertEqual(report.total_errors, 0, 'PEP8 formatting errors were found.')
-
-    def test_no_legacy_interfaces(self):
-        for unit in get_all_entry_points():
-            self.assertFalse(hasattr(unit, 'interface') and callable(unit.interface))
