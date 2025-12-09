@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.8', '3.12']
+        python-version: ['3.8', '3.13']
         os: [windows-latest, macos-15-intel, ubuntu-latest]
     steps:
       - name: Debug Logging
@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.12']
+        python-version: ['3.13']
         os: [windows-latest, macos-15-intel, ubuntu-latest]
     steps:
       - name: Checkout Main Repository
@@ -90,7 +90,7 @@ jobs:
     - name: Install Dependencies
       uses: ./.github/actions/setup/
       with:
-        py: '3.12'
+        py: '3.13'
         os: windows-latest
     - name: Install Coverage Dependencies
       run: |
