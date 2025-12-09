@@ -344,23 +344,28 @@ class ZipDigitalSignature(Struct):
 class ZipDataDescriptor(Struct):
     Signature = B'PK\x07\x08'
 
-    def __init__(self, reader: StructReader[memoryview], is64bit: bool = False, csize: int = -1):
+    def __init__(
+        self,
+        reader: StructReader[memoryview],
+        is64bit: bool = False,
+        expected_size: int = -1,
+    ):
         if reader.read(4) != self.Signature:
             raise ValueError
         self.crc32 = reader.u32()
-        if csize >= 0:
+        if expected_size >= 0:
             u64value = reader.u64(peek=True)
             u32value = reader.u32(peek=True)
-            if csize == u32value:
-                if csize != u64value:
+            if expected_size == u32value:
+                if expected_size != u64value:
                     is64bit = False
-            elif csize == u64value:
-                if csize != u32value:
+            elif expected_size == u64value:
+                if expected_size != u32value:
                     is64bit = True
         size = reader.u64 if is64bit else reader.u32
         self.csize = size()
         self.usize = size()
-        if self.usize == 0 and self.csize != 0 and not is64bit:
+        if not is64bit and self.usize == 0 and self.csize > 0x100:
             # This is likely a 64-bit descriptor despite what we thought.
             self.usize = reader.u64()
             is64bit = True
@@ -466,14 +471,18 @@ class ZipFileRecord(Struct):
                     self.crc32 = info.crc32
                     self.csize = info.csize
                     self.usize = info.usize
+                    is64bit = info.is64bit
                     break
                 reader.seekset(self.data_offset)
                 start += 4
         elif self.flags.DataDescriptor or reader.peek(4) == ZipDataDescriptor.Signature:
             info = ZipDataDescriptor(reader, is64bit)
+            is64bit = info.is64bit
             self.crc32 = info.crc32
             self.csize = info.csize
             self.usize = info.usize
+
+        self.is64bit = is64bit
 
     def get_mtime(self):
         ts = None
@@ -970,11 +979,31 @@ class Zip:
         if not read_records:
             return
 
+        verdicts64bit = {self.is64bit}
+
         for entry in self.directory:
             try:
-                self.read(entry)
+                record = self.read(entry)
             except Exception:
                 pass
+            else:
+                verdicts64bit.add(record.is64bit)
+
+        if len(verdicts64bit) == 2:
+            # For at least one record, a data descriptor indicated that our 64-bit assumption
+            # was incorrect. We try to re-parse with the opposite assumption and use whatever
+            # produces more correctly parsed records.
+            backup_records = self.records
+            self.records.clear()
+            self.is64bit = not self.is64bit
+            for entry in self.directory:
+                try:
+                    record = self.read(entry)
+                except Exception:
+                    pass
+            self.is64bit = not self.is64bit
+            if len(self.records) < len(backup_records):
+                self.records = backup_records
 
         if not read_unreferenced_records:
             return
