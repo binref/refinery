@@ -344,16 +344,27 @@ class ZipDigitalSignature(Struct):
 class ZipDataDescriptor(Struct):
     Signature = B'PK\x07\x08'
 
-    def __init__(self, reader: StructReader[memoryview], is64bit: bool = False):
+    def __init__(self, reader: StructReader[memoryview], is64bit: bool = False, csize: int = -1):
         if reader.read(4) != self.Signature:
             raise ValueError
         self.crc32 = reader.u32()
+        if csize >= 0:
+            u64value = reader.u64(peek=True)
+            u32value = reader.u32(peek=True)
+            if csize == u32value:
+                if csize != u64value:
+                    is64bit = False
+            elif csize == u64value:
+                if csize != u32value:
+                    is64bit = True
         size = reader.u64 if is64bit else reader.u32
         self.csize = size()
         self.usize = size()
         if self.usize == 0 and self.csize != 0 and not is64bit:
             # This is likely a 64-bit descriptor despite what we thought.
             self.usize = reader.u64()
+            is64bit = True
+        self.is64bit = is64bit
 
 
 class ZipFileRecord(Struct):
@@ -450,7 +461,7 @@ class ZipFileRecord(Struct):
                 ddpos = ddirs[k]
                 csize = ddpos - self.data_offset
                 self.data = reader.read_exactly(csize - skipped)
-                info = ZipDataDescriptor(reader, is64bit)
+                info = ZipDataDescriptor(reader, is64bit, csize)
                 if info.csize == csize:
                     self.crc32 = info.crc32
                     self.csize = info.csize
