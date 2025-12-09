@@ -23,7 +23,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def unpack(self, data: buf):
         def trypwd(password: str | None):
             try:
-                zipf = Zip(data, password)
+                zipf = Zip(view, password)
             except (PasswordRequired, InvalidPassword):
                 return None
             for file in zipf.records.values():
@@ -34,6 +34,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 return False
             return zipf
 
+        view = memoryview(data)
         password = self.args.pwd
         if not password:
             password = None
@@ -46,7 +47,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             if zipf := trypwd(p):
                 break
         else:
-            zipf = Zip(data, password)
+            zipf = Zip(view, password)
 
         if zipf.password:
             self.log_debug('Using password:', zipf.password)
@@ -54,7 +55,8 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         if boundary := zipf.coverage.boundary():
             w = len(hex(boundary[1]))
             for start, end in zipf.coverage.gaps():
-                self.log_warn(F'data cave detected at range {start:#0{w}x}:{end:#0{w}x}')
+                self.log_info(F'data cave detected at range {start:#0{w}x}:{end:#0{w}x}')
+                yield self._pack(F'.{start:#0{w}x}.cave', None, view[start:end])
 
         for entry in zipf.directory:
             def xt(entry=entry):
