@@ -389,7 +389,8 @@ class ZipFileRecord(Struct):
         nl = reader.u16()
         xl = reader.u16()
         self.name_bytes = reader.read_exactly(nl)
-        self.xtra = ZipExtraField.ParseBuffer(reader.read_exactly(xl))
+        self.xtra_data = reader.read_exactly(xl)
+        self.xtra = ZipExtraField.ParseBuffer(self.xtra_data)
 
         self.ae = None
         self.ux = None
@@ -609,7 +610,10 @@ class ZipExtraField(Struct):
         reader = StructReader(memoryview(data))
         extras = []
         while not reader.eof:
-            extras.append(cls(reader))
+            try:
+                extras.append(cls(reader))
+            except EOFError:
+                break
         return extras
 
 
@@ -835,8 +839,18 @@ class Zip:
             dir=dir,
         )
 
-    def read(self, entry: ZipDirEntry):
-        start = entry.header_offset + self.shift
+    def read(self, entry: str | int | ZipDirEntry):
+        if isinstance(entry, str):
+            entries = self.by_name[entry]
+            if (c := len(entries)) > 1:
+                raise RuntimeError(F'There are {c} central directory entries for: {entry}')
+            entry = entries[0]
+        if isinstance(entry, ZipDirEntry):
+            start = entry.header_offset + self.shift
+            dir = entry
+        else:
+            start = entry
+            dir = None
         if start < 0:
             raise EOFError(F'Record referenced at {-start} bytes before start of file.')
         if (x := start - len(self.reader)) >= 0:
@@ -846,7 +860,7 @@ class Zip:
         except KeyError:
             pass
         self.reader.seekset(start)
-        self.records[start] = r = self.parse_record(dir=entry)
+        self.records[start] = r = self.parse_record(dir=dir)
         self.coverage.addi(start, len(r))
         self.unreferenced_records.pop(start, None)
         return r
@@ -919,6 +933,12 @@ class Zip:
                 ZipDirEntry(reader) for _ in range(eocd.entries_in_directory)
             ]
             coverage.addi(start, sum(len(d) for d in self.directory))
+
+        by_name: dict[str, list[ZipDirEntry]] = {}
+        self.by_name = by_name
+
+        for entry in self.directory:
+            by_name.setdefault(entry.name, []).append(entry)
 
         records: dict[int, ZipFileRecord] = {}
         unreferenced_records: dict[int, ZipFileRecord] = {}
