@@ -288,8 +288,15 @@ _IS_AMBIGUOUS = {
     _I(6, 4,  0, 0, IVF.UTF_16): False, # noqa
     _I(6, 4,  0, 1, IVF.UTF_16): False, # noqa
     _I(6, 4,  1, 0, IVF.UTF_16): False, # noqa
-    _I(6, 4,  2, 0, IVF.UTF_16): False, # noqa
-    _I(6, 4,  3, 0, IVF.UTF_16): False, # noqa
+    _I(6, 4,  2, 0, IVF.UTF_16): False, # noqa f80c9ea
+    _I(6, 4,  3, 0, IVF.UTF_16): False, # noqa 
+    _I(6, 5,  0, 0, IVF.UTF_16): False, # noqa TODO
+    _I(6, 5,  1, 0, IVF.UTF_16): False, # noqa TODO 99c1859
+    _I(6, 5,  2, 0, IVF.UTF_16): False, # noqa TODO
+    _I(6, 5,  3, 0, IVF.UTF_16): False, # noqa TODO
+    _I(6, 5,  4, 0, IVF.UTF_16): False, # noqa TODO 9610981
+    _I(6, 6,  0, 0, IVF.UTF_16): False, # noqa TODO
+    _I(6, 6,  1, 0, IVF.UTF_16): False, # noqa TODO
 }
 
 _VERSIONS = sorted(_IS_AMBIGUOUS)
@@ -538,32 +545,44 @@ class CrcCompressedBlock(Struct):
         self.BlockData = reader.read(size)
 
 
-TSetupMagicToVersion = {
-    B'rDlPtS02\x87eVx'          : _I(1, 2, 10), # noqa
-    B'rDlPtS04\x87eVx'          : _I(4, 0,  0), # noqa
-    B'rDlPtS05\x87eVx'          : _I(4, 0,  3), # noqa
-    B'rDlPtS06\x87eVx'          : _I(4, 0, 10), # noqa
-    B'rDlPtS07\x87eVx'          : _I(4, 1,  6), # noqa
-    B'rDlPtS\xcd\xe6\xd7{\x0b*' : _I(5, 1,  5), # noqa
-    B'nS5W7dT\x83\xaa\x1b\x0fj' : _I(5, 1,  5), # noqa
+SetupMagicToVersion = {
+    B'rDlPtS\x30\x32\x87\x65\x56\x78' : _I(1, 2, 10), # noqa
+    B'rDlPtS\x30\x34\x87\x65\x56\x78' : _I(4, 0,  0), # noqa
+    B'rDlPtS\x30\x35\x87\x65\x56\x78' : _I(4, 0,  3), # noqa
+    B'rDlPtS\x30\x36\x87\x65\x56\x78' : _I(4, 0, 10), # noqa
+    B'rDlPtS\x30\x37\x87\x65\x56\x78' : _I(4, 1,  6), # noqa
+    B'rDlPtS\xcd\xe6\xd7\x7b\x0b\x2a' : _I(5, 1,  5), # noqa
+    B'nS5W7d\x54\x83\xaa\x1b\x0f\x6a' : _I(5, 1,  5), # noqa
 }
 
 
-class TSetupOffsets(Struct):
+class TSetupLdrOffsetTable(Struct):
     def __init__(self, reader: StructReader[memoryview]):
         start = reader.tell()
         check = reader.peek()
 
         self.id = bytes(reader.read(12))
-        self.iv = iv = TSetupMagicToVersion.get(self.id)
+        self.iv = iv = SetupMagicToVersion.get(self.id)
 
         if iv is None:
             iv = _VERSIONS[-1]
 
-        self.revision = reader.u32() if iv >= (5, 1, 5) else None
-        self.total_size = reader.u32()
+        if iv >= (5, 1, 5):
+            self.revision = reader.u32()
+        else:
+            self.revision = 0
 
-        self.exe_offset = reader.u32()
+        if self.revision >= 2:
+            self.iv = iv = _I(6, 5, 0)
+            integer = reader.u64
+            crc_pad = 4
+        else:
+            integer = reader.u32
+            crc_pad = 0
+
+        self.total_size = integer()
+        self.exe_offset = integer()
+
         self.exe_compressed_size = None if iv >= (4, 1, 6) else reader.u32()
         self.exe_uncompressed_size = reader.u32()
 
@@ -571,12 +590,14 @@ class TSetupOffsets(Struct):
             self.exe_checksum_type = CheckSumType.CRC32
         else:
             self.exe_checksum_type = CheckSumType.Adler32
+
         self.exe_checksum = bytes(reader.read(4))
 
         self.messages = reader.u32() if iv < (4, 0, 0) else None
-        self.info_abs_offset = reader.u32()
-        self.data_abs_offset = reader.u32()
+        self.info_abs_offset = integer()
+        self.data_abs_offset = integer()
 
+        self.crc_padding = reader.read(crc_pad)
         check = check[:reader.tell() - start]
         self.computed_checksum = zlib.crc32(check)
         self.expected_checksum = reader.u32() if (
@@ -614,7 +635,7 @@ class TSetupOffsets(Struct):
         view = memoryview(data)
         if len(view) < 0x1000:
             return None
-        for magic in TSetupMagicToVersion:
+        for magic in SetupMagicToVersion:
             for match in re.finditer(re.escape(magic), view):
                 if self := cls.Try(view[match.start():]):
                     ip = self.base + self.info_offset
@@ -798,6 +819,10 @@ class SetupHeader(InnoStruct):
             self.ArchitecturesAllowed64 = read_string()
         if version >= (6, 4, 2):
             self.CloseApplicationsFilterExcludes = read_string()
+        if version >= (6, 5, 0):
+            self.SevenZipLibraryName = read_string()
+        else:
+            self.SevenZipLibraryName = None
         if version >= (5, 2, 5):
             self._license = reader.read_length_prefixed_ascii()
             self.InfoHead = reader.read_length_prefixed_ascii()
@@ -845,6 +870,12 @@ class SetupHeader(InnoStruct):
             self.TaskCount = 0
 
         self.DirectoryCount = reader.u32()
+
+        if version >= (6, 5, 0):
+            self.ISSigCount = reader.u32()
+        else:
+            self.ISSigCount = 0
+
         self.FileCount = reader.u32()
         self.DataEntryCount = reader.u32()
         self.IconCount = reader.u32()
@@ -887,7 +918,9 @@ class SetupHeader(InnoStruct):
         else:
             self.StoredAlphaFormat = StoredAlphaFormat.AlphaIgnored
 
-        if version >= (6, 4, 0):
+        if version >= (6, 5, 0):
+            pass
+        elif version >= (6, 4, 0):
             self.PasswordType = PasswordType.XChaCha20
             self.PasswordHash = bytes(reader.read(4))
         elif version >= (5, 3, 9):
@@ -900,7 +933,9 @@ class SetupHeader(InnoStruct):
             self.PasswordType = PasswordType.CRC32
             self.PasswordHash = bytes(reader.read(4))
 
-        if version >= (6, 4, 0):
+        if version >= (6, 5, 0):
+            pass
+        elif version >= (6, 4, 0):
             self.PasswordSalt = bytes(reader.read(44))
         elif version >= (4, 2, 2):
             self.PasswordSalt = bytes(reader.read(8))
@@ -1062,7 +1097,7 @@ class SetupHeader(InnoStruct):
         if version >= (4, 1, 8):
             flags.append(Flags.AppendDefaultDirName)
             flags.append(Flags.AppendDefaultGroupName)
-        if version >= (4, 2, 2):
+        if (6, 5, 0) > version >= (4, 2, 2):
             flags.append(Flags.EncryptionUsed)
         if version >= (5, 0, 4) and version < (5, 6, 1):
             flags.append(Flags.ChangesEnvironment)
@@ -1268,6 +1303,38 @@ class SetupLanguage(InnoStruct):
 
         if version >= (5, 2, 3):
             self.RightToLeft = reader.u8()
+
+
+class SetupEncryptionHeaderUse(enum.IntEnum):
+    Nowhere = 0
+    Files = 1
+    Full = 2
+
+
+class SetupEncryptionNonce(Struct):
+    def __init__(self, reader: StructReader[memoryview]):
+        self.RandomXorStartOffset = reader.u64()
+        self.RandomXorFirstSlice = reader.u32()
+        self.RemainingRandom = [reader.u32() for _ in range(3)]
+
+
+class SetupEncryptionHeader(Struct):
+    def __init__(self, reader: StructReader[memoryview]):
+        self.EncryptionType = PasswordType.XChaCha20
+        self.EncryptionUse = SetupEncryptionHeaderUse(reader.u8())
+        self.KDFSalt = bytes(reader.read_exactly(16))
+        self.KDFIterations = reader.u32()
+        self.BaseNonce = SetupEncryptionNonce(reader)
+        self.PasswordTest = bytes(reader.read(4))
+
+
+class SetupISSignature(InnoStruct):
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
+        super().__init__(reader, version, parent.Codec)
+        read_string = self._read_string
+        self.PublicX = read_string()
+        self.PublicY = read_string()
+        self.RuntimeID = read_string()
 
 
 class SetupMessage(InnoStruct):
@@ -1512,6 +1579,8 @@ class SetupFileFlags(enum.IntFlag):
     SetNtfsCompression                 = enum.auto() # noqa
     UnsetNtfsCompression               = enum.auto() # noqa
     GacInstall                         = enum.auto() # noqa
+    Download                           = enum.auto() # noqa
+    ExtractArchive                     = enum.auto() # noqa
 
 
 class SetupFileType(enum.IntEnum):
@@ -1527,6 +1596,21 @@ class SetupFileCopyMode(enum.IntEnum):
     AlwaysSkipIfSameOrOlder = enum.auto() # noqa
 
 
+class SetupFileVerificationType(enum.IntEnum):
+    Nothing  = 0           # noqa
+    Hash     = enum.auto() # noqa
+    ISSig    = enum.auto() # noqa
+
+
+class SetupFileVerification(InnoStruct):
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        super().__init__(reader, version)
+        self.ISSigAllowedKeys = reader.read_length_prefixed_ascii()
+        self.Hash = reader.read_exactly(32)
+        self.Type = _enum(SetupFileVerificationType, reader.u8(), SetupFileVerificationType.Nothing)
+
+
 class SetupFile(InnoStruct):
 
     def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, parent: TSetup):
@@ -1535,14 +1619,34 @@ class SetupFile(InnoStruct):
 
         if version < (1, 3, 0):
             self.UncompressedSize = reader.u32()
+        else:
+            self.UncompressedSize = None
         if True:
             self.Source = read_string()
             self.Destination = read_string()
             self.InstallFontName = read_string()
         if version >= (5, 2, 5):
             self.StrongAssemblyName = read_string()
+        else:
+            self.StrongAssemblyName = None
 
         self.Condition = SetupCondition(reader, version, parent)
+
+        if version >= (6, 5, 0):
+            self.Excludes = read_string()
+            self.DownloadISSigSource = read_string()
+            self.DownloadUserName = read_string()
+            self.DownloadPassword = read_string()
+            self.ExtractArchivePassword = read_string()
+            self.Verification = SetupFileVerification(reader, version)
+        else:
+            self.Excludes = None
+            self.DownloadISSigSource = None
+            self.DownloadUserName = None
+            self.DownloadPassword = None
+            self.ExtractArchivePassword = None
+            self.Verification = None
+
         self.WindowsVersion = WinVerRange(reader, version)
 
         self.Location = reader.u32()
@@ -1564,6 +1668,8 @@ class SetupFile(InnoStruct):
 
         if version >= (4, 1, 0):
             self.Permissions = reader.u16()
+        else:
+            self.Permissions = None
 
         def flagbit(f):
             self.Flags |= f if reader.read_bit() else 0
@@ -1624,6 +1730,9 @@ class SetupFile(InnoStruct):
             flagbit(SetupFileFlags.UnsetNtfsCompression)
         if version >= (5, 2, 5):
             flagbit(SetupFileFlags.GacInstall)
+        if version >= (6, 5, 0):
+            flagbit(SetupFileFlags.Download)
+            flagbit(SetupFileFlags.ExtractArchive)
 
         reader.byte_align()
 
@@ -1948,6 +2057,7 @@ class TSetup(InnoStruct):
         self.Components             = _array(h.ComponentCount,       SetupComponent)     # noqa
         self.Tasks                  = _array(h.TaskCount,            SetupTask)          # noqa
         self.Directories            = _array(h.DirectoryCount,       SetupDirectory)     # noqa
+        self.ISSignatures           = _array(h.ISSigCount,           SetupISSignature)   # noqa
         self.Files                  = _array(h.FileCount,            SetupFile)          # noqa
 
         self._DecompressDLL = None
@@ -1973,6 +2083,9 @@ class TSetup(InnoStruct):
     def get_decompress_dll(self):
         return self._DecompressDLL
 
+    def get_7zip_dll(self):
+        return self._SevenZipDLL
+
     def get_decryption_dll(self):
         return self._DecryptionDLL
 
@@ -1983,11 +2096,13 @@ class TSetup(InnoStruct):
             self._WizardImagesSmall = self._load_wizard_images(reader, version)
         method = self.Header.CompressionMethod
         crypto = self.Header.Flags & Flags.EncryptionUsed and version < (6, 4, 0)
-        hasDLL = (
-            method == CompressionMethod.BZip2
+        has7zip = bool(self.Header.SevenZipLibraryName)
+        hasDLL = (False
+            or method == CompressionMethod.BZip2
             or method == CompressionMethod.LZMA1 and version == (4, 1, 5)
             or method == CompressionMethod.Flate and version >= (4, 2, 6))
         self._DecompressDLL = reader.read_length_prefixed() if hasDLL else None
+        self._SevenZipDLL = reader.read_length_prefixed() if has7zip else None
         self._DecryptionDLL = reader.read_length_prefixed() if crypto else None
 
     def _load_wizard_images(self, reader: StructReader[memoryview], version: InnoVersion):
@@ -2028,10 +2143,17 @@ class SetupDataEntry(InnoStruct):
         self.FirstSlice = reader.u32()
         self.LastSlice = reader.u32()
         self.ChunkOffset = reader.u32()
+        if version < (4, 0, 0):
+            if self.FirstSlice < 1 or self.LastSlice < 1:
+                raise ValueError(F'Unexpected slice {self.FirstSlice}:{self.LastSlice}')
         if version >= (4, 0, 1):
             self.Offset = reader.u64()
-        self.FileSize = reader.u64()
-        self.ChunkSize = reader.u64()
+        if version >= (4, 0, 0):
+            self.FileSize = reader.u64()
+            self.ChunkSize = reader.u64()
+        else:
+            self.FileSize = reader.u32()
+            self.ChunkSize = reader.u32()
 
         if version >= (6, 4, 0):
             self.ChecksumType = CheckSumType.SHA256
@@ -2049,9 +2171,13 @@ class SetupDataEntry(InnoStruct):
             self.ChecksumType = CheckSumType.Adler32
             self.Checksum = bytes(reader.read(4))
 
-        ft = reader.u64()
-        ts = datetime.fromtimestamp(
-            (ft - _FILE_TIME_1970_01_01) / 10000000, timezone.utc)
+        if version.bits == 16:
+            from refinery.units.misc.datefix import datefix
+            ts = datefix.dostime(reader.u32())
+        else:
+            ts = reader.u64() - _FILE_TIME_1970_01_01
+            ts = datetime.fromtimestamp(ts / 10000000, timezone.utc)
+
         self.FileTime = ts
 
         self.FileVersionMs = reader.u32()
@@ -2118,6 +2244,7 @@ class InnoParseResult(NamedTuple):
     failures: list[str]
     setup_info: None | TSetup
     setup_data: None | TData
+    encryption: None | SetupEncryptionHeader
 
     def ok(self):
         return self.warnings == 0 and not self.failures
@@ -2134,7 +2261,7 @@ class InnoArchive:
     This class represents an InnoSetup archive. Optionally, a `refinery.units.Unit` can be
     passed to the class as a parameter to use its logger.
     """
-    OffsetsPath: ClassVar[str] = 'RCDATA/11111/0'
+    OffsetsPath: ClassVar[str] = 'RCDATA/11111'
     ChunkPrefix: ClassVar[bytes] = b'zlb\x1a'
 
     def __init__(
@@ -2142,13 +2269,13 @@ class InnoArchive:
         data: bytearray,
         unit: Unit | None = None,
     ):
-        if not (meta := TSetupOffsets.FindInBinary(data)):
+        if not (meta := TSetupLdrOffsetTable.FindInBinary(data)):
             try:
                 _meta = one(data | perc(self.OffsetsPath))
             except Exception as E:
                 raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
             else:
-                meta = TSetupOffsets.Parse(_meta)
+                meta = TSetupLdrOffsetTable.Parse(_meta)
 
         self._password = None
         self._password_guessed = False
@@ -2214,7 +2341,7 @@ class InnoArchive:
                 nonlocal best_error
                 best_error = best_error or e
                 self._log_comment(F'exception while parsing as {v!s}: {exception_to_string(e)}')
-                return InnoParseResult(v, [], [], 1, [str(e)], None, None)
+                return InnoParseResult(v, [], [], 1, [str(e)], None, None, None)
             else:
                 results[v] = r
                 return r
@@ -2366,6 +2493,15 @@ class InnoArchive:
         files: list[InnoFile] = []
         warnings = 0
 
+        if version >= (6, 5, 0):
+            expected_checksum = inno.u32()
+            encryption_header = SetupEncryptionHeader(inno)
+            computed_checksum = zlib.crc32(encryption_header.get_data()) & 0xFFFFFFFF
+            if expected_checksum != computed_checksum:
+                raise ValueError('Encryption header failed the CRC check.')
+        else:
+            encryption_header = None
+
         for _ in range(3):
             stream = InnoStream(StreamHeader(inno, version))
             streams.append(stream)
@@ -2486,6 +2622,7 @@ class InnoArchive:
             failures,
             stream0,
             stream1,
+            encryption_header,
         )
 
     def read_stream(self, stream: InnoStream):
@@ -2785,7 +2922,7 @@ def is_inno_setup(data: bytearray):
     ]:
         if re.search(re.escape(marker), data):
             return True
-    for marker in TSetupMagicToVersion.keys():
+    for marker in SetupMagicToVersion.keys():
         if re.search(re.escape(marker), data) is not None:
             return True
     return False
