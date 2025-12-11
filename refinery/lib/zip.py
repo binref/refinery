@@ -845,14 +845,15 @@ class ZipExtUnixIDs(ZipExt):
     HeaderID = 0x7875
 
     def __init__(self, reader: StructReader[memoryview]):
-        self.uid = bytes(reader.read_exactly(reader.u8()))
-        self.gid = bytes(reader.read_exactly(reader.u8()))
+        self.version = reader.u8()
+        self.uid = reader.read_integer(reader.u8() * 8)
+        self.gid = reader.read_integer(reader.u8() * 8)
 
 
 class ZipExtTimestampFlags(FlagAccessMixin, enum.IntFlag):
-    Modification = 0
-    Access = 1
-    Creation = 2
+    Modification = 1
+    Access = 2
+    Creation = 4
 
 
 class ZipExtTimestamp(ZipExt):
@@ -860,9 +861,15 @@ class ZipExtTimestamp(ZipExt):
 
     def __init__(self, reader: StructReader[memoryview]):
         self.flags = ZipExtTimestampFlags(reader.u8())
-        self.mtime = reader.u32() if self.flags.Modification else None
-        self.atime = reader.u32() if self.flags.Access else None
-        self.ctime = reader.u32() if self.flags.Creation else None
+        self.mtime = None
+        self.atime = None
+        self.ctime = None
+        if reader.remaining_bytes >= 4 and self.flags.Modification:
+            self.mtime = reader.u32()
+        if reader.remaining_bytes >= 4 and self.flags.Access:
+            self.atime = reader.u32()
+        if reader.remaining_bytes >= 4 and self.flags.Creation:
+            self.ctime = reader.u32()
 
 
 class ZipExtUnicodePath(ZipExt):
