@@ -13,12 +13,17 @@ class carve_zip(Unit):
     def __init__(
         self,
         recursive: Param[bool, Arg.Switch('-r', help=(
-            'Extract ZIP archives that occur as data caves within the parent archive. This does not'
-            ' include archives that are stored as archived files, but only archives that are nested'
-            ' within unused data of the parent archive.'
+            'Extract ZIP archives that occur as data caves within the parent archive. This does '
+            'not include archives that are stored as archived files, but only archives that are '
+            'nested within unused data of the parent archive.'
+        ))] = False,
+        trim_left: Param[bool, Arg.Switch('-t', help=(
+            'By default, extracted archives span from offset 0 to where their EOCD was found. '
+            'When this flag is specified, they are trimmed left to include only the data that is '
+            'referenced by them.'
         ))] = False,
     ):
-        super().__init__(recursive=recursive)
+        super().__init__(recursive=recursive, trim_left=trim_left)
 
     def process(self, data: bytearray):
         end = len(data)
@@ -44,8 +49,11 @@ class carve_zip(Unit):
             else:
                 break
 
-        extractions.sort(key=lambda t: t[0])
-
-        for lower, upper in extractions:
-            zip = mem[lower:upper]
-            yield self.labelled(zip, offset=lower)
+        if self.args.trim_left:
+            extractions.sort(key=lambda t: t[0])
+            for p, n in extractions:
+                yield self.labelled(mem[p:n], offset=p)
+        else:
+            extractions.sort(key=lambda t: t[1])
+            for _, n in extractions:
+                yield self.labelled(mem[0:n])
