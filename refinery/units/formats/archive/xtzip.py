@@ -7,19 +7,14 @@ from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.lib.types import buf
 from refinery.lib.zip import InvalidPassword, PasswordRequired, Zip, ZipDirEntry
 from refinery.units import RefineryPartialResult
-from refinery.units.formats.archive import ArchiveUnit
+from refinery.units.formats.archive import ArchiveUnit, MultipleArchives
 from refinery.units.formats.pe import get_pe_size
-from refinery.units.pattern.carve_zip import carve_zip
 
 
 class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
     Extract files from a Zip archive.
     """
-    @classmethod
-    def _carver(cls):
-        return carve_zip
-
     def unpack(self, data: buf):
         def trypwd(password: str | None):
             try:
@@ -48,6 +43,12 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 break
         else:
             zipf = Zip(view, password)
+
+        if some := zipf.sub_archive_count() and not self.args.lenient:
+            text = (
+                F'The input contains {some + 1} archives. Use the xtzip unit to extract '
+                R'them individually or set the --lenient/-L option to fuse the archives.')
+            raise MultipleArchives(text)
 
         if zipf.password:
             self.log_debug('Using password:', zipf.password)

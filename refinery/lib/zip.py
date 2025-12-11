@@ -980,12 +980,16 @@ class Zip:
         self.unreferenced_records.pop(start, None)
         return r
 
+    def sub_archive_count(self):
+        return sum(sub.sub_archive_count() + 1 for sub in self.sub_archives.values())
+
     def __init__(
         self,
         data: buf,
         password: str | None = None,
         read_records: bool = True,
         read_unreferenced_records: bool = True,
+        sub_archives_covered: bool = True,
     ):
         self.reader = reader = StructReader(view := memoryview(data))
         self.is64bit = True
@@ -1126,8 +1130,9 @@ class Zip:
                 end = sub_eocd
                 continue
             sub_archives[sub_eocd] = sub
-            for i in sub.coverage:
-                self.coverage.addi(*i)
+            if sub_archives_covered:
+                for i in sub.coverage:
+                    self.coverage.addi(*i)
             end = sub.eocd.offset
 
         self.sub_archives = sub_archives
