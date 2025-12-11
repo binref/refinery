@@ -653,6 +653,7 @@ class ZipEndOfCentralDirectory(Struct):
     Signature = B'PK\x05\x06'
 
     def __init__(self, reader: StructReader[memoryview]):
+        self.offset = reader.tell()
         if reader.read(4) != self.Signature:
             raise ValueError
         self.disk_number = reader.u16()
@@ -679,6 +680,7 @@ class ZipEndOfCentralDirectory64(Struct):
     Signature = B'PK\x06\x06'
 
     def __init__(self, reader: StructReader[memoryview]):
+        self.offset = reader.tell()
         if reader.read(4) != self.Signature:
             raise ValueError
         self.eocd64_size = reader.u64()
@@ -1047,8 +1049,10 @@ class Zip:
 
         records: dict[int, ZipFileRecord] = {}
         unreferenced_records: dict[int, ZipFileRecord] = {}
+        unreferenced_dirents: dict[int, ZipDirEntry] = {}
         self.records = records
         self.unreferenced_records = unreferenced_records
+        self.unreferenced_dirents = unreferenced_dirents
         start = reader.tell()
 
         if reader.peek(4) == ZipDigitalSignature.Signature:
@@ -1098,22 +1102,32 @@ class Zip:
             if apksig and end == apksig.offset and not any(gap):
                 coverage.addi(start, len(gap))
                 continue
-            while gap[:4] == ZipFileRecord.Signature:
+            while gap[:2] == B'PK':
                 reader.seekset(start)
-                try:
-                    r = self.parse_record(read_data=False)
-                    n = len(r)
-                except Exception:
-                    break
-                if gap[n:n + 4] != ZipFileRecord.Signature and len(gap) >= n + r.csize:
-                    reader.seekset(start)
+                if gap[:4] == ZipDirEntry.Signature:
                     try:
-                        r = self.parse_record()
-                    except Exception:
-                        pass
-                    else:
+                        r = ZipDirEntry(reader)
                         n = len(r)
+                    except Exception:
+                        break
+                    unreferenced_dirents[start] = r
+                elif gap[:4] == ZipFileRecord.Signature:
+                    try:
+                        r = self.parse_record(read_data=False)
+                        n = len(r)
+                    except Exception:
+                        break
+                    if gap[n:n + 4] != ZipFileRecord.Signature and len(gap) >= n + r.csize:
+                        reader.seekset(start)
+                        try:
+                            r = self.parse_record()
+                        except Exception:
+                            pass
+                        else:
+                            n = len(r)
+                    unreferenced_records[start] = r
+                else:
+                    break
                 gap = gap[n:]
                 coverage.addi(start, n)
                 start += n
-                unreferenced_records[start] = r
