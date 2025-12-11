@@ -745,7 +745,7 @@ class InstallMode(enum.IntEnum):
 
 class SetupHeader(InnoStruct):
 
-    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, encryption: SetupEncryptionHeader | None):
         super().__init__(reader, version)
 
         def read_string():
@@ -919,7 +919,9 @@ class SetupHeader(InnoStruct):
             self.StoredAlphaFormat = StoredAlphaFormat.AlphaIgnored
 
         if version >= (6, 5, 0):
-            pass
+            assert encryption
+            self.PasswordType = encryption.EncryptionType
+            self.PasswordHash = encryption.PasswordTest
         elif version >= (6, 4, 0):
             self.PasswordType = PasswordType.XChaCha20
             self.PasswordHash = bytes(reader.read(4))
@@ -934,7 +936,8 @@ class SetupHeader(InnoStruct):
             self.PasswordHash = bytes(reader.read(4))
 
         if version >= (6, 5, 0):
-            pass
+            assert encryption
+            self.PasswordSalt = encryption.SaltData
         elif version >= (6, 4, 0):
             self.PasswordSalt = bytes(reader.read(44))
         elif version >= (4, 2, 2):
@@ -1306,7 +1309,7 @@ class SetupLanguage(InnoStruct):
 
 
 class SetupEncryptionHeaderUse(enum.IntEnum):
-    Nowhere = 0
+    NoEncryption = 0
     Files = 1
     Full = 2
 
@@ -1322,6 +1325,7 @@ class SetupEncryptionHeader(Struct):
     def __init__(self, reader: StructReader[memoryview]):
         self.EncryptionType = PasswordType.XChaCha20
         self.EncryptionUse = SetupEncryptionHeaderUse(reader.u8())
+        self.SaltData = bytes(reader.peek(44))
         self.KDFSalt = bytes(reader.read_exactly(16))
         self.KDFIterations = reader.u32()
         self.BaseNonce = SetupEncryptionNonce(reader)
@@ -2021,9 +2025,9 @@ class SetupRunEntry(InnoStruct):
 
 class TSetup(InnoStruct):
 
-    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, encryption: SetupEncryptionHeader | None):
         super().__init__(reader, version)
-        self.Header = h = SetupHeader(reader, version)
+        self.Header = h = SetupHeader(reader, version, encryption)
 
         def _array(count: int, parser: type[_T]) -> list[_T]:
             return [parser.Parse(reader, version, self) for _ in range(count)]
@@ -2495,12 +2499,14 @@ class InnoArchive:
 
         if version >= (6, 5, 0):
             expected_checksum = inno.u32()
-            encryption_header = SetupEncryptionHeader(inno)
-            computed_checksum = zlib.crc32(encryption_header.get_data()) & 0xFFFFFFFF
+            encryption = SetupEncryptionHeader(inno)
+            computed_checksum = zlib.crc32(encryption.get_data()) & 0xFFFFFFFF
             if expected_checksum != computed_checksum:
                 raise ValueError('Encryption header failed the CRC check.')
+            if encryption.EncryptionUse == SetupEncryptionHeaderUse.Full:
+                raise NotImplementedError('This archive uses full encryption, support has not yet been added.')
         else:
-            encryption_header = None
+            encryption = None
 
         for _ in range(3):
             stream = InnoStream(StreamHeader(inno, version))
@@ -2519,7 +2525,7 @@ class InnoArchive:
             files.append(file)
 
         self._log_verbose(F'{version!s} parsing stream 0 (TSetup)')
-        stream0 = TSetup.Parse(memoryview(self.read_stream(streams[0])), version)
+        stream0 = TSetup.Parse(memoryview(self.read_stream(streams[0])), version, encryption)
         path_dedup: dict[str, list[SetupFile]] = {}
 
         for file in files:
@@ -2622,7 +2628,7 @@ class InnoArchive:
             failures,
             stream0,
             stream1,
-            encryption_header,
+            encryption,
         )
 
     def read_stream(self, stream: InnoStream):
