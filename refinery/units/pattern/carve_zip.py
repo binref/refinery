@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from refinery.lib.intervals import IntIntervalUnion
 from refinery.lib.types import Param
 from refinery.lib.zip import Zip
 from refinery.units import Unit
@@ -24,27 +23,29 @@ class carve_zip(Unit):
     def process(self, data: bytearray):
         end = len(data)
         mem = memoryview(data)
-        rev = []
-        cov = IntIntervalUnion() if self.args.recursive else None
+        extractions = []
+        recursive = self.args.recursive
         while True:
+            def _sub_archive_boundaries(zip: Zip):
+                for sub in zip.sub_archives.values():
+                    if b := sub.coverage.boundary():
+                        yield from _sub_archive_boundaries(sub)
+                        yield b
             try:
                 zip = Zip(mem[:end], read_unreferenced_records=False)
             except Exception:
                 break
             if boundary := zip.coverage.boundary():
                 lower, upper = boundary
-                if cov is None:
-                    end = lower
-                else:
-                    if zip.eocd.offset in cov:
-                        end = zip.eocd.offset
-                        continue
-                    for i in zip.coverage:
-                        cov.addi(*i)
-                    end = zip.eocd.offset
-                rev.append((lower, upper))
+                extractions.append((lower, upper))
+                end = lower
+                if recursive:
+                    extractions.extend(_sub_archive_boundaries(zip))
             else:
                 break
-        for lower, upper in reversed(rev):
+
+        extractions.sort(key=lambda t: t[0])
+
+        for lower, upper in extractions:
             zip = mem[lower:upper]
             yield self.labelled(zip, offset=lower)

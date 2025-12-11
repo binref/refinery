@@ -1094,6 +1094,24 @@ class Zip:
             if len(self.records) < len(backup_records):
                 self.records = backup_records
 
+        sub_archives: dict[int, Zip] = {}
+        end = self.eocd.offset
+
+        while True:
+            try:
+                sub = Zip(view[:end], read_unreferenced_records=False)
+            except Exception:
+                break
+            if (sub_eocd := sub.eocd.offset) in self.coverage:
+                end = sub_eocd
+                continue
+            sub_archives[sub_eocd] = sub
+            for i in sub.coverage:
+                self.coverage.addi(*i)
+            end = sub.eocd.offset
+
+        self.sub_archives = sub_archives
+
         if not read_unreferenced_records:
             return
 
