@@ -180,6 +180,12 @@ class IntervalUnion(ABC, Generic[Value]):
             value = values[start]
             yield (start, value)
 
+    def __contains__(self, value: int | tuple[int, Value]):
+        args = value
+        if isinstance(args, int):
+            args = (args, None)
+        return self.overlaps(*args)
+
     def overlaps(self, start: int, value: int | Value | None = None) -> bool:
         """
         Return whether the given interval or point overlaps with any interval in the union.
