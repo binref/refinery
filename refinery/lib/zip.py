@@ -11,7 +11,7 @@ import re
 import zlib
 
 from datetime import datetime
-from typing import Iterable
+from typing import Iterable, NamedTuple
 
 from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
 from Cryptodome.Hash import HMAC, SHA1
@@ -37,6 +37,11 @@ class InvalidPassword(ValueError):
 
 class DataIntegrityError(ValueError):
     pass
+
+
+class ZipAnomalies(enum.IntFlag):
+    Normal = 0
+    DataDescriptorWithoutHeader = 1
 
 
 class ZipFlags(FlagAccessMixin, enum.IntFlag):
@@ -160,7 +165,7 @@ class ZipInternalFileAttributes(FlagAccessMixin, enum.IntFlag):
     RecordLengthControl = 0x0002
 
 
-class ApkSigningBlock42Entry(Struct):
+class SigningBlock42Entry(Struct):
     def __init__(self, reader: StructReader[memoryview]):
         length = reader.u64()
         self.id = reader.u32()
@@ -194,10 +199,14 @@ class ApkSigningBlock42(Struct):
             raise ValueError(F'Size mismatch: {m} != {n}.')
         if reader.read(0x10) != self.Signature:
             raise ValueError('Invalid signature.')
-        fields: list[ApkSigningBlock42Entry] = []
+        fields: list[SigningBlock42Entry] = []
         while not body.eof:
-            fields.append(ApkSigningBlock42Entry(body))
+            fields.append(SigningBlock42Entry(body))
         self.fields = fields
+
+
+class RpkSigningBlock42(ApkSigningBlock42):
+    Signature = B'RPK Sig Block 42'
 
 
 class ZipEncryptionHeader(Struct):
@@ -341,6 +350,12 @@ class ZipDigitalSignature(Struct):
         self.signature_data = reader.read_exactly(self.size_of_data)
 
 
+class ZipDataDescriptorRaw(NamedTuple):
+    crc32: int
+    csize: int
+    usize: int
+
+
 class ZipDataDescriptor(Struct):
     Signature = B'PK\x07\x08'
 
@@ -388,6 +403,8 @@ class ZipFileRecord(Struct):
         self.offset = reader.tell()
         self.dir = dir
 
+        self.anomalies = ZipAnomalies.Normal
+
         if reader.read(4) != self.Signature:
             raise ValueError
         self.version = reader.u16()
@@ -399,9 +416,12 @@ class ZipFileRecord(Struct):
             self.date = None
         self.mtime = reader.u16()
         self.mdate = reader.u16()
+
+        descriptor = reader.peek(12)
         self.crc32 = reader.u32()
         self.csize = reader.u32()
         self.usize = reader.u32()
+
         nl = reader.u16()
         xl = reader.u16()
         self.name_bytes = reader.read_exactly(nl)
@@ -436,6 +456,7 @@ class ZipFileRecord(Struct):
                 self.ts = ts
 
         self.data_offset = start = reader.tell()
+        self.data_descriptor = None
 
         if not self.flags.Encrypted:
             self.encryption = NoCrypto()
@@ -466,7 +487,7 @@ class ZipFileRecord(Struct):
                 ddpos = ddirs[k]
                 csize = ddpos - self.data_offset
                 self.data = reader.read_exactly(csize - skipped)
-                info = ZipDataDescriptor(reader, is64bit, csize)
+                self.data_descriptor = info = ZipDataDescriptor(reader, is64bit, csize)
                 if info.csize == csize:
                     self.crc32 = info.crc32
                     self.csize = info.csize
@@ -476,11 +497,14 @@ class ZipFileRecord(Struct):
                 reader.seekset(self.data_offset)
                 start += 4
         elif self.flags.DataDescriptor or reader.peek(4) == ZipDataDescriptor.Signature:
-            info = ZipDataDescriptor(reader, is64bit)
+            self.data_descriptor = info = ZipDataDescriptor(reader, is64bit)
             is64bit = info.is64bit
             self.crc32 = info.crc32
             self.csize = info.csize
             self.usize = info.usize
+        elif reader.peek(12) == descriptor:
+            self.data_descriptor = ZipDataDescriptorRaw(reader.u32(), reader.u32(), reader.u32())
+            self.anomalies |= ZipAnomalies.DataDescriptorWithoutHeader
 
         self.is64bit = is64bit
 
@@ -924,6 +948,9 @@ class Zip:
         self.apksig = ApkSigningBlock42.FromCentralDir(reader)
         if (apksig := self.apksig):
             coverage.addi(apksig.offset, len(apksig))
+        self.rpksig = RpkSigningBlock42.FromCentralDir(reader)
+        if (rpksig := self.rpksig):
+            coverage.addi(rpksig.offset, len(rpksig))
 
         if reader.peek(4) == ZipArchiveExtraDataRecord.Signature:
             self.archive_extra_data = ZipArchiveExtraDataRecord(reader)
@@ -1011,7 +1038,9 @@ class Zip:
         for start, end in list(coverage.gaps(0, len(view))):
             gap = view[start:end]
             if apksig and end == apksig.offset and not any(gap):
-                # Signature Padding
+                coverage.addi(start, len(gap))
+                continue
+            if rpksig and end == rpksig.offset and not any(gap):
                 coverage.addi(start, len(gap))
                 continue
             while gap[:4] == ZipFileRecord.Signature:
