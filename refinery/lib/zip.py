@@ -526,6 +526,7 @@ class ZipFileRecord(Struct):
         if not read_data:
             self.data = None
             return
+
         if 0 < self.csize:
             rest = self.csize - skipped
             if rest < 0:
@@ -547,14 +548,22 @@ class ZipFileRecord(Struct):
                     self.usize = info.usize
                     is64bit = info.is64bit
                     break
+                try:
+                    u = self.unpack()
+                except Exception:
+                    pass
+                else:
+                    self.csize = csize
+                    self.usize = len(u)
+                    break
                 reader.seekset(self.data_offset)
                 start += 4
         elif self.flags.DataDescriptor or reader.peek(4) == ZipDataDescriptor.Signature:
             self.data_descriptor = info = ZipDataDescriptor(reader, is64bit)
             is64bit = info.is64bit
-            self.crc32 = info.crc32
-            self.csize = info.csize
-            self.usize = info.usize
+            self.crc32 = self.crc32 or info.crc32
+            self.csize = self.csize or info.csize
+            self.usize = self.usize or info.usize
         elif reader.peek(12) == descriptor:
             self.data_descriptor = ZipDataDescriptorRaw(reader.u32(), reader.u32(), reader.u32())
             self.anomalies |= ZipAnomalies.DataDescriptorWithoutHeader
@@ -566,17 +575,17 @@ class ZipFileRecord(Struct):
         if dir := self.dir:
             if (ts := dir.ts) is None and (dt := dir.date):
                 return dt
-        if ts := ts or self.ts:
-            return datetime.fromtimestamp(ts.mtime)
+        if ts and (t := ts.mtime) or self.ts and (t := self.ts.mtime):
+            return datetime.fromtimestamp(t)
         return self.date
 
     def get_ctime(self):
-        if ts := (d.ts if (d := self.dir) else None) or self.ts:
-            return datetime.fromtimestamp(ts.ctime)
+        if self.dir and (ts := self.dir.ts) and (t := ts.ctime) or (ts := self.ts) and (t := ts.ctime):
+            return datetime.fromtimestamp(t)
 
     def get_atime(self):
-        if ts := (d.ts if (d := self.dir) else None) or self.ts:
-            return datetime.fromtimestamp(ts.atime)
+        if self.dir and (ts := self.dir.ts) and (t := ts.atime) or (ts := self.ts) and (t := ts.atime):
+            return datetime.fromtimestamp(t)
 
     def get_name(self):
         if (dir := self.dir) and (name := dir.name):
@@ -851,9 +860,9 @@ class ZipExtTimestamp(ZipExt):
 
     def __init__(self, reader: StructReader[memoryview]):
         self.flags = ZipExtTimestampFlags(reader.u8())
-        self.mtime = reader.u32()
-        self.atime = reader.u32()
-        self.ctime = reader.u32()
+        self.mtime = reader.u32() if self.flags.Modification else None
+        self.atime = reader.u32() if self.flags.Access else None
+        self.ctime = reader.u32() if self.flags.Creation else None
 
 
 class ZipExtUnicodePath(ZipExt):
