@@ -11,7 +11,7 @@ import re
 import zlib
 
 from datetime import datetime
-from typing import Iterable, NamedTuple
+from typing import Iterable, NamedTuple, Self
 
 from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
 from Cryptodome.Hash import HMAC, SHA1
@@ -172,41 +172,94 @@ class SigningBlock42Entry(Struct):
         self.value = reader.read_exactly(length - 4)
 
 
-class ApkSigningBlock42(Struct):
-    Signature = B'APK Sig Block 42'
+class PkgSigningBlock(Struct):
+    Signature = None
+    SeekDelta = 0
 
     @classmethod
-    def FromCentralDir(cls, reader: StructReader[memoryview]) -> ApkSigningBlock42 | None:
-        if (seek := reader.tell() - 0x10 - 8) >= 0:
+    def FromCentralDir(cls, reader: StructReader[memoryview]) -> Self | None:
+        cd = reader.tell()
+        sd = cls.SeekDelta
+        sb = cls.Signature
+        if sb is None:
+            raise NotImplementedError
+        if (seek := cd - len(sb) - 8) >= 0:
             reader.seekset(seek)
             size = reader.u64()
-            if reader.read(0x10) != cls.Signature:
+            if reader.read(len(sb)) != sb:
                 return None
-            if (seek := reader.tell() - size - 8) >= 0:
+            if (seek := reader.tell() - size - sd) >= 0:
                 reader.seekset(seek)
-                apksig = cls(reader)
-                if (m := len(apksig)) != (n := size + 8):
+                try:
+                    apksig = cls(reader, size)
+                except (ValueError, EOFError):
+                    reader.seekset(cd)
+                    return None
+                if (m := len(apksig)) != (n := size + sd):
                     raise ValueError(F'Size mismatch: {m} != {n}.')
                 return apksig
 
-    def __init__(self, reader: StructReader[memoryview]):
+
+class ApkSigningBlock42(PkgSigningBlock):
+    """
+    The standard APK signing block.
+    """
+    Signature = B'APK Sig Block 42'
+    SeekDelta = 8
+
+    def __init__(self, reader: StructReader[memoryview], size: int):
         self.offset = reader.tell()
         n = reader.u64()
-        if n < 0x18:
+        if n != size or n < 0x18:
             raise ValueError(F'Invalid length {n} for {self.__class__.__name__}.')
-        body = StructReader(reader.read_exactly(n - 0x18))
+        self.data = reader.read_exactly(n - 0x18)
+        body = StructReader(self.data)
         if (m := reader.u64()) != n:
             raise ValueError(F'Size mismatch: {m} != {n}.')
         if reader.read(0x10) != self.Signature:
             raise ValueError('Invalid signature.')
         fields: list[SigningBlock42Entry] = []
-        while not body.eof:
-            fields.append(SigningBlock42Entry(body))
-        self.fields = fields
+        try:
+            while not body.eof:
+                fields.append(SigningBlock42Entry(body))
+        except (ValueError, EOFError):
+            self.fields = None
+        else:
+            self.fields = fields
 
 
 class RpkSigningBlock42(ApkSigningBlock42):
+    """
+    Rapid Package variant of the signing block. Also known as MiniApp.  
+    """
     Signature = B'RPK Sig Block 42'
+
+
+class ApkSigningBlock42_VariantWithAt(ApkSigningBlock42):
+    """
+    An unknown variant of the APK signing block with an @ symbol instead of A. Seen in:
+    e85f49b2234cc84d222e57a24c905cd37ceaf460a55e38956389e759f2ffd0a8
+    """
+    Signature = B'@PK Sig Block 42'
+
+
+class UnknownSigningBlockPK57(PkgSigningBlock):
+    """
+    Unknown block of what appears to be a custom signature, seen in:
+    fc5a13755bc0a744ea2c0807eee83823a03cdb28bf99c5d40419719a2b159cb4
+    """
+    Signature = B'PK\x05\x07'
+    SeekDelta = 12
+
+    def __init__(self, reader: StructReader[memoryview], size: int):
+        self.offset = reader.tell()
+        self.unknown = reader.u32()
+        self.signature = reader.read(size - 4)
+        self.size = reader.u64()
+        if self.size != size:
+            raise ValueError
+        if reader.read(4) != self.Signature:
+            raise ValueError
 
 
 class ZipEncryptionHeader(Struct):
@@ -944,13 +997,18 @@ class Zip:
             raise ValueError('Invalid end of central directory size')
         self.offset_directory = start
         reader.seekset(start)
+        apksig = None
 
-        self.apksig = ApkSigningBlock42.FromCentralDir(reader)
-        if (apksig := self.apksig):
-            coverage.addi(apksig.offset, len(apksig))
-        self.rpksig = RpkSigningBlock42.FromCentralDir(reader)
-        if (rpksig := self.rpksig):
-            coverage.addi(rpksig.offset, len(rpksig))
+        for sb in (
+            ApkSigningBlock42,
+            RpkSigningBlock42,
+            ApkSigningBlock42_VariantWithAt,
+            UnknownSigningBlockPK57,
+        ):
+            self.apksig = sb.FromCentralDir(reader)
+            if (apksig := self.apksig):
+                coverage.addi(apksig.offset, len(apksig))
+                break
 
         if reader.peek(4) == ZipArchiveExtraDataRecord.Signature:
             self.archive_extra_data = ZipArchiveExtraDataRecord(reader)
@@ -1038,9 +1096,6 @@ class Zip:
         for start, end in list(coverage.gaps(0, len(view))):
             gap = view[start:end]
             if apksig and end == apksig.offset and not any(gap):
-                coverage.addi(start, len(gap))
-                continue
-            if rpksig and end == rpksig.offset and not any(gap):
                 coverage.addi(start, len(gap))
                 continue
             while gap[:4] == ZipFileRecord.Signature:
