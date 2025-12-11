@@ -976,6 +976,10 @@ class Zip:
         self.coverage = coverage = IntIntervalUnion()
         self.password = password
 
+        self.has_pk00_header = (data[:4] == B'PK00')
+        if self.has_pk00_header:
+            self.coverage.addi(0, 4)
+
         for EOCD in (
             ZipEndOfCentralDirectory64,
             ZipEndOfCentralDirectory,
