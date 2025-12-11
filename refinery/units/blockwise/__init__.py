@@ -17,7 +17,7 @@ from refinery.lib.types import INF, NoMask, Param, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Generator, Iterable, Literal, Union, TypeVar
+    from typing import Generator, Iterable, Literal, TypeVar, Union
 
     from numpy import ndarray
     _I = Union[Iterable[int], list[int], int]
