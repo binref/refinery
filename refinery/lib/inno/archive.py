@@ -1295,7 +1295,7 @@ class SetupLanguage(InnoStruct):
             self.RightToLeft = reader.u8()
 
 
-class SetupEncryptionHeaderUse(enum.IntEnum):
+class SetupEncryptionScope(enum.IntEnum):
     NoEncryption = 0
     Files = 1
     Full = 2
@@ -1311,6 +1311,7 @@ class SetupEncryptionNonce(Struct):
     def __init__(self, reader: StructReader[memoryview]):
         self.RandomXorChunkStart = reader.u64()
         self.RandomXorFirstSlice = reader.u32()
+        self.RemainignBytes = reader.peek(12)
         self.RemainingWords = [reader.u32() for _ in range(3)]
 
     def compile(self, chunk_start: int = 0, fist_slice: int | SpecialCryptContext = 0):
@@ -1319,6 +1320,9 @@ class SetupEncryptionNonce(Struct):
             self.RandomXorFirstSlice ^ fist_slice,
             *self.RemainingWords)
 
+    def __repr__(self):
+        return F'{self.RandomXorChunkStart:016X}-{self.RandomXorFirstSlice:08X}-{self.RemainignBytes.hex().upper()}'
+
 
 class XChaChaParams(Struct):
     def __init__(self, reader: StructReader[memoryview]):
@@ -1326,10 +1330,18 @@ class XChaChaParams(Struct):
         self.KDFIterations = reader.u32()
         self.BaseNonce = SetupEncryptionNonce(reader)
 
+    def __repr__(self):
+        return (
+            F'PBKDF2[salt:{self.KDFSalt.hex().upper()}/iter:{self.KDFIterations}/'
+            F'nonce:{self.BaseNonce!r}]')
+
 
 class SetupEncryptionHeader(abc.ABC):
     SaltLength: int
-    EncryptionUse: SetupEncryptionHeaderUse
+    Scope: SetupEncryptionScope
+    PasswordTest: bytes
+    PasswordType: PasswordType
+    PasswordSeed: XChaChaParams | bytes
 
     @abc.abstractmethod
     def test(self, password_bytes: buf) -> bool:
@@ -1342,15 +1354,14 @@ class SetupEncryptionHeader(abc.ABC):
 
 class XChaChaMixin(SetupEncryptionHeader):
     SaltLength = 0
-    EncryptionParams: XChaChaParams
-    PasswordTest: bytes
+    Derivation: XChaChaParams
 
     def _derive(self, password_bytes: buf) -> buf:
         return pbkdf2_hmac(
             'sha256',
             password_bytes,
-            self.EncryptionParams.KDFSalt,
-            self.EncryptionParams.KDFIterations,
+            self.Derivation.KDFSalt,
+            self.Derivation.KDFIterations,
             dklen=32,
         )
 
@@ -1360,7 +1371,7 @@ class XChaChaMixin(SetupEncryptionHeader):
 
     def decrypt(self, password_bytes: buf, data: buf, chunk_start: int, first_slice: int) -> buf:
         key = self._derive(password_bytes)
-        nonce = self.EncryptionParams.BaseNonce.compile(chunk_start, first_slice)
+        nonce = self.PasswordSeed.BaseNonce.compile(chunk_start, first_slice)
         return data | xchacha(key, nonce=nonce) | bytes
 
 
@@ -1368,7 +1379,7 @@ class SetupEncryptionHeaderV1(Struct, SetupEncryptionHeader):
     SaltLength = 8
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
-        self.EncryptionUse = SetupEncryptionHeaderUse.Files
+        self.Scope = SetupEncryptionScope.Files
         if version >= (6, 4, 0):
             raise ValueError(F'Invalid version {version} for V1 encryption header!')
         elif version >= (5, 3, 9):
@@ -1384,6 +1395,7 @@ class SetupEncryptionHeaderV1(Struct, SetupEncryptionHeader):
             self.PasswordSalt = bytes(reader.read(8))
         else:
             self.PasswordSalt = B''
+        self.PasswordSeed = self.PasswordSalt
 
     @property
     def _algorithm(self):
@@ -1409,17 +1421,17 @@ class SetupEncryptionHeaderV1(Struct, SetupEncryptionHeader):
 
 class SetupEncryptionHeaderV2(Struct, XChaChaMixin):
     def __init__(self, reader: StructReader[memoryview]):
-        self.EncryptionType = PasswordType.XChaCha20
-        self.EncryptionUse = SetupEncryptionHeaderUse.Files
+        self.Scope = SetupEncryptionScope.Files
+        self.PasswordType = PasswordType.XChaCha20
         self.PasswordTest = bytes(reader.read(4))
-        self.EncryptionParams = XChaChaParams(reader)
+        self.PasswordSeed = self.Derivation = XChaChaParams(reader)
 
 
 class SetupEncryptionHeaderV3(Struct, XChaChaMixin):
     def __init__(self, reader: StructReader[memoryview]):
-        self.EncryptionType = PasswordType.XChaCha20
-        self.EncryptionUse = SetupEncryptionHeaderUse(reader.u8())
-        self.EncryptionParams = XChaChaParams(reader)
+        self.Scope = SetupEncryptionScope(reader.u8())
+        self.PasswordType = PasswordType.XChaCha20
+        self.PasswordSeed = self.Derivation = XChaChaParams(reader)
         self.PasswordTest = bytes(reader.read(4))
 
 
@@ -2597,7 +2609,7 @@ class InnoArchive:
             computed_checksum = zlib.crc32(encryption.get_data()) & 0xFFFFFFFF
             if expected_checksum != computed_checksum:
                 raise ValueError('Encryption header failed the CRC check.')
-            if encryption.EncryptionUse == SetupEncryptionHeaderUse.Full:
+            if encryption.Scope == SetupEncryptionScope.Full:
                 raise NotImplementedError('This archive uses full encryption, support has not yet been added.')
         else:
             encryption = None

@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from refinery.lib.inno.archive import InnoArchive, is_inno_setup
-from refinery.lib.inno.emulator import InnoSetupEmulator, NewPassword
+from refinery.lib.inno.emulator import (
+    IFPSEmulatorConfig,
+    InnoSetupEmulator,
+    NewFunctionCall,
+    NewInstruction,
+    NewMutex,
+    NewPassword,
+)
 from refinery.lib.inno.ifps import IFPSFile
 from refinery.units import Unit
 
@@ -23,22 +30,43 @@ class innopwd(Unit):
             if file is None:
                 self.log_info('the archive is not password-protected, password is empty')
                 return None
-            self.log_info('password type:', file.password_type.name)
-            self.log_info('password hash:', file.password_hash)
-            self.log_info('password salt:', file.password_salt)
+            assert file.crypto
+            self.log_info('password type:', file.crypto.PasswordType.name)
+            self.log_info('password test:', file.crypto.PasswordTest)
+            self.log_info('password seed:', file.crypto.PasswordSeed)
 
-        emulator = InnoSetupEmulator(inno)
+        info = self.log_info()
+        dbug = self.log_debug()
+        emulator = InnoSetupEmulator(inno, IFPSEmulatorConfig(
+            log_mutexes=info,
+            log_passwords=True,
+            log_calls=info,
+            log_opcodes=dbug,
+            max_seconds=6000000,
+        ))
+        function = None
 
-        for password in emulator.emulate_installation():
-            if not isinstance(password, NewPassword):
+        for event in emulator.emulate_installation():
+            if isinstance(event, NewInstruction):
+                if not function or function.name != event.function.name:
+                    function = event.function
+                    self.log_debug(repr(function))
+                self.log_debug(F'\x20\x20{event.offset:#08x} {event.instruction!s}')
                 continue
-            if isinstance(inno, InnoArchive) and file and not inno.check_password(file, password):
-                self.log_info('discarding password:', password)
+            if isinstance(event, NewFunctionCall):
+                self.log_info(F'calling {event.name!s}{event.args!r}')
                 continue
-            yield password.encode(self.codec)
-            if file is not None:
-                self.log_info('aborting emulation after validating password')
-                return
+            if isinstance(event, NewMutex):
+                self.log_info(F'mutex registered: {event!s}')
+                continue
+            if isinstance(event, NewPassword):
+                if isinstance(inno, InnoArchive) and file and not inno.check_password(file, event):
+                    self.log_info('discarding password:', event)
+                    continue
+                yield event.encode(self.codec)
+                if file is not None:
+                    self.log_info('aborting emulation after validating password')
+                    return
 
     @classmethod
     def handles(cls, data):
