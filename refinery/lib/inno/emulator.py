@@ -8,14 +8,17 @@ and seems mildly insane in hindsight.
 """
 from __future__ import annotations
 
+import bisect
 import fnmatch
 import hashlib
 import inspect
 import io
 import math
+import ntpath
 import operator
 import random
 import re
+import shlex
 import struct
 
 from dataclasses import dataclass, field
@@ -72,6 +75,9 @@ if TYPE_CHECKING:
 
 _T = TypeVar('_T')
 _Y = TypeVar('_Y')
+
+
+ERROR_NO_MORE_FILES = 0x100123
 
 
 class OleObject:
@@ -446,11 +452,6 @@ class IFPSEmulatedFunction(NamedTuple):
     A list of boolean values, one for each parameter of the function. Each boolean indicates
     whether the parameter at that index is passed by reference.
     """
-    static: bool
-    """
-    Indicates whether the handler is static. If this value is `False`, the callable expects an
-    additional `self` parameter of type `refinery.lib.inno.emulator.IFPSEmulator`.
-    """
     void: bool = False
     """
     Indicates whether the handler implements a procedure rather than a function in the IFPS
@@ -495,6 +496,21 @@ class IFPSEmulatorConfig:
     language: str = 'en'
     executable: str = 'C:\\Install.exe'
     install_to: str = 'I:\\'
+    allow_process_listing: bool = False
+    processes = {
+        1001: 'explorer.exe',
+        1002: None, # represents self
+        1023: 'svchost.exe',
+        1024: 'svchost.exe',
+        1060: 'rundll32.exe',
+        1061: 'rundll32.exe',
+        2223: 'csrss.exe',
+        1200: 'winlogon.exe',
+        1300: 'wininit.exe',
+        1301: 'dllhost.exe',
+        1305: 'notepad.exe',
+        5305: 'chrome.exe',
+    }
     lcid: int = 0x0409
 
     @property
@@ -592,6 +608,7 @@ class NewInstruction(NamedTuple):
     """
     function: Function
     instruction: Instruction
+    offset: int
 
 
 class EventCall(Generic[_Y, _T]):
@@ -599,12 +616,6 @@ class EventCall(Generic[_Y, _T]):
     This class is a wrapper for generator functions that can also capture their return value.
     It is used for `refinery.lib.inno.emulator.IFPSEmulator.emulate_function`.
     """
-
-    value: _T
-    """
-    The return value of the wrapped function.
-    """
-
     def __init__(self, call: Generator[_Y, Any, _T]):
         self._call = call
         self._done = False
@@ -622,7 +633,10 @@ class EventCall(Generic[_Y, _T]):
         return wrapped
 
     @property
-    def value(self):
+    def value(self) -> _T | None:
+        """
+        The return value of the wrapped function.
+        """
         if not self._done:
             self._buffer = list(self)
         return self._value
@@ -706,6 +720,8 @@ class IFPSEmulator:
         self.stack.clear()
         for v in self.globals:
             v.setdefault()
+        self._win32api_last_error = 0
+        self._win32api_sorted_process_ids = sorted(self.config.processes)
         return self
 
     def unimplemented(self, function: Function):
@@ -842,7 +858,7 @@ class IFPSEmulator:
 
                 try:
                     rpos = 0 if void else 1
-                    args = [stack[~k] for k in range(rpos, argc + rpos)]
+                    args: list = [stack[~k] for k in range(rpos, argc + rpos)]
                 except IndexError:
                     raise EmulatorException(
                         F'Cannot call {function!s}; {argc} arguments + {rpos} return values expected,'
@@ -866,8 +882,7 @@ class IFPSEmulator:
                     for k, (var, byref) in enumerate(zip(args, handler.spec)):
                         if not byref:
                             args[k] = var.get()
-                    if not handler.static:
-                        args.insert(0, self)
+                    args.insert(0, self)
                     try:
                         return_value = handler.call(*args)
                         if inspect.isgenerator(return_value):
@@ -894,7 +909,7 @@ class IFPSEmulator:
                 if 0 < _cfg_max_data_stack < len(stack):
                     raise EmulatorMaxStack
                 if _cfg_log_opcodes:
-                    yield NewInstruction(function, insn)
+                    yield NewInstruction(function, insn, ip)
                 try:
                     if pe := pending_exception:
                         pending_exception = None
@@ -914,6 +929,8 @@ class IFPSEmulator:
                         else:
                             dst.set(getvar(src))
                     elif opc == Op.Calculate:
+                        if not isinstance((aop := insn.operator), AOp):
+                            raise TypeError(F'Operator for {opc} was of type {aop.__class__.__name__} rather than AOp.')
                         calculate = {
                             AOp.Add: operator.add,
                             AOp.Sub: operator.sub,
@@ -925,7 +942,7 @@ class IFPSEmulator:
                             AOp.And: operator.and_,
                             AOp.BOr: operator.or_,
                             AOp.Xor: operator.xor,
-                        }[insn.operator]
+                        }[aop]
                         src = insn.op(1)
                         dst = insn.op(0)
                         sv = getval(src)
@@ -987,6 +1004,8 @@ class IFPSEmulator:
                             VariableSpec(len(stack) - sp, VariableType.Local)
                         ))
                     elif opc == Op.Compare:
+                        if not isinstance((cop := insn.operator), COp):
+                            raise TypeError(F'Operator for {opc} was of type {cop.__class__.__name__} rather than COp.')
                         compare = {
                             COp.GE: operator.ge,
                             COp.LE: operator.le,
@@ -996,7 +1015,7 @@ class IFPSEmulator:
                             COp.EQ: operator.eq,
                             COp.IN: operator_in,
                             COp.IS: operator.is_,
-                        }[insn.operator]
+                        }[cop]
                         d = getvar(insn.op(0))
                         a = getval(insn.op(1))
                         b = getval(insn.op(2))
@@ -1101,7 +1120,7 @@ class IFPSEmulator:
         dict[str, IFPSEmulatedFunction]] # method or function name to emulation info
     ] = CaseInsensitiveDict()
 
-    def external(*args, static=True, __reg: dict = external_symbols, **kwargs):
+    def external(*args, __reg: dict = external_symbols, **kwargs):
         def decorator(pfn):
             signature = inspect.signature(pfn)
             name: str = kwargs.get('name', pfn.__name__)
@@ -1119,8 +1138,7 @@ class IFPSEmulator:
             void = kwargs.get('void', signature.return_annotation == signature.empty)
             parameters: list[bool] = []
             specs = iter(signature.parameters.values())
-            if not static:
-                next(specs)
+            next(specs) # skip self
             for spec in specs:
                 try:
                     hint = evaluate(spec.annotation, globals(), locals())
@@ -1130,48 +1148,110 @@ class IFPSEmulator:
                     hint = get_origin(hint)
                 var = isinstance(hint, type) and issubclass(hint, Variable)
                 parameters.append(var)
-            registry[name] = e = IFPSEmulatedFunction(pfn, parameters, static, void)
+            registry[name] = e = IFPSEmulatedFunction(pfn, parameters, void)
             aliases = kwargs.get('alias', [])
             if isinstance(aliases, str):
                 aliases = [aliases]
             for name in aliases:
                 registry[name] = e
-            if static:
-                pfn = staticmethod(pfn)
             return pfn
         return decorator(args[0]) if args else decorator
 
-    @external
-    def TInputDirWizardPage__GetValues(this: object, k: int) -> str:
+    @external()
+    def TInputDirWizardPage__GetValues(self, this: object, k: int) -> str:
         return F'$InputDir{k}'
 
-    @external
-    def TInputFileWizardPage__GetValues(this: object, k: int) -> str:
+    @external()
+    def TInputFileWizardPage__GetValues(self, this: object, k: int) -> str:
         return F'$InputFile{k}'
 
-    @external(static=False)
+    @external()
     def TPasswordEdit__SetText(self, this: object, value: str):
         if value:
             yield NewPassword(value)
         return value
 
-    @external(static=False)
+    @external(alias=['ShellExecuteA', 'ShellExecuteW'])
+    def shell32__ShellExecute(self, hwnd: int, operation: str, file: str, args: str, cwd: str, show: int) -> int:
+        if file == self.config.executable:
+            for arg in shlex.split(args):
+                if arg.upper().startswith('/PASSWORD='):
+                    yield NewPassword(arg[10:])
+        return 0x40
+
+    def _PROCESSENTRY32(self, record: list, pid: int):
+        path = self.config.processes[pid]
+        if path is None:
+            _, path = ntpath.split(self.config.executable)
+        ...                 # DWORD     dwSize
+        record[1] = 0       # DWORD     cntUsage
+        record[2] = pid     # DWORD     th32ProcessID
+        record[3] = 0       # ULONG_PTR th32DefaultHeapID
+        record[4] = 0       # DWORD     th32ModuleID
+        record[5] = 1       # DWORD     cntThreads
+        record[6] = 0       # DWORD     th32ParentProcessID
+        record[7] = 0       # LONG      pcPriClassBase
+        record[8] = 0       # DWORD     dwFlags
+        szExe = record[9]   # CHAR      szExeFile[MAX_PATH]
+        szExe[:len(path)] = path # noqa
+        szExe[ len(path)] = '\0' # noqa
+
+    @external()
+    def kernel32__GetLastError(self) -> int:
+        return self._win32api_last_error
+
+    @external()
+    def kernel32__SetLastError(self, code: int):
+        self._win32api_last_error = code
+
+    @external()
+    def kernel32__CreateToolhelp32Snapshot(self, flags: int, process_id: int) -> int:
+        if not self.config.allow_process_listing:
+            return -1
+        return random.randrange(0x10, 0x100000)
+
+    @external(alias=['Process32FirstW'])
+    def kernel32__Process32First(self, handle: int, p_record: Variable[list]) -> bool:
+        if not (pids := self._win32api_sorted_process_ids):
+            return False
+        record = p_record.get()
+        pid = pids[0]
+        self._PROCESSENTRY32(record, pid)
+        p_record.set(record)
+        return True
+
+    @external(alias=['Process32NextW'])
+    def kernel32__Process32Next(self, handle: int, p_record: Variable[list]) -> bool:
+        record = p_record.get()
+        pid = record[2]
+        pids = self._win32api_sorted_process_ids
+        k = bisect.bisect_right(pids, pid)
+        if k < len(pids):
+            pid = pids[k]
+            self._PROCESSENTRY32(record, pid)
+            p_record.set(record)
+            return True
+        else:
+            self.kernel32__SetLastError(ERROR_NO_MORE_FILES)
+            return False
+
+    @external()
     def kernel32__GetTickCount(self) -> int:
         tick = self.clock
         tick *= self.config.milliseconds_per_instruction
         tick += self.seconds_slept * 1000
         return int(tick)
 
-    @external
-    def user32__GetSystemMetrics(index: int) -> int:
+    @external()
+    def user32__GetSystemMetrics(self, index: int) -> int:
         if index == 80:
             return 1
         if index == 43:
             return 2
         return 0
 
-    @external
-    def IsX86Compatible() -> bool:
+    @external()
+    def IsX86Compatible(self) -> bool:
         return True
 
     @external(alias=[
@@ -1180,61 +1260,61 @@ class IFPSEmulator:
         'Debugging',
         'IsUninstaller',
     ])
-    def Terminated() -> bool:
+    def Terminated(self) -> bool:
         return False
 
-    @external(static=False)
+    @external()
     def IsAdmin(self) -> bool:
         return self.config.admin
 
-    @external(static=False, alias='Sleep')
+    @external(alias='Sleep')
     def kernel32__Sleep(self, ms: int):
         seconds = ms / 1000.0
         self.seconds_slept += seconds
 
-    @external
-    def Random(top: int) -> int:
+    @external()
+    def Random(self, top: int) -> int:
         return random.randrange(0, top)
 
     @external(alias='StrGet')
-    def WStrGet(string: Variable[str], index: int) -> str:
+    def WStrGet(self, string: Variable[str], index: int) -> str:
         if index <= 0:
             raise ValueError
         return string[index - 1:index]
 
     @external(alias='StrSet')
-    def WStrSet(char: str, index: int, dst: Variable[str]):
+    def WStrSet(self, char: str, index: int, dst: Variable[str]):
         old = dst.get()
-        index -= 1
-        dst.set(old[:index] + char + old[index:])
+        halt = index - 1
+        dst.set(old[:halt] + char + old[index:])
 
-    @external(static=False)
+    @external()
     def GetEnv(self, name: str) -> str:
         return self.config.environment.get(name, F'%{name}%')
 
-    @external
-    def Beep():
+    @external()
+    def Beep(self):
         pass
 
-    @external(static=False)
+    @external()
     def Abort(self):
         if self.config.throw_abort:
             raise AbortEmulation
 
-    @external
-    def DirExists(path: str) -> bool:
+    @external()
+    def DirExists(self, path: str) -> bool:
         return True
 
-    @external
-    def ForceDirectories(path: str) -> bool:
+    @external()
+    def ForceDirectories(self, path: str) -> bool:
         return True
 
     @external(alias='LoadStringFromLockedFile')
-    def LoadStringFromFile(path: str, out: Variable[str]) -> bool:
+    def LoadStringFromFile(self, path: str, out: Variable[str]) -> bool:
         return True
 
     @external(alias='LoadStringsFromLockedFile')
-    def LoadStringsFromFile(path: str, out: Variable[str]) -> bool:
+    def LoadStringsFromFile(self, path: str, out: Variable[str]) -> bool:
         return True
 
     @cached_property
@@ -1357,11 +1437,11 @@ class IFPSEmulator:
 
         return map
 
-    @external(static=False)
+    @external()
     def ExpandConstant(self, string: str) -> str:
         return self.expand_constant(string)
 
-    @external(static=False)
+    @external()
     def ExpandConstantEx(self, string: str, custom_var: str, custom_val: str) -> str:
         return self.expand_constant(string, custom_var, custom_val)
 
@@ -1385,6 +1465,7 @@ class IFPSEmulator:
             except ValueError as VE:
                 raise IFPSException(F'invalid format string: {string!r}', VE) from VE
             for prefix, spec, modifier, conversion in parsed:
+                modifier = modifier or ''
                 if backslash and prefix[:1] == '\\':
                     prefix = prefix[1:]
                 if unescape:
@@ -1452,36 +1533,37 @@ class IFPSEmulator:
                 result.write(value)
             return result.getvalue()
 
-    @external
-    def DeleteFile(path: str) -> bool:
+    @external()
+    def DeleteFile(self, path: str) -> bool:
         return True
 
-    @external
-    def FileExists(file_name: str) -> bool:
+    @external()
+    def FileExists(self, file_name: str) -> bool:
         return False
 
-    @external
-    def Log(log: str):
+    @external()
+    def Log(self, log: str):
         ...
 
-    @external
-    def Inc(p: Variable[Variable[int]]):
+    @external()
+    def Inc(self, p: Variable[int]):
         p.set(p.get() + 1)
 
-    @external
-    def Dec(p: Variable[Variable[int]]):
+    @external()
+    def Dec(self, p: Variable[int]):
         p.set(p.get() - 1)
 
-    @external
-    def FindFirst(file_name: str, frec: Variable) -> bool:
+    @external()
+    def FindFirst(self, file_name: str, frec: Variable) -> bool:
         return False
 
-    @external
-    def Trunc(x: float) -> float:
+    @external()
+    def Trunc(self, x: float) -> float:
         return math.trunc(x)
 
-    @external
+    @external()
     def GetSpaceOnDisk(
+        self,
         path: str,
         in_megabytes: bool,
         avail: Variable[int],
@@ -1496,8 +1578,9 @@ class IFPSEmulator:
         space.set(_t)
         return True
 
-    @external
+    @external()
     def GetSpaceOnDisk64(
+        self,
         path: str,
         avail: Variable[int],
         space: Variable[int],
@@ -1506,8 +1589,9 @@ class IFPSEmulator:
         space.set(5_000_000_000)
         return True
 
-    @external
+    @external()
     def Exec(
+        self,
         exe: str,
         cmd: str,
         cwd: str,
@@ -1518,28 +1602,30 @@ class IFPSEmulator:
         out.set(0)
         return True
 
-    @external
-    def GetCmdTail() -> str:
+    @external()
+    def GetCmdTail(self) -> str:
         return ''
 
-    @external
-    def ParamCount() -> int:
+    @external()
+    def ParamCount(self) -> int:
         return 0
 
-    @external
-    def ParamStr(index: int) -> str:
+    @external()
+    def ParamStr(self, index: int) -> str:
         return ''
 
-    @external
-    def ActiveLanguage() -> str:
+    @external()
+    def ActiveLanguage(self) -> str:
         return 'en'
 
-    @external(static=False)
+    @external()
     def CustomMessage(self, msg_name: str) -> str:
         by_language = {}
-        for msg in self.inno.setup_info.Messages:
-            if msg.EncodedName == msg_name:
-                lng = msg.get_language_value().Name
+        if (inno := self.inno) is None:
+            return ''
+        for msg in inno.setup_info.Messages:
+            if msg.EncodedName == msg_name and (lv := msg.get_language_value()):
+                lng = lv.Name
                 if lng == self.config.language:
                     return msg.Value
                 by_language[lng] = msg.Value
@@ -1552,15 +1638,15 @@ class IFPSEmulator:
         except StopIteration:
             raise IFPSException(F'Custom message with name {msg_name} not found.')
 
-    @external
-    def FmtMessage(fmt: str, args: list[str]) -> str:
+    @external()
+    def FmtMessage(self, fmt: str, args: list[str]) -> str:
         fmt = fmt.replace('{', '{{')
         fmt = fmt.replace('}', '}}')
         fmt = '%'.join(re.sub('%(\\d+)', '{\\1}', p) for p in fmt.split('%%'))
         return fmt.format(*args)
 
-    @external
-    def Format(fmt: str, args: list[str | int | float]) -> str:
+    @external()
+    def Format(self, fmt: str, args: list[str | int | float]) -> str:
         try:
             formatted = fmt % tuple(args)
         except Exception:
@@ -1568,75 +1654,77 @@ class IFPSEmulator:
         else:
             return formatted
 
-    @external(static=False)
+    @external()
     def SetupMessage(self, id: int) -> str:
         try:
-            return self.inno.setup_info.Messages[id].Value
-        except (AttributeError, IndexError):
-            return ''
+            if inno := self.inno:
+                return inno.setup_info.Messages[id].Value
+        except IndexError:
+            pass
+        return ''
 
-    @external(static=False, alias=['Is64BitInstallMode', 'IsX64Compatible', 'IsX64OS'])
+    @external(alias=['Is64BitInstallMode', 'IsX64Compatible', 'IsX64OS'])
     def IsWin64(self) -> bool:
         return self.config.x64
 
-    @external(static=False)
+    @external()
     def IsX86OS(self) -> bool:
         return not self.config.x64
 
-    @external
-    def RaiseException(msg: str):
+    @external()
+    def RaiseException(self, msg: str):
         raise IFPSException(msg)
 
-    @external(static=False)
+    @external()
     def ProcessorArchitecture(self) -> int:
         if self.config.x64:
             return TSetupProcessorArchitecture.paX64.value
         else:
             return TSetupProcessorArchitecture.paX86.value
 
-    @external(static=False)
+    @external()
     def GetUserNameString(self) -> str:
         return self.config.user_name
 
-    @external(static=False)
+    @external()
     def GetComputerNameString(self) -> str:
         return self.config.host_name
 
-    @external(static=False)
-    def GetUILanguage(self) -> str:
+    @external()
+    def GetUILanguage(self) -> int:
         return self.config.lcid
 
-    @external
-    def GetArrayLength(array: Variable) -> int:
+    @external()
+    def GetArrayLength(self, array: Variable) -> int:
         array = array.deref()
         return len(array)
 
-    @external
-    def SetArrayLength(array: Variable, n: int):
+    @external()
+    def SetArrayLength(self, array: Variable, n: int):
         a = array.deref()
         a.resize(n)
 
-    @external(static=False)
+    @external()
     def WizardForm(self) -> object:
         return self
 
-    @external
-    def Unassigned() -> None:
+    @external()
+    def Unassigned(self) -> None:
         return None
 
-    @external
-    def Null() -> None:
+    @external()
+    def Null(self) -> None:
         return None
 
-    @external(static=False)
+    @external()
     def Set8087CW(self, cw: int):
         self.fpucw = FPUControl(cw)
 
-    @external(static=False)
+    @external()
     def Get8087CW(self) -> int:
         return self.fpucw.value
 
-    @external(static=False)
+    @external()
     def GetDateTimeString(
         self,
         fmt: str,
@@ -1706,120 +1794,120 @@ class IFPSEmulator:
             split[k] = split[k][1:-1]
         return ''.join(split)
 
-    @external
-    def Chr(b: int) -> str:
+    @external()
+    def Chr(self, b: int) -> str:
         return chr(b)
 
-    @external
-    def Ord(c: str) -> int:
+    @external()
+    def Ord(self, c: str) -> int:
         return ord(c)
 
-    @external
-    def Copy(string: str, index: int, count: int) -> str:
+    @external()
+    def Copy(self, string: str, index: int, count: int) -> str:
         index -= 1
         return string[index:index + count]
 
-    @external
-    def Length(string: str) -> int:
+    @external()
+    def Length(self, string: str) -> int:
         return len(string)
 
     @external(alias='AnsiLowercase')
-    def Lowercase(string: str) -> str:
+    def Lowercase(self, string: str) -> str:
         return string.lower()
 
     @external(alias='AnsiUppercase')
-    def Uppercase(string: str) -> str:
+    def Uppercase(self, string: str) -> str:
         return string.upper()
 
-    @external
-    def StringOfChar(c: str, count: int) -> str:
+    @external()
+    def StringOfChar(self, c: str, count: int) -> str:
         return c * count
 
-    @external
-    def Delete(string: Variable[str], index: int, count: int):
+    @external()
+    def Delete(self, string: Variable[str], index: int, count: int):
         index -= 1
         old = string.get()
         string.set(old[:index] + old[index + count:])
 
-    @external
-    def Insert(string: str, dest: Variable[str], index: int):
+    @external()
+    def Insert(self, string: str, dest: Variable[str], index: int):
         index -= 1
         old = dest.get()
         dest.set(old[:index] + string + old[index:])
 
-    @external(static=False)
+    @external()
     def StringChange(self, string: Variable[str], old: str, new: str) -> int:
         return self.StringChangeEx(string, old, new, False)
 
-    @external
-    def StringChangeEx(string: Variable[str], old: str, new: str, _: bool) -> int:
+    @external()
+    def StringChangeEx(self, string: Variable[str], old: str, new: str, _: bool) -> int:
         haystack = string.get()
         count = haystack.count(old)
         string.set(haystack.replace(old, new))
         return count
 
-    @external
-    def Pos(string: str, sub: str) -> int:
+    @external()
+    def Pos(self, string: str, sub: str) -> int:
         return string.find(sub) + 1
 
-    @external
-    def AddQuotes(string: str) -> str:
+    @external()
+    def AddQuotes(self, string: str) -> str:
         if string and (string[0] != '"' or string[~0] != '"') and ' ' in string:
             string = F'"{string}"'
         return string
 
-    @external
-    def RemoveQuotes(string: str) -> str:
+    @external()
+    def RemoveQuotes(self, string: str) -> str:
         if string and string[0] == '"' and string[~0] == '"':
             string = string[1:-1]
         return string
 
-    @external(static=False)
+    @external()
     def CompareText(self, a: str, b: str) -> int:
         return self.CompareStr(a.casefold(), b.casefold())
 
-    @external
-    def CompareStr(a: str, b: str) -> int:
+    @external()
+    def CompareStr(self, a: str, b: str) -> int:
         if a > b:
             return +1
         if a < b:
             return -1
         return 0
 
-    @external
-    def SameText(a: str, b: str) -> bool:
+    @external()
+    def SameText(self, a: str, b: str) -> bool:
         return a.casefold() == b.casefold()
 
-    @external
-    def SameStr(a: str, b: str) -> bool:
+    @external()
+    def SameStr(self, a: str, b: str) -> bool:
         return a == b
 
-    @external
-    def IsWildcard(pattern: str) -> bool:
+    @external()
+    def IsWildcard(self, pattern: str) -> bool:
         return '*' in pattern or '?' in pattern
 
-    @external
-    def WildcardMatch(text: str, pattern: str) -> bool:
+    @external()
+    def WildcardMatch(self, text: str, pattern: str) -> bool:
         return fnmatch.fnmatch(text, pattern)
 
-    @external
-    def Trim(string: str) -> str:
+    @external()
+    def Trim(self, string: str) -> str:
         return string.strip()
 
-    @external
-    def TrimLeft(string: str) -> str:
+    @external()
+    def TrimLeft(self, string: str) -> str:
         return string.lstrip()
 
-    @external
-    def TrimRight(string: str) -> str:
+    @external()
+    def TrimRight(self, string: str) -> str:
         return string.rstrip()
 
-    @external
-    def StringJoin(sep: str, values: list[str]) -> str:
+    @external()
+    def StringJoin(self, sep: str, values: list[str]) -> str:
         return sep.join(values)
 
-    @external
-    def StringSplitEx(string: str, separators: list[str], quote: str, how: TSplitType) -> list[str]:
+    @external()
+    def StringSplitEx(self, string: str, separators: list[str], quote: str, how: TSplitType) -> list[str]:
         if not quote:
             parts = [string]
         else:
@@ -1841,31 +1929,31 @@ class IFPSEmulator:
                     break
         return out
 
-    @external(static=False)
+    @external()
     def StringSplit(self, string: str, separators: list[str], how: TSplitType) -> list[str]:
         return self.StringSplitEx(string, separators, None, how)
 
     @external(alias='StrToInt64')
-    def StrToInt(s: str) -> int:
+    def StrToInt(self, s: str) -> int:
         return int(s)
 
     @external(alias='StrToInt64Def')
-    def StrToIntDef(s: str, d: int) -> int:
+    def StrToIntDef(self, s: str, d: int) -> int:
         try:
             return int(s)
         except Exception:
             return d
 
-    @external
-    def StrToFloat(s: str) -> float:
+    @external()
+    def StrToFloat(self, s: str) -> float:
         return float(s)
 
     @external(alias='FloatToStr')
-    def IntToStr(i: int) -> str:
+    def IntToStr(self, i: int) -> str:
         return str(i)
 
-    @external
-    def StrToVersion(s: str, v: Variable[int]) -> bool:
+    @external()
+    def StrToVersion(self, s: str, v: Variable[int]) -> bool:
         try:
             packed = bytes(map(int, s.split('.')))
         except Exception:
@@ -1875,56 +1963,56 @@ class IFPSEmulator:
         v.set(int.from_bytes(packed, 'little'))
         return True
 
-    @external
-    def CharLength(string: str, index: int) -> int:
+    @external()
+    def CharLength(self, string: str, index: int) -> int:
         return 1
 
-    @external
-    def AddBackslash(string: str) -> str:
+    @external()
+    def AddBackslash(self, string: str) -> str:
         if string and string[~0] != '\\':
             string = F'{string}\\'
         return string
 
-    @external
-    def AddPeriod(string: str) -> str:
+    @external()
+    def AddPeriod(self, string: str) -> str:
         if string and string[~0] != '.':
             string = F'{string}.'
         return string
 
-    @external(static=False)
+    @external()
     def RemoveBackslashUnlessRoot(self, string: str) -> str:
         path = Path(string)
         if len(path.parts) == 1:
             return str(path)
         return self.RemoveBackslash(string)
 
-    @external
-    def RemoveBackslash(string: str) -> str:
+    @external()
+    def RemoveBackslash(self, string: str) -> str:
         return string.rstrip('\\/')
 
-    @external
-    def ChangeFileExt(name: str, ext: str) -> str:
+    @external()
+    def ChangeFileExt(self, name: str, ext: str) -> str:
         if not ext.startswith('.'):
             ext = F'.{ext}'
         return str(Path(name).with_suffix(ext))
 
-    @external
-    def ExtractFileExt(name: str) -> str:
+    @external()
+    def ExtractFileExt(self, name: str) -> str:
         return Path(name).suffix
 
     @external(alias='ExtractFilePath')
-    def ExtractFileDir(name: str) -> str:
+    def ExtractFileDir(self, name: str) -> str:
         dirname = str(Path(name).parent)
         return '' if dirname == '.' else dirname
 
-    @external
-    def ExtractFileName(name: str) -> str:
+    @external()
+    def ExtractFileName(self, name: str) -> str:
         if name:
             name = Path(name).parts[-1]
         return name
 
-    @external
-    def ExtractFileDrive(name: str) -> str:
+    @external()
+    def ExtractFileDrive(self, name: str) -> str:
         if name:
             parts = Path(name).parts
             if len(parts) >= 2 and parts[0] == '\\' and parts[1] == '?':
@@ -1938,126 +2026,126 @@ class IFPSEmulator:
                     return root
         return ''
 
-    @external
-    def ExtractRelativePath(base: str, dst: str) -> str:
+    @external()
+    def ExtractRelativePath(self, base: str, dst: str) -> str:
         return str(Path(dst).relative_to(base))
 
-    @external(static=False, alias='ExpandUNCFileName')
+    @external(alias='ExpandUNCFileName')
     def ExpandFileName(self, name: str) -> str:
         if self.ExtractFileDrive(name):
             return name
         return str(self.config.cwd / name)
 
-    @external
-    def SetLength(string: Variable[str], size: int):
+    @external()
+    def SetLength(self, string: Variable[str], size: int):
         old = string.get()
         old = old.ljust(size, '\0')
         string.set(old[:size])
 
     @external(alias='OemToCharBuff')
-    def CharToOemBuff(string: str) -> str:
+    def CharToOemBuff(self, string: str) -> str:
         # TODO
         return string
 
-    @external
-    def Utf8Encode(string: str) -> str:
+    @external()
+    def Utf8Encode(self, string: str) -> str:
         return string.encode('utf8').decode('latin1')
 
-    @external
-    def Utf8Decode(string: str) -> str:
+    @external()
+    def Utf8Decode(self, string: str) -> str:
         return string.encode('latin1').decode('utf8')
 
-    @external
-    def GetMD5OfString(string: str) -> str:
+    @external()
+    def GetMD5OfString(self, string: str) -> str:
         return hashlib.md5(string.encode('latin1')).hexdigest()
 
-    @external
-    def GetMD5OfUnicodeString(string: str) -> str:
+    @external()
+    def GetMD5OfUnicodeString(self, string: str) -> str:
         return hashlib.md5(string.encode('utf8')).hexdigest()
 
-    @external
-    def GetSHA1OfString(string: str) -> str:
+    @external()
+    def GetSHA1OfString(self, string: str) -> str:
         return hashlib.sha1(string.encode('latin1')).hexdigest()
 
-    @external
-    def GetSHA1OfUnicodeString(string: str) -> str:
+    @external()
+    def GetSHA1OfUnicodeString(self, string: str) -> str:
         return hashlib.sha1(string.encode('utf8')).hexdigest()
 
-    @external
-    def GetSHA256OfString(string: str) -> str:
+    @external()
+    def GetSHA256OfString(self, string: str) -> str:
         return hashlib.sha256(string.encode('latin1')).hexdigest()
 
-    @external
-    def GetSHA256OfUnicodeString(string: str) -> str:
+    @external()
+    def GetSHA256OfUnicodeString(self, string: str) -> str:
         return hashlib.sha256(string.encode('utf8')).hexdigest()
 
-    @external
-    def SysErrorMessage(code: int) -> str:
+    @external()
+    def SysErrorMessage(self, code: int) -> str:
         return F'[description for error {code:08X}]'
 
-    @external
-    def MinimizePathName(path: str, font: object, max_len: int) -> str:
+    @external()
+    def MinimizePathName(self, path: str, font: object, max_len: int) -> str:
         return path
 
-    @external(static=False)
+    @external()
     def CheckForMutexes(self, mutexes: str) -> bool:
         return any(m in self.mutexes for m in mutexes.split(','))
 
-    @external(static=False)
+    @external()
     def CreateMutex(self, name: str):
         if self.config.log_mutexes:
             yield NewMutex(name)
         self.mutexes.add(name)
 
-    @external(static=False)
+    @external()
     def GetWinDir(self) -> str:
         return self.expand_constant('{win}')
 
-    @external(static=False)
+    @external()
     def GetSystemDir(self) -> str:
         return self.expand_constant('{sys}')
 
-    @external(static=False)
+    @external()
     def GetWindowsVersion(self) -> int:
         version = int.from_bytes(
             struct.pack('>BBH', *self.config.windows_os_version), 'big')
         return version
 
-    @external(static=False)
+    @external()
     def GetWindowsVersionEx(self, tv: Variable[int | bool]):
         tv[0], tv[1], tv[2] = self.config.windows_os_version # noqa
         tv[3], tv[4]        = self.config.windows_sp_version # noqa
         tv[5], tv[6], tv[7] = True, 0, 0
 
-    @external(static=False)
+    @external()
     def GetWindowsVersionString(self) -> str:
         return '{}.{:02d}.{:04d}'.format(*self.config.windows_os_version)
 
-    @external
-    def CreateOleObject(name: str) -> OleObject:
+    @external()
+    def CreateOleObject(self, name: str) -> OleObject:
         return OleObject(name)
 
-    @external
-    def GetActiveOleObject(name: str) -> OleObject:
+    @external()
+    def GetActiveOleObject(self, name: str) -> OleObject:
         return OleObject(name)
 
-    @external
-    def IDispatchInvoke(ole: OleObject, prop_set: bool, name: str, value: Any) -> int:
+    @external()
+    def IDispatchInvoke(self, ole: OleObject, prop_set: bool, name: str, value: Any) -> int:
         return 0
 
-    @external
-    def FindWindowByClassName(name: str) -> int:
+    @external()
+    def FindWindowByClassName(self, name: str) -> int:
         return 0
 
-    @external
-    def FindWindowByWindowName(name: str) -> int:
+    @external()
+    def FindWindowByWindowName(self, name: str) -> int:
         return 0
 
-    @external(static=False)
+    @external()
     def WizardSilent(self) -> bool:
         return self.config.wizard_silent
 
-    @external(static=False)
+    @external()
     def SizeOf(self, var: Variable) -> int:
         if var.pointer:
             return (self.config.x64 + 1) * 4
