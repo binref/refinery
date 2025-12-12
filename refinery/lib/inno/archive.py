@@ -397,6 +397,10 @@ class Flags(enum.IntFlag):
     UsePreviousPrivileges       = enum.auto() # noqa
     WizardResizable             = enum.auto() # noqa
     UninstallLogging            = enum.auto() # noqa
+    WizardModern                = enum.auto() # noqa
+    WizardBorderStyled          = enum.auto() # noqa
+    WizardKeepAspectRatio       = enum.auto() # noqa
+    WizardLightButtonsUnstyled  = enum.auto() # noqa
 
 
 class AutoBool(enum.IntEnum):
@@ -412,6 +416,12 @@ class AutoBool(enum.IntEnum):
 class WizardStyle(enum.IntEnum):
     Classic = 0
     Modern = 1
+
+
+class WizardDarkStyle(enum.IntEnum):
+    Light = 0
+    Dark = 1
+    Dynamic = 2
 
 
 class StoredAlphaFormat(enum.IntEnum):
@@ -903,11 +913,14 @@ class SetupHeader(InnoStruct):
         self.BackColor2 = reader.u32() if (1, 3, 3) <= version < (6, 4, 0, 1) else 0
 
         if version < (5, 5, 7):
-            self.ImageBackColor = reader.u32()
+            self.LargeImageBackColor = reader.u32()
         if (2, 0, 0) <= version < (5, 0, 4) or version.isx:
             self.SmallImageBackColor = reader.u32()
         if version >= (6, 0, 0):
-            self.WizardStyle = WizardStyle(reader.u8())
+            if version < (6, 6, 0):
+                self.WizardStyle = WizardStyle(reader.u8())
+            else:
+                self.WizardStyle = None
             self.WizardResizePercentX = reader.u32()
             self.WizardResizePercentY = reader.u32()
         else:
@@ -915,14 +928,29 @@ class SetupHeader(InnoStruct):
             self.WizardResizePercentX = 0
             self.WizardResizePercentY = 0
 
+        if version >= (6, 6, 0):
+            self.WizardDarkStyle = WizardDarkStyle(reader.u8())
+        else:
+            self.WizardDarkStyle = None
+
         if version >= (5, 5, 7):
             self.StoredAlphaFormat = StoredAlphaFormat(reader.u8())
         else:
             self.StoredAlphaFormat = StoredAlphaFormat.AlphaIgnored
 
         if version >= (6, 5, 2):
-            self.ImageBackColor = reader.u32()
+            self.LargeImageBackColor = reader.u32()
             self.SmallImageBackColor = reader.u32()
+        if version >= (6, 6, 0):
+            self.LargeImageBackColorDynamicDark = reader.u32()
+            self.SmallImageBackColorDynamicDark = reader.u32()
+        else:
+            self.LargeImageBackColorDynamicDark = None
+            self.SmallImageBackColorDynamicDark = None
+        if version >= (6, 6, 1):
+            self.WizardImageOpacity = reader.u8()
+        else:
+            self.WizardImageOpacity = 0
 
         if version >= (6, 5, 0):
             assert HeaderEncryption
@@ -1113,6 +1141,11 @@ class SetupHeader(InnoStruct):
             flags.append(Flags.WizardResizable)
         if version >= (6, 3, 0):
             flags.append(Flags.UninstallLogging)
+        if version >= (6, 6, 0):
+            flags.append(Flags.WizardModern)
+            flags.append(Flags.WizardBorderStyled)
+            flags.append(Flags.WizardKeepAspectRatio)
+            flags.append(Flags.WizardLightButtonsUnstyled)
 
         flagsize, _r = divmod(len(flags), 8)
         flagsize += int(bool(_r))
@@ -1240,8 +1273,11 @@ class WinVerRange(InnoStruct):
 
 
 class LanguageId(Struct):
-    def __init__(self, reader: StructReader[memoryview]):
-        self.Value = reader.i32()
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        if version < (6, 6, 0):
+            self.Value = reader.i32()
+        else:
+            self.Value = reader.u16()
         self.Name = LCID.get(self.Value, None)
 
 
@@ -1255,9 +1291,9 @@ class SetupLanguage(InnoStruct):
         LanguageName = reader.read_length_prefixed()
 
         self.DialogFont = read_string()
-        self.TitleFont = read_string()
+        self.TitleFont = read_string() if version < (6, 6, 0) else None
         self.WelcomeFont = read_string()
-        self.CopyrightFont = read_string()
+        self.CopyrightFont = read_string() if version < (6, 6, 0) else None
         self._data = reader.read_length_prefixed()
 
         if version >= (4, 0, 1):
@@ -1265,7 +1301,7 @@ class SetupLanguage(InnoStruct):
             self.InfoBefore = reader.read_length_prefixed_ascii()
             self.InfoAfter = reader.read_length_prefixed_ascii()
 
-        self.LanguageId = LanguageId(reader)
+        self.LanguageId = LanguageId(reader, version)
 
         if version < (4, 2, 2):
             self.Codepage = DEFAULT_CODEPAGE.get(self.LanguageId.Value, 'cp1252')
@@ -1286,10 +1322,21 @@ class SetupLanguage(InnoStruct):
 
         if version < (4, 1, 0):
             self.DialogFontStandardHeight = reader.u32()
+        if version < (6, 6, 0):
+            self.TitleFontSize = reader.u32()
+            self.DialogFontBaseScaleHeight = None
+            self.DialogFontBaseScaleWidth = None
+        else:
+            self.TitleFontSize = None
+            self.DialogFontBaseScaleHeight = reader.u32()
+            self.DialogFontBaseScaleWidth = reader.u32()
 
-        self.TitleFontSize = reader.u32()
         self.WelcomeFontSize = reader.u32()
-        self.CopyrightFontSize = reader.u32()
+
+        if version < (6, 6, 0):
+            self.CopyrightFontSize = reader.u32()
+        else:
+            self.CopyrightFontSize = None
 
         if version >= (5, 2, 3):
             self.RightToLeft = reader.u8()
