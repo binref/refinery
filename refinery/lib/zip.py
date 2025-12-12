@@ -11,7 +11,7 @@ import re
 import zlib
 
 from datetime import datetime
-from typing import Iterable, NamedTuple, Self
+from typing import NamedTuple, TYPE_CHECKING
 
 from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
 from Cryptodome.Hash import HMAC, SHA1
@@ -25,6 +25,9 @@ from refinery.lib.shared import pyppmd, pyzstd
 from refinery.lib.structures import FlagAccessMixin, Struct, StructReader, StructReaderBits
 from refinery.lib.types import buf
 from refinery.units.misc.datefix import datefix
+
+if TYPE_CHECKING:
+    from typing import Self, Iterable
 
 
 class PasswordRequired(Exception):
