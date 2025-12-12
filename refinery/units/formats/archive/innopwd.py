@@ -42,7 +42,6 @@ class innopwd(Unit):
             log_passwords=True,
             log_calls=info,
             log_opcodes=dbug,
-            max_seconds=6000000,
         ))
         function = None
 
