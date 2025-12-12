@@ -46,8 +46,8 @@ class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
 
         inno = InnoArchive(data, self)
 
-        password: bytes = self.args.pwd
-        password = password.decode(self.codec) if password else None
+        _pwd: bytes = self.args.pwd
+        password = _pwd.decode(self.codec) if _pwd else None
 
         if any(file.encrypted for file in inno.files) and password is None:
             self.log_info('some files are password-protected and no password was given')
@@ -76,7 +76,7 @@ class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
         if script := inno.setup_info.Header.get_script():
             yield self._pack('embedded/script.bin', None, script)
             yield self._pack('embedded/script.ps', None,
-                lambda i=inno: i.ifps.disassembly().encode(self.codec))
+                lambda i=inno: ps.disassembly().encode(self.codec) if (ps := i.ifps) else B'')
 
         if dll := inno.setup_info.get_decompress_dll():
             yield self._pack(F'embedded/decompress.{magic(dll).extension}', None, dll)

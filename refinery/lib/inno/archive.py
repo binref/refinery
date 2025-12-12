@@ -9,6 +9,7 @@ data structures.
 """
 from __future__ import annotations
 
+import abc
 import bz2
 import codecs
 import dataclasses
@@ -21,7 +22,7 @@ import zlib
 
 from datetime import datetime, timezone
 from functools import cached_property
-from hashlib import md5, sha1, sha256
+from hashlib import md5, pbkdf2_hmac, sha1, sha256
 from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib.decompression import parse_lzma_properties
@@ -33,7 +34,6 @@ from refinery.lib.types import buf
 from refinery.units import Unit
 from refinery.units.crypto.cipher.chacha import xchacha
 from refinery.units.crypto.cipher.rc4 import rc4
-from refinery.units.crypto.keyderive.pbkdf2 import pbkdf2
 from refinery.units.formats.pe.perc import perc
 
 if TYPE_CHECKING:
@@ -652,9 +652,7 @@ class InnoFile:
     dupe: bool = False
     setup: SetupFile | None = None
     compression_method: CompressionMethod | None = None
-    password_hash: bytes = B''
-    password_salt: bytes = B''
-    password_type: PasswordType = PasswordType.Nothing
+    crypto: SetupEncryptionHeader | None = None
 
     @property
     def tags(self):
@@ -684,6 +682,10 @@ class InnoFile:
     @property
     def date(self):
         return self.meta.FileTime
+
+    @property
+    def first_slice(self):
+        return self.meta.FirstSlice
 
     @property
     def chunk_offset(self):
@@ -745,7 +747,7 @@ class InstallMode(enum.IntEnum):
 
 class SetupHeader(InnoStruct):
 
-    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, encryption: SetupEncryptionHeader | None):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, HeaderEncryption: SetupEncryptionHeaderV3 | None):
         super().__init__(reader, version)
 
         def read_string():
@@ -918,32 +920,17 @@ class SetupHeader(InnoStruct):
         else:
             self.StoredAlphaFormat = StoredAlphaFormat.AlphaIgnored
 
-        if version >= (6, 5, 0):
-            assert encryption
-            self.PasswordType = encryption.EncryptionType
-            self.PasswordHash = encryption.PasswordTest
-        elif version >= (6, 4, 0):
-            self.PasswordType = PasswordType.XChaCha20
-            self.PasswordHash = bytes(reader.read(4))
-        elif version >= (5, 3, 9):
-            self.PasswordType = PasswordType.SHA1
-            self.PasswordHash = bytes(reader.read(20))
-        elif version >= (4, 2, 0):
-            self.PasswordType = PasswordType.MD5
-            self.PasswordHash = bytes(reader.read(16))
-        else:
-            self.PasswordType = PasswordType.CRC32
-            self.PasswordHash = bytes(reader.read(4))
+        if version >= (6, 5, 2):
+            self.ImageBackColor = reader.u32()
+            self.SmallImageBackColor = reader.u32()
 
         if version >= (6, 5, 0):
-            assert encryption
-            self.PasswordSalt = encryption.SaltData
+            assert HeaderEncryption
+            self.Encryption = HeaderEncryption
         elif version >= (6, 4, 0):
-            self.PasswordSalt = bytes(reader.read(44))
-        elif version >= (4, 2, 2):
-            self.PasswordSalt = bytes(reader.read(8))
+            self.Encryption = SetupEncryptionHeaderV2(reader)
         else:
-            self.PasswordSalt = B''
+            self.Encryption = SetupEncryptionHeaderV1(reader, version)
 
         if version >= (4, 0, 0):
             self.ExtraDiskSpace = reader.i64()
@@ -1314,21 +1301,125 @@ class SetupEncryptionHeaderUse(enum.IntEnum):
     Full = 2
 
 
+class SpecialCryptContext(enum.IntEnum):
+    PasswordTest = 0xFFFFFFFF
+    CompressedBlocks1 = 0xFFFFFFFE
+    CompressedBlocks2 = 0xFFFFFFFD
+
+
 class SetupEncryptionNonce(Struct):
     def __init__(self, reader: StructReader[memoryview]):
-        self.RandomXorStartOffset = reader.u64()
+        self.RandomXorChunkStart = reader.u64()
         self.RandomXorFirstSlice = reader.u32()
-        self.RemainingRandom = [reader.u32() for _ in range(3)]
+        self.RemainingWords = [reader.u32() for _ in range(3)]
+
+    def compile(self, chunk_start: int = 0, fist_slice: int | SpecialCryptContext = 0):
+        return struct.pack('<Q4I',
+            self.RandomXorChunkStart ^ chunk_start,
+            self.RandomXorFirstSlice ^ fist_slice,
+            *self.RemainingWords)
 
 
-class SetupEncryptionHeader(Struct):
+class XChaChaParams(Struct):
     def __init__(self, reader: StructReader[memoryview]):
-        self.EncryptionType = PasswordType.XChaCha20
-        self.EncryptionUse = SetupEncryptionHeaderUse(reader.u8())
-        self.SaltData = bytes(reader.peek(44))
         self.KDFSalt = bytes(reader.read_exactly(16))
         self.KDFIterations = reader.u32()
         self.BaseNonce = SetupEncryptionNonce(reader)
+
+
+class SetupEncryptionHeader(abc.ABC):
+    SaltLength: int
+    EncryptionUse: SetupEncryptionHeaderUse
+
+    @abc.abstractmethod
+    def test(self, password_bytes: buf) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def decrypt(self, password_bytes: buf, data: buf, chunk_start: int, first_slice: int) -> bytes:
+        ...
+
+
+class XChaChaMixin(SetupEncryptionHeader):
+    SaltLength = 0
+    EncryptionParams: XChaChaParams
+    PasswordTest: bytes
+
+    def _derive(self, password_bytes: buf) -> buf:
+        return pbkdf2_hmac(
+            'sha256',
+            password_bytes,
+            self.EncryptionParams.KDFSalt,
+            self.EncryptionParams.KDFIterations,
+            dklen=32,
+        )
+
+    def test(self, password_bytes: buf) -> bool:
+        return self.PasswordTest == self.decrypt(
+            password_bytes, bytes(4), 0, SpecialCryptContext.PasswordTest)
+
+    def decrypt(self, password_bytes: buf, data: buf, chunk_start: int, first_slice: int) -> buf:
+        key = self._derive(password_bytes)
+        nonce = self.EncryptionParams.BaseNonce.compile(chunk_start, first_slice)
+        return data | xchacha(key, nonce=nonce) | bytes
+
+
+class SetupEncryptionHeaderV1(Struct, SetupEncryptionHeader):
+    SaltLength = 8
+
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
+        self.EncryptionUse = SetupEncryptionHeaderUse.Files
+        if version >= (6, 4, 0):
+            raise ValueError(F'Invalid version {version} for V1 encryption header!')
+        elif version >= (5, 3, 9):
+            self.PasswordType = PasswordType.SHA1
+            self.PasswordTest = bytes(reader.read(20))
+        elif version >= (4, 2, 0):
+            self.PasswordType = PasswordType.MD5
+            self.PasswordTest = bytes(reader.read(16))
+        else:
+            self.PasswordType = PasswordType.CRC32
+            self.PasswordTest = bytes(reader.read(4))
+        if version >= (4, 2, 2):
+            self.PasswordSalt = bytes(reader.read(8))
+        else:
+            self.PasswordSalt = B''
+
+    @property
+    def _algorithm(self):
+        if self.PasswordType == PasswordType.MD5:
+            return md5
+        if self.PasswordType == PasswordType.SHA1:
+            return sha1
+        raise NotImplementedError(F'Password type {self.PasswordType.name} is not implemented.')
+
+    def test(self, password_bytes: buf) -> bool:
+        hash = self._algorithm(b'PasswordCheckHash')
+        hash.update(self.PasswordSalt)
+        hash.update(password_bytes)
+        return self.PasswordTest == hash.digest()
+
+    def decrypt(self, password_bytes: buf, data: buf, chunk_start: int, first_slice: int) -> buf:
+        slen = self.SaltLength
+        view = memoryview(data)
+        hash = self._algorithm(view[:slen])
+        hash.update(password_bytes)
+        return view[slen:] | rc4(hash.digest(), discard=1000) | bytes
+
+
+class SetupEncryptionHeaderV2(Struct, XChaChaMixin):
+    def __init__(self, reader: StructReader[memoryview]):
+        self.EncryptionType = PasswordType.XChaCha20
+        self.EncryptionUse = SetupEncryptionHeaderUse.Files
+        self.PasswordTest = bytes(reader.read(4))
+        self.EncryptionParams = XChaChaParams(reader)
+
+
+class SetupEncryptionHeaderV3(Struct, XChaChaMixin):
+    def __init__(self, reader: StructReader[memoryview]):
+        self.EncryptionType = PasswordType.XChaCha20
+        self.EncryptionUse = SetupEncryptionHeaderUse(reader.u8())
+        self.EncryptionParams = XChaChaParams(reader)
         self.PasswordTest = bytes(reader.read(4))
 
 
@@ -2025,7 +2116,7 @@ class SetupRunEntry(InnoStruct):
 
 class TSetup(InnoStruct):
 
-    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, encryption: SetupEncryptionHeader | None):
+    def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, encryption: SetupEncryptionHeaderV3 | None):
         super().__init__(reader, version)
         self.Header = h = SetupHeader(reader, version, encryption)
 
@@ -2146,7 +2237,10 @@ class SetupDataEntry(InnoStruct):
         super().__init__(reader, version)
         self.FirstSlice = reader.u32()
         self.LastSlice = reader.u32()
-        self.ChunkOffset = reader.u32()
+        if version < (6, 5, 2):
+            self.ChunkOffset = reader.u32()
+        else:
+            self.ChunkOffset = reader.u64()
         if version < (4, 0, 0):
             if self.FirstSlice < 1 or self.LastSlice < 1:
                 raise ValueError(F'Unexpected slice {self.FirstSlice}:{self.LastSlice}')
@@ -2248,7 +2342,7 @@ class InnoParseResult(NamedTuple):
     failures: list[str]
     setup_info: None | TSetup
     setup_data: None | TData
-    encryption: None | SetupEncryptionHeader
+    encryption: None | SetupEncryptionHeaderV3
 
     def ok(self):
         return self.warnings == 0 and not self.failures
@@ -2499,7 +2593,7 @@ class InnoArchive:
 
         if version >= (6, 5, 0):
             expected_checksum = inno.u32()
-            encryption = SetupEncryptionHeader(inno)
+            encryption = SetupEncryptionHeaderV3(inno)
             computed_checksum = zlib.crc32(encryption.get_data()) & 0xFFFFFFFF
             if expected_checksum != computed_checksum:
                 raise ValueError('Encryption header failed the CRC check.')
@@ -2530,9 +2624,7 @@ class InnoArchive:
 
         for file in files:
             file.compression_method = stream0.Header.CompressionMethod
-            file.password_hash = stream0.Header.PasswordHash
-            file.password_type = stream0.Header.PasswordType
-            file.password_salt = stream0.Header.PasswordSalt
+            file.crypto = stream0.Header.Encryption
 
         for sf in stream0.Files:
             sf: SetupFile
@@ -2700,35 +2792,17 @@ class InnoArchive:
             raise ValueError(F'Error reading chunk at offset 0x{offset:X}; invalid magic {prefix.hex()}.')
 
         if file.encrypted:
-            if file.password_type == PasswordType.Nothing:
+            if file.crypto is None:
                 raise RuntimeError(F'File {file.path} is encrypted, but no password type was set.')
             if password is None:
                 raise InvalidPassword
-            if file.password_type == PasswordType.XChaCha20:
-                salt, iterations, nonce = struct.unpack('=16sI24s', file.password_salt)
-                key = password.encode(self.script_codec) | pbkdf2(32, salt, iterations, 'SHA256') | bytes
-                test_nonce = list(struct.unpack('6I', nonce))
-                test_nonce[2] = ~test_nonce[2]
-                test_nonce = struct.pack('6I', test_nonce)
-                if B'\0\0\0\0' | xchacha(key, nonce=test_nonce) | bytes != file.password_hash:
-                    raise InvalidPassword(password)
-                decryptor = xchacha(key, nonce=nonce)
-            else:
-                password_bytes = password.encode(
-                    'utf-16le' if file.unicode else self.script_codec)
-                algorithm = {
-                    PasswordType.SHA1: sha1,
-                    PasswordType.MD5 : md5,
-                }[file.password_type]
-                hash = algorithm(b'PasswordCheckHash' + file.password_salt)
-                hash.update(password_bytes)
-                if hash.digest() != file.password_hash:
-                    raise InvalidPassword(password)
-                hash = algorithm(reader.read(8))
-                hash.update(password_bytes)
-                decryptor = rc4(hash.digest(), discard=1000)
+            password_bytes = password.encode(
+                'utf-16le' if file.unicode else self.script_codec)
+            if not file.crypto.test(password_bytes):
+                raise InvalidPassword(password)
+            length += file.crypto.SaltLength
         else:
-            decryptor = None
+            password_bytes = None
 
         if check_only:
             return B''
@@ -2736,8 +2810,9 @@ class InnoArchive:
         data = reader.read_exactly(length)
 
         if file.encrypted:
-            assert decryptor
-            data = data | decryptor | bytearray
+            assert password_bytes
+            assert file.crypto
+            data = file.crypto.decrypt(password_bytes, data, file.chunk_offset, file.first_slice)
 
         if method is None:
             return data
@@ -2911,7 +2986,7 @@ class InnoArchive:
         return data
 
 
-def is_inno_setup(data: bytearray):
+def is_inno_setup(data: buf):
     """
     Test whether the input data is likely an Inno Setup executable.
     """
