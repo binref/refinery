@@ -67,3 +67,10 @@ class TestInnoExtractor(TestUnitBase):
         unit = self.load()
         pwds = data | unit | {str}
         self.assertContains(pwds, r'LD6DQAUT2FQRBGKMXKET7K6PBBBP6TMDUKQ6K4S995HKIGIYFUDCFLU')
+
+    def test_password_from_shell_relaunch(self):
+        # 9794c2f6949b96de153acc516d901140353ec9597d8822539a1fd1d629e12571
+        data = self.download_sample('51ac80ab4daea0877910d13eb9dae07e8c26507e5115ee815eb7dc9410be3c22')
+        unit = self.load()
+        pwds = data | unit | {str}
+        self.assertContains(pwds, r'ef0d0d8f-fb77-461c-b2f6-92cf1c921282')
