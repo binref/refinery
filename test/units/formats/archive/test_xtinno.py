@@ -16,6 +16,11 @@ class TestInnoExtractor(TestUnitBase):
         )
         self.assertEqual(test, 'http''s:/''/t.''me/+r1hwDlb8VAI5ZTQy')
 
+    def test_v_5_5_00_pwd(self):
+        data = self.download_sample('aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42')
+        test = data | self.load('HalfTime.dll') | self.ldu('sha256', text=True) | str
+        self.assertEqual(test, 'e91b33814738947981595f529e6de370dae57623a67f3531ce238363d657e18e')
+
     def test_real_world_02_script(self):
         test = (
             self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')
