@@ -230,7 +230,7 @@ class ApkSigningBlock42(PkgSigningBlock):
 
 class RpkSigningBlock42(ApkSigningBlock42):
     """
-    Rapid Package variant of the signing block. Also known as MiniApp.  
+    Rapid Package variant of the signing block. Also known as MiniApp.
     """
     Signature = B'RPK Sig Block 42'
 
