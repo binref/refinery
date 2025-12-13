@@ -5,6 +5,10 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.19
+- The `xtinno` (and thereby `xt`) now support Inno Setup up to version 6.6.1.
+- The `innopwd` unit has improved logging and can intercept passwords in more cases.
+
 ## Version 0.9.18 - bugfix release
 
 ## Version 0.9.17 - bugfix release
