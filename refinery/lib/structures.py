@@ -158,9 +158,9 @@ class MemoryFileMethods(Generic[T, B]):
                 _data = data
             if output is None:
                 if TYPE_CHECKING:
-                    output = cast(type[B], type(data))
+                    output = cast(type[B], type(_data))
                 else:
-                    output = type(data)
+                    output = type(_data)
             if size_limit is not None and len(_data) > size_limit:
                 raise ValueError('Initial data exceeds size limit')
             self._output = output
