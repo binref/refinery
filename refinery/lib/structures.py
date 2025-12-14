@@ -140,9 +140,7 @@ class MemoryFileMethods(Generic[T, B]):
         fileno: int | None = None,
         size_limit: int | None = None,
     ) -> None:
-        if isinstance(data, MemoryFileMethods):
-            if data is self:
-                raise ValueError(F'Cannot create {self.__class__.__name__} from itself.')
+        if data is not self and isinstance(data, MemoryFileMethods):
             self._output = output or data._output
             self._cursor = data._cursor
             self._closed = data._closed
