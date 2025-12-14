@@ -94,8 +94,13 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
             return self.__wrapped__(parser, *args, **kwargs)
 
     def __init__(self, keywords, prog=None, description=None, add_help=True):
-        super().__init__(prog=prog, description=description, add_help=add_help,
-            formatter_class=LineWrapRawTextHelpFormatter)
+        super().__init__(
+            prog=prog,
+            description=description,
+            add_help=add_help,
+            formatter_class=LineWrapRawTextHelpFormatter,
+            color=False,
+        )
         self.keywords = keywords
         self.order = []
 
