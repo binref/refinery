@@ -99,8 +99,9 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
             description=description,
             add_help=add_help,
             formatter_class=LineWrapRawTextHelpFormatter,
-            color=False,
         )
+        if sys.version_info >= (3, 14):
+            self.color = False
         self.keywords = keywords
         self.order = []
 
