@@ -135,12 +135,14 @@ class MemoryFileMethods(Generic[T, B]):
 
     def __init__(
         self,
-        data: T | MemoryFileMethods[T, B] | None = None,
+        data: T | MemoryFileMethods[T, B] | type[T] = bytearray,
         output: type[B] | None = None,
         fileno: int | None = None,
         size_limit: int | None = None,
     ) -> None:
-        if data is not self and isinstance(data, MemoryFileMethods):
+        if isinstance(data, MemoryFileMethods):
+            if data is self:
+                raise ValueError(F'Cannot create {self.__class__.__name__} from itself.')
             self._output = output or data._output
             self._cursor = data._cursor
             self._closed = data._closed
@@ -148,24 +150,25 @@ class MemoryFileMethods(Generic[T, B]):
             self._size_limit = size_limit or data._size_limit
             self._data = data._data
         else:
-            if data is None:
-                if TYPE_CHECKING:
-                    data = cast(T, bytearray())
-                else:
-                    data = bytearray()
+            if isinstance(data, type):
+                if not issubclass(data, (bytes, bytearray)):
+                    raise TypeError(data.__name__)
+                _data = data()
+            else:
+                _data = data
             if output is None:
                 if TYPE_CHECKING:
                     output = cast(type[B], type(data))
                 else:
                     output = type(data)
-            if size_limit is not None and len(data) > size_limit:
+            if size_limit is not None and len(_data) > size_limit:
                 raise ValueError('Initial data exceeds size limit')
             self._output = output
             self._cursor = 0
             self._closed = False
             self._fileno = fileno
             self._size_limit = size_limit
-            self._data = data
+            self._data = _data
 
     def close(self) -> None:
         self._closed = True
