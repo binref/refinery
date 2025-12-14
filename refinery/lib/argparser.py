@@ -100,10 +100,10 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         self.order = []
 
     def print_help(self, file: SupportsWrite[str] | None = None) -> None:
+        out = file or sys.stderr
+        super().print_help(file=out)
         if file is None:
-            file = sys.stderr
-        super().print_help(file=file)
-        sys.stdout.close()
+            sys.stdout.close()
 
     def _add_action(self, action: Action):
         keywords = self.keywords
