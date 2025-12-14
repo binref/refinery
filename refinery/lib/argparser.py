@@ -101,9 +101,9 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
 
     def print_help(self, file: SupportsWrite[str] | None = None) -> None:
         if file is None:
-            sys.stdout.close()
             file = sys.stderr
-        return super().print_help(file=file)
+        super().print_help(file=file)
+        sys.stdout.close()
 
     def _add_action(self, action: Action):
         keywords = self.keywords
