@@ -63,7 +63,8 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.json import xtjson                ; yield xtjson    # noqa
         from refinery.units.formats.xml import xtxml                  ; yield xtxml     # noqa
         from refinery.units.formats.html import xthtml                ; yield xthtml    # noqa
-        from refinery.units.formats.exe.vsect import vsect            ; yield vsect     # noqa
+        # really obscure formats go last
+        from refinery.units.formats.archive.xtrpa import xtrpa        ; yield xtrpa     # noqa
 
     def unpack(self, data):
         fallback: list[type[PathExtractorUnit]] = []
