@@ -29,7 +29,7 @@ def make_array(
     itemsize: int,
     length: int = 0,
     unsigned: bool = True,
-    init: int | Iterable[int] | None = None
+    init: int | Iterable[int] = 0
 ) -> array.array[int]:
     """
     Create an array of the given length and itemsize. Optionally specify whether it should
@@ -45,7 +45,7 @@ def make_array(
             fill = (init & ((1 << (itemsize * 8)) - 1))
             init = (fill for _ in range(length))
         else:
-            init = None
+            init = 0
     if init:
         return array.array(code, init)
     else:
