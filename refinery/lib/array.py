@@ -47,3 +47,15 @@ def make_array(
         return array.array(code, init)
     else:
         return array.array(code)
+
+
+def uint64array(n: int):
+    return make_array(8, n, unsigned=True, init=0)
+
+
+def uint32array(n: int):
+    return make_array(4, n, unsigned=True, init=0)
+
+
+def uint16array(n: int):
+    return make_array(2, n, unsigned=True, init=0)
