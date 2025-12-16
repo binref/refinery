@@ -567,21 +567,20 @@ SetupMagicToVersion = {
 
 
 class TSetupLdrOffsetTable(Struct):
-    def __init__(self, reader: StructReader[memoryview]):
+    def __init__(self, reader: StructReader[memoryview], version: InnoVersion = min(SetupMagicToVersion.values())):
         start = reader.tell()
         check = reader.peek()
-
         self.id = bytes(reader.read(12))
         self.iv = iv = SetupMagicToVersion.get(self.id)
-
+        # version: 6.5.0  5.1.5  4.1.6  4.0.0  1.0.0
+        # offsets: 0x00C  0x00C  0x00C  0x00C  0x00C
         if iv is None:
-            iv = _VERSIONS[-1]
-
+            iv = version
         if iv >= (5, 1, 5):
             self.revision = reader.u32()
         else:
             self.revision = 0
-
+        # offsets: 0x010  0x010  0x00C  0x00C  0x00C
         if self.revision >= 2:
             self.iv = iv = _I(6, 5, 0)
             integer = reader.u64
@@ -589,23 +588,27 @@ class TSetupLdrOffsetTable(Struct):
         else:
             integer = reader.u32
             crc_pad = 0
-
         self.total_size = integer()
+        # offsets: 0x018  0x014  0x010  0x010  0x010
         self.exe_offset = integer()
-
+        # offsets: 0x020  0x018  0x014  0x014  0x014
         self.exe_compressed_size = None if iv >= (4, 1, 6) else reader.u32()
+        # offsets: 0x020  0x018  0x014  0x018  0x018
         self.exe_uncompressed_size = reader.u32()
-
+        # offsets: 0x024  0x01C  0x018  0x01C  0x01C
         if iv >= (4, 0, 3):
             self.exe_checksum_type = CheckSumType.CRC32
         else:
             self.exe_checksum_type = CheckSumType.Adler32
-
         self.exe_checksum = bytes(reader.read(4))
-
+        # offsets: 0x028  0x020  0x01C  0x020  0x020
         self.messages = reader.u32() if iv < (4, 0, 0) else None
+        # offsets: 0x028  0x020  0x01C  0x020  0x024
         self.info_abs_offset = integer()
+        # offsets: 0x030  0x024  0x020  0x024  0x028
         self.data_abs_offset = integer()
+        # version: 6.5.0  5.1.5  4.1.6  4.0.0  1.0.0
+        # offsets: 0x038  0x028  0x024  0x028  0x02C
 
         self.crc_padding = reader.read(crc_pad)
         check = check[:reader.tell() - start]
@@ -651,6 +654,28 @@ class TSetupLdrOffsetTable(Struct):
                     ip = self.base + self.info_offset
                     if view[ip:][:len(issd)] == issd:
                         return self
+        for im in re.finditer(B'%s.{20}' % issd, view):
+            iv = InnoVersion.Parse(im[0])
+            ip = im.start()
+            if iv >= (6, 5, 0):
+                delta = 0x38
+            elif iv >= (5, 1, 5):
+                delta = 0x28
+            elif iv >= (4, 1, 6):
+                delta = 0x24
+            elif iv >= (4, 0, 0):
+                delta = 0x28
+            else:
+                delta = 0x2C
+            for dm in re.finditer(re.escape(InnoArchive.ChunkPrefix), view):
+                dp = dm.start()
+                rx = re.escape(dp.to_bytes(4, 'little'))
+                for match in re.finditer(rx, view):
+                    offset = match.start() - delta
+                    if self := cls.Try(view[offset:]):
+                        _ip = self.base + self.info_offset
+                        if view[_ip:][:len(issd)] == issd:
+                            return self
 
 
 @dataclasses.dataclass
