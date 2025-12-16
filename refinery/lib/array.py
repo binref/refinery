@@ -29,7 +29,7 @@ def make_array(
     itemsize: int,
     length: int = 0,
     unsigned: bool = True,
-    init: int | Iterable[int] = 0
+    init: int | Iterable[int] | None = None
 ) -> array.array[int]:
     """
     Create an array of the given length and itemsize. Optionally specify whether it should
@@ -40,9 +40,12 @@ def make_array(
     except KeyError as KE:
         un = 'un' if unsigned else ''
         raise LookupError(F'Cannot build array of {un}signed integers of width {itemsize}.') from KE
-    if isinstance(init, int) and length > 0:
-        fill = (init & ((1 << (itemsize * 8)) - 1))
-        init = (fill for _ in range(length))
+    if isinstance(init, int):
+        if length > 0:
+            fill = (init & ((1 << (itemsize * 8)) - 1))
+            init = (fill for _ in range(length))
+        else:
+            init = None
     if init:
         return array.array(code, init)
     else:
