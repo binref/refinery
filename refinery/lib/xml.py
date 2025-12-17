@@ -16,6 +16,7 @@ import defusedxml.ElementTree as et
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import exception_to_string
+from refinery.lib.types import buf
 
 if TYPE_CHECKING:
     from typing import Self
@@ -215,7 +216,7 @@ class XMLNode(XMLNodeBase):
         return ElementTree(self.source).write(stream)
 
 
-def parse(data) -> XMLNode | None:
+def parse(data: buf) -> XMLNode | None:
     """
     This function is the primary export of the `refinery.lib.xml` module. It accepts raw XML data
     as input and returns an `refinery.lib.xml.XMLNode` representing the document root node as

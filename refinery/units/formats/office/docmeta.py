@@ -15,15 +15,15 @@ class docmeta(PathExtractorUnit):
         return olefile
 
     def unpack(self, data: bytearray):
-        properties = data | xtdoc('docProps/custom.xml') | str
+        properties, = data | xtdoc('docProps/custom.xml')
         if not properties:
             return
-        properties = xml.parse(properties)
-        while properties.tag.lower() != 'properties':
-            properties = properties.children[0]
-        for node in properties:
-            assert node.tag.lower() == 'property'
-            assert len(node.children) == 1
-            content = node.children[0].content
-            assert content is not None
-            yield UnpackResult(node.attributes['name'], content.encode(self.codec))
+        if dom := xml.parse(properties):
+            while dom.tag.lower() != 'properties':
+                dom = dom.children[0]
+            for node in dom:
+                assert node.tag.lower() == 'property'
+                assert len(node.children) == 1
+                content = node.children[0].content
+                assert content is not None
+                yield UnpackResult(node.attributes['name'], content.encode(self.codec))

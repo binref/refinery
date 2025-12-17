@@ -167,6 +167,8 @@ class MemoryFileMethods(Generic[T, B]):
             self._fileno = fileno or _data._fileno
             self._size_limit = size_limit or _data._size_limit
             self._data = _data._data
+        else:
+            raise TypeError(F'Invalid input: {data!r}.')
 
     def close(self) -> None:
         self._closed = True
