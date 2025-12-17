@@ -140,20 +140,13 @@ class MemoryFileMethods(Generic[T, B]):
         fileno: int | None = None,
         size_limit: int | None = None,
     ) -> None:
-        if data is not self and isinstance(data, MemoryFileMethods):
-            self._output = output or data._output
-            self._cursor = data._cursor
-            self._closed = data._closed
-            self._fileno = fileno or data._fileno
-            self._size_limit = size_limit or data._size_limit
-            self._data = data._data
+        if isinstance(data, type):
+            if not issubclass(data, bytearray):
+                raise TypeError(data.__name__)
+            _data = data()
         else:
-            if isinstance(data, type):
-                if not issubclass(data, (bytes, bytearray)):
-                    raise TypeError(data.__name__)
-                _data = data()
-            else:
-                _data = data
+            _data = data
+        if isinstance(_data, (bytearray, bytes, memoryview)):
             if output is None:
                 if TYPE_CHECKING:
                     output = cast(type[B], type(_data))
@@ -167,6 +160,13 @@ class MemoryFileMethods(Generic[T, B]):
             self._fileno = fileno
             self._size_limit = size_limit
             self._data = _data
+        elif isinstance(_data, MemoryFileMethods):
+            self._output = output or _data._output
+            self._cursor = _data._cursor
+            self._closed = _data._closed
+            self._fileno = fileno or _data._fileno
+            self._size_limit = size_limit or _data._size_limit
+            self._data = _data._data
 
     def close(self) -> None:
         self._closed = True
