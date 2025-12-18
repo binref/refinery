@@ -631,6 +631,17 @@ def guess_text_encoding(
     low byte of a character (odd for big endian encodings, even for others) and finally the size of
     each encoded character in bytes.
     """
+    def ascii_count(v: memoryview):
+        count = 0
+        ascii = range(0x20, 0x80)
+        b = 0xFF
+        for b in v:
+            count += (b in ascii or b == 9 or b == 10 or b == 13)
+        if b == 0 and count > 0:
+            # accept a terminating null byte
+            count += 1
+        return count
+
     view = memoryview(data)
     size = window_size
     step = 1
@@ -658,8 +669,8 @@ def guess_text_encoding(
         # UTF7 BOM
         bom = 4
     elif len(view) % 2 == 0:
-        u16le = (win := view[1:size:2]) and sum(win) / len(win) <= maxbad
-        u16be = (win := view[0:size:2]) and sum(win) / len(win) <= maxbad
+        u16le = (win := view[1:size:2]) and ascii_count(win) / len(win) <= maxbad
+        u16be = (win := view[0:size:2]) and ascii_count(win) / len(win) <= maxbad
         if u16le:
             if u16be:
                 return None
@@ -667,10 +678,12 @@ def guess_text_encoding(
         elif u16be:
             step, lsb = 2, 1
 
+    win = view[lsb:size:step]
+
     if step > 1:
         if len(data) % step != 0:
             return None
-        if not (win := view[lsb:size:step]) or sum(win) / len(win) > maxbad:
+        if not win or ascii_count(win) / len(win) < ascii_ratio:
             return None
 
     if len(data) <= bom:
@@ -702,24 +715,11 @@ def guess_text_encoding(
         - histogram[0x0D] \
         - histogram[0x0A] \
         - histogram[0x09]
-    if step == 2:
-        bad -= histogram[0] // 2
-    if bad / sum(histogram) > maxbad:
-        return None
-
-    while True:
-        try:
-            win = view[lsb:size:step]
-            bad = sum(m.end() - m.start()
-                for m in re.finditer(BR'[^\t\n\r\x20-\x7E]+', win))
-        except TypeError:
-            pass
-        else:
-            if bad and bad / len(win) > maxbad:
-                return None
-        if size >= len(view):
-            return TextEncoding(bom, lsb, step)
-        size <<= 1
+    if step > 1:
+        # disregard zeros for this case
+        bad -= histogram[0]
+    if bad / sum(histogram) <= maxbad:
+        return TextEncoding(bom, lsb, step)
 
 
 def xml_or_html(view: buf):
