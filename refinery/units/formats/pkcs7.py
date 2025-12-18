@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import suppress
 
 from refinery.lib import json
-from refinery.lib.tools import convert
+from refinery.lib.tools import asbuffer, convert
 from refinery.units import Unit
 
 
@@ -76,14 +76,10 @@ class pkcs7(Unit):
         cms.CMSAttributeType._map['1.3.6.1.4.1.311.2.1.12'] = 'authenticode_info'
         cms.CMSAttribute._oid_specs['authenticode_info'] = SetOfInfos
 
-        def max64(v):
-            if isinstance(v, int) and v.bit_length() > 64:
-                return hex(v)
-            return v
-
         def tojson(obj):
-            if isinstance(obj, dict) and set(obj.keys()) == {'type', 'values'} and len(obj['values']) == 1:
-                obj['value'] = obj.pop('values')[0]
+            if isinstance(obj, dict) and len(obj) == 2 and 'type' in obj and (values := obj.get('values')) and len(values) == 1:
+                del obj['values']
+                obj['value'] = values[0]
                 return obj
 
             dict_result = {}
@@ -97,6 +93,8 @@ class pkcs7(Unit):
                 list_result = list(obj)
                 if all(isinstance(k, str) for k in list_result):
                     dict_result.update((key, obj[key]) for key in list_result)
+                if all(k in range(0x100) for k in list_result):
+                    return bytes(list_result).hex().upper()
             if dict_result:
                 return json.preprocess(dict_result)
             if list_result is not None:
@@ -119,8 +117,10 @@ class pkcs7(Unit):
                         out = parsed or obj.dump()
                     elif isinstance(obj, asn1.Asn1Value):
                         out = obj.dump()
+                    elif (b := asbuffer(obj)):
+                        return b.hex().upper()
                     else:
-                        return json.bytes_as_array(obj)
+                        return json.standard_conversions(obj)
                 else:
                     out = json.preprocess(out)
 
