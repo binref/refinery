@@ -792,7 +792,7 @@ def is_likely_eml(
         b'\nContent-Type:\x20',
         b'\nReturn-Path:\x20',
     ):
-        if re.search(re.escape(marker), view) is None:
+        if not buffer_contains(view, marker):
             continue
         if (hits := hits + 1) >= 2:
             return True
@@ -805,9 +805,9 @@ def is_likely_vbe(data: buf):
     Checks whether the input contains the known markers used by encoded Visual Basic scripts.
     """
     view = memoryview(data)
-    if re.search(BR'#@~\^[!-~]{6}==', view[:+64]) is None:
+    if not buffer_contains(view[:+64], BR'#@~^'):
         return False
-    if re.search(BR'[!-~]{6}==\^#~@', view[-64:]) is None:
+    if not buffer_contains(view[-64:], BR'==^#~@'):
         return False
     return True
 
@@ -1190,12 +1190,15 @@ def get_text_format(data: buf):
 
     if is_likely_vbe(view):
         return Fmt.VBE
-    if re.search(BR'^\s{0,500}\{\\rtf', view) is not None:
+    if buffer_contains(view[:200], BR'{\rtf'):
         return Fmt.RTF
-    if format := xml_or_html(view):
-        return format
     if step == 1 and is_likely_eml(data):
         return Fmt.EML
+    if step > 1:
+        # The following checks require a contiguous buffer for the regular expression searches.
+        view = bytearray(view)
+    if format := xml_or_html(view):
+        return format
     if is_likely_json(view):
         return Fmt.JSON
     if step == 1:
