@@ -52,6 +52,10 @@ class TestArgumentFormats(TestBase):
         key = argformats.DelayedArgument('take[1:16]:cycle:KITTY')()
         self.assertEqual(key, B'ITTYKITTYKITTYK')
 
+    def test_with_seed(self):
+        key = argformats.DelayedBinaryArgument('snip[:2]:snip[1:]', seed=B'FOO')()
+        self.assertEqual(key, B'OO')
+
     def test_itob(self):
         data = argformats.DelayedArgument('itob:take[:4]:accu[0x1337]:A')()
         self.assertEqual(data, bytes.fromhex('3713371337133713'))

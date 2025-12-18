@@ -596,25 +596,23 @@ class DelayedArgument(LazyEvaluation):
     _CMD_SPLIT_TOKEN = ':'
 
     def __init__(self, expression: str, reverse: bool = False, seed=None):
+        requires_seed = seed is None
         self.expression = expression
         self.modifiers = []
         self.finalized = False
-        if seed is not None:
-            if reverse:
-                if not expression.startswith(':'):
-                    expression = F':{expression}'
-            else:
-                if not expression.endswith(':'):
-                    expression = F'{expression}:'
         while not self.finalized:
-            name, arguments, newexpr = self._split_modifier(expression, reverse)
+            name, arguments, newexpr = self._split_modifier(
+                expression,
+                reverse,
+                requires_seed,
+            )
             if not name or not self.handler.can_handle(name, *arguments):
                 break
             self.modifiers.append((name, arguments))
             expression = newexpr
             if self.handler.terminates(name):
                 self.finalized = True
-        if seed is not None:
+        if not requires_seed and not self.finalized:
             if expression:
                 rt = 'reverse ' if reverse else ''
                 raise ValueError(F'{rt}expression {self.expression} with seed {seed} was not fully parsed.')
@@ -654,15 +652,24 @@ class DelayedArgument(LazyEvaluation):
                 return (head, tail) if reverse else (tail, head)
         return expression, None
 
-    def _split_modifier(self, expression: str, reverse: bool = False) -> tuple[str | None, tuple[str], str]:
+    def _split_modifier(
+        self,
+        sequence: str,
+        reverse: bool = False,
+        requires_seed: bool = True,
+    ) -> tuple[str | None, tuple[str, ...], str]:
         brackets = 0
         name = None
         argoffset = 0
         arguments = ()
 
-        rest, expression = self._split_expression(expression, reverse)
+        rest, expression = self._split_expression(sequence, reverse)
+
         if expression is None:
-            return name, arguments, rest
+            if requires_seed:
+                return name, arguments, rest
+            expression, rest = rest, ''
+
         name = expression
 
         for k, character in enumerate(expression):

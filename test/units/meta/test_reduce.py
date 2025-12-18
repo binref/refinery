@@ -8,6 +8,10 @@ class TestReduce(TestUnitBase):
         pl = L('emit 5 4 3 2 1 0 [| reduce cca[var:t] ]')
         self.assertEqual(pl(), B'012345')
 
+    def test_finalized_pipeline(self):
+        pl = L('emit 5 4 3 2 1 0 [| reduce t:var ]')
+        self.assertEqual(pl(), B'5')
+
     def test_variables_are_retained(self):
         pl = L('emit +Y X X X [| put q index | reduce pf[{q}{}{t}] ]')
         self.assertEqual(pl(), B'3X2X1X+Y')
