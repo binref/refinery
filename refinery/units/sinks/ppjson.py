@@ -6,7 +6,7 @@ import unicodedata
 
 from refinery.lib import json
 from refinery.lib.tools import get_terminal_size
-from refinery.lib.types import Param
+from refinery.lib.types import buf, Param
 from refinery.units import Arg, Unit
 
 
@@ -54,13 +54,13 @@ class ppjson(Unit):
         else:
             yield encoded
 
-    def process(self, data):
+    def process(self, data: buf):
         if self._TRAILING_COMMA.search(data):
-            def smartfix(match):
+            def smartfix(match: re.Match[bytes]):
                 k = match.start()
                 return match.group(0 if any(k in s for s in strings) else 1)
             from refinery.lib.patterns import formats
-            strings = {range(*m.span()) for m in formats.string.finditer(data)}
+            strings = {range(*m.span()) for m in formats.str.value.finditer(data)}
             data = self._TRAILING_COMMA.sub(smartfix, data)
-        pretty = not self.args.minimal
-        yield from self._pretty_output(json.loads(data), pretty=pretty)
+        yield from self._pretty_output(
+            json.loads(data), pretty=not self.args.minimal)
