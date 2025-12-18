@@ -270,14 +270,15 @@ class SliceAgain(LazyEvaluation):
     Raised by `refinery.lib.argformats.sliceobj` to indicate that meta variables are required to
     compute this slice.
     """
-    def __init__(self, expr: DelayedBinaryArgument | str):
+    def __init__(self, expr: DelayedBinaryArgument | str, intok: bool = False):
         self.expr = expr
+        self.intok = intok
 
     def __call__(self, data):
         expression = self.expr
         if pending(expression):
             expression = expression(data).decode('utf8')
-        return sliceobj(expression, data)
+        return sliceobj(expression, data, intok=self.intok)
 
 
 def percent(expression: str):
@@ -379,7 +380,7 @@ def sliceobj(
             parser = DelayedNumSeqArgument(expression)
             return sliceobj(parser(data), data, intok=intok, final=True)
         else:
-            return SliceAgain(expression)
+            return SliceAgain(expression, intok)
     if len(sliced) == 1:
         k = sliced[0]
         if intok:
