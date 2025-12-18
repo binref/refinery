@@ -4,10 +4,8 @@ import itertools
 
 from refinery.lib.meta import check_variable_name
 from refinery.lib.tools import isbuffer, typename
-from refinery.lib.types import Param, isq
+from refinery.lib.types import NoDefault, Param, isq
 from refinery.units import Arg, Chunk, Unit
-
-_EMPTY = object()
 
 
 class put(Unit):
@@ -18,15 +16,15 @@ class put(Unit):
     def __init__(
         self,
         name: Param[str, Arg.String(help='The name of the variable to be used.')],
-        value: Param[isq, Arg.NumSeq(check=False, help=(
+        value: Param[isq | NoDefault, Arg.NumSeq(check=False, help=(
             'The value for the variable. If no value is given, the entire current chunk is stored.'
-        ))] = _EMPTY
+        ))] = NoDefault
     ):
         super().__init__(name=check_variable_name(name), value=value)
 
     def process(self, data: Chunk):
         value = self.args.value
-        if value is _EMPTY:
+        if value is NoDefault:
             value = data
         if not isinstance(value, (int, float)) and not isbuffer(value):
             try:

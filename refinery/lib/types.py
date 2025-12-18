@@ -252,3 +252,13 @@ class RepeatedInteger(int):
 
     def __next__(self):
         return self
+
+
+class _NoDefault(metaclass=Singleton):
+    pass
+
+
+NoDefault = _NoDefault()
+"""
+A sentinel singleton that can be used as a no-default marker when "None" is a valid option.
+"""
