@@ -613,7 +613,11 @@ class DelayedArgument(LazyEvaluation):
             expression = newexpr
             if self.handler.terminates(name):
                 self.finalized = True
-        if not requires_seed and not self.finalized:
+        if self.finalized:
+            if not expression and seed is not None:
+                expression = seed
+            self.seed = expression
+        elif not requires_seed:
             if expression:
                 rt = 'reverse ' if reverse else ''
                 raise ValueError(F'{rt}expression {self.expression} with seed {seed} was not fully parsed.')
