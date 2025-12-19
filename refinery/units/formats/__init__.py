@@ -50,7 +50,7 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, query: str | re.Pattern, regex=False, fuzzy=0):
+    def __init__(self, query: str, regex=False, fuzzy=0):
         self.query = query
         self.regex = regex
         self.fuzzy = fuzzy
@@ -58,22 +58,23 @@ class PathPattern:
 
     def compile(self, **kw):
         query = self.query
-        if isinstance(query, re.Pattern):
-            self.stops = []
-            self.pattern = query
-            return
-        elif not self.regex:
+        if not self.regex:
             self.stops = re.split(R'([/*?]+)', query)
             query, _, _ = fnmatch.translate(query).partition(r'\Z')
         p1 = re.compile(query, **kw)
         p2 = re.compile(F'.*?{query}')
         self.matchers = [p1.fullmatch, p2.fullmatch, p1.search]
 
-    def reach(self, path):
-        if not any(self.stops):
+    def reach(self, path: str):
+        """
+        This is a crude heuristic to determine whether the pattern can likely reach any files
+        that have the given path as a parent.
+        """
+        if len(self.stops) == 1:
+            # a specific file could always be somewhere
             return True
         for stop in self.stops[0::2]:
-            if fnmatch.fnmatch(path, F'*{stop}'):
+            if fnmatch.fnmatch(path, F'*{stop}*'):
                 return True
         return False
 
