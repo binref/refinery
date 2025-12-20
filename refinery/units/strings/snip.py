@@ -8,7 +8,7 @@ class snip(Unit):
     """
     Snips the input data based on a Python slice expression. For example, the initialization
 
-        sbip 0::1 1::1
+        snip 0::1 1::1
 
     would yield a unit that first extracts every byte at an even position and then, every byte at
     an odd position. In this case, multiple outputs are produced. This is a versatile tool that can
