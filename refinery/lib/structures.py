@@ -513,7 +513,7 @@ class StructReader(MemoryFile[T, T]):
     def read_exactly(self, size: int | None = None, peek: bool = False) -> T:
         """
         Read bytes from the underlying stream. Raises a `RuntimeError` when the stream is not currently
-        byte-aligned, i.e. when `refinery.lib.structures.StructReader.byte_aligned` is `False`. Raises
+        byte-aligned, i.e. when `refinery.lib.structures.StructReader.bits_in_buffer` is positive. Raises
         an exception of type `refinery.lib.structures.EOF` when fewer data is available in the stream than
         requested via the `size` parameter. The remaining data can be extracted from the exception.
         Use `refinery.lib.structures.StructReader.read_bytes` to read bytes from the stream when it is
@@ -825,18 +825,18 @@ class StructReaderBits(StructReader[T]):
         return 8 * self.remaining_bytes + self._nbits
 
     @property
-    def byte_aligned(self) -> bool:
+    def bits_in_buffer(self) -> int:
         """
         This property is `True` if and only if there are currently no bits still waiting in the internal
         bit buffer.
         """
-        return not self._nbits
+        return self._nbits
 
     def read_bytes(self, size: int, peek: bool = False) -> bytes:
         """
         The method reads `size` many bytes from the underlying stream starting at the current bit.
         """
-        if not self.byte_aligned:
+        if self.bits_in_buffer:
             return self.read_integer(size * 8, peek).to_bytes(size, self.byteorder_name)
         return super().read_bytes(size, peek)
 
@@ -850,8 +850,8 @@ class StructReaderBits(StructReader[T]):
         super().byte_align(blocksize)
 
     def read_exactly(self, size: int | None = None, peek: bool = False) -> T:
-        if not self.byte_aligned:
-            raise StructReader.Unaligned('buffer is not byte-aligned')
+        if self.bits_in_buffer:
+            raise StructReader.Unaligned('The bit buffer is not empty.')
         return super().read_exactly(size, peek)
 
     def seek(self, offset, whence=io.SEEK_SET) -> int:
@@ -884,8 +884,8 @@ class StructReaderBits(StructReader[T]):
                 self._nbits = new_count
         else:
             nbits, bbits = self._nbits, self._bbits
-            number_of_missing_bits = size - nbits
-            bytecount, rest = divmod(number_of_missing_bits, 8)
+            needed = size - nbits
+            bytecount, rest = divmod(needed, 8)
             if rest:
                 bytecount += 1
                 rest = 8 - rest
@@ -900,15 +900,15 @@ class StructReaderBits(StructReader[T]):
                 result = int.from_bytes(bb, self.byteorder_name)
             if nbits or rest:
                 if self.bigendian:
-                    rbmask   = 2 ** rest - 1       # noqa
-                    excess   = result & rbmask     # noqa
-                    result >>= rest                # noqa
-                    result  ^= bbits << number_of_missing_bits   # noqa
+                    rbmask   = 2 ** rest - 1        # noqa
+                    excess   = result & rbmask      # noqa
+                    result >>= rest                 # noqa
+                    result  ^= bbits << needed      # noqa
                 else:
-                    excess   = result >> number_of_missing_bits  # noqa
-                    result  ^= excess << number_of_missing_bits  # noqa
-                    result <<= nbits               # noqa
-                    result  |= bbits               # noqa
+                    excess   = result >> needed     # noqa
+                    result  ^= excess << needed     # noqa
+                    result <<= nbits                # noqa
+                    result  |= bbits                # noqa
                 assert excess.bit_length() <= rest
                 if not peek:
                     self._nbits = rest
