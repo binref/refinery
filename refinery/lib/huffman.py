@@ -24,6 +24,8 @@ class HuffmanStartOutOfBounds(OutOfBounds):
 
 
 class BitDecoderBase(abc.ABC):
+    __slots__ = ()
+
     @abc.abstractmethod
     def get_value(self, num_bits: int) -> int:
         ...
@@ -92,20 +94,21 @@ class HuffmanDecoder:
         return True
 
     def decode(self, bits: BitDecoderBase) -> int:
+        lim = self._limits
         num_bits_max = self.num_bits_max
         num_table_bits = self.num_table_bits
         val = bits.get_value(num_bits_max)
-        if val < self._limits[num_table_bits]:
+        if val < lim[num_table_bits]:
             pair = self._lens[val >> (num_bits_max - num_table_bits)]
             bits.move_position(pair & _PAIR_LEN_MASK)
             return pair >> _NUM_PAIR_LEN_BITS
         num_bits = num_table_bits + 1
-        while val >= self._limits[num_bits]:
+        while val >= lim[num_bits]:
             num_bits += 1
         if num_bits > num_bits_max:
             return 0xFFFFFFFF
         bits.move_position(num_bits)
-        index = self._poses[num_bits] + ((val - self._limits[num_bits - 1]) >> (num_bits_max - num_bits))
+        index = self._poses[num_bits] + ((val - lim[num_bits - 1]) >> (num_bits_max - num_bits))
         return self._symbols[index]
 
 
