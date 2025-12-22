@@ -321,6 +321,9 @@ class MemoryFileMethods(Generic[T, B]):
     def seekrel(self, offset: int) -> int:
         return self.seek(offset, io.SEEK_CUR)
 
+    def seekend(self, offset: int) -> int:
+        return self.seek(offset, io.SEEK_END)
+
     def seekset(self, offset: int) -> int:
         if offset < 0:
             return self.seek(offset, io.SEEK_END)
