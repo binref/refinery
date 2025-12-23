@@ -9,6 +9,23 @@ from test.units.compression import KADATH1, KADATH2
 
 class TestZIP(TestBase):
 
+    def test_deflate64(self):
+        data = base64.b85decode(
+            'P)h>@6#xJL2>@?Gms<ePea<EV008F$000XB003)YWMOn@F)nm?bWKxBveYmP<S078ymtXs6e|{NC@!ERn%IT>!ICG0)6=%0id`bB'
+            'TitE>duSr$F^SPP&PUN2=rcE$Mn@A)a!`4a2cg96C90(x?a}WCp`H9c{KZD-v&_B+;P~R3t`HS9kE-Laa<@U5CuN9dAdG6f3-MN7'
+            'Lebyp6ME00hvYd!QP&$Mv?>1vIxe*JY~l~Pq6Z9DwFk&jRl&zzwB*c(*b>TZYT8;nPO;(XB{8D{Tbs&*Eb2?z+r~D_&(gDV%(Jz&'
+            'Xo)@UWVJD*WDpfT$bNQiVsk>3_Ut3ClN+S3xe#{@`$)-+(ohleNt^g3uy=^Yom~hGiv}KxSxIlo!+&pimE)_l8$|3~YzR12I1R2='
+            'F8jE09=V!}RLZ4!xFCc~O9f)rm^O&>C~bObasXPMi@xYEz(1z^O#ukVrSvu?Xmkg;a$d=ujm>UEyp7Ix`r`BMnVy0O|Lx0J4(LLW'
+            '^AjPBvUP-%Sz))QD!yhj#IXf5#FU^L=lh*DR#1Pv;RnV;hYp4yAA7*VPw9uP(j2n&xtcw{qD3DU`}YPvt|9hst<6griy-U)@|Onr'
+            'Rb_Y1zE+c+Fu$8OK0sBuG2{+gFk+Wfr(Vemg_x$<TH={G@AqW0ZdI~P&#bAKzr8p|3qzK`<Na7D$QwP14iu2}+M2)b?Z5`0Mp=Nv'
+            'u&VQ&oC9?Q9$N7q_yC6Z5-Uk2JmDid;#iRP4}SnqO928u02KfL00{tZLYG?r(0$G(0ssK#0{{RE03-ka0000003ZMW000000Bd1n'
+            'VRUFQE_8Tw3IHGg000000RR{P&{N`h+;iLk00000000000000000000P)h{{000000RRC2T>t<8PXYh{000'
+        )
+        zipf = Zip(data)
+        self.assertEqual(len(zipf.records), 1)
+        test = zipf.read('kadath1.txt').unpack()
+        self.assertEqual(KADATH1.encode('latin1'), test)
+
     def test_ae_crypto_bzip2(self):
         data = base64.b85decode(
             'P)h>@GXMbqV*q5Gg<Ajs002w?001xm000623jlO60htE?0suip0{{TfTx`?=Av?BcA;urlLQDcZ7!zolb}kvPoU*L;nb|ex`py1u'

@@ -626,6 +626,11 @@ class ZipFileRecord(Struct):
             u = compressed
         elif m == ZipCompressionMethod.DEFLATE:
             u = zlib.decompress(compressed, -15)
+        elif m == ZipCompressionMethod.DEFLATE64:
+            from refinery.lib.seven.deflate import Deflate
+            u = bytearray()
+            deflate = Deflate(u, StructReader(memoryview(compressed)), df64=True)
+            deflate.decode()
         elif m == ZipCompressionMethod.BZIP2:
             import bz2
             u = bz2.decompress(compressed)
