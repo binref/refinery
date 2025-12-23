@@ -657,6 +657,15 @@ class ZipFileRecord(Struct):
             u = lzma.decompress(compressed, format=lzma.FORMAT_XZ)
         else:
             raise NotImplementedError(F'Compression method {m.name} is not implemented.')
+
+        crc32loc = self.crc32
+        crc32dir = 0 if (dir := self.dir) is None else dir.crc32
+
+        if crc32loc != 0 or crc32dir != 0:
+            crc32 = zlib.crc32(u)
+            if crc32 != crc32loc and crc32 != crc32dir:
+                raise ValueError('Invalid Checksum.')
+
         self._unpacked = u
         return u
 
