@@ -16,8 +16,9 @@ from lzma import (
 )
 
 from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.id import buffer_contains
 from refinery.lib.structures import MemoryFile
-from refinery.lib.types import Param
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, RefineryPartialResult, Unit
 
 __all__ = ['lzma', '_auto_decompress_lzma']
@@ -37,8 +38,8 @@ class lzma(Unit):
     _SEARCH_MIN_DICT = 0x1_0000
     _SEARCH_MAX_DICT = 0x1000_0000
     _SEARCH_MAX_BLOW = 1.2
-    _SEARCH_SKIP1 = 0x08
-    _SEARCH_SKIP2 = 0x10
+    _SEARCH_SKIP1 = range(9)
+    _SEARCH_SKIP2 = (0, 8, 16, 24, 4, 12, 20, 2, 6, 10, 14, 18, 22)
     _ATTEMPT_PARTIAL = True
 
     def __init__(
@@ -79,7 +80,7 @@ class lzma(Unit):
         output += lz.flush()
         return output
 
-    def _decompress(self, data: bytearray, lz: LZMADecompressor, partial: bool = False):
+    def _decompress(self, data: buf, lz: LZMADecompressor, partial: bool = False):
         temp = bytearray()
         sizes = repeat(1) if partial else [len(data)]
         with MemoryFile(temp) as output:
@@ -87,12 +88,12 @@ class lzma(Unit):
                 for size in sizes:
                     if stream.eof or stream.closed:
                         break
+                    offset = stream.tell()
                     try:
-                        offset = stream.tell()
                         output.write(lz.decompress(stream.read(size)))
-                    except (EOFError, LZMAError):
+                    except (EOFError, LZMAError) as e:
                         raise RefineryPartialResult(
-                            F'compression failed at offset {offset}', temp)
+                            F'Compression failed at offset {offset}: {e!s}', temp)
         if n := len(lz.unused_data):
             raise RefineryPartialResult(F'Data stream is truncated, {n} bytes unused.', temp)
         return temp
@@ -115,9 +116,10 @@ class lzma(Unit):
         for (version, p), offset_prop, to_data in product(
             ((1, 5),
              (2, 1)),
-            range(self._SEARCH_SKIP1 + 1),
-            range(self._SEARCH_SKIP2 + 1),
+            self._SEARCH_SKIP1,
+            self._SEARCH_SKIP2,
         ):
+            offset = offset_prop + p + to_data
             if offset_prop + to_data > p + 20:
                 # expect no more than a 20 byte header on top of the properties
                 # that would be enough for, e.g. compressed & uncompressed size
@@ -132,7 +134,7 @@ class lzma(Unit):
                 )
                 self.log_debug(F'attempt LZMA{version} at {offset_prop:02d}, skipping {to_data:02d}, filter: {filter!r}')
                 engine = LZMADecompressor(FORMAT_RAW, filters=[filter])
-                result = self._decompress(view[offset_prop + p + to_data:], engine, partial)
+                result = self._decompress(view[offset:], engine, partial)
             except RefineryPartialResult as pe:
                 if best is None:
                     best = pe
@@ -141,10 +143,13 @@ class lzma(Unit):
                 continue
             except Exception:
                 continue
-            if len(result) < min_original_size[version]:
-                continue
-            if len(result) * self._SEARCH_MAX_BLOW < len(data):
-                continue
+            if buffer_contains(view[:offset], len(result).to_bytes(8, 'little')):
+                self.log_debug('header contains uncompressed size, fast-tracking result')
+            else:
+                if len(result) < min_original_size[version]:
+                    continue
+                if len(result) * self._SEARCH_MAX_BLOW < len(data):
+                    continue
             self.log_info(
                 F'success with LZMA{version} properties at {offset_prop} and raw stream starting at {to_data + offset_prop + p}')
             return result
@@ -170,6 +175,6 @@ class _auto_decompress_lzma(lzma):
     _SEARCH_MIN_DICT = 0x1_0000
     _SEARCH_MAX_DICT = 0x100_0000
     _SEARCH_MAX_BLOW = 1.5
-    _SEARCH_SKIP1 = 0
-    _SEARCH_SKIP2 = 8
+    _SEARCH_SKIP1 = (0,)
+    _SEARCH_SKIP2 = (0, 8, 16, 4)
     _ATTEMPT_PARTIAL = False

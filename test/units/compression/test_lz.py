@@ -4,6 +4,11 @@ from .. import TestUnitBase
 
 class TestLZMA(TestUnitBase):
 
+    def test_regression_tripple_a(self):
+        data = bytes.fromhex('5D0000800003000000000000000030E83DFFFFFFFFE0000000')
+        test = data | self.load() | bytes
+        self.assertEqual(test, b'aaa')
+
     def test_decompress_partial(self):
         unit = self.load()
         data = bytes.fromhex(
