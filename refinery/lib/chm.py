@@ -9,7 +9,7 @@ from typing import ClassVar
 from uuid import UUID
 
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
-from refinery.lib.lzx import LzxDecoder
+from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.structures import Struct, StructReader
 
 _LZX_HLP = UUID('0a9007c6-4076-11d3-8789-0000f8105754')

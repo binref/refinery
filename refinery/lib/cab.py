@@ -10,7 +10,7 @@ from enum import IntEnum, IntFlag
 from typing import Iterable, NamedTuple
 
 from refinery.lib import chunks
-from refinery.lib.lzx import LzxDecoder
+from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.structures import Struct, StructReader
 
 

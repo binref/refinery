@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.lzx import LzxDecoder
+from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.types import Param
 from refinery.units import Arg, RefineryPartialResult, Unit
 
