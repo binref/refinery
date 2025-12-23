@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from refinery.lib.array import uint32array
 from refinery.lib.types import INF
-from refinery.lib.huffman import HuffmanDecoder, HuffmanDecoder7b, OutOfBounds, BitDecoderBase
+from refinery.lib.seven.huffman import HuffmanDecoder, HuffmanDecoder7b, OutOfBounds, BitDecoderBase
 
 _BLOCK_TYPE_NUM_BITS = 3
 _BLOCK_TYPE_VERBATIM = 1 # noqa
