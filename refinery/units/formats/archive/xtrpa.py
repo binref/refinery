@@ -8,7 +8,6 @@ import zlib
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.units.formats.archive import PathExtractorUnit, UnpackResult
 
-
 _SAFE_PICKLE_OPCODES = {
     'ADDITEMS',          # Add items to set
     'APPEND',            # Append to list

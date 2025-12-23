@@ -6,7 +6,7 @@ import unicodedata
 
 from refinery.lib import json
 from refinery.lib.tools import get_terminal_size
-from refinery.lib.types import buf, Param
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
