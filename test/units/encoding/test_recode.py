@@ -1,5 +1,5 @@
-from functools import reduce
-from base64 import b64decode
+import functools
+import base64
 
 from .. import TestUnitBase
 
@@ -13,7 +13,7 @@ class TestRecode(TestUnitBase):
     def test_circular_encoding(self):
         codecs = ['UTF8', 'UNICODE_ESCAPE', 'UTF-16LE', 'UTF-32', 'UTF8']
         units = [self.load(a, b) for a, b in zip(codecs[:-1], codecs[1:])]
-        self.assertEqual(self.zalgo, reduce(lambda t, u: u(t), units, self.zalgo))
+        self.assertEqual(self.zalgo, functools.reduce(lambda t, u: u(t), units, self.zalgo))
 
     def test_impossible_encoding(self):
         unit = self.load('UTF8', 'cp1252')
@@ -25,7 +25,7 @@ class TestRecode(TestUnitBase):
         self.assertEqual(unit(data.encode('cp1252')).decode('UTF8'), data)
 
     def test_auto_decode_01(self):
-        data = b64decode('08nT2uSvwMDG97XEyejWw8/e1sajrMXk1sO5pL7fzt63qNaxvdPUy9DQo6zH68rWtq/PwtTYsaO05rW9sb67+rrz1NnUy9DQIQ==')
+        data = base64.b64decode('08nT2uSvwMDG97XEyejWw8/e1sajrMXk1sO5pL7fzt63qNaxvdPUy9DQo6zH68rWtq/PwtTYsaO05rW9sb67+rrz1NnUy9DQIQ==')
         unit = self.load()
         self.assertEqual(unit(data).decode(unit.codec),
             U'由于浏览器的设置限制，配置工具无法直接运行，请手动下载保存到本机后再运行!')
