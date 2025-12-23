@@ -58,7 +58,7 @@ class VirtualFile:
         if length:
             view = view[offset:offset + length]
 
-        class _MappedView(bytearray, MemoryFileMethods):
+        class _MappedView(bytearray, MemoryFileMethods[bytearray, bytes]):
             def __init__(self):
                 MemoryFileMethods.__init__(self, data=self, output=bytes, fileno=node)
 
@@ -70,7 +70,7 @@ class VirtualFile:
         """
         Open the virtual file.
         """
-        if self.data is None and 'w' in mode:
+        if self.data is None:
             self.data = bytearray()
         fd = MemoryFile(self.data, output=bytes, fileno=self.node)
         fd.name = self.path
