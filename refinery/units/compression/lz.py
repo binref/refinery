@@ -165,8 +165,12 @@ class lzma(Unit):
 
     @classmethod
     def handles(cls, data):
-        if data[:4] == B'\x5D\0\0\0':
-            return True
+        if len(data) < 4:
+            return
+        if data[:3] == B'\x5D\0\0':
+            for lb in range(8):
+                if data[3] == 1 << lb:
+                    return True
         if data[:5] == B'\xFD7zXZ':
             return True
 

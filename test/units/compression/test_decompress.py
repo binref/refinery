@@ -6,6 +6,12 @@ from . import KADATH1, KADATH2
 
 class TestAutoDecompressor(TestUnitBase):
 
+    def test_lz_with_length_prefix(self):
+        data = bytes.fromhex('5D0000800003000000000000000030E83DFFFFFFFFE0000000')
+        test = next(data | self.load())
+        self.assertEqual(test, b'aaa')
+        self.assertEqual(test.meta['method'], 'lzma')
+
     def test_zl_with_custom_padding(self):
         data = bytes.fromhex('11 73F2F4730C 8AD40F7275 F3F4730D8A 0400616161')
         test = next(data | self.load())
