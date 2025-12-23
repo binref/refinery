@@ -5,6 +5,10 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.21
+- The `edit` unit was added which allows overwriting any part of the input data with a binary string.
+- The `xtzip` unit now supports Deflate64.
+
 ## Version 0.9.20
 - Adds the `xtrpa` unit for extracting RenPy archives, because Karsten did it and why not.
 
