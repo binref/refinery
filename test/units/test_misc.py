@@ -93,8 +93,11 @@ class TestMetaProperties(TestUnitBase):
 
     def test_custom_unit_01(self):
         class prefixer(Unit):
-            def __init__(self, prefix): pass
-            def process(self, data): return self.args.prefix + data
+            def __init__(self, prefix):
+                pass
+
+            def process(self, data):
+                return self.args.prefix + data
 
         self.assertEqual(prefixer.assemble('Hello')(B'World'), B'HelloWorld')
 
