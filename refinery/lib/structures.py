@@ -120,10 +120,27 @@ class MemoryFileMethods(Generic[T, B]):
     A thin wrapper around (potentially mutable) byte sequences which gives it the features of a
     file-like object.
     """
+    # TODO: This sadly breaks everything. It would provide minor performance gains for e.g.
+    #       decompression routines where tight loops with access to a binary reader dominate
+    #       the runtime; so it is a nice to have, not a must.
+    # __slots__ = (
+    #     '_data',
+    #     '_name',
+    #     '_output',
+    #     '_cursor',
+    #     '_closed',
+    #     '_maxlen',
+    #     '_fileno',
+    # )
+
     _data: T
+    _name: str
+
     _output: type[B]
     _cursor: int
     _closed: bool
+    _fileno: int | None
+    _maxlen: int | None
 
     class SEEK(int, enum.Enum):
         CUR = io.SEEK_CUR
@@ -138,7 +155,8 @@ class MemoryFileMethods(Generic[T, B]):
         data: T | MemoryFileMethods[T, B] | type[T] = bytearray,
         output: type[B] | None = None,
         fileno: int | None = None,
-        size_limit: int | None = None,
+        maxlen: int | None = None,
+        name: str = '',
     ) -> None:
         if isinstance(data, type):
             if not issubclass(data, bytearray):
@@ -152,23 +170,37 @@ class MemoryFileMethods(Generic[T, B]):
                     output = cast(type[B], type(_data))
                 else:
                     output = type(_data)
-            if size_limit is not None and len(_data) > size_limit:
+            if maxlen is not None and len(_data) > maxlen:
                 raise ValueError('Initial data exceeds size limit')
             self._output = output
             self._cursor = 0
             self._closed = False
             self._fileno = fileno
-            self._size_limit = size_limit
+            self._maxlen = maxlen
             self._data = _data
+            self._name = name
         elif isinstance(_data, MemoryFileMethods):
             self._output = output or _data._output
             self._cursor = _data._cursor
             self._closed = _data._closed
             self._fileno = fileno or _data._fileno
-            self._size_limit = size_limit or _data._size_limit
+            self._maxlen = maxlen or _data._maxlen
             self._data = _data._data
+            self._name = _data._name
         else:
             raise TypeError(F'Invalid input: {data!r}.')
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, name: str):
+        self._name = name
+
+    @property
+    def mode(self):
+        return 'r+b'
 
     def close(self) -> None:
         self._closed = True
@@ -368,7 +400,7 @@ class MemoryFileMethods(Generic[T, B]):
             raise TypeError
         if isinstance(self._data, memoryview):
             raise NotImplementedError
-        limit = self._size_limit
+        limit = self._maxlen
         cc = self._cursor
         nc = cc + 1
         if limit and nc > limit:
@@ -402,7 +434,7 @@ class MemoryFileMethods(Generic[T, B]):
             data = getbuf(0)
 
         beginning = self._cursor
-        limit = self._size_limit
+        limit = self._maxlen
 
         if limit is None and beginning == end:
             out[end:] = data
@@ -480,6 +512,7 @@ class StructReader(MemoryFile[T, T]):
     An extension of a `refinery.lib.structures.MemoryFile` which provides methods to read
     structured data.
     """
+    __slots__ = 'bigendian',
 
     class Unaligned(RuntimeError):
         pass
@@ -663,7 +696,13 @@ class StructReader(MemoryFile[T, T]):
             self._cursor += 1
         return chr(b)
 
-    u8fast = u8 = read_byte
+    def u8fast(self):
+        c = self._cursor
+        b = self._data[c]
+        self._cursor = c + 1
+        return b
+
+    u8 = read_byte
 
     def i8(self, peek: bool = False) -> int:
         return signed(self.u8(peek), 8)
@@ -813,6 +852,7 @@ class StructReader(MemoryFile[T, T]):
 
 
 class StructReaderBits(StructReader[T]):
+    __slots__ = '_bbits', '_nbits'
 
     def __init__(self, data: T | StructReader[T], bigendian: bool | None = None):
         super().__init__(data, bigendian)

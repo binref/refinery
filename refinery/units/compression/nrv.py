@@ -20,7 +20,7 @@ class NRVUnit(Unit, abstract=True):
         def process(length_prefix: bool):
             src = StructReader(data)
             bbr = BitBufferedReader(src, self.args.bits)
-            dst = MemoryFile(size_limit=src.u32()) if length_prefix else MemoryFile()
+            dst = MemoryFile(maxlen=src.u32()) if length_prefix else MemoryFile()
             self._decompress(src, dst, bbr)
             return dst.getvalue()
         try:

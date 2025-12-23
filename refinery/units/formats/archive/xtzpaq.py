@@ -1337,7 +1337,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     if not 1 <= frag_id <= 4294967295:
                         raise RuntimeError('fragment ID out of range')
 
-                seg = MemoryFile(size_limit=jsize)
+                seg = MemoryFile(maxlen=jsize)
                 dc.set_output(seg)
                 sha1 = hashlib.sha1()
                 dc.set_hasher(sha1)
