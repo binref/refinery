@@ -38,6 +38,20 @@ class InvalidPassword(ValueError):
     pass
 
 
+class InvalidChecksum(ValueError):
+    def __init__(self, record: ZipFileRecord, data: buf, expected: int, computed: int) -> None:
+        self.record = record
+        self.data = data
+        self.expected = expected
+        self.computed = computed
+
+    def __str__(self):
+        return (
+            F'Invalid checksum for {self.record.name};'
+            F' computed {self.computed:08X},'
+            F' expected {self.expected:08X}.')
+
+
 class DataIntegrityError(ValueError):
     pass
 
@@ -609,11 +623,27 @@ class ZipFileRecord(Struct):
     def is_password_ok(self, password: str | None = None):
         return self.encryption.checkpwd(password)
 
-    def unpack(self, password: str | None = None):
+    def unpack(self, password: str | None = None, check: bool = True):
+        if not check:
+            def _nocheck(x):
+                return x
+            _checked = _nocheck
+        else:
+            def _checker(unpacked: buf):
+                crc32loc = self.crc32
+                crc32dir = 0 if (dir := self.dir) is None else dir.crc32
+                if crc32loc == 0 and crc32dir == 0:
+                    return unpacked
+                crc32 = zlib.crc32(unpacked)
+                if crc32 == crc32loc or crc32 == crc32dir:
+                    return unpacked
+                raise InvalidChecksum(self, unpacked, crc32dir or crc32loc, crc32)
+            _checked = _checker
+
         if (d := self.data) is None:
             raise ValueError(F'The data for this {self.__class__.__name__} was not read.')
         if (u := self._unpacked) is not None:
-            return u
+            return _checked(u)
 
         if e := self.encryption:
             if not password:
@@ -663,16 +693,8 @@ class ZipFileRecord(Struct):
         else:
             raise NotImplementedError(F'Compression method {m.name} is not implemented.')
 
-        crc32loc = self.crc32
-        crc32dir = 0 if (dir := self.dir) is None else dir.crc32
-
-        if crc32loc != 0 or crc32dir != 0:
-            crc32 = zlib.crc32(u)
-            if crc32 != crc32loc and crc32 != crc32dir:
-                raise ValueError('Invalid Checksum.')
-
         self._unpacked = u
-        return u
+        return _checked(u)
 
 
 class ZipEndOfCentralDirectory(Struct):

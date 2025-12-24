@@ -5,7 +5,7 @@ import codecs
 from refinery.lib import lief
 from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.lib.types import buf
-from refinery.lib.zip import InvalidPassword, PasswordRequired, Zip, ZipDirEntry
+from refinery.lib.zip import InvalidChecksum, InvalidPassword, PasswordRequired, Zip, ZipDirEntry
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit, MultipleArchives
 from refinery.units.formats.pe import get_pe_size
@@ -64,6 +64,8 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 record = zipf.read(entry)
                 try:
                     return record.unpack(zipf.password)
+                except InvalidChecksum as ck:
+                    raise RefineryPartialResult('invalid checksum', ck.data) from ck
                 except InvalidPassword:
                     if not record.data:
                         raise
