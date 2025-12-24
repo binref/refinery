@@ -1057,7 +1057,7 @@ class Struct(Generic[T], Buffer, metaclass=StructMeta):
         return bytes(self._data)
 
     def __buffer__(self, flags: int, /):
-        return self._data.__buffer__(flags)
+        return memoryview(self._data)
 
     def __init__(self, reader: StructReader[T], *args, **kwargs):
         pass

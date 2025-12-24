@@ -132,7 +132,7 @@ class jpeg(PathExtractorUnit):
     def unpack(self, data):
         jpg = Jpeg.Parse(data)
         for k, stream in enumerate(jpg.streams):
-            yield UnpackResult(F'streams/{k}.{stream.type.name}', memoryview(stream))
+            yield UnpackResult(F'streams/{k}.{stream.type.name}', stream.__buffer__(0))
         for k, comment in enumerate(jpg.comments):
             yield UnpackResult(F'comments/{k}', comment.data)
         for k, scan in enumerate(jpg.scans):
