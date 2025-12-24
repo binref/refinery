@@ -21,4 +21,4 @@ class carve_zip(Unit):
         except Exception:
             return
         for lower, upper in _sub_archive_boundaries(zip):
-            yield mem[lower:upper]
+            yield self.labelled(mem[lower:upper], offset=lower)

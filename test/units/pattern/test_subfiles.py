@@ -1,0 +1,15 @@
+from .. import TestUnitBase
+
+
+class TestSubFileUnit(TestUnitBase):
+
+    def test_simple_zip(self):
+        zip = bytes.fromhex(
+            '504B03041400010000001505FA5496732F8E130000000700000008000000746573742E7478749C4E'
+            '1F7FD879AA31F390F53CCD310BA615503F504B01023F001400010000001505FA5496732F8E130000'
+            '0007000000080024000000000000002000000000000000746573742E7478740A0020000000000001'
+            '0018000C83349177A0D8010C83349177A0D801EA64048F77A0D801504B050600000000010001005A'
+            '000000390000000000'
+        )
+        data = self.generate_random_buffer(200) + zip + self.generate_random_buffer(12)
+        self.assertSetEqual(data | self.load() | {bytes}, {zip})

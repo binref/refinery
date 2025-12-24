@@ -38,7 +38,7 @@ class subfiles(Unit):
             '7z'   : carve_7z(),
             'pe'   : carve_pe(memdump=self.args.memdump, fileinfo=True, recursive=True, keep_root=True),
             'lnk'  : carve_lnk(),
-            'json' : carve_json(dictonly=True),
+            'json' : carve_json(),
             'xml'  : carve_xml(),
             'rtf'  : carve_rtf(),
         }
