@@ -16,6 +16,7 @@ import struct
 import sys
 import weakref
 
+from collections.abc import Buffer
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -34,7 +35,6 @@ from uuid import UUID
 from refinery.lib.id import buffer_offset
 
 if TYPE_CHECKING:
-    from collections.abc import Buffer
     from typing import Generator, Protocol, Self
 
     from refinery.lib.types import JSON, buf
@@ -1028,7 +1028,7 @@ class StructMeta(abc.ABCMeta):
         setattr(cls, '__init__', wrapped__init__)
 
 
-class Struct(Generic[T], metaclass=StructMeta):
+class Struct(Generic[T], Buffer, metaclass=StructMeta):
     """
     A class to parse structured data. A `refinery.lib.structures.Struct` class can be instantiated
     as follows:
@@ -1052,10 +1052,8 @@ class Struct(Generic[T], metaclass=StructMeta):
     def __bytes__(self):
         return bytes(self._data)
 
-    def get_data(self, decouple=False):
-        if decouple and isinstance(self._data, memoryview):
-            self._data = bytearray(self._data)
-        return self._data
+    def __buffer__(self, flags: int, /):
+        return self._data.__buffer__(flags)
 
     def __init__(self, reader: StructReader[T], *args, **kwargs):
         pass
