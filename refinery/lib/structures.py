@@ -16,7 +16,6 @@ import struct
 import sys
 import weakref
 
-from collections.abc import Buffer
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -49,6 +48,11 @@ else:
     B = TypeVar('B')
     C = TypeVar('C')
     R = TypeVar('R')
+
+if sys.version_info >= (3, 12):
+    from collections.abc import Buffer
+else:
+    Buffer = object
 
 
 class ToJSON(Protocol):
