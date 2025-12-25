@@ -66,7 +66,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                     return record.unpack(zipf.password)
                 except InvalidChecksum as ck:
                     raise RefineryPartialResult('invalid checksum', ck.data) from ck
-                except InvalidPassword:
+                except (PasswordRequired, InvalidPassword):
                     if not record.data:
                         raise
                     msg = 'invalid password; use -L to extract raw encrypted data'
