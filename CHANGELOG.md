@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.24
+- Adds the `jpeg` unit for parsing out JPG data streams and some metadata.
+
 ## Version 0.9.23 - bugfix release
 
 ## Version 0.9.22 - bugfix release
