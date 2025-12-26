@@ -61,7 +61,7 @@ class ppxml(Unit):
                 if more_sibs:
                     element.tail += pad
 
-        if root := dom.getroot():
+        if (root := dom.getroot()) is not None:
             indent(root)
 
         with io.BytesIO() as output:
