@@ -187,7 +187,7 @@ from refinery.lib.exceptions import (
 )
 from refinery.lib.frame import MAGIC, MSIZE, Chunk, Framed, generate_frame_header
 from refinery.lib.structures import MemoryFile
-from refinery.lib.types import buf
+from refinery.lib.types import buf, isbuffer, isstream
 
 if TYPE_CHECKING:
     from argparse import _MutuallyExclusiveGroup
@@ -221,8 +221,6 @@ from refinery.lib.tools import (
     autoinvoke,
     documentation,
     exception_to_string,
-    isbuffer,
-    isstream,
     lookahead,
     normalize_to_display,
     normalize_to_identifier,

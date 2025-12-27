@@ -129,11 +129,10 @@ from refinery.lib.patterns import formats
 from refinery.lib.tools import (
     exception_to_string,
     infinitize,
-    isbuffer,
     normalize_to_identifier,
     one,
 )
-from refinery.lib.types import NoMask, RepeatedInteger, bounds, buf
+from refinery.lib.types import NoMask, RepeatedInteger, bounds, buf, isbuffer
 
 if TYPE_CHECKING:
     from refinery import Unit

@@ -10,8 +10,7 @@ from itertools import islice
 from typing import TYPE_CHECKING
 
 from refinery.lib.patterns import formats, indicators
-from refinery.lib.tools import bounds
-from refinery.lib.types import INF, Callable, Iterable, Param, buf
+from refinery.lib.types import INF, Callable, Iterable, Param, bounds, buf
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
