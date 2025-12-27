@@ -3,7 +3,6 @@ Miscellaneous helper functions.
 """
 from __future__ import annotations
 
-import datetime
 import inspect
 import io
 import itertools
