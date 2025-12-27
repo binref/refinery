@@ -14,7 +14,7 @@ class jamv(Unit):
         name: Param[str, Arg.String(metavar='format', help=(
             'A format string that specifies the variable name for storing the chunk.'))],
         data: Param[buf, Arg.Binary(metavar='data', help=(
-            'Optionally specify the body of the fused output chunk; empty by default.'))] = None,
+            'Optionally specify the body of the fused output chunk; empty by default.'))] = B'',
     ):
         super().__init__(name=name, data=data)
 
@@ -26,14 +26,14 @@ class jamv(Unit):
         if not isinstance(meta, dict):
             raise RuntimeError('this unit can only be used inside a frame')
         data.meta.update(meta)
-        data[:] = self.args.data or B''
+        data[:] = self.args.data
         return data
 
-    def filter(self, inputs):
+    def filter(self, chunks):
         head = None
         spec = self.args.name
         meta = {}
-        for chunk in inputs:
+        for chunk in chunks:
             if not chunk.visible:
                 yield chunk
                 continue
