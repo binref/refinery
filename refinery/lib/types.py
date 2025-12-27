@@ -365,6 +365,7 @@ class BoundsType:
         k = self.min
         i = self.inc
         if (m := self.max) is INF:
+            import itertools
             yield from itertools.count(k, i)
         else:
             while k <= m:
