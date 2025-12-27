@@ -233,18 +233,6 @@ def splitchunks(
         yield chunk
 
 
-def make_buffer_mutable(data: buf):
-    """
-    Returns a mutable version of the input data. Already mutable inputs are returned
-    as themselves, i.e. no copy operation occurs in these cases.
-    """
-    if isinstance(data, bytearray):
-        return data
-    if isinstance(data, memoryview) and not data.readonly:
-        return data
-    return bytearray(data)
-
-
 def infinitize(it: _T | Iterable[_T]) -> Iterable[_T]:
     if isinstance(it, (
         itertools.cycle,
