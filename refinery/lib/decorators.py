@@ -64,3 +64,13 @@ def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk],
                     partial[k] = ''
         return codecs.encode(''.join(partial), self.codec, errors='surrogateescape')
     return method_wrapper
+
+
+def nopdoc(obj: object):
+    """
+    This decorator can be applied to any object to exclude it from the automatically generated
+    documentation.
+    """
+    pdoc: dict = sys.modules[obj.__module__].__dict__.setdefault('__pdoc__', {})
+    pdoc[obj.__qualname__] = False
+    return obj
