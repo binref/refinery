@@ -18,8 +18,8 @@ from refinery.lib.meta import (
     SizeInt,
     metavars,
 )
-from refinery.lib.tools import asbuffer, get_terminal_size
-from refinery.lib.types import INF, Param
+from refinery.lib.tools import get_terminal_size
+from refinery.lib.types import INF, Param, asbuffer
 from refinery.units import Chunk
 from refinery.units.sinks import Arg, HexViewer
 

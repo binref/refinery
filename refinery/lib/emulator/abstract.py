@@ -11,8 +11,7 @@ from typing import Any, Generic, TypeVar
 from refinery.lib.executable import Arch, Executable, ExecutableCodeBlob, align
 from refinery.lib.intervals import IntIntervalUnion
 from refinery.lib.structures import FlagAccessMixin
-from refinery.lib.tools import asbuffer
-from refinery.lib.types import buf
+from refinery.lib.types import asbuffer, buf
 
 _T = TypeVar('_T')
 _E = TypeVar('_E')

@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Iterable
 from refinery.lib import json
 from refinery.lib.id import is_likely_email
 from refinery.lib.mime import file_extension
-from refinery.lib.tools import NoLogging, asbuffer, isbuffer
+from refinery.lib.tools import NoLogging
+from refinery.lib.types import asbuffer, isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.pattern.mimewords import mimewords
 

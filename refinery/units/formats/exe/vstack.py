@@ -25,8 +25,8 @@ from refinery.lib.executable import Arch, Range
 from refinery.lib.intervals import MemoryIntervalUnion
 from refinery.lib.meta import metavars
 from refinery.lib.structures import StructReader
-from refinery.lib.tools import exception_to_string, isbuffer
-from refinery.lib.types import INF, bounds
+from refinery.lib.tools import exception_to_string
+from refinery.lib.types import INF, bounds, isbuffer
 from refinery.units import Arg, Chunk
 from refinery.units.formats.exe import EmulatingUnit, Engine
 

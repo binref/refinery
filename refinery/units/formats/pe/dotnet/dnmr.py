@@ -3,8 +3,7 @@ from __future__ import annotations
 import codecs
 
 from refinery.lib.dotnet.resources import NetStructuredResources, NoManagedResource
-from refinery.lib.tools import asbuffer
-from refinery.lib.types import Param
+from refinery.lib.types import Param, asbuffer
 from refinery.units import RefineryPartialResult
 from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 

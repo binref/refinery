@@ -4,7 +4,9 @@ It also exports important singleton types used throughout refinery.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
+
+_T = TypeVar('_T')
 
 if TYPE_CHECKING:
     from typing import (
@@ -27,7 +29,6 @@ if TYPE_CHECKING:
         bool,
         dict[str, 'JSON'],
         list['JSON'],
-        # These are superfluous but help the type checker:
         list[int],
         list[str],
         list[float],
@@ -61,24 +62,84 @@ else:
 
 
 __all__ = [
+    'asbuffer',
+    'AST',
+    'bounds',
+    'BoundsType',
+    'buf',
+    'Callable',
+    'ClassVar',
+    'Collection',
+    'convert',
+    'Generator',
+    'INF',
+    'isbuffer',
+    'isq',
+    'isstream',
+    'Iterable',
     'JSON',
     'JSONDict',
-    'buf',
-    'isq',
-    'Param',
     'NamedTuple',
-    'Collection',
-    'Iterable',
+    'NoMask',
+    'Param',
+    'RepeatedInteger',
     'Self',
     'Singleton',
-    'Generator',
-    'ClassVar',
-    'Callable',
-    'INF',
-    'AST',
-    'NoMask',
-    'RepeatedInteger',
+    'typename',
 ]
+
+
+def isstream(obj) -> bool:
+    """
+    Tests whether `obj` is a stream. This is currently done by simply testing whether the object
+    has an attribute called `read`.
+    """
+    return hasattr(obj, 'read')
+
+
+def isbuffer(obj) -> bool:
+    """
+    Test whether `obj` is an object that supports the buffer API, like a bytes or bytearray object.
+    """
+    try:
+        with memoryview(obj):
+            return True
+    except TypeError:
+        return False
+
+
+def asbuffer(obj) -> memoryview | None:
+    """
+    Attempts to acquire a memoryview of the given object. This works for bytes and bytearrays, or
+    memoryview objects themselves. The return value is `None` for objects that do not support the
+    buffer protocol.
+    """
+    try:
+        return memoryview(obj)
+    except TypeError:
+        return None
+
+
+def typename(thing):
+    """
+    Determines the name of the type of an object.
+    """
+    if not isinstance(thing, type):
+        thing = type(thing)
+    mro = [c for c in thing.__mro__ if c is not object]
+    if mro:
+        thing = mro[~0]
+    try:
+        return thing.__name__
+    except AttributeError:
+        return repr(thing)
+
+
+def convert(x: _T | Any, t: type[_T]) -> _T:
+    """
+    Convert the given object `x` to the type `t`.
+    """
+    return x if isinstance(x, t) else t(x) # type:ignore
 
 
 class Singleton(type):

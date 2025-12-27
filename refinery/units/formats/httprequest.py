@@ -4,7 +4,7 @@ from email.parser import BytesParser
 from enum import Enum
 from urllib.parse import parse_qs
 
-from refinery.lib.tools import asbuffer
+from refinery.lib.types import asbuffer
 from refinery.units import Chunk, Unit
 
 

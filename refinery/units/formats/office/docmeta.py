@@ -7,8 +7,8 @@ from refinery.lib import xml
 from refinery.lib.dt import isodate
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
-from refinery.units.sinks.ppjson import ppjson
 from refinery.units.formats.office.xtdoc import xtdoc
+from refinery.units.sinks.ppjson import ppjson
 
 
 class _Prop(str, Enum):

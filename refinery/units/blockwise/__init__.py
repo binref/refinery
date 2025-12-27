@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 from refinery.lib import chunks
 from refinery.lib.inline import iterspread
-from refinery.lib.tools import asbuffer, infinitize
-from refinery.lib.types import INF, NoMask, Param, buf, isq
+from refinery.lib.tools import infinitize
+from refinery.lib.types import INF, NoMask, Param, asbuffer, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:

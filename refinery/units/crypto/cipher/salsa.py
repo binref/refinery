@@ -8,8 +8,7 @@ from typing import Iterable, Sequence, TypeVar
 from Cryptodome.Cipher import Salsa20
 
 from refinery.lib.crypto import PyCryptoFactoryWrapper, rotl32
-from refinery.lib.tools import asbuffer
-from refinery.lib.types import buf
+from refinery.lib.types import asbuffer, buf
 from refinery.units.crypto.cipher import LatinCipherStandardUnit, LatinCipherUnit
 
 

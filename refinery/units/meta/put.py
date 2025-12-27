@@ -3,8 +3,7 @@ from __future__ import annotations
 import itertools
 
 from refinery.lib.meta import check_variable_name
-from refinery.lib.tools import isbuffer, typename
-from refinery.lib.types import NoDefault, Param, isq
+from refinery.lib.types import NoDefault, Param, isbuffer, isq, typename
 from refinery.units import Arg, Chunk, Unit
 
 

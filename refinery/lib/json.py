@@ -14,8 +14,7 @@ from enum import Enum, IntFlag
 from uuid import UUID
 
 from refinery.lib.shared import orjson
-from refinery.lib.tools import isbuffer
-from refinery.lib.types import Any, Callable, Generator
+from refinery.lib.types import Any, Callable, Generator, isbuffer
 
 
 def flattened(data: dict, prefix: str = '', separator: str = '.'):

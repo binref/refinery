@@ -3,8 +3,7 @@ from __future__ import annotations
 from itertools import cycle
 from typing import Sequence
 
-from refinery.lib.tools import isbuffer
-from refinery.lib.types import Param, isq
+from refinery.lib.types import Param, isbuffer, isq
 from refinery.units.blockwise import Arg, BlockTransformation
 
 

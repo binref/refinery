@@ -126,8 +126,8 @@ from urllib.parse import unquote_to_bytes
 from refinery.lib.environment import environment
 from refinery.lib.mime import get_cached_file_magic_info
 from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import entropy, index_of_coincidence, isbuffer, typename
-from refinery.lib.types import buf
+from refinery.lib.tools import entropy, index_of_coincidence
+from refinery.lib.types import buf, isbuffer, typename
 
 if TYPE_CHECKING:
     from typing import Protocol

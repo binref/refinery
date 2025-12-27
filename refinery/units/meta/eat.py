@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.meta import check_variable_name, metavars
-from refinery.lib.tools import isbuffer
-from refinery.lib.types import Param
+from refinery.lib.types import Param, isbuffer
 from refinery.units import Arg, Chunk, Unit
 
 

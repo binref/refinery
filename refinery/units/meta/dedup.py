@@ -4,8 +4,7 @@ from hashlib import md5
 
 from refinery.lib.argformats import PythonExpression
 from refinery.lib.meta import metavars
-from refinery.lib.tools import isbuffer
-from refinery.lib.types import Param
+from refinery.lib.types import Param, isbuffer
 from refinery.units import Arg, Unit
 
 

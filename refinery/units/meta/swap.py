@@ -4,8 +4,7 @@ from typing import Iterable
 
 from refinery.lib.frame import Chunk
 from refinery.lib.meta import check_variable_name
-from refinery.lib.tools import isbuffer
-from refinery.lib.types import Param
+from refinery.lib.types import Param, isbuffer
 from refinery.units import Arg, Unit
 
 

@@ -16,8 +16,7 @@ from refinery.lib.crypto import (
     pad,
     unpad,
 )
-from refinery.lib.tools import isbuffer
-from refinery.lib.types import Any, ClassVar, Collection, Iterable, Param, buf, isq
+from refinery.lib.types import Any, ClassVar, Collection, Iterable, Param, buf, isbuffer, isq
 from refinery.units import (
     Arg,
     Chunk,

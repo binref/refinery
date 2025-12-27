@@ -14,9 +14,9 @@ import warnings
 
 from enum import Enum, IntFlag
 from math import log
-from typing import Any, Callable, Generator, Iterable, TypeVar
+from typing import Callable, Generator, Iterable, TypeVar
 
-from refinery.lib.types import INF, buf
+from refinery.lib.types import buf
 
 _T = TypeVar('_T')
 
@@ -263,37 +263,6 @@ def index_of_coincidence(data: buf) -> float:
             numpy.arange(0x100))[0]
     d = 1 / N / (N - 1)
     return float(sum(x * (x - 1) * d for x in C))
-
-
-def isstream(obj) -> bool:
-    """
-    Tests whether `obj` is a stream. This is currently done by simply testing whether the object
-    has an attribute called `read`.
-    """
-    return hasattr(obj, 'read')
-
-
-def isbuffer(obj) -> bool:
-    """
-    Test whether `obj` is an object that supports the buffer API, like a bytes or bytearray object.
-    """
-    try:
-        with memoryview(obj):
-            return True
-    except TypeError:
-        return False
-
-
-def asbuffer(obj) -> memoryview | None:
-    """
-    Attempts to acquire a memoryview of the given object. This works for bytes and bytearrays, or
-    memoryview objects themselves. The return value is `None` for objects that do not support the
-    buffer protocol.
-    """
-    try:
-        return memoryview(obj)
-    except TypeError:
-        return None
 
 
 def splitchunks(
@@ -579,21 +548,6 @@ def normalize_to_identifier(words: str, strip: bool = True):
     return normalize_word_separators(words, '_', strip)
 
 
-def typename(thing):
-    """
-    Determines the name of the type of an object.
-    """
-    if not isinstance(thing, type):
-        thing = type(thing)
-    mro = [c for c in thing.__mro__ if c is not object]
-    if mro:
-        thing = mro[~0]
-    try:
-        return thing.__name__
-    except AttributeError:
-        return repr(thing)
-
-
 def exception_to_string(exception: BaseException, default=None) -> str:
     """
     Attempts to convert a given exception to a good description that can be exposed to the user.
@@ -614,10 +568,3 @@ def nopdoc(obj: object):
     pdoc: dict = sys.modules[obj.__module__].__dict__.setdefault('__pdoc__', {})
     pdoc[obj.__qualname__] = False
     return obj
-
-
-def convert(x: _T | Any, t: type[_T]) -> _T:
-    """
-    Convert the given object `x` to the type `t`.
-    """
-    return x if isinstance(x, t) else t(x) # type:ignore

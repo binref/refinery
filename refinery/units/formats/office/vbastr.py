@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.tools import isbuffer
+from refinery.lib.types import isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
