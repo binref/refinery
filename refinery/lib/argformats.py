@@ -127,14 +127,13 @@ from refinery.lib.frame import Chunk
 from refinery.lib.meta import Percentage, is_valid_variable_name, metavars
 from refinery.lib.patterns import formats
 from refinery.lib.tools import (
-    bounds,
     exception_to_string,
     infinitize,
     isbuffer,
     normalize_to_identifier,
     one,
 )
-from refinery.lib.types import NoMask, RepeatedInteger, buf
+from refinery.lib.types import NoMask, RepeatedInteger, bounds, buf
 
 if TYPE_CHECKING:
     from refinery import Unit

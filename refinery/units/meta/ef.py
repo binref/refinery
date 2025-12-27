@@ -11,8 +11,8 @@ from typing import Iterable
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import bounds, exception_to_string
-from refinery.lib.types import Param
+from refinery.lib.tools import exception_to_string
+from refinery.lib.types import Param, bounds
 from refinery.units import Arg, Unit
 
 _ERROR_IGNORES = {

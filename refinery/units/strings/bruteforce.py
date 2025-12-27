@@ -4,8 +4,7 @@ import itertools
 import re
 
 from refinery.lib.meta import metavars
-from refinery.lib.tools import bounds
-from refinery.lib.types import Param, buf
+from refinery.lib.types import Param, bounds, buf
 from refinery.units import Arg, Unit
 
 

@@ -262,3 +262,63 @@ NoDefault = _NoDefault()
 """
 A sentinel singleton that can be used as a no-default marker when "None" is a valid option.
 """
+
+
+class BoundsType:
+    """
+    Can be used to specify certain upper and lower bounds. For example, the following is `True`:
+
+        5 in bounds[3:5]
+
+    This is notably different from how a `range` object functions since the upper bound is included
+    in the valid range, and it is also permitted to be `None` for an unbounded range.
+    """
+    __name__ = 'bounds'
+
+    min: int
+    max: int | INF
+    inc: int
+
+    def __getitem__(self, k: slice):
+        return BoundsType(k)
+
+    def __init__(self, bounds: int | slice[int, int | None | INF, int | None] | None):
+        if bounds is None:
+            self.min = 0
+            self.max = INF
+            self.inc = 1
+        elif isinstance(bounds, int):
+            self.min = self.max = bounds
+            self.inc = 1
+        else:
+            _min, _max, _inc = bounds.start, bounds.stop, bounds.step
+            self.min = _min or 0
+            self.max = _max or INF
+            self.inc = _inc or 1
+            if _max and _max < self.min:
+                raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')
+            if self.inc < 0:
+                raise ValueError('Negative step size not supported for range expressions.')
+
+    def __iter__(self):
+        k = self.min
+        i = self.inc
+        if (m := self.max) is INF:
+            yield from itertools.count(k, i)
+        else:
+            while k <= m:
+                yield k
+                k += i
+
+    def __repr__(self):
+        return F'[{self.min}:{self.max}:{self.inc}]'
+
+    def __contains__(self, value: int):
+        if value < self.min:
+            return False
+        if (m := self.max) and value > m:
+            return False
+        return (value - self.min) % self.inc == 0
+
+
+bounds = BoundsType(slice(None, None))

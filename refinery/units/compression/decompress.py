@@ -5,8 +5,8 @@ from enum import IntFlag
 import colorama
 
 from refinery.lib.id import get_structured_data_type
-from refinery.lib.tools import bounds, normalize_to_display
-from refinery.lib.types import INF, NamedTuple, Param, buf
+from refinery.lib.tools import normalize_to_display
+from refinery.lib.types import INF, NamedTuple, Param, bounds, buf
 from refinery.units import Arg, RefineryPartialResult, Unit
 
 if True:
