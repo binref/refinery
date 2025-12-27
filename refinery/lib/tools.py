@@ -14,7 +14,7 @@ import warnings
 
 from enum import Enum, IntFlag
 from math import log
-from typing import Callable, Generator, Iterable, TypeVar
+from typing import Generator, Iterable, TypeVar
 
 from refinery.lib.types import buf
 
@@ -172,45 +172,6 @@ def skipfirst(iterable: Iterable[_T]) -> Generator[_T]:
     it = iter(iterable)
     next(it)
     yield from it
-
-
-def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
-    """
-    For each parameter that `method` expects, this function looks for an entry in `keywords` which
-    has the same name as that parameter. `autoinvoke` then calls `method` with all matching
-    parameters forwarded in the appropriate manner.
-    """
-
-    kwdargs = {}
-    posargs = []
-    varargs = []
-    kwdjoin = False
-
-    for p in inspect.signature(method).parameters.values():
-        if p.kind is p.VAR_KEYWORD:
-            kwdjoin = True
-        try:
-            value = keywords.pop(p.name)
-        except KeyError:
-            if p.kind is p.VAR_KEYWORD:
-                continue
-            value = p.default
-            if value is p.empty:
-                raise ValueError(F'missing required parameter {p.name}')
-        if p.kind is p.POSITIONAL_OR_KEYWORD or p.kind is p.POSITIONAL_ONLY:
-            if value == p.default:
-                # when equality holds, we force identity
-                value = p.default
-            posargs.append(value)
-        elif p.kind is p.VAR_POSITIONAL:
-            varargs = value
-        elif p.kind is p.KEYWORD_ONLY:
-            kwdargs[p.name] = value
-
-    if kwdjoin:
-        kwdargs.update(keywords)
-
-    return method(*posargs, *varargs, **kwdargs)
 
 
 def entropy_fallback(data: buf) -> float:

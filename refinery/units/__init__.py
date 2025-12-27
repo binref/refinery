@@ -218,7 +218,6 @@ from refinery.lib.argformats import (
     sliceobj,
 )
 from refinery.lib.tools import (
-    autoinvoke,
     documentation,
     exception_to_string,
     lookahead,
@@ -227,6 +226,45 @@ from refinery.lib.tools import (
     one,
     skipfirst,
 )
+
+
+def autoinvoke(method: Callable[..., _T], keywords: dict) -> _T:
+    """
+    For each parameter that `method` expects, this function looks for an entry in `keywords` which
+    has the same name as that parameter. `autoinvoke` then calls `method` with matching parameters
+    forwarded in the appropriate manner.
+    """
+
+    kwdargs = {}
+    posargs = []
+    varargs = []
+    kwdjoin = False
+
+    for p in inspect.signature(method).parameters.values():
+        if p.kind is p.VAR_KEYWORD:
+            kwdjoin = True
+        try:
+            value = keywords.pop(p.name)
+        except KeyError:
+            if p.kind is p.VAR_KEYWORD:
+                continue
+            value = p.default
+            if value is p.empty:
+                raise ValueError(F'missing required parameter {p.name}')
+        if p.kind is p.POSITIONAL_OR_KEYWORD or p.kind is p.POSITIONAL_ONLY:
+            if value == p.default:
+                # when equality holds, we force identity
+                value = p.default
+            posargs.append(value)
+        elif p.kind is p.VAR_POSITIONAL:
+            varargs = value
+        elif p.kind is p.KEYWORD_ONLY:
+            kwdargs[p.name] = value
+
+    if kwdjoin:
+        kwdargs.update(keywords)
+
+    return method(*posargs, *varargs, **kwdargs)
 
 
 class Entry:
