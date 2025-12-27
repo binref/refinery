@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from contextlib import suppress
 
+from refinery.lib.dt import date_from_timestamp
 from refinery.lib.structures import EOF, Struct, StructReader
-from refinery.lib.tools import date_from_timestamp
 from refinery.units.formats.archive import ArchiveUnit
 
 

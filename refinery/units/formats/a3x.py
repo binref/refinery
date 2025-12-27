@@ -7,9 +7,9 @@ import struct
 from enum import Enum
 from typing import Generator, Iterable, NamedTuple
 
+from refinery.lib.dt import date_from_timestamp
 from refinery.lib.id import buffer_contains
 from refinery.lib.structures import MemoryFile, Struct, StructReader, StructReaderBits
-from refinery.lib.tools import date_from_timestamp
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 A3X_KEYWORDS = [

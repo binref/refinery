@@ -11,10 +11,11 @@ from enum import Enum
 
 from refinery.lib import lief
 from refinery.lib.dotnet.header import DotNetHeader
+from refinery.lib.dt import date_from_timestamp
 from refinery.lib.id import is_likely_pe
 from refinery.lib.lcid import LCID
 from refinery.lib.resources import datapath
-from refinery.lib.tools import NoLoggingProxy, date_from_timestamp, unwrap
+from refinery.lib.tools import NoLoggingProxy, unwrap
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 from refinery.units.formats.pe import get_pe_size

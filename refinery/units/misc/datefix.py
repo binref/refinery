@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta
 
 from refinery.lib.decorators import unicoded
-from refinery.lib.tools import date_from_timestamp
+from refinery.lib.dt import date_from_timestamp
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
