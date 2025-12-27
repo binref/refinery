@@ -56,13 +56,11 @@ class TestJSONLevel0Extractor(TestUnitBase):
             "date": "2021-09-04 12:00",
             "test": true,
             "keys": [7, 1, 12, 9, 1, 4],
-            "n1": "I have\nline breaks and should not be in meta",
             "n2": {
                 "nope": "I am a dictionary and should not be in meta"
             },
-            "n3": ["No", ["nested", "lists"], "even when they contain numbers:", 7, 8],
-            "n4": "something way too long %s"
-        }''' % (B'OOM' * 200)
+            "n3": ["No", ["nested", "lists"], "even when they contain numbers:", 7, 8]
+        }'''
         unit = self.ldu('xj0', '{data}')
         result: Chunk = next(data | unit)
 
@@ -85,6 +83,4 @@ class TestJSONLevel0Extractor(TestUnitBase):
         self.assertEqual(result['keys'], [7, 1, 12, 9, 1, 4])
         self.assertEqual(result, B'Binary Refinery!')
         self.assertNotIn('n3', result.meta)
-        self.assertEqual(result['n1'], b'I have\nline breaks and should not be in meta')
         self.assertIn('n2', result.meta)
-        self.assertIn('n4', result.meta)

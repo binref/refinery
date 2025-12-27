@@ -332,7 +332,8 @@ class TestScoping(TestUnitBase):
         pipe = self.load_pipeline(r'''
             push [[
                      | docmeta
-                     | jamv {path}
+                     | xt custom
+                     | xj0
                      | pop
                 ]| xtvba [
                      | sep

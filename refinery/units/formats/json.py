@@ -52,10 +52,8 @@ class xtjson(PathExtractorUnit):
 
 class xj0(Unit):
     """
-    Extracts a single field from a JSON document at depth 0. By default, the unit applies a
-    heuristic to extract remaining fields as metadata: String values are extracted only if
-    they do not exceed 80 characters in length and do not contain any line breaks.
-    Floating-point, integer, boolean values, and lists of the latter are also extracted.
+    Extracts a single field from a JSON document at depth 0. By default, dictionaries are not
+    extracted. Nested lists and dictionaries are never extracted.
     """
     def __init__(
         self,
@@ -83,35 +81,26 @@ class xj0(Unit):
             if iskey:
                 raise TypeError
             if isinstance(value, dict):
-                return {convert(k): convert(v) for k, v in value.items()}
+                return {convert(k, True): convert(v) for k, v in value.items()}
             if isinstance(value, list):
                 return [convert(k) for k in value]
 
-        def acceptable(key, value, nested=False, convert=False):
+        def acceptable(key, value, nested=False):
             if not is_valid_variable_name(key):
                 self.log_info(F'rejecting item with invalid name {key}')
                 return None
-            if isinstance(value, (float, int, bool)):
+            if isinstance(value, (float, int, bool, str)):
                 return True
             if isinstance(value, dict):
                 if not self.args.all:
                     self.log_info(F'rejecting item {key} with dictionary value')
                     return False
-                return True
+                return all(acceptable(k, val, True) for k, val in value.items())
             if isinstance(value, list):
                 if nested:
-                    self.log_info(F'rejecting item {key} containing a doubly nested list')
+                    self.log_info(F'rejecting item {key} containing a nested list')
                     return False
                 return all(acceptable(key, t, True) for t in value)
-            if isinstance(value, str):
-                if not self.args.all:
-                    if len(value) not in range(1, 80):
-                        self.log_info(F'rejecting string item {key} because {len(value)} exceeds the length limit')
-                        return False
-                    if '\n' in value:
-                        self.log_info(F'rejecting string item {key} because it contains line breaks')
-                        return False
-                return True
             return False
 
         jdoc: dict = libjson.loads(data)
