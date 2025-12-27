@@ -12,8 +12,27 @@ import re
 
 from typing import Callable, NamedTuple
 
-from refinery.lib.tools import entropy, meminfo
+from refinery.lib.tools import entropy
 from refinery.lib.types import buf
+
+try:
+    import ctypes
+except ImportError:
+    def _meminfo_d(v: memoryview) -> slice | None:
+        return None
+    meminfo = _meminfo_d
+else:
+    def _meminfo_c(v: memoryview):
+        if not (n := len(v)):
+            return None
+        if v.readonly or not v.contiguous:
+            return None
+        base = memoryview(v.obj)
+        offset, base_addr = (
+            ctypes.addressof(ctypes.c_char.from_buffer(t)) for t in (v, base))
+        start = offset - base_addr
+        return slice(start, min(start + n, len(base)), 1)
+    meminfo = _meminfo_c
 
 MimeByExtension = {
     'bin'   : 'application/ocet-stream',
