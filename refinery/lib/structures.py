@@ -1174,4 +1174,4 @@ class FlagAccessMixin:
             raise RuntimeError
         if name := self.name:
             return name
-        return super().__repr__()
+        return enum.IntFlag.__repr__(self)

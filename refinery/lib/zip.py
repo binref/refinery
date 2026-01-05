@@ -138,6 +138,9 @@ class ZipCrypto(Struct):
         self.crc = crc
         self._restart()
 
+    def __buffer__(self, flags: int, /):
+        return memoryview(self.header)
+
     def _restart(self):
         self.state = (0x12345678, 0x23456789, 0x34567890)
 
@@ -479,13 +482,19 @@ class ZipFileRecord(Struct):
             raise ValueError
         self.version = reader.u16()
         self.flags = ZipFlags(reader.u16())
-        self.method = ZipCompressionMethod(reader.u16())
+        self.method_value = reader.u16()
+        try:
+            self.method = ZipCompressionMethod(self.method_value)
+        except ValueError:
+            self.method = None
         try:
             self.date = datefix.dostime(reader.u32(peek=True))
         except Exception:
             self.date = None
         self.mtime = reader.u16()
         self.mdate = reader.u16()
+
+        self.crc32_ignored = False
 
         descriptor = reader.peek(12)
         self.crc32 = reader.u32()
@@ -585,6 +594,18 @@ class ZipFileRecord(Struct):
             self.data_descriptor = ZipDataDescriptorRaw(reader.u32(), reader.u32(), reader.u32())
             self.anomalies |= ZipAnomalies.DataDescriptorWithoutHeader
 
+        if self.name == 'AndroidManifest.xml':
+            checkpoint = reader.tell()
+            axml_magic = B'\x03\x00\x08\x00'
+            reader.seekset(self.data_offset)
+            if reader.peek(4) == axml_magic and (usize := self.usize) and (reader.remaining_bytes >= usize):
+                self.data = reader.read_exactly(usize)
+                self.method = ZipCompressionMethod.STORE
+                self.crc32_ignored = True
+                self.encryption = NoCrypto()
+            else:
+                reader.seekset(checkpoint)
+
         self.is64bit = is64bit
 
     def get_mtime(self):
@@ -624,7 +645,7 @@ class ZipFileRecord(Struct):
         return self.encryption.checkpwd(password)
 
     def unpack(self, password: str | None = None, check: bool = True):
-        if not check:
+        if not check or self.crc32_ignored:
             def _nocheck(x):
                 return x
             _checked = _nocheck
@@ -646,7 +667,7 @@ class ZipFileRecord(Struct):
             return _checked(u)
 
         if e := self.encryption:
-            if not password:
+            if password is None:
                 raise PasswordRequired
             compressed = e.decrypt(password, d)
         else:
@@ -778,6 +799,9 @@ class NoCrypto:
     def __len__(self):
         return 0
 
+    def __buffer__(self, flags: int, /):
+        return memoryview(B'')
+
     def decrypt(self, password: str, data: buf):
         return data
 
@@ -851,7 +875,11 @@ class ZipExtAES(ZipExt):
         self.strength = reader.u8()
         if not 1 <= self.strength <= 3:
             raise ValueError(F'Invalid AES strength {self.strength}.')
-        self.method = ZipCompressionMethod(reader.u16())
+        self.method_value = reader.u16()
+        try:
+            self.method = ZipCompressionMethod(self.method_value)
+        except ValueError:
+            self.method = None
 
 
 class ZipExtInfo64(ZipExt):
@@ -932,7 +960,11 @@ class ZipDirEntry(Struct):
         self.version_made_by = reader.u16()
         self.version_to_extract = reader.u16()
         self.flags = ZipFlags(reader.u16())
-        self.compression = ZipCompressionMethod(reader.u16())
+        self.method_value = reader.u16()
+        try:
+            self.compression = ZipCompressionMethod(self.method_value)
+        except ValueError:
+            self.compression = None
         try:
             self.date = datefix.dostime(reader.u32(peek=True))
         except Exception:
