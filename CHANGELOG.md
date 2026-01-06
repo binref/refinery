@@ -5,6 +5,10 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.9.25
+- The `docmeta` unit now exposes more of the embedded metadata of Word documents.
+. The `xj0` unit no longer has size restrictions on extracted strings.
+
 ## Version 0.9.24
 - Adds the `jpeg` unit for parsing out JPG data streams and some metadata.
 
