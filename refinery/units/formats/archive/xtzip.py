@@ -59,7 +59,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                 self.log_info(F'data cave detected at range {start:#0{w}x}:{end:#0{w}x}')
                 yield self._pack(F'.{start:#0{w}x}.cave', None, view[start:end])
 
-        for entry in zipf.directory:
+        for entry in sorted(zipf.directory, key=lambda d: d.name):
             def xt(entry=entry):
                 record = zipf.read(entry)
                 try:
