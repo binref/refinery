@@ -2678,7 +2678,7 @@ class InnoArchive:
         if version >= (6, 5, 0):
             expected_checksum = inno.u32()
             encryption = SetupEncryptionHeaderV3(inno)
-            computed_checksum = zlib.crc32(encryption.get_data()) & 0xFFFFFFFF
+            computed_checksum = zlib.crc32(encryption.__buffer__(0)) & 0xFFFFFFFF
             if expected_checksum != computed_checksum:
                 raise ValueError('Encryption header failed the CRC check.')
             if encryption.Scope == SetupEncryptionScope.Full:
