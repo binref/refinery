@@ -264,9 +264,9 @@ class TestDump(TestUnitBase):
         )
         listing = self.ldu('xtzip', list=True)
         self.assertEqual(listing(archive), B'\n'.join([
+            B'bar/bok',
             B'foo/baf',
             B'foo/baz',
-            B'bar/bok'
         ]))
         with tempfile.TemporaryDirectory() as root:
             paths = [
