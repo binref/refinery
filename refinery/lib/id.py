@@ -218,6 +218,7 @@ class Fmt(Format, enum.Enum):
     WASM = (FC.Executable, 'wasm', 'WASM', 'Web Assembly')
     LUAC = (FC.Executable, 'luac', 'LUAC', 'LUA Bytecode')
     PYC = (FC.Executable, 'pyc', 'PYC', 'Python Bytecode')
+    APK = (FC.Executable, 'apk', 'ZIP/APK', 'Android Package')
 
     PDF = (FC.Document, 'pdf', 'PDF', 'PDF Document')
     CHM = (FC.Document, 'chm', 'CHM', 'Microsoft Windows HtmlHelp Data')
@@ -486,6 +487,13 @@ def get_executable_type(data: buf):
         return t
     if t := get_macho_type(data):
         return t
+    if data[:4] == B'PK\x03\x04':
+        for marker in (
+            B'AndroidManifest.xml',
+            B'APK Sig Block 42',
+        ):
+            if buffer_contains(data, marker):
+                return Fmt.APK
 
 
 def is_likely_pe(data: buf):
