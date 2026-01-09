@@ -101,11 +101,9 @@ class Format:
     def __eq__(self, them):
         if not isinstance(them, Format):
             return False
-        if them.category != self.category:
-            return False
-        t1, s1, _ = (m1 := them.mnemonic).partition('/')
-        t2, s2, _ = (m2 := self.mnemonic).partition('/')
-        return t1 == t2 if s1 != s2 else m1 == m2
+        t1 = them.mnemonic.split('/')
+        t2 = self.mnemonic.split('/')
+        return all(a == b for a, b in zip(t1, t2))
 
     def __iter__(self):
         yield self.category
@@ -223,7 +221,7 @@ class Fmt(Format, enum.Enum):
 
     PDF = (FC.Document, 'pdf', 'PDF', 'PDF Document')
     CHM = (FC.Document, 'chm', 'CHM', 'Microsoft Windows HtmlHelp Data')
-    DJV = (FC.Document, 'djvu')
+    DJV = (FC.Document, 'djvu', 'DJVU', 'DJVu Document')
 
     PCAP = (FC.Binary, 'pcap', 'PCAP', 'Network Packet Capture')
     PCAPNG = (FC.Binary, 'pcapng', 'PCAP/NG', 'Next-Generation Network Packet Capture')
@@ -244,17 +242,17 @@ class Fmt(Format, enum.Enum):
     REG_TEXT = (FC.Binary, 'reg', 'WinReg/Text', 'Windows Registry Script')
 
     MDB = (FC.Document, 'accdb', 'MDB', 'Microsoft Access Database')
-    DOC = (FC.Document, 'doc')
-    ONE = (FC.Document, 'one')
-    XLS = (FC.Document, 'xls')
-    PPT = (FC.Document, 'ppt')
-    MSG = (FC.Document, 'msg')
-    MSI = (FC.Archive, 'msi')
-    CFF = (FC.Binary, 'ole', 'Compound File Format')
+    DOC = (FC.Document, 'doc', 'DOC', 'Microsoft Word Document')
+    ONE = (FC.Document, 'one', 'ONE', 'Microsoft OneNote Document')
+    XLS = (FC.Document, 'xls', 'XLS', 'Microsoft Excel Document')
+    PPT = (FC.Document, 'ppt', 'PPT', 'Microsoft PowerPoint Document')
+    MSG = (FC.Document, 'msg', 'MSG', 'Microsoft Outlook EMail Message')
+    MSI = (FC.Archive, 'msi', 'MSI', 'Microsoft Installer Archive (MSI)')
+    CFF = (FC.Binary, 'ole', 'OLE', 'Compound File Format')
 
-    DOCX = (FC.Document, 'docx')
-    XLSX = (FC.Document, 'xlsx')
-    PPTX = (FC.Document, 'pptx')
+    DOCX = (FC.Document, 'docx', 'ZIP/DOCX', 'Microsoft Word ZIP/XML Document')
+    XLSX = (FC.Document, 'xlsx', 'ZIP/XLSX', 'Microsoft Excel ZIP/XML Document')
+    PPTX = (FC.Document, 'pptx', 'ZIP/PPTX', 'Microsoft PowerPoint ZIP/XML Document')
 
     ASCII = (FC.Text, 'txt', 'Text', 'Single-Byte, Plain Text Encoding')
     UTF16 = (FC.Text, 'txt', 'Text/UTF16')
@@ -311,7 +309,7 @@ class Fmt(Format, enum.Enum):
     TAR = (FC.Archive, 'tar')
     OAR = (FC.Archive, 'oar')
     ZIP7 = (FC.Archive, '7z', '7Zip')
-    ZIP = (FC.Archive, 'zip')
+    ZIP = (FC.Archive, 'zip', 'ZIP')
     RAR = (FC.Archive, 'rar')
     CAB = (FC.Archive, 'cab')
     CPIO = (FC.Archive, 'cpio')

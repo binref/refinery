@@ -52,3 +52,4 @@ class TestIDLib(TestBase):
         self.assertNotEqual(idlib.Fmt.PE, idlib.Fmt.ELF)
         self.assertNotEqual(idlib.Fmt.PE32DLL, idlib.Fmt.PE32CUI)
         self.assertNotEqual(idlib.Fmt.JSON, idlib.Fmt.REG)
+        self.assertEqual(idlib.Fmt.ZIP, idlib.Fmt.DOCX)
