@@ -45,3 +45,10 @@ class TestIDLib(TestBase):
                 self.assertEqual(goal, test, F'buffer {msg}'.format(test))
                 if (test := idlib.slice_offset(h_slice, n_slice)) is not None:
                     self.assertEqual(goal, test, F'sliced {msg}'.format(test))
+
+    def test_comparisin(self):
+        self.assertEqual(idlib.Fmt.PE, idlib.Fmt.PE32CUI)
+        self.assertEqual(idlib.Fmt.MACHO, idlib.Fmt.MACHO32BE)
+        self.assertNotEqual(idlib.Fmt.PE, idlib.Fmt.ELF)
+        self.assertNotEqual(idlib.Fmt.PE32DLL, idlib.Fmt.PE32CUI)
+        self.assertNotEqual(idlib.Fmt.JSON, idlib.Fmt.REG)

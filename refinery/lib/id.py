@@ -96,12 +96,16 @@ class Format:
     __slots__ = 'category', 'extension', 'mime', 'mnemonic', 'details'
 
     def __hash__(self):
-        return hash(tuple(self))
+        return hash((self.category, self.mnemonic))
 
-    def __eq__(self, other):
-        if not isinstance(other, Format):
+    def __eq__(self, them):
+        if not isinstance(them, Format):
             return False
-        return all(a == b for a, b in zip(self, other))
+        if them.category != self.category:
+            return False
+        t1, s1, _ = (m1 := them.mnemonic).partition('/')
+        t2, s2, _ = (m2 := self.mnemonic).partition('/')
+        return t1 == t2 if s1 != s2 else m1 == m2
 
     def __iter__(self):
         yield self.category
@@ -186,6 +190,9 @@ class Fmt(Format, enum.Enum):
     An enumeration of all known file formats that can be returned by
      `refinery.lib.id.get_structured_data_type`.
     """
+    ELF = (FC.Executable, 'elf', 'ELF')
+    MACHO = (FC.Executable, 'macho', 'MachO')
+    PE = (FC.Executable, 'exe', 'PE')
 
     PE32GUI = (FC.Executable, 'exe', 'PE/32/GUI')
     PE32CUI = (FC.Executable, 'exe', 'PE/32/CUI')
@@ -204,9 +211,9 @@ class Fmt(Format, enum.Enum):
     MACHOuvLE = (FC.Executable, 'macho', 'MachO/Fat/LE')
     MACHOuvBE = (FC.Executable, 'macho', 'MachO/Fat/BE')
     MACHO32LE = (FC.Executable, 'macho', 'MachO/32/LE')
-    MACHO64LE = (FC.Executable, 'macho', 'Macho/64/LE')
+    MACHO64LE = (FC.Executable, 'macho', 'MachO/64/LE')
     MACHO32BE = (FC.Executable, 'macho', 'MachO/32/BE')
-    MACHO64BE = (FC.Executable, 'macho', 'Macho/64/BE')
+    MACHO64BE = (FC.Executable, 'macho', 'MachO/64/BE')
 
     JAVA = (FC.Executable, 'class', 'JavaClass')
     DEX = (FC.Executable, 'dex', 'Dalvik')
@@ -232,6 +239,7 @@ class Fmt(Format, enum.Enum):
     LNK = (FC.Binary, 'lnk', 'LNK', 'Windows Shortcut')
     DMP = (FC.Binary, 'dmp', 'MDMP', 'Mini DuMP Crash Report')
 
+    REG = (FC.Binary, 'reg', 'WinReg', 'A Windows Registry Script or Hive File')
     REG_HIVE = (FC.Binary, 'reg', 'WinReg/Hive', 'Windows Registry Hive File', 'text/plain')
     REG_TEXT = (FC.Binary, 'reg', 'WinReg/Text', 'Windows Registry Script')
 
@@ -248,13 +256,13 @@ class Fmt(Format, enum.Enum):
     XLSX = (FC.Document, 'xlsx')
     PPTX = (FC.Document, 'pptx')
 
-    ASCII = (FC.Text, 'txt', 'PlainText', 'Single-Byte, Plain Text Encoding')
-    UTF16 = (FC.Text, 'txt', 'UTF16')
-    UTF32 = (FC.Text, 'txt', 'UTF32')
+    ASCII = (FC.Text, 'txt', 'Text', 'Single-Byte, Plain Text Encoding')
+    UTF16 = (FC.Text, 'txt', 'Text/UTF16')
+    UTF32 = (FC.Text, 'txt', 'Text/UTF32')
 
-    JSON = (FC.Text, 'json')
-    XML = (FC.Text, 'xml')
-    HTM = (FC.Text, 'html')
+    JSON = (FC.Text, 'json', 'Text/JSON')
+    XML = (FC.Text, 'xml', 'Text/XML')
+    HTM = (FC.Text, 'html', 'Text/HTML')
     RTF = (FC.Text, 'rtf', 'RTF')
     VBE = (FC.Text, 'vbe', 'VBE', 'Encoded VBScript')
     EML = (FC.Text, 'eml', 'EML', 'Plain-Text EMail Document')
@@ -309,9 +317,9 @@ class Fmt(Format, enum.Enum):
     CPIO = (FC.Archive, 'cpio')
     ZPQ = (FC.Archive, 'zpq')
 
-    S_JAV = (FC.Serialized, 'bin', 'SerializedJava')
-    S_DOT = (FC.Serialized, 'bin', 'SerializedDotNet')
-    S_PHP = (FC.Serialized, 'bin', 'SerializedPHP')
+    S_JAV = (FC.Serialized, 'bin', 'Serialized/Java')
+    S_DOT = (FC.Serialized, 'bin', 'Serialized/DotNet')
+    S_PHP = (FC.Serialized, 'bin', 'Serialized/PHP')
 
     APLIB = (FC.Compression, 'ap', 'apLib')
     BZ2 = (FC.Compression, 'bz2', 'BZIP')
@@ -330,6 +338,7 @@ class Fmt(Format, enum.Enum):
     SZDD = (FC.Compression, 'szdd')
     GZIP = (FC.Compression, 'gz')
     XZ = (FC.Compression, 'xz', 'XZ/LZMA2')
+    ZLIB = (FC.Compression, 'zlib', 'ZLIB')
     ZLIB0 = (FC.Compression, 'zlib', 'ZLIB/0')
     ZLIB1 = (FC.Compression, 'zlib', 'ZLIB/1')
     ZLIB2 = (FC.Compression, 'zlib', 'ZLIB/2')
