@@ -46,10 +46,14 @@ class TestIDLib(TestBase):
                 if (test := idlib.slice_offset(h_slice, n_slice)) is not None:
                     self.assertEqual(goal, test, F'sliced {msg}'.format(test))
 
-    def test_comparisin(self):
-        self.assertEqual(idlib.Fmt.PE, idlib.Fmt.PE32CUI)
-        self.assertEqual(idlib.Fmt.MACHO, idlib.Fmt.MACHO32BE)
+    def test_comparison(self):
+        self.assertLessEqual(idlib.Fmt.PE, idlib.Fmt.PE32CUI)
+        self.assertLessEqual(idlib.Fmt.MACHO, idlib.Fmt.MACHO32BE)
         self.assertNotEqual(idlib.Fmt.PE, idlib.Fmt.ELF)
         self.assertNotEqual(idlib.Fmt.PE32DLL, idlib.Fmt.PE32CUI)
         self.assertNotEqual(idlib.Fmt.JSON, idlib.Fmt.REG)
-        self.assertEqual(idlib.Fmt.ZIP, idlib.Fmt.DOCX)
+        self.assertLessEqual(idlib.Fmt.ZIP, idlib.Fmt.DOCX)
+
+    def test_not_json_regression(self):
+        a = B'Acceptance of the QuoVadis Root CA 3 Certificate'
+        self.assertNotEqual(idlib.get_structured_data_type(a), idlib.Fmt.JSON)

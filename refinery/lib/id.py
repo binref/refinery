@@ -98,12 +98,39 @@ class Format:
     def __hash__(self):
         return hash((self.category, self.mnemonic))
 
+    def cmp(self, them):
+        if not isinstance(them, Format):
+            return None
+        t1 = self.mnemonic.split('/')
+        t2 = them.mnemonic.split('/')
+        if t1 == t2:
+            return +0
+        elif t1 > t2:
+            return +1
+        elif t1 < t2:
+            return -1
+        else:
+            return None
+
+    def __le__(self, them):
+        return self.cmp(them) in (0, -1)
+
+    def __lt__(self, them):
+        return self.cmp(them) == -1
+
+    def __ge__(self, them):
+        return self.cmp(them) in (0, +1)
+
+    def __gt__(self, them):
+        return self.cmp(them) == +1
+
     def __eq__(self, them):
         if not isinstance(them, Format):
             return False
-        t1 = them.mnemonic.split('/')
-        t2 = self.mnemonic.split('/')
-        return all(a == b for a, b in zip(t1, t2))
+        return self.mnemonic == them.mnemonic
+
+    def __ne__(self, them):
+        return not self.__eq__(them)
 
     def __iter__(self):
         yield self.category
@@ -255,9 +282,10 @@ class Fmt(Format, enum.Enum):
     XLSX = (FC.Document, 'xlsx', 'ZIP/XLSX', 'Microsoft Excel ZIP/XML Document')
     PPTX = (FC.Document, 'pptx', 'ZIP/PPTX', 'Microsoft PowerPoint ZIP/XML Document')
 
-    ASCII = (FC.Text, 'txt', 'Text', 'Single-Byte, Plain Text Encoding')
-    UTF16 = (FC.Text, 'txt', 'Text/UTF16')
-    UTF32 = (FC.Text, 'txt', 'Text/UTF32')
+    TEXT = (FC.Text, 'txt', 'Text', 'Plain Text Data')
+    ASCII = (FC.Text, 'txt', 'Text/ASCII', 'Plain Text, Single Byte Encoding')
+    UTF16 = (FC.Text, 'txt', 'Text/UTF16', 'Plain Text, UTF-16 Encoding')
+    UTF32 = (FC.Text, 'txt', 'Text/UTF32', 'Plain Text, UTF-32 Encoding')
 
     JSON = (FC.Text, 'json', 'Text/JSON')
     XML = (FC.Text, 'xml', 'Text/XML')

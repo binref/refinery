@@ -19,4 +19,4 @@ class iffid(ConditionalUnit, docs='{0}{p}{1}'):
         super().__init__(pattern=Arg.AsOption(pattern, Fmt), retain=retain)
 
     def match(self, chunk):
-        return self.args.pattern == get_structured_data_type(chunk)
+        return self.args.pattern <= get_structured_data_type(chunk)
