@@ -113,10 +113,8 @@ def py_json_dumps(
     This is the JSON dump method wrapper which is based on the standard library backend. It is
     exposed separately to allow testing.
     """
-    if (enc := tojson) is not None:
-        class encoder(pyjson.JSONEncoder):
-            default = staticmethod(tojson) # type:ignore
-        enc = encoder
+    class enc(pyjson.JSONEncoder):
+        default = staticmethod(tojson or standard_conversions) # type:ignore
     if checks:
         object = preprocess(object, keys=True)
     if pretty:

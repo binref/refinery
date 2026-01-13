@@ -19,3 +19,8 @@ class TestLNK(TestUnitBase):
         self.assertEqual(result['header.accessed_time'], '2022-06-03 12:49:55+00:00')
         self.assertEqual(result['header.modified_time'], '2021-12-26 21:31:16+00:00')
         self.assertEqual(result['data.command_line_arguments'], '019338921.dll,DllInstall')
+
+    def test_real_world_regression(self):
+        data = self.download_sample('e80e7382eb4ce1868a24bcad0743f754cd92fbfd1dbfe38acd9e0f3755a44215')
+        result = data | self.load() | json.loads
+        self.assertEqual(result['link_info']['local_base_path'], 'C:\\Windows\\System32\\wscript.exe')

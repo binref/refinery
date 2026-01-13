@@ -1,6 +1,6 @@
 from refinery.lib import json
 
-from datetime import datetime, timezone, date, time
+from datetime import datetime, timezone, date
 from uuid import uuid4
 from math import cos, exp
 from enum import Enum
