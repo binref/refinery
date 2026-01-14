@@ -31,11 +31,19 @@ class defang(Unit):
     def __init__(
         self,
         url_only: Param[bool, Arg.Switch('-u', help='Only defang URLs, do not look for domains or IPs.')] = False,
-        url_protocol: Param[bool, Arg.Switch('-p', help='Escape the protocol in URLs.')] = False,
+        url_protocol: Param[bool, Arg.Switch('-p', help='Escape the protocol in URLs, i.e. hxxp instead of http')] = False,
         dot_only: Param[bool, Arg.Switch('-d', help='Do not escape the protocol colon in URLs.')] = False,
-        quote_md: Param[bool, Arg.Switch('-q', help='Wrap all indicators in backticks for markdown code.')] = False
+        quote_md: Param[bool, Arg.Switch('-q', help='Wrap all indicators in backticks for markdown code.')] = False,
+        **keywords,
     ):
-        self.superinit(super(), **vars())
+        self.superinit(
+            super(),
+            url_only=url_only,
+            url_protocol=url_protocol,
+            dot_only=dot_only,
+            quote_md=quote_md,
+            **keywords
+        )
 
     def _quote(self, word):
         return word if not self.args.quote_md else B'`%s`' % word
