@@ -2104,6 +2104,48 @@
     "0001": {
       "ide": "CVTPGD"
     },
+    "8B89": {
+      "ide": "VS2026 v18.3.0 Insiders [11312.210] build 35721"
+    },
+    "8B88": {
+      "ide": "VS2026 v18.3.0 Insiders [11304.161] build 35720"
+    },
+    "8B87": {
+      "ide": "VS2026 v18.3.0 Insiders [11222.16] build 35719"
+    },
+    "8B86": {
+      "ide": "VS2026 v18.3.0 Insiders [11218.70] build 35718"
+    },
+    "8B85": {
+      "ide": "VS2026 v18.0.0 Insiders build 35717"
+    },
+    "8B7E": {
+      "ide": "VS2026 v18.0.0 Insiders build 35710"
+    },
+    "8B76": {
+      "ide": "VS2026 v18.0.0 Insiders build 35702"
+    },
+    "8B1F": {
+      "ide": "VS2026 v18.0.0 Insiders build 35615"
+    },
+    "8AAF": {
+      "ide": "VS2026 v18.0.0 Insiders build 35503"
+    },
+    "8996": {
+      "ide": "VS2022 v17.14.22 build 35222"
+    },
+    "8995": {
+      "ide": "VS2022 v17.14.21 build 35221"
+    },
+    "8994": {
+      "ide": "VS2022 v17.14.20 build 35220"
+    },
+    "8993": {
+      "ide": "VS2022 v17.14.18 build 35219"
+    },
+    "8991": {
+      "ide": "VS2022 v17.14.15 build 35217"
+    },
     "898F": {
       "ide": "VS2022 v17.14.13 build 35215"
     },
@@ -2187,6 +2229,9 @@
     },
     "7CC6": {
       "ide": "VS2022 v17.4.5 build 31942"
+    },
+    "8990": {
+      "ide": "VS2022 v17.14.14 pre 1.0 build 35216"
     },
     "898B": {
       "ide": "VS2022 v17.14.6 pre 1.0 build 35211"
