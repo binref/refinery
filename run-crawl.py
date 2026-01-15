@@ -30,8 +30,6 @@ def crawl_tlds():
     tlds.sort(key=len, reverse=True)
     tab = '\x20' * 4
     with open(os.path.join('.', 'refinery', 'lib', 'patterns', 'tlds.py'), 'w', newline='\n') as stream:
-        stream.write('#!/usr/bin/env python3\n')
-        stream.write('# -*- coding: utf-8 -*-\n')
         stream.write('tlds = [\n')
         for tld in tlds:
             stream.write(F'{tab}{tld!r},\n')
