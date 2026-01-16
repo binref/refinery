@@ -1,0 +1,21 @@
+AMPERSAND    = BR'&'[0] # noqa
+ANGLES       = B'<>'    # noqa
+ANGLE_CLOSE  = BR'>'[0] # noqa
+ANGLE_OPEN   = BR'<'[0] # noqa
+BANG         = BR'!'[0] # noqa
+CARET        = BR'^'[0] # noqa
+COLON        = BR':'[0] # noqa
+DOLLAR       = BR'$'[0] # noqa
+EQUALS       = BR'='[0] # noqa
+LINEBREAK    = B'\n'[0] # noqa
+PAREN_CLOSE  = BR')'[0] # noqa
+PAREN_OPEN   = BR'('[0] # noqa
+PERCENT      = BR'%'[0] # noqa
+PIPE         = BR'|'[0] # noqa
+QUOTE        = BR'"'[0] # noqa
+SPACE        = BR' '[0] # noqa
+TILDE        = BR'~'[0] # noqa
+WHITESPACE   = B' \t\v' # noqa
+ZERO         = BR'0'[0] # noqa
+NINE         = BR'9'[0] # noqa
+ASTERIX      = BR'*'[0] # noqa

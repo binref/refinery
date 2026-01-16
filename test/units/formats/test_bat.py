@@ -40,8 +40,9 @@ class TestBAT(TestUnitBase):
 
     def test_real_world_01(self):
         data = self.download_sample('6a1bc124f945ddfde62b4137d627f3958b23d8a2a6507e3841cab84416c54eea')
-        out = data | self.load() | self.ldu('xtp', 'url') | {str}
-        self.assertSetEqual(out, {
+        deob = data | self.load() | str
+        test = deob | self.ldu('xtp', 'url') | {str}
+        self.assertSetEqual(test, {
             'https'R':'R'//pastebin'R'.'R'com/raw/bLnD8FWX',
             'https'R':'R'//pastebin'R'.'R'com/raw/EZ88t5c1',
         })
