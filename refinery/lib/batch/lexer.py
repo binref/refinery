@@ -731,7 +731,7 @@ class BatchLexer:
             encoded = memoryview(encoded).cast('H')
             offset = len(utf16)
             prefix = re.search('[^\\s]', line)
-            if prefix and encoded[p := prefix.start()] == COLON and (lb := self.label(u16(encoded[p + 1:]))):
+            if prefix and encoded[(p := prefix.start())] == COLON and (lb := self.label(u16(encoded[p + 1:]))):
                 self.labels.setdefault(lb, offset + p)
             utf16.extend(encoded)
             utf16.append(LINEBREAK)
