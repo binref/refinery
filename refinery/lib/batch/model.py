@@ -128,18 +128,18 @@ class ArgVarFlags(FlagAccessMixin, enum.IntFlag):
 
 @dataclass
 class ArgVar:
-    offset: int = 0
+    offset: int | ellipsis = 0
     path: str | None = None
     flags: ArgVarFlags = ArgVarFlags.Empty
 
     def __str__(self):
         k = self.offset
-        if k < 0:
+        if k is (...):
             assert self.path is None
             assert self.flags is ArgVarFlags.Empty
             return '%*'
         p = F'${p}' if (p := self.path) is not None else ''
-        return F'%{self.flags!s}{p}{self.offset}'
+        return F'%{self.flags!s}{p}{k}'
 
 
 class AstCondition(str, enum.Enum):

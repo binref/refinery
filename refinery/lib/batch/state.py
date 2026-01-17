@@ -70,7 +70,8 @@ _DEFAULT_ENVIRONMENT = {
 
 class BatchState:
 
-    args: list[str] | None
+    name: str
+    args: list[str]
 
     environments: list[dict[str, str]]
     delayexpands: list[bool]
@@ -147,8 +148,19 @@ class BatchState:
         self.file_system = dict(self.file_system_seed)
         self.dirstack = []
         self.linebreaks = []
-        self.args = None
+        self.name = F'{uuid4()}.bat'
+        self.args = []
+        self._cmd = ''
         self.ec = None
+
+    @property
+    def command_line(self):
+        return self._cmd
+
+    @command_line.setter
+    def command_line(self, value: str):
+        self._cmd = value
+        self.args = value.split()
 
     def envar(self, name: str) -> str:
         name = name.upper()

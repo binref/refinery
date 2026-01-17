@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import io
-import re
 
 from collections import deque
-from typing import overload
 
 from refinery.lib.batch.lexer import BatchLexer
 from refinery.lib.batch.model import (
@@ -27,7 +25,6 @@ from refinery.lib.batch.model import (
 )
 from refinery.lib.batch.state import BatchState
 from refinery.lib.batch.util import batchint, unquote
-from refinery.lib.patterns import formats
 from refinery.lib.types import buf
 
 

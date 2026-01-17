@@ -722,3 +722,15 @@ class TestBatchEmulator(TestBase):
         for _ in bat.emulate():
             pass
         self.assertEqual(bat.state.ingest_file('output.txt'), 'test')
+
+    def test_variable_asterix_01(self):
+        @emulate
+        class bat:
+            '''
+            echo %*%
+            echo %1 %2
+            '''
+        self.assertListEqual(
+            list(bat.emulate(0, command_line="hum   ho")),
+            ['echo hum   ho', 'echo hum ho']
+    )

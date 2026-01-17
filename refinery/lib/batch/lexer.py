@@ -190,15 +190,17 @@ class BatchLexer:
         valid values.  The %~ syntax is terminated by a valid argument
         number.  The %~ modifiers may not be used with %*
         """
-        args = self.state.args
-        if args is None:
-            return str(var)
-        if var.offset < 0:
-            return ' '.join(args)
-        try:
-            argval = args[var.offset]
-        except IndexError:
+        state = self.state
+
+        if (k := var.offset) is (...):
+            return state.command_line
+        if (j := k - 1) < 0:
+            argval = state.name
+        elif j < len(args := state.args):
+            argval = args[j]
+        else:
             return ''
+
         if var.flags.StripQuotes and argval.startswith('"') and argval.endswith('"'):
             argval = argval[1:-1]
         with io.StringIO() as output:
@@ -223,7 +225,7 @@ class BatchLexer:
             if var.flags.FileSize:
                 ...
             output.write(argval)
-        return output.getvalue()
+            return output.getvalue()
 
     def reset(self, offset: int):
         self.modes = [Mode.Text]
@@ -505,12 +507,13 @@ class BatchLexer:
         if char == PERCENT:
             var_name = u16(self.code[var_offset:self.cursor.offset])
             variable = u16(self.parse_env_variable(var_name))
-        elif var_cmdarg and (ZERO <= char <= NINE):
-            try:
+        elif var_cmdarg:
+            if ZERO <= char <= NINE:
                 var_cmdarg.offset = char - ZERO
                 variable = u16(self.parse_arg_variable(var_cmdarg))
-            except ValueError:
-                self.var_cmdarg = None
+            elif char == ASTERIX and var_offset == current:
+                var_cmdarg.offset = (...)
+                variable = u16(self.parse_arg_variable(var_cmdarg))
 
         if variable is not None:
             self.consume_char()

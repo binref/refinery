@@ -287,8 +287,10 @@ class BatchEmulator:
             raise RuntimeError(statement)
         yield from handler(self, statement)
 
-    def emulate(self, offset: int = 0, args: list[str] | None = None, called: bool = False):
-        self.state.args = copy.copy(args)
+    def emulate(self, offset: int = 0, name: str | None = None, command_line: str = '', called: bool = False):
+        if name:
+            self.state.name = name
+        self.state.command_line = command_line
         length = len(self.parser.lexer.code)
         labels = self.parser.lexer.labels
 

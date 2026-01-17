@@ -28,9 +28,7 @@ class bat(Unit):
             name = codecs.decode(name, self.codec)
         else:
             name = F'{uuid.uuid4()!s}.bat'
-        args = [name]
-        for arg in self.args.args:
-            args.append(codecs.decode(arg, self.codec))
+        cmd = ' '.join(codecs.decode(arg, self.codec) for arg in self.args.args)
         emu = BatchEmulator(data)
-        for cmd in emu.emulate(0, args):
+        for cmd in emu.emulate(0, name, cmd):
             yield cmd.encode(self.codec)
