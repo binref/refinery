@@ -1629,6 +1629,9 @@ class Unit(UnitBase, abstract=True):
         return None
 
     def reset(self):
+        """
+        Clear all data from the unit's input buffers.
+        """
         try:
             if isinstance(source := self._source, Unit):
                 source.reset()
@@ -2015,6 +2018,14 @@ class Unit(UnitBase, abstract=True):
             return B''
 
     def act(self, data: Chunk) -> Generator[Chunk]:
+        """
+        This method generates the output chunks that the fully instantiated unit will
+        produce for the given input chunk of data; This usually means calling either
+        the `refinery.units.Unit.process` or `refinery.units.Unit.reverse` method and
+        then yielding all generated results. It also takes into account flags like
+        the `--iff` switch which will prevent processing entirely when the input data
+        does not match the unit's expected format.
+        """
         cls = self.__class__
         iff = self.args.iff
         lvl = self.log_level
@@ -2080,7 +2091,8 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_fail(cls, *messages, clip=False) -> bool:
         """
-        Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.ERROR`.
+        Log the message if and only if the current log level is at least
+        `refinery.lib.environment.LogLevel.ERROR`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.ERROR)
         if rv and messages:
@@ -2090,7 +2102,8 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_warn(cls, *messages, clip=False) -> bool:
         """
-        Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.WARN`.
+        Log the message if and only if the current log level is at least
+        `refinery.lib.environment.LogLevel.WARN`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.WARNING)
         if rv and messages:
@@ -2109,7 +2122,8 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_info(cls, *messages, clip=False) -> bool:
         """
-        Log the message if and only if the current log level is at least `refinery.lib.environment.LogLevel.INFO`.
+        Log the message if and only if the current log level is at least
+        `refinery.lib.environment.LogLevel.INFO`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.INFO)
         if rv and messages:
@@ -2119,7 +2133,8 @@ class Unit(UnitBase, abstract=True):
     @classmethod
     def log_debug(cls, *messages, clip=False) -> bool:
         """
-        Log the pmessage if and only if the current log level is at least `refinery.lib.environment.LogLevel.DEBUG`.
+        Log the pmessage if and only if the current log level is at least
+        `refinery.lib.environment.LogLevel.DEBUG`.
         """
         rv = cls.logger.isEnabledFor(LogLevel.DEBUG)
         if rv and messages:
@@ -2127,6 +2142,9 @@ class Unit(UnitBase, abstract=True):
         return rv
 
     def isatty(self) -> bool:
+        """
+        Checks whether the unit's output is currently connected to a terminal type IO stream.
+        """
         try:
             return (t := self._target) is not None and t.isatty()
         except AttributeError:
