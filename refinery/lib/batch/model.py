@@ -13,17 +13,18 @@ IntOrStr = TypeVar('IntOrStr', int, str)
 
 
 class Ctrl(str, enum.Enum):
-    NewLine             = '\n'  # noqa;
+    Label               = ':'   # noqa;
+    Equals              = '='   # noqa;
+    IsEqualTo           = '=='  # noqa;
     NewGroup            = '('   # noqa;
+#   The following can terminate a command:
     EndGroup            = ')'   # noqa;
+    NewLine             = '\n'  # noqa;
     RunOnSuccess        = '&&'  # noqa;
     RunOnFailure        = '||'  # noqa;
     CommandSeparator    = '&'   # noqa;
     Pipe                = '|'   # noqa;
     EndOfFile           = ''    # noqa;
-    Label               = ':'   # noqa;
-    Equals              = '='   # noqa;
-    IsEqualTo           = '=='  # noqa;
 
     def __str__(self):
         return self.value
@@ -176,7 +177,8 @@ class AstLabel(AstStatement):
 
 @dataclass
 class AstCommand(AstNode):
-    tokens: list[str | RedirectIO] = field(default_factory=list)
+    tokens: list[str] = field(default_factory=list)
+    redirects: list[RedirectIO] = field(default_factory=list)
 
 
 @dataclass
@@ -342,18 +344,13 @@ class EmulatorCommand:
     ast: AstCommand
     args: list[str]
     verb: str
-    redirects: list[RedirectIO]
 
     def __init__(self, ast_command: AstCommand):
         self.ast = ast_command
-        self.redirects = []
         self.args = []
         self.verb = ''
         argstr = io.StringIO()
         for token in ast_command.tokens:
-            if isinstance(token, RedirectIO):
-                self.redirects.append(token)
-                continue
             if token.isspace():
                 if self.verb:
                     argstr.write(token)
@@ -366,6 +363,10 @@ class EmulatorCommand:
         if not self.verb:
             raise ValueError('Empty Command')
         self.argument_string = argstr.getvalue().lstrip()
+
+    @property
+    def redirects(self):
+        return self.ast.redirects
 
     def __str__(self):
         return ''.join(str(t) for t in self.ast.tokens).lstrip()

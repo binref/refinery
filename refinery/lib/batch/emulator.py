@@ -60,15 +60,12 @@ class BatchEmulator:
     def delayexpand(self):
         return self.state.delayexpand
 
-    def delay_expand(self, block: str | RedirectIO):
-        if isinstance(block, RedirectIO):
-            return block
-
+    def delay_expand(self, block: str):
         def expansion(match: re.Match[str]):
             name = match.group(1)
-            return self.environment.get(name.upper(), '')
+            return self.parser.lexer.parse_env_variable(name)
 
-        return re.sub(r'!([^!:\n]*)!', expansion, block)
+        return re.sub(r'!([^!\n]*)!', expansion, block)
 
     def execute_set(self, cmd: EmulatorCommand):
         if not (args := cmd.args):
@@ -122,7 +119,8 @@ class BatchEmulator:
 
     def execute_command(self, ast_command: AstCommand):
         if self.delayexpand:
-            ast_command.tokens[:] = (self.delay_expand(token) for token in ast_command.tokens)
+            ast_command.tokens[:] = (
+                self.delay_expand(token) for token in ast_command.tokens)
         command = EmulatorCommand(ast_command)
         verb = command.verb.upper().strip()
         if verb == 'SET':

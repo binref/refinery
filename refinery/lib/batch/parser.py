@@ -156,8 +156,12 @@ class BatchParser:
         ast = AstCommand(tokens.offset())
         tok = tokens.peek()
         cmd = ast.tokens
-        if tok.upper() == 'SET':
+
+        if (is_set := tok.upper() == 'SET'):
             self.lexer.parse_set()
+
+        nonspace = io.StringIO()
+
         while tok not in (
             Ctrl.CommandSeparator,
             Ctrl.RunOnFailure,
@@ -168,11 +172,25 @@ class BatchParser:
         ):
             if in_group and tok == Ctrl.EndGroup:
                 break
-            cmd.append(tok)
+            if isinstance(tok, RedirectIO):
+                ast.redirects.append(tok)
+            elif is_set:
+                cmd.append(tok)
+            elif tok.isspace():
+                if nsp := nonspace.getvalue():
+                    nonspace.seek(0)
+                    nonspace.truncate(0)
+                    cmd.append(nsp)
+                cmd.append(tok)
+            else:
+                nonspace.write(tok)
             tokens.pop()
             tok = tokens.peek()
-        if ast.tokens:
-            return ast
+        if nsp := nonspace.getvalue():
+            cmd.append(nsp)
+        elif not cmd:
+            return None
+        return ast
 
     def pipeline(self, tokens: LookAhead, in_group: bool) -> AstPipeline | None:
         if head := self.command(tokens, in_group):

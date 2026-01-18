@@ -733,4 +733,12 @@ class TestBatchEmulator(TestBase):
         self.assertListEqual(
             list(bat.emulate(0, command_line="hum   ho")),
             ['echo hum   ho', 'echo hum ho']
-    )
+        )
+
+    def test_replace_in_delayed_expansion(self):
+        @emulate
+        class bat:
+            '''
+            setlocal enableDelayedExpansion &&  (set foo=REFINARY) && echo !foo:REF=B!
+            '''
+        self.assertListEqual(list(bat.emulate()), ['echo BINARY'])
