@@ -250,7 +250,7 @@ class TestBatchEmulator(TestBase):
         parsed = parsed[0]
         assert isinstance(parsed, AstSequence)
         assert isinstance(parsed.head, AstPipeline)
-        command = EmulatorCommand(parsed.head.parts[0])
+        command = EmulatorCommand(parsed.head.parts[0].tokens)
         self.assertEqual(command.verb, 'set')
         self.assertEqual(len(command.args), 1)
 
@@ -742,3 +742,21 @@ class TestBatchEmulator(TestBase):
             setlocal enableDelayedExpansion &&  (set foo=REFINARY) && echo !foo:REF=B!
             '''
         self.assertListEqual(list(bat.emulate()), ['echo BINARY'])
+
+    def test_for_loop_01(self):
+        @emulate
+        class bat:
+            '''
+            for %%i in (foo,bar) do (
+                echo %%i
+            )
+            '''
+        self.assertEqual(list(bat.emulate()), ['echo foo', 'echo bar'])
+
+    def test_for_loop_02(self):
+        @emulate
+        class bat:
+            '''
+            for /f %%i in ("hello)") do echo %%i
+            '''
+        self.assertEqual(list(bat.emulate()), ['echo hello)'])

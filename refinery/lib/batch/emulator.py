@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import fnmatch
 import re
 
 from typing import Callable, ClassVar, Generator
 
 from refinery.lib.batch.model import (
+    ArgVarFlags,
     AstCommand,
     AstCondition,
     AstFor,
+    AstForParserMode,
+    AstForVariant,
     AstGroup,
     AstIf,
     AstIfCmp,
@@ -23,7 +27,6 @@ from refinery.lib.batch.model import (
     Goto,
     InvalidLabel,
     Redirect,
-    RedirectIO,
 )
 from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
@@ -63,9 +66,18 @@ class BatchEmulator:
     def delay_expand(self, block: str):
         def expansion(match: re.Match[str]):
             name = match.group(1)
-            return self.parser.lexer.parse_env_variable(name)
-
+            return parse(name)
+        parse = self.parser.lexer.parse_env_variable
         return re.sub(r'!([^!\n]*)!', expansion, block)
+
+    def for_expand(self, block: str, vars: dict[str, str]):
+        def expansion(match: re.Match[str]):
+            flags = ArgVarFlags.Empty
+            for flag in match[1]:
+                flags |= ArgVarFlags.FromToken(ord(flag))
+            return vars[match[3]]
+        return re.sub(
+            RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
 
     def execute_set(self, cmd: EmulatorCommand):
         if not (args := cmd.args):
@@ -118,10 +130,12 @@ class BatchEmulator:
                 self.environment[name] = content
 
     def execute_command(self, ast_command: AstCommand):
+        tokens = iter(ast_command.tokens)
         if self.delayexpand:
-            ast_command.tokens[:] = (
-                self.delay_expand(token) for token in ast_command.tokens)
-        command = EmulatorCommand(ast_command)
+            tokens = (self.delay_expand(token) for token in tokens)
+        if v := self.state.for_loop_variables:
+            tokens = (self.for_expand(token, v) for token in tokens)
+        command = EmulatorCommand(tokens)
         verb = command.verb.upper().strip()
         if verb == 'SET':
             self.execute_set(command)
@@ -185,7 +199,7 @@ class BatchEmulator:
             except IndexError:
                 pass
         elif verb == 'ECHO':
-            for io in command.redirects:
+            for io in ast_command.redirects:
                 if io.type == Redirect.In:
                     continue
                 if isinstance(path := io.target, str):
@@ -266,7 +280,50 @@ class BatchEmulator:
 
     @_register(AstFor)
     def emulate_for(self, _for: AstFor):
-        yield from ()
+        vars = self.state.new_forloop()
+        body = _for.body
+        name = _for.variable
+
+        if _for.variant == AstForVariant.FileParsing:
+            if _for.mode == AstForParserMode.Command:
+                return NotImplemented
+            if _for.mode == AstForParserMode.Literal:
+                lines = _for.strings()
+            else:
+                def lines_from_files():
+                    fs = self.state.file_system
+                    for name in _for.strings():
+                        for path, content in fs.items():
+                            if not fnmatch.fnmatch(path, name):
+                                continue
+                            yield from content.splitlines(False)
+                lines = lines_from_files()
+            opt = _for.options
+            tokens = sorted(opt.tokens)
+            split = re.compile('[{}]+'.format(re.escape(opt.delims)))
+            count = tokens[-1] + 1
+            first_variable = ord(name)
+            if opt.asterisk:
+                tokens.append(count)
+            for n, line in enumerate(lines):
+                if n < opt.skip:
+                    continue
+                if opt.comment and line.startswith(opt.comment):
+                    continue
+                tokenized = split.split(line, maxsplit=count)
+                for k, tok in enumerate(tokens):
+                    name = chr(first_variable + k)
+                    if not name.isalpha():
+                        raise EmulatorException('Ran out of variables in FOR-Loop.')
+                    try:
+                        vars[name] = tokenized[tok]
+                    except IndexError:
+                        vars[name] = ''
+                yield from self.emulate_statement(body)
+        else:
+            for entry in _for.strings():
+                vars[name] = entry
+                yield from self.emulate_statement(_for.body)
 
     @_register(AstGroup)
     def emulate_group(self, group: AstGroup):

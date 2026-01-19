@@ -76,6 +76,8 @@ class BatchState:
     environments: list[dict[str, str]]
     delayexpands: list[bool]
     ext_settings: list[bool]
+
+    _for_loops: list[dict[str, str]]
     file_system: dict[str, str]
 
     def __init__(
@@ -142,6 +144,7 @@ class BatchState:
 
     def reset(self):
         self.labels = {}
+        self._for_loops = []
         self.environments = [dict(self.environment_seed)]
         self.delayexpands = [self.delayed_expansion]
         self.ext_settings = [self.extensions_enabled]
@@ -213,6 +216,17 @@ class BatchState:
     def exists_file(self, path: str) -> bool:
         return self._resolved(path) in self.file_system
 
+    def new_forloop(self) -> dict[str, str]:
+        new = {}
+        old = self.for_loop_variables
+        if old is not None:
+            new.update(old)
+        self._for_loops.append(new)
+        return new
+
+    def end_forloop(self):
+        self._for_loops.pop()
+
     @property
     def environment(self):
         return self.environments[-1]
@@ -224,3 +238,10 @@ class BatchState:
     @property
     def ext_setting(self):
         return self.ext_settings[-1]
+
+    @property
+    def for_loop_variables(self):
+        if vars := self._for_loops:
+            return vars[-1]
+        else:
+            return None

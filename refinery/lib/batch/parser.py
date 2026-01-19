@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 from collections import deque
 
@@ -10,6 +11,9 @@ from refinery.lib.batch.model import (
     AstCondition,
     AstConditionalStatement,
     AstFor,
+    AstForOptions,
+    AstForParserMode,
+    AstForVariant,
     AstGroup,
     AstIf,
     AstIfCmp,
@@ -278,10 +282,157 @@ class BatchParser:
             lhs, rhs # type:ignore
         )
 
+    def forloop_options(self, options: str) -> AstForOptions:
+        result = AstForOptions()
+
+        if not options:
+            return result
+        elif not (quote := re.search('"(.*?)"', options)):
+            raise UnexpectedToken(options)
+        else:
+            options = quote[1]
+
+        parts = options.strip().split()
+        count = len(parts)
+
+        for k, part in enumerate(parts, 1):
+            key, eq, value = part.partition('=')
+            key = key.lower()
+            if key == 'usebackq':
+                if eq or value:
+                    raise ValueError
+                result.usebackq = True
+            elif not eq:
+                raise ValueError
+            elif key == 'eol':
+                if len(value) != 1:
+                    raise ValueError
+                result.comment = value
+            elif key == 'skip':
+                try:
+                    result.skip = batchint(value)
+                except Exception:
+                    raise ValueError
+            elif key == 'delims':
+                if k == count:
+                    _, _, value = options.rpartition('=')
+                result.delims = value
+            elif key == 'tokens':
+                tokens: set[int] = set()
+                if value.endswith('*'):
+                    result.asterisk = True
+                    value = value[:-1]
+                for x in value.split(','):
+                    x, _, y = x.partition('-')
+                    x = batchint(x) - 1
+                    if x < 0:
+                        raise ValueError
+                    y = batchint(y) if y else x + 1
+                    for t in range(x, y):
+                        tokens.add(t)
+                result.tokens = tuple(sorted(tokens))
+            else:
+                raise ValueError
+
+        return result
+
     def forloop(self, tokens: LookAhead, in_group: bool) -> AstFor | None:
+        offset = tokens.offset()
+
         if not tokens.pop_string('FOR'):
             return None
-        return None
+
+        def isvar(token: str):
+            return len(token) == 2 and token.startswith('%')
+
+        path = None
+        mode = AstForParserMode.FileSet
+        spec = []
+        options = ''
+
+        if isvar(variable := tokens.word()):
+            variant = AstForVariant.Default
+        elif len(variable) != 2 or not variable.startswith('/'):
+            raise UnexpectedToken(variable)
+        else:
+            try:
+                variant = AstForVariant(variable[1].upper())
+            except ValueError:
+                raise UnexpectedToken(variable)
+            variable = tokens.word()
+            if not isvar(variable):
+                if variant == AstForVariant.FileParsing:
+                    options = variable
+                elif variant == AstForVariant.DescendRecursively:
+                    path = unquote(variable)
+                else:
+                    raise UnexpectedToken(variable)
+                variable = tokens.word()
+                if not isvar(variable):
+                    raise UnexpectedToken(variable)
+
+        if (t := tokens.word()).upper() != 'IN':
+            raise UnexpectedToken(t)
+
+        tokens.skip_space()
+
+        if not tokens.pop(Ctrl.NewGroup):
+            raise UnexpectedToken(tokens.peek())
+
+        with io.StringIO() as _spec:
+            while not tokens.pop(Ctrl.EndGroup):
+                if isinstance((t := next(tokens)), RedirectIO):
+                    raise UnexpectedToken(t)
+                _spec.write(t)
+            spec_string = _spec.getvalue().strip()
+
+        tokens.skip_space()
+
+        if not tokens.pop_string('DO'):
+            raise UnexpectedToken(tokens.peek())
+
+        if not (body := self.sequence(tokens, in_group)):
+            raise UnexpectedToken(tokens.peek())
+
+        options = self.forloop_options(options)
+
+        if variant == AstForVariant.FileParsing:
+            quote_literal = "'" if options.usebackq else '"'
+            quote_command = '`' if options.usebackq else "'"
+            for q, m in (
+                (quote_literal, AstForParserMode.Literal),
+                (quote_command, AstForParserMode.Command),
+            ):
+                if spec_string.startswith(q):
+                    if not spec_string.endswith(q):
+                        raise UnexpectedToken(spec_string)
+                    mode = m
+                    spec = [spec_string[1:-1]]
+                    break
+
+        if not spec:
+            spec = re.split('[\\s,;]+', spec_string)
+
+        if variant == AstForVariant.NumericLoop:
+            try:
+                start, step, stop = spec
+                start = batchint(start)
+                step = batchint(step)
+                stop = batchint(stop)
+            except Exception:
+                raise UnexpectedToken(spec_string)
+            spec = range(start, stop + step, step)
+
+        return AstFor(
+            offset,
+            variant,
+            variable[1],
+            options,
+            body,
+            spec,
+            path,
+            mode,
+        )
 
     def group(self, tokens: LookAhead) -> AstGroup | None:
         offset = tokens.offset()

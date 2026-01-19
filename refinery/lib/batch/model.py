@@ -4,7 +4,7 @@ import enum
 import io
 
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar, Union
+from typing import Generic, Iterable, TypeVar, Union
 
 from refinery.lib.batch.const import TILDE
 from refinery.lib.structures import FlagAccessMixin
@@ -215,20 +215,43 @@ class AstForVariant(str, enum.Enum):
     L = 'L'
     F = 'F'
     Default = ''
-    Folders = D
-    Recurse = R
-    Numbers = L
-    FileSet = F
+    MatchFolders = D
+    DescendRecursively = R
+    NumericLoop = L
+    FileParsing = F
+
+
+class AstForParserMode(enum.IntEnum):
+    FileSet = 0
+    Literal = 1
+    Command = 2
+
+
+@dataclass
+class AstForOptions:
+    comment: str | None = None
+    skip: int = 0
+    tokens: tuple[int, ...] = (0,)
+    asterisk: bool = False
+    delims: str = '\x20\t'
+    usebackq: bool = False
 
 
 @dataclass
 class AstFor(AstStatement):
     variant: AstForVariant
     variable: str
-    body: AstNode
-    spec: str | range
-    path: str | None = None
-    options: str | None = None
+    options: AstForOptions
+    body: AstStatement
+    spec: list[str] | range
+    path: str | None
+    mode: AstForParserMode
+
+    def strings(self):
+        spec = self.spec
+        if isinstance(spec, range):
+            spec = (str(k) for k in spec)
+        yield from spec
 
 
 class AstIfVariant(str, enum.Enum):
@@ -341,16 +364,16 @@ class InvalidLabel(EmulatorException):
 
 
 class EmulatorCommand:
-    ast: AstCommand
+    _all: list[str]
     args: list[str]
     verb: str
 
-    def __init__(self, ast_command: AstCommand):
-        self.ast = ast_command
+    def __init__(self, tokens: Iterable[str]):
+        self._all = list(tokens)
         self.args = []
         self.verb = ''
         argstr = io.StringIO()
-        for token in ast_command.tokens:
+        for token in self._all:
             if token.isspace():
                 if self.verb:
                     argstr.write(token)
@@ -364,9 +387,5 @@ class EmulatorCommand:
             raise ValueError('Empty Command')
         self.argument_string = argstr.getvalue().lstrip()
 
-    @property
-    def redirects(self):
-        return self.ast.redirects
-
     def __str__(self):
-        return ''.join(str(t) for t in self.ast.tokens).lstrip()
+        return ''.join(self._all).lstrip()
