@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from refinery.lib.id import Fmt, get_structured_data_type
 from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.meta import ConditionalUnit
-from refinery.lib.id import Fmt, get_structured_data_type
 
 
 class iffid(ConditionalUnit, docs='{0}{p}{1}'):
