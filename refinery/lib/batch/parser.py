@@ -80,7 +80,7 @@ class LookAhead:
 
     def skip_space(self):
         spaces = []
-        while self.peek().isspace():
+        while (t := self.peek()) != Ctrl.NewLine and t.isspace():
             spaces.append(next(self))
         if not spaces:
             return None
@@ -434,13 +434,22 @@ class BatchParser:
             mode,
         )
 
+    def block(self, tokens: LookAhead, in_group: bool):
+        while True:
+            while tokens.pop(Ctrl.NewLine):
+                continue
+            if in_group and tokens.pop(Ctrl.EndGroup):
+                break
+            if sequence := self.sequence(tokens, in_group):
+                yield sequence
+            else:
+                break
+
     def group(self, tokens: LookAhead) -> AstGroup | None:
         offset = tokens.offset()
         if tokens.pop(Ctrl.NewGroup):
             self.lexer.parse_group()
-            sequences: list[AstSequence] = []
-            while not tokens.pop(Ctrl.EndGroup) and (sequence := self.sequence(tokens, True)):
-                sequences.append(sequence)
+            sequences = list(self.block(tokens, True))
             return AstGroup(offset, sequences)
 
     def label(self, tokens: LookAhead) -> AstLabel | None:
@@ -486,5 +495,4 @@ class BatchParser:
 
     def parse(self, offset: int):
         tokens = LookAhead(self.lexer, offset)
-        while sequence := self.sequence(tokens, False):
-            yield sequence
+        yield from self.block(tokens, False)

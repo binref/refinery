@@ -743,6 +743,15 @@ class TestBatchEmulator(TestBase):
             '''
         self.assertListEqual(list(bat.emulate()), ['echo BINARY'])
 
+    def test_expansion_directly_after_set(self):
+        @emulate
+        class bat:
+            '''
+            set jVElq=yxlpdqajizrusokhbmnwefgctv
+            @%jVElq:~20,1%%jVElq:~23,1%%jVElq:~15,1%%jVElq:~13,1% %jVElq:~13,1%%jVElq:~21,1%%jVElq:~21,1%
+            '''
+        self.assertListEqual(list(bat.emulate()), ['@echo off'])
+
     def test_for_loop_01(self):
         @emulate
         class bat:
