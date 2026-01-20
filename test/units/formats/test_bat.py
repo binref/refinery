@@ -1,5 +1,11 @@
 from .. import TestUnitBase
 
+from inspect import getdoc
+
+
+def multiline(obj):
+    return getdoc(obj) or ''
+
 
 class TestBAT(TestUnitBase):
 
@@ -46,3 +52,52 @@ class TestBAT(TestUnitBase):
             'https'R':'R'//pastebin'R'.'R'com/raw/bLnD8FWX',
             'https'R':'R'//pastebin'R'.'R'com/raw/EZ88t5c1',
         })
+
+    def test_blog_post_example(self):
+        @multiline
+        class batch:
+            '''
+            set wjdk=set
+            %wjdk% gwdoy= 
+            %wjdk%%gwdoy%ipatx==
+            %wjdk%%gwdoy%mqhofe%ipatx%es
+            %wjdk%%gwdoy%dppmto%ipatx%*
+            %wjdk%%gwdoy%qqou%ipatx%Da
+            %wjdk%%gwdoy%jpsfhg%ipatx%i
+            %wjdk%%gwdoy%ellpj%ipatx%1
+            %wjdk%%gwdoy%mtbrob%ipatx%g
+            %wjdk%%gwdoy%owmdn%ipatx%xe
+            %wjdk%%gwdoy%xhpnnd%ipatx%R
+            %wjdk%%gwdoy%lgqwon%ipatx%b4.
+            %wjdk%%gwdoy%tqwnuq%ipatx%***
+            %wjdk%%gwdoy%hhemc%ipatx%u
+            %wjdk%%gwdoy%onqdwr%ipatx%60
+            %wjdk%%gwdoy%xjbgb%ipatx%*
+            %wjdk%%gwdoy%trpjq%ipatx%303
+            %wjdk%%gwdoy%jwdub%ipatx%nt
+            %wjdk%%gwdoy%papbet%ipatx%t
+            %wjdk%%gwdoy%dmhljv%ipatx%min
+            %wjdk%%gwdoy%lkjmj%ipatx%C:
+            %wjdk%%gwdoy%hwagtv%ipatx%I
+            %wjdk%%gwdoy%ximgny%ipatx%App
+            %wjdk%%gwdoy%dblcjy%ipatx%***
+            %wjdk%%gwdoy%hbjewj%ipatx%de
+            %wjdk%%gwdoy%yatty%ipatx%b8
+            %wjdk%%gwdoy%tbqci%ipatx%li
+            %wjdk%%gwdoy%fbakxo%ipatx%**
+            %wjdk%%gwdoy%drwc%ipatx%131
+            %wjdk%%gwdoy%skmxb%ipatx%Use
+            %wjdk%%gwdoy%wttahx%ipatx%st
+            %wjdk%%gwdoy%nmdl%ipatx%5
+            %wjdk%%gwdoy%rulr%ipatx%e
+            %wjdk%%gwdoy%opflr%ipatx%o
+            %wjdk%%gwdoy%blel%ipatx%ti
+            %wjdk%%gwdoy%wbyt%ipatx%a
+            %wjdk%%gwdoy%exiy%ipatx%r
+            %wjdk%%gwdoy%yxbqxf%ipatx%s
+            %wjdk%%gwdoy%ntqi%ipatx%\
+            %wjdk%%gwdoy%jngoq%ipatx%ar
+            %wttahx%%jngoq%%papbet%%gwdoy%%lkjmj%%ntqi%%skmxb%%exiy%%yxbqxf%%ntqi%%dppmto%%dblcjy%%xjbgb%%fbakxo%%tqwnuq%%ntqi%%ximgny%%qqou%%papbet%%wbyt%%ntqi%%xhpnnd%%opflr%%wbyt%%dmhljv%%mtbrob%%ntqi%%hwagtv%%hbjewj%%jwdub%%jpsfhg%%blel%%mqhofe%%ellpj%%onqdwr%%trpjq%%drwc%%nmdl%%ntqi%%hhemc%%tbqci%%yatty%%lgqwon%%rulr%%owmdn%
+            '''
+        test = batch | self.load() | str
+        self.assertIn('Identities1603031315', test)

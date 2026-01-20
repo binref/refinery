@@ -364,16 +364,16 @@ class InvalidLabel(EmulatorException):
 
 
 class EmulatorCommand:
-    _all: list[str]
+    argv: list[str]
     args: list[str]
     verb: str
 
     def __init__(self, tokens: Iterable[str]):
-        self._all = list(tokens)
+        self.argv = list(tokens)
         self.args = []
         self.verb = ''
         argstr = io.StringIO()
-        for token in self._all:
+        for token in self.argv:
             if token.isspace():
                 if self.verb:
                     argstr.write(token)
@@ -388,4 +388,4 @@ class EmulatorCommand:
         self.argument_string = argstr.getvalue().lstrip()
 
     def __str__(self):
-        return ''.join(self._all).lstrip()
+        return ''.join(self.argv).lstrip()

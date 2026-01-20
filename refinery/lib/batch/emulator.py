@@ -80,18 +80,25 @@ class BatchEmulator:
             RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
 
     def execute_set(self, cmd: EmulatorCommand):
-        if not (args := cmd.args):
+        if not (args := cmd.argv):
             raise EmulatorException('Empty SET instruction')
 
         arithmetic = False
         quote_mode = False
 
-        if args[0].upper() == '/P':
+        it = iter(args)
+
+        if next(it).upper() != 'SET':
+            raise RuntimeError
+        while (tok := next(it)).isspace():
+            continue
+        if tok.upper() == '/P':
             raise NotImplementedError('Prompt SET not implemented.')
-        elif args[0].upper() == '/A':
+        if tok.upper() == '/A':
             arithmetic = True
-        elif len(args) not in (1, 3):
-            raise EmulatorException(F'SET instruction with {len(args)} arguments unexpected.')
+            tok = next(it)
+
+        args = [tok, *it]
 
         if arithmetic:
             integers = {}
@@ -111,11 +118,9 @@ class BatchEmulator:
                     updated[name] = str(expression)
                 self.environment.update(updated)
         else:
-            if (n := len(args)) >= 2 and args[1] == '=':
+            if len(args) >= 2 and args[1] == '=':
                 name, _, content = args
-            elif (assignment := args[-1]).startswith('"'):
-                if n != 1:
-                    raise EmulatorException('Invalid SET from Lexer.')
+            elif (assignment := cmd.argument_string).startswith('"'):
                 quote_mode = True
                 assignment, _, unquoted = assignment[1:].rpartition('"')
                 assignment = assignment or unquoted
