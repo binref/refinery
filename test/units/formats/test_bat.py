@@ -53,10 +53,10 @@ class TestBAT(TestUnitBase):
             'https'R':'R'//pastebin'R'.'R'com/raw/EZ88t5c1',
         })
 
-    def test_blog_post_example(self):
+    def test_blog_post_example_01(self):
         @multiline
         class batch:
-            '''
+            R'''
             set wjdk=set
             %wjdk% gwdoy= 
             %wjdk%%gwdoy%ipatx==
@@ -101,3 +101,25 @@ class TestBAT(TestUnitBase):
             '''
         test = batch | self.load() | str
         self.assertIn('Identities1603031315', test)
+
+    def test_blog_post_example_02(self):
+        @multiline
+        class batch:
+            R'''
+            set a=cadmin
+            set b=led
+            set c=\
+            %b:~2,1%el %a:~0,1%:%c%%a:~1,1%dmi%a:~5,1%
+            '''
+        test = batch | self.load() | str
+        self.assertIn(R'del c:\admin', test)
+
+    def test_blog_post_example_03(self):
+        @multiline
+        class batch:
+            R'''
+            set a=pdfcondelpdfcon pdfconpdfconpdfconpdfconpdfconpdfconCpdfconpdfconpdfconpdfcon:pdfconpdfcon\pdfconpdfconpdfconApdfcondmpdfconpdfconpdfconpdfconipdfconn
+            %a:pdfcon=%
+            '''
+        test = batch | self.load() | str
+        self.assertIn(R'del C:\Admin', test)

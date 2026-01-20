@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import fnmatch
+import io
+import itertools
 import re
 
-from typing import Callable, ClassVar, Generator
+from typing import Callable, ClassVar, Generator, Iterable
 
 from refinery.lib.batch.model import (
     ArgVarFlags,
@@ -21,11 +23,11 @@ from refinery.lib.batch.model import (
     AstPipeline,
     AstSequence,
     AstStatement,
-    EmulatorCommand,
     EmulatorException,
     Exit,
     Goto,
     InvalidLabel,
+    MissingVariable,
     Redirect,
 )
 from refinery.lib.batch.parser import BatchParser
@@ -33,6 +35,34 @@ from refinery.lib.batch.state import BatchState
 from refinery.lib.batch.util import batchint, uncaret, unquote
 from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
+
+
+class EmulatorCommand:
+    argv: list[str]
+    args: list[str]
+    verb: str
+
+    def __init__(self, tokens: Iterable[str]):
+        self.argv = list(tokens)
+        self.args = []
+        self.verb = ''
+        argstr = io.StringIO()
+        for token in self.argv:
+            if token.isspace():
+                if self.verb:
+                    argstr.write(token)
+                continue
+            if not self.verb:
+                self.verb = token.strip().lstrip('@')
+                continue
+            self.args.append(token)
+            argstr.write(token)
+        if not self.verb:
+            raise ValueError('Empty Command')
+        self.argument_string = argstr.getvalue().lstrip()
+
+    def __str__(self):
+        return ''.join(self.argv).lstrip()
 
 
 class BatchEmulator:
@@ -66,7 +96,10 @@ class BatchEmulator:
     def delay_expand(self, block: str):
         def expansion(match: re.Match[str]):
             name = match.group(1)
-            return parse(name)
+            try:
+                return parse(name)
+            except MissingVariable:
+                return ''
         parse = self.parser.lexer.parse_env_variable
         return re.sub(r'!([^!\n]*)!', expansion, block)
 
@@ -83,13 +116,14 @@ class BatchEmulator:
         if not (args := cmd.argv):
             raise EmulatorException('Empty SET instruction')
 
+        if cmd.verb.upper() != 'SET':
+            raise RuntimeError
+
         arithmetic = False
         quote_mode = False
 
-        it = iter(args)
+        it = itertools.islice(iter(args), 1, None)
 
-        if next(it).upper() != 'SET':
-            raise RuntimeError
         while (tok := next(it)).isspace():
             continue
         if tok.upper() == '/P':

@@ -35,6 +35,7 @@ from refinery.lib.batch.model import (
     ArgVarFlags,
     Ctrl,
     EmulatorException,
+    MissingVariable,
     Redirect,
     RedirectIO,
     UnexpectedEOF,
@@ -505,8 +506,16 @@ class BatchLexer:
             return done()
 
         if char == PERCENT:
-            var_name = u16(self.code[var_offset:self.cursor.offset])
-            variable = u16(self.parse_env_variable(var_name))
+            try:
+                var_name = u16(self.code[var_offset:self.cursor.offset])
+                variable = u16(self.parse_env_variable(var_name))
+            except MissingVariable:
+                if var_resume >= 0:
+                    self.cursor.offset = var_resume
+                else:
+                    self.consume_char()
+                return done()
+
         elif var_cmdarg:
             if ZERO <= char <= NINE:
                 var_cmdarg.offset = char - ZERO
@@ -529,7 +538,7 @@ class BatchLexer:
             if char == COLON:
                 if var_cmdarg:
                     var_cmdarg.path = u16(self.code[self.var_dollar:current])
-                self.var_resume = current
+                self.var_resume = current + 1
         if mode == Mode.VarStarted:
             if char == DOLLAR:
                 self.var_dollar = current
@@ -538,7 +547,7 @@ class BatchLexer:
             if char == COLON:
                 self.var_cmdarg = None
                 self.mode = Mode.VarColon
-                self.var_resume = current
+                self.var_resume = current + 1
                 return True
             if not var_cmdarg:
                 return True
@@ -703,7 +712,7 @@ class BatchLexer:
         elif data[:2] == B'\xFE\xFF':
             return codecs.decode(data[2:], 'utf-16be')
         else:
-            return codecs.decode(data, 'cp1252')
+            return codecs.decode(data, 'utf8')
 
     @staticmethod
     def label(text: str):

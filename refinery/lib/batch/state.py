@@ -4,19 +4,10 @@ import ntpath
 
 from datetime import datetime
 from random import randrange, seed
-from typing import NamedTuple
 from uuid import uuid4
 
-from refinery.lib.batch.const import WHITESPACE
+from refinery.lib.batch.model import MissingVariable
 from refinery.lib.dt import date_from_timestamp, isodate
-
-
-class ParserConfig(NamedTuple):
-    uncaret: bool = True
-    unquote: bool = False
-    toupper: bool = False
-    stop_letters: bytes = WHITESPACE
-    stop_strings: tuple[bytes, ...] = ()
 
 
 _DEFAULT_ENVIRONMENT = {
@@ -190,8 +181,7 @@ class BatchState:
             return str(self.extensions_version)
         elif name == 'HIGHESTNUMANODENUMBER':
             return '0'
-        else:
-            return ''
+        raise MissingVariable
 
     def _resolved(self, path: str) -> str:
         if not ntpath.isabs(path):

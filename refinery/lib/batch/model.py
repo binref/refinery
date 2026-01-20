@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import enum
-import io
 
 from dataclasses import dataclass, field
-from typing import Generic, Iterable, TypeVar, Union
+from typing import Generic, TypeVar, Union
 
 from refinery.lib.batch.const import TILDE
 from refinery.lib.structures import FlagAccessMixin
@@ -311,6 +310,10 @@ class If(enum.IntFlag):
         return skip
 
 
+class MissingVariable(LookupError):
+    pass
+
+
 class EmulatorException(Exception):
     pass
 
@@ -361,31 +364,3 @@ class InvalidLabel(EmulatorException):
 
     def __str__(self):
         return F'The following label was not found: {self.label}'
-
-
-class EmulatorCommand:
-    argv: list[str]
-    args: list[str]
-    verb: str
-
-    def __init__(self, tokens: Iterable[str]):
-        self.argv = list(tokens)
-        self.args = []
-        self.verb = ''
-        argstr = io.StringIO()
-        for token in self.argv:
-            if token.isspace():
-                if self.verb:
-                    argstr.write(token)
-                continue
-            if not self.verb:
-                self.verb = token.strip()
-                continue
-            self.args.append(token)
-            argstr.write(token)
-        if not self.verb:
-            raise ValueError('Empty Command')
-        self.argument_string = argstr.getvalue().lstrip()
-
-    def __str__(self):
-        return ''.join(self.argv).lstrip()

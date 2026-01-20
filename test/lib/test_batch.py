@@ -1,7 +1,8 @@
 from inspect import getdoc
 
 from refinery.lib.batch import BatchEmulator, BatchLexer, BatchParser, BatchState
-from refinery.lib.batch.model import AstPipeline, AstSequence, EmulatorCommand, InvalidLabel, EmulatorException
+from refinery.lib.batch.emulator import EmulatorCommand
+from refinery.lib.batch.model import AstPipeline, AstSequence, InvalidLabel, EmulatorException
 
 from .. import TestBase
 
@@ -400,6 +401,14 @@ class TestBatchEmulator(TestBase):
         with self.assertRaises(StopIteration):
             next(it)
 
+    def test_variables_reset_at_colon(self):
+        @emulate
+        class bat:
+            '''
+            echo %x:LEAK%
+            '''
+        self.assertListEqual(list(bat.emulate()), ['echo LEAK'])
+
     def test_variables_unclosed(self):
         @emulate
         class bat:
@@ -690,6 +699,15 @@ class TestBatchEmulator(TestBase):
             echo %B%
             '''
         self.assertListEqual(list(bat.emulate()), ['echo "FOO"'])
+
+    def test_variable_set_with_at(self):
+        @emulate
+        class bat:
+            '''
+            @@set A=FOO
+            echo %A%
+            '''
+        self.assertListEqual(list(bat.emulate()), ['echo FOO'])
 
     def test_if_does_not_chain(self):
         for op in ('&', '&&'):
