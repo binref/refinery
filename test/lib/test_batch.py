@@ -425,6 +425,16 @@ class TestBatchEmulator(TestBase):
             '''
         self.assertListEqual(list(bat.emulate()), ['echo %FOO BAR'])
 
+    def test_delayed_variable_resetting(self):
+        @emulate
+        class bat:
+            '''
+            @ setlocal EnableDelayedExpansion
+            @ @ @ @ @@ set foo=bar
+            @@@@@ echo !foo:oo=ar!!u:bong!
+            '''
+        self.assertListEqual(list(bat.emulate()), ['@echo barbong'])
+
     def test_labels_within_line_continuations_work(self):
         @emulate
         class bat:

@@ -38,31 +38,45 @@ from refinery.lib.types import buf
 
 
 class EmulatorCommand:
-    argv: list[str]
+    tokens: list[str]
     args: list[str]
     verb: str
+    silent: bool
 
     def __init__(self, tokens: Iterable[str]):
-        self.argv = list(tokens)
+        self.tokens = list(tokens)
+        self.silent = False
         self.args = []
         self.verb = ''
-        argstr = io.StringIO()
-        for token in self.argv:
+        self.argskip = 0
+        arg_string = io.StringIO()
+        for k, token in enumerate(self.tokens, 1):
             if token.isspace():
                 if self.verb:
-                    argstr.write(token)
+                    arg_string.write(token)
                 continue
             if not self.verb:
-                self.verb = token.strip().lstrip('@')
+                verb = token.strip()
+                if verb.startswith('@'):
+                    self.silent = True
+                if verb := token.lstrip('@'):
+                    self.verb = verb
+                    self.argskip = k
                 continue
             self.args.append(token)
-            argstr.write(token)
+            arg_string.write(token)
         if not self.verb:
             raise ValueError('Empty Command')
-        self.argument_string = argstr.getvalue().lstrip()
+        self.argument_string = arg_string.getvalue().lstrip()
 
     def __str__(self):
-        return ''.join(self.argv).lstrip()
+        with io.StringIO() as cmd:
+            if self.silent:
+                cmd.write('@')
+            cmd.write(self.verb)
+            for a in itertools.islice(self.tokens, self.argskip, None):
+                cmd.write(a)
+            return cmd.getvalue()
 
 
 class BatchEmulator:
@@ -99,7 +113,8 @@ class BatchEmulator:
             try:
                 return parse(name)
             except MissingVariable:
-                return ''
+                _, _, rest = name.partition(':')
+                return rest
         parse = self.parser.lexer.parse_env_variable
         return re.sub(r'!([^!\n]*)!', expansion, block)
 
@@ -113,7 +128,7 @@ class BatchEmulator:
             RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
 
     def execute_set(self, cmd: EmulatorCommand):
-        if not (args := cmd.argv):
+        if not (args := cmd.tokens):
             raise EmulatorException('Empty SET instruction')
 
         if cmd.verb.upper() != 'SET':
@@ -122,7 +137,7 @@ class BatchEmulator:
         arithmetic = False
         quote_mode = False
 
-        it = itertools.islice(iter(args), 1, None)
+        it = itertools.islice(iter(args), cmd.argskip, None)
 
         while (tok := next(it)).isspace():
             continue
