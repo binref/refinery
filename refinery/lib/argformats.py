@@ -100,6 +100,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import codecs
 import inspect
 import itertools
 import re
@@ -112,7 +113,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    AnyStr,
     Callable,
     Deque,
     Iterable,
@@ -172,16 +172,21 @@ class PythonExpression:
     of the expression if no variables were present, or a callable which expects keyword arguments
     corresponding to the permitted variable names.
     """
-    def __init__(self, definition: AnyStr, *variables, constants=None, all_variables_allowed=False, mask=None):
-        self.definition = definition = definition.strip()
+    def __init__(self, definition: str | buf, *variables, constants=None, all_variables_allowed=False, modulus=None, mask=None):
         if not isinstance(definition, str):
-            definition = definition.decode('utf8')
+            definition = codecs.decode(definition, 'utf8')
+        self.definition = definition = definition.strip()
         constants = constants or {}
         variables = set(variables) | set(constants)
         try:
             expression = ast.parse(definition, mode='eval')
         except Exception as error:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}; {exception_to_string(error)}')
+
+        if mask not in (None, NoMask):
+            if modulus is not None:
+                raise ValueError('Cannot specify both modulus and mask.')
+            modulus = mask + 1
 
         class Postprocessor(ast.NodeTransformer):
             def visit_Constant(self, node: ast.Constant):
@@ -193,20 +198,20 @@ class PythonExpression:
                 return ast.BitXor()
 
             def visit_BinOp(self, node: ast.BinOp) -> Any:
-                node = self.generic_visit(node)
-                if mask in (NoMask, None):
+                self.generic_visit(node)
+                if modulus is None:
                     return node
                 if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
                     return node
-                return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
+                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
 
             def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
-                node = self.generic_visit(node)
-                if mask in (NoMask, None):
+                self.generic_visit(node)
+                if modulus is None:
                     return node
                 if not isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
                     return node
-                return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
+                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
 
         expression = ast.fix_missing_locations(Postprocessor().visit(expression))
         nodes = ast.walk(expression)
@@ -232,7 +237,7 @@ class PythonExpression:
     def __str__(self):
         return self.definition
 
-    def __call__(self, mapping: dict = None, **values):
+    def __call__(self, mapping: dict | None = None, **values):
         if mapping is not None:
             values, tmp = mapping, values
             values.update(tmp)
@@ -817,7 +822,7 @@ class DelayedArgument(LazyEvaluation):
         return urllib.parse.unquote_to_bytes(string)
 
     @handler.register('read', final=True)
-    def read(self, path: str, region: str = None) -> bytes:
+    def read(self, path: str, region: str = '') -> bytes:
         """
         Returns the contents of the file located at the given path. This path may contain
         wildcard characters, but this pattern has to match a single file. It is also possible
@@ -827,7 +832,7 @@ class DelayedArgument(LazyEvaluation):
         return self._file(path, region)
 
     @handler.register('readfrom')
-    def readfrom(self, path: bytes, region: str = None) -> bytes:
+    def readfrom(self, path: bytes, region: str = '') -> bytes:
         """
         A non-final variant of the `refinery.lib.argformats.DelayedArgument.read` handler. This
         handler should only be used to read from path names that were the result of a previous
