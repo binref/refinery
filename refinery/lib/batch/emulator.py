@@ -168,7 +168,7 @@ class BatchEmulator:
                 self.environment.update(updated)
         else:
             if len(args) >= 2 and args[1] == '=':
-                name, _, content = args
+                name, content = args[0], args[2]
             elif (assignment := cmd.argument_string).startswith('"'):
                 quote_mode = True
                 assignment, _, unquoted = assignment[1:].rpartition('"')

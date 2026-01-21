@@ -719,6 +719,10 @@ class TestBatchEmulator(TestBase):
             '''
         self.assertListEqual(list(bat.emulate()), ['echo FOO'])
 
+    def test_if_knows_variables_in_sequence(self):
+        self.assertListEqual(['echo success'], list(BatchEmulator(
+            'set b=1 >nul 2>&1 & if not defined b (echo trap) else (echo success)').emulate()))
+
     def test_if_does_not_chain(self):
         for op in ('&', '&&'):
             self.assertEqual(list(BatchEmulator(
