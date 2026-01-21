@@ -403,7 +403,7 @@ class BatchLexer:
         self.consume_char()
         return True
 
-    def check_command_separators(self, mode: Mode, char: int):
+    def check_command_separators(self, char: int):
         if char == PAREN_CLOSE and (g := self.group) > 0:
             yield from self.emit_token()
             yield Ctrl.EndGroup
@@ -416,9 +416,9 @@ class BatchLexer:
             return False
         if self.first:
             raise UnexpectedFirstToken(char)
-        if mode != Mode.Text:
-            self.mode_finish()
         yield from self.emit_token()
+        if self.mode != Mode.Text:
+            self.mode_finish()
         if self.next_char() == char:
             self.consume_char()
             yield two
@@ -664,13 +664,13 @@ class BatchLexer:
             self.first = False
             return True
 
-        if char in WHITESPACE and mode == Mode.Text:
+        if char in WHITESPACE and mode in (Mode.Text, Mode.RedirectIO):
             yield from self.emit_token()
             token.append(char)
             self.mode_switch(Mode.Whitespace)
             return True
 
-        if (yield from self.check_command_separators(mode, char)):
+        if (yield from self.check_command_separators(char)):
             return False
 
         if (yield from self.check_redirect_io(char)):
