@@ -399,6 +399,7 @@ class BatchEmulator:
         if name:
             self.state.name = name
         self.state.command_line = command_line
+        self.state.create_file(self.state.name, self.parser.lexer.text)
         length = len(self.parser.lexer.code)
         labels = self.parser.lexer.labels
 

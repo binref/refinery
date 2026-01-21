@@ -129,6 +129,7 @@ class BatchLexer:
         if isinstance(data, BatchLexer):
             if state is not None:
                 raise NotImplementedError
+            self.text = data.text
             self.code = data.code
             self.labels = data.labels
             self.state = data.state
@@ -744,6 +745,7 @@ class BatchLexer:
             utf16.extend(encoded)
             utf16.append(LINEBREAK)
 
+        self.text = text
         self.code = memoryview(utf16)
 
     if set(_register.handlers) != set(Mode):
