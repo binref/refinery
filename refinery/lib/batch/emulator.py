@@ -253,14 +253,14 @@ class BatchEmulator:
             except IndexError:
                 pass
         elif verb == 'ECHO':
-            for io in ast_command.redirects:
-                if io.type == Redirect.In:
+            for r in ast_command.redirects:
+                if r.type == Redirect.In:
                     continue
-                if isinstance(path := io.target, str):
+                if isinstance(path := r.target, str):
                     path = unquote(path.lstrip())
                     method = (
                         self.state.append_file
-                    ) if io.type == Redirect.OutAppend else (
+                    ) if r.type == Redirect.OutAppend else (
                         self.state.create_file
                     )
                     method(path, command.argument_string)
