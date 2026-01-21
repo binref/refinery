@@ -127,6 +127,90 @@ class BatchEmulator:
         return re.sub(
             RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
 
+    def execute_find(self, cmd: EmulatorCommand, findstr: bool):
+        needles = []
+        paths = []
+        flags = {}
+        it = iter(cmd.args)
+        arg = None
+
+        for arg in it:
+            if not arg.startswith('/'):
+                if not findstr and not arg.startswith('"'):
+                    self.state.ec = 1
+                    return
+                needles.extend(unquote(arg).split())
+                break
+            name, has_param, value = arg[1:].partition(':')
+            name = name.upper()
+            if name in ('OFF', 'OFFLINE'):
+                continue
+            elif len(name) > 1:
+                self.state.ec = 1
+                return
+            elif name == 'C':
+                needles.append(unquote(value))
+            elif name == 'F' and findstr:
+                if (p := self.state.ingest_file(value)) is None:
+                    self.state.ec = 1
+                    return
+                paths.extend(p.splitlines(False))
+            elif name == 'G' and findstr:
+                if (n := self.state.ingest_file(value)) is None:
+                    self.state.ec = 1
+                    return
+                needles.extend(n.splitlines(False))
+            elif has_param:
+                flags[name] = value
+            else:
+                flags[name] = True
+
+        valid_flags = 'VNI'
+        if findstr:
+            valid_flags += 'BELRSXMOPADQ'
+
+        for v in flags:
+            if v not in valid_flags:
+                self.state.ec = 1
+                return
+
+        for arg in it:
+            paths.append(unquote(arg))
+
+        for k, n in enumerate(needles):
+            if not findstr or flags['L']:
+                n = re.escape(n)
+            if flags['X']:
+                n = F'^{n}$'
+            elif flags['B']:
+                n = F'^{n}'
+            elif flags['E']:
+                n = F'{n}$'
+            needles[k] = n
+
+        _V = flags['V'] # Prints only lines that do not contain a match.
+        _P = flags['P'] # Skip files with non-printable characters.
+        _O = flags['O'] # Prints character offset before each matching line.
+        _N = flags['N'] # Prints the line number before each line that matches.
+        _M = flags['M'] # Prints only the filename if a file contains a match.
+
+        nothing_found = True
+
+        for path in paths:
+            if (data := self.state.ingest_file(path)) is None:
+                self.state.ec = 1
+                return
+            if _P and not re.fullmatch('[\\s!-~]+', data):
+                continue
+            for line in data.splitlines():
+                for needle in needles:
+                    if _V == bool(re.match(needle, line)):
+                        continue
+                    nothing_found = False
+
+        if nothing_found:
+            self.state.ec = 1
+
     def execute_set(self, cmd: EmulatorCommand):
         if not (args := cmd.tokens):
             raise EmulatorException('Empty SET instruction')
@@ -189,10 +273,15 @@ class BatchEmulator:
             tokens = (self.delay_expand(token) for token in tokens)
         if v := self.state.for_loop_variables:
             tokens = (self.for_expand(token, v) for token in tokens)
+        self.state.ec = 0
         command = EmulatorCommand(tokens)
         verb = command.verb.upper().strip()
         if verb == 'SET':
             self.execute_set(command)
+        elif verb == 'FINDSTR':
+            self.execute_find(command, True)
+        elif verb == 'FIND':
+            self.execute_find(command, False)
         elif verb == 'GOTO':
             label, *_ = command.argument_string.split(maxsplit=1)
             if label.startswith(':'):
