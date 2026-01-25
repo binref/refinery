@@ -26,9 +26,10 @@ from refinery.lib.batch.model import (
     RedirectIO,
     Token,
     UnexpectedToken,
+    Word,
 )
 from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.util import batchint, unquote
+from refinery.lib.batch.util import batchint, batchrange, unquote
 from refinery.lib.types import buf
 
 
@@ -54,7 +55,7 @@ class LookAhead:
 
     def pop(self, *value):
         if not (preview := self.preview):
-            return False
+            return Ctrl.EndOfFile in value
         if value and preview[0] not in value:
             return False
         next(self)
@@ -93,7 +94,7 @@ class LookAhead:
                 fused.write(tok)
             return fused.getvalue()
 
-    def word(self, upper=False):
+    def word(self, upper=False) -> Word | Ctrl:
         self.skip_space()
         if isinstance((token := next(self)), RedirectIO):
             raise UnexpectedToken(str(token))
@@ -106,6 +107,10 @@ class LookAhead:
             return self.preview[index]
         except IndexError:
             return Ctrl.EndOfFile
+
+    def drop_and_peek(self):
+        self.__next__()
+        return self.peek()
 
     def _collect(self):
         offsets = self.offsets
@@ -156,13 +161,41 @@ class BatchParser:
     def environment(self):
         return self.state.environment
 
-    def command(self, tokens: LookAhead, in_group: bool) -> AstCommand | None:
-        ast = AstCommand(tokens.offset())
+    def command(self, tokens: LookAhead, in_group: bool, silenced: bool = False) -> AstCommand | None:
+        ast = AstCommand(tokens.offset(), silenced)
         tok = tokens.peek()
         cmd = ast.tokens
 
-        if (is_set := tok.upper() == 'SET'):
+        self.lexer.parse_command()
+
+        while True:
+            if tok == Ctrl.EndOfFile:
+                return None
+            elif isinstance(tok, Word):
+                if not tok.isspace():
+                    break
+                ast.prefix.append(tok)
+            elif isinstance(tok, RedirectIO):
+                ast.redirects.append(tok)
+            else:
+                ast.prefix.append(tok)
+                ast.silenced = (tok == Ctrl.At)
+            tok = tokens.drop_and_peek()
+
+        tok_upper = tok.upper()
+        echo_skip = False
+
+        if (is_set := tok_upper == 'SET'):
             self.lexer.parse_set()
+        elif tok_upper.startswith('ECHO'):
+            if len(tok_upper) > 4 and tok_upper[4] in '/.':
+                cmd.append(tok[:4])
+                cmd.append(' ')
+                cmd.append(tok[5:])
+            else:
+                cmd.append(tok)
+                echo_skip = True
+            tok = tokens.drop_and_peek()
 
         nonspace = io.StringIO()
 
@@ -178,6 +211,13 @@ class BatchParser:
                 break
             if isinstance(tok, RedirectIO):
                 ast.redirects.append(tok)
+            elif echo_skip:
+                echo_skip = False
+                if not tok.isspace():
+                    cmd.append(' ')
+                    tok = tok[1:]
+                if tok:
+                    cmd.append(tok)
             elif is_set:
                 cmd.append(tok)
             elif tok.isspace():
@@ -192,13 +232,12 @@ class BatchParser:
             tok = tokens.peek()
         if nsp := nonspace.getvalue():
             cmd.append(nsp)
-        elif not cmd:
-            return None
-        return ast
+        if ast:
+            return ast
 
-    def pipeline(self, tokens: LookAhead, in_group: bool) -> AstPipeline | None:
-        if head := self.command(tokens, in_group):
-            node = AstPipeline(head.offset, [head])
+    def pipeline(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstPipeline | None:
+        if head := self.command(tokens, in_group, silenced):
+            node = AstPipeline(head.offset, silenced, [head])
             while tokens.pop(Ctrl.Pipe):
                 if cmd := self.command(tokens, in_group):
                     node.parts.append(cmd)
@@ -206,7 +245,7 @@ class BatchParser:
                 raise UnexpectedToken(tokens.peek())
             return node
 
-    def ifthen(self, tokens: LookAhead, in_group: bool) -> AstIf | None:
+    def ifthen(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstIf | None:
         offset = tokens.offset()
 
         if not tokens.pop_string('IF'):
@@ -273,6 +312,7 @@ class BatchParser:
 
         return AstIf(
             offset,
+            silenced,
             then_do,
             else_do,
             variant,
@@ -336,7 +376,7 @@ class BatchParser:
 
         return result
 
-    def forloop(self, tokens: LookAhead, in_group: bool) -> AstFor | None:
+    def forloop(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstFor | None:
         offset = tokens.offset()
 
         if not tokens.pop_string('FOR'):
@@ -414,22 +454,20 @@ class BatchParser:
             spec = re.split('[\\s,;]+', spec_string)
 
         if variant == AstForVariant.NumericLoop:
-            try:
-                start, step, stop = spec
-                start = batchint(start)
-                step = batchint(step)
-                stop = batchint(stop)
-            except Exception:
-                raise UnexpectedToken(spec_string)
-            spec = range(start, stop + step, step)
+            init = [0, 0, 0]
+            for k, v in enumerate(spec):
+                init[k] = batchint(v, 0)
+            spec = batchrange(*init)
 
         return AstFor(
             offset,
+            silenced,
             variant,
             variable[1],
             options,
             body,
             spec,
+            spec_string,
             path,
             mode,
         )
@@ -440,41 +478,49 @@ class BatchParser:
                 continue
             if in_group and tokens.pop(Ctrl.EndGroup):
                 break
+            if tokens.pop(Ctrl.EndOfFile):
+                break
             if sequence := self.sequence(tokens, in_group):
                 yield sequence
             else:
                 break
 
-    def group(self, tokens: LookAhead) -> AstGroup | None:
+    def group(self, tokens: LookAhead, silenced: bool) -> AstGroup | None:
         offset = tokens.offset()
-        if tokens.pop(Ctrl.NewGroup):
+        if tokens.peek() == Ctrl.NewGroup:
             self.lexer.parse_group()
+            tokens.pop()
             sequences = list(self.block(tokens, True))
-            return AstGroup(offset, sequences)
+            return AstGroup(offset, silenced, sequences)
 
-    def label(self, tokens: LookAhead) -> AstLabel | None:
+    def label(self, tokens: LookAhead, silenced: bool) -> AstLabel | None:
+        if tokens.peek() != Ctrl.Label:
+            return None
         offset = tokens.offset()
         lexer = self.lexer
         lexer.parse_label()
-        if not tokens.pop(Ctrl.Label):
-            lexer.parse_label_abort()
-            return None
+        tokens.pop()
         line = tokens.word()
         label = lexer.label(line)
         if (x := lexer.labels[label]) != offset:
             raise RuntimeError(F'Expected offset for label {label} to be {offset}, got {x} instead.')
-        return AstLabel(offset, line, label)
+        return AstLabel(offset, silenced, line, label)
 
     def statement(self, tokens: LookAhead, in_group: bool):
-        if s := self.label(tokens):
+        at = 0
+        while tokens.pop(Ctrl.At):
+            at += 1
+            tokens.skip_space()
+        silenced = at > 0
+        if at <= 1 and (s := self.label(tokens, silenced)):
             return s
-        if s := self.ifthen(tokens, in_group):
+        if s := self.ifthen(tokens, in_group, silenced):
             return s
-        if s := self.group(tokens):
+        if s := self.group(tokens, silenced):
             return s
-        if s := self.forloop(tokens, in_group):
+        if s := self.forloop(tokens, in_group, silenced):
             return s
-        return self.pipeline(tokens, in_group)
+        return self.pipeline(tokens, in_group, silenced)
 
     def sequence(self, tokens: LookAhead, in_group: bool) -> AstSequence | None:
         tokens.skip_space()

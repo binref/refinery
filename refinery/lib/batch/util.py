@@ -8,7 +8,22 @@ if typing.TYPE_CHECKING:
     from array import array
 
 
-def batchint(expr: str):
+class batchrange:
+    def __init__(self, min: int, inc: int, max: int):
+        self.min = min
+        self.inc = inc
+        self.max = max
+
+    def __iter__(self):
+        val = self.min
+        inc = self.inc
+        max = self.max
+        while val <= max:
+            yield str(val)
+            val += inc
+
+
+def batchint(expr: str, default: int | None = None):
     m = int(expr.startswith('-'))
     if expr[m:m + 2] in ('0x', '0X'):
         base = 16
@@ -16,7 +31,12 @@ def batchint(expr: str):
         base = 8
     else:
         base = 10
-    return int(expr, base)
+    try:
+        return int(expr, base)
+    except ValueError:
+        if default is None:
+            raise
+        return default
 
 
 @typing.overload

@@ -16,8 +16,10 @@ from refinery.lib.batch.const import (
     ANGLE_OPEN,
     ANGLES,
     ASTERIX,
+    AT,
     CARET,
     COLON,
+    COMMA,
     DOLLAR,
     EQUALS,
     LINEBREAK,
@@ -27,6 +29,9 @@ from refinery.lib.batch.const import (
     PERCENT,
     PIPE,
     QUOTE,
+    SEMICOLON,
+    SEPARATORS,
+    SLASH,
     WHITESPACE,
     ZERO,
 )
@@ -38,12 +43,14 @@ from refinery.lib.batch.model import (
     MissingVariable,
     Redirect,
     RedirectIO,
+    Token,
     UnexpectedEOF,
     UnexpectedFirstToken,
     UnexpectedToken,
+    Word,
 )
 from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.util import batchint, u16, uncaret
+from refinery.lib.batch.util import batchint, u16, uncaret, unquote
 from refinery.lib.types import buf
 
 
@@ -52,7 +59,8 @@ class Mode(enum.IntEnum):
     Whitespace = enum.auto()
     Quote = enum.auto()
     Label = enum.auto()
-    RedirectIO = enum.auto()
+    Command = enum.auto()
+    Gap = enum.auto()
     SetStarted = enum.auto()
     SetRegular = enum.auto()
     SetQuoted = enum.auto()
@@ -72,19 +80,35 @@ SeparatorEscalation = {
     ],
 }
 
+SeparatorMap = {
+    AT          : Ctrl.At,
+    COLON       : Ctrl.Label,
+    COMMA       : Ctrl.Comma,
+    PAREN_CLOSE : Ctrl.EndGroup,
+    PAREN_OPEN  : Ctrl.NewGroup,
+    SEMICOLON   : Ctrl.Semicolon,
+}
+
 
 @dataclass
 class BatchLexerCursor:
     offset: int = 0
+    modes: list[Mode] = field(default_factory=list)
     token: array.array[int] = field(
         default_factory=lambda: array.array('H'))
     subst_offset: int = 0
     subst_buffer: array.array[int] = field(
         default_factory=lambda: array.array('H'))
 
+    def eof(self, size: int):
+        if self.offset < size:
+            return False
+        return (n := len(self.subst_buffer)) == 0 or self.subst_offset >= n
+
     def copy(self):
         return self.__class__(
             self.offset,
+            list(self.modes),
             array.array('H', self.token),
             self.subst_offset,
             array.array('H', self.subst_buffer)
@@ -114,7 +138,7 @@ class BatchLexer:
         # A handler is given the current mode and char. It returns a boolean indicating
         # whether or not the character was processed and may be consumed.
         handlers: ClassVar[dict[Mode, Callable[
-            [BatchLexer, Mode, int], Generator[str | Ctrl, None, bool]
+            [BatchLexer, Mode, int], Generator[Token, None, bool]
         ]]] = {}
 
         def __init__(self, *modes: Mode):
@@ -139,11 +163,13 @@ class BatchLexer:
             self.state = state
             self.preparse(data)
 
-    def parse_label_abort(self):
-        self.mode_finish()
-
     def parse_group(self):
         self.group += 1
+
+    def parse_command(self):
+        if (m := self.mode) != Mode.Text or len(self.modes) != 1:
+            raise EmulatorException(F'Switching to command while in mode {m.name}')
+        self.mode_switch(Mode.Command)
 
     def parse_label(self):
         if (m := self.mode) != Mode.Text or len(self.modes) != 1:
@@ -151,7 +177,7 @@ class BatchLexer:
         self.mode_switch(Mode.Label)
 
     def parse_set(self):
-        if (m := self.mode) != Mode.Text or len(self.modes) != 1:
+        if (m := self.mode) != Mode.Command or len(self.modes) != 2:
             raise EmulatorException(F'Switching to SET while in mode {m.name}')
         self.mode_switch(Mode.SetStarted)
 
@@ -229,20 +255,27 @@ class BatchLexer:
             output.write(argval)
             return output.getvalue()
 
+    @property
+    def modes(self):
+        return self.cursor.modes
+
     def reset(self, offset: int):
-        self.modes = [Mode.Text]
         self.quote = False
         self.caret = False
         self.white = False
         self.first = True
         self.group = 0
         self.cursor = BatchLexerCursor(offset)
+        self.modes.append(Mode.Text)
         self.resume = None
         self.var_resume = -1
         self.var_offset = -1
         self.var_dollar = -1
         self.var_cmdarg = None
         self.pending_redirect = None
+
+    def mode_reset(self):
+        del self.modes[1:]
 
     def mode_finish(self):
         modes = self.modes
@@ -346,30 +379,23 @@ class BatchLexer:
 
     def emit_token(self):
         if (buffer := self.cursor.token) and (token := u16(buffer)):
-            if (io := self.pending_redirect):
-                if self.mode != Mode.RedirectIO:
-                    raise RuntimeError
-                self.mode_finish()
+            if (pr := self.pending_redirect):
+                pr.target = unquote(token)
                 self.pending_redirect = None
-                io.target, token = token, io
-            yield token
+                yield pr
+            else:
+                yield Word(token)
         del buffer[:]
         self.first = False
 
-    def line_break(self):
-        self.first = True
-        self.white = True
-        self.quote = False
-        yield Ctrl.NewLine
-
-    def tokens(self, offset: int):
+    def tokens(self, offset: int) -> Generator[Token]:
         self.reset(offset)
         handlers = self._register.handlers
         current_char = self.current_char
         consume_char = self.consume_char
         size = len(self.code)
 
-        while self.cursor.offset < size:
+        while not self.cursor.eof(size):
             c = current_char()
             m = self.mode
             h = handlers[m]
@@ -398,15 +424,32 @@ class BatchLexer:
         if not self.caret:
             # caret is not reset until the next char!
             yield from self.emit_token()
-            yield from self.line_break()
-            del self.modes[1:]
+            self.first = True
+            self.white = True
+            self.quote = False
+            self.mode_reset()
+            yield Ctrl.NewLine
         self.consume_char()
         return True
+
+    def check_caret(self, char: int):
+        if self.caret:
+            self.cursor.token.append(char)
+            self.caret = False
+            self.consume_char()
+            return True
+        elif char == CARET:
+            self.caret = True
+            self.consume_char()
+            return True
+        else:
+            return False
 
     def check_command_separators(self, char: int):
         if char == PAREN_CLOSE and (g := self.group) > 0:
             yield from self.emit_token()
             yield Ctrl.EndGroup
+            self.mode_reset()
             self.consume_char()
             self.group = g - 1
             return True
@@ -417,8 +460,7 @@ class BatchLexer:
         if self.first:
             raise UnexpectedFirstToken(char)
         yield from self.emit_token()
-        if self.mode != Mode.Text:
-            self.mode_finish()
+        self.mode_reset()
         if self.next_char() == char:
             self.consume_char()
             yield two
@@ -464,7 +506,7 @@ class BatchLexer:
 
         if char != AMPERSAND:
             self.pending_redirect = RedirectIO(how, source)
-            self.mode_switch(Mode.RedirectIO)
+            self.mode_switch(Mode.Gap)
         else:
             char = self.next_char()
             if char not in range(ZERO, NINE + 1):
@@ -479,7 +521,7 @@ class BatchLexer:
         Mode.VarDollar,
         Mode.VarColon,
     )
-    def gobble_var(self, mode: Mode, char: int):
+    def gobble_var(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         yield from ()
 
         def done():
@@ -563,14 +605,14 @@ class BatchLexer:
         return True
 
     @_register(Mode.Label)
-    def gobble_label(self, mode: Mode, char: int):
+    def gobble_label(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         if (yield from self.check_line_break(mode, char)):
             return False
         self.cursor.token.append(char)
         return True
 
     @_register(Mode.Quote)
-    def gobble_quote(self, mode: Mode, char: int):
+    def gobble_quote(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         if (yield from self.check_line_break(mode, char)):
             return False
         if self.check_variable_start(char):
@@ -581,16 +623,18 @@ class BatchLexer:
         return True
 
     @_register(Mode.Whitespace)
-    def gobble_whitespace(self, mode: Mode, char: int):
+    def gobble_whitespace(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         if char in WHITESPACE:
             self.cursor.token.append(char)
             return True
-        yield from self.emit_token()
         self.mode_finish()
+        token = self.cursor.token
+        yield Word(u16(token))
+        del token[:]
         return False
 
     @_register(Mode.SetQuoted)
-    def gobble_quoted_set(self, mode: Mode, char: int):
+    def gobble_quoted_set(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         if char == QUOTE:
             self.consume_char()
             self.cursor.token.append(QUOTE)
@@ -600,6 +644,7 @@ class BatchLexer:
         if char == LINEBREAK:
             if self.resume is None:
                 yield from self.emit_token()
+                self.mode_reset()
                 yield Ctrl.NewLine
             elif self.caret:
                 self.caret = False
@@ -607,7 +652,6 @@ class BatchLexer:
             else:
                 self.quick_load()
                 yield from self.emit_token()
-            self.mode_finish()
             return True
 
         if char == CARET and self.resume:
@@ -623,84 +667,90 @@ class BatchLexer:
         self.cursor.token.append(char)
         return True
 
-    @_register(
-        Mode.Text,
-        Mode.SetStarted,
-        Mode.SetRegular,
-        Mode.RedirectIO,
-    )
-    def gobble_txt(self, mode: Mode, char: int):
+    @_register(Mode.SetStarted)
+    def gobble_set(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         token = self.cursor.token
-
         if (yield from self.check_line_break(mode, char)):
             return False
-
         if self.check_variable_start(char):
             return False
-
-        if not token and char == QUOTE and mode == Mode.SetStarted:
+        if not token and char == QUOTE:
             self.caret = False
             token.append(char)
             self.mode = Mode.SetQuoted
             return True
-
-        if self.caret:
-            token.append(char)
-            self.caret = False
-            self.consume_char()
+        if self.check_caret(char):
             return False
-
-        if char == EQUALS and mode == Mode.SetStarted:
+        if char == EQUALS:
             yield from self.emit_token()
-            yield '='
+            yield Ctrl.Equals
             self.mode = Mode.SetRegular
             return True
-
         if self.check_quote_start(char):
             return False
-
-        if char == CARET:
-            self.caret = True
-            self.first = False
-            return True
-
-        if char in WHITESPACE and mode in (Mode.Text, Mode.RedirectIO):
-            yield from self.emit_token()
-            token.append(char)
-            self.mode_switch(Mode.Whitespace)
-            return True
-
         if (yield from self.check_command_separators(char)):
             return False
-
         if (yield from self.check_redirect_io(char)):
             return False
+        self.cursor.token.append(char)
+        return True
 
-        if mode == Mode.Text:
-            if char == PAREN_OPEN:
-                self.first = False
-                yield from self.emit_token()
-                yield Ctrl.NewGroup
-                return True
-            if char == PAREN_CLOSE:
-                self.first = False
-                yield from self.emit_token()
-                yield Ctrl.EndGroup
-                return True
-            if char == COLON:
-                self.first = False
-                yield from self.emit_token()
-                yield Ctrl.Label
-                return True
-            if char == EQUALS:
-                yield from self.emit_token()
-                if self.next_char() != EQUALS:
-                    yield Ctrl.Equals
-                    return False
-                else:
-                    yield Ctrl.IsEqualTo
-                    return True
+    def common_token_checks(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
+        return (False
+            or (yield from self.check_line_break(mode, char))
+            or self.check_variable_start(char)
+            or self.check_caret(char)
+            or self.check_quote_start(char)
+            or (yield from self.check_command_separators(char))
+            or (yield from self.check_redirect_io(char)))
 
+    @_register(Mode.SetRegular)
+    def gobble_set_regular(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
+        if (yield from self.common_token_checks(mode, char)):
+            return False
+        self.cursor.token.append(char)
+        return True
+
+    @_register(Mode.Gap)
+    def gobble_gap(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
+        yield from ()
+        if char in SEPARATORS:
+            return True
+        self.mode_finish()
+        return False
+
+    @_register(Mode.Text, Mode.Command)
+    def gobble_txt(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
+        if (yield from self.common_token_checks(mode, char)):
+            return False
+        if char in WHITESPACE:
+            yield from self.emit_token()
+            self.cursor.token.append(char)
+            self.mode_switch(Mode.Whitespace)
+            return True
+        if self.first and char in SEPARATORS:
+            return True
+        if char == SLASH and mode == Mode.Command:
+            yield from self.emit_token()
+        elif char == EQUALS:
+            yield from self.emit_token()
+            if self.next_char() != EQUALS:
+                yield Ctrl.Equals
+                return False
+            else:
+                yield Ctrl.IsEqualTo
+                return True
+        else:
+            try:
+                t = SeparatorMap[char]
+            except KeyError:
+                pass
+            else:
+                self.first = False
+                yield from self.emit_token()
+                yield t
+                return True
+        self.first = False
         self.cursor.token.append(char)
         return True
 
@@ -732,18 +782,23 @@ class BatchLexer:
         if not isinstance(text, str):
             text = self._decode(text)
 
-        lines = re.split(r'[\r\n]+', text.strip())
+        lines = re.split(r'(\r\n|\r|\n)', text)
         utf16 = array.array('H')
 
-        for line in lines:
+        for k, line in enumerate(itertools.islice(lines, 0, None, 2)):
+            if k > 0:
+                utf16.append(LINEBREAK)
             encoded = line.encode('utf-16le')
+            if not encoded:
+                continue
             encoded = memoryview(encoded).cast('H')
             offset = len(utf16)
-            prefix = re.search('[^\\s]', line)
-            if prefix and encoded[(p := prefix.start())] == COLON and (lb := self.label(u16(encoded[p + 1:]))):
-                self.labels.setdefault(lb, offset + p)
+            prefix = re.search('^@?[\\s]*:', line)
+            if prefix:
+                p = prefix.end()
+                if lb := self.label(u16(encoded[p:])):
+                    self.labels.setdefault(lb, offset + p - 1)
             utf16.extend(encoded)
-            utf16.append(LINEBREAK)
 
         self.text = text
         self.code = memoryview(utf16)

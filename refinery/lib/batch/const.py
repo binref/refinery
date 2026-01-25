@@ -7,6 +7,7 @@ BANG        = BR'!'[0] # noqa
 CARET       = BR'^'[0] # noqa
 COLON       = BR':'[0] # noqa
 COMMA       = BR','[0] # noqa
+DOT         = BR'.'[0] # noqa
 DOLLAR      = BR'$'[0] # noqa
 EQUALS      = BR'='[0] # noqa
 LINEBREAK   = B'\n'[0] # noqa
@@ -17,6 +18,7 @@ PERCENT     = BR'%'[0] # noqa
 PIPE        = BR'|'[0] # noqa
 QUOTE       = BR'"'[0] # noqa
 SEMICOLON   = BR';'[0] # noqa
+SLASH       = BR'/'[0] # noqa
 SPACE       = BR' '[0] # noqa
 TILDE       = BR'~'[0] # noqa
 ZERO        = BR'0'[0] # noqa

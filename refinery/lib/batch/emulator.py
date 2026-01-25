@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import fnmatch
-import io
 import itertools
 import re
 
-from typing import Callable, ClassVar, Generator, Iterable
+from typing import Callable, ClassVar, Generator
 
 from refinery.lib.batch.model import (
     ArgVarFlags,
@@ -32,51 +31,10 @@ from refinery.lib.batch.model import (
 )
 from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
+from refinery.lib.batch.synth import SynCommand, SynSequence
 from refinery.lib.batch.util import batchint, uncaret, unquote
 from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
-
-
-class EmulatorCommand:
-    tokens: list[str]
-    args: list[str]
-    verb: str
-    silent: bool
-
-    def __init__(self, tokens: Iterable[str]):
-        self.tokens = list(tokens)
-        self.silent = False
-        self.args = []
-        self.verb = ''
-        self.argskip = 0
-        arg_string = io.StringIO()
-        for k, token in enumerate(self.tokens, 1):
-            if token.isspace():
-                if self.verb:
-                    arg_string.write(token)
-                continue
-            if not self.verb:
-                verb = token.strip()
-                if verb.startswith('@'):
-                    self.silent = True
-                if verb := token.lstrip('@'):
-                    self.verb = verb
-                    self.argskip = k
-                continue
-            self.args.append(token)
-            arg_string.write(token)
-        if not self.verb:
-            raise ValueError('Empty Command')
-        self.argument_string = arg_string.getvalue().lstrip()
-
-    def __str__(self):
-        with io.StringIO() as cmd:
-            if self.silent:
-                cmd.write('@')
-            cmd.write(self.verb)
-            for a in itertools.islice(self.tokens, self.argskip, None):
-                cmd.write(a)
-            return cmd.getvalue()
 
 
 class BatchEmulator:
@@ -127,7 +85,7 @@ class BatchEmulator:
         return re.sub(
             RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
 
-    def execute_find(self, cmd: EmulatorCommand, findstr: bool):
+    def execute_find(self, cmd: SynCommand, findstr: bool):
         needles = []
         paths = []
         flags = {}
@@ -208,11 +166,10 @@ class BatchEmulator:
                         continue
                     nothing_found = False
 
-        if nothing_found:
-            self.state.ec = 1
+        self.state.ec = int(nothing_found)
 
-    def execute_set(self, cmd: EmulatorCommand):
-        if not (args := cmd.tokens):
+    def execute_set(self, cmd: SynCommand):
+        if not (args := cmd.ast.tokens):
             raise EmulatorException('Empty SET instruction')
 
         if cmd.verb.upper() != 'SET':
@@ -221,7 +178,7 @@ class BatchEmulator:
         arithmetic = False
         quote_mode = False
 
-        it = itertools.islice(iter(args), cmd.argskip, None)
+        it = itertools.islice(iter(args), 1, None)
 
         while (tok := next(it)).isspace():
             continue
@@ -267,14 +224,21 @@ class BatchEmulator:
             else:
                 self.environment[name] = content
 
-    def execute_command(self, ast_command: AstCommand):
-        tokens = iter(ast_command.tokens)
+    def execute_command(self, ast: AstCommand):
+        tokens = iter(ast.tokens)
+        ast = AstCommand(
+            ast.offset,
+            ast.silenced,
+            ast.prefix,
+            [],
+            ast.redirects,
+        )
         if self.delayexpand:
             tokens = (self.delay_expand(token) for token in tokens)
         if v := self.state.for_loop_variables:
             tokens = (self.for_expand(token, v) for token in tokens)
-        self.state.ec = 0
-        command = EmulatorCommand(tokens)
+        ast.tokens.extend(tokens)
+        command = SynCommand(ast)
         verb = command.verb.upper().strip()
         if verb == 'SET':
             self.execute_set(command)
@@ -342,7 +306,7 @@ class BatchEmulator:
             except IndexError:
                 pass
         elif verb == 'ECHO':
-            for r in ast_command.redirects:
+            for r in ast.redirects:
                 if r.type == Redirect.In:
                     continue
                 if isinstance(path := r.target, str):
@@ -357,6 +321,7 @@ class BatchEmulator:
             else:
                 yield str(command)
         else:
+            self.state.ec = 0
             yield str(command)
 
     @_register(AstPipeline)
@@ -417,9 +382,9 @@ class BatchEmulator:
             condition = not condition
 
         if condition:
-            yield from self.emulate_statement(_if.then_do)
+            yield from self.emulate_sequence(_if.then_do)
         elif (_else := _if.else_do):
-            yield from self.emulate_statement(_else)
+            yield from self.emulate_sequence(_else)
 
     @_register(AstFor)
     def emulate_for(self, _for: AstFor):
@@ -431,11 +396,11 @@ class BatchEmulator:
             if _for.mode == AstForParserMode.Command:
                 return NotImplemented
             if _for.mode == AstForParserMode.Literal:
-                lines = _for.strings()
+                lines = _for.spec
             else:
                 def lines_from_files():
                     fs = self.state.file_system
-                    for name in _for.strings():
+                    for name in _for.spec:
                         for path, content in fs.items():
                             if not fnmatch.fnmatch(path, name):
                                 continue
@@ -462,11 +427,11 @@ class BatchEmulator:
                         vars[name] = tokenized[tok]
                     except IndexError:
                         vars[name] = ''
-                yield from self.emulate_statement(body)
+                yield from self.emulate_sequence(body)
         else:
-            for entry in _for.strings():
+            for entry in _for.spec:
                 vars[name] = entry
-                yield from self.emulate_statement(_for.body)
+                yield from self.emulate_sequence(_for.body)
 
     @_register(AstGroup)
     def emulate_group(self, group: AstGroup):
@@ -495,6 +460,7 @@ class BatchEmulator:
         while offset < length:
             try:
                 for sequence in self.parser.parse(offset):
+                    print(str(SynSequence(sequence)))
                     yield from self.emulate_sequence(sequence)
             except Goto as goto:
                 try:

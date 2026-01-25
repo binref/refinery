@@ -1,25 +1,55 @@
 from inspect import getdoc
 
 from refinery.lib.batch import BatchEmulator, BatchLexer, BatchParser, BatchState
-from refinery.lib.batch.emulator import EmulatorCommand
-from refinery.lib.batch.model import AstPipeline, AstSequence, InvalidLabel, EmulatorException
+from refinery.lib.batch.synth import SynCommand
+from refinery.lib.batch.model import AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
 
 from .. import TestBase
 
 
 def emulate(cls):
     if code := getdoc(cls):
+        code = F'{code}\n'
         return BatchEmulator(code)
     raise ValueError
 
 
 def docs(cls):
     if code := getdoc(cls):
-        return code
+        return F'{code.strip()}\n'
     raise ValueError
 
 
 class TestBatchLexer(TestBase):
+
+    def test_whitespace_collapse_01(self):
+        lexer = BatchLexer(';;;@ echo foo>,; =="==" bar')
+        lexed = list(lexer.tokens(0))
+        self.assertEqual(lexed, [
+            '@',
+            ' ',
+            'echo',
+            ' ',
+            'foo',
+            RedirectIO(Redirect.Out, 1, '=='),
+            ' ',
+        ])
+
+    def test_whitespace_collapse_02(self):
+        lexer = BatchLexer(';;;@ echo foo>,; =="==" bar\n')
+        lexed = list(lexer.tokens(0))
+        self.assertEqual(lexed, [
+            '@',
+            ' ',
+            'echo',
+            ' ',
+            'foo',
+            RedirectIO(Redirect.Out, 1, '=='),
+            ' ',
+            'bar',
+            '\n',
+        ])
+
     def test_arithmetic_if(self):
         lexer = BatchLexer('if 4 ^LE^Q s (true) else (a | b | c)', BatchState())
         lexed = list(lexer.tokens(0))
@@ -49,7 +79,6 @@ class TestBatchLexer(TestBase):
             ' ',
             'c',
             ')',
-            '\n'
         ])
 
     def test_regression_set_with_escapes(self):
@@ -65,12 +94,14 @@ class TestBatchLexer(TestBase):
         lexer = BatchLexer(code, BatchState())
         lexed = lexer.tokens(0)
 
-        self.assertEqual(next(lexed), '@echo')
+        self.assertEqual(next(lexed), '@')
+        self.assertEqual(next(lexed), 'echo')
         self.assertEqual(next(lexed), ' ')
         self.assertEqual(next(lexed), 'off')
         self.assertEqual(next(lexed), '\n')
 
         self.assertEqual(next(lexed), 'set')
+        lexer.parse_command()
         lexer.parse_set()
         self.assertEqual(next(lexed), ' ')
         self.assertEqual(next(lexed), '"FOO=FIRST')
@@ -83,6 +114,7 @@ class TestBatchLexer(TestBase):
         self.assertEqual(next(lexed), '\n')
 
         self.assertEqual(next(lexed), 'set')
+        lexer.parse_command()
         lexer.parse_set()
         self.assertEqual(next(lexed), ' ')
         self.assertEqual(next(lexed), '^"^BA^R=S"E"C^O^^^"N"D')
@@ -251,7 +283,7 @@ class TestBatchEmulator(TestBase):
         parsed = parsed[0]
         assert isinstance(parsed, AstSequence)
         assert isinstance(parsed.head, AstPipeline)
-        command = EmulatorCommand(parsed.head.parts[0].tokens)
+        command = SynCommand(parsed.head.parts[0])
         self.assertEqual(command.verb, 'set')
         self.assertEqual(len(command.args), 1)
 
@@ -434,6 +466,30 @@ class TestBatchEmulator(TestBase):
             @@@@@ echo !foo:oo=ar!!u:bong!
             '''
         self.assertListEqual(list(bat.emulate()), ['@echo barbong'])
+
+    def test_leading_semicolons(self):
+        @emulate
+        class bat:
+            '''
+            @ echo,Test1
+            =;echo Test2
+            ;;echo...st3
+            =@echo:Test4
+            @;=,echo/Test5
+            =echo#Test6
+            =echo!Test7
+            '''
+        goal = [
+            '@echo Test1',
+            R'echo Test2',
+            R'echo ..st3',
+            '@echo Test4',
+            R'echo Test5',
+            R'echo#Test6',
+            R'echo!Test7',
+        ]
+        test = list(bat.emulate())
+        self.assertListEqual(test, goal)
 
     def test_labels_within_line_continuations_work(self):
         @emulate
@@ -721,7 +777,7 @@ class TestBatchEmulator(TestBase):
 
     def test_if_knows_variables_in_sequence(self):
         self.assertListEqual(['echo success'], list(BatchEmulator(
-            'set b=1 >nul 2>&1 & if not defined b (echo trap) else (echo success)').emulate()))
+            'set b=1 >nul 2>&1& if not defined b (echo trap) else (echo success)').emulate()))
 
     def test_if_does_not_chain(self):
         for op in ('&', '&&'):
@@ -744,6 +800,17 @@ class TestBatchEmulator(TestBase):
                 'echo z',
             ])
 
+    def test_labels_can_be_silenced(self):
+        @emulate
+        class bat:
+            '''
+            @goto HI
+            @echo HO
+            @:HI
+            @echo HI
+            '''
+        self.assertListEqual(list(bat.emulate()), ['@echo HI'])
+
     def test_variables_in_redirect_work(self):
         @emulate
         class bat:
@@ -753,7 +820,16 @@ class TestBatchEmulator(TestBase):
             '''
         for _ in bat.emulate():
             pass
-        self.assertEqual(bat.state.ingest_file('output.txt'), 'test')
+        self.assertEqual(bat.state.ingest_file('output.txt'), 'test\r\n')
+
+    def test_separators_in_redirect(self):
+        @emulate
+        class bat:
+            '''
+            echo/==;;>;; ="==",
+            '''
+        self.assertEqual(list(bat.emulate()), ['echo ==;; 1>"=="'])
+        self.assertEqual(bat.state.ingest_file('=='), '==;;\r\n')
 
     def test_variable_asterix_01(self):
         @emulate

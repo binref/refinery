@@ -6,12 +6,16 @@ from dataclasses import dataclass, field
 from typing import Generic, TypeVar, Union
 
 from refinery.lib.batch.const import TILDE
+from refinery.lib.batch.util import batchrange
 from refinery.lib.structures import FlagAccessMixin
 
 IntOrStr = TypeVar('IntOrStr', int, str)
 
 
 class Ctrl(str, enum.Enum):
+    At                  = '@'   # noqa;
+    Semicolon           = ';'   # noqa;
+    Comma               = ','   # noqa;
     Label               = ':'   # noqa;
     Equals              = '='   # noqa;
     IsEqualTo           = '=='  # noqa;
@@ -28,9 +32,13 @@ class Ctrl(str, enum.Enum):
     def __str__(self):
         return self.value
 
+    def upper(self):
+        return self
+
 
 class Word(str):
-    pass
+    def upper(self):
+        return Word(super().upper())
 
 
 class Expected(str):
@@ -44,6 +52,9 @@ class Redirect(str, enum.Enum):
 
     def __str__(self):
         return self.value
+
+    def __repr__(self):
+        return self.name
 
 
 @dataclass
@@ -71,10 +82,10 @@ class RedirectIO:
         return False
 
     def upper(self):
-        return None
+        return self
 
 
-Token = Union[str, Ctrl, RedirectIO]
+Token = Union[Word, Ctrl, RedirectIO]
 
 
 class ArgVarFlags(FlagAccessMixin, enum.IntFlag):
@@ -165,7 +176,7 @@ class AstNode:
 
 @dataclass
 class AstStatement(AstNode):
-    ...
+    silenced: bool
 
 
 @dataclass
@@ -175,15 +186,10 @@ class AstLabel(AstStatement):
 
 
 @dataclass
-class AstCommand(AstNode):
+class AstCommand(AstStatement):
+    prefix: list[str] = field(default_factory=list)
     tokens: list[str] = field(default_factory=list)
     redirects: list[RedirectIO] = field(default_factory=list)
-
-
-@dataclass
-class AstSet(AstCommand):
-    name: str = ""
-    value: str = ""
 
 
 @dataclass
@@ -198,7 +204,7 @@ class AstConditionalStatement(AstNode):
 
 
 @dataclass
-class AstSequence(AstStatement):
+class AstSequence(AstNode):
     head: AstStatement
     tail: list[AstConditionalStatement] = field(default_factory=list)
 
@@ -241,16 +247,11 @@ class AstFor(AstStatement):
     variant: AstForVariant
     variable: str
     options: AstForOptions
-    body: AstStatement
-    spec: list[str] | range
+    body: AstSequence
+    spec: list[str] | batchrange
+    spec_string: str
     path: str | None
     mode: AstForParserMode
-
-    def strings(self):
-        spec = self.spec
-        if isinstance(spec, range):
-            spec = (str(k) for k in spec)
-        yield from spec
 
 
 class AstIfVariant(str, enum.Enum):
@@ -272,8 +273,8 @@ class AstIfCmp(str, enum.Enum):
 
 @dataclass
 class AstIf(AstStatement, Generic[IntOrStr]):
-    then_do: AstStatement
-    else_do: AstStatement | None = None
+    then_do: AstSequence
+    else_do: AstSequence | None = None
     variant: AstIfVariant | None = None
     casefold: bool = True
     negated: bool = False
