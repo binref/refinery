@@ -178,21 +178,21 @@ class BatchEmulator:
             paths.append(unquote(arg))
 
         for k, n in enumerate(needles):
-            if not findstr or flags['L']:
+            if not findstr or 'L' in flags:
                 n = re.escape(n)
-            if flags['X']:
+            if 'X' in flags:
                 n = F'^{n}$'
-            elif flags['B']:
+            elif 'B' in flags:
                 n = F'^{n}'
-            elif flags['E']:
+            elif 'E' in flags:
                 n = F'{n}$'
             needles[k] = n
 
-        _V = flags['V'] # Prints only lines that do not contain a match.
-        _P = flags['P'] # Skip files with non-printable characters.
-        _O = flags['O'] # Prints character offset before each matching line.
-        _N = flags['N'] # Prints the line number before each line that matches.
-        _M = flags['M'] # Prints only the filename if a file contains a match.
+        _V = 'V' in flags # noqa; Prints only lines that do not contain a match.
+        _P = 'P' in flags # noqa; Skip files with non-printable characters.
+        _O = 'O' in flags # noqa; Prints character offset before each matching line.
+        _N = 'N' in flags # noqa; Prints the line number before each line that matches.
+        _M = 'M' in flags # noqa; Prints only the filename if a file contains a match.
 
         nothing_found = True
 
