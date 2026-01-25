@@ -1,22 +1,26 @@
 AMPERSAND   = BR'&'[0] # noqa
 ANGLE_CLOSE = BR'>'[0] # noqa
 ANGLE_OPEN  = BR'<'[0] # noqa
+ASTERIX     = BR'*'[0] # noqa
+AT          = BR'@'[0] # noqa
 BANG        = BR'!'[0] # noqa
 CARET       = BR'^'[0] # noqa
 COLON       = BR':'[0] # noqa
+COMMA       = BR','[0] # noqa
 DOLLAR      = BR'$'[0] # noqa
 EQUALS      = BR'='[0] # noqa
 LINEBREAK   = B'\n'[0] # noqa
+NINE        = BR'9'[0] # noqa
 PAREN_CLOSE = BR')'[0] # noqa
 PAREN_OPEN  = BR'('[0] # noqa
 PERCENT     = BR'%'[0] # noqa
 PIPE        = BR'|'[0] # noqa
 QUOTE       = BR'"'[0] # noqa
+SEMICOLON   = BR';'[0] # noqa
 SPACE       = BR' '[0] # noqa
 TILDE       = BR'~'[0] # noqa
 ZERO        = BR'0'[0] # noqa
-NINE        = BR'9'[0] # noqa
-ASTERIX     = BR'*'[0] # noqa
 
-WHITESPACE  = set(B'\040\t\v')  # noqa
 ANGLES      = set(B'<>')        # noqa
+SEPARATORS  = set(B' \t\v;,=')  # noqa
+WHITESPACE  = set(B' \t\v')     # noqa
