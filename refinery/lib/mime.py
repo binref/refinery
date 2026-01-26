@@ -271,7 +271,9 @@ class FileMagicInfo:
                 extension = t.extension
             blob = description.lower() == 'data'
 
-        if blob and (check := get_structured_data_type(data)):
+        check = get_structured_data_type(data)
+
+        if check and extension != check.extension:
             extension = check.extension
             description = check.details
             mime = check.mime
