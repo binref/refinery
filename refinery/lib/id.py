@@ -974,6 +974,10 @@ def get_office_xml_type(data: buf):
         return Fmt.DOCX
     if buffer_contains(data, B'xl/document.xml'):
         return Fmt.XLSX
+    if buffer_contains(data, B'xl/workbook.xml'):
+        return Fmt.XLSX
+    if buffer_contains(data, B'xl/worksheets/'):
+        return Fmt.XLSX
     if buffer_contains(data, B'ppt/presentation.xml'):
         return Fmt.PPTX
 
