@@ -877,3 +877,13 @@ class TestBatchEmulator(TestBase):
             for /f %%i in ("hello)") do echo %%i
             '''
         self.assertEqual(list(bat.emulate()), ['echo hello)'])
+
+    def test_regression_quoted_set_statements_not_separated(self):
+        @emulate
+        class bat:
+            '''
+            ;SE^T "BAR=BAR"
+            ;SE^T "FOO=FOO"
+            echo %FOO%
+            '''
+        self.assertListEqual(list(bat.emulate(0)), ['echo FOO'])

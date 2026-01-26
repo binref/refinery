@@ -646,13 +646,14 @@ class BatchLexer:
                 yield from self.emit_token()
                 self.mode_reset()
                 yield Ctrl.NewLine
+                return True
             elif self.caret:
                 self.caret = False
                 return True
             else:
                 self.quick_load()
                 yield from self.emit_token()
-            return True
+                return False
 
         if char == CARET and self.resume:
             self.caret = not self.caret
