@@ -4,6 +4,7 @@ A selection of refinery-specific decorators.
 from __future__ import annotations
 
 import codecs
+import copy
 import itertools
 import re
 
@@ -23,7 +24,7 @@ def wraps_without_annotations(method: Callable) -> Callable[[_F], _F]:
     type annotations of the wrapped function. This is used in the other decorators
     in this module because they change the function signature.
     """
-    assignments = set(WRAPPER_ASSIGNMENTS)
+    assignments: set[str] = set(WRAPPER_ASSIGNMENTS)
     assignments.discard('__annotations__')
     wrap = wraps(method, assigned=assignments)
     if TYPE_CHECKING:
@@ -64,3 +65,66 @@ def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk],
                     partial[k] = ''
         return codecs.encode(''.join(partial), self.codec, errors='surrogateescape')
     return method_wrapper
+
+
+def masked(modulus: int):
+    """
+    Convert arithmetic operations that occur within the decorated function body in such a way that
+    the result is reduced using the given modulus. All additions, subtractions, multiplications,
+    left shifts, and taking powers are augmented by introducing a modulo operation.
+    """
+    import ast
+    import inspect
+
+    def decorator(function):
+        code = inspect.getsource(function)
+        code = inspect.cleandoc(code)
+        tree = ast.parse(code)
+
+        class Postprocessor(ast.NodeTransformer):
+            name = None
+
+            def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+                self.generic_visit(node)
+                if not isinstance(node.op, (ast.USub, ast.Invert)):
+                    return node
+                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+
+            def visit_AugAssign(self, node: ast.AugAssign) -> Any:
+                self.generic_visit(node)
+                if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
+                    return node
+                target_load = copy.deepcopy(node.target)
+                target_load.ctx = ast.Load()
+                computation = ast.BinOp(left=target_load, op=node.op, right=node.value)
+                reduced = ast.BinOp(left=computation, op=ast.Mod(), right=ast.Constant(modulus))
+                return ast.Assign(targets=[node.target], value=reduced)
+
+            def visit_BinOp(self, node: ast.BinOp):
+                self.generic_visit(node)
+                if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
+                    return node
+                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+
+            def visit_FunctionDef(self, node: ast.FunctionDef):
+                self.generic_visit(node)
+                if self.name is None:
+                    node.name = self.name = F'__wrapped_{node.name}'
+                    for k in range(len(node.decorator_list)):
+                        if not isinstance(decorator := node.decorator_list[k], ast.Call):
+                            continue
+                        if not isinstance(decorator := decorator.func, ast.Name):
+                            continue
+                        if decorator.id == masked.__name__:
+                            del node.decorator_list[:k + 1]
+                            break
+                return node
+
+        pp = Postprocessor()
+        fixed = ast.fix_missing_locations(pp.visit(tree))
+        eval(compile(fixed, function.__code__.co_filename, 'exec'))
+        if (name := pp.name) is None:
+            raise RuntimeError
+        return wraps(function)(eval(name))
+
+    return decorator
