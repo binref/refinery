@@ -120,27 +120,15 @@ class Format:
     def __hash__(self):
         return hash((self.category, self.mnemonic))
 
-    def cmp(self, them):
-        if not isinstance(them, Format):
-            return None
-        t1 = tuple(self.mnemonic.split('/'))
-        t2 = tuple(them.mnemonic.split('/'))
-        if t1[0] != t2[0]:
-            return 1
-        if t1 == t2:
-            return +0
-        elif t1 > t2:
-            return +1
-        elif t1 < t2:
-            return -1
-        else:
-            return None
+    def __str__(self):
+        return self.mnemonic
 
     def __le__(self, them):
-        return self.cmp(them) in (0, -1)
-
-    def __lt__(self, them):
-        return self.cmp(them) == -1
+        if not isinstance(them, Format):
+            return False
+        t1 = set(self.mnemonic.split('/'))
+        t2 = set(them.mnemonic.split('/'))
+        return t1 <= t2
 
     def __eq__(self, them):
         if not isinstance(them, Format):
@@ -297,9 +285,9 @@ class Fmt(Format, enum.Enum):
     MSI = (FC.Archive, 'msi', 'MSI', 'Microsoft Installer Archive (MSI)')
     CFF = (FC.Binary, 'ole', 'OLE', 'Compound File Format')
 
-    DOCX = (FC.Document, 'docx', 'ZIP/DOCX', 'Microsoft Word ZIP/XML Document')
-    XLSX = (FC.Document, 'xlsx', 'ZIP/XLSX', 'Microsoft Excel ZIP/XML Document')
-    PPTX = (FC.Document, 'pptx', 'ZIP/PPTX', 'Microsoft PowerPoint ZIP/XML Document')
+    DOCX = (FC.Document, 'docx', 'OFFICE/ZIP/DOCX', 'Microsoft Word ZIP/XML Document')
+    XLSX = (FC.Document, 'xlsx', 'OFFICE/ZIP/XLSX', 'Microsoft Excel ZIP/XML Document')
+    PPTX = (FC.Document, 'pptx', 'OFFICE/ZIP/PPTX', 'Microsoft PowerPoint ZIP/XML Document')
 
     TEXT = (FC.Text, 'txt', 'Text', 'Plain Text Data')
     ASCII = (FC.Text, 'txt', 'Text/ASCII', 'Plain Text, Single Byte Encoding')

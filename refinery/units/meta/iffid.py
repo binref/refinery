@@ -19,4 +19,10 @@ class iffid(ConditionalUnit, docs='{0}{p}{1}'):
         super().__init__(pattern=Arg.AsOption(pattern, Fmt), retain=retain)
 
     def match(self, chunk):
-        return self.args.pattern <= get_structured_data_type(chunk)
+        if t := get_structured_data_type(chunk):
+            pattern: Fmt = self.args.pattern
+            self.log_info(F'computed: {t!s}')
+            self.log_debug(F'expected: {pattern!s}')
+            return pattern <= t
+        else:
+            return False

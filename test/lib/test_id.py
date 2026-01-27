@@ -56,6 +56,7 @@ class TestIDLib(TestBase):
         self.assertNotEqual(idlib.Fmt.JSON, idlib.Fmt.REG)
         self.assertLessEqual(idlib.Fmt.ZIP, idlib.Fmt.DOCX)
         self.assertFalse(idlib.Fmt.OFFICE <= idlib.Fmt.TEXT)
+        self.assertLessEqual(idlib.Fmt.OFFICE, idlib.Fmt.DOCX)
 
     def test_not_json_regression(self):
         a = B'Acceptance of the QuoVadis Root CA 3 Certificate'
