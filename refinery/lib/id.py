@@ -281,13 +281,13 @@ class Fmt(Format, enum.Enum):
     ONE = (FC.Document, 'one', 'OFFICE/ONE', 'Microsoft OneNote Document')
     XLS = (FC.Document, 'xls', 'OFFICE/XLS', 'Microsoft Excel Document')
     PPT = (FC.Document, 'ppt', 'OFFICE/PPT', 'Microsoft PowerPoint Document')
-    MSG = (FC.Document, 'msg', 'OFFICE/MSG', 'Microsoft Outlook EMail Message')
+    MSG = (FC.Document, 'msg', 'MSG', 'Microsoft Outlook EMail Message')
     MSI = (FC.Archive, 'msi', 'MSI', 'Microsoft Installer Archive (MSI)')
     CFF = (FC.Binary, 'ole', 'OLE', 'Compound File Format')
 
-    DOCX = (FC.Document, 'docx', 'OFFICE/ZIP/DOCX', 'Microsoft Word ZIP/XML Document')
-    XLSX = (FC.Document, 'xlsx', 'OFFICE/ZIP/XLSX', 'Microsoft Excel ZIP/XML Document')
-    PPTX = (FC.Document, 'pptx', 'OFFICE/ZIP/PPTX', 'Microsoft PowerPoint ZIP/XML Document')
+    DOCX = (FC.Document, 'docx', 'OFFICE/ZIP/DOCX', 'Microsoft ZIP/XML Document for Word')
+    XLSX = (FC.Document, 'xlsx', 'OFFICE/ZIP/XLSX', 'Microsoft ZIP/XML Document for Excel')
+    PPTX = (FC.Document, 'pptx', 'OFFICE/ZIP/PPTX', 'Microsoft ZIP/XML Document for PowerPoint')
 
     TEXT = (FC.Text, 'txt', 'Text', 'Plain Text Data')
     ASCII = (FC.Text, 'txt', 'Text/ASCII', 'Plain Text, Single Byte Encoding')
