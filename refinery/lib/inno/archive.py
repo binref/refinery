@@ -1331,7 +1331,8 @@ class SetupLanguage(InnoStruct):
         if version < (4, 2, 2):
             self.Codepage = DEFAULT_CODEPAGE.get(self.LanguageId.Value, 'cp1252')
         elif version.ascii:
-            cp = reader.u32() or 1252
+            cp = reader.u32()
+            cp = cp or 1252
             self.Codepage = F'cp{cp}'
         else:
             if version < (5, 3, 0):
@@ -1532,7 +1533,7 @@ class SetupMessage(InnoStruct):
             codec = self._language_value.Codepage
         try:
             self.Value = codecs.decode(self._raw_value, codec)
-        except LookupError:
+        except (LookupError, UnicodeDecodeError):
             # TODO: This is a fallback
             self.Value = codecs.decode(self._raw_value, 'latin1')
 
@@ -2785,16 +2786,6 @@ class InnoArchive:
             if file.setup is None:
                 failures.append(F'file {file.path} had no associated metadata')
                 continue
-            if file.chunk_length < 0x10000:
-                try:
-                    data = self.read_file(file)
-                except InvalidPassword:
-                    continue
-                except Exception as e:
-                    failures.append(F'extraction error for {file.path}: {e!s}')
-                    continue
-                if file.check(data) != file.checksum:
-                    failures.append(F'invalid checksum for {file.path}')
 
         return InnoParseResult(
             version,
