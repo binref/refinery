@@ -123,8 +123,10 @@ class Format:
     def cmp(self, them):
         if not isinstance(them, Format):
             return None
-        t1 = self.mnemonic.split('/')
-        t2 = them.mnemonic.split('/')
+        t1 = tuple(self.mnemonic.split('/'))
+        t2 = tuple(them.mnemonic.split('/'))
+        if t1[0] != t2[0]:
+            return 1
         if t1 == t2:
             return +0
         elif t1 > t2:
@@ -139,12 +141,6 @@ class Format:
 
     def __lt__(self, them):
         return self.cmp(them) == -1
-
-    def __ge__(self, them):
-        return self.cmp(them) in (0, +1)
-
-    def __gt__(self, them):
-        return self.cmp(them) == +1
 
     def __eq__(self, them):
         if not isinstance(them, Format):
@@ -291,12 +287,13 @@ class Fmt(Format, enum.Enum):
     REG_HIVE = (FC.Binary, 'reg', 'WinReg/Hive', 'Windows Registry Hive File', 'text/plain')
     REG_TEXT = (FC.Binary, 'reg', 'WinReg/Text', 'Windows Registry Script')
 
-    MDB = (FC.Document, 'accdb', 'MDB', 'Microsoft Access Database')
-    DOC = (FC.Document, 'doc', 'DOC', 'Microsoft Word Document')
-    ONE = (FC.Document, 'one', 'ONE', 'Microsoft OneNote Document')
-    XLS = (FC.Document, 'xls', 'XLS', 'Microsoft Excel Document')
-    PPT = (FC.Document, 'ppt', 'PPT', 'Microsoft PowerPoint Document')
-    MSG = (FC.Document, 'msg', 'MSG', 'Microsoft Outlook EMail Message')
+    OFFICE = (FC.Document, 'bin', 'OFFICE', 'A Microsoft Office Document')
+    MDB = (FC.Document, 'accdb', 'OFFICE/MDB', 'Microsoft Access Database')
+    DOC = (FC.Document, 'doc', 'OFFICE/DOC', 'Microsoft Word Document')
+    ONE = (FC.Document, 'one', 'OFFICE/ONE', 'Microsoft OneNote Document')
+    XLS = (FC.Document, 'xls', 'OFFICE/XLS', 'Microsoft Excel Document')
+    PPT = (FC.Document, 'ppt', 'OFFICE/PPT', 'Microsoft PowerPoint Document')
+    MSG = (FC.Document, 'msg', 'OFFICE/MSG', 'Microsoft Outlook EMail Message')
     MSI = (FC.Archive, 'msi', 'MSI', 'Microsoft Installer Archive (MSI)')
     CFF = (FC.Binary, 'ole', 'OLE', 'Compound File Format')
 
