@@ -7,13 +7,35 @@ their heuristics to determine that a high quality output has been generated.
 """
 from __future__ import annotations
 
+import codecs
 import enum
 import re
 
 from typing import Callable, NamedTuple
+from unicodedata import category as unicode_category
 
 from refinery.lib.tools import entropy
 from refinery.lib.types import buf
+
+ENCODINGS = [
+    'utf8',
+    'cp1252',
+    'cp1250',
+    'cp1251',
+    'cp1253',
+    'cp1254',
+    'cp1255',
+    'cp1256',
+    'cp1257',
+    'cp1258',
+    'gbk',
+    'iso_8859_1',
+    'iso_8859_14',
+    'big5',
+    'cp874',
+    'shift_jis',
+    'uhc',
+]
 
 try:
     import ctypes
@@ -284,6 +306,7 @@ class Fmt(Format, enum.Enum):
 
     TEXT = (FC.Text, 'txt', 'Text', 'Plain Text Data')
     ASCII = (FC.Text, 'txt', 'Text/ASCII', 'Plain Text, Single Byte Encoding')
+    UTF08 = (FC.Text, 'txt', 'Text/UTF08', 'Plain Text, UTF-08 Encoding')
     UTF16 = (FC.Text, 'txt', 'Text/UTF16', 'Plain Text, UTF-16 Encoding')
     UTF32 = (FC.Text, 'txt', 'Text/UTF32', 'Plain Text, UTF-32 Encoding')
 
@@ -676,6 +699,7 @@ def get_reg_export_type(data: buf):
 
 
 class TextEncoding(NamedTuple):
+    codec: str
     bom: int = 0
     lsb: int = 0
     step: int = 1
@@ -710,78 +734,65 @@ def guess_text_encoding(
     maxbad = 1 - ascii_ratio
     bom = 0
     lsb = 0
+    enc = None
 
     if data[:3] == B'\xEF\xBB\xBF':
-        # BOM: UTF8
         bom = 3
+        enc = 'utf8'
     elif data[:4] == B'\xFF\xFE\0\0':
-        step = bom = lsb = 4 # UTF-32LE
-    elif data[:2] == B'\xFF\xFE':
-        step = bom = lsb = 2 # UTF-16LE
-    elif data[:2] == B'\xFE\xFF':
-        step, bom, lsb = 2, 2, 3
+        step = bom = lsb = 4
+        enc = 'utf-32le'
     elif data[:4] == B'\0\0\xFE\xFF':
         step, bom, lsb = 4, 4, 7
+        enc = 'utf-32be'
+    elif data[:2] == B'\xFF\xFE':
+        step = bom = lsb = 2
+        enc = 'utf-16le'
+    elif data[:2] == B'\xFE\xFF':
+        step, bom, lsb = 2, 2, 3
+        enc = 'utf-16be'
     elif any(data[:4] == bom for bom in (
         b'\x2B\x2F\x76\x38',
         b'\x2B\x2F\x76\x39',
         b'\x2B\x2F\x76\x2B',
         b'\x2B\x2F\x76\x2F',
     )):
-        # UTF7 BOM
         bom = 4
+        enc = 'utf7'
     elif len(view) % 2 == 0:
         u16le = (win := view[1:size:2]) and ascii_count(win) / len(win) <= maxbad
         u16be = (win := view[0:size:2]) and ascii_count(win) / len(win) <= maxbad
         if u16le:
             if u16be:
                 return None
+            enc = 'utf-16le'
             step, lsb = 2, 0
         elif u16be:
+            enc = 'utf-16be'
             step, lsb = 2, 1
 
     win = view[lsb:size:step]
+
+    if len(data) <= bom:
+        return None
 
     if step > 1:
         if len(data) % step != 0:
             return None
         if not win or ascii_count(win) / len(win) < ascii_ratio:
             return None
+        assert enc is not None
+        return TextEncoding(enc, bom, lsb, step)
 
-    if len(data) <= bom:
-        return None
-
-    if not size:
-        return TextEncoding(bom, lsb, step)
-
-    if isinstance(data, (bytes, bytearray)):
-        histogram = [data.count(b, bom, size) for b in range(0x100)]
-    else:
-        histogram = [0] * 256
-        for b in view[bom:size]:
-            histogram[b] += 1
-
-    presence = memoryview(bytes(1 if v else 0 for v in histogram))
-
-    if sum(presence) > 102:
-        # 96 printable ASCII characters plus some slack for control bytes or encoding
-        return None
-    if sum(presence[0x7F:]) > 5:
-        # Allow for some control characters or encoding-specific values
-        return None
-    if sum(presence[:0x20]) > 5:
-        # Tab, CR, LF, Null, plus one byte slack
-        return None
-
-    bad = sum(histogram[:0x20]) + sum(histogram[0x7F:]) \
-        - histogram[0x0D] \
-        - histogram[0x0A] \
-        - histogram[0x09]
-    if step > 1:
-        # disregard zeros for this case
-        bad -= histogram[0]
-    if bad / sum(histogram) <= maxbad:
-        return TextEncoding(bom, lsb, step)
+    for encoding in (enc and [enc] or ENCODINGS):
+        try:
+            decoded = codecs.decode(data, encoding)
+        except UnicodeDecodeError:
+            continue
+        else:
+            bad = sum(1 for c in decoded if unicode_category(c).startswith('C'))
+            if bad / len(decoded) <= maxbad:
+                return TextEncoding(encoding, bom, lsb, step)
 
 
 def xml_or_html(view: buf):
@@ -1268,7 +1279,10 @@ def get_text_format(data: buf):
     if is_likely_json(view):
         return Fmt.JSON
     if step == 1:
-        return Fmt.ASCII
+        if encoding.codec == 'utf8':
+            return Fmt.UTF08
+        else:
+            return Fmt.ASCII
     if step == 2:
         return Fmt.UTF16
     if step == 4:
