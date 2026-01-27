@@ -631,7 +631,7 @@ class Arg(Argument):
     def Number(
         cls,
         *args   : str,
-        bound   : type[omit] | tuple[int, int] = omit,
+        bound   : type[omit] | tuple[int | None, int | None] = omit,
         help    : type[omit] | str = omit,
         dest    : type[omit] | str = omit,
         metavar : type[omit] | str = omit,
