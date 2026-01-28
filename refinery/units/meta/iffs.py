@@ -10,13 +10,22 @@ class iffs(ConditionalUnit, docs='{0}{p}{1}'):
     """
     def __init__(
         self,
-        needle: Param[buf, Arg(help='the string to search for')],
+        needle: Param[buf, Arg.Binary(help='The string to search for.')],
+        nocase: Param[bool, Arg.Switch('-i', help='Specify to make the search case-insensitive.')],
         retain=False,
     ):
         super().__init__(
             needle=needle,
+            nocase=nocase,
             retain=retain,
         )
 
     def match(self, chunk):
-        return self.args.needle in chunk
+        needle = self.args.needle
+        if self.args.nocase:
+            from re import IGNORECASE, escape, search
+            return search(
+                escape(needle), chunk, flags=IGNORECASE
+            ) is not None
+        else:
+            return needle in chunk
