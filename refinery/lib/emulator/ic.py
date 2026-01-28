@@ -6,7 +6,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, RawMetalEmulator, Register
+from refinery.lib.emulator.abstract import EmulationError, RawMetalEmulator, Register, MemAccess
 from refinery.lib.executable import Arch
 from refinery.lib.shared import icicle as ic
 
@@ -112,7 +112,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                     ice.mem_protect(addr, size, MP.ExecuteOnly)
                     if mm_w_hooked and prot == MP.ExecuteReadWrite:
                         value = self.mem_read_int(addr, size)
-                        if self.hook_mem_write(ice, 0, addr, size, value, self.state) is False:
+                        if self.hook_mem_write(ice, MemAccess.Write, addr, size, value, self.state) is False:
                             break
                 mprotect.clear()
                 retrying = 0
@@ -129,13 +129,18 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                 EC = ic.ExceptionCode
                 ea = ice.exception_value
                 ec = ice.exception_code
-                if ec in (EC.ReadUnmapped, EC.WriteUnmapped) and mm_e_hooked:
-                    if self.hook_mem_error(ice, 0, ea, size, 0, self.state) is not False:
+                xs = None
+                if ec == EC.ReadUnmapped:
+                    xs = MemAccess.Unmapped | MemAccess.Read
+                if ec == EC.WriteUnmapped:
+                    xs = MemAccess.Unmapped | MemAccess.Write
+                if xs is not None and mm_e_hooked:
+                    if self.hook_mem_error(ice, xs, ea, size, 0, self.state) is not False:
                         retrying += 1
                         continue
                 elif ec == EC.ReadPerm and mm_x_hooked:
                     value = self.mem_read_int(ea, size)
-                    if self.hook_mem_read(ice, 0, ea, size, value, self.state) is not False:
+                    if self.hook_mem_read(ice, MemAccess.Read, ea, size, value, self.state) is not False:
                         prot = MP.ExecuteRead if mm_w_hooked else MP.ExecuteReadWrite
                         mprotect.append((ea, size, prot))
                         retrying += 1

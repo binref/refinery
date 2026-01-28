@@ -19,6 +19,7 @@ from refinery.lib.emulator import (
     EmulationError,
     Emulator,
     Hook,
+    MemAccess,
     Register,
 )
 from refinery.lib.executable import Arch, Range
@@ -201,12 +202,12 @@ def EmuFactory(base: ET) -> ET:
             return retval
 
         @inject_state_argument
-        def hook_mem_read(self, emu, access: int, address: int, size: int, value: int, state: EmuState):
+        def hook_mem_read(self, emu, access: MemAccess, address: int, size: int, value: int, state: EmuState):
             mask = (1 << (size * 8)) - 1
             state.last_read = value & mask
 
         @inject_state_argument
-        def hook_mem_write(self, emu, access: int, address: int, size: int, value: int, state: EmuState):
+        def hook_mem_write(self, emu, access: MemAccess, address: int, size: int, value: int, state: EmuState):
             mask = (1 << (size * 8)) - 1
             unsigned_value = value & mask
 
@@ -270,11 +271,16 @@ def EmuFactory(base: ET) -> ET:
                     vstack.log_always(msg)
 
         @inject_state_argument
-        def hook_mem_error(self, _, access: int, address: int, size: int, value: int, state: EmuState) -> bool:
+        def hook_mem_error(self, _, access: MemAccess, address: int, size: int, value: int, state: EmuState) -> bool:
             if address == self.state.last_api:
                 self.state.last_api = None
                 return True
-            if address == (1 << self.exe.pointer_size) - 1:
+            if access.Execute and access.Unmapped:
+                vstack.log_info(self.state.log('attempt to execute unmapped memory'))
+                self.halt()
+                return False
+            if address >= (1 << self.exe.pointer_size) - 1:
+                vstack.log_info(self.state.log('attempt to execute beyond address space'))
                 self.halt()
                 return False
             msg = F'{state.fmt(address)}:{size:02X} memory error'
@@ -286,7 +292,7 @@ def EmuFactory(base: ET) -> ET:
                 except Exception as error:
                     vstack.log_info(self.state.log(F'{msg}; fatal, {exception_to_string(error)}'))
                 else:
-                    vstack.log_debug(self.state.log(F'{msg}; recovery, space mapped'))
+                    vstack.log_debug(self.state.log(F'{msg}; recovery, space mapped for access {access!r}'))
             return True
 
         def hook_code_error(self, emu, state: EmuState):

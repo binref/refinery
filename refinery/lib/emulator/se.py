@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, Emulator, Register
+from refinery.lib.emulator.abstract import EmulationError, Emulator, Register, MemAccess
+from refinery.lib.emulator.uc_shared import get_access_map
 from refinery.lib.executable import ET, Arch
 from refinery.lib.shared import speakeasy as se
 from refinery.lib.vfs import VirtualFileSystem
@@ -88,21 +89,35 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         emu.emu.add_interrupt_hook(cb=emu.emu._hook_interrupt)
         emu.emu.builtin_hooks_set = True
 
+        self._access_map = get_access_map()
+
         if self.hooks.CodeExecute:
             emu.add_code_hook(self.hook_code_execute, ctx=self.state)
             emu.add_dyn_code_hook(self.hook_code_execute, ctx=self.state)
 
         if self.hooks.MemoryRead:
-            emu.add_mem_read_hook(self.hook_mem_read)
+            emu.add_mem_read_hook(self._uc_hook_mem_read)
 
         if self.hooks.MemoryWrite:
-            emu.add_mem_write_hook(self.hook_mem_write)
+            emu.add_mem_write_hook(self._uc_hook_mem_write)
 
         if self.hooks.MemoryError:
-            emu.add_mem_invalid_hook(self.hook_mem_error)
+            emu.add_mem_invalid_hook(self._uc_hook_mem_error)
 
         if self.hooks.ApiCall:
             emu.add_api_hook(self.hook_api_call, '*', '*')
+
+    def _uc_hook_mem_read(self, emu: Se, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+        access = self._access_map.get(access, MemAccess.Unknown)
+        return self.hook_mem_read(emu, access, address, size, value, state)
+
+    def _uc_hook_mem_write(self, emu: Se, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+        access = self._access_map.get(access, MemAccess.Unknown)
+        return self.hook_mem_write(emu, access, address, size, value, state)
+
+    def _uc_hook_mem_error(self, emu: Se, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+        access = self._access_map.get(access, MemAccess.Unknown)
+        return self.hook_mem_error(emu, access, address, size, value, state)
 
     def _enable_single_step(self):
         hd = self._single_step_hook_d

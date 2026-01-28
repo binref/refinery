@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, RawMetalEmulator, Register
+from refinery.lib.emulator.abstract import EmulationError, MemAccess, RawMetalEmulator, Register
 from refinery.lib.executable import BO, Arch
 from refinery.lib.shared import unicorn as uc
+from refinery.lib.emulator.uc_shared import get_access_map
 
 if TYPE_CHECKING:
     from unicorn.unicorn import Uc
@@ -57,15 +58,29 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
             self._install_api_trampoline()
             self.unicorn.hook_add(uc.UC_HOOK_CODE, self._hook_api_call_check, user_data=self.state)
 
+        self._access_map = get_access_map()
+
         for hook, hooked, callback in [
             (uc.UC_HOOK_CODE,           self.hooks.CodeExecute, self.hook_code_execute ),  # noqa
             (uc.UC_HOOK_INSN_INVALID,   self.hooks.CodeError,   self.hook_code_error   ),  # noqa
-            (uc.UC_HOOK_MEM_READ,       self.hooks.MemoryRead,  self.hook_mem_read     ),  # noqa
-            (uc.UC_HOOK_MEM_WRITE,      self.hooks.MemoryWrite, self.hook_mem_write    ),  # noqa
-            (uc.UC_HOOK_MEM_INVALID,    self.hooks.MemoryError, self.hook_mem_error    ),  # noqa
+            (uc.UC_HOOK_MEM_READ,       self.hooks.MemoryRead,  self._uc_hook_mem_read ),  # noqa
+            (uc.UC_HOOK_MEM_WRITE,      self.hooks.MemoryWrite, self._uc_hook_mem_write),  # noqa
+            (uc.UC_HOOK_MEM_INVALID,    self.hooks.MemoryError, self._uc_hook_mem_error),  # noqa
         ]:
             if hooked:
                 self.unicorn.hook_add(hook, callback, user_data=self.state)
+
+    def _uc_hook_mem_read(self, emu: Uc, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+        access = self._access_map.get(access, MemAccess.Unknown)
+        return self.hook_mem_read(emu, access, address, size, value, state)
+
+    def _uc_hook_mem_write(self, emu: Uc, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+        access = self._access_map.get(access, MemAccess.Unknown)
+        return self.hook_mem_write(emu, access, address, size, value, state)
+
+    def _uc_hook_mem_error(self, emu: Uc, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+        access = self._access_map.get(access, MemAccess.Unknown)
+        return self.hook_mem_error(emu, access, address, size, value, state)
 
     class _singlestep:
         def __init__(self):
@@ -122,7 +137,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
             end = self.exe.location_from_address(start).virtual.box.upper
         try:
             self.unicorn.emu_start(start, end)
-        except uc.UcError as E:
+        except Exception as E:
             raise EmulationError(str(E)) from E
 
     def halt(self):

@@ -111,6 +111,16 @@ class Hook(FlagAccessMixin, IntFlag):
     NoErrors     = 0b001_01101  # noqa
 
 
+class MemAccess(FlagAccessMixin, IntFlag):
+    Unknown = 0
+    Execute = 0x01
+    Read = 0x02
+    Write = 0x04
+    Unmapped = 0x08
+    Denied = 0x10
+    After = 0x20
+
+
 NopCodeByArch = {
     Arch.X32    : B'\x90',
     Arch.X64    : B'\x90',
@@ -653,19 +663,19 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self.halt()
         return False
 
-    def hook_mem_read(self, emu: _E, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+    def hook_mem_read(self, emu: _E, access: MemAccess, address: int, size: int, value: int, state: _T | None = None) -> bool:
         """
         Called when memory reads are hooked.
         """
         return True
 
-    def hook_mem_write(self, emu: _E, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+    def hook_mem_write(self, emu: _E, access: MemAccess, address: int, size: int, value: int, state: _T | None = None) -> bool:
         """
         Called when memory writes are hooked.
         """
         return True
 
-    def hook_mem_error(self, emu: _E | None, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
+    def hook_mem_error(self, emu: _E | None, access: MemAccess, address: int, size: int, value: int, state: _T | None = None) -> bool:
         """
         Called when memory errors are hooked.
         """
