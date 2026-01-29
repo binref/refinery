@@ -101,3 +101,15 @@ class TestEscaping(TestUnitBase):
     def test_autoquotes_03(self):
         self.assertEqual(B'BINARY REFINERY!"', B'BINARY\\x20REFINERY!"' | self.load() | bytes)
         self.assertEqual(B"'BINARY REFINERY!", B"'BINARY\\x20REFINERY!" | self.load() | bytes)
+
+    def test_regression_sneaky2fa_user_agents(self):
+        data = (
+            RB'"\115\157\x7a\x69\x6c\154\x61\57\65\x2e\60\x20\50\127\x69\156\x64\x6f\x77\163\40'
+            RB'\x4e\124\40\61\60\56\60\x3b\40\x57\x69\x6e\x36\x34\x3b\40\x78\x36\x34\51\x20\x41'
+            RB'\x70\160\154\145\127\x65\x62\113\x69\164\57\x35\63\67\x2e\x33\x36\x20\x28\113\110'
+            RB'\x54\x4d\x4c\54\40\154\x69\153\145\40\x47\145\x63\x6b\x6f\51\x20\103\150\x72\157'
+            RB'\155\145\57\x39\x31\56\x30\x2e\64\64\67\x32\56\61\x32\x34\x20\x53\x61\x66\141\162'
+            RB'\x69\57\65\63\x37\x2e\63\66"')
+        goal = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        test = data | self.load() | str
+        self.assertEqual(goal, test)
