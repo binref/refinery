@@ -54,7 +54,7 @@ class EmuConfig:
     wait_calls: bool
     skip_calls: bool
     write_range: slice
-    wait: int
+    wait: slice[int, int, int]
     block_size: int
     stack_size: int
     max_visits: int
@@ -73,6 +73,7 @@ class EmuState:
     cfg: EmuConfig
     expected_address: int
     address_width: int
+    wait: int
     waiting: int = 0
     callstack: list[int] = field(default_factory=list)
     retaddr: int | None = None
@@ -89,7 +90,7 @@ class EmuState:
     last_api: int | None = None
 
     def log(self, msg: str) -> str:
-        _width = len(str(w)) if (w := self.cfg.wait) else 8
+        _width = len(str(w)) if (w := self.cfg.wait.start) else 8
         _depth = len(self.callstack)
         return F'[wait={self.waiting:0{_width}d}] [depth={_depth}] {self.fmt(self.previous_address)}: {msg}'
 
@@ -255,6 +256,10 @@ def EmuFactory(base: ET) -> ET:
 
             if not skipped:
                 state.write(address, unsigned_value.to_bytes(size, 'little'))
+                wait_config = state.cfg.wait
+                if (wait := state.wait) > (stop := wait_config.stop):
+                    state.wait = max(stop, wait - wait_config.step)
+                    vstack.log_debug(F'adjusting wait to {state.wait}')
                 state.waiting = 0
 
             if state.cfg.show_memory:
@@ -353,11 +358,11 @@ def EmuFactory(base: ET) -> ET:
                 # a function call anyway, but rather a way to get the IP.
                 callstack.pop()
 
-            if waiting > state.cfg.wait > 0:
+            if waiting > state.wait > 0:
                 self.halt()
                 return False
             if not depth or not state.cfg.wait_calls:
-                state.waiting += 1
+                state.waiting = waiting + 1
             state.expected_address += size
 
             instruction = self.disassemble(address)
@@ -403,8 +408,11 @@ class vstack(EmulatingUnit):
             help='Extract only patches that are in the given range, default is {default}.')] = slice(5, None),
         write_range: Param[slice, Arg.Bounds('-n', metavar='MIN:MAX',
             help='Log only writes whose size is in the given range, default is {default}.')] = slice(1, None),
-        wait: Param[int, Arg.Number('-w', help=(
-            'When this many instructions did not write to memory, emulation is halted. The default is {default}.'))] = 20,
+        wait: Param[slice, Arg.Bounds('-w', metavar='A[:B[:D]]', intok=True, help=(
+            'Emulation halts when X instructions ran without tracking a memory write. '
+            'X starts at A and is decreased by D after each write until it reaches B and then remains at B. '
+            'Specifying A is equivalent to A:A:1, and A:B is equivalent to A:B:1. B may not be greater than A. '
+            'The default is {default}.'))] = slice(80, 20, 5),
         wait_calls: Param[bool, Arg.Switch('-c', group='CALL',
             help='Wait indefinitely when inside a function call.')] = False,
         skip_calls: Param[int, Arg.Counts('-C', group='CALL',
@@ -471,11 +479,19 @@ class vstack(EmulatingUnit):
             args.stack_size,
         )
 
+        wait: int | slice[int, int, int] = args.wait
+        if isinstance(wait, int):
+            wait = slice(wait, wait, 1)
+        elif wait.start < wait.stop:
+            raise ValueError('invalid wait format')
+
+        self.log_info(F'setting wait to: {wait.start}:{wait.stop}:{wait.step}')
+
         cfg = EmuConfig(
             args.wait_calls,
             args.skip_calls,
             args.write_range,
-            args.wait,
+            wait,
             args.block_size,
             args.stack_size,
             args.max_visits,
@@ -510,7 +526,7 @@ class vstack(EmulatingUnit):
                     break
 
         for cursor in addresses:
-            state = EmuState(cfg, cursor.start, emu.exe.pointer_size // 4, stop=cursor.stop)
+            state = EmuState(cfg, cursor.start, emu.exe.pointer_size // 4, wait=wait.start, stop=cursor.stop)
             emu.reset(state)
 
             for reg in emu.general_purpose_registers():
