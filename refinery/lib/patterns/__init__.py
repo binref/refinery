@@ -494,7 +494,7 @@ _pattern_pem = (
 ).format(n=R'(?:\r\n|\n\r|\n)', b=R'[0-9a-zA-Z\+\/]')
 
 
-AnsiColor = pattern(R'\x1b\[(?:22|[34]\d|(?:9|10)[0-8]|[0-2])(?:;\d+)*m')
+AnsiColor = pattern(R'\x1b\[(?:22|[34]\d|(?:9|10)[0-8]|0?[0-2])(?:;\d+){0,20}m')
 
 
 class checks(_PatternEnum):
