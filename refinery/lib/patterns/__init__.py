@@ -595,6 +595,7 @@ class formats(_PatternEnum):
     integer = int
     number = num
     string = str
+    ps = printable
 
     @classmethod
     def from_dashname(cls, key: str):
