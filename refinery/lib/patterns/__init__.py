@@ -433,13 +433,13 @@ _pattern_defanged_url = F'{_prefix_defanged_url}({_pattern_defanged_hostname}){_
 _pattern_email = fR'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{_pattern_serrated_domain})'
 _pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
 
-_pattern_pathpart_nospace = R'[-\w+,.;@\]\[{}^`~]+'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
+_pattern_pathpart_nospace = R'[-\w+,.;@\]\[{}^`~]{1,256}'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 _pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=_pattern_pathpart_nospace)
 _pattern_nix_path_element = R'(?:{n} ){{0,1}}{n}'.format(n=_pattern_pathpart_nospace)
 _pattern_win_env_variable = R'%[a-zA-Z][a-zA-Z0-9_\-\(\)]*%'
 
-_pattern_win_path_template_abs = R'(?:{s})(?P<__pathsep__>[\\\/])(?:{p}(?P=__pathsep__))*{p}(?:(?P=__pathsep__)|\b)'
-_pattern_win_path_template_rel = R'(?:{p}|)\\(?:{p}\\)*{p}(?:\\|\b)'
+_pattern_win_path_template_abs = R'(?:{s})(?P<__pathsep__>[\\\/])(?:{p}(?P=__pathsep__)){{0,256}}{p}(?:(?P=__pathsep__)|\b)'
+_pattern_win_path_template_rel = R'(?:{p}|)\\(?:{p}\\){{0,256}}{p}(?:\\|\b)'
 _pattern_win_path_template = F'(?:{_pattern_win_path_template_abs}|{_pattern_win_path_template_rel})'
 
 _pattern_win_root = '|'.join([
