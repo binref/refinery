@@ -84,4 +84,6 @@ class docmeta(Unit):
             for name, value in contents.items():
                 contents[name] = interpret(value)
 
+        if not result:
+            return None
         yield from ppjson(tabular=self.args.tabular)._pretty_output(result)
