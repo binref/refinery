@@ -11,7 +11,6 @@ class esc(Unit):
     Encodes and decodes common ASCII escape sequences.
     """
     _ESCAPE = {
-        0x00: BR'\0',
         0x07: BR'\a',
         0x08: BR'\b',
         0x0C: BR'\f',
@@ -93,7 +92,7 @@ class esc(Unit):
             RB'\\(u[a-fA-F0-9]{4}|x[a-fA-F0-9]{1,2}|[0-7]{1,3}|.)', unescape, data)
         return data
 
-    def reverse(self, data):
+    def reverse(self, data: bytearray):
         if self.args.unicode:
             string = data.decode(self.codec).encode('UNICODE_ESCAPE')
         else:

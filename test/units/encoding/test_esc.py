@@ -113,3 +113,8 @@ class TestEscaping(TestUnitBase):
         goal = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         test = data | self.load() | str
         self.assertEqual(goal, test)
+
+    def test_invertible_with_zero_bytes(self):
+        data = B'FOO\x005BAR'
+        test = data | -self.load() | self.load() | bytes
+        self.assertEqual(test, data)
