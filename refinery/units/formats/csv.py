@@ -23,11 +23,16 @@ class csv(Unit):
     ):
         super().__init__(quote=quote, delim=delim)
 
-    def json_to_csv(self, table: list):
+    def json_to_csv(self, table: list | dict):
         quote = self.args.quote.decode(self.codec)
         delim = self.args.delim.decode(self.codec)
 
-        if not isinstance(table, list):
+        if isinstance(table, dict):
+            table = [{
+                'Name': name,
+                'Value': val,
+            } for name, val in table.items()]
+        elif not isinstance(table, list):
             raise ValueError('Input must be a JSON list.')
 
         out = MemoryFile()
