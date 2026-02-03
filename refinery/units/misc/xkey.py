@@ -66,6 +66,16 @@ class xkey(Unit):
     """
 
     _CRIBS: dict[range, dict[str, bytes | tuple[bytes | tuple[bytes, ...], ...]]] = {
+        range(16, 0x200, 1): {
+            'JavaType'      : (B'java/lang/', (
+                B'Boolean',
+                B'Exception',
+                B'Integer',
+                B'NullPointerException',
+                B'Object',
+                B'String',
+            )),
+        },
         range(0, 64, 4): {
             'ZIP'           : (B'PK\x03\x04', (B'\x14\x00', B'\x0A\x00'), (B'\x08\x00', B'\x00\x00')),
             'RAR'           : (B'Rar!\x1A\x07', (B'\x01\x00', B'\x00')),
@@ -77,7 +87,7 @@ class xkey(Unit):
             'LNK'           : (B'L\0\0\0\01\x14\02\0\0\0\0\0\xC0\0\0\0\0\0\0F', (B'', B'\x9B')),
             'DDS'           : (B'\x00\x00\x00\x01Bud1'),
             'ELF'           : (B'\x7FELF'),
-            'JavaClass'     : (B'\xCA\xFE\xBA\xBE'),
+            'JavaClass'     : (B'\xCA\xFE\xBA\xBE\0\0', (B'\00', B'\01')),
             'LZIP'          : (B'LZIP'),
             'SZDD'          : (B'SZDD\x88\xF0\x27\x33'),
             'LZMA'          : (B'\x5D\x00\x00\x00'),
