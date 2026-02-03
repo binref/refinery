@@ -81,6 +81,9 @@ class carve(PatternExtractor):
         elif self.args.format == formats.ps1str:
             from ..encoding.escps import escps
             decoder = escps()
+        elif self.args.format == formats.htmlesc:
+            from ..encoding.htmlesc import htmlesc
+            decoder = htmlesc()
         elif self.args.format == formats.vbastr:
             from ..encoding.escps import escps
             decoder = escps()
