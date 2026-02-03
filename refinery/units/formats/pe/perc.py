@@ -6,6 +6,7 @@ import struct
 from typing import Callable
 
 from refinery.lib import json, lief
+from refinery.lib.id import is_likely_pe
 from refinery.lib.lcid import LCID
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.types import Param, buf
@@ -205,6 +206,10 @@ class perc(PathExtractorUnit):
         if not isinstance(rsrc := pe.resources, lief.PE.ResourceDirectory):
             raise TypeError('resource root entry was unexpectedly not a directory')
         yield from self._search(pe, rsrc)
+
+    @classmethod
+    def handles(cls, data: buf):
+        return is_likely_pe(data)
 
     _LANG_ID_TO_LCID = _mktbl([
         (0x00, 0x03, 0x0C00),
