@@ -71,7 +71,7 @@ class alu(ArithmeticUnit):
         inc: Param[bool, Arg.Switch('-I', group='EPI', help='equivalent to --epilogue=S+1')] = False,
         dec: Param[bool, Arg.Switch('-D', group='EPI', help='equivalent to --epilogue=S-1')] = False,
         cbc: Param[bool, Arg.Switch('-X', group='EPI', help='equivalent to --epilogue=(B)')] = False,
-        ctr: Param[bool, Arg.Switch('-T', group='EPI', help='equivalent to --epilogue=S+B')] = False,
+        ctr: Param[bool, Arg.Switch('-C', group='EPI', help='equivalent to --epilogue=S+B')] = False,
         bigendian=False, blocksize=1, precision=-1
     ):
         for flag, flag_is_set, expression in [

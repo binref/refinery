@@ -1526,11 +1526,14 @@ class Unit(UnitBase, abstract=True):
             if self.leniency >= 1:
                 return exception.partial
             if self.log_level < LogLevel.DETACHED:
-                self.log_warn(F'A partial result was returned, use the -L switch to retrieve it: {exception}')
+                if not self.args.trypass:
+                    self.log_warn(F'A partial result was returned, use the -L switch to retrieve it: {exception}')
                 return None
             raise exception
         elif self.leniency >= 1 and data is not None:
             return data
+        elif self.args.trypass:
+            return None
         elif self.log_level >= LogLevel.DETACHED:
             raise exception
         elif isinstance(exception, RefineryCriticalException):
@@ -2029,6 +2032,7 @@ class Unit(UnitBase, abstract=True):
         cls = self.__class__
         iff = self.args.iff
         lvl = self.log_level
+        ctr = 0
 
         if iff and not self.handles(data):
             if iff < 2:
@@ -2050,8 +2054,13 @@ class Unit(UnitBase, abstract=True):
             if isinstance(it, (bytes, bytearray, memoryview)):
                 it = (it,)
             for out in it:
+                ctr += 1
                 assert isinstance(out, Chunk)
                 yield out
+        except BaseException:
+            if ctr > 0 or not self.args.trypass:
+                raise
+            yield data
         finally:
             cls.logger_locked = False
 
@@ -2197,6 +2206,9 @@ class Unit(UnitBase, abstract=True):
             base.add_argument('-R', '--reverse', action='store_true',
                 help='Use the reverse operation.')
 
+        base.add_argument('-T', '--try', dest='trypass', action='store_true',
+            help='Silence exceptions and return input data if no output would be produced.')
+
         if cls.handles.__func__ is not Unit.handles.__func__:
             base.add_argument('-F', '--iff', action='count', default=0,
                 help='Only apply unit if it can handle the input format. Specify twice to drop all other chunks.')
@@ -2277,6 +2289,7 @@ class Unit(UnitBase, abstract=True):
             unit.args._store(_argo=argp.order)
             unit.args.quiet = args.quiet
             unit.args.iff = args.iff
+            unit.args.trypass = args.trypass
             unit.args.lenient = args.lenient
             unit.args.squeeze = args.squeeze
             unit.args.nesting = args.nesting
@@ -2315,6 +2328,7 @@ class Unit(UnitBase, abstract=True):
         for key, value in dict(
             nesting=0,
             iff=0,
+            trypass=False,
             reverse=False,
             squeeze=False,
             verbose=0,

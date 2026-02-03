@@ -163,7 +163,7 @@ class pemeta(Unit):
             help='Parse the .NET header.')] = False,
         signatures: Param[bool, Arg.Switch('-S',
             help='Parse digital signatures.')] = False,
-        timestamps: Param[int, Arg.Counts('-T',
+        timestamps: Param[int, Arg.Counts('-P',
             help='Extract time stamps. Specify twice for more detail.')] = 0,
         version: Param[bool, Arg.Switch('-V',
             help='Parse the VERSION resource.')] = False,
