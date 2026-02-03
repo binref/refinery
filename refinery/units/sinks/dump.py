@@ -220,9 +220,7 @@ class dump(Unit):
             self.stream = io.BytesIO()
 
         for index, chunk in enumerate(chunks, 0):
-            if not chunk.visible:
-                continue
-            if not clipcopy and not self.exhausted and (nostream or not self.stream):
+            if chunk.visible and not clipcopy and not self.exhausted and (nostream or not self.stream):
                 try:
                     path = next(self.paths)
                 except StopIteration:
