@@ -49,15 +49,29 @@ def _tojson(obj):
         return str(obj)
     if isinstance(obj, jvb.JavaInstance):
         cd = obj.classdesc
-        fd = obj.field_data[cd]
-        return dict(
-            isException=cd.is_exception,
-            isInnerClass=cd.is_inner_class,
-            isLocalInnerClass=cd.is_local_inner_class,
-            isStaticMemberClass=cd.is_static_member_class,
-            name=cd.name,
-            fields=_preprocess(fd),
-        )
+        fields = _preprocess(obj.field_data[cd])
+        if (name := cd.name) and name.startswith('java.lang.') and len(fields) == 1:
+            try:
+                return fields['value']
+            except KeyError:
+                pass
+        result = {'class': cd.name, 'fields': fields}
+        flags = []
+        if cd.is_exception:
+            flags.append('EXCEPTION')
+        if cd.is_inner_class:
+            flags.append('INNER')
+        if cd.is_local_inner_class:
+            flags.append('LOCAL_INNER')
+        if cd.is_static_member_class:
+            flags.append('STATIC_MEMBER')
+        if cd.is_super_class:
+            flags.append('SUPER')
+        if flags:
+            result['flags'] = flags
+        if cd.interfaces:
+            result['interfaces'] = cd.interfaces
+        return result
     if isinstance(obj, jvb.JavaField):
         return obj.class_name
     if isinstance(obj, jvb.JavaEnum):
@@ -78,3 +92,7 @@ class dsjava(Unit):
     def process(self, data):
         ds = _preprocess(self._javaobj.loads(data))
         return json.dumps(ds, tojson=_tojson)
+
+    @classmethod
+    def handles(cls, data):
+        return data[:4] == B'\xAC\xED\0\05'
