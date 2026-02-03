@@ -412,6 +412,8 @@ _pattern_string = _sized_pattern_string()
 _pattern_urlenc = R'''(?:%[0-9a-fA-F]{2}|[0-9a-zA-Z\-\._~\?!$&=])+'''
 _pattern_urlhex = R'''(?:%[0-9a-fA-F]{2})+'''
 
+_pattern_htmlesc = R'''(?:&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]{2,32}[0-9]{0,2});?)+'''
+
 _pattern_json = (
     R'''\s{0,20}[\[\{](?:"(?:[^"\\\r\n]|\\[^\r\n])*'''
     R'''"(?:\s*[:,])?|(?:none|true|false|%s|%s|\]|\})(?:\s*,)?|[,\]\}\[\{\s]+)*[\]\}]'''
@@ -528,6 +530,8 @@ class formats(_PatternEnum):
     "Any sequence of url-encoded characters, default char set"
     urlhex = pattern(_pattern_urlhex)
     "A hex-encoded buffer using URL escape sequences"
+    htmlesc = pattern(_pattern_htmlesc)
+    "A sequence of HTML-escape characters"
     intarray = tokenize(_pattern_integer, sep=R'[;,]', bound='', unique_sep=True)
     "Sequences of integers, separated by commas or semicolons"
     strarray = tokenize(_pattern_string, sep=R'[;,]', bound='', unique_sep=True)
