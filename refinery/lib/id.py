@@ -276,6 +276,7 @@ class Fmt(Format, enum.Enum):
     REG_TEXT = (FC.Binary, 'reg', 'WinReg/Text', 'Windows Registry Script')
 
     OFFICE = (FC.Document, 'bin', 'OFFICE', 'A Microsoft Office Document')
+    OFFICECRYPT = (FC.Document, 'bin', 'OFFICE/ENCRYPTED', 'Encrypted Microsoft Office Document')
     MDB = (FC.Document, 'accdb', 'OFFICE/MDB', 'Microsoft Access Database')
     DOC = (FC.Document, 'doc', 'OFFICE/DOC', 'Microsoft Word Document')
     ONE = (FC.Document, 'one', 'OFFICE/ONE', 'Microsoft OneNote Document')
@@ -947,6 +948,8 @@ def get_microsoft_format(data: buf):
     if buffer_contains(data, b'B\0o\0o\0k\0'):
         # Book
         return Fmt.XLS
+    if buffer_contains(data, B'E\0n\0c\0r\0y\0p\0t\0e\0d\0P\0a\0c\0k\0a\0g\0e\0'):
+        return Fmt.OFFICECRYPT
     if re.search(b'Property|ProductCode|UpgradeCode|PackageCode|InstallExecuteSequence|Component|Feature|File|Media', data):
         return Fmt.MSI
     if re.search(B'Msi(?:[A-Z][a-z]{2,30}){2,5}', data):
