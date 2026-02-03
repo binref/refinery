@@ -156,7 +156,7 @@ class TestMetaProperties(TestUnitBase):
         self.assertIn('hex', pd)
         self.assertIn('b64', pd)
         self.assertIn('--verbose', pd['hex'])
-        self.assertIn('--devnull', pd['hex'])
+        self.assertIn('--lenient', pd['hex'])
 
 
 class TestSimpleInvertible(TestUnitBase):

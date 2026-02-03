@@ -45,7 +45,7 @@ code:
 The option of writing an empty `__init__` was added because it is rarely needed to perform any
 processing of the input arguments. The command line help for this unit will look as follows:
 
-    usage: myxor [-h] [-Q] [-0] [-v] key
+    usage: myxor [-h] [-L] [-Q] [-v] key
 
     positional arguments:
       key            Encryption key
@@ -2190,7 +2190,6 @@ class Unit(UnitBase, abstract=True):
         base.add_argument('-L', '--lenient', action='count', default=0,
             help='Increase the leniency, allowing partial results and ignoring more errors.')
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
-        base.add_argument('-0', '--devnull', action='store_true', help='Do not produce any output.')
         base.add_argument('-v', '--verbose', action='count', default=0,
             help='Specify up to two times to increase log level.')
 
@@ -2282,7 +2281,6 @@ class Unit(UnitBase, abstract=True):
             unit.args.squeeze = args.squeeze
             unit.args.nesting = args.nesting
             unit.args.reverse = args.reverse
-            unit.args.devnull = args.devnull
             unit.args.verbose = args.verbose
 
             if args.quiet:
@@ -2319,7 +2317,6 @@ class Unit(UnitBase, abstract=True):
             iff=0,
             reverse=False,
             squeeze=False,
-            devnull=False,
             verbose=0,
             lenient=0,
             quiet=False,
@@ -2410,8 +2407,7 @@ class Unit(UnitBase, abstract=True):
             unit.console = True
 
             try:
-                stream = open(os.devnull, 'wb') if unit.args.devnull else sys.stdout.buffer
-                with stream as output:
+                with sys.stdout.buffer as output:
                     _ = source | unit | output
             except ParserVariableMissing as E:
                 unit.logger.error(F'the variable "{E!s}" was missing while trying to parse an expression')
