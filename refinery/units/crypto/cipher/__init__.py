@@ -274,6 +274,11 @@ class StandardCipherUnit(CipherUnit, metaclass=StandardCipherExecutable):
             self.log_warn(F'removing {overlap} bytes from the input to make it a multiple of the {self.block_size}-byte block size')
             return self._get_cipher(True).decrypt(data)
 
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        if len(data) % cls.block_size == 0:
+            return True
+
 
 class StandardBlockCipherUnit(BlockCipherUnitBase, StandardCipherUnit):
 
