@@ -18,9 +18,15 @@ class hl(Unit):
     This unit uses the Pygments library for syntax highlighting. It expects plain text code as
     input and outputs ANSI-colored text.
     """
+    _pygments_name_completion = {
+        'vb'  : 'VisualBasic',
+        'vba' : 'VisualBasic',
+        'vbs' : 'VisualBasic',
+    }
+
     def __init__(
         self,
-        lexer: Param[str | None, Arg.String(
+        language: Param[str | None, Arg.String(
             help='Optionally specify the input language to be highlighted.')] = None,
         style: Param[str | None, Arg.String('-s', group='STYLE',
             help='Optionally specify a color style supported by Pygments.')] = None,
@@ -40,7 +46,7 @@ class hl(Unit):
         if sum(1 for opt in (github, solarized, gruvbox, style) if opt) > 1:
             raise ValueError('More than one styling option was set.')
         return super().__init__(
-            lexer=lexer,
+            language=language,
             style=style,
             dark=dark,
             light=light,
@@ -64,9 +70,11 @@ class hl(Unit):
     def process(self, data):
         lib = self._pygments
         token = lib.token
+        language: str = self.args.language
 
-        if _lexer := self.args.lexer:
-            lexer = lib.lexers.get_lexer_by_name(_lexer)
+        if language:
+            lexer = lib.lexers.get_lexer_by_name(
+                self._pygments_name_completion.get(language, language))
         else:
             guesses = []
             meta = metavars(data)
