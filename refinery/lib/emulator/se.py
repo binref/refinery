@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, Emulator, Register, MemAccess
+from refinery.lib.emulator.abstract import EmulationError, Emulator, MemAccess, Register
 from refinery.lib.emulator.uc_shared import get_access_map
 from refinery.lib.executable import ET, Arch
 from refinery.lib.shared import speakeasy as se
