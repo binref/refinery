@@ -15,7 +15,7 @@ from zlib import adler32
 from refinery.lib import json as libjson
 from refinery.lib.loader import load
 from refinery.lib.meta import ByteStringWrapper, LazyMetaOracle, metavars
-from refinery.lib.tools import exception_to_string
+from refinery.lib.tools import exception_to_string, get_terminal_size
 from refinery.lib.types import Callable, Iterable, Param, buf, isbuffer
 from refinery.lib.xml import XMLNodeBase
 from refinery.units import Arg, Chunk, RefineryPartialResult, RefineryPotentialUserError, Unit
@@ -403,6 +403,53 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
                 return name
 
         return path_builder
+
+
+class JSONTableUnit(Unit, abstract=True):
+
+    def __init__(
+        self,
+        tabular: Param[bool, Arg.Switch('-t', group='OUT',
+            help='Do not output JSON but a flattened ASCII table.')] = False,
+        minimal: Param[bool, Arg.Switch('-m', group='OUT',
+            help='Minify the JSON output instead of pretty-printing.')] = False,
+        **kwargs
+    ):
+        super().__init__(tabular=tabular, minimal=minimal, **kwargs)
+
+    @abc.abstractmethod
+    def json(self, data: Chunk) -> dict | None:
+        ...
+
+    def process(self, data: Chunk):
+        if not (parsed := self.json(data)):
+            return None
+        if not self.args.tabular:
+            pretty = not self.args.minimal
+            yield libjson.dumps(parsed, pretty=pretty)
+        else:
+            import textwrap
+            table = list(libjson.flattened(parsed))
+            width = max(len(key) for key, _ in table)
+            tsize = get_terminal_size(80) - width - 4
+            for key, value in table:
+                if isinstance(value, str):
+                    value = value.strip()
+                    if not value.isprintable() and all(ord(c) < 0x100 for c in value):
+                        value = value.encode('latin1').hex(':')
+                elif isinstance(value, libjson.datetime):
+                    value = value.isoformat(' ', 'seconds')
+                else:
+                    value = str(value).rstrip()
+                value = textwrap.wrap(value, tsize)
+                it = iter(value)
+                try:
+                    item = next(it)
+                except StopIteration:
+                    continue
+                yield F'{key:<{width}} : {item}'.encode(self.codec)
+                for wrap in it:
+                    yield F'{"":<{width + 3}}{wrap}'.encode(self.codec)
 
 
 class JSONEncoderUnit(Unit, abstract=True):

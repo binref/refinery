@@ -3,17 +3,16 @@ from __future__ import annotations
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
-from refinery.units.formats import Arg, Unit
-from refinery.units.sinks.ppjson import ppjson
+from refinery.units.formats import Arg, JSONTableUnit
 
 
-class lnk(Unit):
+class lnk(JSONTableUnit):
     """
     Parse Windows Shortcuts (LNK files) and returns the parsed information in JSON format. This
     unit is a thin wrapper around the LnkParse3 library.
     """
 
-    @Unit.Requires('LnkParse3>=1.4.0', ['formats', 'default', 'extended'])
+    @JSONTableUnit.Requires('LnkParse3>=1.4.0', ['formats', 'default', 'extended'])
     def _LnkParse3():
         import LnkParse3
         return LnkParse3
@@ -26,12 +25,12 @@ class lnk(Unit):
 
     def __init__(
         self,
-        tabular: Param[bool, Arg('-t', help='Print information in a table rather than as JSON.')] = False,
         details: Param[bool, Arg('-d', help='Print all details; some properties are hidden by default.')] = False,
+        tabular=False,
     ):
         super().__init__(tabular=tabular, details=details)
 
-    def process(self, data):
+    def json(self, data):
         with NoLogging():
             parsed = self._LnkParse3.lnk_file(MemoryFile(data)).get_json()
         if not self.args.details:
@@ -49,8 +48,7 @@ class lnk(Unit):
                 noise = [key for key in section if key not in scope]
                 for key in noise:
                     del section[key]
-        pp = ppjson(tabular=self.args.tabular)
-        yield from pp._pretty_output(parsed)
+        return parsed
 
     @classmethod
     def handles(cls, data):

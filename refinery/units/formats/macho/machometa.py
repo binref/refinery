@@ -5,14 +5,14 @@ import plistlib
 
 from enum import IntEnum
 from hashlib import md5
-from typing import Iterable
+from typing import Iterable, cast
 
 from refinery.lib import lief
 from refinery.lib.structures import StreamDetour, Struct, StructReader
 from refinery.lib.types import Param
-from refinery.units import Arg, Unit
+from refinery.units import Arg
+from refinery.units.formats import JSONTableUnit
 from refinery.units.formats.pe.pemeta import pemeta
-from refinery.units.sinks.ppjson import ppjson
 
 CS_ADHOC = 0x0000_0002
 
@@ -87,15 +87,15 @@ class CodeDirectoryBlob(Struct):
 
 
 _CPU_SUBTYPES = {
-    lief.MachO.Header.CPU_TYPE.X86: {
+    lief.MachO.Header.CPU_TYPE.X86.value: {
         0x03: 'ALL',
         0x04: 'ARCH1',
     },
-    lief.MachO.Header.CPU_TYPE.X86_64: {
+    lief.MachO.Header.CPU_TYPE.X86_64.value: {
         0x03: 'ALL',
         0x08: 'H',
     },
-    lief.MachO.Header.CPU_TYPE.POWERPC: {
+    lief.MachO.Header.CPU_TYPE.POWERPC.value: {
         0x00: 'ALL',
         0x01: '601',
         0x02: '602',
@@ -110,7 +110,7 @@ _CPU_SUBTYPES = {
         0x0B: '7450',
         0x64: '970',
     },
-    lief.MachO.Header.CPU_TYPE.ARM: {
+    lief.MachO.Header.CPU_TYPE.ARM.value: {
         0x00: 'ALL',
         0x05: 'V4T',
         0x06: 'V6',
@@ -124,17 +124,17 @@ _CPU_SUBTYPES = {
         0x0F: 'V7M',
         0x10: 'V7EM',
     },
-    lief.MachO.Header.CPU_TYPE.ARM64: {
+    lief.MachO.Header.CPU_TYPE.ARM64.value: {
         0x00: 'ALL',
         0x02: 'ARM64E',
     },
-    lief.MachO.Header.CPU_TYPE.SPARC: {
+    lief.MachO.Header.CPU_TYPE.SPARC.value: {
         0x00: 'ALL',
     },
 }
 
 
-class machometa(Unit):
+class machometa(JSONTableUnit):
     """
     Extract metadata from Mach-O files.
     """
@@ -161,28 +161,27 @@ class machometa(Unit):
             tabular=tabular,
         )
 
-    def compute_symhash(self, macho: lief.MachO.Binary) -> dict:
+    def compute_symhash(self, macho: lief.MachO.Binary):
         def _symbols(symbols: Iterable[lief.MachO.Symbol]):
             for sym in symbols:
                 if sym.category != lief.MachO.Symbol.CATEGORY.UNDEFINED:
                     continue
                 yield lief.string(sym.name)
         symbols = sorted(set(_symbols(macho.symbols)))
-        symbols: str = ','.join(symbols)
-        return md5(symbols.encode('utf8')).hexdigest()
+        return md5(','.join(symbols).encode('utf8')).hexdigest()
 
     def parse_macho_header(self, macho: lief.MachO.Binary, data=None) -> dict:
         info = {}
         if header := macho.header:
             st = header.cpu_subtype & 0x7FFFFFFF
-            ht = 'mach_header_64' if header.magic in {
-                lief.MachO.MACHO_TYPES.CIGAM_64,
-                lief.MachO.MACHO_TYPES.MAGIC_64,
+            ht = 'mach_header_64' if header.magic.value in {
+                lief.MachO.MACHO_TYPES.CIGAM_64.value,
+                lief.MachO.MACHO_TYPES.MAGIC_64.value,
             } else 'mach_header'
             info['Type'] = ht
             info['Magic'] = header.magic.value
             info['CPUType'] = header.cpu_type.__name__.upper()
-            info['CPUSubType'] = _CPU_SUBTYPES.get(header.cpu_type, {}).get(st, st)
+            info['CPUSubType'] = _CPU_SUBTYPES.get(header.cpu_type.value, {}).get(st, st)
             info['FileType'] = header.file_type.__name__
             info['LoadCount'] = header.nb_cmds
             info['LoadSize'] = header.sizeof_cmds
@@ -260,14 +259,14 @@ class machometa(Unit):
         for load_command in load_commands:
             if load_command.command == lief.MachO.LoadCommand.TYPE.SOURCE_VERSION:
                 if 'SourceVersion' not in info:
-                    cmd: lief.MachO.SourceVersion = load_command
-                    info['SourceVersion'] = cmd.version[0]
+                    sv = cast('lief.MachO.SourceVersion', load_command)
+                    info['SourceVersion'] = sv.version[0]
                 else:
                     self.log_warn('More than one load command of type SOURCE_VERSION found; the MachO file is possibly malformed')
                 continue
             if load_command.command == lief.MachO.LoadCommand.TYPE.BUILD_VERSION:
                 if 'BuildVersion' not in info:
-                    cmd: lief.MachO.BuildVersion = load_command
+                    cmd = cast('lief.MachO.BuildVersion', load_command)
                     info['BuildVersion'] = {}
                     info['BuildVersion']['Platform'] = cmd.platform.__name__
                     info['BuildVersion']['MinOS'] = '.'.join(str(v) for v in cmd.minos)
@@ -303,16 +302,19 @@ class machometa(Unit):
             info.append(lief.string(exp.name))
         return info
 
-    def process(self, data: bytearray):
+    def json(self, data: bytearray):
         result = {}
         slices = []
         macho = lief.load_macho(data)
         macho_slices: list[lief.MachO.Binary] = []
 
-        for k in itertools.count():
-            if not (ms := macho.at(k)):
-                break
-            macho_slices.append(ms)
+        if isinstance(macho, lief.MachO.Binary):
+            macho_slices = [macho]
+        else:
+            for k in itertools.count():
+                if not (ms := macho.at(k)):
+                    break
+                macho_slices.append(ms)
 
         result['FileType'] = 'FAT' if len(macho_slices) > 1 else 'THIN'
 
@@ -349,6 +351,4 @@ class machometa(Unit):
 
         if slices:
             result['Slices'] = slices
-            yield from ppjson(
-                tabular=self.args.tabular
-            )._pretty_output(result)
+            return result

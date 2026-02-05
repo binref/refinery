@@ -15,11 +15,11 @@ from refinery.lib.dt import date_from_timestamp
 from refinery.lib.id import is_likely_pe
 from refinery.lib.lcid import LCID
 from refinery.lib.resources import datapath
-from refinery.lib.tools import NoLoggingProxy, unwrap
+from refinery.lib.tools import proxy, unwrap
 from refinery.lib.types import Param
-from refinery.units import Arg, Unit
+from refinery.units import Arg
+from refinery.units.formats import JSONTableUnit
 from refinery.units.formats.pe import get_pe_size
-from refinery.units.sinks.ppjson import ppjson
 
 
 def _FILETIME(value: int) -> datetime:
@@ -29,6 +29,8 @@ def _FILETIME(value: int) -> datetime:
 
 def _STRING(value: str | bytes, dll: bool = False) -> str:
     if not isinstance(value, str):
+        if not isinstance(value, bytes):
+            value = bytes(value)
         value, _, _ = value.partition(B'\0')
         value = value.decode('utf8')
     if dll and value.lower().endswith('.dll'):
@@ -148,7 +150,7 @@ def get_rich_info(vid: int) -> VersionInfo:
     return VersionInfo(pid, ver, err)
 
 
-class pemeta(Unit):
+class pemeta(JSONTableUnit):
     """
     Extract metadata from PE files. By default, all information except for imports and exports are
     extracted.
@@ -173,10 +175,9 @@ class pemeta(Unit):
             help='List all exported functions. Specify twice to include addresses.')] = 0,
         imports: Param[int, Arg.Counts('-I',
             help='List all imported functions. Specify twice to include addresses.')] = 0,
-        tabular: Param[bool, Arg.Switch('-t',
-            help='Print information in a table rather than as JSON')] = False,
         timeraw: Param[bool, Arg.Switch('-r',
             help='Extract time stamps as numbers instead of human-readable format.')] = False,
+        tabular=False,
     ):
         if not custom and not any((debug, dotnet, signatures, timestamps, version, header)):
             debug = dotnet = signatures = timestamps = version = header = True
@@ -210,7 +211,7 @@ class pemeta(Unit):
             for key, val in bin.items() if val}
 
     @classmethod
-    def parse_signature(cls, data: bytearray) -> dict:
+    def parse_signature(cls, data: bytes | bytearray | memoryview) -> dict:
         """
         Extracts a JSON-serializable and human-readable dictionary with information about
         time stamp and code signing certificates that are attached to the input PE file.
@@ -385,7 +386,7 @@ class pemeta(Unit):
                 Charset=self._CHARSET.get(icon.sublang, 'Unknown Charset'),
             )
 
-        def _code_pages(d: lief.PE.ResourceDirectory | lief.PE.ResourceData):
+        def _code_pages(d: lief.PE.ResourceDirectory | lief.PE.ResourceData | lief.PE.ResourceNode):
             if isinstance(d, lief.PE.ResourceData):
                 yield d.code_page
                 return
@@ -456,13 +457,13 @@ class pemeta(Unit):
             info.append(item)
         return info
 
-    def parse_imports(self, pe: lief.PE.Binary, data=None, include_addresses=False) -> list:
+    def parse_imports(self, pe: lief.PE.Binary, data=None, include_addresses=False):
         info = {}
         for idd in itertools.chain(pe.imports, pe.delay_imports):
             dll = _STRING(idd.name)
             if dll.lower().endswith('.dll'):
                 dll = dll[:~3]
-            imports: list[str] = info.setdefault(dll, [])
+            imports: list[dict | str] = info.setdefault(dll, [])
             for imp in idd.entries:
                 name = _STRING(imp.name) or F'@{imp.ordinal}'
                 imports.append(dict(
@@ -491,6 +492,7 @@ class pemeta(Unit):
 
         if pe.has_rich_header:
             rich = []
+            cw = None
             if self.args.tabular:
                 cw = max(len(F'{entry.count:d}') for entry in pe.rich_header.entries)
             for entry in pe.rich_header.entries:
@@ -653,7 +655,7 @@ class pemeta(Unit):
             result = result[0]
         return result
 
-    def process(self, data):
+    def json(self, data):
         result = {}
 
         pe = lief.load_pe(
@@ -722,8 +724,7 @@ class pemeta(Unit):
         if signature and self.args.signatures:
             result['Signature'] = signature
 
-        if result:
-            yield from ppjson(tabular=self.args.tabular)._pretty_output(result)
+        return result
 
     _CHARSET = {
         0x0000: '7-bit ASCII',

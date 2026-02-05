@@ -5,10 +5,8 @@ from pathlib import Path
 
 from refinery.lib import xml
 from refinery.lib.dt import isodate
-from refinery.lib.types import Param
-from refinery.units import Arg, Unit
+from refinery.units.formats import JSONTableUnit
 from refinery.units.formats.office.xtdoc import xtdoc
-from refinery.units.sinks.ppjson import ppjson
 
 
 class _Prop(str, Enum):
@@ -17,15 +15,11 @@ class _Prop(str, Enum):
     custom = 'custom.xml'
 
 
-class docmeta(Unit):
+class docmeta(JSONTableUnit):
     """
     Extract metadata from Word Documents such as custom document properties.
     """
-
-    def __init__(self, tabular: Param[bool, Arg('-t', help='Print information in a table rather than as JSON')] = False):
-        super().__init__(tabular=tabular)
-
-    def process(self, data: bytearray):
+    def json(self, data: bytearray):
         def interpret(value: str | dict):
             if isinstance(value, dict):
                 return {k: interpret(v) for k, v in value.items()}
@@ -84,6 +78,4 @@ class docmeta(Unit):
             for name, value in contents.items():
                 contents[name] = interpret(value)
 
-        if not result:
-            return None
-        yield from ppjson(tabular=self.args.tabular)._pretty_output(result)
+        return result
