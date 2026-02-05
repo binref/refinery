@@ -285,6 +285,8 @@ class Fmt(Format, enum.Enum):
     MSG = (FC.Document, 'msg', 'MSG', 'Microsoft Outlook EMail Message')
     MSI = (FC.Archive, 'msi', 'MSI', 'Microsoft Installer Archive (MSI)')
     CFF = (FC.Binary, 'ole', 'OLE', 'Compound File Format')
+    IDB = (FC.Document, 'idb', 'IDB/32', 'IDA Database (32 Bit)')
+    I64 = (FC.Document, 'i64', 'IDB/64', 'IDA Database (64 Bit)')
 
     DOCX = (FC.Document, 'docx', 'OFFICE/ZIP/DOCX', 'Microsoft ZIP/XML Document for Word')
     XLSX = (FC.Document, 'xlsx', 'OFFICE/ZIP/XLSX', 'Microsoft ZIP/XML Document for Excel')
@@ -1138,6 +1140,8 @@ def get_image_format(data: buf):
         (Fmt.FIF, B'FLIF'),
         (Fmt.LEP, B'\xCF\x84\x01'),
         (Fmt.HDR, B'#?RADIANCE\n'),
+        (Fmt.IDB, B'IDA1'),
+        (Fmt.I64, B'IDA2'),
     ):
         if data[:len(signature)] == signature:
             return format
