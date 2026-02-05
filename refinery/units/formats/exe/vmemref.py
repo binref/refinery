@@ -115,9 +115,10 @@ class vmemref(Unit):
         self.log_info('disassembling and exploring call graph using smda')
         with NoLogging():
             cfg = smda.Disassembler.SmdaConfig()
-            cfg.CALCULATE_SCC = False
-            cfg.CALCULATE_NESTING = False
-            cfg.TIMEOUT = 600
+            setattr(cfg, 'CALCULATE_SCC', False)
+            setattr(cfg, 'CALCULATE_HASHING', False)
+            setattr(cfg, 'CALCULATE_NESTING', False)
+            setattr(cfg, 'TIMEOUT', 600)
             dsm = smda.Disassembler.Disassembler(cfg)
             _input = data
             if not isinstance(_input, bytes):
