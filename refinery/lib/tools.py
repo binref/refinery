@@ -14,7 +14,7 @@ import warnings
 
 from enum import Enum, IntFlag
 from math import log
-from typing import Generator, Iterable, TypeVar
+from typing import Generator, Iterable, TypeVar, cast
 
 from refinery.lib.types import buf
 
@@ -402,6 +402,14 @@ class NoLoggingProxy:
         with NoLogging(mode):
             rv = self.__wrapped__(*args, **kwargs)
         return NoLoggingProxy(rv, mode)
+
+
+def proxy(t: _T) -> _T:
+    """
+    Proxy an object using `refinery.lib.tools.NoLoggingProxy` but cheat the type checker into
+    thinking that it has retained its type.
+    """
+    return cast(_T, NoLoggingProxy(t))
 
 
 def unwrap(t: _T) -> _T:

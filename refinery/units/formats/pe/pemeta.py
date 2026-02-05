@@ -668,7 +668,7 @@ class pemeta(Unit):
         if pe is None:
             raise ValueError('Input not recognized as a PE file.')
 
-        pe = NoLoggingProxy(pe)
+        pe = proxy(pe)
 
         for switch, resolver, name in [
             (self.args.debug,   self.parse_debug,    'Debug'),    # noqa
