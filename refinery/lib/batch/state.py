@@ -82,6 +82,7 @@ class BatchState:
         hostname: str | None = None,
         now: int | float | str | datetime | None = None,
         cwd: str = 'C:\\',
+        filename: str | None = None,
     ):
         self.delayed_expansion = delayed_expansion
         self.extensions_version = extensions_version
@@ -105,6 +106,7 @@ class BatchState:
         self.now = now
         self.hostname = hostname
         self.username = username
+        self.filename = filename
         seed(self.now.timestamp())
         self.reset()
 
@@ -142,7 +144,7 @@ class BatchState:
         self.file_system = dict(self.file_system_seed)
         self.dirstack = []
         self.linebreaks = []
-        self.name = F'{uuid4()}.bat'
+        self.name = self.filename or F'{uuid4()}.bat'
         self.args = []
         self._cmd = ''
         self.ec = None
