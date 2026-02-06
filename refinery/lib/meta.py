@@ -320,7 +320,7 @@ def is_valid_variable_name(name: str, allow_wildcards: bool = False) -> bool:
         return True
 
 
-def check_variable_name(name: str | None, allow_derivations=False) -> None:
+def check_variable_name(name: str | None, allow_derivations=False) -> str | None:
     """
     All single-letter, uppercase variable names are reserved. Additionally, derived
     property names should not be overwritten.
