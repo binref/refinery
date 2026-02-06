@@ -334,7 +334,8 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
 
     @staticmethod
     def _normalize_key(attribute: str):
-        _, _, a = attribute.rpartition(':')
+        a = attribute.rpartition(':')[2]
+        a = re.sub(r'[^\w]+', '_', a)
         return a
 
     def _make_path_builder(
