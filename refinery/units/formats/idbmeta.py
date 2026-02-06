@@ -54,7 +54,7 @@ class idb(JSONTableUnit):
     def handles(cls, data):
         return data[:4] in (B'IDA2', B'IDA1')
 
-    @JSONTableUnit.Requires('python-idb==0.8.0', 'all')
+    @JSONTableUnit.Requires('python-idb<=0.8.0', 'all')
     def _idb():
         import idb
         import idb.analysis
