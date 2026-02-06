@@ -570,8 +570,8 @@ class vstack(EmulatingUnit):
                     emu.base_exe_to_emu(cursor.start),
                     emu.base_exe_to_emu(cursor.stop),
                 )
-            except EmulationError:
-                pass
+            except EmulationError as e:
+                self.log_info(F'emulation halted with error: {e!s}')
 
             for patch, api in state.synthesized.items():
                 chunk = self.labelled(patch, src=api)
