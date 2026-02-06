@@ -32,6 +32,9 @@ class FailedRead(EmulationError):
         self.addr = addr
         self.size = size
 
+    def __str__(self):
+        return F'could not read {self.size} bytes from {self.addr:#x}'
+
 
 class FailedWrite(EmulationError):
     """
@@ -40,6 +43,20 @@ class FailedWrite(EmulationError):
     def __init__(self, addr: int, data: buf) -> None:
         self.addr = addr
         self.data = data
+
+    def __str__(self):
+        return F'could not write data {self.data.hex()} to {self.addr:#x}'
+
+
+class InvalidInstruction(EmulationError):
+    """
+    The emulator failed to disassemble an instruction at the given address.
+    """
+    def __init__(self, addr: int) -> None:
+        self.addr = addr
+
+    def __str__(self):
+        return F'could not read instruction at {self.addr:#x}'
 
 
 class CC(str, Enum):

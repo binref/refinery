@@ -6,7 +6,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, MemAccess, RawMetalEmulator, Register
+from refinery.lib.emulator.abstract import EmulationError, MemAccess, RawMetalEmulator, InvalidInstruction, Register
 from refinery.lib.executable import Arch
 from refinery.lib.shared import icicle as ic
 
@@ -96,7 +96,10 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             if end is not None and ip == end:
                 break
             if (code_hooked or apis_hooked) and not retrying:
-                insn = next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
+                try:
+                    insn = next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
+                except StopIteration as SI:
+                    raise InvalidInstruction(ip) from SI
                 args = (ice, ip, insn.size, self.state)
                 if apis_hooked:
                     self._hook_api_call_check(*args)
