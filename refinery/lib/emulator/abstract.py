@@ -471,7 +471,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
                 return self._mem_read(address, size)
             except Exception as E:
                 if retry or not self.hooks.MemoryError or not self.hook_mem_error(
-                    None, 0, address, size, 0, self.state
+                    None, MemAccess.Read, address, size, 0, self.state
                 ):
                     raise FailedRead(address, size) from E
         assert False
