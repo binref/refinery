@@ -136,3 +136,8 @@ class TestGrabBagExamples(TestBase):
             'http'U':/'R'/addvertseense'U'.co'R'.uk/bfgnqs2.exe',
             'http'U':/'R'/addvertseense'U'.co'R'.uk/click.php',
         })
+
+    def test_0x09_extension(self):
+        data = self.download_sample('bb41df67b503fef9bfd8f74757adcc50137365fbc25b92933573a64c7d419c1b')
+        test, = data | self.load_pipeline('alu B@S -P2 -s64 -e=R(E*0x81F6+0xF3C7,8) | rev')
+        self.assertEqual(test.meta['ext'], 'dll')
