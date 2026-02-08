@@ -139,5 +139,13 @@ class TestGrabBagExamples(TestBase):
 
     def test_0x09_extension(self):
         data = self.download_sample('bb41df67b503fef9bfd8f74757adcc50137365fbc25b92933573a64c7d419c1b')
-        test, = data | self.load_pipeline('alu B@S -P2 -s64 -e=R(E*0x81F6+0xF3C7,8) | rev')
+        test,= data | self.load_pipeline('alu B@S -P2 -s64 -e=R(E*0x81F6+0xF3C7,8) | rev')
         self.assertEqual(test.meta['ext'], 'dll')
+
+    def test_0x09_timestamps(self):
+        data = self.download_sample('3045902d7104e67ca88ca54360d9ef5bfe5bec8b575580bc28205ca67eeba96d')
+        test = data | self.ldu('pemeta', timestamps=True, custom=True) | json.loads
+        ts = test['TimeStamp']
+        self.assertEqual(ts['Linker'], '1992-06-19 22:22:17')
+        self.assertEqual(ts['Delphi'], '2021-10-24 13:25:36')
+        self.assertEqual(ts['RsrcTS'], '2014-04-24 01:38:58')

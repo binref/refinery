@@ -658,13 +658,23 @@ class pemeta(JSONTableUnit):
     def json(self, data):
         result = {}
 
+        _a = self.args
+        D: bool = _a.debug
+        N: bool = _a.dotnet
+        S: bool = _a.signatures
+        P: bool = _a.timestamps
+        V: bool = _a.version
+        H: bool = _a.header
+        E: bool = _a.exports
+        I: bool = _a.imports
+
         pe = lief.load_pe(
             data,
             parse_exports=True,
-            parse_imports=self.args.imports,
-            parse_rsrc=self.args.version,
+            parse_imports=I,
+            parse_rsrc=(V or P),
             parse_reloc=False,
-            parse_signature=self.args.timestamps or self.args.signatures,
+            parse_signature=(P or S),
         )
 
         if pe is None:
@@ -673,12 +683,12 @@ class pemeta(JSONTableUnit):
         pe = proxy(pe)
 
         for switch, resolver, name in [
-            (self.args.debug,   self.parse_debug,    'Debug'),    # noqa
-            (self.args.dotnet,  self.parse_dotnet,   'DotNet'),   # noqa
-            (self.args.header,  self.parse_header,   'Header'),   # noqa
-            (self.args.version, self.parse_version,  'Version'),  # noqa
-            (self.args.imports, self.parse_imports,  'Imports'),  # noqa
-            (self.args.exports, self.parse_exports,  'Exports'),  # noqa
+            (D, self.parse_debug,    'Debug'),    # noqa
+            (N, self.parse_dotnet,   'DotNet'),   # noqa
+            (H, self.parse_header,   'Header'),   # noqa
+            (V, self.parse_version,  'Version'),  # noqa
+            (I, self.parse_imports,  'Imports'),  # noqa
+            (E, self.parse_exports,  'Exports'),  # noqa
         ]:
             if not switch:
                 continue
@@ -696,7 +706,7 @@ class pemeta(JSONTableUnit):
 
         signature = {}
 
-        if self.args.timestamps or self.args.signatures:
+        if P or S:
             with suppress(Exception):
                 from refinery.units.formats.pe.pesig import pesig
                 signature = self.parse_signature(next(data | pesig))
@@ -715,13 +725,13 @@ class pemeta(JSONTableUnit):
                         vf.name for vf in Signature.VERIFICATION_FLAGS if vf & verification]
                     signature['IsValid'] = False
 
-        if self.args.timestamps:
-            ts = self.parse_time_stamps(pe, self.args.timeraw, self.args.timestamps > 1)
+        if P > 0:
+            ts = self.parse_time_stamps(pe, self.args.timeraw, P > 1)
             with suppress(KeyError):
                 ts.update(Signed=signature['Timestamp'])
             result.update(TimeStamp=ts)
 
-        if signature and self.args.signatures:
+        if signature and S:
             result['Signature'] = signature
 
         return result
