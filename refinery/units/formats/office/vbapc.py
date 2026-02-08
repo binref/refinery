@@ -40,5 +40,5 @@ class vbapc(Unit):
                 parser.parseInput()
                 parser.processInput(False)
                 code = parser.getOutput()
-                code = re.sub(R'(?m)^((?:Sub|Function).*?)$(?!\n[^\s])', r'\n\1', code)
+                code = re.sub(R'(?m)^((?:(?:Public|Private|Friend)\s+)?(?:Sub|Function).*?)$(?!\n[^\s])', r'\n\1', code)
             return code.encode(self.codec)
