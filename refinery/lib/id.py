@@ -1049,7 +1049,6 @@ def get_compression_type(
         (Fmt.ISO         , F, 0x9001, B'CD001'),                                # noqa
         (Fmt.ISZ         , T, 0, B'IsZ!'),                                      # noqa
         (Fmt.TAR         , F, 257, B'ustar'),                                   # noqa
-        (Fmt.TAR         , F, 257, B'ustar'),                                   # noqa
         (Fmt.OAR         , T, 0, B'OAR'),                                       # noqa
         (Fmt.ZPQ         , T, 0, B'7kSt\xA01\x83\xD3\x8C\xB2\x28\xB0\xD3zPQ'),  # noqa
         (Fmt.VMDK        , T, 0, B'KDM'),                                       # noqa
