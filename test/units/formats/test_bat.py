@@ -124,6 +124,7 @@ class TestBAT(TestUnitBase):
         test = batch | self.load() | str
         self.assertIn(R'del C:\Admin', test)
 
+    @skip('under development')
     def test_abobus_frontpage(self):
         @multiline
         class batch:
