@@ -15,11 +15,14 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from Cryptodome.Cipher import AES
 
+from refinery.lib import lief
+from refinery.lib.id import is_likely_pe
 from refinery.lib.py import decompile_buffer, version2tuple
 from refinery.lib.shared import xdis
 from refinery.lib.structures import StreamDetour, Struct, StructReader
 from refinery.lib.types import Param, buf
 from refinery.units.formats.archive import ArchiveUnit, Arg
+from refinery.units.formats.pe import get_pe_size
 from refinery.units.formats.pym import Marshal
 from refinery.units.pattern.carve import carve
 
@@ -95,9 +98,7 @@ class PYZ(Struct):
     def __init__(self, reader: StructReader, version: str):
         reader.bigendian = True
         self.base = reader.tell()
-        signature = reader.read(4)
-        if signature != self.MagicSignature:
-            raise ValueError('invalid magic')
+        self.signature = reader.read(4)
         magic = bytes(reader.read(4))
         with contextlib.suppress(KeyError, AttributeError):
             version = xdis.magics.versions[magic]
@@ -247,11 +248,7 @@ class PyInstallerArchiveEpilogue(Struct):
         reader.bigendian = True
         reader.seekset(offset)
         self.reader = reader
-        signature = reader.read_bytes(8)
-        if signature != self.MagicSignature:
-            raise ValueError(
-                F'offset 0x{offset:X} has invalid signature {signature.hex().upper()}; '
-                F'should be {self.MagicSignature.hex().upper()}')
+        self.signature = reader.read_bytes(8)
         self.size = reader.i32()
         toc_offset = reader.i32()
         toc_length = reader.i32()
@@ -406,11 +403,52 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             user_code=user_code,
         )
 
+    def _search_pyi_start(self, data: memoryview):
+        if not is_likely_pe(data):
+            self.log_debug("not a PE")
+            return None
+        pe = lief.load_pe_fast(data)
+        overlay = get_pe_size(pe, certificate=False)
+        size = len(data)
+        view = data[overlay:]
+        size_bytes = size.to_bytes(4, 'big')
+        size_options = []
+        for k, b in enumerate(size_bytes):
+            if not b:
+                continue
+            option = ''.join(F'\\x{h:02X}' for h in size_bytes[:k])
+            option = F'{option}[\\0-\\x{b - 1:02X}]'
+            option = option + (3 - k) * '.'
+            size_options.append(option)
+        size_pattern = '({})'.format('|'.join(size_options))
+        pattern = F'(?s).(?=.{{7}}{size_pattern}{{3}}\\0\\0[\\0-\\x02].)'
+        self.log_debug(pattern)
+        reader = StructReader(view, bigendian=True)
+        for candidate in re.finditer(pattern.encode('ascii'), view):
+            offset = candidate.start()
+            reader.seekset(offset + 8)
+            pkg_len = reader.i32()
+            toc_pos = reader.i32()
+            toc_len = reader.i32()
+            version = reader.i32()
+            if not 0 < pkg_len < len(data):
+                continue
+            if not 0 < toc_pos + toc_len < pkg_len:
+                continue
+            if not 20 <= version <= 400:
+                continue
+            return offset + overlay
+
     def unpack(self, data):
         view = memoryview(data)
-        positions = [m.start() for m in re.finditer(re.escape(PyInstallerArchiveEpilogue.MagicSignature), view)]
         mode = Unmarshal(min(2, int(self.args.unmarshal)))
         self.log_debug(F'unmarshal mode: {mode.name}')
+
+        positions = [
+            m.start() for m in re.finditer(
+                re.escape(PyInstallerArchiveEpilogue.MagicSignature), view)]
+        if not positions and (p := self._search_pyi_start(view)):
+            positions = [p]
         if not positions:
             raise LookupError('unable to find PyInstaller signature')
         if len(positions) > 2:
@@ -422,6 +460,7 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         decompile = self.args.decompile
         uc_target = PiType.USERCODE if decompile else PiType.SOURCE
         archive = PyInstallerArchiveEpilogue.Parse(view, positions[-1], mode, decompile)
+        self.log_info('Signature:', archive.signature)
         for name, file in archive.files.items():
             if self.args.user_code:
                 if file.type != uc_target:
