@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import re
 
 from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
