@@ -405,7 +405,6 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     def _search_pyi_start(self, data: memoryview):
         if not is_likely_pe(data):
-            self.log_debug("not a PE")
             return None
         pe = lief.load_pe_fast(data)
         overlay = get_pe_size(pe, certificate=False)
@@ -422,10 +421,11 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             size_options.append(option)
         size_pattern = '({})'.format('|'.join(size_options))
         pattern = F'(?s).(?=.{{7}}{size_pattern}{{3}}\\0\\0[\\0-\\x02].)'
-        self.log_debug(pattern)
+        self.log_info(F'no signature found; searching for malformed headers starting at offset {overlay:#x}')
         reader = StructReader(view, bigendian=True)
         for candidate in re.finditer(pattern.encode('ascii'), view):
             offset = candidate.start()
+            self.log_debug(F'at {offset:#x}: {reader.peek(24).hex(" ")}', clip=True)
             reader.seekset(offset + 8)
             pkg_len = reader.i32()
             toc_pos = reader.i32()
