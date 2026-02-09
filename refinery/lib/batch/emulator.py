@@ -31,7 +31,7 @@ from refinery.lib.batch.model import (
 )
 from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.synth import SynCommand, SynSequence
+from refinery.lib.batch.synth import SynCommand
 from refinery.lib.batch.util import batchint, uncaret, unquote
 from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
@@ -631,7 +631,6 @@ class BatchEmulator:
         while offset < length:
             try:
                 for sequence in self.parser.parse(offset):
-                    print(str(SynSequence(sequence)))
                     yield from self.emulate_sequence(sequence)
             except Goto as goto:
                 try:
