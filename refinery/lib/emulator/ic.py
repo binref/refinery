@@ -6,7 +6,13 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, MemAccess, RawMetalEmulator, InvalidInstruction, Register
+from refinery.lib.emulator.abstract import (
+    EmulationError,
+    InvalidInstruction,
+    MemAccess,
+    RawMetalEmulator,
+    Register,
+)
 from refinery.lib.executable import Arch
 from refinery.lib.shared import icicle as ic
 

@@ -9,7 +9,6 @@ from uuid import uuid4
 from refinery.lib.batch.model import MissingVariable
 from refinery.lib.dt import date_from_timestamp, isodate
 
-
 _DEFAULT_ENVIRONMENT = {
     'ALLUSERSPROFILE'           : r'C:\ProgramData',
     'APPDATA'                   : r'C:\Users\{u}\AppData\Roaming',
