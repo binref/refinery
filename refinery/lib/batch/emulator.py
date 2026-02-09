@@ -4,6 +4,7 @@ import fnmatch
 import itertools
 import re
 
+from io import StringIO
 from typing import Callable, ClassVar, Generator
 
 from refinery.lib.batch.model import (
@@ -27,7 +28,6 @@ from refinery.lib.batch.model import (
     Goto,
     InvalidLabel,
     MissingVariable,
-    Redirect,
 )
 from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
@@ -37,21 +37,82 @@ from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
 
 
+class DevNull:
+    def getvalue(self):
+        return ''
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        raise StopIteration
+
+    def detach(self):
+        raise NotImplementedError
+
+    def readline(self, size: int = -1, /) -> str:
+        return ''
+
+    def read(self, size: int | None = -1, /) -> str:
+        return ''
+
+    def write(self, s: str, /) -> int:
+        return len(s)
+
+
+IoStream = DevNull | StringIO
+
+
 class BatchEmulator:
 
-    class _register:
-        handlers: ClassVar[dict[type[AstNode], Callable[[BatchEmulator, AstNode], Generator[str]]]] = {}
+    class _node:
+        handlers: ClassVar[dict[
+            type[AstNode],
+            Callable[[
+                BatchEmulator,
+                AstNode
+            ], Generator[str]]
+        ]] = {}
 
-        def __init__(self, node_type: type[AstNode]):
-            self.node_type = node_type
+        def __init__(self, key: type[AstNode]):
+            self.key = key
 
         def __call__(self, handler):
-            self.handlers[self.node_type] = handler
+            self.handlers[self.key] = handler
             return handler
 
-    def __init__(self, data: str | buf | BatchParser, state: BatchState | None = None):
+    class _command:
+        handlers: ClassVar[dict[
+            str,
+            Callable[[
+                BatchEmulator,
+                SynCommand,
+                IoStream,
+                IoStream,
+                IoStream,
+            ], Generator[str, None, int | None] | int | None]
+        ]] = {}
+
+        def __init__(self, key: str):
+            self.key = key
+
+        def __call__(self, handler):
+            self.handlers[self.key] = handler
+            return handler
+
+    def __init__(
+        self,
+        data: str | buf | BatchParser,
+        state: BatchState | None = None,
+        stdin: IoStream | None = None,
+        stderr: IoStream | None = None,
+        stdout: IoStream | None = None,
+    ):
         self.stack = []
         self.parser = BatchParser(data, state)
+        self.stdout = stdout or StringIO()
+        self.stderr = stderr or StringIO()
+        self.stdin = stdin or StringIO()
 
     @property
     def state(self):
@@ -85,7 +146,7 @@ class BatchEmulator:
         return re.sub(
             RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
 
-    def execute_find(self, cmd: SynCommand, findstr: bool):
+    def execute_find_or_findstr(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream, findstr: bool):
         needles = []
         paths = []
         flags = {}
@@ -168,7 +229,16 @@ class BatchEmulator:
 
         self.state.ec = int(nothing_found)
 
-    def execute_set(self, cmd: SynCommand):
+    @_command('FIND')
+    def execute_find(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+        self.execute_find_or_findstr(cmd, stdin, stderr, stdout, findstr=False)
+
+    @_command('FINDSTR')
+    def execute_findstr(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+        self.execute_find_or_findstr(cmd, stdin, stderr, stdout, findstr=True)
+
+    @_command('SET')
+    def execute_set(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
         if not (args := cmd.ast.tokens):
             raise EmulatorException('Empty SET instruction')
 
@@ -218,118 +288,219 @@ class BatchEmulator:
             else:
                 name, _, content = ''.join(args).partition('=')
             name = name.upper()
-            _, content = uncaret(content, quote_mode)
+            trailing_caret, content = uncaret(content, quote_mode)
+            if trailing_caret:
+                content = content[:-1]
             if not content:
                 self.environment.pop(name, None)
             else:
                 self.environment[name] = content
 
-    def execute_command(self, ast: AstCommand):
-        tokens = iter(ast.tokens)
-        ast = AstCommand(
-            ast.offset,
-            ast.silenced,
-            ast.prefix,
-            [],
-            ast.redirects,
-        )
-        if self.delayexpand:
-            tokens = (self.delay_expand(token) for token in tokens)
-        if v := self.state.for_loop_variables:
-            tokens = (self.for_expand(token, v) for token in tokens)
-        ast.tokens.extend(tokens)
-        command = SynCommand(ast)
-        verb = command.verb.upper().strip()
-        if verb == 'SET':
-            self.execute_set(command)
-        elif verb == 'FINDSTR':
-            self.execute_find(command, True)
-        elif verb == 'FIND':
-            self.execute_find(command, False)
-        elif verb == 'GOTO':
-            label, *_ = command.argument_string.split(maxsplit=1)
-            if label.startswith(':'):
-                if label.upper() == ':EOF':
-                    raise Exit(self.state.ec, False)
-                label = label[1:]
-            raise Goto(label)
-        elif verb == 'CALL':
-            empty, colon, label = command.argument_string.partition(':')
-            if empty or not colon:
-                raise EmulatorException(F'Invalid CALL label: {label}')
+    @_command('CALL')
+    def execute_call(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+        cmdl = cmd.argument_string
+        empty, colon, label = cmdl.partition(':')
+        if colon and not empty:
             try:
                 offset = self.parser.lexer.labels[label.upper()]
             except KeyError as KE:
                 raise InvalidLabel(label) from KE
-            emu = BatchEmulator(self.parser)
-            yield from emu.emulate(offset, called=True)
-        elif verb == 'SETLOCAL':
-            setting = command.argument_string.strip().upper()
-            delay = {
-                'DISABLEDELAYEDEXPANSION': False,
-                'ENABLEDELAYEDEXPANSION' : True,
-            }.get(setting, self.state.delayexpand)
-            cmdxt = {
-                'DISABLEEXTENSIONS': False,
-                'ENABLEEXTENSIONS' : True,
-            }.get(setting, self.state.ext_setting)
-            self.state.delayexpands.append(delay)
-            self.state.ext_settings.append(cmdxt)
-            self.state.environments.append(dict(self.environment))
-        elif verb == 'ENDLOCAL' and len(self.state.environments) > 1:
+            emu = BatchEmulator(self.parser, stdin=stdin, stderr=stderr, stdout=stdout)
+        else:
+            offset = 0
+            target = self.state.ingest_file(cmdl.strip())
+            if target is None:
+                yield str(cmd)
+                return
+            emu = BatchEmulator(
+                target,
+                state=BatchState(
+                    environment=self.state.environment,
+                    file_system=self.state.file_system,
+                    now=self.state.now,
+                    cwd=self.state.cwd,
+                    username=self.state.username,
+                    hostname=self.state.hostname,
+                    filename=target,
+                ),
+                stdin=stdin,
+                stderr=stderr,
+                stdout=stdout,
+            )
+        yield from emu.emulate(offset, called=True)
+
+    @_command('SETLOCAL')
+    def execute_setlocal(self, cmd: SynCommand, *_):
+        setting = cmd.argument_string.strip().upper()
+        delay = {
+            'DISABLEDELAYEDEXPANSION': False,
+            'ENABLEDELAYEDEXPANSION' : True,
+        }.get(setting, self.state.delayexpand)
+        cmdxt = {
+            'DISABLEEXTENSIONS': False,
+            'ENABLEEXTENSIONS' : True,
+        }.get(setting, self.state.ext_setting)
+        self.state.delayexpands.append(delay)
+        self.state.ext_settings.append(cmdxt)
+        self.state.environments.append(dict(self.environment))
+
+    @_command('ENDLOCAL')
+    def execute_endlocal(self, *_):
+        if len(self.state.environments) > 1:
             self.state.environments.pop()
             self.state.delayexpands.pop()
-        elif verb == 'EXIT':
-            it = iter(command.args)
-            exit = True
-            token = 0
-            for arg in it:
-                if arg.upper() == '/B':
-                    exit = False
-                    continue
-                token = arg
-                break
-            try:
-                code = int(token)
-            except ValueError:
-                code = 0
-            raise Exit(code, exit)
-        elif verb == 'CD' or verb == 'CHDIR':
-            self.state.cwd = command.argument_string
-        elif verb == 'PUSHD':
-            directory = command.argument_string
-            self.state.dirstack.append(self.cwd)
-            self.cwd = directory.rstrip()
-        elif verb == 'POPD':
-            try:
-                self.state.cwd = self.state.dirstack.pop()
-            except IndexError:
-                pass
-        elif verb == 'ECHO':
-            for r in ast.redirects:
-                if r.type == Redirect.In:
-                    continue
-                if isinstance(path := r.target, str):
-                    path = unquote(path.lstrip())
-                    method = (
-                        self.state.append_file
-                    ) if r.type == Redirect.OutAppend else (
-                        self.state.create_file
-                    )
-                    method(path, command.argument_string)
-                break
-            else:
-                yield str(command)
+
+    @_command('GOTO')
+    def execute_goto(self, cmd: SynCommand, *_):
+        label, *_ = cmd.argument_string.split(maxsplit=1)
+        if label.startswith(':'):
+            if label.upper() == ':EOF':
+                raise Exit(self.state.ec, False)
+            label = label[1:]
+        raise Goto(label)
+
+    @_command('EXIT')
+    def execute_exit(self, cmd: SynCommand, *_):
+        it = iter(cmd.args)
+        exit = True
+        token = 0
+        for arg in it:
+            if arg.upper() == '/B':
+                exit = False
+                continue
+            token = arg
+            break
+        try:
+            code = int(token)
+        except ValueError:
+            code = 0
+        raise Exit(code, exit)
+
+    @_command('CHDIR')
+    @_command('CD')
+    def execute_chdir(self, cmd: SynCommand, *_):
+        self.state.cwd = cmd.argument_string.strip()
+
+    @_command('PUSHD')
+    def execute_pushd(self, cmd: SynCommand, *_):
+        self.state.dirstack.append(self.state.cwd)
+        self.execute_chdir(cmd)
+
+    @_command('POPD')
+    def execute_popd(self, *_):
+        try:
+            self.state.cwd = self.state.dirstack.pop()
+        except IndexError:
+            pass
+
+    @_command('ECHO')
+    def execute_echo(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+        cmdl = cmd.argument_string
+        mode = cmdl.strip().lower()
+        yield str(cmd)
+        if mode == 'on':
+            self.state.echo = True
+            return
+        if mode == 'off':
+            self.state.echo = False
+            return
+        if mode:
+            stdout.write(F'{cmdl}\r\n')
         else:
+            mode = 'on' if self.state.echo else 'off'
+            stdout.write(F'ECHO is {mode}.\r\n')
+
+    def execute_command(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+        verb = cmd.verb.upper().strip()
+
+        try:
+            handler = self._command.handlers[verb]
+        except KeyError:
+            yield str(cmd)
             self.state.ec = 0
-            yield str(command)
+            return
 
-    @_register(AstPipeline)
+        out_file: str | None = None
+        err_file: str | None = None
+
+        for src, r in cmd.ast.redirects.items():
+            if not 0 <= src <= 2 or (src == 0) != r.is_input:
+                continue
+            if isinstance((target := r.target), str):
+                if target.upper() == 'NUL':
+                    if src == 0:
+                        stdin = DevNull()
+                    elif src == 1:
+                        stdout = DevNull()
+                    elif src == 2:
+                        stderr = DevNull()
+                else:
+                    data = self.state.ingest_file(target)
+                    if src == 0:
+                        if data is None:
+                            return
+                        stdin = StringIO(data)
+                    else:
+                        if r.is_out_append:
+                            buffer = StringIO(data)
+                            buffer.seek(0, 2)
+                        else:
+                            buffer = StringIO()
+                        if src == 1:
+                            stdout = buffer
+                            out_file = target
+                        if src == 2:
+                            stderr = buffer
+                            err_file = target
+            elif src == 1 and target == 2:
+                stdout = stderr
+            elif src == 2 and target == 1:
+                stderr = stdout
+
+        if (result := handler(self, cmd, stdin, stderr, stdout)) is None:
+            pass
+        elif not isinstance(result, int):
+            result = (yield from result)
+
+        for path, buffer in (
+            (err_file, stderr),
+            (out_file, stdout),
+        ):
+            if path is None:
+                continue
+            self.state.create_file(path, buffer.getvalue())
+
+        if result is not None:
+            self.state.ec = result
+
+    @_node(AstPipeline)
     def emulate_pipeline(self, pipeline: AstPipeline):
-        for part in pipeline.parts:
-            yield from self.execute_command(part)
+        n = len(pipeline.parts)
+        stdi = self.stdin
+        stde = self.stderr
+        stdo = stdi
+        for k, part in enumerate(pipeline.parts, 1):
+            if k == n:
+                stdo = self.stdout
+            else:
+                stdi = stdo
+                stdo = StringIO()
 
-    @_register(AstSequence)
+            tokens = iter(part.tokens)
+            ast = AstCommand(
+                part.offset,
+                part.silenced,
+                [],
+                part.redirects,
+            )
+            if self.delayexpand:
+                tokens = (self.delay_expand(token) for token in tokens)
+            if v := self.state.for_loop_variables:
+                tokens = (self.for_expand(token, v) for token in tokens)
+            ast.tokens.extend(tokens)
+            yield from self.execute_command(SynCommand(ast), stdi, stde, stdo)
+
+    @_node(AstSequence)
     def emulate_sequence(self, sequence: AstSequence):
         yield from self.emulate_statement(sequence.head)
         for cs in sequence.tail:
@@ -341,7 +512,7 @@ class BatchEmulator:
                     continue
             yield from self.emulate_statement(cs.statement)
 
-    @_register(AstIf)
+    @_node(AstIf)
     def emulate_if(self, _if: AstIf):
         if _if.variant == AstIfVariant.ErrorLevel:
             condition = _if.var_int <= self.state.ec
@@ -386,7 +557,7 @@ class BatchEmulator:
         elif (_else := _if.else_do):
             yield from self.emulate_sequence(_else)
 
-    @_register(AstFor)
+    @_node(AstFor)
     def emulate_for(self, _for: AstFor):
         vars = self.state.new_forloop()
         body = _for.body
@@ -433,18 +604,18 @@ class BatchEmulator:
                 vars[name] = entry
                 yield from self.emulate_sequence(_for.body)
 
-    @_register(AstGroup)
+    @_node(AstGroup)
     def emulate_group(self, group: AstGroup):
         for sequence in group.sequences:
             yield from self.emulate_sequence(sequence)
 
-    @_register(AstLabel)
+    @_node(AstLabel)
     def emulate_label(self, label: AstLabel):
         yield from ()
 
     def emulate_statement(self, statement: AstStatement):
         try:
-            handler = self._register.handlers[statement.__class__]
+            handler = self._node.handlers[statement.__class__]
         except KeyError:
             raise RuntimeError(statement)
         yield from handler(self, statement)

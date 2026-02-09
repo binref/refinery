@@ -2,7 +2,7 @@ from inspect import getdoc
 
 from refinery.lib.batch import BatchEmulator, BatchLexer, BatchParser, BatchState
 from refinery.lib.batch.synth import SynCommand
-from refinery.lib.batch.model import AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
+from refinery.lib.batch.model import AstGroup, AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
 
 from .. import TestBase
 
@@ -31,7 +31,7 @@ class TestBatchLexer(TestBase):
             'echo',
             ' ',
             'foo',
-            RedirectIO(Redirect.Out, 1, '=='),
+            RedirectIO(Redirect.OutCreate, 1, '=='),
             ' ',
         ])
 
@@ -44,7 +44,7 @@ class TestBatchLexer(TestBase):
             'echo',
             ' ',
             'foo',
-            RedirectIO(Redirect.Out, 1, '=='),
+            RedirectIO(Redirect.OutCreate, 1, '=='),
             ' ',
             'bar',
             '\n',
@@ -101,7 +101,6 @@ class TestBatchLexer(TestBase):
         self.assertEqual(next(lexed), '\n')
 
         self.assertEqual(next(lexed), 'set')
-        lexer.parse_command()
         lexer.parse_set()
         self.assertEqual(next(lexed), ' ')
         self.assertEqual(next(lexed), '"FOO=FIRST')
@@ -114,7 +113,6 @@ class TestBatchLexer(TestBase):
         self.assertEqual(next(lexed), '\n')
 
         self.assertEqual(next(lexed), 'set')
-        lexer.parse_command()
         lexer.parse_set()
         self.assertEqual(next(lexed), ' ')
         self.assertEqual(next(lexed), '^"^BA^R=S"E"C^O^^^"N"D')
@@ -122,6 +120,27 @@ class TestBatchLexer(TestBase):
 
 
 class TestBatchParser(TestBase):
+
+    def test_cannot_silence_after_redirect_happened(self):
+        parser = BatchParser(';;>test.txt===@echo hi\n')
+        parsed = list(parser.parse(0))
+        self.assertEqual(len(parsed), 1)
+        parsed = parsed[0].head
+        assert isinstance(parsed, AstPipeline)
+        parsed = parsed.parts[0]
+        self.assertFalse(parsed.silenced)
+        self.assertDictEqual(parsed.redirects, {1: RedirectIO(Redirect.OutCreate, 1, 'test.txt')})
+        self.assertListEqual(parsed.tokens, ['@echo', ' ', 'hi'])
+
+    def test_regressuib_group_not_identified(self):
+        parser = BatchParser(';@;@@(chcp 43^7)', BatchState())
+        parsed = list(parser.parse(0))
+        self.assertEqual(len(parsed), 1)
+        parsed = parsed[0]
+        assert isinstance(parsed, AstSequence)
+        assert isinstance(parsed.head, AstGroup)
+        assert isinstance(parsed.head.sequences[0].head, AstPipeline)
+
     def test_regression_set_with_escapes(self):
         @docs
         class code:
@@ -178,7 +197,7 @@ class TestBatchEmulator(TestBase):
             '''
         bat.state.create_file('exists')
         self.assertListEqual(list(bat.emulate()), ['@echo off', 'echo hi'])
-        bat.state.reset()
+        bat.state.remove_file('exists')
         self.assertListEqual(list(bat.emulate()), ['@echo off'])
 
     def test_labels_can_be_variables(self):
@@ -558,7 +577,7 @@ class TestBatchEmulator(TestBase):
             GOTO :EOF
             :TEST
             SET VAR=CHANGED
-            EXIT /B 0011
+            EXIT/B 0011
             '''
         self.assertListEqual(list(bat.emulate()), [
             'ECHO 11',
@@ -598,9 +617,11 @@ class TestBatchEmulator(TestBase):
             :EOF
             echo BAR
             """
-        with self.assertRaises(EmulatorException):
-            for _ in bat.emulate():
-                pass
+        self.assertEqual(list(bat.emulate()), [
+            'call EOF',
+            'echo FOO',
+            'echo BAR',
+        ])
 
     def test_goto_vs_call_vs_eof_04(self):
         @emulate
@@ -822,13 +843,15 @@ class TestBatchEmulator(TestBase):
             pass
         self.assertEqual(bat.state.ingest_file('output.txt'), 'test\r\n')
 
+    def test_separators_after_redirect(self):
+        emu = BatchEmulator(';;>test.txt===echo hi\n')
+        cmd = list(emu.emulate())
+        self.assertListEqual(cmd, ['1>"test.txt" echo hi'])
+        self.assertEqual(emu.state.ingest_file('test.txt'), 'hi\r\n')
+
     def test_separators_in_redirect(self):
-        @emulate
-        class bat:
-            '''
-            echo/==;;>;; ="==",
-            '''
-        self.assertEqual(list(bat.emulate()), ['echo ==;; 1>"=="'])
+        bat = BatchEmulator('echo/==;;>;; ="==",,  ')
+        self.assertEqual(list(bat.emulate()), ['1>"==" echo ==;;'])
         self.assertEqual(bat.state.ingest_file('=='), '==;;\r\n')
 
     def test_variable_asterix_01(self):

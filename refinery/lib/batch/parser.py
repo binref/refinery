@@ -161,40 +161,62 @@ class BatchParser:
     def environment(self):
         return self.state.environment
 
+    def skip_prefix(self, tokens: LookAhead) -> tuple[int, list[Token]]:
+        token = tokens.peek()
+        prefix = []
+        skip = {
+            Ctrl.At,
+            Ctrl.Semicolon,
+            Ctrl.Comma,
+            Ctrl.Equals,
+            Ctrl.IsEqualTo,
+        }
+        at = 0
+        while True:
+            if isinstance(token, Word):
+                if not token.isspace():
+                    break
+                prefix.append(token)
+            elif token not in skip:
+                break
+            else:
+                prefix.append(token)
+                if token == Ctrl.At:
+                    at += 1
+                else:
+                    at = 0
+            token = tokens.drop_and_peek()
+        return at, prefix
+
     def command(self, tokens: LookAhead, in_group: bool, silenced: bool = False) -> AstCommand | None:
         ast = AstCommand(tokens.offset(), silenced)
         tok = tokens.peek()
         cmd = ast.tokens
 
-        self.lexer.parse_command()
+        # while isinstance(tok, RedirectIO):
+        #     ast.redirects[tok.source] = tok
+        #     tok = tokens.drop_and_peek()
 
-        while True:
-            if tok == Ctrl.EndOfFile:
-                return None
-            elif isinstance(tok, Word):
-                if not tok.isspace():
-                    break
-                ast.prefix.append(tok)
-            elif isinstance(tok, RedirectIO):
-                ast.redirects.append(tok)
-            else:
-                ast.prefix.append(tok)
-                ast.silenced = (tok == Ctrl.At)
-            tok = tokens.drop_and_peek()
+        add_space = True
+        eat_token = False
+        set_logic = False
 
-        tok_upper = tok.upper()
-        echo_skip = False
-
-        if (is_set := tok_upper == 'SET'):
-            self.lexer.parse_set()
-        elif tok_upper.startswith('ECHO'):
-            if len(tok_upper) > 4 and tok_upper[4] in '/.':
-                cmd.append(tok[:4])
-                cmd.append(' ')
-                cmd.append(tok[5:])
-            else:
-                cmd.append(tok)
-                echo_skip = True
+        if isinstance(tok, RedirectIO):
+            add_space = False
+        else:
+            tok_upper = tok.upper()
+            if tok_upper == 'SET':
+                self.lexer.parse_set()
+                set_logic = True
+            if tok_upper.startswith('ECHO'):
+                if len(tok_upper) > 4 and tok_upper[4] == '.':
+                    cmd.append(tok[:4])
+                    cmd.append(' ')
+                    tok = tok[5:]
+                    add_space = False
+                else:
+                    eat_token = True
+            cmd.append(tok)
             tok = tokens.drop_and_peek()
 
         nonspace = io.StringIO()
@@ -210,15 +232,16 @@ class BatchParser:
             if in_group and tok == Ctrl.EndGroup:
                 break
             if isinstance(tok, RedirectIO):
-                ast.redirects.append(tok)
-            elif echo_skip:
-                echo_skip = False
+                ast.redirects[tok.source] = tok
+            elif add_space:
+                add_space = False
                 if not tok.isspace():
                     cmd.append(' ')
-                    tok = tok[1:]
+                    if eat_token:
+                        tok = tok[1:]
                 if tok:
                     cmd.append(tok)
-            elif is_set:
+            elif set_logic:
                 cmd.append(tok)
             elif tok.isspace():
                 if nsp := nonspace.getvalue():
@@ -228,8 +251,7 @@ class BatchParser:
                 cmd.append(tok)
             else:
                 nonspace.write(tok)
-            tokens.pop()
-            tok = tokens.peek()
+            tok = tokens.drop_and_peek()
         if nsp := nonspace.getvalue():
             cmd.append(nsp)
         if ast:
@@ -507,10 +529,7 @@ class BatchParser:
         return AstLabel(offset, silenced, line, label)
 
     def statement(self, tokens: LookAhead, in_group: bool):
-        at = 0
-        while tokens.pop(Ctrl.At):
-            at += 1
-            tokens.skip_space()
+        at, _ = self.skip_prefix(tokens)
         silenced = at > 0
         if at <= 1 and (s := self.label(tokens, silenced)):
             return s

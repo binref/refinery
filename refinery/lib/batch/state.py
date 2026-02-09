@@ -83,16 +83,15 @@ class BatchState:
         now: int | float | str | datetime | None = None,
         cwd: str = 'C:\\',
         filename: str | None = None,
+        echo: bool = False
     ):
-        self.delayed_expansion = delayed_expansion
         self.extensions_version = extensions_version
-        self.extensions_enabled = extensions_enabled
-        self.file_system_seed = file_system or {}
-        self.environment_seed = environment or {}
+        file_system = file_system or {}
+        environment = environment or {}
         if hostname is None:
             hostname = str(uuid4())
         for key, value in _DEFAULT_ENVIRONMENT.items():
-            self.environment_seed.setdefault(
+            environment.setdefault(
                 key.upper(),
                 value.format(h=hostname, u=username)
             )
@@ -104,11 +103,22 @@ class BatchState:
             now = datetime.now()
         self.cwd = cwd
         self.now = now
+        seed(self.now.timestamp())
         self.hostname = hostname
         self.username = username
-        self.filename = filename
-        seed(self.now.timestamp())
-        self.reset()
+        self.labels = {}
+        self._for_loops = []
+        self.environments = [environment]
+        self.delayexpands = [delayed_expansion]
+        self.ext_settings = [extensions_enabled]
+        self.file_system = file_system
+        self.dirstack = []
+        self.linebreaks = []
+        self.name = filename or F'{uuid4()}.bat'
+        self.args = []
+        self._cmd = ''
+        self.ec = None
+        self.echo = echo
 
     @property
     def cwd(self):
@@ -134,20 +144,6 @@ class BatchState:
         ec = value or 0
         self.environment['ERRORLEVEL'] = str(ec)
         self.errorlevel = ec
-
-    def reset(self):
-        self.labels = {}
-        self._for_loops = []
-        self.environments = [dict(self.environment_seed)]
-        self.delayexpands = [self.delayed_expansion]
-        self.ext_settings = [self.extensions_enabled]
-        self.file_system = dict(self.file_system_seed)
-        self.dirstack = []
-        self.linebreaks = []
-        self.name = self.filename or F'{uuid4()}.bat'
-        self.args = []
-        self._cmd = ''
-        self.ec = None
 
     @property
     def command_line(self):

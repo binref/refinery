@@ -46,7 +46,7 @@ class Expected(str):
 
 
 class Redirect(str, enum.Enum):
-    Out = '>'
+    OutCreate = '>'
     OutAppend = '>>'
     In = '<'
 
@@ -57,7 +57,7 @@ class Redirect(str, enum.Enum):
         return self.name
 
 
-@dataclass
+@dataclass(unsafe_hash=True, slots=True)
 class RedirectIO:
     type: Redirect
     source: int
@@ -68,15 +68,26 @@ class RedirectIO:
         return isinstance(self.target, str)
 
     @property
-    def outbound(self):
-        return self.type in (Redirect.Out, Redirect.OutAppend)
+    def is_out_create(self):
+        return self.type == Redirect.OutCreate
+
+    @property
+    def is_out_append(self):
+        return self.type == Redirect.OutAppend
+
+    @property
+    def is_input(self):
+        return self.type == Redirect.In
 
     def __str__(self):
         target = self.target
         string = F'{self.source}{self.type!s}'
         if target is None:
             return string
-        return F'{string}{target}'
+        if isinstance(target, int):
+            return F'{string}&{target}'
+        else:
+            return F'{string}"{target}"'
 
     def isspace(self):
         return False
@@ -187,9 +198,8 @@ class AstLabel(AstStatement):
 
 @dataclass
 class AstCommand(AstStatement):
-    prefix: list[str] = field(default_factory=list)
     tokens: list[str] = field(default_factory=list)
-    redirects: list[RedirectIO] = field(default_factory=list)
+    redirects: dict[int, RedirectIO] = field(default_factory=dict)
 
 
 @dataclass
