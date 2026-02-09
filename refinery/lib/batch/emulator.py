@@ -209,9 +209,9 @@ class BatchEmulator:
 
         _V = 'V' in flags # noqa; Prints only lines that do not contain a match.
         _P = 'P' in flags # noqa; Skip files with non-printable characters.
-        _O = 'O' in flags # noqa; Prints character offset before each matching line.
-        _N = 'N' in flags # noqa; Prints the line number before each line that matches.
-        _M = 'M' in flags # noqa; Prints only the filename if a file contains a match.
+        _ = r'O' in flags # noqa; Prints character offset before each matching line.
+        _ = r'N' in flags # noqa; Prints the line number before each line that matches.
+        _ = r'M' in flags # noqa; Prints only the filename if a file contains a match.
 
         nothing_found = True
 
