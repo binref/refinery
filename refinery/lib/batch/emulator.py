@@ -4,6 +4,7 @@ import fnmatch
 import itertools
 import re
 
+from dataclasses import dataclass, field
 from io import StringIO
 from typing import Callable, ClassVar, Generator
 
@@ -59,8 +60,40 @@ class DevNull:
     def write(self, s: str, /) -> int:
         return len(s)
 
+    def seek(self, k: int, whence: int = 0, /):
+        return
 
-IoStream = DevNull | StringIO
+
+@dataclass
+class IO:
+    i: DevNull | StringIO = field(default_factory=StringIO)
+    o: DevNull | StringIO = field(default_factory=StringIO)
+    e: DevNull | StringIO = field(default_factory=StringIO)
+
+    def __iter__(self):
+        yield self.i
+        yield self.o
+        yield self.e
+
+    def __setitem__(self, k, v):
+        if k == 0:
+            self.i = v
+        elif k == 1:
+            self.o = v
+        elif k == 2:
+            self.e = v
+        else:
+            raise IndexError(k)
+
+    def __getitem__(self, k):
+        if k == 0:
+            return self.i
+        elif k == 1:
+            return self.o
+        elif k == 2:
+            return self.e
+        else:
+            raise IndexError(k)
 
 
 class BatchEmulator:
@@ -70,7 +103,9 @@ class BatchEmulator:
             type[AstNode],
             Callable[[
                 BatchEmulator,
-                AstNode
+                AstNode,
+                IO,
+                bool,
             ], Generator[str]]
         ]] = {}
 
@@ -87,9 +122,8 @@ class BatchEmulator:
             Callable[[
                 BatchEmulator,
                 SynCommand,
-                IoStream,
-                IoStream,
-                IoStream,
+                IO,
+                bool,
             ], Generator[str, None, int | None] | int | None]
         ]] = {}
 
@@ -104,15 +138,11 @@ class BatchEmulator:
         self,
         data: str | buf | BatchParser,
         state: BatchState | None = None,
-        stdin: IoStream | None = None,
-        stderr: IoStream | None = None,
-        stdout: IoStream | None = None,
+        std: IO | None = None,
     ):
         self.stack = []
         self.parser = BatchParser(data, state)
-        self.stdout = stdout or StringIO()
-        self.stderr = stderr or StringIO()
-        self.stdin = stdin or StringIO()
+        self.std = std or IO()
 
     @property
     def state(self):
@@ -146,9 +176,9 @@ class BatchEmulator:
         return re.sub(
             RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
 
-    def execute_find_or_findstr(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream, findstr: bool):
+    def execute_find_or_findstr(self, cmd: SynCommand, std: IO, findstr: bool):
         needles = []
-        paths = []
+        paths: list[str | ellipsis] = [...]
         flags = {}
         it = iter(cmd.args)
         arg = None
@@ -193,53 +223,84 @@ class BatchEmulator:
                 self.state.ec = 1
                 return
 
-        for arg in it:
-            paths.append(unquote(arg))
+        prefix_filename = False
 
-        for k, n in enumerate(needles):
+        for arg in it:
+            pattern = unquote(arg)
+            if '*' in pattern or '?' in pattern:
+                prefix_filename = True
+                for path in self.state.file_system:
+                    if fnmatch.fnmatch(path, pattern):
+                        paths.append(path)
+            else:
+                paths.append(pattern)
+
+        if len(paths) > 1:
+            prefix_filename = True
+
+        for n, needle in enumerate(needles):
             if not findstr or 'L' in flags:
-                n = re.escape(n)
+                needle = re.escape(needle)
             if 'X' in flags:
-                n = F'^{n}$'
+                needle = F'^{needle}$'
             elif 'B' in flags:
-                n = F'^{n}'
+                needle = F'^{needle}'
             elif 'E' in flags:
-                n = F'{n}$'
-            needles[k] = n
+                needle = F'{needle}$'
+            needles[n] = needle
 
         _V = 'V' in flags # noqa; Prints only lines that do not contain a match.
         _P = 'P' in flags # noqa; Skip files with non-printable characters.
-        _ = r'O' in flags # noqa; Prints character offset before each matching line.
-        _ = r'N' in flags # noqa; Prints the line number before each line that matches.
-        _ = r'M' in flags # noqa; Prints only the filename if a file contains a match.
+        _O = 'O' in flags # noqa; Prints character offset before each matching line.
+        _N = 'N' in flags # noqa; Prints the line number before each line that matches.
+        _M = 'M' in flags # noqa; Prints only the filename if a file contains a match.
 
         nothing_found = True
+        offset = 0
 
         for path in paths:
-            if (data := self.state.ingest_file(path)) is None:
+            if path is ...:
+                data = std.i.read()
+            else:
+                data = self.state.ingest_file(path)
+            if data is None:
                 self.state.ec = 1
                 return
             if _P and not re.fullmatch('[\\s!-~]+', data):
                 continue
-            for line in data.splitlines():
+            for n, line in enumerate(data.splitlines(True), 1):
                 for needle in needles:
-                    if _V == bool(re.match(needle, line)):
+                    hit = re.match(needle, line)
+                    if _V == bool(hit):
                         continue
                     nothing_found = False
+                    if not _M:
+                        if _O:
+                            o = offset + (hit.start() if hit else 0)
+                            line = F'{o}:{line}'
+                        if _N:
+                            line = F'{n}:{line}'
+                        if prefix_filename:
+                            line = F'{path}:{line}'
+                        std.o.write(line)
+                    else:
+                        std.o.write(path)
+                        break
+                offset += len(line)
 
         self.state.ec = int(nothing_found)
 
     @_command('FIND')
-    def execute_find(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
-        self.execute_find_or_findstr(cmd, stdin, stderr, stdout, findstr=False)
+    def execute_find(self, cmd: SynCommand, std: IO, *_):
+        self.execute_find_or_findstr(cmd, std, findstr=False)
 
     @_command('FINDSTR')
-    def execute_findstr(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
-        self.execute_find_or_findstr(cmd, stdin, stderr, stdout, findstr=True)
+    def execute_findstr(self, cmd: SynCommand, std: IO, *_):
+        self.execute_find_or_findstr(cmd, std, findstr=True)
 
     @_command('SET')
-    def execute_set(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
-        if not (args := cmd.ast.tokens):
+    def execute_set(self, cmd: SynCommand, std: IO, *_):
+        if not (args := cmd.ast.fragments):
             raise EmulatorException('Empty SET instruction')
 
         if cmd.verb.upper() != 'SET':
@@ -297,7 +358,7 @@ class BatchEmulator:
                 self.environment[name] = content
 
     @_command('CALL')
-    def execute_call(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+    def execute_call(self, cmd: SynCommand, std: IO, *_):
         cmdl = cmd.argument_string
         empty, colon, label = cmdl.partition(':')
         if colon and not empty:
@@ -305,28 +366,22 @@ class BatchEmulator:
                 offset = self.parser.lexer.labels[label.upper()]
             except KeyError as KE:
                 raise InvalidLabel(label) from KE
-            emu = BatchEmulator(self.parser, stdin=stdin, stderr=stderr, stdout=stdout)
+            emu = BatchEmulator(self.parser, std=std)
         else:
             offset = 0
             target = self.state.ingest_file(cmdl.strip())
             if target is None:
                 yield str(cmd)
                 return
-            emu = BatchEmulator(
-                target,
-                state=BatchState(
-                    environment=self.state.environment,
-                    file_system=self.state.file_system,
-                    now=self.state.now,
-                    cwd=self.state.cwd,
-                    username=self.state.username,
-                    hostname=self.state.hostname,
-                    filename=target,
-                ),
-                stdin=stdin,
-                stderr=stderr,
-                stdout=stdout,
-            )
+            emu = BatchEmulator(target, std=std, state=BatchState(
+                environment=self.state.environment,
+                file_system=self.state.file_system,
+                now=self.state.now,
+                cwd=self.state.cwd,
+                username=self.state.username,
+                hostname=self.state.hostname,
+                filename=target,
+            ))
         yield from emu.emulate(offset, called=True)
 
     @_command('SETLOCAL')
@@ -394,7 +449,7 @@ class BatchEmulator:
             pass
 
     @_command('ECHO')
-    def execute_echo(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+    def execute_echo(self, cmd: SynCommand, std: IO, in_group: bool):
         cmdl = cmd.argument_string
         mode = cmdl.strip().lower()
         yield str(cmd)
@@ -405,12 +460,14 @@ class BatchEmulator:
             self.state.echo = False
             return
         if mode:
-            stdout.write(F'{cmdl}\r\n')
+            if in_group and not cmdl.endswith(' '):
+                cmdl += ' '
+            std.o.write(F'{cmdl}\r\n')
         else:
             mode = 'on' if self.state.echo else 'off'
-            stdout.write(F'ECHO is {mode}.\r\n')
+            std.e.write(F'ECHO is {mode}.\r\n')
 
-    def execute_command(self, cmd: SynCommand, stdin: IoStream, stderr: IoStream, stdout: IoStream):
+    def execute_command(self, cmd: SynCommand, std: IO, in_group: bool):
         verb = cmd.verb.upper().strip()
 
         try:
@@ -420,89 +477,75 @@ class BatchEmulator:
             self.state.ec = 0
             return
 
-        out_file: str | None = None
-        err_file: str | None = None
+        paths: dict[int, str] = {}
 
         for src, r in cmd.ast.redirects.items():
             if not 0 <= src <= 2 or (src == 0) != r.is_input:
                 continue
             if isinstance((target := r.target), str):
                 if target.upper() == 'NUL':
-                    if src == 0:
-                        stdin = DevNull()
-                    elif src == 1:
-                        stdout = DevNull()
-                    elif src == 2:
-                        stderr = DevNull()
+                    std[src] = DevNull()
                 else:
                     data = self.state.ingest_file(target)
                     if src == 0:
                         if data is None:
                             return
-                        stdin = StringIO(data)
+                        std.i = StringIO(data)
                     else:
                         if r.is_out_append:
                             buffer = StringIO(data)
                             buffer.seek(0, 2)
                         else:
                             buffer = StringIO()
-                        if src == 1:
-                            stdout = buffer
-                            out_file = target
-                        if src == 2:
-                            stderr = buffer
-                            err_file = target
+                        std[src] = buffer
+                        paths[src] = target
             elif src == 1 and target == 2:
-                stdout = stderr
+                std.o = std.e
             elif src == 2 and target == 1:
-                stderr = stdout
+                std.e = std.o
 
-        if (result := handler(self, cmd, stdin, stderr, stdout)) is None:
+        if (result := handler(self, cmd, std, in_group)) is None:
             pass
         elif not isinstance(result, int):
             result = (yield from result)
 
-        for path, buffer in (
-            (err_file, stderr),
-            (out_file, stdout),
-        ):
-            if path is None:
-                continue
-            self.state.create_file(path, buffer.getvalue())
+        for k, path in paths.items():
+            self.state.create_file(path, std[k].getvalue())
 
         if result is not None:
             self.state.ec = result
 
     @_node(AstPipeline)
-    def emulate_pipeline(self, pipeline: AstPipeline):
-        n = len(pipeline.parts)
-        stdi = self.stdin
-        stde = self.stderr
-        stdo = stdi
+    def emulate_pipeline(self, pipeline: AstPipeline, std: IO, in_group: bool):
+        length = len(pipeline.parts)
+        streams = IO(*std)
         for k, part in enumerate(pipeline.parts, 1):
-            if k == n:
-                stdo = self.stdout
+            if k != 1:
+                streams.i = streams.o
+                streams.i.seek(0)
+            if k == length:
+                streams.o = std.o
             else:
-                stdi = stdo
-                stdo = StringIO()
-
-            tokens = iter(part.tokens)
-            ast = AstCommand(
-                part.offset,
-                part.silenced,
-                [],
-                part.redirects,
-            )
-            if self.delayexpand:
-                tokens = (self.delay_expand(token) for token in tokens)
-            if v := self.state.for_loop_variables:
-                tokens = (self.for_expand(token, v) for token in tokens)
-            ast.tokens.extend(tokens)
-            yield from self.execute_command(SynCommand(ast), stdi, stde, stdo)
+                streams.o = StringIO()
+            if isinstance(part, AstGroup):
+                yield from self.emulate_group(part, streams, in_group)
+            else:
+                tokens = iter(part.fragments)
+                ast = AstCommand(
+                    part.offset,
+                    part.silenced,
+                    part.redirects,
+                )
+                if self.delayexpand:
+                    tokens = (self.delay_expand(token) for token in tokens)
+                if v := self.state.for_loop_variables:
+                    tokens = (self.for_expand(token, v) for token in tokens)
+                ast.fragments.extend(tokens)
+                yield from self.execute_command(SynCommand(ast), streams, in_group)
 
     @_node(AstSequence)
-    def emulate_sequence(self, sequence: AstSequence):
-        yield from self.emulate_statement(sequence.head)
+    def emulate_sequence(self, sequence: AstSequence, std: IO, in_group: bool):
+        yield from self.emulate_statement(sequence.head, std, in_group)
         for cs in sequence.tail:
             if cs.condition == AstCondition.Failure:
                 if self.state.ec == 0:
@@ -510,10 +553,10 @@ class BatchEmulator:
             if cs.condition == AstCondition.Success:
                 if self.state.ec != 0:
                     continue
-            yield from self.emulate_statement(cs.statement)
+            yield from self.emulate_statement(cs.statement, std, in_group)
 
     @_node(AstIf)
-    def emulate_if(self, _if: AstIf):
+    def emulate_if(self, _if: AstIf, std: IO, in_group: bool):
         if _if.variant == AstIfVariant.ErrorLevel:
             condition = _if.var_int <= self.state.ec
         elif _if.variant == AstIfVariant.CmdExtVersion:
@@ -553,12 +596,12 @@ class BatchEmulator:
             condition = not condition
 
         if condition:
-            yield from self.emulate_sequence(_if.then_do)
+            yield from self.emulate_sequence(_if.then_do, std, in_group)
         elif (_else := _if.else_do):
-            yield from self.emulate_sequence(_else)
+            yield from self.emulate_sequence(_else, std, in_group)
 
     @_node(AstFor)
-    def emulate_for(self, _for: AstFor):
+    def emulate_for(self, _for: AstFor, std: IO, in_group: bool):
         vars = self.state.new_forloop()
         body = _for.body
         name = _for.variable
@@ -598,27 +641,27 @@ class BatchEmulator:
                         vars[name] = tokenized[tok]
                     except IndexError:
                         vars[name] = ''
-                yield from self.emulate_sequence(body)
+                yield from self.emulate_sequence(body, std, in_group)
         else:
             for entry in _for.spec:
                 vars[name] = entry
-                yield from self.emulate_sequence(_for.body)
+                yield from self.emulate_sequence(_for.body, std, in_group)
 
     @_node(AstGroup)
-    def emulate_group(self, group: AstGroup):
-        for sequence in group.sequences:
-            yield from self.emulate_sequence(sequence)
+    def emulate_group(self, group: AstGroup, std: IO, in_group: bool):
+        for sequence in group.fragments:
+            yield from self.emulate_sequence(sequence, std, True)
 
     @_node(AstLabel)
-    def emulate_label(self, label: AstLabel):
+    def emulate_label(self, *_):
         yield from ()
 
-    def emulate_statement(self, statement: AstStatement):
+    def emulate_statement(self, statement: AstStatement, std: IO, in_group: bool):
         try:
             handler = self._node.handlers[statement.__class__]
         except KeyError:
             raise RuntimeError(statement)
-        yield from handler(self, statement)
+        yield from handler(self, statement, std, in_group)
 
     def emulate(self, offset: int = 0, name: str | None = None, command_line: str = '', called: bool = False):
         if name:
@@ -631,7 +674,7 @@ class BatchEmulator:
         while offset < length:
             try:
                 for sequence in self.parser.parse(offset):
-                    yield from self.emulate_sequence(sequence)
+                    yield from self.emulate_sequence(sequence, self.std, False)
             except Goto as goto:
                 try:
                     offset = labels[goto.label.upper()]

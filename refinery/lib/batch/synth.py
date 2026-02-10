@@ -77,7 +77,7 @@ class SynCommand(SynNode[AstCommand]):
         self.args = []
         self.verb = ''
         arg_string = io.StringIO()
-        for token in self.ast.tokens:
+        for token in self.ast.fragments:
             if token.isspace():
                 if self.verb:
                     arg_string.write(token)
@@ -99,7 +99,7 @@ class SynCommand(SynNode[AstCommand]):
             if self.ast.silenced:
                 out.write('@')
             out.write(self.verb)
-            for a in itertools.islice(self.ast.tokens, 1, None):
+            for a in itertools.islice(self.ast.fragments, 1, None):
                 out.write(a)
             return out.getvalue()
 
@@ -110,12 +110,15 @@ class SynGroup(SynNodeBase[AstGroup]):
         if not indented:
             out.write(tab)
         out.write('(')
-        for seq in self.ast.sequences:
+        for seq in self.ast.fragments:
             out.write('\n')
             SynSequence(seq).pretty(out, indent + 1, False)
         out.write('\n')
         out.write(tab)
         out.write(')')
+        for rd in self.ast.redirects.values():
+            out.write(K.SP)
+            out.write(str(rd))
         return True
 
 

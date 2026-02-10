@@ -198,13 +198,19 @@ class AstLabel(AstStatement):
 
 @dataclass
 class AstCommand(AstStatement):
-    tokens: list[str] = field(default_factory=list)
     redirects: dict[int, RedirectIO] = field(default_factory=dict)
+    fragments: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AstGroup(AstStatement):
+    redirects: dict[int, RedirectIO] = field(default_factory=dict)
+    fragments: list[AstSequence] = field(default_factory=list)
 
 
 @dataclass
 class AstPipeline(AstStatement):
-    parts: list[AstCommand] = field(default_factory=list)
+    parts: list[AstCommand | AstGroup] = field(default_factory=list)
 
 
 @dataclass
@@ -217,11 +223,6 @@ class AstConditionalStatement(AstNode):
 class AstSequence(AstNode):
     head: AstStatement
     tail: list[AstConditionalStatement] = field(default_factory=list)
-
-
-@dataclass
-class AstGroup(AstStatement):
-    sequences: list[AstSequence] = field(default_factory=list)
 
 
 class AstForVariant(str, enum.Enum):

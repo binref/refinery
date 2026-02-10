@@ -188,22 +188,25 @@ class BatchParser:
             token = tokens.drop_and_peek()
         return at, prefix
 
-    def command(self, tokens: LookAhead, in_group: bool, silenced: bool = False) -> AstCommand | None:
-        ast = AstCommand(tokens.offset(), silenced)
+    def command(
+        self,
+        tokens: LookAhead,
+        redirects: dict[int, RedirectIO],
+        in_group: bool,
+        silenced: bool,
+    ) -> AstCommand | None:
+        ast = AstCommand(tokens.offset(), silenced, redirects)
         tok = tokens.peek()
-        cmd = ast.tokens
+        cmd = ast.fragments
 
-        # while isinstance(tok, RedirectIO):
-        #     ast.redirects[tok.source] = tok
-        #     tok = tokens.drop_and_peek()
-
-        add_space = True
         eat_token = False
         set_logic = False
 
-        if isinstance(tok, RedirectIO):
+        if ast.redirects:
             add_space = False
         else:
+            assert not isinstance(tok, RedirectIO)
+            add_space = True
             tok_upper = tok.upper()
             if tok_upper == 'SET':
                 self.lexer.parse_set()
@@ -257,15 +260,28 @@ class BatchParser:
         if ast:
             return ast
 
+    def redirects(self, tokens: LookAhead):
+        redirects = {}
+        while isinstance((t := tokens.peek()), RedirectIO):
+            redirects[t.source] = t
+            tokens.pop()
+            tokens.skip_space()
+        return redirects
+
     def pipeline(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstPipeline | None:
-        if head := self.command(tokens, in_group, silenced):
-            node = AstPipeline(head.offset, silenced, [head])
-            while tokens.pop(Ctrl.Pipe):
-                if cmd := self.command(tokens, in_group):
-                    node.parts.append(cmd)
-                    continue
-                raise UnexpectedToken(tokens.peek())
-            return node
+        ast = AstPipeline(tokens.offset(), silenced)
+        while True:
+            redirects = self.redirects(tokens)
+            if not (cmd := self.group(tokens, redirects, silenced)):
+                if not (cmd := self.command(tokens, redirects, in_group, silenced)):
+                    break
+            ast.parts.append(cmd)
+            if not tokens.pop(Ctrl.Pipe):
+                break
+            at, _ = self.skip_prefix(tokens)
+            silenced = at > 0
+        if ast.parts:
+            return ast
 
     def ifthen(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstIf | None:
         offset = tokens.offset()
@@ -507,13 +523,21 @@ class BatchParser:
             else:
                 break
 
-    def group(self, tokens: LookAhead, silenced: bool) -> AstGroup | None:
+    def group(
+        self,
+        tokens: LookAhead,
+        redirects: dict[int, RedirectIO],
+        silenced: bool,
+    ) -> AstGroup | None:
         offset = tokens.offset()
         if tokens.peek() == Ctrl.NewGroup:
             self.lexer.parse_group()
             tokens.pop()
             sequences = list(self.block(tokens, True))
-            return AstGroup(offset, silenced, sequences)
+            group = AstGroup(offset, silenced, redirects, sequences)
+            tokens.skip_space()
+            group.redirects.update(self.redirects(tokens))
+            return group
 
     def label(self, tokens: LookAhead, silenced: bool) -> AstLabel | None:
         if tokens.peek() != Ctrl.Label:
@@ -534,8 +558,6 @@ class BatchParser:
         if at <= 1 and (s := self.label(tokens, silenced)):
             return s
         if s := self.ifthen(tokens, in_group, silenced):
-            return s
-        if s := self.group(tokens, silenced):
             return s
         if s := self.forloop(tokens, in_group, silenced):
             return s

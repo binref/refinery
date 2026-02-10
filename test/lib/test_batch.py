@@ -130,16 +130,16 @@ class TestBatchParser(TestBase):
         parsed = parsed.parts[0]
         self.assertFalse(parsed.silenced)
         self.assertDictEqual(parsed.redirects, {1: RedirectIO(Redirect.OutCreate, 1, 'test.txt')})
-        self.assertListEqual(parsed.tokens, ['@echo', ' ', 'hi'])
+        self.assertListEqual(parsed.fragments, ['@echo', ' ', 'hi'])
 
-    def test_regressuib_group_not_identified(self):
+    def test_regression_group_not_identified(self):
         parser = BatchParser(';@;@@(chcp 43^7)', BatchState())
         parsed = list(parser.parse(0))
         self.assertEqual(len(parsed), 1)
         parsed = parsed[0]
         assert isinstance(parsed, AstSequence)
-        assert isinstance(parsed.head, AstGroup)
-        assert isinstance(parsed.head.sequences[0].head, AstPipeline)
+        assert isinstance(parsed.head, AstPipeline)
+        assert isinstance(parsed.head.parts[0], AstGroup)
 
     def test_regression_set_with_escapes(self):
         @docs
@@ -160,7 +160,7 @@ class TestBatchParser(TestBase):
 
         self.assertEqual(len(parsed.tail), 0)
         self.assertEqual(len(parsed.head.parts), 1)
-        self.assertEqual(len(t := parsed.head.parts[0].tokens), 3)
+        self.assertEqual(len(t := parsed.head.parts[0].fragments), 3)
         self.assertEqual(t[0], 'set')
         self.assertEqual(t[1], ' ')
         self.assertEqual(t[2], '^"^BA^R=S"E"C^O^^^"N"D')
@@ -199,6 +199,18 @@ class TestBatchEmulator(TestBase):
         self.assertListEqual(list(bat.emulate()), ['@echo off', 'echo hi'])
         bat.state.remove_file('exists')
         self.assertListEqual(list(bat.emulate()), ['@echo off'])
+
+    def test_groups_are_commands(self):
+        @emulate
+        class bat:
+            '''
+            (
+                echo hello
+                echo harry
+            ) | findstr h
+            '''
+        self.assertListEqual(list(bat.emulate()), ['echo hello', 'echo harry'])
+        self.assertEqual(bat.std.o.getvalue(), 'hello\x20\r\nharry\x20\r\n')
 
     def test_labels_can_be_variables(self):
         @emulate
