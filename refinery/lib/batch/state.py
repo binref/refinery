@@ -60,7 +60,7 @@ _DEFAULT_ENVIRONMENT = {
 
 class BatchState:
 
-    name: str
+    name: str | None
     args: list[str]
 
     environments: list[dict[str, str]]
@@ -81,7 +81,7 @@ class BatchState:
         hostname: str | None = None,
         now: int | float | str | datetime | None = None,
         cwd: str = 'C:\\',
-        filename: str | None = None,
+        filename: str | None = '',
         echo: bool = False
     ):
         self.extensions_version = extensions_version
@@ -113,7 +113,9 @@ class BatchState:
         self.file_system = file_system
         self.dirstack = []
         self.linebreaks = []
-        self.name = filename or F'{uuid4()}.bat'
+        self.name = filename
+        if self.name == '':
+            self.name = F'{uuid4()}.bat'
         self.args = []
         self._cmd = ''
         self.ec = None

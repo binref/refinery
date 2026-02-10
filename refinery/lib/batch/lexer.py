@@ -685,6 +685,15 @@ class BatchLexer:
         token = self.cursor.token
         if (yield from self.check_line_break(mode, char)):
             return False
+        if char in WHITESPACE:
+            yield from self.emit_token()
+            token.append(char)
+            self.mode_switch(Mode.Whitespace)
+            return True
+        if char == SLASH and not self.pending_redirect:
+            yield from self.emit_token()
+            token.append(char)
+            return True
         if self.check_variable_start(char):
             return False
         if not token and char == QUOTE:
@@ -705,7 +714,7 @@ class BatchLexer:
             return False
         if (yield from self.check_redirect_io(char)):
             return False
-        self.cursor.token.append(char)
+        token.append(char)
         return True
 
     def common_token_checks(self, mode: Mode, char: int) -> Generator[Token, None, bool]:

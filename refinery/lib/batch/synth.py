@@ -185,7 +185,7 @@ class SynFor(SynNodeBase[AstFor]):
             tokens = ','.join(str(t) for t in opt.tokens)
             if ast:
                 tokens = F'{tokens}*'
-            options.append(tokens)
+            options.append(F'tokens={tokens}')
         if c := opt.comment:
             options.append(F'eol={c}')
         if s := opt.skip:
@@ -285,24 +285,32 @@ SynMap = {
 }
 
 
-@overload
-def synthesize(ast: AstFor) -> SynFor: ...
-@overload
-def synthesize(ast: AstIf) -> SynIf: ...
-@overload
-def synthesize(ast: AstSequence) -> SynSequence: ...
-@overload
-def synthesize(ast: AstGroup) -> SynGroup: ...
-@overload
-def synthesize(ast: AstCommand) -> SynCommand: ...
-@overload
-def synthesize(ast: AstLabel) -> SynLabel: ...
-@overload
-def synthesize(ast: AstPipeline) -> SynPipeline: ...
-
-
-@overload
+@overload # noqa
+def synthesize(ast: AstFor) -> SynFor:
+    ...
+@overload # noqa
+def synthesize(ast: AstIf) -> SynIf:
+    ...
+@overload # noqa
+def synthesize(ast: AstSequence) -> SynSequence:
+    ...
+@overload # noqa
+def synthesize(ast: AstGroup) -> SynGroup:
+    ...
+@overload # noqa
+def synthesize(ast: AstCommand) -> SynCommand:
+    ...
+@overload # noqa
+def synthesize(ast: AstLabel) -> SynLabel:
+    ...
+@overload # noqa
+def synthesize(ast: AstPipeline) -> SynPipeline:
+    ...
+@overload # noqa
 def synthesize(ast: AstStatement) -> SynLabel | SynCommand | SynGroup | SynPipeline | SynFor | SynIf:
+    ...
+@overload # noqa
+def synthesize(ast: AstNode) -> SynNodeBase:
     ...
 
 

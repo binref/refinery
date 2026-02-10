@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import sys
 
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar, Union
@@ -181,46 +182,57 @@ class AstCondition(str, enum.Enum):
         return self.value
 
 
-@dataclass
+@dataclass(repr=False)
 class AstNode:
     offset: int
 
+    def __repr__(self):
+        try:
+            synth = sys.modules['refinery.lib.batch.synth']
+        except KeyError:
+            return super().__repr__()
+        else:
+            return str(synth.synthesize(self))
 
-@dataclass
+
+@dataclass(repr=False)
 class AstStatement(AstNode):
     silenced: bool
 
 
-@dataclass
+@dataclass(repr=False)
 class AstLabel(AstStatement):
     line: str = ''
     label: str = ''
 
 
-@dataclass
+@dataclass(repr=False)
 class AstCommand(AstStatement):
     redirects: dict[int, RedirectIO] = field(default_factory=dict)
     fragments: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(repr=False)
 class AstGroup(AstStatement):
     redirects: dict[int, RedirectIO] = field(default_factory=dict)
     fragments: list[AstSequence] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(repr=False)
 class AstPipeline(AstStatement):
     parts: list[AstCommand | AstGroup] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(repr=False)
 class AstConditionalStatement(AstNode):
     condition: AstCondition
     statement: AstStatement
 
+    def __repr__(self):
+        return F'{self.condition.value} {self.statement!r}'
 
-@dataclass
+
+@dataclass(repr=False)
 class AstSequence(AstNode):
     head: AstStatement
     tail: list[AstConditionalStatement] = field(default_factory=list)
@@ -254,7 +266,7 @@ class AstForOptions:
     usebackq: bool = False
 
 
-@dataclass
+@dataclass(repr=False)
 class AstFor(AstStatement):
     variant: AstForVariant
     variable: str
@@ -264,6 +276,16 @@ class AstFor(AstStatement):
     spec_string: str
     path: str | None
     mode: AstForParserMode
+
+    @property
+    def specline(self):
+        spec = self.spec
+        if isinstance(spec, batchrange):
+            raise AttributeError
+        try:
+            return spec[0]
+        except IndexError:
+            raise AttributeError
 
 
 class AstIfVariant(str, enum.Enum):
@@ -283,7 +305,7 @@ class AstIfCmp(str, enum.Enum):
     GEQ = 'GEQ'
 
 
-@dataclass
+@dataclass(repr=False)
 class AstIf(AstStatement, Generic[IntOrStr]):
     then_do: AstSequence
     else_do: AstSequence | None = None
@@ -297,16 +319,16 @@ class AstIf(AstStatement, Generic[IntOrStr]):
     @property
     def var_int(self):
         var = self.lhs
-        if not isinstance(var, int):
-            raise RuntimeError
-        return var
+        if isinstance(var, int):
+            return var
+        raise AttributeError
 
     @property
     def var_str(self):
         var = self.lhs
-        if not isinstance(var, str):
-            raise RuntimeError
-        return var
+        if isinstance(var, str):
+            return var
+        raise AttributeError
 
 
 class If(enum.IntFlag):

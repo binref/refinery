@@ -4,9 +4,10 @@ import fnmatch
 import itertools
 import re
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from enum import Enum
 from io import StringIO
-from typing import Callable, ClassVar, Generator
+from typing import Callable, ClassVar, Generator, TypeVar
 
 from refinery.lib.batch.model import (
     ArgVarFlags,
@@ -32,10 +33,12 @@ from refinery.lib.batch.model import (
 )
 from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.synth import synthesize, SynCommand
+from refinery.lib.batch.synth import synthesize, SynCommand, SynNodeBase
 from refinery.lib.batch.util import batchint, uncaret, unquote
 from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
+
+_T = TypeVar('_T')
 
 
 class DevNull:
@@ -62,6 +65,13 @@ class DevNull:
 
     def seek(self, k: int, whence: int = 0, /):
         return
+
+
+class Error(str):
+    pass
+
+
+ErrorCannotFindFile = Error('The system cannot find the file specified.')
 
 
 @dataclass
@@ -106,7 +116,7 @@ class BatchEmulator:
                 AstNode,
                 IO,
                 bool,
-            ], Generator[str]]
+            ], Generator[SynNodeBase | Error]]
         ]] = {}
 
         def __init__(self, key: type[AstNode]):
@@ -156,7 +166,7 @@ class BatchEmulator:
     def delayexpand(self):
         return self.state.delayexpand
 
-    def delay_expand(self, block: str):
+    def expand_delayed_variables(self, block: str):
         def expansion(match: re.Match[str]):
             name = match.group(1)
             try:
@@ -167,14 +177,41 @@ class BatchEmulator:
         parse = self.parser.lexer.parse_env_variable
         return re.sub(r'!([^!\n]*)!', expansion, block)
 
-    def for_expand(self, block: str, vars: dict[str, str]):
+    def expand_forloop_variables(self, block: str, vars: dict[str, str] | None):
         def expansion(match: re.Match[str]):
             flags = ArgVarFlags.Empty
             for flag in match[1]:
                 flags |= ArgVarFlags.FromToken(ord(flag))
-            return vars[match[3]]
+            return _vars[match[3]]
+        if not vars:
+            return block
+        _vars = vars
         return re.sub(
             RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
+
+    def expand_ast_node(self, ast: _T) -> _T:
+        def expand(token):
+            if isinstance(token, list):
+                return [expand(v) for v in token]
+            if isinstance(token, dict):
+                return {k: expand(v) for k, v in token.items()}
+            if isinstance(token, Enum):
+                return token
+            if isinstance(token, str):
+                if delayexpand:
+                    token = self.expand_delayed_variables(token)
+                return self.expand_forloop_variables(token, variables)
+            if isinstance(token, AstNode):
+                new = {}
+                for tf in fields(token):
+                    new[tf.name] = expand(getattr(token, tf.name))
+                return token.__class__(**new)
+            return token
+        delayexpand = self.delayexpand
+        variables = self.state.for_loop_variables
+        if not variables and not delayexpand:
+            return ast
+        return expand(ast) # type:ignore
 
     def execute_find_or_findstr(self, cmd: SynCommand, std: IO, findstr: bool):
         needles = []
@@ -290,6 +327,17 @@ class BatchEmulator:
 
         self.state.ec = int(nothing_found)
 
+    @_command('TYPE')
+    def execute_type(self, cmd: SynCommand, std: IO, *_):
+        path = cmd.argument_string.strip()
+        data = self.state.ingest_file(path)
+        if data is None:
+            yield ErrorCannotFindFile
+            return 1
+        else:
+            std.o.write(data)
+            return 0
+
     @_command('FIND')
     def execute_find(self, cmd: SynCommand, std: IO, *_):
         self.execute_find_or_findstr(cmd, std, findstr=False)
@@ -375,7 +423,7 @@ class BatchEmulator:
             offset = 0
             target = self.state.ingest_file(cmdl.strip())
             if target is None:
-                yield str(cmd)
+                yield cmd
                 return
             emu = BatchEmulator(target, std=std, state=BatchState(
                 environment=self.state.environment,
@@ -386,7 +434,7 @@ class BatchEmulator:
                 hostname=self.state.hostname,
                 filename=target,
             ))
-        yield from emu.emulate(offset, called=True)
+        yield from emu.trace(offset, called=True)
 
     @_command('SETLOCAL')
     def execute_setlocal(self, cmd: SynCommand, *_):
@@ -456,7 +504,7 @@ class BatchEmulator:
     def execute_echo(self, cmd: SynCommand, std: IO, in_group: bool):
         cmdl = cmd.argument_string
         mode = cmdl.strip().lower()
-        yield str(cmd)
+        yield cmd
         if mode == 'on':
             self.state.echo = True
             return
@@ -469,7 +517,7 @@ class BatchEmulator:
             std.o.write(F'{cmdl}\r\n')
         else:
             mode = 'on' if self.state.echo else 'off'
-            std.e.write(F'ECHO is {mode}.\r\n')
+            std.o.write(F'ECHO is {mode}.\r\n')
 
     def execute_command(self, cmd: SynCommand, std: IO, in_group: bool):
         verb = cmd.verb.upper().strip()
@@ -477,7 +525,7 @@ class BatchEmulator:
         try:
             handler = self._command.handlers[verb]
         except KeyError:
-            yield str(cmd)
+            yield cmd
             self.state.ec = 0
             return
 
@@ -493,6 +541,7 @@ class BatchEmulator:
                     data = self.state.ingest_file(target)
                     if src == 0:
                         if data is None:
+                            yield ErrorCannotFindFile
                             return
                         std.i = StringIO(data)
                     else:
@@ -520,7 +569,7 @@ class BatchEmulator:
             self.state.ec = result
 
     @_node(AstPipeline)
-    def emulate_pipeline(self, pipeline: AstPipeline, std: IO, in_group: bool):
+    def trace_pipeline(self, pipeline: AstPipeline, std: IO, in_group: bool):
         length = len(pipeline.parts)
         streams = IO(*std)
         for k, part in enumerate(pipeline.parts, 1):
@@ -532,7 +581,7 @@ class BatchEmulator:
             else:
                 streams.o = StringIO()
             if isinstance(part, AstGroup):
-                yield from self.emulate_group(part, streams, in_group)
+                yield from self.trace_group(part, streams, in_group)
             else:
                 tokens = iter(part.fragments)
                 ast = AstCommand(
@@ -541,15 +590,15 @@ class BatchEmulator:
                     part.redirects,
                 )
                 if self.delayexpand:
-                    tokens = (self.delay_expand(token) for token in tokens)
+                    tokens = (self.expand_delayed_variables(token) for token in tokens)
                 if v := self.state.for_loop_variables:
-                    tokens = (self.for_expand(token, v) for token in tokens)
+                    tokens = (self.expand_forloop_variables(token, v) for token in tokens)
                 ast.fragments.extend(tokens)
                 yield from self.execute_command(synthesize(ast), streams, in_group)
 
     @_node(AstSequence)
-    def emulate_sequence(self, sequence: AstSequence, std: IO, in_group: bool):
-        yield from self.emulate_statement(sequence.head, std, in_group)
+    def trace_sequence(self, sequence: AstSequence, std: IO, in_group: bool):
+        yield from self.trace_statement(sequence.head, std, in_group)
         for cs in sequence.tail:
             if cs.condition == AstCondition.Failure:
                 if self.state.ec == 0:
@@ -557,10 +606,12 @@ class BatchEmulator:
             if cs.condition == AstCondition.Success:
                 if self.state.ec != 0:
                     continue
-            yield from self.emulate_statement(cs.statement, std, in_group)
+            yield from self.trace_statement(cs.statement, std, in_group)
 
     @_node(AstIf)
-    def emulate_if(self, _if: AstIf, std: IO, in_group: bool):
+    def trace_if(self, _if: AstIf, std: IO, in_group: bool):
+        _if = self.expand_ast_node(_if)
+
         if _if.variant == AstIfVariant.ErrorLevel:
             condition = _if.var_int <= self.state.ec
         elif _if.variant == AstIfVariant.CmdExtVersion:
@@ -600,20 +651,32 @@ class BatchEmulator:
             condition = not condition
 
         if condition:
-            yield from self.emulate_sequence(_if.then_do, std, in_group)
+            yield from self.trace_sequence(_if.then_do, std, in_group)
         elif (_else := _if.else_do):
-            yield from self.emulate_sequence(_else, std, in_group)
+            yield from self.trace_sequence(_else, std, in_group)
 
     @_node(AstFor)
-    def emulate_for(self, _for: AstFor, std: IO, in_group: bool):
+    def trace_for(self, _for: AstFor, std: IO, in_group: bool):
+        yield _for
         vars = self.state.new_forloop()
         body = _for.body
         name = _for.variable
 
         if _for.variant == AstForVariant.FileParsing:
             if _for.mode == AstForParserMode.Command:
-                return NotImplemented
-            if _for.mode == AstForParserMode.Literal:
+                state = self.state
+                emulator = BatchEmulator(_for.specline, BatchState(
+                    username=state.username,
+                    hostname=state.hostname,
+                    now=state.now,
+                    cwd=state.cwd,
+                    file_system=state.file_system,
+                    environment=dict(state.environment),
+                    filename=None,
+                ))
+                yield from emulator.trace()
+                lines = emulator.std.o.getvalue().splitlines()
+            elif _for.mode == AstForParserMode.Literal:
                 lines = _for.spec
             else:
                 def lines_from_files():
@@ -645,22 +708,23 @@ class BatchEmulator:
                         vars[name] = tokenized[tok]
                     except IndexError:
                         vars[name] = ''
-                yield from self.emulate_sequence(body, std, in_group)
+                yield from self.trace_sequence(body, std, in_group)
         else:
             for entry in _for.spec:
                 vars[name] = entry
-                yield from self.emulate_sequence(_for.body, std, in_group)
+                yield from self.trace_sequence(_for.body, std, in_group)
+        self.state.end_forloop()
 
     @_node(AstGroup)
-    def emulate_group(self, group: AstGroup, std: IO, in_group: bool):
+    def trace_group(self, group: AstGroup, std: IO, in_group: bool):
         for sequence in group.fragments:
-            yield from self.emulate_sequence(sequence, std, True)
+            yield from self.trace_sequence(sequence, std, True)
 
     @_node(AstLabel)
-    def emulate_label(self, *_):
+    def trace_label(self, *_):
         yield from ()
 
-    def emulate_statement(self, statement: AstStatement, std: IO, in_group: bool):
+    def trace_statement(self, statement: AstStatement, std: IO, in_group: bool):
         try:
             handler = self._node.handlers[statement.__class__]
         except KeyError:
@@ -668,17 +732,23 @@ class BatchEmulator:
         yield from handler(self, statement, std, in_group)
 
     def emulate(self, offset: int = 0, name: str | None = None, command_line: str = '', called: bool = False):
+        for syn in self.trace(offset, name, command_line):
+            if isinstance(syn, SynNodeBase):
+                yield str(syn)
+
+    def trace(self, offset: int = 0, name: str | None = '', command_line: str = '', called: bool = False):
         if name:
             self.state.name = name
         self.state.command_line = command_line
-        self.state.create_file(self.state.name, self.parser.lexer.text)
+        if (name := self.state.name):
+            self.state.create_file(name, self.parser.lexer.text)
         length = len(self.parser.lexer.code)
         labels = self.parser.lexer.labels
 
         while offset < length:
             try:
                 for sequence in self.parser.parse(offset):
-                    yield from self.emulate_sequence(sequence, self.std, False)
+                    yield from self.trace_sequence(sequence, self.std, False)
             except Goto as goto:
                 try:
                     offset = labels[goto.label.upper()]
