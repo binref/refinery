@@ -44,6 +44,8 @@ class xtmacho(ArchiveUnit):
     _SIGNATURE_BE = B'\xCA\xFE\xBA\xBE'
     _SIGNATURE_LE = B'\xBE\xBA\xFE\xCA'
 
+    CustomPathSeparator = '.'
+
     def unpack(self, data: bytearray):
         view = memoryview(data)
         signature = bytes(view[:4])
