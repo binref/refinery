@@ -32,7 +32,7 @@ from refinery.lib.batch.model import (
 )
 from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.synth import SynCommand
+from refinery.lib.batch.synth import synthesize, SynCommand
 from refinery.lib.batch.util import batchint, uncaret, unquote
 from refinery.lib.deobfuscation import cautious_eval_or_default
 from refinery.lib.types import buf
@@ -541,7 +541,7 @@ class BatchEmulator:
                 if v := self.state.for_loop_variables:
                     tokens = (self.for_expand(token, v) for token in tokens)
                 ast.fragments.extend(tokens)
-                yield from self.execute_command(SynCommand(ast), streams, in_group)
+                yield from self.execute_command(synthesize(ast), streams, in_group)
 
     @_node(AstSequence)
     def emulate_sequence(self, sequence: AstSequence, std: IO, in_group: bool):

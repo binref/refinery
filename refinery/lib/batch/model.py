@@ -85,9 +85,10 @@ class RedirectIO:
         if target is None:
             return string
         if isinstance(target, int):
-            return F'{string}&{target}'
-        else:
-            return F'{string}"{target}"'
+            target = F'&{target}'
+        elif any(p in target for p in ';,=\x20\t\v'):
+            target = F'"{target}"'
+        return F'{string}{target}'
 
     def isspace(self):
         return False
