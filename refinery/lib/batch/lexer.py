@@ -644,6 +644,9 @@ class BatchLexer:
 
     @_register(Mode.SetQuoted)
     def gobble_quoted_set(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
+        if self.check_variable_start(char):
+            return False
+
         if char == QUOTE:
             self.consume_char()
             self.cursor.token.append(QUOTE)
@@ -718,6 +721,12 @@ class BatchLexer:
     def gobble_set_regular(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         if (yield from self.common_token_checks(mode, char)):
             return False
+        if (pr := self.pending_redirect) and char in WHITESPACE:
+            token = self.cursor.token
+            self.pending_redirect = None
+            pr.target = unquote(u16(token))
+            del token[:]
+            yield pr
         self.cursor.token.append(char)
         return True
 

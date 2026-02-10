@@ -339,8 +339,12 @@ class BatchEmulator:
                     updated[name] = str(expression)
                 self.environment.update(updated)
         else:
-            if len(args) >= 2 and args[1] == '=':
-                name, content = args[0], args[2]
+            if (n := len(args)) >= 2 and args[1] == '=':
+                name = args[0]
+                with StringIO() as rest:
+                    for k in range(2, n):
+                        rest.write(args[k])
+                    content = rest.getvalue()
             elif (assignment := cmd.argument_string).startswith('"'):
                 quote_mode = True
                 assignment, _, unquoted = assignment[1:].rpartition('"')

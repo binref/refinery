@@ -211,7 +211,7 @@ class BatchParser:
             if tok_upper == 'SET':
                 self.lexer.parse_set()
                 set_logic = True
-            if tok_upper.startswith('ECHO'):
+            elif tok_upper.startswith('ECHO'):
                 if len(tok_upper) > 4 and tok_upper[4] == '.':
                     cmd.append(tok[:4])
                     cmd.append(' ')

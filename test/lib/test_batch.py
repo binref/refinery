@@ -245,6 +245,17 @@ class TestBatchEmulator(TestBase):
         with self.assertRaises(StopIteration):
             next(it)
 
+    def test_variables_in_quoted_set(self):
+        @emulate
+        class bat:
+            '''
+            setlocal enabledelayedexpansion
+            set _a=FOO>nul &set _b=BAR
+            set "c=%_a%!_b!
+            echo %c%
+            '''
+        self.assertListEqual(list(bat.emulate()), ['echo FOO BAR'])
+
     def test_delayed_expansion_simple_01(self):
         @emulate
         class bat:
@@ -858,7 +869,7 @@ class TestBatchEmulator(TestBase):
     def test_separators_after_redirect(self):
         emu = BatchEmulator(';;>test.txt===echo hi\n')
         cmd = list(emu.emulate())
-        self.assertListEqual(cmd, ['1>"test.txt" echo hi'])
+        self.assertListEqual(cmd, ['1>test.txt echo hi'])
         self.assertEqual(emu.state.ingest_file('test.txt'), 'hi\r\n')
 
     def test_separators_in_redirect(self):
