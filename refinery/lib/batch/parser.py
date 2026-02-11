@@ -246,7 +246,7 @@ class BatchParser:
                     cmd.append(tok)
             elif set_logic:
                 cmd.append(tok)
-            elif tok.isspace():
+            elif tok.isspace() or tok.startswith('/'):
                 if nsp := nonspace.getvalue():
                     nonspace.seek(0)
                     nonspace.truncate(0)

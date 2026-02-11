@@ -35,6 +35,7 @@ from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
 from refinery.lib.batch.synth import SynCommand, SynNodeBase, synthesize
 from refinery.lib.batch.util import batchint, uncaret, unquote
+from refinery.lib.batch.help import HelpOutput
 from refinery.lib.deobfuscation import cautious_parse, names_in_expression
 from refinery.lib.types import buf
 
@@ -324,7 +325,7 @@ class BatchEmulator:
                 continue
             for n, line in enumerate(data.splitlines(True), 1):
                 for needle in needles:
-                    hit = re.match(needle, line)
+                    hit = re.search(needle, line)
                     if _V == bool(hit):
                         continue
                     nothing_found = False
@@ -651,6 +652,11 @@ class BatchEmulator:
             elif src == 2 and target == 1:
                 std.e = std.o
 
+        if '/?' in cmd.args:
+            std.o.write(HelpOutput[verb])
+            self.state.ec = 0
+            return
+
         if (result := handler(self, cmd, std, in_group)) is None:
             pass
         elif not isinstance(result, int):
@@ -677,18 +683,9 @@ class BatchEmulator:
             if isinstance(part, AstGroup):
                 yield from self.trace_group(part, streams, in_group)
             else:
-                tokens = iter(part.fragments)
-                ast = AstCommand(
-                    part.offset,
-                    part.silenced,
-                    part.redirects,
-                )
-                if self.delayexpand:
-                    tokens = (self.expand_delayed_variables(token) for token in tokens)
-                if v := self.state.for_loop_variables:
-                    tokens = (self.expand_forloop_variables(token, v) for token in tokens)
-                ast.fragments.extend(tokens)
-                yield from self.execute_command(synthesize(ast), streams, in_group)
+                ast = self.expand_ast_node(part)
+                cmd = synthesize(ast)
+                yield from self.execute_command(cmd, streams, in_group)
 
     @_node(AstSequence)
     def trace_sequence(self, sequence: AstSequence, std: IO, in_group: bool):
@@ -752,13 +749,14 @@ class BatchEmulator:
     @_node(AstFor)
     def trace_for(self, _for: AstFor, std: IO, in_group: bool):
         yield _for
-        vars = self.state.new_forloop()
+        state = self.state
+        cwd = state.cwd
+        vars = state.new_forloop()
         body = _for.body
         name = _for.variable
 
         if _for.variant == AstForVariant.FileParsing:
             if _for.mode == AstForParserMode.Command:
-                state = self.state
                 emulator = BatchEmulator(_for.specline, BatchState(
                     username=state.username,
                     hostname=state.hostname,
@@ -774,10 +772,10 @@ class BatchEmulator:
                 lines = _for.spec
             else:
                 def lines_from_files():
-                    fs = self.state.file_system
+                    fs = state.file_system
                     for name in _for.spec:
                         for path, content in fs.items():
-                            if not fnmatch.fnmatch(path, name):
+                            if not winfnmatch(path, name, cwd):
                                 continue
                             yield from content.splitlines(False)
                 lines = lines_from_files()
@@ -806,8 +804,8 @@ class BatchEmulator:
         else:
             for entry in _for.spec:
                 vars[name] = entry
-                yield from self.trace_sequence(_for.body, std, in_group)
-        self.state.end_forloop()
+                yield from self.trace_sequence(body, std, in_group)
+        state.end_forloop()
 
     @_node(AstGroup)
     def trace_group(self, group: AstGroup, std: IO, in_group: bool):

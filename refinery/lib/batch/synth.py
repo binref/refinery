@@ -162,7 +162,6 @@ class SynPipeline(SynNodeBase[AstPipeline]):
             out.write(tab)
         for k, part in enumerate(self.ast.parts):
             if k > 0:
-                out.write(K.SP)
                 out.write('|')
                 out.write(K.SP)
             indented = synthesize(part).pretty(out, indent, indented)

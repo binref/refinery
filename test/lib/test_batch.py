@@ -180,13 +180,27 @@ class TestBatchEmulator(TestBase):
         self.assertEqual(_bat('"^=="=="^=="'), 'true')
 
         self.assertEqual(_bat('4 ^LE^Q s'), 'true')
-        self.assertEqual(_bat('a ^L^EQ s'), 'true')
+        self.assertEqual(_bat('a ^L^eQ s'), 'true')
         self.assertEqual(_bat('sta LEQ st'), 'false')
         self.assertEqual(_bat('4 LEQ 2+3'), 'false')
-        self.assertEqual(_bat('4 LEQ 2^+3'), 'false')
-        self.assertEqual(_bat('09 LEQ 5'), 'true')
+        self.assertEqual(_bat('4 LeQ 2^+3'), 'false')
+        self.assertEqual(_bat('09 lEq 5'), 'true')
         self.assertEqual(_bat('0x4 LEQ 5'), 'true')
-        self.assertEqual(_bat('0X4 LEQ 005'), 'true')
+        self.assertEqual(_bat('0X4 leq 005'), 'true')
+
+    def test_extract_text_from_help(self):
+        @emulate
+        class bat:
+            '''
+            for /F "tokens=6" %%i in ('exit /? ^| findstr label') do @set cl=%%i
+            %cl% :ABORT
+            echo SKIPPED
+            goto :EOF
+            :ABORT
+            exit 0
+            '''
+        self.assertListEqual(list(bat.emulate()), [])
+        self.assertEqual(bat.state.envar('cl'), 'CALL')
 
     def test_file_exists(self):
         @emulate
