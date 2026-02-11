@@ -919,7 +919,7 @@ class LIEF(Executable):
                 if symbol.imported and symbol.is_function:
                     continue
                 name = self.ascii(symbol.demangled_name) or name
-                if name in imports_done:
+                if name in imports_done or addr == 0:
                     continue
                 yield Symbol(
                     addr,
@@ -932,7 +932,7 @@ class LIEF(Executable):
                 )
             elif isinstance(symbol, lief.MachO.Symbol):
                 name = self.ascii(symbol.demangled_name) or name
-                if name in imports_done:
+                if name in imports_done or addr == 0:
                     continue
                 yield Symbol(
                     addr,

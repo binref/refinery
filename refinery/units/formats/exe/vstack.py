@@ -277,27 +277,30 @@ def EmuFactory(base: ET) -> ET:
 
         @inject_state_argument
         def hook_mem_error(self, _, access: MemAccess, address: int, size: int, value: int, state: EmuState) -> bool:
-            if address == self.state.last_api:
-                self.state.last_api = None
+            state = self.state
+            if state is None:
+                return True
+            if address == state.last_api:
+                state.last_api = None
                 return True
             if access.Execute and access.Unmapped:
-                vstack.log_info(self.state.log('attempt to execute unmapped memory'))
+                vstack.log_info(state.log('attempt to execute unmapped memory'))
                 self.halt()
                 return False
             if address >= (1 << self.exe.pointer_size) - 1:
-                vstack.log_info(self.state.log('attempt to execute beyond address space'))
+                vstack.log_info(state.log('attempt to execute beyond address space'))
                 self.halt()
                 return False
             msg = F'{state.fmt(address)}:{size:02X} memory error'
             if self.is_mapped(address, size):
-                vstack.log_info(self.state.log(F'{msg}; fatal, this area was already mapped'))
+                vstack.log_info(state.log(F'{msg}; fatal, this area was already mapped'))
             else:
                 try:
                     self.map(self.align(address, down=True), self.alloc_size)
                 except Exception as error:
-                    vstack.log_info(self.state.log(F'{msg}; fatal, {exception_to_string(error)}'))
+                    vstack.log_info(state.log(F'{msg}; fatal, {exception_to_string(error)}'))
                 else:
-                    vstack.log_debug(self.state.log(F'{msg}; recovery, space mapped for access {access!r}'))
+                    vstack.log_debug(state.log(F'{msg}; recovery, space mapped for access {access!r}'))
             return True
 
         def hook_code_error(self, emu, state: EmuState):
@@ -526,7 +529,14 @@ class vstack(EmulatingUnit):
                     break
 
         for cursor in addresses:
-            state = EmuState(cfg, cursor.start, emu.exe.pointer_size // 4, wait=wait.start, stop=cursor.stop)
+            state = EmuState(
+                cfg,
+                cursor.start,
+                emu.exe.pointer_size // 4,
+                wait=wait.start,
+                stop=cursor.stop,
+            )
+
             emu.reset(state)
 
             for reg in emu.general_purpose_registers():

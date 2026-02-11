@@ -45,7 +45,7 @@ class FailedWrite(EmulationError):
         self.data = data
 
     def __str__(self):
-        return F'could not write data {self.data.hex()} to {self.addr:#x}'
+        return F'could not write {len(self.data)} bytes to {self.addr:#x}'
 
 
 class InvalidInstruction(EmulationError):
@@ -177,6 +177,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
     stack_base: int
     stack_size: int
     alloc_base: int
+    page_limit: int
 
     state: _T | None
 
@@ -188,6 +189,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         hooks: Hook = Hook.Errors,
         align_size: int = 0x1000,
         alloc_size: int = 0x1000,
+        page_limit: int = 1 << 28,
     ):
         if isinstance(data, Executable):
             exe = data
@@ -209,6 +211,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
 
         self.align_size = align_size
         self.alloc_size = alloc_size
+        self.page_limit = page_limit
         self._resetonce = False
 
         self._sp, self._ip, self._rv = {
@@ -475,7 +478,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             except Exception as E:
                 size = len(data)
                 if retry or not self.hooks.MemoryError or not self.hook_mem_error(
-                    None, 0, address, size, 0, self.state
+                    None, MemAccess.Write, address, size, 0, self.state
                 ):
                     raise FailedWrite(address, data) from E
 
@@ -776,6 +779,8 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
             base = self.align(segment.virtual.lower, down=True)
             size = self.align(segment.virtual.upper) - base
             size = max(size, len(segment.physical))
+            if size > self.page_limit:
+                continue
             mem.addi(base, size)
         it = iter(mem)
         nc = NopCodeByArch[exe.arch()]
@@ -788,7 +793,10 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
             vm = segment.virtual
             if len(pm) <= 0:
                 continue
-            self.mem_write(vm.lower, bytes(img[pm.slice()]))
+            slice = img[pm.slice()]
+            if not any(slice):
+                continue
+            self.mem_write(vm.lower, bytes(slice))
 
     def _init(self):
         self.trampoline = None
