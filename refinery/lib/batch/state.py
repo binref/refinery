@@ -82,7 +82,7 @@ class BatchState:
         now: int | float | str | datetime | None = None,
         cwd: str = 'C:\\',
         filename: str | None = '',
-        echo: bool = False
+        echo: bool = True
     ):
         self.extensions_version = extensions_version
         file_system = file_system or {}
