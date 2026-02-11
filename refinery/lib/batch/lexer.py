@@ -786,16 +786,6 @@ class BatchLexer:
         self.cursor.token.append(char)
         return True
 
-    def _decode(self, data: buf):
-        if data[:3] == B'\xEF\xBB\xBF':
-            return codecs.decode(data[3:], 'utf8')
-        elif data[:2] == B'\xFF\xFE':
-            return codecs.decode(data[2:], 'utf-16le')
-        elif data[:2] == B'\xFE\xFF':
-            return codecs.decode(data[2:], 'utf-16be')
-        else:
-            return codecs.decode(data, 'utf8')
-
     @staticmethod
     def label(text: str):
         parts = re.split('([\x20\t\v])', text.lstrip())
@@ -812,12 +802,17 @@ class BatchLexer:
         self.labels = {}
 
         if not isinstance(text, str):
-            text = self._decode(text)
+            text = codecs.decode(text, 'utf8', errors='replace')
 
-        lines = re.split(r'(\r\n|\r|\n)', text)
+        _tail = text[-10:]
+        lines = text.splitlines(keepends=False)
         utf16 = array.array('H')
 
-        for k, line in enumerate(itertools.islice(lines, 0, None, 2)):
+        if _tail.splitlines() != F'{_tail}\n'.splitlines():
+            # the text had a trailing line break, which is swallowed by the splitlines method
+            lines.append('')
+
+        for k, line in enumerate(lines):
             if k > 0:
                 utf16.append(LINEBREAK)
             encoded = line.encode('utf-16le')

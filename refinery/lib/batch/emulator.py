@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fnmatch
 import re
 import uuid
 
@@ -40,6 +39,28 @@ from refinery.lib.deobfuscation import cautious_parse, names_in_expression
 from refinery.lib.types import buf
 
 _T = TypeVar('_T')
+
+
+def winfnmatch(pattern: str, path: str, cwd: str):
+    """
+    A function similar to the fnmatch module, but using only Windows wildcards. In Batch, the
+    bracket wildcard does not exist.
+    """
+    parts = re.split('([*?])', pattern)
+    regex = StringIO()
+    it = iter(parts)
+    verbatim = next(it)
+    for wildcard in it:
+        regex.write(re.escape(verbatim))
+        if wildcard == '*':
+            regex.write('.*')
+        if wildcard == '?':
+            regex.write('.')
+        verbatim = next(it)
+    regex.write(re.escape(verbatim))
+    cwd = re.escape(cwd.rstrip('\\'))
+    pattern = rF'(?s:{cwd}\\{regex.getvalue()})$'
+    return bool(re.match(pattern, path))
 
 
 class DevNull:
@@ -224,8 +245,7 @@ class BatchEmulator:
         for arg in it:
             if not arg.startswith('/'):
                 if not findstr and not arg.startswith('"'):
-                    self.state.ec = 1
-                    return
+                    return 1
                 needles.extend(unquote(arg).split())
                 break
             name, has_param, value = arg[1:].partition(':')
@@ -233,19 +253,16 @@ class BatchEmulator:
             if name in ('OFF', 'OFFLINE'):
                 continue
             elif len(name) > 1:
-                self.state.ec = 1
-                return
+                return 1
             elif name == 'C':
                 needles.append(unquote(value))
             elif name == 'F' and findstr:
                 if (p := self.state.ingest_file(value)) is None:
-                    self.state.ec = 1
-                    return
+                    return 1
                 paths.extend(p.splitlines(False))
             elif name == 'G' and findstr:
                 if (n := self.state.ingest_file(value)) is None:
-                    self.state.ec = 1
-                    return
+                    return 1
                 needles.extend(n.splitlines(False))
             elif has_param:
                 flags[name] = value
@@ -258,17 +275,17 @@ class BatchEmulator:
 
         for v in flags:
             if v not in valid_flags:
-                self.state.ec = 1
-                return
+                return 1
 
         prefix_filename = False
+        state = self.state
 
         for arg in it:
             pattern = unquote(arg)
             if '*' in pattern or '?' in pattern:
                 prefix_filename = True
-                for path in self.state.file_system:
-                    if fnmatch.fnmatch(path, pattern):
+                for path in state.file_system:
+                    if winfnmatch(path, pattern, state.cwd):
                         paths.append(path)
             else:
                 paths.append(pattern)
@@ -297,13 +314,12 @@ class BatchEmulator:
         offset = 0
 
         for path in paths:
-            if path is ...:
+            if path is (...):
                 data = std.i.read()
             else:
-                data = self.state.ingest_file(path)
+                data = state.ingest_file(path)
             if data is None:
-                self.state.ec = 1
-                return
+                return 1
             if _P and not re.fullmatch('[\\s!-~]+', data):
                 continue
             for n, line in enumerate(data.splitlines(True), 1):
@@ -321,12 +337,12 @@ class BatchEmulator:
                         if prefix_filename:
                             line = F'{path}:{line}'
                         std.o.write(line)
-                    else:
+                    elif path is not (...):
                         std.o.write(path)
                         break
                 offset += len(line)
 
-        self.state.ec = int(nothing_found)
+        return int(nothing_found)
 
     @_command('TYPE')
     def execute_type(self, cmd: SynCommand, std: IO, *_):
@@ -341,11 +357,11 @@ class BatchEmulator:
 
     @_command('FIND')
     def execute_find(self, cmd: SynCommand, std: IO, *_):
-        self.execute_find_or_findstr(cmd, std, findstr=False)
+        return self.execute_find_or_findstr(cmd, std, findstr=False)
 
     @_command('FINDSTR')
     def execute_findstr(self, cmd: SynCommand, std: IO, *_):
-        self.execute_find_or_findstr(cmd, std, findstr=True)
+        return self.execute_find_or_findstr(cmd, std, findstr=True)
 
     @_command('SET')
     def execute_set(self, cmd: SynCommand, std: IO, *_):
@@ -546,6 +562,56 @@ class BatchEmulator:
             mode = 'on' if self.state.echo else 'off'
             std.o.write(F'ECHO is {mode}.\r\n')
 
+    @_command('CLS')
+    def execute_cls(self, cmd: SynCommand, *_):
+        yield cmd
+
+    @_command('ERASE')
+    @_command('DEL')
+    def execute_del(self, cmd: SynCommand, std: IO, *_):
+        if not cmd.args:
+            yield Error('The syntax of the command is incorrect')
+            return 1
+        else:
+            yield cmd
+        flags = {}
+        it = iter(cmd.args)
+        while (arg := next(it)).startswith('/') and 1 < len(arg):
+            flag = arg.upper()
+            if flag[:3] == '/A:':
+                flags['A'] = flag[3:]
+                continue
+            flags[flag[1]] = True
+        _P = 'P' in flags # Prompts for confirmation before deleting each file.
+        _F = 'F' in flags # Force deleting of read-only files.
+        _S = 'S' in flags # Delete specified files from all subdirectories.
+        _Q = 'Q' in flags # Quiet mode, do not ask if ok to delete on global wildcard
+        paths = [arg, *it]
+        state = self.state
+        cwd = state.cwd
+        for pattern in paths:
+            for path in list(state.file_system):
+                if not winfnmatch(pattern, path, cwd):
+                    continue
+                if _F:
+                    pass
+                if _S:
+                    pass
+                if _Q:
+                    pass
+                if _P and state.exists_file(pattern):
+                    std.o.write(F'{pattern}, Delete (Y/N)? ')
+                    decision = None
+                    while decision not in ('y', 'n'):
+                        confirmation = std.i.readline()
+                        if not confirmation.endswith('\n'):
+                            raise InputLocked
+                        decision = confirmation[:1].lower()
+                    if decision == 'n':
+                        continue
+                state.remove_file(path)
+        return 0
+
     def execute_command(self, cmd: SynCommand, std: IO, in_group: bool):
         verb = cmd.verb.upper().strip()
 
@@ -553,7 +619,8 @@ class BatchEmulator:
             handler = self._command.handlers[verb]
         except KeyError:
             yield cmd
-            self.state.ec = 0
+            bogus_command = '\uFFFD' in verb or not verb.isprintable()
+            self.state.ec = bogus_command * 9009
             return
 
         paths: dict[int, str] = {}
