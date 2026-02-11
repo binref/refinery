@@ -10,7 +10,7 @@ class group(Unit):
     """
     Group incoming chunks into frames of the given size.
     """
-    def __init__(self, size: Param[int, Arg.Number(help='Size of each group; must be at least 2.', bound=(2, None))]):
+    def __init__(self, size: Param[int, Arg.Number(help='The size of each group.', bound=(1, None))]):
         super().__init__(size=size)
 
     def process(self, data: Chunk):
