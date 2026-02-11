@@ -245,6 +245,15 @@ class TestBatchEmulator(TestBase):
         with self.assertRaises(StopIteration):
             next(it)
 
+    def test_set_with_spaces(self):
+        @emulate
+        class bat:
+            '''
+            set a=hello>&2 world>&2 how>&2 are>&2 you?
+            echo %a%
+            '''
+        self.assertListEqual(list(bat.emulate()), ['echo hello world how are you?'])
+
     def test_variables_in_quoted_set(self):
         @emulate
         class bat:

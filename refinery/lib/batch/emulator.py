@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import fnmatch
-import itertools
 import re
+import uuid
 
 from dataclasses import dataclass, field, fields
 from enum import Enum
@@ -28,14 +28,15 @@ from refinery.lib.batch.model import (
     EmulatorException,
     Exit,
     Goto,
+    InputLocked,
     InvalidLabel,
     MissingVariable,
 )
 from refinery.lib.batch.parser import BatchParser
 from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.synth import synthesize, SynCommand, SynNodeBase
+from refinery.lib.batch.synth import SynCommand, SynNodeBase, synthesize
 from refinery.lib.batch.util import batchint, uncaret, unquote
-from refinery.lib.deobfuscation import cautious_eval_or_default
+from refinery.lib.deobfuscation import cautious_parse, names_in_expression
 from refinery.lib.types import buf
 
 _T = TypeVar('_T')
@@ -348,7 +349,7 @@ class BatchEmulator:
 
     @_command('SET')
     def execute_set(self, cmd: SynCommand, std: IO, *_):
-        if not (args := cmd.ast.fragments):
+        if not (args := cmd.args):
             raise EmulatorException('Empty SET instruction')
 
         if cmd.verb.upper() != 'SET':
@@ -356,36 +357,59 @@ class BatchEmulator:
 
         arithmetic = False
         quote_mode = False
+        prompt = None
 
-        it = itertools.islice(iter(args), 1, None)
+        it = iter(args)
+        tk = next(it)
 
-        while (tok := next(it)).isspace():
-            continue
-        if tok.upper() == '/P':
-            raise NotImplementedError('Prompt SET not implemented.')
-        if tok.upper() == '/A':
+        if tk.upper() == '/P':
+            prompt = std.i.readline()
+            if not prompt.endswith('\n'):
+                raise InputLocked
+            prompt = prompt.rstrip('\r\n')
+            tk = next(it)
+
+        if tk.upper() == '/A':
             arithmetic = True
-            tok = next(it)
+            tk = next(it)
 
-        args = [tok, *it]
+        args = [tk, *it, *cmd.trailing_spaces]
 
         if arithmetic:
-            integers = {}
-            updated = {}
-            assignment = ''.join(args[1:])
-            for name, value in self.environment.items():
-                try:
-                    integers[name] = batchint(value)
-                except ValueError:
-                    pass
-            for assignment in assignment.split(','):
+            def defang(s: str):
+                def r(m: re.Match[str]):
+                    return F'_{prefix}{ord(m[0]):X}_'
+                return re.sub(r'[^-\s()!~*/%+><&^|_\w]', r, s)
+            def refang(s: str): # noqa
+                def r(m: re.Match[str]):
+                    return chr(int(m[1], 16))
+                return re.sub(rf'_{prefix}([A-F0-9]+)_', r, s)
+            prefix = F'{uuid.uuid4().time_mid:X}'
+            namespace = {}
+            translate = {}
+            for assignment in ''.join(args).split(','):
                 assignment = assignment.strip()
-                name, _, expression = assignment.partition('=')
-                expression = cautious_eval_or_default(expression, environment=integers)
-                if expression is not None:
-                    integers[name] = expression
-                    updated[name] = str(expression)
-                self.environment.update(updated)
+                name, operator, definition = re.split(r'([*+^|/%-&]|<<|>>|)=', assignment, maxsplit=1)
+                if operator:
+                    definition = F'{name}{operator}({definition})'
+                definition = defang(definition)
+                expression = cautious_parse(definition)
+                names = names_in_expression(expression)
+                if names.stored or names.others:
+                    raise EmulatorException('Arithmetic SET had unexpected variable access.')
+                for var in names.loaded:
+                    original = refang(name)
+                    translate[original] = var
+                    if var in namespace:
+                        continue
+                    try:
+                        namespace[var] = batchint(self.environment[original])
+                    except (KeyError, ValueError):
+                        namespace[var] = 0
+                code = compile(expression, filename='[ast]', mode='eval')
+                value = eval(code, namespace, {})
+                self.environment[name] = str(value)
+                namespace[defang(name)] = value
         else:
             if (n := len(args)) >= 2 and args[1] == '=':
                 name = args[0]
@@ -404,7 +428,10 @@ class BatchEmulator:
             trailing_caret, content = uncaret(content, quote_mode)
             if trailing_caret:
                 content = content[:-1]
-            if not content:
+            if prompt is not None:
+                std.o.write(content)
+                self.environment[name] = prompt
+            elif not content:
                 self.environment.pop(name, None)
             else:
                 self.environment[name] = content

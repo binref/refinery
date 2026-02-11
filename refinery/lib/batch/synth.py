@@ -74,7 +74,7 @@ class SynNode(SynNodeBase[_A]):
 
 
 class SynCommand(SynNode[AstCommand]):
-    __slots__ = 'args', 'verb', 'silent', 'argument_string'
+    __slots__ = 'args', 'verb', 'silent', 'argument_string', 'trailing_spaces'
 
     args: list[str]
     verb: str
@@ -85,19 +85,23 @@ class SynCommand(SynNode[AstCommand]):
         self.args = []
         self.verb = ''
         arg_string = io.StringIO()
+        spaces = []
         for token in self.ast.fragments:
             if token.isspace():
                 if self.verb:
                     arg_string.write(token)
+                spaces.append(token)
                 continue
             if not self.verb:
                 self.verb = token.strip()
                 continue
             self.args.append(token)
             arg_string.write(token)
+            spaces.clear()
         if not self.verb:
             raise ValueError('Empty Command')
         self.argument_string = arg_string.getvalue().lstrip()
+        self.trailing_spaces = spaces
 
     def oneline(self) -> bool:
         return True

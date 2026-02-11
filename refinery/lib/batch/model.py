@@ -353,6 +353,11 @@ class EmulatorException(Exception):
     pass
 
 
+class InputLocked(EmulatorException):
+    def __str__(self):
+        return 'The emulation could not continue because a command is waiting for input.'
+
+
 class EmulatorLongJump(EmulatorException):
     pass
 
