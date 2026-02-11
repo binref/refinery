@@ -201,12 +201,10 @@ class BatchParser:
 
         eat_token = False
         set_logic = False
+        add_space = False
 
-        if ast.redirects:
-            add_space = False
-        else:
+        if not ast.redirects:
             assert not isinstance(tok, RedirectIO)
-            add_space = True
             tok_upper = tok.upper()
             if tok_upper == 'SET':
                 self.lexer.parse_set()
@@ -218,6 +216,7 @@ class BatchParser:
                     tok = tok[5:]
                     add_space = False
                 else:
+                    add_space = True
                     eat_token = True
             cmd.append(tok)
             tok = tokens.drop_and_peek()

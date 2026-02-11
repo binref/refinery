@@ -141,6 +141,12 @@ class TestBatchParser(TestBase):
         assert isinstance(parsed.head, AstPipeline)
         assert isinstance(parsed.head.parts[0], AstGroup)
 
+    def test_regression_invalid_space_character(self):
+        text = 'IOLAqbKJcLfrETVUMAcXH/CNyCn09b1QMn9qaOxrwmd7hgPdD8VFEKz23KDf25DD3LWhxzQugT4'
+        parser = BatchParser(text, BatchState())
+        cmd, = parser.parse(0)
+        self.assertEqual(str(cmd), text)
+
     def test_regression_set_with_escapes(self):
         @docs
         class code:
