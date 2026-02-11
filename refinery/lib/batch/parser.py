@@ -310,7 +310,7 @@ class BatchParser:
             lhs = token
             cmp = next(tokens)
             try:
-                cmp = AstIfCmp(cmp)
+                cmp = AstIfCmp(cmp.upper())
             except Exception:
                 raise UnexpectedToken(cmp)
             if cmp != AstIfCmp.STR and self.state.extensions_version < 1:
