@@ -6,7 +6,7 @@ from __future__ import annotations
 import ast
 import re
 
-from typing import Any
+from typing import Any, NamedTuple
 
 
 class ExpressionParsingFailure(ValueError):
@@ -21,6 +21,8 @@ _ALLOWED_NODE_TYPES = frozenset({
     ast.BitOr,
     ast.BitXor,
     ast.Constant,
+    ast.Name,
+    ast.Load,
     ast.Div,
     ast.FloorDiv,
     ast.Invert,
@@ -39,14 +41,15 @@ _ALLOWED_NODE_TYPES = frozenset({
 })
 
 
-def cautious_eval(
+def cautious_parse(
     definition: str,
     size_limit: int | None = None,
     walker: ast.NodeTransformer | None = None,
     environment: dict[str, Any] | None = None,
-) -> Any:
+    allow_variables: bool = True,
+) -> ast.Expression:
     """
-    Very, very, very, very, very carefully evaluate a Python expression.
+    Very, very, very, very, very carefully parse a Python expression.
     """
     definition = re.sub(R'\s+', '', definition)
 
@@ -57,14 +60,15 @@ def cautious_eval(
     if size_limit and len(definition) > size_limit:
         raise Abort(F'Size limit {size_limit} was exceeded while parsing')
 
-    test = definition
-    if environment:
-        for symbol in environment:
-            test = re.sub(RF'\b{symbol}\b', '', test)
-    if any(x not in '.^%|&~<>()-+/*0123456789xabcdefABCDEF' for x in test):
-        raise Abort('Unknown characters in expression')
+    if not allow_variables:
+        test = definition
+        if environment:
+            for symbol in environment:
+                test = re.sub(RF'\b{symbol}\b', '', test)
+        if any(x not in '.^%|&~<>()-+/*0123456789xabcdefABCDEF' for x in test):
+            raise Abort('Unknown characters in expression')
     try:
-        expression = ast.parse(definition)
+        expression = ast.parse(definition, mode='eval')
     except Exception:
         raise Abort('Python AST parser failed')
 
@@ -74,9 +78,9 @@ def cautious_eval(
     nodes = ast.walk(expression)
 
     try:
-        assert type(next(nodes)) == ast.Module
-        assert type(next(nodes)) == ast.Expr
-    except (StopIteration, AssertionError):
+        if type(next(nodes)) != ast.Expression:
+            raise ValueError
+    except (StopIteration, ValueError):
         raise Abort('Not a Python expression')
 
     nodes = list(nodes)
@@ -84,9 +88,31 @@ def cautious_eval(
 
     if not types <= _ALLOWED_NODE_TYPES:
         problematic = types - _ALLOWED_NODE_TYPES
-        raise Abort('Expression contains operations that are not allowed: {}'.format(', '.join(str(p) for p in problematic)))
+        raise ExpressionParsingFailure(
+            'Expression contains operations that are not allowed: {}'.format(
+                ', '.join(str(p) for p in problematic)))
 
-    return eval(definition, environment)
+    return expression
+
+
+def cautious_eval(
+    definition: str,
+    size_limit: int | None = None,
+    walker: ast.NodeTransformer | None = None,
+    environment: dict[str, Any] | None = None,
+) -> Any:
+    """
+    Very, very, very, very, very carefully parse a Python expression.
+    """
+    tree = cautious_parse(
+        definition,
+        size_limit,
+        walker,
+        environment,
+        allow_variables=False
+    )
+    code = compile(tree, filename='[code]', mode='eval')
+    return eval(code, environment)
 
 
 def cautious_eval_or_default(
@@ -96,7 +122,37 @@ def cautious_eval_or_default(
     walker: ast.NodeTransformer | None = None,
     environment: dict[str, Any] | None = None,
 ):
+    """
+    Very, very, very, very, very carefully parse a Python expression or return a default value.
+    """
     try:
         return cautious_eval(definition, size_limit, walker, environment)
     except ExpressionParsingFailure:
         return default
+
+
+class NamesInExpression(NamedTuple):
+    loaded: dict[str, ast.Name]
+    stored: dict[str, ast.Name]
+    others: dict[str, ast.Name]
+
+
+def names_in_expression(expression: ast.Expression):
+    """
+    Take a parsed expression and extract the names of all variables that are accessed.
+    This returns a `refinery.lib.deobfuscation.NamesInExpression` tuple where loaded,
+    stored, and otherwise accessed variables are exposed as dictionaries that map their
+    name to the corresponding AST node.
+    """
+    result = NamesInExpression({}, {}, {})
+    for node in ast.walk(expression):
+        if not isinstance(node, ast.Name):
+            continue
+        if isinstance(node.ctx, ast.Load):
+            result.loaded[node.id] = node
+            continue
+        if isinstance(node.ctx, ast.Store):
+            result.stored[node.id] = node
+            continue
+        result.others[node.id] = node
+    return result
