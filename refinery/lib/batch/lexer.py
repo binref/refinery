@@ -764,11 +764,8 @@ class BatchLexer:
         elif char == EQUALS:
             if (yield from self.emit_token()):
                 return False
-            if self.next_char() != EQUALS:
-                yield Ctrl.Equals
-                return False
             else:
-                yield Ctrl.IsEqualTo
+                yield Ctrl.Equals
                 return True
         else:
             try:

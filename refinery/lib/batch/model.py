@@ -19,7 +19,6 @@ class Ctrl(str, enum.Enum):
     Comma               = ','   # noqa;
     Label               = ':'   # noqa;
     Equals              = '='   # noqa;
-    IsEqualTo           = '=='  # noqa;
     NewGroup            = '('   # noqa;
 #   The following can terminate a command:
     EndGroup            = ')'   # noqa;

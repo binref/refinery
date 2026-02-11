@@ -169,7 +169,6 @@ class BatchParser:
             Ctrl.Semicolon,
             Ctrl.Comma,
             Ctrl.Equals,
-            Ctrl.IsEqualTo,
         }
         at = 0
         while True:
@@ -308,12 +307,19 @@ class BatchParser:
             variant = None
             lhs = token
             cmp = next(tokens)
-            try:
-                cmp = AstIfCmp(cmp.upper())
-            except Exception:
-                raise UnexpectedToken(cmp)
-            if cmp != AstIfCmp.STR and self.state.extensions_version < 1:
-                raise UnexpectedToken(cmp)
+
+            if cmp == Ctrl.Equals:
+                if tokens.pop(Ctrl.Equals):
+                    cmp = AstIfCmp('==')
+                else:
+                    raise UnexpectedToken(tokens.peek())
+            else:
+                try:
+                    cmp = AstIfCmp(cmp.upper())
+                except Exception:
+                    raise UnexpectedToken(cmp)
+                if cmp != AstIfCmp.STR and self.state.extensions_version < 1:
+                    raise UnexpectedToken(cmp)
 
             rhs = tokens.consume_nonspace_words()
 
