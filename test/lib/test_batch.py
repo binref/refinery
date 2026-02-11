@@ -259,7 +259,7 @@ class TestBatchEmulator(TestBase):
             goto :AGAIN
             :BOM
             '''
-        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
+        it = (cmd[5:] for cmd in bat.emulate_commands() if cmd.startswith('echo'))
         self.assertEqual(next(it), '[FOO-BAR]')
         self.assertEqual(next(it), '[BAR-BAZ]')
         self.assertEqual(next(it), '[BAR-BAZ]')
@@ -343,7 +343,7 @@ class TestBatchEmulator(TestBase):
             if 3==4 (echo hi) else echo ho
             echo hi
             '''
-        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
+        it = (cmd[5:] for cmd in bat.emulate_commands() if cmd.startswith('echo'))
         self.assertEqual(next(it), 'ho')
         self.assertEqual(next(it), 'hi')
         with self.assertRaises(StopIteration):
@@ -473,7 +473,7 @@ class TestBatchEmulator(TestBase):
             GOTO :BLOCK
             :END
             '''
-        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('ECHO'))
+        it = (cmd[5:] for cmd in bat.emulate_commands() if cmd.startswith('ECHO'))
         self.assertEqual(next(it), 'FOO=FOO')
         self.assertEqual(next(it), 'BAR=BAR')
         self.assertEqual(next(it), 'FOO=END')
@@ -712,7 +712,7 @@ class TestBatchEmulator(TestBase):
                 echo C
             )
             '''
-        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
+        it = (cmd[5:] for cmd in bat.emulate_commands() if cmd.startswith('echo'))
         self.assertEqual(next(it), '(')
         self.assertEqual(next(it), 'B')
         self.assertEqual(next(it), 'C')
