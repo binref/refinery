@@ -58,7 +58,7 @@ class Redirect(str, enum.Enum):
         return self.name
 
 
-@dataclass(unsafe_hash=True, slots=True)
+@dataclass(unsafe_hash=True)
 class RedirectIO:
     type: Redirect
     source: int
