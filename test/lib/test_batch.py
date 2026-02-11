@@ -176,7 +176,7 @@ class TestBatchEmulator(TestBase):
 
     def test_arithmetic_if(self):
         def _bat(s: str):
-            for e in BatchEmulator(F'if {s} (true) else (false)').emulate():
+            for e in BatchEmulator(F'if {s} (true) else (false)').emulate_commands():
                 return e
 
         self.assertEqual(_bat('"^="==^='), 'false')
@@ -205,7 +205,7 @@ class TestBatchEmulator(TestBase):
             :ABORT
             exit 0
             '''
-        self.assertListEqual(list(bat.emulate()), [])
+        self.assertListEqual(list(bat.emulate_commands()), [])
         self.assertEqual(bat.state.envar('cl'), 'CALL')
 
     def test_file_exists(self):
@@ -215,10 +215,11 @@ class TestBatchEmulator(TestBase):
             @echo off
             if exist "ex"""""i"sts" echo hi
             '''
+        bat.show_noops = True
         bat.state.create_file('exists')
-        self.assertListEqual(list(bat.emulate()), ['@echo off', 'echo hi'])
+        self.assertListEqual(list(bat.emulate_commands()), ['@echo off', 'echo hi'])
         bat.state.remove_file('exists')
-        self.assertListEqual(list(bat.emulate()), ['@echo off'])
+        self.assertListEqual(list(bat.emulate_commands()), ['@echo off'])
 
     def test_groups_are_commands(self):
         @emulate
@@ -229,7 +230,7 @@ class TestBatchEmulator(TestBase):
                 echo harry
             ) | findstr h
             '''
-        self.assertListEqual(list(bat.emulate()), ['echo hello', 'echo harry'])
+        self.assertListEqual(list(bat.emulate_commands()), ['echo hello', 'echo harry'])
         self.assertEqual(bat.std.o.getvalue(), 'hello\x20\r\nharry\x20\r\n')
 
     def test_labels_can_be_variables(self):
@@ -602,7 +603,7 @@ class TestBatchEmulator(TestBase):
             echo A^!BAR!
             echo B
             '''
-        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
+        it = (cmd[5:] for cmd in bat.emulate_commands() if cmd.startswith('echo'))
         self.assertEqual(next(it), 'A echo B %FOO%')
         self.assertEqual(next(it), 'A FOO')
         self.assertEqual(next(it), 'B %FOO%')
@@ -631,7 +632,7 @@ class TestBatchEmulator(TestBase):
             SET VAR=CHANGED
             EXIT/B 0011
             '''
-        self.assertListEqual(list(bat.emulate()), [
+        self.assertListEqual(list(bat.emulate_commands()), [
             'ECHO 11',
             'ECHO CHANGED',
             'ECHO FOO',
@@ -740,7 +741,7 @@ class TestBatchEmulator(TestBase):
                 echo [%A%]
             )
             '''
-        self.assertEqual(list(bat.emulate()), ['echo []'])
+        self.assertEqual(list(bat.emulate_commands()), ['echo []'])
 
     def test_block_expand_02(self):
         @emulate
@@ -749,7 +750,7 @@ class TestBatchEmulator(TestBase):
             set A=BAR
             set A=FOO && (echo [%A%])
             '''
-        self.assertEqual(list(bat.emulate()), ['echo [BAR]'])
+        self.assertEqual(list(bat.emulate_commands()), ['echo [BAR]'])
 
     def test_goto_01_label_escaped_without_respecting_quotes(self):
         @emulate
@@ -850,24 +851,24 @@ class TestBatchEmulator(TestBase):
 
     def test_if_knows_variables_in_sequence(self):
         self.assertListEqual(['echo success'], list(BatchEmulator(
-            'set b=1 >nul 2>&1& if not defined b (echo trap) else (echo success)').emulate()))
+            'set b=1 >nul 2>&1& if not defined b (echo trap) else (echo success)').emulate_commands()))
 
     def test_if_does_not_chain(self):
         for op in ('&', '&&'):
             self.assertEqual(list(BatchEmulator(
                 F'           if 1==1 (echo x) else (echo y)  {op} echo z'
-            ).emulate()), [
+            ).emulate_commands()), [
                 'echo x',
             ])
             self.assertEqual(list(BatchEmulator(
                 F'          (if 1==1 (echo x) else (echo y)) {op} echo z'
-            ).emulate()), [
+            ).emulate_commands()), [
                 'echo x',
                 'echo z',
             ])
             self.assertEqual(list(BatchEmulator(
                 F'echo a{op} if 1==2 (echo x) else (echo y) {op} echo z'
-            ).emulate()), [
+            ).emulate_commands()), [
                 'echo a',
                 'echo y',
                 'echo z',
@@ -924,7 +925,7 @@ class TestBatchEmulator(TestBase):
             '''
             setlocal enableDelayedExpansion &&  (set foo=REFINARY) && echo !foo:REF=B!
             '''
-        self.assertListEqual(list(bat.emulate()), ['echo BINARY'])
+        self.assertListEqual(list(bat.emulate_commands()), ['echo BINARY'])
 
     def test_expansion_directly_after_set(self):
         @emulate
@@ -943,7 +944,7 @@ class TestBatchEmulator(TestBase):
                 echo %%i
             )
             '''
-        self.assertEqual(list(bat.emulate()), ['echo foo', 'echo bar'])
+        self.assertEqual(list(bat.emulate_commands()), ['echo foo', 'echo bar'])
 
     def test_for_loop_02(self):
         @emulate
@@ -951,7 +952,7 @@ class TestBatchEmulator(TestBase):
             '''
             for /f %%i in ("hello)") do echo %%i
             '''
-        self.assertEqual(list(bat.emulate()), ['echo hello)'])
+        self.assertEqual(list(bat.emulate_commands()), ['echo hello)'])
 
     def test_regression_quoted_set_statements_not_separated(self):
         @emulate
@@ -961,4 +962,4 @@ class TestBatchEmulator(TestBase):
             ;SE^T "FOO=FOO"
             echo %FOO%
             '''
-        self.assertListEqual(list(bat.emulate(0)), ['echo FOO'])
+        self.assertListEqual(list(bat.emulate_commands()), ['echo FOO'])

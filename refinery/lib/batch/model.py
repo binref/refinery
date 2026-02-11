@@ -4,6 +4,7 @@ import enum
 import sys
 
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Generic, TypeVar, Union
 
 from refinery.lib.batch.const import TILDE
@@ -184,6 +185,21 @@ class AstCondition(str, enum.Enum):
 @dataclass(repr=False)
 class AstNode:
     offset: int
+    parent: AstNode | None
+
+    def is_descendant_of(self, ast: AstNode | None):
+        parent = self.parent
+        if parent is ast:
+            return True
+        if parent is None:
+            return False
+        return parent.is_descendant_of(ast)
+
+    @cached_property
+    def depth(self):
+        if (p := self.parent) is None:
+            return 0
+        return 1 + p.depth
 
     def __repr__(self):
         try:

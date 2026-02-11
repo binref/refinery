@@ -19,6 +19,7 @@ from refinery.lib.batch.model import (
     AstIfCmp,
     AstIfVariant,
     AstLabel,
+    AstNode,
     AstPipeline,
     AstSequence,
     Ctrl,
@@ -189,12 +190,13 @@ class BatchParser:
 
     def command(
         self,
+        parent: AstNode,
         tokens: LookAhead,
         redirects: dict[int, RedirectIO],
         in_group: bool,
         silenced: bool,
     ) -> AstCommand | None:
-        ast = AstCommand(tokens.offset(), silenced, redirects)
+        ast = AstCommand(tokens.offset(), parent, silenced, redirects)
         tok = tokens.peek()
         cmd = ast.fragments
 
@@ -266,12 +268,12 @@ class BatchParser:
             tokens.skip_space()
         return redirects
 
-    def pipeline(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstPipeline | None:
-        ast = AstPipeline(tokens.offset(), silenced)
+    def pipeline(self, parent: AstNode | None, tokens: LookAhead, in_group: bool, silenced: bool) -> AstPipeline | None:
+        ast = AstPipeline(tokens.offset(), parent, silenced)
         while True:
             redirects = self.redirects(tokens)
-            if not (cmd := self.group(tokens, redirects, silenced)):
-                if not (cmd := self.command(tokens, redirects, in_group, silenced)):
+            if not (cmd := self.group(ast, tokens, redirects, silenced)):
+                if not (cmd := self.command(ast, tokens, redirects, in_group, silenced)):
                     break
             ast.parts.append(cmd)
             if not tokens.pop(Ctrl.Pipe):
@@ -281,7 +283,7 @@ class BatchParser:
         if ast.parts:
             return ast
 
-    def ifthen(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstIf | None:
+    def ifthen(self, parent: AstNode | None, tokens: LookAhead, in_group: bool, silenced: bool) -> AstIf | None:
         offset = tokens.offset()
 
         if not tokens.pop_string('IF'):
@@ -340,30 +342,32 @@ class BatchParser:
             except ValueError:
                 pass
 
-        then_do = self.sequence(tokens, in_group)
+        then_do = self.sequence(None, tokens, in_group)
 
         if then_do is None:
             raise UnexpectedToken(tokens.peek())
 
         tokens.skip_space()
 
-        if tokens.peek().upper() == 'ELSE':
-            tokens.pop()
-            else_do = self.sequence(tokens, in_group)
-        else:
-            else_do = None
-
-        return AstIf(
+        ast = AstIf(
             offset,
+            parent,
             silenced,
             then_do,
-            else_do,
+            None,
             variant,
             casefold,
             negated,
             cmp,
             lhs, rhs # type:ignore
         )
+        then_do.parent = ast
+
+        if tokens.peek().upper() == 'ELSE':
+            tokens.pop()
+            ast.else_do = self.sequence(ast, tokens, in_group)
+
+        return ast
 
     def forloop_options(self, options: str) -> AstForOptions:
         result = AstForOptions()
@@ -419,7 +423,7 @@ class BatchParser:
 
         return result
 
-    def forloop(self, tokens: LookAhead, in_group: bool, silenced: bool) -> AstFor | None:
+    def forloop(self, parent: AstNode | None, tokens: LookAhead, in_group: bool, silenced: bool) -> AstFor | None:
         offset = tokens.offset()
 
         if not tokens.pop_string('FOR'):
@@ -474,7 +478,7 @@ class BatchParser:
         if not tokens.pop_string('DO'):
             raise UnexpectedToken(tokens.peek())
 
-        if not (body := self.sequence(tokens, in_group)):
+        if not (body := self.sequence(None, tokens, in_group)):
             raise UnexpectedToken(tokens.peek())
 
         options = self.forloop_options(options)
@@ -502,8 +506,9 @@ class BatchParser:
                 init[k] = batchint(v, 0)
             spec = batchrange(*init)
 
-        return AstFor(
+        ast = AstFor(
             offset,
+            parent,
             silenced,
             variant,
             variable[1],
@@ -514,8 +519,10 @@ class BatchParser:
             path,
             mode,
         )
+        ast.body.parent = ast
+        return ast
 
-    def block(self, tokens: LookAhead, in_group: bool):
+    def block(self, parent: AstNode | None, tokens: LookAhead, in_group: bool):
         while True:
             while tokens.pop(Ctrl.NewLine):
                 continue
@@ -523,13 +530,14 @@ class BatchParser:
                 break
             if tokens.pop(Ctrl.EndOfFile):
                 break
-            if sequence := self.sequence(tokens, in_group):
+            if sequence := self.sequence(parent, tokens, in_group):
                 yield sequence
             else:
                 break
 
     def group(
         self,
+        parent: AstNode | None,
         tokens: LookAhead,
         redirects: dict[int, RedirectIO],
         silenced: bool,
@@ -538,8 +546,8 @@ class BatchParser:
         if tokens.peek() == Ctrl.NewGroup:
             self.lexer.parse_group()
             tokens.pop()
-            sequences = list(self.block(tokens, True))
-            group = AstGroup(offset, silenced, redirects, sequences)
+            group = AstGroup(offset, parent, silenced, redirects)
+            group.fragments.extend(self.block(group, tokens, True))
             tokens.skip_space()
             group.redirects.update(self.redirects(tokens))
             return group
@@ -555,36 +563,37 @@ class BatchParser:
         label = lexer.label(line)
         if (x := lexer.labels[label]) != offset:
             raise RuntimeError(F'Expected offset for label {label} to be {offset}, got {x} instead.')
-        return AstLabel(offset, silenced, line, label)
+        return AstLabel(offset, None, silenced, line, label)
 
-    def statement(self, tokens: LookAhead, in_group: bool):
+    def statement(self, parent: AstNode | None, tokens: LookAhead, in_group: bool):
         at, _ = self.skip_prefix(tokens)
         silenced = at > 0
         if at <= 1 and (s := self.label(tokens, silenced)):
             return s
-        if s := self.ifthen(tokens, in_group, silenced):
+        if s := self.ifthen(parent, tokens, in_group, silenced):
             return s
-        if s := self.forloop(tokens, in_group, silenced):
+        if s := self.forloop(parent, tokens, in_group, silenced):
             return s
-        return self.pipeline(tokens, in_group, silenced)
+        return self.pipeline(parent, tokens, in_group, silenced)
 
-    def sequence(self, tokens: LookAhead, in_group: bool) -> AstSequence | None:
+    def sequence(self, parent: AstNode | None, tokens: LookAhead, in_group: bool) -> AstSequence | None:
         tokens.skip_space()
-        head = self.statement(tokens, in_group)
+        head = self.statement(parent, tokens, in_group)
         if head is None:
             return None
-        node = AstSequence(head.offset, head)
+        node = AstSequence(head.offset, parent, head)
+        head.parent = node
         tokens.skip_space()
         while condition := AstCondition.Try(tokens.peek()):
             tokens.pop()
             tokens.skip_space()
-            if not (statement := self.statement(tokens, in_group)):
+            if not (statement := self.statement(node, tokens, in_group)):
                 raise EmulatorException('Failed to parse conditional statement.')
             node.tail.append(
-                AstConditionalStatement(statement.offset, condition, statement))
+                AstConditionalStatement(statement.offset, node, condition, statement))
             tokens.skip_space()
         return node
 
     def parse(self, offset: int):
         tokens = LookAhead(self.lexer, offset)
-        yield from self.block(tokens, False)
+        yield from self.block(None, tokens, False)

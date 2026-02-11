@@ -10,7 +10,6 @@ from typing import Callable, ClassVar, Generator, TypeVar
 
 from refinery.lib.batch.model import (
     ArgVarFlags,
-    AstCommand,
     AstCondition,
     AstFor,
     AstForParserMode,
@@ -139,7 +138,7 @@ class BatchEmulator:
                 AstNode,
                 IO,
                 bool,
-            ], Generator[SynNodeBase | Error]]
+            ], Generator[SynNodeBase[AstNode] | Error]]
         ]] = {}
 
         def __init__(self, key: type[AstNode]):
@@ -172,10 +171,12 @@ class BatchEmulator:
         data: str | buf | BatchParser,
         state: BatchState | None = None,
         std: IO | None = None,
+        show_noops: bool = False,
     ):
         self.stack = []
         self.parser = BatchParser(data, state)
         self.std = std or IO()
+        self.show_noops = show_noops
 
     @property
     def state(self):
@@ -227,7 +228,10 @@ class BatchEmulator:
             if isinstance(token, AstNode):
                 new = {}
                 for tf in fields(token):
-                    new[tf.name] = expand(getattr(token, tf.name))
+                    value = getattr(token, tf.name)
+                    if tf.name != 'parent':
+                        value = expand(value)
+                    new[tf.name] = value
                 return token.__class__(**new)
             return token
         delayexpand = self.delayexpand
@@ -548,13 +552,18 @@ class BatchEmulator:
     def execute_echo(self, cmd: SynCommand, std: IO, in_group: bool):
         cmdl = cmd.argument_string
         mode = cmdl.strip().lower()
-        yield cmd
+        current_state = self.state.echo
         if mode == 'on':
+            if self.show_noops or current_state is False:
+                yield cmd
             self.state.echo = True
             return
         if mode == 'off':
+            if self.show_noops or current_state is True:
+                yield cmd
             self.state.echo = False
             return
+        yield cmd
         if mode:
             if in_group and not cmdl.endswith(' '):
                 cmdl += ' '
@@ -672,6 +681,8 @@ class BatchEmulator:
     def trace_pipeline(self, pipeline: AstPipeline, std: IO, in_group: bool):
         length = len(pipeline.parts)
         streams = IO(*std)
+        if length > 1:
+            yield synthesize(pipeline)
         for k, part in enumerate(pipeline.parts, 1):
             if k != 1:
                 streams.i = streams.o
@@ -681,11 +692,12 @@ class BatchEmulator:
             else:
                 streams.o = StringIO()
             if isinstance(part, AstGroup):
-                yield from self.trace_group(part, streams, in_group)
+                it = self.trace_group(part, streams, in_group)
             else:
                 ast = self.expand_ast_node(part)
                 cmd = synthesize(ast)
-                yield from self.execute_command(cmd, streams, in_group)
+                it = self.execute_command(cmd, streams, in_group)
+            yield from it
 
     @_node(AstSequence)
     def trace_sequence(self, sequence: AstSequence, std: IO, in_group: bool):
@@ -701,6 +713,7 @@ class BatchEmulator:
 
     @_node(AstIf)
     def trace_if(self, _if: AstIf, std: IO, in_group: bool):
+        yield synthesize(_if)
         _if = self.expand_ast_node(_if)
 
         if _if.variant == AstIfVariant.ErrorLevel:
@@ -748,7 +761,7 @@ class BatchEmulator:
 
     @_node(AstFor)
     def trace_for(self, _for: AstFor, std: IO, in_group: bool):
-        yield _for
+        yield synthesize(_for)
         state = self.state
         cwd = state.cwd
         vars = state.new_forloop()
@@ -809,6 +822,7 @@ class BatchEmulator:
 
     @_node(AstGroup)
     def trace_group(self, group: AstGroup, std: IO, in_group: bool):
+        yield synthesize(group)
         for sequence in group.fragments:
             yield from self.trace_sequence(sequence, std, True)
 
@@ -823,10 +837,31 @@ class BatchEmulator:
             raise RuntimeError(statement)
         yield from handler(self, statement, std, in_group)
 
-    def emulate(self, offset: int = 0, name: str | None = None, command_line: str = '', called: bool = False):
-        for syn in self.trace(offset, name, command_line):
-            if isinstance(syn, SynNodeBase):
+    def emulate_commands(self):
+        for syn in self.trace():
+            if isinstance(syn, SynCommand):
                 yield str(syn)
+
+    def emulate_to_depth(self, depth: int = 0):
+        for syn in self.trace():
+            if not isinstance(syn, SynNodeBase):
+                continue
+            if syn.ast.depth <= depth:
+                yield str(syn)
+
+    def emulate(self, offset: int = 0, name: str | None = None, command_line: str = ''):
+        cursor: AstNode | None = None
+        for syn in self.trace(offset, name, command_line):
+            if not isinstance(syn, SynNodeBase):
+                continue
+            ast = syn.ast
+            if cursor is not None and ast.is_descendant_of(cursor):
+                continue
+            if isinstance(ast, AstPipeline):
+                if len(ast.parts) == 1:
+                    continue
+            cursor = ast
+            yield str(syn)
 
     def trace(self, offset: int = 0, name: str | None = '', command_line: str = '', called: bool = False):
         if name:
