@@ -213,7 +213,7 @@ class SynFor(SynNodeBase[AstFor]):
                 out.write(path)
         else:
             out.write(K.FOR)
-        out.write(' %%')
+        out.write(' %')
         out.write(ast.variable)
         out.write(F' {K.IN} (')
         out.write(ast.spec_string)
