@@ -155,7 +155,7 @@ class BatchState:
         self._cmd = value
         self.args = value.split()
 
-    def envar(self, name: str) -> str:
+    def envar(self, name: str, default: str | None = None) -> str:
         name = name.upper()
         if name in (e := self.environment):
             return e[name]
@@ -171,7 +171,7 @@ class BatchState:
         elif name == 'CD':
             return self.cwd
         elif name == 'CMDCMDLINE':
-            line = self.envar('COMSPEC')
+            line = self.envar('COMSPEC', 'cmd.exe')
             if args := self.args:
                 args = ' '.join(args)
                 line = F'{line} /c "{args}"'
@@ -180,7 +180,10 @@ class BatchState:
             return str(self.extensions_version)
         elif name == 'HIGHESTNUMANODENUMBER':
             return '0'
-        raise MissingVariable
+        elif default is not None:
+            return default
+        else:
+            raise MissingVariable
 
     def _resolved(self, path: str) -> str:
         if not ntpath.isabs(path):
