@@ -42,7 +42,7 @@ class imgdb(Unit):
             count = len(test)
             total = count * image.width
             out = bytearray(total)
-            for row in self._get_rows():
+            for row in self._get_rows(image):
                 for pixel, offset in zip(row, range(0, total, count)):
                     out[offset:offset + count] = pixel
             yield out
