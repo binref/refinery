@@ -72,6 +72,8 @@ class alu(ArithmeticUnit):
         dec: Param[bool, Arg.Switch('-D', group='EPI', help='equivalent to --epilogue=S-1')] = False,
         cbc: Param[bool, Arg.Switch('-X', group='EPI', help='equivalent to --epilogue=(B)')] = False,
         ctr: Param[bool, Arg.Switch('-C', group='EPI', help='equivalent to --epilogue=S+B')] = False,
+        lcg: Param[None | slice, Arg.Bounds('-G', group='EPI', metavar='a:b[:m]', help=(
+            'equivalent to --epilogue=(a*S+b)%%m'))] = None,
         bigendian=False, blocksize=1, precision=-1
     ):
         for flag, flag_is_set, expression in [
@@ -79,13 +81,16 @@ class alu(ArithmeticUnit):
             ('--inc', inc, 'S+1'),
             ('--dec', dec, 'S-1'),
             ('--ctr', ctr, 'S+B'),
+            ('--lcg', lcg, '{a}*S+{b}'),
         ]:
-            if flag_is_set:
-                if epilogue:
-                    raise ValueError(
-                        F'Ambiguous specification; epilogue was already set to {epilogue} '
-                        F'when {flag} was parsed.')
+            if not flag_is_set:
+                continue
+            if not epilogue:
                 epilogue = expression
+                continue
+            raise ValueError(
+                F'Ambiguous specification; epilogue was already set to {epilogue} '
+                F'when {flag} was parsed.')
 
         self._index = IndexCounter()
 
@@ -96,6 +101,7 @@ class alu(ArithmeticUnit):
             blocksize=blocksize,
             precision=precision,
             seed=seed,
+            lcg=lcg,
             operator=self._parse_op(operator),
             prologue=self._parse_op(prologue, 'S'),
             epilogue=self._parse_op(epilogue, 'S'),
@@ -119,9 +125,23 @@ class alu(ArithmeticUnit):
         def _expression(definition: str):
             return PythonExpression(definition, *'IBEASMNVRLX', all_variables_allowed=True, mask=fmask)
 
-        prologue = _expression(self.args.prologue).expression
-        epilogue = _expression(self.args.epilogue).expression
-        operator = _expression(self.args.operator).expression
+        _prologue: str = self.args.prologue
+        _epilogue: str = self.args.epilogue
+        _operator: str = self.args.operator
+        lcg: slice[int, int, int | None] | None = self.args.lcg
+
+        if lcg is not None:
+            a = lcg.start
+            b = lcg.stop
+            if a is None or b is None:
+                raise ValueError('Invalid LCG specification. Both a multiplier and an increment must be specified.')
+            _epilogue = _epilogue.format(a=a, b=b)
+            if m := lcg.step:
+                _epilogue = F'({_epilogue})%{m}'
+
+        prologue = _expression(_prologue).expression
+        epilogue = _expression(_epilogue).expression
+        operator = _expression(_operator).expression
 
         def cast_unsigned(n) -> int:
             return int(n) & fmask
