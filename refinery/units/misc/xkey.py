@@ -100,7 +100,7 @@ class xkey(Unit):
             'PdfDocument'   : (B'%PDF-', _S(B'12'), (B'.'), _S(B'0123456789'), _S(B'\r\n')),
             'SQLite'        : (B'SQLite format 3\0'),
             'GIF'           : (B'GIF87a', B'GIF89a'),
-            'PNG'           : (B'\x89PNG\r\n\x1A\n'),
+            'PNG'           : (B'\x89PNG\r\n\x1A\n\0\0\0\x0DIHDR'),
             'DEX'           : (B'dex\n035\0'),
             'JPG'           : (B'\xFF\xD8\xFF', _S(B'\xE0\xE1\xEE'), (B'\x00\x10\x4A\x46\x49\x46\x00\x01', B'')),
             'OneNote'       : (B'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3'),
