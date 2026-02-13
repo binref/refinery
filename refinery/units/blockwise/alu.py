@@ -81,7 +81,7 @@ class alu(ArithmeticUnit):
             ('--inc', inc, 'S+1'),
             ('--dec', dec, 'S-1'),
             ('--ctr', ctr, 'S+B'),
-            ('--lcg', lcg, '{a}*S+{b}'),
+            ('--lcg', lcg, 'S'),
         ]:
             if not flag_is_set:
                 continue
@@ -135,7 +135,10 @@ class alu(ArithmeticUnit):
             b = lcg.stop
             if a is None or b is None:
                 raise ValueError('Invalid LCG specification. Both a multiplier and an increment must be specified.')
-            _epilogue = _epilogue.format(a=a, b=b)
+            if a != 1:
+                _epilogue = F'{_epilogue}*{a}'
+            if b != 0:
+                _epilogue = F'{_epilogue}+{b}'
             if m := lcg.step:
                 _epilogue = F'({_epilogue})%{m}'
 
