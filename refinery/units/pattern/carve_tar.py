@@ -25,6 +25,6 @@ class carve_tar(Unit):
                 success = False
             if success:
                 offset = stream.tell()
-                yield memory[start:offset]
+                yield self.labelled(memory[start:offset], offset=start)
             else:
                 offset = p + 1
