@@ -303,13 +303,11 @@ class BatchLexer:
         self.cursor = resume
         self.resume = None
 
-    def current_char(self, lookahead=0):
+    def current_char(self):
         if not (subst := self.cursor.subst_buffer):
-            offset = self.cursor.offset + lookahead
+            offset = self.cursor.offset
         else:
             offset = self.cursor.subst_offset
-            if lookahead:
-                offset += lookahead
             if offset >= (n := len(subst)):
                 offset -= n
                 offset += self.cursor.offset
@@ -321,24 +319,19 @@ class BatchLexer:
             raise UnexpectedEOF
 
     def consume_char(self):
-        if subst := self.cursor.subst_buffer:
-            offset = self.cursor.subst_offset + 1
+        cursor = self.cursor
+        if subst := cursor.subst_buffer:
+            offset = cursor.subst_offset + 1
             if offset >= len(subst):
                 del subst[:]
-                self.cursor.subst_offset = -1
+                cursor.subst_offset = -1
             else:
-                self.cursor.subst_offset = offset
+                cursor.subst_offset = offset
         else:
-            offset = self.cursor.offset + 1
+            offset = cursor.offset + 1
             if offset > len(self.code):
                 raise EOFError('Consumed a character beyond EOF.')
-            self.cursor.offset = offset
-
-    def peek_char(self):
-        try:
-            return self.current_char(1)
-        except UnexpectedEOF:
-            return None
+            cursor.offset = offset
 
     def next_char(self):
         self.consume_char()
