@@ -411,6 +411,7 @@ class BatchEmulator:
             for assignment in ''.join(args).split(','):
                 assignment = assignment.strip()
                 name, operator, definition = re.split(r'([*+^|/%-&]|<<|>>|)=', assignment, maxsplit=1)
+                definition = re.sub(r'\b0([0-7]+)\b', r'0o\1', definition)
                 if operator:
                     definition = F'{name}{operator}({definition})'
                 definition = defang(definition)
