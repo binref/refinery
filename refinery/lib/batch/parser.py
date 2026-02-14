@@ -43,16 +43,15 @@ class LookAhead:
         self.tokens = lexer.tokens(offset)
         self.preview = deque()
         self.offsets = deque()
-        self._offset = offset
         self.done = False
         self.scope = scope
         self._collect()
 
-    def offset(self, index: int = 0):
+    def offset(self):
         try:
-            return self.offsets[index]
+            return self.offsets[0]
         except IndexError:
-            return self._offset
+            return len(self.lexer.code)
 
     def pop(self, *value):
         if not (preview := self.preview):
@@ -122,9 +121,7 @@ class LookAhead:
             except StopIteration:
                 break
             preview.append(token)
-            if not (c := self.lexer.cursor).substituting:
-                self._offset = c.offset
-            offsets.append(self._offset)
+            offsets.append(self.lexer.cursor.offset)
 
     def __iter__(self):
         return self
@@ -225,9 +222,7 @@ class BatchParser:
         nonspace = io.StringIO()
 
         while tok not in (
-            Ctrl.CommandSeparator,
-            Ctrl.RunOnFailure,
-            Ctrl.RunOnSuccess,
+            Ctrl.Ampersand,
             Ctrl.Pipe,
             Ctrl.NewLine,
             Ctrl.EndOfFile,
@@ -276,7 +271,7 @@ class BatchParser:
                 if not (cmd := self.command(ast, tokens, redirects, in_group, silenced)):
                     break
             ast.parts.append(cmd)
-            if not tokens.pop(Ctrl.Pipe):
+            if not tokens.pop(Ctrl.Pipe) or tokens.peek() == Ctrl.Pipe:
                 break
             at, _ = self.skip_prefix(tokens)
             silenced = at > 0
@@ -584,8 +579,16 @@ class BatchParser:
         node = AstSequence(head.offset, parent, head)
         head.parent = node
         tokens.skip_space()
-        while condition := AstCondition.Try(tokens.peek()):
-            tokens.pop()
+        while True:
+            if tokens.pop(Ctrl.Ampersand):
+                if tokens.pop(Ctrl.Ampersand):
+                    condition = AstCondition.Success
+                else:
+                    condition = AstCondition.NoCheck
+            elif tokens.pop(Ctrl.Pipe):
+                condition = AstCondition.Failure
+            else:
+                break
             tokens.skip_space()
             if not (statement := self.statement(node, tokens, in_group)):
                 raise EmulatorException('Failed to parse conditional statement.')

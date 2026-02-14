@@ -24,9 +24,7 @@ class Ctrl(str, enum.Enum):
 #   The following can terminate a command:
     EndGroup            = ')'   # noqa;
     NewLine             = '\n'  # noqa;
-    RunOnSuccess        = '&&'  # noqa;
-    RunOnFailure        = '||'  # noqa;
-    CommandSeparator    = '&'   # noqa;
+    Ampersand           = '&'   # noqa;
     Pipe                = '|'   # noqa;
     EndOfFile           = ''    # noqa;
 
@@ -170,13 +168,6 @@ class AstCondition(str, enum.Enum):
     NoCheck = '&'
     Success = '&&'
     Failure = '||'
-
-    @classmethod
-    def Try(cls, value):
-        try:
-            return cls(value)
-        except ValueError:
-            return None
 
     def __str__(self):
         return self.value

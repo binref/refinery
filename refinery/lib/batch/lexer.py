@@ -68,17 +68,6 @@ class Mode(enum.IntEnum):
     VarColon = enum.auto()
 
 
-SeparatorEscalation = {
-    AMPERSAND: [
-        Ctrl.CommandSeparator,
-        Ctrl.RunOnSuccess,
-    ],
-    PIPE: [
-        Ctrl.Pipe,
-        Ctrl.RunOnFailure,
-    ],
-}
-
 SeparatorMap = {
     AT          : Ctrl.At,
     COLON       : Ctrl.Label,
@@ -265,7 +254,7 @@ class BatchLexer:
         self.quote = False
         self.caret = False
         self.white = False
-        self.first_after_sep = True
+        self.separator_count = 2
         self.first_after_gap = True
         self.group = 0
         self.cursor = BatchLexerCursor(offset)
@@ -393,7 +382,7 @@ class BatchLexer:
                 yield Word(token)
         del buffer[:]
         self.first_after_gap = False
-        self.first_after_sep = False
+        self.separator_count = 0
         return switched
 
     def tokens(self, offset: int) -> Generator[Token]:
@@ -433,7 +422,7 @@ class BatchLexer:
         if not self.caret:
             # caret is not reset until the next char!
             yield from self.emit_token()
-            self.first_after_sep = True
+            self.separator_count = 2
             self.white = True
             self.quote = False
             self.mode_reset()
@@ -462,20 +451,19 @@ class BatchLexer:
             self.consume_char()
             self.group = g - 1
             return True
-        try:
-            one, two = SeparatorEscalation[char]
-        except KeyError:
+        elif char == AMPERSAND:
+            tok = Ctrl.Ampersand
+        elif char == PIPE:
+            tok = Ctrl.Pipe
+        else:
             return False
-        if self.first_after_sep:
+        if self.separator_count >= 2:
             raise UnexpectedFirstToken(char)
         yield from self.emit_token()
         self.mode_reset()
-        if self.next_char() == char:
-            self.consume_char()
-            yield two
-        else:
-            yield one
-        self.first_after_sep = False
+        self.consume_char()
+        yield tok
+        self.separator_count += 1
         return True
 
     def check_quote_start(self, char: int):
@@ -484,7 +472,7 @@ class BatchLexer:
         self.cursor.token.append(char)
         self.mode_switch(Mode.Quote)
         self.caret = False
-        self.first_after_sep = False
+        self.separator_count = 0
         self.consume_char()
         return True
 
@@ -757,7 +745,7 @@ class BatchLexer:
             self.cursor.token.append(char)
             self.mode_switch(Mode.Whitespace)
             return True
-        if self.first_after_sep and char in SEPARATORS:
+        if self.separator_count > 0 and char in SEPARATORS:
             return True
         if char == SLASH and not self.pending_redirect:
             yield from self.emit_token()
@@ -773,13 +761,13 @@ class BatchLexer:
             except KeyError:
                 pass
             else:
-                self.first_after_sep = False
+                self.separator_count = 0
                 if (yield from self.emit_token()):
                     return False
                 else:
                     yield token
                     return True
-        self.first_after_sep = False
+        self.separator_count = 0
         self.cursor.token.append(char)
         return True
 
