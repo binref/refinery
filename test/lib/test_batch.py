@@ -221,6 +221,20 @@ class TestBatchEmulator(TestBase):
         bat.state.remove_file('exists')
         self.assertListEqual(list(bat.emulate_commands()), ['@echo off'])
 
+    def test_syntax_in_variables(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set O=^>
+            set A=^=
+            set C=^;
+            echo foo%o%%o%%a%%c%%c%%a%==test.txt
+            echo bar%o%%o%%c%%a%%c%%a%==test.txt
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.ingest_file('test.txt'), 'foo\r\nbar\r\n')
+
     def test_groups_are_commands(self):
         @emulate
         class bat:

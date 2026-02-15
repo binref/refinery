@@ -63,9 +63,12 @@ class Mode(enum.IntEnum):
     SetStarted = enum.auto()
     SetRegular = enum.auto()
     SetQuoted = enum.auto()
-    VarStarted = enum.auto()
-    VarDollar = enum.auto()
-    VarColon = enum.auto()
+
+
+class EV(enum.IntEnum):
+    New = PERCENT
+    Env = DOLLAR
+    Mod = COLON
 
 
 SeparatorMap = {
@@ -111,11 +114,6 @@ class BatchLexer:
 
     labels: dict[str, int]
     code: memoryview
-
-    var_cmdarg: ArgVar | None
-    var_resume: int
-    var_offset: int
-    var_dollar: int
 
     pending_redirect: RedirectIO | None
 
@@ -260,10 +258,6 @@ class BatchLexer:
         self.cursor = BatchLexerCursor(offset)
         self.modes.append(Mode.Text)
         self.resume = None
-        self.var_resume = -1
-        self.var_offset = -1
-        self.var_dollar = -1
-        self.var_cmdarg = None
         self.pending_redirect = None
 
     def mode_reset(self):
@@ -304,15 +298,20 @@ class BatchLexer:
         self.resume = None
 
     def current_char(self):
-        if not (subst := self.cursor.subst_buffer):
-            offset = self.cursor.offset
+        cursor = self.cursor
+        if not (subst := cursor.subst_buffer):
+            offset = cursor.offset
+            if self.code[offset] == PERCENT:
+                cursor.offset += 1
+                self.fill_substitution_buffer()
+                return self.current_char()
         else:
-            offset = self.cursor.subst_offset
+            offset = cursor.subst_offset
             if offset >= (n := len(subst)):
                 offset -= n
-                offset += self.cursor.offset
+                offset += cursor.offset
             else:
-                return self.cursor.subst_buffer[offset]
+                return subst[offset]
         try:
             return self.code[offset]
         except IndexError:
@@ -338,6 +337,8 @@ class BatchLexer:
         return self.current_char()
 
     def parse_env_variable(self, var: str):
+        if var == '':
+            return '%'
         name, _, modifier = var.partition(':')
         base = self.state.envar(name)
         if not modifier or not base:
@@ -394,20 +395,6 @@ class BatchLexer:
 
         if not self.first_after_gap:
             yield from self.emit_token()
-
-    def check_variable_start(self, char: int):
-        if char != PERCENT:
-            return False
-        if self.cursor.substituting:
-            return False
-        if self.next_char() == PERCENT:
-            self.consume_char()
-            self.cursor.token.append(PERCENT)
-            return True
-        self.mode_switch(Mode.VarStarted)
-        self.var_cmdarg = ArgVar()
-        self.var_offset = self.cursor.offset
-        return True
 
     def check_line_break(self, mode: Mode, char: int):
         if char != LINEBREAK:
@@ -506,93 +493,72 @@ class BatchLexer:
 
         return True
 
-    @_register(
-        Mode.VarStarted,
-        Mode.VarDollar,
-        Mode.VarColon,
-    )
-    def gobble_var(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
-        yield from ()
+    def fill_substitution_buffer(self):
+        if (cursor := self.cursor).substituting:
+            return
 
-        def done():
-            self.mode_finish()
-            self.var_cmdarg = None
-            self.var_resume = -1
-            self.var_offset = -1
-            return False
-
-        var_offset = self.var_offset
-        var_resume = self.var_resume
-        var_cmdarg = self.var_cmdarg
-        current = self.cursor.offset
+        code = self.code
+        var_resume = -1
+        var_dollar = -1
+        var_cmdarg = ArgVar()
         variable = None
+        phase = EV.New
 
-        if self.substituting:
-            raise RuntimeError('Nested variable substitution.')
-
-        if char == LINEBREAK:
-            if var_resume < 0:
-                var_resume = var_offset
-            if var_resume < 0:
-                raise RuntimeError
-            self.cursor.offset = var_resume
-            return done()
-
-        if char == PERCENT:
-            try:
-                var_name = u16(self.code[var_offset:self.cursor.offset])
-                variable = u16(self.parse_env_variable(var_name))
-            except MissingVariable:
-                if var_resume >= 0:
-                    self.cursor.offset = var_resume
-                self.consume_char()
-                return done()
-
-        elif var_cmdarg:
-            if ZERO <= char <= NINE:
-                var_cmdarg.offset = char - ZERO
-                variable = u16(self.parse_arg_variable(var_cmdarg))
-            elif char == ASTERIX and var_offset == current:
-                var_cmdarg.offset = (...)
-                variable = u16(self.parse_arg_variable(var_cmdarg))
-
-        if variable is not None:
-            self.consume_char()
-            self.cursor.subst_buffer.extend(variable)
-            self.cursor.subst_offset = 0
-            return done()
-
-        if mode == Mode.VarColon:
-            # With a colon, the argument index must follow immediately: %~$PATH:0
-            # If there is anything between colon and digit, it is not an argument variable.
-            self.var_cmdarg = None
-        if mode == Mode.VarDollar:
-            if char == COLON:
-                if var_cmdarg:
-                    var_cmdarg.path = u16(self.code[self.var_dollar:current])
-                self.var_resume = current
-        if mode == Mode.VarStarted:
-            if char == DOLLAR:
-                self.var_dollar = current
-                self.mode = Mode.VarDollar
-                return True
-            if char == COLON:
-                self.var_cmdarg = None
-                self.mode = Mode.VarColon
-                self.var_resume = current
-                return True
-            if not var_cmdarg:
-                return True
-            try:
-                flag = ArgVarFlags.FromToken(char)
-            except KeyError:
-                self.var_cmdarg = None
-                return True
-            if flag == ArgVarFlags.StripQuotes and var_cmdarg.flags > 0:
-                self.var_cmdarg = None
-            elif ArgVarFlags.StripQuotes not in var_cmdarg.flags:
-                self.var_cmdarg = None
-        return True
+        for current in range((current := cursor.offset), len(code)):
+            char = code[current]
+            if char == LINEBREAK:
+                break
+            elif char == PERCENT:
+                try:
+                    var_name = u16(self.code[cursor.offset:current])
+                    variable = u16(self.parse_env_variable(var_name))
+                except MissingVariable:
+                    if var_resume < 0:
+                        var_resume = current + 1
+                    break
+            elif var_cmdarg:
+                if ZERO <= char <= NINE:
+                    var_cmdarg.offset = char - ZERO
+                    variable = u16(self.parse_arg_variable(var_cmdarg))
+                elif char == ASTERIX and cursor.offset == current:
+                    var_cmdarg.offset = (...)
+                    variable = u16(self.parse_arg_variable(var_cmdarg))
+            if variable is not None:
+                cursor.subst_offset = 0
+                cursor.subst_buffer.extend(variable)
+                var_resume = current + 1
+                break
+            if phase == EV.Mod:
+                var_cmdarg = None
+            elif phase == EV.Env:
+                if char == COLON:
+                    if var_cmdarg:
+                        assert var_dollar > 0
+                        var_cmdarg.path = u16(self.code[var_dollar:current])
+                    var_resume = current + 1
+            else:
+                if char == DOLLAR:
+                    var_dollar = current + 1
+                    phase = EV.Env
+                    continue
+                if char == COLON:
+                    var_cmdarg = None
+                    var_resume = current + 1
+                    phase = EV.Mod
+                    continue
+                if not var_cmdarg:
+                    continue
+                try:
+                    flag = ArgVarFlags.FromToken(char)
+                except KeyError:
+                    var_cmdarg = None
+                    continue
+                if flag == ArgVarFlags.StripQuotes and var_cmdarg.flags > 0:
+                    var_cmdarg = None
+                elif ArgVarFlags.StripQuotes not in var_cmdarg.flags:
+                    var_cmdarg = None
+        if var_resume >= 0:
+            cursor.offset = var_resume
 
     @_register(Mode.Label)
     def gobble_label(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
@@ -604,8 +570,6 @@ class BatchLexer:
     @_register(Mode.Quote)
     def gobble_quote(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         if (yield from self.check_line_break(mode, char)):
-            return False
-        if self.check_variable_start(char):
             return False
         self.cursor.token.append(char)
         if char == QUOTE:
@@ -625,9 +589,6 @@ class BatchLexer:
 
     @_register(Mode.SetQuoted)
     def gobble_quoted_set(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
-        if self.check_variable_start(char):
-            return False
-
         if char == QUOTE:
             self.consume_char()
             self.cursor.token.append(QUOTE)
@@ -675,8 +636,6 @@ class BatchLexer:
             yield from self.emit_token()
             token.append(char)
             return True
-        if self.check_variable_start(char):
-            return False
         if not token and char == QUOTE:
             self.caret = False
             token.append(char)
@@ -701,7 +660,6 @@ class BatchLexer:
     def common_token_checks(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
         return (False
             or (yield from self.check_line_break(mode, char))
-            or self.check_variable_start(char)
             or self.check_caret(char)
             or self.check_quote_start(char)
             or (yield from self.check_command_separators(char))
