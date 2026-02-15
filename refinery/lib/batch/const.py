@@ -23,6 +23,6 @@ SPACE       = BR' '[0] # noqa
 TILDE       = BR'~'[0] # noqa
 ZERO        = BR'0'[0] # noqa
 
-ANGLES      = set(B'<>')        # noqa
-SEPARATORS  = set(B' \t\v;,=')  # noqa
-WHITESPACE  = set(B' \t\v')     # noqa
+ANGLES      = frozenset(B'<>')        # noqa
+SEPARATORS  = frozenset(B' \t\v;,=')  # noqa
+WHITESPACE  = frozenset(B' \t\v')     # noqa
