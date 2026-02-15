@@ -9,6 +9,7 @@ from io import StringIO
 from typing import Callable, ClassVar, Generator, TypeVar
 
 from refinery.lib.batch.model import (
+    AbortExecution,
     ArgVarFlags,
     AstCondition,
     AstFor,
@@ -411,6 +412,7 @@ class BatchEmulator:
             for assignment in ''.join(args).split(','):
                 assignment = assignment.strip()
                 name, operator, definition = re.split(r'([*+^|/%-&]|<<|>>|)=', assignment, maxsplit=1)
+                name = name.upper()
                 definition = re.sub(r'\b0([0-7]+)\b', r'0o\1', definition)
                 if operator:
                     definition = F'{name}{operator}({definition})'
@@ -420,7 +422,7 @@ class BatchEmulator:
                 if names.stored or names.others:
                     raise EmulatorException('Arithmetic SET had unexpected variable access.')
                 for var in names.loaded:
-                    original = refang(name)
+                    original = refang(name).upper()
                     translate[original] = var
                     if var in namespace:
                         continue
@@ -470,18 +472,19 @@ class BatchEmulator:
             emu = BatchEmulator(self.parser, std=std)
         else:
             offset = 0
-            target = self.state.ingest_file(cmdl.strip())
-            if target is None:
+            path = cmdl.strip()
+            code = self.state.ingest_file(path)
+            if code is None:
                 yield cmd
                 return
-            emu = BatchEmulator(target, std=std, state=BatchState(
+            emu = BatchEmulator(code, std=std, state=BatchState(
                 environment=self.state.environment,
                 file_system=self.state.file_system,
                 now=self.state.now,
                 cwd=self.state.cwd,
                 username=self.state.username,
                 hostname=self.state.hostname,
-                filename=target,
+                filename=path,
             ))
         yield from emu.trace(offset, called=True)
 
@@ -507,8 +510,12 @@ class BatchEmulator:
             self.state.delayexpands.pop()
 
     @_command('GOTO')
-    def execute_goto(self, cmd: SynCommand, *_):
-        label, *_ = cmd.argument_string.split(maxsplit=1)
+    def execute_goto(self, cmd: SynCommand, std: IO, *_):
+        try:
+            label, *_ = cmd.argument_string.split(maxsplit=1)
+        except ValueError:
+            std.e.write('No batch label specified to GOTO command.\r\n')
+            raise AbortExecution
         if label.startswith(':'):
             if label.upper() == ':EOF':
                 raise Exit(self.state.ec, False)
@@ -778,7 +785,7 @@ class BatchEmulator:
                     cwd=state.cwd,
                     file_system=state.file_system,
                     environment=dict(state.environment),
-                    filename=None,
+                    filename=state.name,
                 ))
                 yield from emulator.trace()
                 lines = emulator.std.o.getvalue().splitlines()
@@ -890,5 +897,8 @@ class BatchEmulator:
                     raise
                 else:
                     break
+            except AbortExecution:
+                self.state.ec = 1
+                break
             else:
                 break

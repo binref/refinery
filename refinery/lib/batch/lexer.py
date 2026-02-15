@@ -6,6 +6,7 @@ import enum
 import io
 import itertools
 import re
+import ntpath
 
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Generator
@@ -208,6 +209,7 @@ class BatchLexer:
         number.  The %~ modifiers may not be used with %*
         """
         state = self.state
+        flags = var.flags
 
         if (k := var.offset) is (...):
             return state.command_line
@@ -218,31 +220,38 @@ class BatchLexer:
         else:
             return ''
 
-        if var.flags.StripQuotes and argval.startswith('"') and argval.endswith('"'):
+        has_path = 0 != ArgVarFlags.FullPath & flags
+
+        if flags.StripQuotes and argval.startswith('"') and argval.endswith('"'):
             argval = argval[1:-1]
-        with io.StringIO() as output:
-            if var.flags.StripQuotes:
-                ...
-            if var.flags.FullPath:
-                ...
-            if var.flags.DriveLetter:
-                ...
-            if var.flags.PathOnly:
-                ...
-            if var.flags.NameOnly:
-                ...
-            if var.flags.Extension:
-                ...
-            if var.flags.ShortName:
-                ...
-            if var.flags.Attributes:
-                ...
-            if var.flags.DateTime:
-                ...
-            if var.flags.FileSize:
-                ...
-            output.write(argval)
-            return output.getvalue()
+
+        if flags.ShortName and not has_path:
+            flags |= ArgVarFlags.FullPath
+            has_path = True
+
+        with io.StringIO() as out:
+            if flags.Attributes:
+                out.write('--a--------') # TODO: placeholder
+            if flags.DateTime:
+                dt = state.start_time.isoformat(' ', 'minutes')
+                out.write(F' {dt}')
+            if flags.FileSize:
+                out.write(F' {state.sizeof_file(argval)}')
+            if has_path:
+                out.write(' ')
+                full_path = state.resolve_path(argval)
+                drv, rest = ntpath.splitdrive(full_path)
+                *pp, name = ntpath.split(rest)
+                name, ext = ntpath.splitext(name)
+                if flags.DriveLetter:
+                    out.write(drv)
+                if flags.FilePath:
+                    out.write(ntpath.join(*pp))
+                if flags.FileName:
+                    out.write(name)
+                if flags.FileExtension:
+                    out.write(ext)
+            return out.getvalue().lstrip()
 
     @property
     def modes(self):
@@ -503,6 +512,7 @@ class BatchLexer:
         var_cmdarg = ArgVar()
         variable = None
         phase = EV.New
+        q = ArgVarFlags.StripQuotes
 
         for current in range((current := cursor.offset), len(code)):
             char = code[current]
@@ -549,13 +559,11 @@ class BatchLexer:
                 if not var_cmdarg:
                     continue
                 try:
-                    flag = ArgVarFlags.FromToken(char)
+                    var_cmdarg.flags |= ArgVarFlags.FromToken(char)
                 except KeyError:
                     var_cmdarg = None
                     continue
-                if flag == ArgVarFlags.StripQuotes and var_cmdarg.flags > 0:
-                    var_cmdarg = None
-                elif ArgVarFlags.StripQuotes not in var_cmdarg.flags:
+                if q not in var_cmdarg.flags:
                     var_cmdarg = None
         if var_resume >= 0:
             cursor.offset = var_resume

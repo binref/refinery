@@ -113,16 +113,16 @@ class ArgVarFlags(FlagAccessMixin, enum.IntFlag):
     z = 0b1000_00000
     f = d | p | n | x
 
-    StripQuotes = q # noqa
-    FullPath    = f # noqa
-    DriveLetter = d # noqa
-    PathOnly    = p # noqa
-    NameOnly    = n # noqa
-    Extension   = x # noqa
-    ShortName   = s # noqa
-    Attributes  = a # noqa
-    DateTime    = t # noqa
-    FileSize    = z # noqa
+    StripQuotes   = q # noqa
+    FullPath      = f # noqa
+    DriveLetter   = d # noqa
+    FilePath      = p # noqa
+    FileName      = n # noqa
+    FileExtension = x # noqa
+    ShortName     = s # noqa
+    Attributes    = a # noqa
+    DateTime      = t # noqa
+    FileSize      = z # noqa
 
     def __str__(self):
         options = self.__class__
@@ -143,25 +143,32 @@ class ArgVarFlags(FlagAccessMixin, enum.IntFlag):
 
     @classmethod
     def FromToken(cls, t: int):
-        if t == TILDE:
+        c = chr(t)
+        if c == '~':
             return cls(1)
-        return cls[chr(t)]
+        if c == 'q':
+            raise KeyError
+        return cls[c]
 
 
 @dataclass
 class ArgVar:
-    offset: int | ellipsis = 0
+    offset: int | ellipsis = -1
     path: str | None = None
     flags: ArgVarFlags = ArgVarFlags.Empty
 
-    def __str__(self):
+    def __repr__(self):
         k = self.offset
         if k is (...):
             assert self.path is None
             assert self.flags is ArgVarFlags.Empty
             return '%*'
+        elif k < 0:
+            k = '?'
         p = F'${p}' if (p := self.path) is not None else ''
         return F'%{self.flags!s}{p}{k}'
+
+    __str__ = __repr__
 
 
 class AstCondition(str, enum.Enum):
@@ -362,6 +369,10 @@ class EmulatorException(Exception):
 class InputLocked(EmulatorException):
     def __str__(self):
         return 'The emulation could not continue because a command is waiting for input.'
+
+
+class AbortExecution(EmulatorException):
+    pass
 
 
 class EmulatorLongJump(EmulatorException):

@@ -60,8 +60,11 @@ _DEFAULT_ENVIRONMENT = {
 
 class BatchState:
 
-    name: str | None
+    name: str
     args: list[str]
+
+    now: datetime
+    start_time: datetime
 
     environments: list[dict[str, str]]
     delayexpands: list[bool]
@@ -102,6 +105,7 @@ class BatchState:
             now = datetime.now()
         self.cwd = cwd
         self.now = now
+        self.start_time = now
         seed(self.now.timestamp())
         self.hostname = hostname
         self.username = username
@@ -113,9 +117,7 @@ class BatchState:
         self.file_system = file_system
         self.dirstack = []
         self.linebreaks = []
-        self.name = filename
-        if self.name == '':
-            self.name = F'{uuid4()}.bat'
+        self.name = filename or F'{uuid4()}.bat'
         self.args = []
         self._cmd = ''
         self.ec = None
@@ -185,28 +187,33 @@ class BatchState:
         else:
             raise MissingVariable
 
-    def _resolved(self, path: str) -> str:
+    def resolve_path(self, path: str) -> str:
         if not ntpath.isabs(path):
             path = F'{self.cwd}{path}'
         return ntpath.normcase(ntpath.normpath(path))
 
     def create_file(self, path: str, data: str = ''):
-        self.file_system[self._resolved(path)] = data
+        self.file_system[self.resolve_path(path)] = data
 
     def append_file(self, path: str, data: str):
-        path = self._resolved(path)
+        path = self.resolve_path(path)
         if left := self.file_system.get(path, None):
             data = F'{left}{data}'
         self.file_system[path] = data
 
     def remove_file(self, path: str):
-        self.file_system.pop(self._resolved(path), None)
+        self.file_system.pop(self.resolve_path(path), None)
 
     def ingest_file(self, path: str) -> str | None:
-        return self.file_system.get(self._resolved(path))
+        return self.file_system.get(self.resolve_path(path))
 
     def exists_file(self, path: str) -> bool:
-        return self._resolved(path) in self.file_system
+        return self.resolve_path(path) in self.file_system
+
+    def sizeof_file(self, path: str) -> int:
+        if data := self.ingest_file(path):
+            return len(data)
+        return -1
 
     def new_forloop(self) -> dict[str, str]:
         new = {}

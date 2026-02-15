@@ -226,7 +226,7 @@ class BatchParser:
             Ctrl.Pipe,
             Ctrl.NewLine,
             Ctrl.EndOfFile,
-        ):
+        ) or not isinstance(tok, Ctrl):
             if in_group and tok == Ctrl.EndGroup:
                 break
             if isinstance(tok, RedirectIO):
