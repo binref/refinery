@@ -914,8 +914,9 @@ class TestBatchEmulator(TestBase):
             echo %*%
             echo %1 %2
             '''
+        bat.state.command_line = "hum   ho"
         self.assertListEqual(
-            list(bat.emulate(0, command_line="hum   ho")),
+            list(bat.emulate()),
             ['echo hum   ho', 'echo hum ho']
         )
 
