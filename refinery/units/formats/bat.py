@@ -3,7 +3,7 @@ from __future__ import annotations
 import codecs
 import uuid
 
-from refinery.lib.batch import BatchEmulator
+from refinery.lib.batch import BatchEmulator, BatchState
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
@@ -24,11 +24,13 @@ class bat(Unit):
         super().__init__(name=name, args=args)
 
     def process(self, data):
+        state = BatchState()
+        batch = BatchEmulator(data, state)
         if (name := self.args.name):
-            name = codecs.decode(name, self.codec)
+            state.name = codecs.decode(name, self.codec)
         else:
-            name = F'{uuid.uuid4()!s}.bat'
-        cmd = ' '.join(codecs.decode(arg, self.codec) for arg in self.args.args)
-        emu = BatchEmulator(data)
-        for cmd in emu.emulate(0, name, cmd):
+            state.name = F'{uuid.uuid4()!s}.bat'
+        state.command_line = ' '.join(
+            codecs.decode(arg, self.codec) for arg in self.args.args)
+        for cmd in batch.emulate():
             yield cmd.encode(self.codec)

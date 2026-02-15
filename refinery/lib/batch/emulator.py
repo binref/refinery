@@ -850,9 +850,9 @@ class BatchEmulator:
             if syn.ast.depth <= depth:
                 yield str(syn)
 
-    def emulate(self, offset: int = 0, name: str | None = None, command_line: str = ''):
+    def emulate(self, offset: int = 0):
         cursor: AstNode | None = None
-        for syn in self.trace(offset, name, command_line):
+        for syn in self.trace(offset):
             if not isinstance(syn, SynNodeBase):
                 continue
             ast = syn.ast
@@ -864,10 +864,11 @@ class BatchEmulator:
             cursor = ast
             yield str(syn)
 
-    def trace(self, offset: int = 0, name: str | None = '', command_line: str = '', called: bool = False):
-        if name:
-            self.state.name = name
-        self.state.command_line = command_line
+    def execute(self, offset: int = 0):
+        for _ in self.trace(offset):
+            pass
+
+    def trace(self, offset: int = 0, called: bool = False):
         if (name := self.state.name):
             self.state.create_file(name, self.parser.lexer.text)
         length = len(self.parser.lexer.code)
