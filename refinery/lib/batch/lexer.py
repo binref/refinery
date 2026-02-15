@@ -76,6 +76,7 @@ SeparatorMap = {
     AT          : Ctrl.At,
     COLON       : Ctrl.Label,
     COMMA       : Ctrl.Comma,
+    EQUALS      : Ctrl.Equals,
     PAREN_CLOSE : Ctrl.EndGroup,
     PAREN_OPEN  : Ctrl.NewGroup,
     SEMICOLON   : Ctrl.Semicolon,
@@ -158,14 +159,6 @@ class BatchLexer:
             raise EmulatorException(F'Switching to LABEL while in mode {m.name}')
         self.mode_switch(Mode.Label)
 
-    def parse_gap(self):
-        m = self.mode
-        if m == Mode.Gap:
-            return
-        if m != Mode.Text or len(self.modes) != 1:
-            raise EmulatorException(F'Switching to GAP while in mode {m.name}')
-        self.mode_switch(Mode.Gap)
-
     def parse_set(self):
         if (m := self.mode) != Mode.Text or len(self.modes) != 1:
             raise EmulatorException(F'Switching to SET while in mode {m.name}')
@@ -220,6 +213,9 @@ class BatchLexer:
         else:
             return ''
 
+        if not flags:
+            return argval
+
         has_path = 0 != ArgVarFlags.FullPath & flags
 
         if flags.StripQuotes and argval.startswith('"') and argval.endswith('"'):
@@ -261,7 +257,6 @@ class BatchLexer:
         self.quote = False
         self.caret = False
         self.white = False
-        self.separator_count = 2
         self.first_after_gap = True
         self.group = 0
         self.cursor = BatchLexerCursor(offset)
@@ -385,7 +380,6 @@ class BatchLexer:
                 yield Word(token)
         del buffer[:]
         self.first_after_gap = False
-        self.separator_count = 0
         return switched
 
     def tokens(self, offset: int) -> Generator[Token]:
@@ -411,7 +405,6 @@ class BatchLexer:
         if not self.caret:
             # caret is not reset until the next char!
             yield from self.emit_token()
-            self.separator_count = 2
             self.white = True
             self.quote = False
             self.mode_reset()
@@ -446,13 +439,10 @@ class BatchLexer:
             tok = Ctrl.Pipe
         else:
             return False
-        if self.separator_count >= 2:
-            raise UnexpectedFirstToken(char)
         yield from self.emit_token()
         self.mode_reset()
         self.consume_char()
         yield tok
-        self.separator_count += 1
         return True
 
     def check_quote_start(self, char: int):
@@ -461,7 +451,6 @@ class BatchLexer:
         self.cursor.token.append(char)
         self.mode_switch(Mode.Quote)
         self.caret = False
-        self.separator_count = 0
         self.consume_char()
         return True
 
@@ -704,29 +693,18 @@ class BatchLexer:
             self.cursor.token.append(char)
             self.mode_switch(Mode.Whitespace)
             return True
-        if self.separator_count > 0 and char in SEPARATORS:
-            return True
         if char == SLASH and not self.pending_redirect:
             yield from self.emit_token()
-        elif char == EQUALS:
+        try:
+            token = SeparatorMap[char]
+        except KeyError:
+            pass
+        else:
             if (yield from self.emit_token()):
                 return False
             else:
-                yield Ctrl.Equals
+                yield token
                 return True
-        else:
-            try:
-                token = SeparatorMap[char]
-            except KeyError:
-                pass
-            else:
-                self.separator_count = 0
-                if (yield from self.emit_token()):
-                    return False
-                else:
-                    yield token
-                    return True
-        self.separator_count = 0
         self.cursor.token.append(char)
         return True
 

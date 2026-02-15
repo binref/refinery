@@ -26,6 +26,9 @@ class TestBatchLexer(TestBase):
         lexer = BatchLexer(';;;@ echo foo>,; =="==" bar')
         lexed = list(lexer.tokens(0))
         self.assertEqual(lexed, [
+            ';',
+            ';',
+            ';',
             '@',
             ' ',
             'echo',
@@ -39,6 +42,9 @@ class TestBatchLexer(TestBase):
         lexer = BatchLexer(';;;@ echo foo>,; =="==" bar\n')
         lexed = list(lexer.tokens(0))
         self.assertEqual(lexed, [
+            ';',
+            ';',
+            ';',
             '@',
             ' ',
             'echo',
