@@ -838,6 +838,18 @@ class TestBatchEmulator(TestBase):
                 pass
         self.assertEqual(exc.exception.label, 'BAZ')
 
+    def test_goto_has_gap_after_verb(self):
+        @emulate
+        class bat:
+            '''
+            goto , , ,TEST,:TEST :FEST :REST
+            echo SKIPPED
+            goto :EOF
+            :TEST
+            echo EXECUTED
+            '''
+        self.assertListEqual(list(bat.emulate()), ['echo EXECUTED'])
+
     def test_goto_06_escaping_of_labels(self):
         @emulate
         class bat:

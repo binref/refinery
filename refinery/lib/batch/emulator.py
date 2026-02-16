@@ -24,6 +24,7 @@ from refinery.lib.batch.model import (
     AstPipeline,
     AstSequence,
     AstStatement,
+    Ctrl,
     EmulatorException,
     Exit,
     Goto,
@@ -511,15 +512,24 @@ class BatchEmulator:
 
     @_command('GOTO')
     def execute_goto(self, cmd: SynCommand, std: IO, *_):
-        try:
-            label, *_ = cmd.argument_string.split(maxsplit=1)
-        except ValueError:
+        it = iter(cmd.args)
+        mark = False
+        for label in it:
+            if not isinstance(label, Ctrl):
+                break
+            if label == Ctrl.Label:
+                mark = True
+                for label in it:
+                    break
+                else:
+                    label = ''
+                break
+        else:
             std.e.write('No batch label specified to GOTO command.\r\n')
             raise AbortExecution
-        if label.startswith(':'):
-            if label.upper() == ':EOF':
-                raise Exit(self.state.ec, False)
-            label = label[1:]
+        label, *_ = label.split(maxsplit=1)
+        if mark and label.upper() == 'EOF':
+            raise Exit(self.state.ec, False)
         raise Goto(label)
 
     @_command('EXIT')

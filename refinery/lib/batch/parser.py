@@ -198,16 +198,13 @@ class BatchParser:
         cmd = ast.fragments
 
         eat_token = False
-        set_logic = False
         add_space = False
+        nsp_merge = True
 
         if not ast.redirects:
             assert not isinstance(tok, RedirectIO)
             tok_upper = tok.upper()
-            if tok_upper == 'SET':
-                self.lexer.parse_set()
-                set_logic = True
-            elif tok_upper.startswith('ECHO'):
+            if tok_upper.startswith('ECHO'):
                 if len(tok_upper) > 4 and tok_upper[4] == '.':
                     cmd.append(tok[:4])
                     cmd.append(' ')
@@ -216,6 +213,11 @@ class BatchParser:
                 else:
                     add_space = True
                     eat_token = True
+            elif tok_upper == 'SET':
+                self.lexer.parse_set()
+                nsp_merge = False
+            elif tok_upper == 'GOTO':
+                nsp_merge = False
             cmd.append(tok)
             tok = tokens.drop_and_peek()
 
@@ -239,7 +241,7 @@ class BatchParser:
                         tok = tok[1:]
                 if tok:
                     cmd.append(tok)
-            elif set_logic:
+            elif not nsp_merge:
                 cmd.append(tok)
             elif tok.isspace() or tok.startswith('/'):
                 if nsp := nonspace.getvalue():
