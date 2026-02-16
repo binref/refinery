@@ -606,15 +606,16 @@ class BatchLexer:
                 yield from self.emit_token()
                 return False
 
-        if char == CARET and self.resume:
-            self.caret = not self.caret
-
-        if char in (PIPE, AMPERSAND) and not self.caret and self.resume is not None:
-            self.quick_load()
-            yield from self.emit_token()
-            self.mode_finish()
-            # after a quick load, the ending quote was already consumed.
-            return False
+        if self.resume is not None:
+            if char == CARET:
+                self.caret = not self.caret
+            elif not self.caret:
+                if (char == PAREN_CLOSE and self.group > 0) or char in (PIPE, AMPERSAND):
+                    self.quick_load()
+                    yield from self.emit_token()
+                    self.mode_finish()
+                    # after a quick load, the ending quote was already consumed.
+                    return False
 
         self.cursor.token.append(char)
         return True
