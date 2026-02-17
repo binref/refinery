@@ -8,6 +8,7 @@ from enum import Enum
 from io import StringIO
 from typing import Callable, ClassVar, Generator, TypeVar
 
+from refinery.lib.batch.help import HelpOutput
 from refinery.lib.batch.model import (
     AbortExecution,
     ArgVarFlags,
@@ -33,10 +34,9 @@ from refinery.lib.batch.model import (
     MissingVariable,
 )
 from refinery.lib.batch.parser import BatchParser
-from refinery.lib.batch.state import BatchState
+from refinery.lib.batch.state import BatchState, ErrorZero
 from refinery.lib.batch.synth import SynCommand, SynNodeBase, synthesize
 from refinery.lib.batch.util import batchint, uncaret, unquote
-from refinery.lib.batch.help import HelpOutput
 from refinery.lib.deobfuscation import cautious_parse, names_in_expression
 from refinery.lib.types import buf
 
@@ -158,7 +158,7 @@ class BatchEmulator:
                 SynCommand,
                 IO,
                 bool,
-            ], Generator[str, None, int | None] | int | None]
+            ], Generator[str, None, int | None] | int | ErrorZero | None]
         ]] = {}
 
         def __init__(self, key: str):
@@ -394,7 +394,10 @@ class BatchEmulator:
 
         if tk.upper() == '/A':
             arithmetic = True
-            tk = next(it)
+            try:
+                tk = next(it)
+            except StopIteration:
+                tk = ''
 
         args = [tk, *it, *cmd.trailing_spaces]
 
@@ -410,8 +413,15 @@ class BatchEmulator:
             prefix = F'{uuid.uuid4().time_mid:X}'
             namespace = {}
             translate = {}
-            for assignment in ''.join(args).split(','):
+            value = None
+            if not (program := ''.join(args)):
+                std.e.write('The syntax of the command is incorrect.\r\n')
+                return ErrorZero
+            for assignment in program.split(','):
                 assignment = assignment.strip()
+                if not assignment:
+                    std.e.write('Missing operand.\r\n')
+                    return ErrorZero
                 name, operator, definition = re.split(r'([*+^|/%-&]|<<|>>|)=', assignment, maxsplit=1)
                 name = name.upper()
                 definition = re.sub(r'\b0([0-7]+)\b', r'0o\1', definition)
@@ -435,6 +445,11 @@ class BatchEmulator:
                 value = eval(code, namespace, {})
                 self.environment[name] = str(value)
                 namespace[defang(name)] = value
+            if value is None:
+                std.e.write('The syntax of the command is incorrect.')
+                return
+            else:
+                std.o.write(F'{value!s}\r\n')
         else:
             if (n := len(args)) >= 2 and args[1] == '=':
                 name = args[0]
@@ -529,7 +544,7 @@ class BatchEmulator:
             raise AbortExecution
         label, *_ = label.split(maxsplit=1)
         if mark and label.upper() == 'EOF':
-            raise Exit(self.state.ec, False)
+            raise Exit(int(self.state.ec), False)
         raise Goto(label)
 
     @_command('EXIT')
@@ -686,7 +701,7 @@ class BatchEmulator:
 
         if (result := handler(self, cmd, std, in_group)) is None:
             pass
-        elif not isinstance(result, int):
+        elif not isinstance(result, (int, type(ErrorZero))):
             result = (yield from result)
 
         for k, path in paths.items():
@@ -722,10 +737,10 @@ class BatchEmulator:
         yield from self.trace_statement(sequence.head, std, in_group)
         for cs in sequence.tail:
             if cs.condition == AstCondition.Failure:
-                if self.state.ec == 0:
+                if bool(self.state.ec) is False:
                     continue
             if cs.condition == AstCondition.Success:
-                if self.state.ec != 0:
+                if bool(self.state.ec) is True:
                     continue
             yield from self.trace_statement(cs.statement, std, in_group)
 

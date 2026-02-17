@@ -8,6 +8,21 @@ from uuid import uuid4
 
 from refinery.lib.batch.model import MissingVariable
 from refinery.lib.dt import date_from_timestamp, isodate
+from refinery.lib.types import Singleton
+
+
+class ErrorZeroType(metaclass=Singleton):
+    def __bool__(self):
+        return True
+
+    def __str__(self):
+        return '0'
+
+    __repr__ = __str__
+
+
+ErrorZero = ErrorZeroType()
+
 
 _DEFAULT_ENVIRONMENT = {
     'ALLUSERSPROFILE'           : r'C:\ProgramData',
@@ -139,11 +154,11 @@ class BatchState:
         self._cwd = ntpath.normcase(ntpath.normpath(new))
 
     @property
-    def ec(self) -> int:
+    def ec(self) -> int | ErrorZero:
         return self.errorlevel
 
     @ec.setter
-    def ec(self, value: int | None):
+    def ec(self, value: int | ErrorZero | None):
         ec = value or 0
         self.environment['ERRORLEVEL'] = str(ec)
         self.errorlevel = ec

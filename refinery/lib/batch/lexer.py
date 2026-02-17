@@ -5,8 +5,8 @@ import codecs
 import enum
 import io
 import itertools
-import re
 import ntpath
+import re
 
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Generator

@@ -330,6 +330,28 @@ class TestBatchEmulator(TestBase):
         with self.assertRaises(StopIteration):
             next(it)
 
+    def test_arithmetic_set_writes_to_stdout(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a x=12, ans=~-662*~-1152 | findstr 11
+            '''
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), '760811\r\n')
+
+    def test_odd_error_level_after_set_01(self):
+        bat = BatchEmulator('set /a||echo %ERRORLEVEL%')
+        bat.execute()
+        self.assertEqual(bat.std.e.getvalue(), 'The syntax of the command is incorrect.\r\n')
+        self.assertEqual(bat.std.o.getvalue(), '0\r\n')
+
+    def test_odd_error_level_after_set_02(self):
+        bat = BatchEmulator('set /a ||echo %ERRORLEVEL%')
+        bat.execute()
+        self.assertEqual(bat.std.e.getvalue(), 'Missing operand.\r\n')
+        self.assertEqual(bat.std.o.getvalue(), '0\r\n')
+
     def test_delayed_expansion(self):
         @emulate
         class bat:
