@@ -399,7 +399,7 @@ class BatchParser:
                     raise ValueError
             elif key == 'delims':
                 if k == count:
-                    _, _, value = options.rpartition('=')
+                    _, _, value = options.partition('delims=')
                 result.delims = value
             elif key == 'tokens':
                 tokens: set[int] = set()
