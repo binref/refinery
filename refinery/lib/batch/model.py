@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Generic, TypeVar, Union
 
-from refinery.lib.batch.const import TILDE
 from refinery.lib.batch.util import batchrange
 from refinery.lib.structures import FlagAccessMixin
 

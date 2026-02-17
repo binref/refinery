@@ -46,7 +46,6 @@ from refinery.lib.batch.model import (
     RedirectIO,
     Token,
     UnexpectedEOF,
-    UnexpectedFirstToken,
     UnexpectedToken,
     Word,
 )
