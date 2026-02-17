@@ -213,3 +213,8 @@ class TestBAT(TestUnitBase):
         ).encode('utf8')
         test = data | self.load() | str
         self.assertIn('powershell.exe', test)
+
+    def test_somalifuscator_v2(self):
+        batch = self.download_sample('50f453161e72b3be24885eded612f224b59ca6e69eb6605d36ce7ed8789b0f51')
+        test = batch | self.load() | str
+        self.assertIn('echo The Binary Refinery refines the finest Binaries', test)
